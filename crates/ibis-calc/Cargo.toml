@@ -1,0 +1,15 @@
+[package]
+name = "ibis-calc"
+description = "Spreadsheet formulas and number formats for ibisOffice: parsing, calculation and display (UI-independent)."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+encoding_rs = "0.8"
+regex = "1.13"
+
+[[bin]]
+name = "ibis-numfmt-check"
+path = "src/bin/numfmt_check.rs"

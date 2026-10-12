@@ -1,0 +1,604 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) ibis inc.
+// Additional terms under AGPL-3.0 section 7(b): see NOTICE.
+//! The slide list on the left: numbered thumbnails, click to open a slide.
+
+use gpui_kit::component::menu::PopupMenu;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
+
+use crate::pptx::SlidePopup;
+use crate::render::shape_view::{shape_element, slide_backdrop};
+use crate::shell::chrome::{MenuEntry, MenuItem, Submenu};
+use crate::shell::editor::SlideEditor;
+
+/// A slide being dragged in the list, to be dropped at another place.
+#[derive(Clone)]
+pub(crate) struct DraggedSlide {
+    pub(crate) slide: ibis_doc_model::SlideId,
+    pub(crate) number: usize,
+}
+
+/// What follows the pointer while a slide is dragged: its number.
+struct DraggedSlideView(usize);
+
+impl Render for DraggedSlideView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(theme.primary)
+            .text_color(theme.primary_foreground)
+            .text_xs()
+            .child(crate::shell::i18n::format("pptx.grid-view.slide-n", &[("n", &self.0)]))
+    }
+}
+
+const THUMBNAIL_WIDTH: f32 = 168.0;
+const PANE_WIDTH: f32 = 216.0;
+const OUTLINE_PANE_WIDTH: f32 = 250.0;
+const SECTION_HEADER_HEIGHT: f32 = 24.0;
+
+/// Extract title and body bullet paragraphs from a slide for Outline View.
+fn slide_outline_text(slide: &ibis_doc_model::Slide) -> (Option<String>, Vec<(usize, String)>) {
+    let mut texts_with_y: Vec<(i64, Vec<(usize, String)>)> = Vec::new();
+
+    for shape in &slide.shapes {
+        if let Some(tb) = shape.text_body() {
+            let mut paras = Vec::new();
+            for p in &tb.paragraphs {
+                let pt = p.text().trim().to_string();
+                if !pt.is_empty() {
+                    paras.push((p.level as usize, pt));
+                }
+            }
+            if !paras.is_empty() {
+                texts_with_y.push((shape.frame.y, paras));
+            }
+        }
+    }
+
+    texts_with_y.sort_by_key(|(y, _)| *y);
+
+    let mut title = None;
+    let mut body_paragraphs = Vec::new();
+
+    for (_, paras) in texts_with_y {
+        let mut paras_iter = paras.into_iter();
+        if title.is_none() {
+            if let Some((_, first_p)) = paras_iter.next() {
+                title = Some(first_p);
+            }
+        }
+        for (lvl, text) in paras_iter {
+            body_paragraphs.push((lvl, text));
+        }
+    }
+
+    (title, body_paragraphs)
+}
+
+impl SlideEditor {
+    fn render_thumbnail_card(
+        &self,
+        slide: &ibis_doc_model::Slide,
+        index: usize,
+        curr_y: &mut f32,
+        visible_top: f32,
+        visible_bottom: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let size = self.presentation().size_of(slide);
+        let scale = (THUMBNAIL_WIDTH / size.width.max(1) as f32).min(THUMBNAIL_WIDTH / size.height.max(1) as f32);
+        let (width, height) = (size.width as f32 * scale, size.height as f32 * scale);
+        let item_h = height + 12.0;
+        let item_top = *curr_y;
+        let item_bottom = *curr_y + item_h;
+        *curr_y += item_h;
+
+        let id = slide.id;
+        let current = id == self.current_slide;
+        let chosen = current || self.pptx().is_some_and(|st| st.slide_selection.contains(&id));
+        let in_view = item_bottom >= visible_top && item_top <= visible_bottom;
+        let should_render = in_view || current;
+
+        let ready = should_render && self.resources.preload.slide_ready(slide);
+        let shapes: Vec<AnyElement> = if ready {
+            slide
+                .shown_shapes()
+                .map(|shape| shape_element(shape, shape.frame, scale, &self.resources, None))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        h_flex()
+            .id(("slide-thumbnail", id.0))
+            .items_start()
+            .gap_2()
+            .px_2()
+            .py_1p5()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if let Some(s) = this.pptx_mut() {
+                    s.section_selection = None;
+                }
+                this.list_focus.focus(window, cx);
+                this.click_slide(id, &event.modifiers(), window, cx);
+            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    // A slide of the selection keeps it (the menu acts on all of them).
+                    if !this.selected_slide_ids().contains(&id) {
+                        this.select_slide(id, window, cx);
+                    }
+                    this.open_slide_context_menu(id, event.position, window, cx);
+                }),
+            )
+            .when(self.pages_are_slides(), |d| {
+                d.on_drag(DraggedSlide { slide: id, number: index + 1 }, |dragged, _, _, cx| {
+                    cx.new(|_| DraggedSlideView(dragged.number))
+                })
+                .drag_over::<DraggedSlide>(move |style, _, _, cx| {
+                    style.border_color(cx.theme().primary).bg(cx.theme().accent)
+                })
+                .on_drop(cx.listener(move |this, dragged: &DraggedSlide, window, cx| {
+                    // A slide of several selected: they all go.
+                    let chosen = this.selected_slide_ids();
+                    if chosen.len() > 1 && chosen.contains(&dragged.slide) {
+                        return this.move_selected_slides_to(id, window, cx);
+                    }
+                    if dragged.slide != id {
+                        this.run(
+                            vec![ibis_doc_model::Command::MoveSlide { slide: dragged.slide, index }],
+                            cx,
+                        );
+                        this.select_slide(dragged.slide, window, cx);
+                    }
+                }))
+            })
+            .child(
+                div()
+                    .w(px(18.))
+                    .text_xs()
+                    .text_right()
+                    .text_color(if chosen { theme.foreground } else { theme.muted_foreground })
+                    .when(slide.hidden, |d| d.line_through())
+                    .child(SharedString::from((index + 1).to_string())),
+            )
+            .child(
+                div()
+                    .relative()
+                    .w(px(width))
+                    .h(px(height))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .border_2()
+                    .border_color(if chosen { theme.primary } else { theme.border })
+                    .rounded_sm()
+                    .bg(gpui_kit::white())
+                    .when(ready, |d| d.child(slide_backdrop(slide, scale, &self.resources)))
+                    .children(shapes)
+                    .when(slide.hidden, |d| d.opacity(0.45)),
+            )
+            .into_any_element()
+    }
+
+    fn render_thumbnail_items(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let accent = cx.theme().accent;
+        let max_y = f32::from(self.list_scroll.max_offset().y);
+        let scroll_y = (-f32::from(self.list_scroll.offset().y)).clamp(0.0, max_y.max(0.0));
+        let view_h = self.workspace_bounds.map(|b| f32::from(b.size.height)).unwrap_or(720.0);
+        let visible_top = scroll_y - 300.0;
+        let visible_bottom = scroll_y + view_h + 300.0;
+        let mut curr_y = 0.0f32;
+
+        let has_sections = !self.presentation().sections.is_empty()
+            && self.presentation().valid_sections(&self.presentation().sections);
+
+        if has_sections {
+            let mut rows = Vec::new();
+            let mut slide_idx = 0;
+            for (index, section) in self.presentation().sections.iter().enumerate() {
+                let folded = self.pptx().is_some_and(|s| s.folded_sections.contains(&section.id));
+                let toggle_id = section.id.clone();
+                let select_id = section.id.clone();
+                rows.push(
+                    h_flex()
+                        .id(("pptx-section-header", index))
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .cursor_pointer()
+                        .when(self.current_section() == Some(index), move |d| d.bg(accent))
+                        .on_click(cx.listener(move |this, _, w, cx| this.select_section(&select_id, w, cx)))
+                        .child(
+                            div()
+                                .id(("pptx-section-fold", index))
+                                .child(if folded { "▸" } else { "▾" })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.toggle_section_fold(&toggle_id, cx);
+                                })),
+                        )
+                        .child(div().text_xs().child(format!("{} ({})", section.name, section.slides.len())))
+                        .into_any_element(),
+                );
+                curr_y += SECTION_HEADER_HEIGHT;
+
+                for &slide_id in &section.slides {
+                    if let Some(slide) = self.presentation().slide(slide_id) {
+                        if !folded {
+                            rows.push(self.render_thumbnail_card(
+                                slide,
+                                slide_idx,
+                                &mut curr_y,
+                                visible_top,
+                                visible_bottom,
+                                cx,
+                            ));
+                        }
+                    }
+                    slide_idx += 1;
+                }
+            }
+            rows
+        } else {
+            self.presentation()
+                .slides
+                .iter()
+                .enumerate()
+                .map(|(index, slide)| {
+                    self.render_thumbnail_card(
+                        slide,
+                        index,
+                        &mut curr_y,
+                        visible_top,
+                        visible_bottom,
+                        cx,
+                    )
+                })
+                .collect()
+        }
+    }
+
+    /// Returns the row index in the thumbnail list corresponding to `slide_index`.
+    /// When sections are present, section header rows shift the row indices,
+    /// and folded sections hide slides.
+    pub(crate) fn row_of_slide(&self, slide_index: usize) -> usize {
+        let pres = self.presentation();
+        let Some(target_slide) = pres.slides.get(slide_index) else {
+            return slide_index;
+        };
+        let target_id = target_slide.id;
+        if pres.sections.is_empty() || !pres.valid_sections(&pres.sections) {
+            return slide_index;
+        }
+        let mut row = 0;
+        for section in &pres.sections {
+            let folded = self.pptx().is_some_and(|s| s.folded_sections.contains(&section.id));
+            let header_row = row;
+            row += 1;
+            for &s_id in &section.slides {
+                if s_id == target_id {
+                    return if folded { header_row } else { row };
+                }
+                if !folded {
+                    row += 1;
+                }
+            }
+        }
+        slide_index
+    }
+
+    fn render_outline_items(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let theme = cx.theme();
+        self.presentation().slides.iter().enumerate().map(|(index, slide)| {
+            let id = slide.id;
+            let current = id == self.current_slide;
+            let (title, paragraphs) = slide_outline_text(slide);
+            let title_text = title.unwrap_or_else(|| crate::shell::i18n::text("pptx.outline.untitled").to_string());
+
+            v_flex()
+                .id(("outline-slide", id.0))
+                .w_full()
+                .px_2()
+                .py_2()
+                .gap_1()
+                .cursor_pointer()
+                .rounded_sm()
+                .border_1()
+                .border_color(if current { theme.primary } else { gpui_kit::transparent_black() })
+                .bg(if current { theme.accent } else { gpui_kit::transparent_black() })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if let Some(s) = this.pptx_mut() { s.section_selection = None; }
+                    this.list_focus.focus(window, cx);
+                    this.select_slide(id, window, cx);
+                }))
+                .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_slide_context_menu(id, event.position, window, cx);
+                }))
+                .child(
+                    h_flex()
+                        .items_start()
+                        .gap_1p5()
+                        .child(
+                            div()
+                                .w(px(18.))
+                                .text_xs()
+                                .text_right()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(if current { theme.primary } else { theme.muted_foreground })
+                                .when(slide.hidden, |d| d.line_through())
+                                .child(SharedString::from((index + 1).to_string())),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_xs()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme.foreground)
+                                .child(title_text),
+                        ),
+                )
+                .when(!paragraphs.is_empty(), |d| {
+                    d.children(paragraphs.into_iter().map(|(level, text)| {
+                        h_flex()
+                            .pl(px(20.0 + (level as f32 * 12.0)))
+                            .gap_1()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(div().w(px(6.)).text_center().child("•"))
+                            .child(div().flex_1().child(text))
+                            .into_any_element()
+                    }))
+                })
+                .into_any_element()
+        }).collect()
+    }
+
+    pub(crate) fn render_thumbnails(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_outline = self.is_outline_view();
+        let pane_w = if is_outline { OUTLINE_PANE_WIDTH } else { PANE_WIDTH };
+
+        let items = if is_outline {
+            self.render_outline_items(cx)
+        } else {
+            self.render_thumbnail_items(cx)
+        };
+
+        let theme = cx.theme();
+
+        let tab_bar = h_flex()
+            .w_full()
+            .px_2()
+            .py_1()
+            .gap_1()
+            .border_b_1()
+            .border_color(theme.sidebar_border)
+            .child(
+                div()
+                    .id("tab-thumbnails")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_sm()
+                    .text_xs()
+                    .cursor_pointer()
+                    .bg(if !is_outline { theme.accent } else { gpui_kit::transparent_black() })
+                    .text_color(if !is_outline { theme.primary } else { theme.muted_foreground })
+                    .font_weight(FontWeight::BOLD)
+                    .on_click(cx.listener(|this, _, window, cx| this.switch_to_normal_view(window, cx)))
+                    .child(crate::shell::i18n::text("pptx.thumbnails-view")),
+            )
+            .child(
+                div()
+                    .id("tab-outline")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_sm()
+                    .text_xs()
+                    .cursor_pointer()
+                    .bg(if is_outline { theme.accent } else { gpui_kit::transparent_black() })
+                    .text_color(if is_outline { theme.primary } else { theme.muted_foreground })
+                    .font_weight(FontWeight::BOLD)
+                    .on_click(cx.listener(|this, _, window, cx| this.switch_to_outline_view(window, cx)))
+                    .child(crate::shell::i18n::text("pptx.outline-view")),
+            );
+
+        v_flex()
+            .relative()
+            .w(px(pane_w))
+            .flex_shrink_0()
+            .h_full()
+            .bg(theme.sidebar)
+            .border_r_1()
+            .border_color(theme.sidebar_border)
+            .child(tab_bar)
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(
+                        v_flex()
+                            .id("slide-list")
+                            .key_context(crate::shell::editor::LIST_CONTEXT)
+                            .track_focus(&self.list_focus)
+                            .track_scroll(&self.list_scroll)
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.list_focus.focus(window, cx)))
+                            // ⌘↑ / ⌘↓ move the current slide up or down the list.
+                            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                                let k = &event.keystroke;
+                                if (k.modifiers.platform || k.modifiers.control) && this.pages_are_slides() {
+                                    match k.key.as_str() {
+                                        "up" => {
+                                            cx.stop_propagation();
+                                            this.move_current_slide(-1, cx);
+                                        }
+                                        "down" => {
+                                            cx.stop_propagation();
+                                            this.move_current_slide(1, cx);
+                                        }
+                                        // ⌘C / ⌘X / ⌘V: the slide copied, cut or pasted.
+                                        "c" => {
+                                            cx.stop_propagation();
+                                            this.copy_current_slide(window, cx);
+                                        }
+                                        "x" => {
+                                            cx.stop_propagation();
+                                            this.cut_current_slide(window, cx);
+                                        }
+                                        "v" => {
+                                            cx.stop_propagation();
+                                            this.paste_slides(window, cx);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }))
+                            .size_full()
+                            .py_2()
+                            .overflow_y_scroll()
+                            .children(items),
+                    )
+                    .vertical_scrollbar(&self.list_scroll),
+            )
+    }
+
+    /// Context menu entries for a slide (used in thumbnails list and slide sorter grid view).
+    pub(crate) fn slide_context_menu_entries(&self) -> Vec<MenuEntry> {
+        let has_clip = crate::pptx::editing::slide_clipboard().is_some();
+        let can_delete = self.presentation().slides.len() >= 2;
+        let is_skipped = self.slide().hidden;
+        vec![
+            MenuItem::tr("pptx.new-slide").icon("add").on(|e, w, cx| e.add_slide(w, cx)).into(),
+            MenuItem::tr("pptx.duplicate-slide").icon("control_point_duplicate").shortcut("⌘D").on(|e, w, cx| e.duplicate_current_slide(w, cx)).into(),
+            MenuItem::tr("pptx.delete-slide").icon("delete").disabled(!can_delete).on(|e, w, cx| e.delete_slide(w, cx)).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.reset-slide").icon("restart_alt").disabled(self.slide().layout.is_none()).on(|e, w, cx| e.reset_slide(w, cx)).into(),
+            Submenu::tr("pptx.theme.palette-selected", "palette", crate::pptx::chrome::theme_palette_selected_items(self)).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.cut-slide").icon("content_cut").shortcut("⌘X").disabled(!can_delete).on(|e, w, cx| e.cut_current_slide(w, cx)).into(),
+            MenuItem::tr("pptx.copy-slide").icon("content_copy").shortcut("⌘C").on(|e, w, cx| e.copy_current_slide(w, cx)).into(),
+            MenuItem::tr("pptx.paste-slide").icon("content_paste").shortcut("⌘V").disabled(!has_clip).on(|e, w, cx| { e.paste_slides(w, cx); }).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.skip-slide").icon("visibility_off").checked(is_skipped).on(|e, w, cx| e.toggle_skip_slide(w, cx)).into(),
+            MenuItem::tr("pptx.slide.add-hidden-title").icon("title").on(|e, _, cx| {
+                let s_id = e.current_slide;
+                e.add_hidden_slide_title(s_id, None, cx);
+            }).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.export-slide-png").icon("image").on(|e, w, cx| e.export_current_slide_png(w, cx)).into(),
+            MenuItem::tr("pptx.export-all-slides-png").icon("image").on(|e, w, cx| e.export_all_slides_png(w, cx)).into(),
+            MenuItem::tr("pptx.export-gif").icon("animation").on(|e, w, cx| e.export_gif(w, cx)).into(),
+        ]
+    }
+
+    /// Open context menu for the given slide at pointer `position`.
+    pub(crate) fn open_slide_context_menu(&mut self, slide_id: ibis_doc_model::SlideId, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_slide(slide_id, window, cx);
+        let entries = std::rc::Rc::new(self.slide_context_menu_entries());
+        let editor = cx.entity().downgrade();
+        let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
+            crate::shell::chrome::fill_menu(menu.min_w(px(220.)), &entries, &editor, window, cx)
+        });
+        let dismiss = cx.subscribe_in(&menu, window, |this, _, _: &DismissEvent, window, cx| {
+            if let Some(state) = this.pptx_mut() {
+                state.slide_popup = None;
+            }
+            cx.notify();
+            this.focus_handle.focus(window, cx);
+        });
+        menu.read(cx).focus_handle(cx).focus(window, cx);
+        if let Some(state) = self.pptx_mut() {
+            state.slide_popup = Some(SlidePopup { menu, position, _dismiss: dismiss });
+        }
+        cx.notify();
+    }
+}
+
+
+impl SlideEditor {
+    /// The slides selected in the list, in order: those chosen with Shift or ⌘, else the one shown.
+    pub(crate) fn selected_slide_ids(&self) -> Vec<ibis_doc_model::SlideId> {
+        let chosen = self.pptx().map(|s| s.slide_selection.clone()).unwrap_or_default();
+        if chosen.len() > 1 && chosen.contains(&self.current_slide) {
+            self.presentation().slides.iter().map(|s| s.id).filter(|id| chosen.contains(id)).collect()
+        } else {
+            vec![self.current_slide]
+        }
+    }
+
+    /// A click on slide `id` of the list: Shift takes the slides from the one shown to it, ⌘ adds or
+    /// takes it away; alone, it is the one shown.
+    pub(crate) fn click_slide(&mut self, id: ibis_doc_model::SlideId, modifiers: &Modifiers, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.pages_are_slides() || !(modifiers.shift || modifiers.secondary()) {
+            return self.select_slide(id, window, cx);
+        }
+        let slides: Vec<ibis_doc_model::SlideId> = self.presentation().slides.iter().map(|s| s.id).collect();
+        let (Some(from), Some(to)) = (slides.iter().position(|s| *s == self.current_slide), slides.iter().position(|s| *s == id)) else { return };
+        let mut chosen = self.selected_slide_ids();
+        if modifiers.shift {
+            let (a, b) = (from.min(to), from.max(to));
+            chosen = slides[a..=b].to_vec();
+        } else if let Some(at) = chosen.iter().position(|s| *s == id) {
+            // Taken away (not the last one).
+            if chosen.len() > 1 {
+                chosen.remove(at);
+            }
+        } else {
+            chosen.push(id);
+        }
+        let shown = if modifiers.shift || chosen.contains(&id) { id } else { *chosen.last().unwrap_or(&id) };
+        self.select_slide(shown, window, cx);
+        if let Some(s) = self.pptx_mut() {
+            s.slide_selection = chosen;
+        }
+        cx.notify();
+    }
+}
+
+impl SlideEditor {
+    /// The slides selected in the list moved together to where slide `target` is (above it when they come
+    /// from below, below it when from above), in their order.
+    pub(crate) fn move_selected_slides_to(&mut self, target: ibis_doc_model::SlideId, window: &mut Window, cx: &mut Context<Self>) {
+        let chosen = self.selected_slide_ids();
+        if chosen.contains(&target) {
+            return;
+        }
+        let all: Vec<ibis_doc_model::SlideId> = self.presentation().slides.iter().map(|s| s.id).collect();
+        let (Some(t), Some(first)) = (all.iter().position(|s| *s == target), all.iter().position(|s| chosen.contains(s))) else { return };
+        let rest: Vec<ibis_doc_model::SlideId> = all.iter().copied().filter(|s| !chosen.contains(s)).collect();
+        let k = rest.iter().position(|s| *s == target).map_or(rest.len(), |p| p + usize::from(first < t));
+        let desired: Vec<ibis_doc_model::SlideId> = rest[..k].iter().chain(chosen.iter()).chain(rest[k..].iter()).copied().collect();
+        // Each place from the first, the slide that belongs there moved to it.
+        let mut now = all.clone();
+        let mut commands = Vec::new();
+        for (j, id) in desired.iter().enumerate() {
+            if now[j] != *id {
+                commands.push(ibis_doc_model::Command::MoveSlide { slide: *id, index: j });
+                let at = now.iter().position(|s| s == id).unwrap_or(j);
+                now.remove(at);
+                now.insert(j, *id);
+            }
+        }
+        if commands.is_empty() {
+            return;
+        }
+        self.run(vec![ibis_doc_model::Command::Group(commands)], cx);
+        self.select_slide(chosen[0], window, cx);
+        if let Some(s) = self.pptx_mut() {
+            s.slide_selection = chosen;
+        }
+        cx.notify();
+    }
+}

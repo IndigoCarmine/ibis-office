@@ -1,0 +1,13 @@
+{
+  "name": "ibis-office-web",
+  "private": true,
+  "description": "Build tooling for the browser version of ibisOffice (www/).",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "build:ts": "tsc -p www"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

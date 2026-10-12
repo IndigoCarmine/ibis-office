@@ -1,0 +1,18 @@
+[package]
+name = "ibis-imgdiff"
+description = "Finds where two PNGs differ and reports the regions as TSV, for rendering tests."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ibis-imgdiff"
+path = "src/main.rs"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[[bin]]
+name = "ibis-grid-diff"
+path = "src/grid_main.rs"

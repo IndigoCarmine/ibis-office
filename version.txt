@@ -1,0 +1,3 @@
+Windows	0.8.0
+macOS	0.8.0
+wasm	0.8.0

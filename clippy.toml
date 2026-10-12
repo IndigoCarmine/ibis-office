@@ -1,0 +1,8 @@
+# The time is read through each crate's `clock` module only:
+# std::time::Instant::now and SystemTime::now panic on wasm32-unknown-unknown
+# (the web version). tests/clock_rule.rs in ibis-office-app checks the same
+# with grep, since check-main does not run clippy.
+disallowed-methods = [
+  { path = "std::time::Instant::now", reason = "wasm で panic する。clock を使う" },
+  { path = "std::time::SystemTime::now", reason = "wasm で panic する。clock を使う" },
+]

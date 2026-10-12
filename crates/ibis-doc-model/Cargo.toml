@@ -1,0 +1,10 @@
+[package]
+name = "ibis-doc-model"
+description = "Presentation document model and editing commands for ibisOffice (UI-independent)."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-calc.workspace = true

@@ -1,0 +1,7 @@
+# 規格書のデータは改変せずに同梱する（改行も変えない）
+crates/ibis-pptx/data/** -text
+*.docx binary
+*.xlsx binary
+*.pptx binary
+# version.txt は CRLF のまま（ユーザーの書式）
+version.txt -text

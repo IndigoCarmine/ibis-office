@@ -1,0 +1,8 @@
+/target
+/www/pkg
+/www/assets
+/www/main.js
+/node_modules
+/test/private/
+__pycache__/
+.DS_Store

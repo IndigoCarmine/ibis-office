@@ -1,0 +1,95 @@
+[package]
+name = "ibis-office-app"
+description = "ibisOffice presentation editor front end (GPUI + gpui-component)."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "ibisOffice"
+path = "src/main.rs"
+
+[dependencies]
+ibis-calc.workspace = true
+ibis-doc-model.workspace = true
+ibis-pptx.workspace = true
+ibis-emf.workspace = true
+ibis-eot.workspace = true
+gpui-kit.workspace = true
+lyon_tessellation = "1.0"
+log = "0.4"
+# Pair kerning of the typeface drawn, for Word's w:kern (docx layout). The
+# version GPUI's tree already has (MIT): HarfBuzz in Rust, reading the
+# font's kern table and GPOS pair adjustments.
+harfrust = "=0.5.2"
+
+# For the `export` feature: GPUI's headless renderer is part of its test
+# support, which also turns on GPUI's entity leak tracking (a small cost).
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+gpui-pre-platform = { version = "=0.3.6", features = ["test-support"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg"], optional = true }
+miniz_oxide = { version = "0.8", optional = true }
+# Vector PDF export: pages as text, paths and images (MIT OR Apache-2.0).
+# Without its text shaping (the export hands it positioned glyphs); its
+# images feature is what takes pixels, and rayon (already a dependency of
+# the workspace) writes pages and fonts on several threads.
+krilla = { version = "=0.8.2", default-features = false, features = ["raster-images", "rayon"], optional = true }
+# The characters of the glyphs embedded, from the fonts' cmaps (the version
+# krilla uses; MIT OR Apache-2.0).
+skrifa = { version = "=0.42.1", optional = true }
+# Trying each font's subset before the PDF is written (the version krilla
+# uses; MIT OR Apache-2.0): a font it cannot subset is drawn as outlines.
+subsetter = { version = "=0.2.6", optional = true }
+
+# macOS only.
+[target.'cfg(target_os = "macos")'.dependencies]
+# GPUI's macOS platform (already a dependency of gpui-pre-platform, patched
+# to forks/gpui-pre-macos): the export draws glyphs without font smoothing.
+gpui-pre-macos = { version = "=0.3.6", optional = true }
+# 動画・音声の再生 (media_player.rs): AVFoundation called through the
+# Objective-C runtime (objc, MIT), and the CoreVideo buffers of the video's
+# frames GPUI draws as a surface (the versions GPUI uses; MIT OR Apache-2.0).
+objc = "0.2.7"
+core-video = "0.5.2"
+core-foundation = "0.10.1"
+# Text drawn on a handout page (export_text.rs): CoreText and CoreGraphics, the versions GPUI already uses.
+core-text = "21"
+core-graphics = "0.24"
+
+# For the `export` feature on Windows: the headless DirectX renderer of
+# ibisOffice's fork of the Windows platform (GPUI has none for Windows).
+[target.'cfg(windows)'.dependencies]
+gpui-pre-windows = { version = "=0.3.6", features = ["test-support"], optional = true }
+
+[features]
+default = ["export"]
+# The scenario tests' driver (`src/shell/scenario.rs`), for tests/scenarios.rs;
+# turned on for this crate's own tests by the dev-dependency below.
+scenarios = ["export"]
+# `--export png|pdf|pdf-image|ui` on the command line (macOS and Windows;
+# build.rs sets `cfg(headless_export)` for it).
+export = ["dep:gpui-pre-platform", "dep:gpui-pre-windows", "dep:image", "dep:miniz_oxide", "dep:krilla", "dep:skrifa", "dep:subsetter", "dep:gpui-pre-macos"]
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+# Reading a fetched response's body (the art borders' pictures); the version
+# GPUI already uses.
+futures = { version = "0.3", default-features = false, features = ["std"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+
+# This crate's tests build it with the scenario driver.
+[dev-dependencies]
+ibis-office-app = { path = ".", features = ["scenarios"] }
+
+# Scenario tests run their own main: GPUI's Mac platform must be made on the
+# main thread, where libtest's test functions do not run.
+[[test]]
+name = "scenarios"
+harness = false
+

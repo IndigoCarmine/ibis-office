@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) ibis inc.
+# Additional terms under AGPL-3.0 section 7(b): see NOTICE.
+# Build the desktop version as a macOS app bundle, target/release/ibisOffice.app.
+#
+#   scripts/bundle-macos.sh
+#
+# A bare executable opened from Finder starts in Terminal; an .app bundle does not.
+# UI icons and fonts are embedded in the executable; the bundle adds the app icon
+# (crates/ibis-office-app/macos/AppIcon.icns, made by scripts/gen-macos-icon.sh) and the
+# third-party licences (Contents/Resources/Licenses).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+cargo build --release --locked -p ibis-office-app
+
+# The version shown for macOS, from version.txt (a platform, a tab and its
+# version, per line).
+VERSION=$(awk -F'\t' '$1 == "macOS" { sub(/\r$/, "", $2); print $2 }' version.txt)
+[[ -n $VERSION ]] || { echo "version.txt has no macOS line" >&2; exit 1; }
+
+APP=target/release/ibisOffice.app
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp target/release/ibisOffice "$APP/Contents/MacOS/ibisOffice"
+cp crates/ibis-office-app/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# The third-party components in the app and the notices their licences ask
+# for (made afresh from the dependencies), and Carlito's licence on its own
+# (OFL-1.1 asks for it with the font).
+python3 scripts/gen-web-licenses.py macos
+mkdir -p "$APP/Contents/Resources/Licenses"
+cp crates/ibis-office-app/macos/license.md "$APP/Contents/Resources/Licenses/license.md"
+cp crates/ibis-office-app/fonts/carlito/OFL.txt "$APP/Contents/Resources/Licenses/Carlito-OFL.txt"
+# The pictures of Word's art page borders: ECMA-376's zip, unmodified, with
+# its notice (read when a document uses an art border; not in the executable).
+mkdir -p "$APP/Contents/Resources/artborders"
+cp crates/ibis-office-app/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip crates/ibis-office-app/data/artborders/ECMA-NOTICE.txt "$APP/Contents/Resources/artborders/"
+
+cat > "$APP/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>ibisOffice</string>
+	<key>CFBundleDisplayName</key>
+	<string>ibisOffice</string>
+	<key>CFBundleIdentifier</key>
+	<string>jp.ne.ibis.office</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleExecutable</key>
+	<string>ibisOffice</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleVersion</key>
+	<string>$VERSION</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$VERSION</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>ファイル &gt; 印刷… で、プレビューの印刷のダイアログを開くために使います。 / Used to open Preview's print dialog for File &gt; Print.</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Office document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.openxmlformats.presentationml.presentation</string>
+				<string>org.openxmlformats.spreadsheetml.sheet</string>
+				<string>org.openxmlformats.wordprocessingml.document</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Office document with macros (the macros do not run)</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>docm</string>
+				<string>xlsm</string>
+				<string>pptm</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
+EOF
+
+# Ad-hoc signature so Apple Silicon runs the copied executable.
+codesign --force --sign - "$APP"
+
+# Tell Finder and the Dock the app changed, so they show the current icon
+# instead of a cached (or blank) one after a rebuild in the same place.
+touch "$APP"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" || true
+
+echo "Built $APP. Open it from Finder or with: open $APP"

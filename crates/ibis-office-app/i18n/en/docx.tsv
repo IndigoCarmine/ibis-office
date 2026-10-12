@@ -1,0 +1,1131 @@
+# ibisOffice UI text (English): docx 担当。キー<TAB>文字（shell/i18n.rs）。
+docx.cell.border.none	No Borders
+docx.cell.diagonal.down	Diagonal Border for Selected Cells ↘
+docx.cell.diagonal.up	Diagonal Border for Selected Cells ↗
+docx.cell.border-edge	Apply Border to Edge of Selected Cells
+docx.cell.border.types	Borders for Selected Cells
+docx.cell.border.width	Line Weight for Selected Cells
+docx.cell.border.color	Line Color for Selected Cells
+docx.paragraph.fill.none	None
+docx.paragraph.border.none	None
+docx.paragraph.border-edge	Apply Border to Edge
+docx.paragraph.fill	Paragraph Shading
+docx.paragraph.border	Border Style
+docx.paragraph.border-width	Border Weight
+docx.paragraph.border-color	Border Color
+docx.style.modify	Modify Style…
+docx.font.custom	Latin, Asian, and Complex Script Fonts…
+docx.font.cs	Complex Script Font
+docx.color.custom	More Colors…
+docx.highlight-none	None
+docx.paragraph.details	Paragraph Details…
+docx.spacing.before-add	Add Space Before Paragraph (12 pt)
+docx.spacing.after-remove	Remove Space After Paragraph
+docx.spacing.contextual	Don't add space between paragraphs of the same style
+docx.fill.none	None
+docx.cell.valign-top	Align Top
+docx.cell.valign-center	Align Center Vertically
+docx.cell.valign-bottom	Align Bottom
+docx.format-brush.apply	Apply Copied Formatting
+docx.format-brush.lock	Repeat Format Painter
+docx.format-brush.cancel	Cancel Format Painter
+docx.picture.size	Picture Size…
+docx.picture.alt-text	Alt Text…
+docx.picture.alt-text.heading	Alt Text
+docx.picture.alt-text.hint	Enter alternative text to describe this image.
+docx.picture.alt-text.title	Title
+docx.picture.alt-text.desc	Description
+docx.picture.alt-text.apply	Apply Alt Text
+docx.picture.decorative	Mark as decorative
+docx.picture.decorative.hint	Decorative images are purely visual and will be ignored by screen readers.
+docx.picture.replace	Change Picture…
+docx.picture.ratio	Lock Aspect Ratio
+docx.underline.none	None
+docx.underline.auto	Automatic
+docx.underline.custom	More Colors…
+docx.text.strike	Strikethrough
+docx.text.double-strike	Double Strikethrough
+docx.text.caps	All Caps
+docx.text.small-caps	Small Caps
+docx.text.hidden	Hidden
+docx.format.hidden	Hidden
+docx.text.outline	Outline
+docx.text.shadow	Shadow
+docx.text.emboss	Emboss
+docx.text.imprint	Engrave
+docx.text.baseline	Baseline
+docx.text.border	Character Border
+docx.text.shading	Character Shading
+docx.text.case	Change Case
+docx.text.case.sentence	Sentence case
+docx.text.case.lower	lowercase
+docx.text.case.upper	UPPERCASE
+docx.text.case.title	Capitalize Each Word
+docx.text.case.toggle	tOGGLE cASE
+docx.text.case.half-width	Half-width
+docx.text.case.full-width	Full-width
+docx.text.case.katakana	Katakana
+docx.text.case.hiragana	Hiragana
+docx.text.enclose.none	(None)
+docx.paragraph.details#2	Details…
+docx.toc.update	Update Table of Contents
+docx.toc.update-menu	Update Table of Contents
+docx.toc.update-dialog	Update Table of Contents…
+docx.toc.update-dialog.title	Update Table of Contents
+docx.toc.update-dialog.prompt	Word is updating the table of contents. Select one of the following options:
+docx.toc.update-page-numbers-only	Update page numbers only
+docx.toc.update-entire-table	Update entire table
+docx.toc.update-ok	OK
+docx.toc.update-cancel	Cancel
+docx.table-of-figures	Table of Figures
+docx.table-of-figures.figure	Table of Figures (Figures)
+docx.table-of-figures.table	Table of Figures (Tables)
+docx.table-of-figures.equation	Table of Figures (Equations)
+docx.xref.none	No Captions Found
+docx.caption.figure	Caption (Figure)
+docx.caption.table	Caption (Table)
+docx.caption.equation	Caption (Equation)
+docx.caption.insert	Insert Caption…
+docx.fields.insert	Field…
+docx.fields.edit	Edit Field…
+docx.fields.update	Update Fields
+docx.fields.unlink	Unlink Fields
+docx.fields.toggle	Toggle Field Codes
+docx.fields.toggle-all	Toggle All Field Codes
+docx.fields.lock	Lock Field
+docx.fields.unlock	Unlock Field
+docx.footnote	Footnote
+docx.endnote	Endnote
+docx.notes.to-endnotes	Convert Footnotes to Endnotes
+docx.notes.to-footnotes	Convert Endnotes to Footnotes
+docx.date.update	Update Automatically
+docx.track.record	Track Changes
+docx.compare	Compare Documents…
+docx.track.lock	Lock Tracking
+docx.track.display	Display for Review
+docx.track.display.simple	Simple Markup
+docx.track.display.all	All Markup
+docx.track.display.none	No Markup
+docx.track.display.original	Original
+docx.track.show	Show Markup (Off Shows Final Document)
+docx.track.accept	Accept Selected Change
+docx.track.reject	Reject Selected Change
+docx.track.accept-shown	Accept All Changes Shown
+docx.track.reject-shown	Reject All Changes Shown
+docx.track.accept-all	Accept All Changes
+docx.track.reject-all	Reject All Changes
+docx.track.accept-all-stop	Accept All Changes and Stop Tracking
+docx.track.reject-all-stop	Reject All Changes and Stop Tracking
+docx.track.reviewers	Specific People
+docx.track.reviewers.all	All Reviewers
+docx.comments.show	Show Comments
+docx.section-next	Section Break (Next Page)
+docx.section-continuous	Section Break (Continuous)
+docx.section-odd	Section Break (Odd Page)
+docx.section-even	Section Break (Even Page)
+docx.image.file	From File…
+docx.cell.merge-right	Merge with Right Cell
+docx.cell.split-grid	Split Cells by Grid Column
+docx.table.repeat-header	Repeat Header Rows
+docx.table.cant-split	Don't Allow Row to Break Across Pages
+docx.table.size	Column Width and Row Height…
+docx.heading-numbers	Number Headings (1 / 1.1 / 1.1.1)
+docx.page.direction.horizontal	Horizontal
+docx.page.direction.vertical	Vertical
+docx.page.portrait	Portrait
+docx.page.landscape	Landscape
+docx.page.a4	A4
+docx.page.b5	B5
+docx.page.a3	A3
+docx.page.letter	Letter
+docx.page.margins-normal	Margins: Normal
+docx.page.margins-narrow	Margins: Narrow
+docx.page.margins-wide	Margins: Wide
+docx.page.color	Page Color
+docx.page.color.none	No Color
+docx.columns	Columns
+docx.columns.1	One
+docx.columns.2	Two
+docx.columns.3	Three
+docx.columns.separator	Line Between
+docx.section.title-page	Different First Page
+docx.section.even-odd	Different Odd & Even Pages
+docx.section.restart	Restart Page Numbering at 1
+docx.section.start-page	Start Page Number
+docx.section.page-start-continue	Continue from Previous Section
+docx.section.page-start-1	Start at: 1
+docx.section.page-start-2	Start at: 2
+docx.section.page-start-3	Start at: 3
+docx.section.page-start-5	Start at: 5
+docx.section.page-start-10	Start at: 10
+docx.section.page-start-custom	Specify in Page Setup…
+docx.underline.types	Underline Style
+docx.underline.colors	Underline Color
+docx.text.scale_menu	Character Scaling
+docx.text.spacing_menu	Character Spacing
+docx.text.kern_menu	Kerning
+docx.toc.levels	Levels Shown in Table of Contents
+docx.xref	Cross-reference
+docx.xref.dialog	Cross-reference…
+docx.xref.title	Cross-reference
+docx.xref.type	Reference type
+docx.xref.type.heading	Heading
+docx.xref.type.bookmark	Bookmark
+docx.xref.type.footnote	Footnote
+docx.xref.type.endnote	Endnote
+docx.xref.type.caption	Figure/Table
+docx.xref.kind	Insert reference to
+docx.xref.kind.text	Text
+docx.xref.kind.page	Page number
+docx.xref.kind.paragraph	Paragraph number
+docx.xref.kind.note	Note number
+docx.xref.kind.label_number	Only label and number
+docx.xref.kind.entire_caption	Entire caption
+docx.xref.kind.caption_text	Only caption text
+docx.xref.kind.relative	Relative position
+docx.xref.hyperlink	Insert as hyperlink
+docx.xref.insert	Insert
+docx.xref.close	Close
+docx.xref.empty	(No referable items found)
+docx.xref.inserted	Cross-reference inserted.
+docx.date	Date & Time
+docx.track	Track Changes
+docx.table	Table
+docx.list.start	Start At
+docx.list	Restart Numbering
+docx.para.pagination	Line and Page Breaks
+docx.para.suppress-auto-hyphens	Don't Hyphenate
+docx.para.overflow-punct	Hanging Punctuation
+docx.para.auto-space-de	Automatically Adjust Space Between Asian and Latin Text
+docx.para.auto-space-dn	Automatically Adjust Space Between Asian Text and Numbers
+docx.para.kinsoku	Use Asian Rules for Controlling First and Last Characters
+docx.para.word-wrap	Allow Latin Text to Wrap in the Middle of a Word
+docx.para.bidi	Right-to-Left Text Direction
+docx.para.snap-to-grid	Snap to Grid
+docx.page	Page Setup
+docx.line-numbers	Line Numbers
+docx.line-numbers.none	None
+docx.line-numbers.continuous	Continuous
+docx.line-numbers.restart-page	Restart Each Page
+docx.line-numbers.restart-section	Restart Each Section
+docx.section	Section
+docx.print-layout	Print Layout
+docx.view.read-mode	Read Mode
+docx.view.web-layout	Web Layout
+docx.view.outline	Outline
+docx.view.draft	Draft
+docx.view.focus	Focus
+docx.ruler	Ruler
+docx.vertical-ruler	Vertical Ruler
+docx.ruler-unit	Ruler Units
+docx.ruler-unit.cm	Centimeters (cm)
+docx.ruler-unit.mm	Millimeters (mm)
+docx.ruler-unit.inch	Inches (in)
+docx.ruler-unit.point	Points (pt)
+docx.ruler-unit.pica	Picas (pica)
+docx.gridlines	Gridlines
+docx.formatting-marks	Show Formatting Marks
+docx.white-space	White Space Between Pages
+docx.page-movement	Page Movement
+docx.page-movement.vertical	Vertical
+docx.page-movement.side-to-side	Side to Side
+docx.view.marks-options	Formatting Marks Options
+docx.view.marks.spaces	Spaces
+docx.view.marks.tabs	Tab Characters
+docx.view.marks.paragraph	Paragraph Marks
+docx.view.marks.line-breaks	Line Breaks
+docx.view.marks.hidden	Hidden Text
+docx.show-outline	Show Outline
+docx.page-break	Page Break
+docx.column-break	Column Break
+docx.header-footer	Header & Footer
+docx.page-number	Page Number
+docx.page-number.position	Page Number Position
+docx.page-number.bottom	Bottom of Page (Footer)
+docx.page-number.bottom-left	Left
+docx.page-number.bottom-center	Center
+docx.page-number.bottom-right	Right
+docx.page-number.top	Top of Page (Header)
+docx.page-number.top-left	Left
+docx.page-number.top-center	Center
+docx.page-number.top-right	Right
+docx.page-number.current	Current Position
+docx.toc	Table of Contents
+docx.cell-borders.all-borders	All Borders
+docx.color-panel.check-6-digit-rgb-value	Check the 6-digit RGB value (e.g. 2A7FC1) and the text selection.
+docx.color-panel.rgb-6-digit-hex	RGB (6-digit hex)
+docx.comments.comment-selection	Comment on selection
+docx.comments.select-text-then-insert-comment	Select text, then Insert > Comment
+docx.editing.replacing-deleting-across-multiple	Replacing or deleting across multiple paragraphs with tracked changes is not supported. Edit one paragraph at a time.
+docx.editing.select-changes-accept-reject	Select changes to accept or reject within the same body, header, or footnote.
+docx.find.replacing-across-multiple	Replacing across multiple paragraphs while tracking changes is not supported.
+docx.find.search-results-have-changed-check	The search results have changed. Check the items to replace.
+docx.find.not-found	Not found
+docx.find.find-whole-words-only	Find whole words only
+docx.find.use-wildcards	Use wildcards
+docx.font-panel.check-font-name-selection-if	Check the font name and selection. If the document has changed, reopen the settings.
+docx.font-panel.blank-means-not-specified-mixed	Blank means not specified or mixed. Only changed font names are applied.
+docx.font-panel.latin-font	Latin Font
+docx.font-panel.east-asian-font	East Asian Font
+docx.font-panel.complex-script-font	Complex Script Font
+docx.link-panel.https-start-bookmark	https://… (start with # for a bookmark)
+docx.mod.page	Page
+docx.mod.zoom-page-width	Zoom to Page Width
+docx.misc.outline	Outline
+docx.paragraph-decorations.single	Single
+docx.chrome.triple	Triple
+docx.paragraph-decorations.fine-dashed	Fine Dashed
+docx.paragraph-decorations.dash-dot-stroked	Dash-Dot Stroked
+docx.paragraph-decorations.thin-thick-narrow-gap	Thin-Thick (Narrow Gap)
+docx.paragraph-decorations.thick-thin-narrow-gap	Thick-Thin (Narrow Gap)
+docx.paragraph-decorations.thin-thick-thin-narrow-gap	Thin-Thick-Thin (Narrow Gap)
+docx.paragraph-decorations.thin-thick-medium-gap	Thin-Thick (Medium Gap)
+docx.paragraph-decorations.thick-thin-medium-gap	Thick-Thin (Medium Gap)
+docx.paragraph-decorations.thin-thick-thin-medium-gap	Thin-Thick-Thin (Medium Gap)
+docx.paragraph-decorations.thin-thick-wide-gap	Thin-Thick (Wide Gap)
+docx.paragraph-decorations.thick-thin-wide-gap	Thick-Thin (Wide Gap)
+docx.paragraph-decorations.thin-thick-thin-wide-gap	Thin-Thick-Thin (Wide Gap)
+docx.paragraph-decorations.double-wave	Double Wave
+docx.paragraph-decorations.emboss	Emboss
+docx.paragraph-decorations.engrave	Engrave
+docx.paragraph-decorations.outset	Outset
+docx.paragraph-decorations.inset	Inset
+docx.paragraph-decorations.light-red	Light Red
+docx.paragraph-panel.document-has-changed-reopen	The document has changed. Reopen the paragraph settings.
+docx.paragraph-panel.check-numbers-paragraph-selection	Check the numbers, the paragraph selection, and the line spacing type.
+docx.paragraph-panel.spacing-indent-unit-pt-use	Spacing and indent unit: pt. Use a negative value for a hanging first line.
+docx.paragraph-panel.before	Before
+docx.paragraph-panel.after	After
+docx.paragraph-panel.left-indent	Left Indent
+docx.paragraph-panel.right-indent	Right Indent
+docx.paragraph-panel.first-line	First Line
+docx.paragraph-panel.line-spacing-mixed	Line Spacing (Mixed)
+docx.paragraph-panel.line-spacing-multiple	Line Spacing (Multiple)
+docx.paragraph-panel.line-spacing-pt	Line Spacing (pt)
+docx.paragraph-panel.blank-means-mixed-only-changed	Blank means mixed. Only changed items are applied.
+docx.picture-panel.check-picture-selection-value	Check the picture selection and a value between 0.01 and 1584 pt. With the aspect ratio locked, change either width or height.
+docx.picture-panel.width-pt	Width (pt)
+docx.picture-panel.height-pt	Height (pt)
+docx.picture-panel.lock-aspect-ratio	Lock Aspect Ratio
+docx.picture-panel.picture-size	Picture Size
+docx.common.color	Color
+docx.common.italic	Italic
+docx.style-panel.justify	Justify
+docx.style-panel.update-match-selection	Update to Match Selection
+docx.table-size-panel.check-table-selection-values-width	Check the table selection and values (width/height 0.05-1584 pt; 0 for automatic height).
+docx.table-size-panel.changes-width-column-where	Changes the width of the column where the selected cell starts and the height of its row.
+docx.table-size-panel.column-width-pt	Column Width (pt)
+docx.table-size-panel.row-height-pt	Row Height (pt)
+docx.table-size-panel.table-column-width-row-height	Table Column Width and Row Height
+docx.toolbar.subtitle	Subtitle
+docx.toolbar.heading-1	Heading 1
+docx.toolbar.heading-2	Heading 2
+docx.toolbar.heading-3	Heading 3
+docx.toolbar.automatic-black	Automatic (Black)
+docx.toolbar.bright-green	Bright Green
+docx.toolbar.pink	Pink
+docx.toolbar.gray-25-percent	Gray 25%
+docx.toolbar.dark-teal	Dark Teal
+docx.toolbar.dark-green	Dark Green
+docx.toolbar.dark-pink	Dark Pink
+docx.toolbar.dark-yellow	Dark Yellow
+docx.toolbar.gray-50-percent	Gray 50%
+docx.toolbar.quote	Quote
+docx.toolbar.intense-quote	Intense Quote
+docx.toolbar.list-paragraph	List Paragraph
+docx.help-panels.caption	Caption
+docx.toolbar.no-spacing	No Spacing
+docx.toolbar.toc-heading	TOC Heading
+docx.toolbar.update-style-match-selection	Update Style to Match Selection
+docx.toolbar.highlight-color	Highlight Color
+docx.toolbar.insert-link-k	Insert Link (⌘K)
+docx.toolbar.align-left-l	Align Left (⌘L)
+docx.toolbar.center-e	Center (⌘E)
+docx.toolbar.align-right-r	Align Right (⌘R)
+docx.toolbar.justify-j	Justify (⌘J)
+docx.toolbar.checklist	Checklist
+docx.toolbar.shading-cell	Shading (Cell)
+docx.toolbar.words-only	Words only
+docx.toolbar.thick-dotted	Thick Dotted
+docx.toolbar.thick-dashed	Thick Dashed
+docx.toolbar.long-dashed	Long Dashed
+docx.toolbar.thick-long-dashed	Thick Long Dashed
+docx.toolbar.thick-dash-dot	Thick Dash-Dot
+docx.toolbar.thick-dash-dot-dot	Thick Dash-Dot-Dot
+docx.toolbar.thick-wave	Thick Wave
+docx.toolbar.100-percent-normal	100% (Normal)
+docx.toolbar.normal-0-pt	Normal (0 pt)
+docx.toolbar.expanded-plus-0-5-pt	Expanded (+0.5 pt)
+docx.toolbar.expanded-plus-1-pt	Expanded (+1 pt)
+docx.toolbar.expanded-plus-1-5-pt	Expanded (+1.5 pt)
+docx.toolbar.expanded-plus-2-pt	Expanded (+2 pt)
+docx.toolbar.expanded-plus-3-pt	Expanded (+3 pt)
+docx.toolbar.expanded-plus-4-pt	Expanded (+4 pt)
+docx.toolbar.condensed-0-5-pt	Condensed (-0.5 pt)
+docx.toolbar.condensed-1-pt	Condensed (-1 pt)
+docx.toolbar.condensed-1-5-pt	Condensed (-1.5 pt)
+docx.toolbar.condensed-2-pt	Condensed (-2 pt)
+docx.toolbar.multiple	Multiple…
+docx.toolbar.least	At Least…
+docx.toolbar.exactly	Exactly…
+docx.toolbar.up-heading-1	Up to Heading 1
+docx.toolbar.up-heading-2	Up to Heading 2
+docx.toolbar.up-heading-3	Up to Heading 3
+docx.toolbar.up-heading-4	Up to Heading 4
+docx.common.figure	Figure
+docx.toolbar.5-rows-times-3-columns	5 rows × 3 columns
+docx.toolbar.delete-table	Delete Table
+docx.toolbar.row-height-auto	Row Height: Auto
+docx.toolbar.row-height-least	Row Height: At Least
+docx.toolbar.row-height-exactly	Row Height: Exactly
+docx.toolbar.cell-vertical-alignment-top	Cell Vertical Alignment: Top
+docx.toolbar.cell-vertical-alignment-center	Cell Vertical Alignment: Center
+docx.toolbar.cell-vertical-alignment-bottom	Cell Vertical Alignment: Bottom
+docx.toolbar.restart-1	Restart at 1
+docx.toolbar.continue-previous-list	Continue Previous List
+docx.toolbar.keep-next	Keep with Next
+docx.toolbar.keep-lines-together	Keep Lines Together
+docx.toolbar.page-break-before	Page Break Before
+docx.toolbar.hanging-punctuation	Hanging Punctuation
+docx.toolbar.automatically-adjust-space-between	Automatically Adjust Space Between Asian and Latin Text
+docx.toolbar.automatically-adjust-space-between-2	Automatically Adjust Space Between Asian Text and Numbers
+docx.toolbar.use-asian-rules-controlling-first	Use Asian Rules for Controlling First and Last Characters
+docx.toolbar.allow-latin-text-wrap-middle	Allow Latin Text to Wrap in the Middle of a Word
+docx.toolbar.edit-header-section	Edit Header for This Section
+docx.toolbar.edit-footer-section	Edit Footer for This Section
+docx.toolbar.edit-first-page-header	Edit First Page Header
+docx.toolbar.edit-first-page-footer	Edit First Page Footer
+docx.toolbar.edit-even-page-header	Edit Even Page Header
+docx.toolbar.edit-even-page-footer	Edit Even Page Footer
+docx.toolbar.link-header-previous	Link Header to Previous
+docx.toolbar.link-footer-previous	Link Footer to Previous
+docx.toolbar.page-number-1-2-3	Page Number: 1, 2, 3
+docx.toolbar.page-number-i-ii-iii	Page Number: i, ii, iii
+docx.toolbar.page-number-i-ii-iii-2	Page Number: I, II, III
+docx.toolbar.page-number-b-c	Page Number: a, b, c
+docx.toolbar.page-number-b-c-2	Page Number: A, B, C
+docx.toolbar.automatic	Automatic
+docx.color-panel.underline-color	Underline Color
+docx.misc.track-changes	Track Changes
+docx.common.table	Table
+docx.common.exactly	Exactly
+docx.chrome.superscript	Superscript
+docx.chrome.subscript	Subscript
+docx.context-menu.delete-row	Delete Row
+docx.context-menu.delete-column	Delete Column
+docx.paragraph-panel.align-indent	Align & Indent
+docx.cell-structure.merging-splitting-cells-can-t	Merging or splitting cells can't be saved in this document: {error}
+docx.find.i-n	{i} of {n}
+docx.find.n-results	{n} results
+docx.mod.n-characters	{n} characters
+docx.style-panel.modify-style-name	Modify Style: {name}
+docx.help-panels.heading-n	Heading {n}
+docx.toolbar.toc-n	TOC {n}
+docx.toolbar.update-name-match-selection	Update {name} to Match Selection
+docx.toolbar.emphasis-mark	Emphasis Mark
+docx.toolbar.none	(none)
+docx.toolbar.dot	Dot
+docx.toolbar.comma	Comma
+docx.toolbar.circle	Circle
+docx.toolbar.under-dot	Under Dot
+docx.toolbar.phonetic-guide	Phonetic Guide…
+docx.ruby-panel.phonetic-guide	Phonetic Guide
+docx.ruby-panel.ruby-text	Ruby text
+docx.ruby-panel.remove-ruby	Remove Ruby
+docx.ruby-panel.select-text-add-phonetic-guide	Select the text to add a phonetic guide to
+xlsx.table-to-range	Convert to Range
+xlsx.conditional-menu	Conditional Formatting
+xlsx.cf-highlight	Highlight Cells Rules
+xlsx.cf-top-bottom	Top/Bottom Rules
+xlsx.cf-bars	Data Bars
+xlsx.cf-scales	Color Scales
+xlsx.cf-icon-sets	Icon Sets
+docx.conditional-quick.text-contains	Text that Contains…
+docx.conditional-quick.duplicate-values	Duplicate Values
+docx.conditional-quick.unique-values	Unique Values
+docx.conditional-quick.top-10-items	Top 10 Items
+docx.conditional-quick.top-10-percent	Top 10%
+docx.conditional-quick.bottom-10-items	Bottom 10 Items
+docx.conditional-quick.bottom-10-percent	Bottom 10%
+docx.conditional-quick.green-yellow-red	Green - Yellow - Red
+docx.conditional-quick.red-yellow-green	Red - Yellow - Green
+docx.conditional-quick.green-white-red	Green - White - Red
+docx.conditional-quick.red-white-green	Red - White - Green
+docx.conditional-quick.blue-white-red	Blue - White - Red
+docx.conditional-quick.red-white-blue	Red - White - Blue
+docx.conditional-quick.white-green	White - Green
+docx.conditional-quick.green-yellow	Green - Yellow
+docx.conditional-quick.3-arrows-colored	3 Arrows (Colored)
+docx.conditional-quick.3-traffic-lights-unrimmed	3 Traffic Lights (Unrimmed)
+docx.conditional-quick.3-symbols-circled	3 Symbols (Circled)
+docx.conditional-quick.3-flags	3 Flags
+docx.conditional-quick.4-arrows-colored	4 Arrows (Colored)
+docx.conditional-quick.5-arrows-colored	5 Arrows (Colored)
+docx.conditional-quick.5-ratings	5 Ratings
+docx.conditional-quick.clear-rules-selected-cells	Clear Rules from Selected Cells
+docx.conditional-quick.clear-rules-entire-sheet	Clear Rules from Entire Sheet
+docx.page.setup	Page Setup…
+docx.notes.settings	Footnote and Endnote Settings…
+docx.toolbar.table-style-options	Table Style Options
+docx.table-design.header-row	Header Row
+docx.table-design.total-row	Total Row
+docx.table-design.first-column	First Column
+docx.table-design.last-column	Last Column
+docx.toolbar.banded-rows	Banded Rows
+docx.toolbar.banded-columns	Banded Columns
+docx.toolbar.combine-characters	Combine Characters
+docx.toolbar.none-2	(none)
+docx.toolbar.no-brackets	No Brackets
+docx.toolbar.enclose-characters	Enclose Characters
+docx.ruby-panel.select-1-2-characters-enclose	Select 1 or 2 characters to enclose
+docx.cell.merge-below	Merge with Cell Below
+docx.cell.unmerge-below	Unmerge Vertically
+docx.toolbar.distribute-columns-evenly	Distribute Columns Evenly
+docx.help-panels.enter-whole-number-1-more	Enter a whole number of 1 or more for the starting page number.
+docx.chrome.text-direction	Text Direction
+docx.help-panels.blank-continue	(blank: continue)
+docx.table.select-cell	Select Cell
+docx.table.select-row	Select Row
+docx.table.select-table	Select Table
+docx.table.to-text	Convert Table to Text (Tabs)
+docx.table.from-text	Convert Text to Table (Tabs)
+docx.table-convert.document-cannot-save-table-text	This document cannot save the table and text conversion: {error}
+docx.paragraph-panel.widow-orphan-control	Widow/Orphan control
+docx.paragraph-panel.suppress-line-numbers	Suppress line numbers
+docx.paragraph-panel.don-t-hyphenate	Don't hyphenate
+docx.toolbar.distribute-rows-evenly	Distribute Rows Evenly
+docx.table.equal-columns	Distribute Columns Evenly
+docx.table.equal-rows	Distribute Rows Evenly
+docx.table.autofit	AutoFit
+docx.table.autofit-contents	AutoFit to Contents
+docx.table.autofit-window	AutoFit to Window
+docx.table.autofit-fixed	Fixed Column Width
+docx.toolbar.autofit-contents	AutoFit to Contents
+docx.toolbar.autofit-window	AutoFit to Window
+docx.toolbar.fixed-column-width	Fixed Column Width
+docx.bullet	Bullets
+docx.bullet.toggle	Bullets
+docx.list.toggle	Numbering
+docx.bullet.format	Bullet Format
+docx.bullet.suffix	Follow Bullet With
+docx.bullet.disc	● (Disc)
+docx.bullet.circle	○ (Circle)
+docx.bullet.square	■ (Square)
+docx.bullet.diamond	◆ (Diamond)
+docx.bullet.arrow	➢ (Arrow)
+docx.bullet.check	✓ (Check mark)
+docx.bullet.dash	– (Dash)
+docx.bullet.suffix-tab	Tab Character
+docx.bullet.suffix-space	Space
+docx.bullet.suffix-none	Nothing
+docx.cell.direction	Text Direction
+docx.cell.direction.lrtb	Horizontal
+docx.cell.direction.tbrl	Vertical (Right to Left)
+docx.cell.direction.tblrv	Vertical (Left to Right)
+docx.cell.direction.btlr	Rotate 270° (Bottom to Top)
+docx.cell.margins	Cell Margins
+docx.cell.margins.normal	Normal (Left/Right 5.4 pt)
+docx.cell.margins.none	None (0 pt)
+docx.cell.margins.narrow	Narrow (Top/Bottom 2 pt, Left/Right 3 pt)
+docx.cell.margins.wide	Wide (Top/Bottom 4 pt, Left/Right 8 pt)
+docx.cell.wrap-text	Wrap Text in Cell
+docx.toolbar.cell-margins	Cell Margins
+docx.toolbar.wrap-text-cell	Wrap Text in Cell
+docx.table.align	Table Alignment
+docx.table.align.left	Align Left
+docx.table.align.center	Align Center
+docx.table.align.right	Align Right
+docx.table.indent	Table Indent from Left
+docx.table.indent.0	None (0 pt)
+docx.table.indent.1	1 Character (10.5 pt)
+docx.table.indent.2	2 Characters (21 pt)
+docx.table.indent.3	3 Characters (31.5 pt)
+docx.table.indent.4	4 Characters (42 pt)
+docx.table.indent.none	None (0 mm)
+docx.table.indent.5mm	5 mm
+docx.table.indent.10mm	10 mm
+docx.table.indent.15mm	15 mm
+docx.table.indent.20mm	20 mm
+docx.toolbar.table-alignment	Table Alignment
+docx.toolbar.table-indent	Table Indent
+docx.table.split	Split Table
+docx.table.select	Select
+docx.table.select.cell	Select Cell
+docx.table.select.column	Select Column
+docx.table.select.row	Select Row
+docx.table.select.table	Select Table
+docx.table.cell-insert	Insert Cells
+docx.table.cell-insert.shift-right	Insert Cells (Shift Right)
+docx.table.cell-insert.shift-down	Insert Cells (Shift Down)
+docx.table.cell-delete	Delete Cells
+docx.table.cell-delete.shift-left	Delete Cells (Shift Left)
+docx.table.cell-delete.shift-up	Delete Cells (Shift Up)
+docx.toolbar.select-cell	Select Cell
+docx.toolbar.select-column	Select Column
+docx.toolbar.select-row	Select Row
+docx.misc.insert-cells	Insert Cells
+docx.context-menu.insert-cells-shift-down	Insert Cells (Shift Down)
+docx.misc.delete-cells	Delete Cells
+docx.context-menu.delete-cells-shift-up	Delete Cells (Shift Up)
+docx.toolbar.select-table	Select Table
+docx.picture.border	Picture Border
+docx.picture.border.none	No Border
+docx.picture.border.width	Weight
+docx.picture.border.w050	0.5 pt
+docx.picture.border.w100	1 pt
+docx.picture.border.w150	1.5 pt
+docx.picture.border.w225	2.25 pt
+docx.picture.border.w300	3 pt
+docx.picture.border.w450	4.5 pt
+docx.picture.border.w600	6 pt
+docx.picture.border.color	Color
+docx.picture.border.color.black	Black
+docx.picture.border.color.gray	Gray
+docx.picture.border.color.red	Red
+docx.picture.border.color.blue	Blue
+docx.picture.border.color.green	Green
+docx.picture.border.color.orange	Orange
+docx.picture.border.dash	Dashes
+docx.picture.border.dash.solid	Solid
+docx.picture.border.dash.dot	Round Dot
+docx.picture.border.dash.dash	Dash
+docx.picture.border.dash.lgdash	Long Dash
+docx.picture.border.dash.dashdot	Dash Dot
+docx.picture.border.label	Border
+docx.table.cell-spacing	Cell Spacing
+docx.table.cell-spacing.none	None (0 pt)
+docx.table.cell-spacing.1pt	1 pt
+docx.table.cell-spacing.2pt	2 pt
+docx.table.cell-spacing.3pt	3 pt
+docx.table.cell-spacing.4pt	4 pt
+docx.table.cell-spacing.6pt	6 pt
+docx.toolbar.cell-spacing	Cell Spacing
+docx.help-panels.word-count	Word Count
+docx.help-panels.selected-text	Selected Text
+docx.help-panels.entire-document	Entire Document
+docx.help-panels.pages	Pages
+docx.help-panels.words	Words
+docx.help-panels.characters-no-spaces	Characters (no spaces)
+docx.help-panels.characters-spaces	Characters (with spaces)
+docx.help-panels.paragraphs	Paragraphs
+docx.help-panels.lines	Lines
+docx.paste-special	Paste Special
+docx.paste-special.keep-source	Keep Source Formatting
+docx.paste-special.match-format	Match Destination Formatting
+docx.paste-special.text-only	Keep Text Only
+docx.paste-special.format-only	Paste Formatting Only
+docx.options.paste-default	Default Paste Behavior
+docx.options.paste-default.keep-source	Keep Source Formatting (Default)
+docx.options.paste-default.merge-format	Merge Formatting
+docx.options.paste-default.text-only	Keep Text Only
+docx.edit.overtype	Overtype
+docx.status.insert	Insert
+docx.status.overtype	Overtype
+docx.status.read-mode	Read Mode
+docx.status.web-layout	Web Layout
+docx.status.outline	Outline
+docx.status.draft	Draft
+docx.table.sort	Sort
+docx.table.sort.asc	Sort Ascending (Header excluded)
+docx.table.sort.desc	Sort Descending (Header excluded)
+docx.table.sort.asc-all	Sort Ascending (Header included)
+docx.table.sort.desc-all	Sort Descending (Header included)
+align.distribute	Distributed
+docx.table.wrap	Text Wrapping
+docx.table.wrap.none	None (Inline)
+docx.table.wrap.around-left	Around (Left)
+docx.table.wrap.around-center	Around (Center)
+docx.table.wrap.around-right	Around (Right)
+docx.table.float-distance	Distance from Surrounding Text
+docx.table.float-distance.none	None (0 pt)
+docx.table.float-distance.standard	Standard (Left/Right 9 pt, Top/Bottom 0 pt)
+docx.table.float-distance.medium	Medium (Left/Right 9 pt, Top/Bottom 6 pt)
+docx.table.float-distance.large	Large (Left/Right 18 pt, Top/Bottom 12 pt)
+docx.toolbar.text-wrapping-table	Text Wrapping (Table)
+docx.table.style	Table Style
+docx.table.style.none	Normal Table (None)
+docx.table.style.table-grid	Table Grid
+docx.toolbar.table-style	Table Style
+docx.picture.wrap	Text Wrapping (Picture)
+docx.picture.wrap.inline	In Line with Text
+docx.picture.wrap.square	Square
+docx.picture.wrap.tight	Tight
+docx.picture.wrap.through	Through
+docx.picture.wrap.top-and-bottom	Top and Bottom
+docx.picture.wrap.behind-text	Behind Text
+docx.picture.wrap.in-front-of-text	In Front of Text
+docx.picture.distance	Distance from Surrounding Text (Picture)
+docx.picture.distance.none	None (0 pt)
+docx.picture.distance.standard	Standard (Left/Right 9 pt, Top/Bottom 0 pt)
+docx.picture.distance.medium	Medium (Left/Right 9 pt, Top/Bottom 6 pt)
+docx.picture.distance.large	Large (Left/Right 18 pt, Top/Bottom 12 pt)
+docx.picture.align-h	Horizontal Alignment (Picture)
+docx.picture.align-h.left	Left
+docx.picture.align-h.center	Center
+docx.picture.align-h.right	Right
+docx.toolbar.text-wrapping-picture	Text Wrapping (Picture)
+docx.misc.distance-surrounding-text-picture	Distance from Surrounding Text (Picture)
+docx.toolbar.horizontal-alignment-picture	Horizontal Alignment (Picture)
+docx.toolbar.distance-text-picture	Distance from Text (Picture)
+docx.picture.align-v	Vertical Alignment (Picture)
+docx.picture.align-v.top	Top
+docx.picture.align-v.center	Center
+docx.picture.align-v.bottom	Bottom
+docx.toolbar.vertical-alignment-picture	Vertical Alignment (Picture)
+docx.picture.allow-overlap	Allow Overlap
+docx.picture.lock-anchor	Lock Anchor
+docx.picture.layout-in-cell	Layout in Table Cell
+docx.picture.move-with-text	Move with Text
+docx.picture.fix-position-on-page	Fix Position on Page
+docx.picture.zorder	Order (Picture)
+docx.picture.zorder.front	Bring to Front
+docx.picture.zorder.forward	Bring Forward
+docx.picture.zorder.backward	Send Backward
+docx.picture.zorder.back	Send to Back
+docx.toolbar.order-picture	Order (Picture)
+docx.picture.align-distribute	Align & Distribute (Picture)
+docx.picture.align.left	Align Left
+docx.picture.align.center	Align Center
+docx.picture.align.right	Align Right
+docx.picture.align.top	Align Top
+docx.picture.align.middle	Align Middle
+docx.picture.align.bottom	Align Bottom
+docx.picture.distribute.horizontally	Distribute Horizontally
+docx.picture.distribute.vertically	Distribute Vertically
+docx.picture.align-to.margin	Align to Margin
+docx.picture.align-to.page	Align to Page
+docx.toolbar.align-distribute-picture	Align & Distribute (Picture)
+docx.page.borders	Page Borders
+docx.page.borders.none	None
+docx.page.borders.box-thin	Box (0.5 pt)
+docx.page.borders.box-medium	Box (1 pt)
+docx.page.borders.box-thick	Box (2 pt)
+docx.page.borders.box-double	Box (Double)
+docx.page.borders.top-bottom	Top and Bottom
+docx.page.borders.from-page	From Edge of Page
+docx.page.borders.from-text	From Text
+docx.toolbar.right-left-text-direction	Right-to-Left Text Direction
+docx.toolbar.snap-grid	Snap to Grid
+docx.field.page	Page Number
+docx.field.numpages	Total Pages
+docx.field.date	Date
+docx.field.time	Time
+docx.field.createdate	Creation Date
+docx.field.savedate	Save Date
+docx.field.filename	File Name
+docx.field.filesize	File Size
+docx.field.docvariable	Document Variable (DOCVARIABLE)
+docx.field.username	User Name (USERNAME)
+docx.field.userinitials	User Initials (USERINITIALS)
+docx.field.quote	Literal Text (QUOTE)
+docx.field.symbol	Symbol / Character (SYMBOL)
+docx.field.set	Set Bookmark (SET)
+docx.field.ask	Prompt Variable (ASK)
+docx.field.fillin	Fill-in Text (FILLIN)
+docx.field.hyperlink	Hyperlink (HYPERLINK)
+docx.field.template	Template (TEMPLATE)
+docx.field.advance	Text Offset (ADVANCE)
+docx.field.info	Document Information (INFO)
+docx.field.nested-page-calc	Nested Formula (= { PAGE } + 1)
+docx.field.author	Author
+docx.field.title	Title
+docx.field.subject	Subject
+docx.field.docprop-author	Author (Property)
+docx.field.docprop-title	Title (Property)
+docx.field.seq-figure	Sequence Number
+docx.field.listnum	Inline List Number (LISTNUM)
+docx.field.autonum	Paragraph Number (AUTONUM)
+docx.field.autonumout	Outline Number (AUTONUMOUT)
+docx.field.pageref	Page Reference
+docx.field.noteref	Footnote/Endnote Reference
+docx.field.if	Conditional Branch (IF)
+docx.field.compare	Conditional Comparison (COMPARE)
+docx.field.toc	Table of Contents (TOC)
+docx.field.toc-custom	Table of Contents with Custom Styles (TOC \t)
+docx.help-panels.document-properties	Document Properties
+docx.properties	Document Properties
+docx.properties.apply	Apply
+docx.properties.reset	Reset
+docx.properties-panel.keywords	Keywords
+docx.properties-panel.manager	Manager
+docx.properties-panel.company	Company
+docx.properties-panel.category	Category
+docx.properties-panel.last-printed	Last Printed
+docx.properties-panel.revision	Revision
+docx.properties-panel.document-properties-updated	Document properties updated.
+docx.selection-pane	Selection Pane…
+docx.selection-pane.title	Selection
+docx.selection-pane.empty	No shapes or pictures in this document.
+docx.picture.name	Object Name
+docx.accessibility-check	Check Accessibility…
+docx.accessibility.title	Accessibility
+docx.accessibility.passed	No accessibility issues found.
+docx.accessibility.missing-alt	Missing alternative text
+docx.accessibility.missing-alt.desc	Add a description for the image or mark it as decorative.
+docx.accessibility.table-header	Table header row not specified
+docx.accessibility.table-header.desc	Specify the first row as a header row.
+docx.accessibility.heading-skip	Skipped heading level
+docx.accessibility.ambiguous-link	Unclear hyperlink text
+docx.navigation-pane	Navigation Pane
+docx.navigation.title	Navigation
+docx.navigation.headings	Headings
+docx.navigation.pages	Pages
+docx.navigation.results	Results
+docx.navigation.no-headings	No headings found in this document.
+docx.navigation.search-prompt	Type text to search.
+docx.mark-as-final	Mark as Final
+docx.read-only-recommended	Read-only Recommended
+docx.infobar.final.title	Marked as Final
+docx.infobar.final.message	An author has marked this document as final to discourage editing.
+docx.infobar.final.edit-anyway	Edit Anyway
+docx.infobar.readonly.title	Read-Only Recommended
+docx.infobar.readonly.message	The author would like you to open this as read-only unless you need to make changes.
+docx.infobar.readonly.enable-editing	Enable Editing
+docx.infobar.readmode.title	Read Mode
+docx.infobar.readmode.message	The document is displayed in read-only mode.
+docx.infobar.readmode.exit	Return to Print Layout
+docx.focus.exit	Exit Focus (Esc)
+docx.protect	Restrict Editing
+docx.protect.formatting	Restrict Formatting
+docx.protect.read-only	Read-only (No changes)
+docx.protect.comments	Comments only
+docx.protect.forms	Filling in forms only
+docx.protect.stop	Stop Protection
+docx.infobar.protect.readonly.title	Editing Restriction
+docx.infobar.protect.readonly.message	This document is protected as read-only.
+docx.infobar.protect.comments.title	Comment Protection
+docx.infobar.protect.comments.message	Only adding and editing comments is allowed in this document.
+docx.infobar.protect.forms.title	Form Protection
+docx.infobar.protect.forms.message	Only filling in form fields is allowed in this document.
+docx.infobar.protect.formatting.title	Formatting Restrictions
+docx.infobar.protect.formatting.message	Formatting is restricted in this document.
+docx.infobar.protect.stop	Stop Protection
+docx.page.doc-grid	Document Grid…
+docx.help-panels.document-grid	Document Grid
+docx.help-panels.no-grid	No Grid
+docx.help-panels.lines-only	Lines Only
+docx.help-panels.line-pitch	Line Pitch
+docx.help-panels.characters	Characters
+docx.help-panels.character-pitch	Character Pitch
+docx.help-panels.please-enter-positive-number-line	Please enter a positive number for line pitch or line count.
+docx.paragraph-panel.indent-units	Indent Units
+docx.paragraph-panel.characters	Characters
+docx.misc.spacing-pt-indents-ch-pt	Spacing: pt. Indents: ch / pt. Negative for hanging.
+docx.table.formula	Formula…
+docx.table-formula-panel.formula	Formula
+docx.table-formula-panel.formula-2	Formula
+docx.table-formula-panel.insert-formula-into-table-cell	Insert a formula into the table cell.
+docx.table-formula-panel.please-enter-formula	Please enter a formula.
+docx.table-formula-panel.paste-function	Paste Function
+docx.table-formula-panel.direction-keywords	Direction Keywords
+docx.toolbar.sort-ascending-header-row	Sort Ascending (Header Row)
+docx.toolbar.sort-descending-header-row	Sort Descending (Header Row)
+docx.toolbar.sort-ascending-no-header-row	Sort Ascending (No Header Row)
+docx.toolbar.sort-descending-no-header-row	Sort Descending (No Header Row)
+docx.toolbar.none-0-pt	None (0 pt)
+docx.toolbar.1-character-10-5-pt	1 Character (10.5 pt)
+docx.toolbar.2-characters-21-pt	2 Characters (21 pt)
+docx.toolbar.3-characters-31-5-pt	3 Characters (31.5 pt)
+docx.toolbar.4-characters-42-pt	4 Characters (42 pt)
+docx.toolbar.standard-left-right-9-pt	Standard (Left/Right 9 pt, Top/Bottom 0 pt)
+docx.toolbar.medium-left-right-9-pt	Medium (Left/Right 9 pt, Top/Bottom 6 pt)
+docx.toolbar.large-left-right-18-pt	Large (Left/Right 18 pt, Top/Bottom 12 pt)
+docx.editing.table-grid	Table Grid
+docx.toolbar.continue-previous-section	Continue from Previous Section
+docx.toolbar.start-1	Start at: 1
+docx.toolbar.start-2	Start at: 2
+docx.toolbar.start-3	Start at: 3
+docx.toolbar.start-5	Start at: 5
+docx.toolbar.start-10	Start at: 10
+docx.toolbar.page-setup	Page Setup…
+docx.toolbar.theme-colors	Theme Colors
+docx.toolbar.text-1-black	Text 1 (Black)
+docx.toolbar.background-1-white	Background 1 (White)
+docx.toolbar.text-2-dark-blue-gray	Text 2 (Dark Blue-Gray)
+docx.toolbar.background-2-light-gray	Background 2 (Light Gray)
+docx.toolbar.accent-2-orange	Accent 2 (Orange)
+docx.toolbar.accent-3-gray	Accent 3 (Gray)
+docx.toolbar.accent-4-yellow	Accent 4 (Yellow)
+docx.toolbar.accent-5-light-blue	Accent 5 (Light Blue)
+docx.toolbar.accent-6-green	Accent 6 (Green)
+docx.toolbar.accent-1-lighter-80-percent	Accent 1 (Lighter 80%)
+docx.toolbar.accent-1-darker-25-percent	Accent 1 (Darker 25%)
+docx.toolbar.accent-2-lighter-80-percent	Accent 2 (Lighter 80%)
+docx.toolbar.accent-2-darker-25-percent	Accent 2 (Darker 25%)
+docx.toolbar.accent-5-lighter-80-percent	Accent 5 (Lighter 80%)
+docx.toolbar.accent-6-lighter-80-percent	Accent 6 (Lighter 80%)
+docx.toolbar.horizontal-vertical	Horizontal in Vertical
+docx.paragraph-panel.tabs	Tabs…
+docx.toolbar.light-gray	Light Gray
+docx.toolbar.show-formatting-marks-8	Show Formatting Marks (⌘8)
+docx.track.change-user-name	Change User Name...
+docx.options.user-info	User Information...
+docx.user-info.title	User Information
+docx.user-info.description	Personalize your copy of Microsoft Office (User name and Initials)
+docx.user-info.name	User name:
+docx.user-info.initials	Initials:
+docx.user-info.name-placeholder	Enter user name
+docx.user-info.initials-placeholder	Enter initials
+docx.user-info.apply	Apply
+docx.user-info.cancel	Cancel
+docx.user-info.reset-default	Reset to System Default
+docx.print-options	Print Options
+docx.options.print.update-fields	Update fields before printing
+docx.options.print.update-links	Update linked data before printing
+docx.options.print.backgrounds	Print background colors and images
+docx.options.print.hidden-text	Print hidden text
+docx.go-to	Go To…
+docx.goto.title	Go To
+docx.goto.what	Go to what:
+docx.goto.page	Page
+docx.goto.section	Section
+docx.goto.line	Line
+docx.goto.bookmark	Bookmark
+docx.goto.comment	Comment
+docx.goto.footnote	Footnote
+docx.goto.endnote	Endnote
+docx.goto.heading	Heading
+docx.goto.table	Table
+docx.goto.graphic	Graphic
+docx.goto.btn-jump	Go To
+docx.goto.btn-prev	Previous
+docx.goto.btn-next	Next
+docx.goto.btn-close	Close
+docx.goto.enter-page	Enter page number:
+docx.goto.enter-section	Enter section number:
+docx.goto.enter-line	Enter line number:
+docx.goto.enter-bookmark	Enter or select bookmark name:
+docx.goto.enter-comment	Enter comment number:
+docx.goto.enter-footnote	Enter footnote number:
+docx.goto.enter-endnote	Enter endnote number:
+docx.goto.enter-heading	Enter heading number or select:
+docx.goto.enter-table	Enter table number:
+docx.goto.enter-graphic	Enter graphic number:
+docx.goto.placeholder	Enter number or name (e.g. 2, +1, -1)
+docx.goto.not-found	The specified target was not found.
+docx.find.next	Find Next
+docx.find.previous	Find Previous
+docx.find.direction	Search Direction
+docx.find.dir.all	All
+docx.find.dir.down	Down
+docx.find.dir.up	Up
+docx.find.scope	Search In
+docx.find.scope.all	Entire Document
+docx.find.scope.main	Main Document
+docx.find.scope.headers-footers	Headers & Footers
+docx.find.scope.notes	Footnotes & Endnotes
+docx.find.scope.comments	Comments
+docx.find.scope.selection	Selection
+docx.find.no-selection	No selection
+docx.view.one-page	One Page
+docx.view.multiple-pages	Multiple Pages
+docx.view.page-width	Page Width
+docx.view.zoom-100	100%
+insert.rich-text	Rich Text
+insert.plain-text	Plain Text
+insert.checkbox	Checkbox
+docx.form.checkbox.toggle	Toggle Checkbox
+checklist	Checklist
+insert.dropdown-list	Drop-Down List
+docx.form.dropdown.cycle	Select Next Item
+insert.combo-box	Combo Box
+insert.date-picker	Date Picker
+docx.form.date.step	Step Date to Tomorrow
+docx.new-window	New Window
+docx.arrange-all	Arrange All
+docx.split	Split
+docx.remove-split	Remove Split
+docx.interaction	Mode
+docx.interaction.editing	Editing
+docx.interaction.reviewing	Reviewing
+docx.interaction.viewing	Viewing
+docx.status.interaction-editing	Editing
+docx.status.interaction-reviewing	Reviewing
+docx.status.interaction-viewing	Viewing
+docx.infobar.viewing.title	Viewing
+docx.infobar.viewing.message	This document is in viewing mode. Switch to editing mode to make changes.
+docx.infobar.viewing.edit	Switch to Editing
+docx.interaction.locked-warning	Track changes is locked. Cannot switch to editing mode.
+docx.find.format.toggle	Format
+docx.find.format.find-label	Find Format:
+docx.find.format.replace-label	Replace Format:
+docx.find.format.bold	Bold
+docx.find.format.italic	Italic
+docx.find.format.underline	Underline
+docx.find.format.strike	Strikethrough
+docx.find.format.clear	No Formatting
+docx.find.format.find-active	Find Format
+docx.find.format.replace-active	Replace Format
+docx.toolbar.shape-text-box-format	Shape and Text Box Format…
+docx.text-box-panel.place-cursor-before-after-text	Place the cursor before or after a text box
+docx.toc.manual	Manual Table of Contents
+docx.language	Language
+docx.language.ja	Japanese
+docx.language.en-US	English (United States)
+docx.language.en-GB	English (United Kingdom)
+docx.language.fr	French
+docx.language.de	German
+docx.language.zh	Chinese (Simplified)
+docx.language.ko	Korean
+docx.text-box-panel.left-pt	Left (pt)
+docx.text-box-panel.top-pt	Top (pt)
+docx.text-box-panel.font-size	Font size
+docx.text-box-panel.text-color	Text color
+docx.outline.promote	Promote Heading
+docx.outline.demote	Demote Heading
+docx.outline.move-up	Move Heading Up
+docx.outline.move-down	Move Heading Down
+docx.outline-ops.cannot-move-any-further	Cannot move any further
+docx.outline-ops.cannot-move-across-section-break	Cannot move across a section break
+docx.outline-ops.heading-level-cannot-changed-any	The heading level cannot be changed any further
+docx.outline.collapse	Collapse or Expand Heading
+docx.outline.collapse-all	Collapse All Headings
+docx.outline.expand-all	Expand All Headings
+docx.style-panel.automatically-update-style	Automatically update style
+docx.text-box-panel.fill-color	Fill color
+docx.text-box-panel.outline-color	Outline color
+docx.text-box-panel.line-width-pt	Line width (pt)
+docx.shape.line	Line
+docx.shape.arrow	Arrow
+docx.text-box-panel.arrow-start	Arrow at start
+docx.text-box-panel.arrow-end	Arrow at end
+docx.merge-panel.recipient-list-first-line-field	Recipient list (the first line is the field names; comma or tab separated)
+docx.merge-panel.insert-merge-field	Insert Merge Field
+docx.merge-panel.preview-results	Preview Results
+docx.merge-panel.create-individual-documents	Create Individual Documents…
+docx.merge-panel.no-recipients	No recipients
+docx.merge-panel.cannot-read-file	Cannot read the file
+docx.merge-panel.there-no-recipient-list	There is no recipient list
+docx.merge-panel.there-no-document	There is no document
+docx.merge-panel.mail-merge	Mail Merge
+docx.merge	Mail Merge…
+merge.done	Saved the results for {n} recipients
+docx.picture-panel.picture-corrections	Picture Corrections
+docx.picture-panel.brightness-10-percent	Brightness −10%
+docx.picture-panel.brightness-plus-10-percent	Brightness +10%
+docx.picture-panel.contrast-10-percent	Contrast −10%
+docx.picture-panel.contrast-plus-10-percent	Contrast +10%
+docx.picture-panel.no-recolor	No Recolor
+docx.picture-panel.sepia	Sepia
+docx.merge-panel.field-sort	Field to sort by
+docx.merge-panel.field-value-contains-field-value	field=value (contains: field~value)
+docx.merge-panel.filter	Filter
+docx.merge-panel.recipients-click-leave-out-add	Recipients (click to leave out or add)
+docx.index	Index
+docx.index.mark	Mark Index Entry
+docx.editing.select-text-mark-index-entry	Select the text to mark as an index entry, within one paragraph
+docx.editing.changes-were-marked-tracked	The changes were marked as tracked changes
+docx.kinsoku.menu	Line Break Characters…
+docx.kinsoku.title	Line Break Characters
+docx.kinsoku.description	Characters a line may not start or end with (whole document). Empty restores the standard ones
+docx.kinsoku.start	Not at the start of a line:
+docx.kinsoku.end	Not at the end of a line:
+docx.kinsoku.apply	Apply
+docx.kinsoku.cancel	Close
+docx.kinsoku.reset	Restore Standard
+docx.format.text.color.custom	More Colors…
+_docx.start-number-first-page	Start Number: {first_page}
+_docx.moved-to-page-page	Moved to page {page}
+_docx.moved-to-section-section	Moved to section {section}
+_docx.moved-to-line-line	Moved to line {line}
+_docx.moved-to-bookmark-bm-name	Moved to bookmark "{bm_name}"
+_docx.moved-to-heading-title	Moved to heading "{title}"
+_docx.item-name-was-not-found	{item_name} was not found.
+_docx.moved-to-item-name-n	Moved to {item_name} {n}
+_docx.moved-to-item-name-idx	Moved to {item_name} {idx}
+_docx.moved-to-bookmark-name	Moved to bookmark "{name}"
+_docx.picture-n	Picture {n}
+_docx.heading-level	Heading {level}
+_docx.table-rows-rows-columns-columns	Table ({rows} rows × {columns} columns)
+_docx.author-text	{author}: {text}
+_docx.merged-result-n	Merged Result {n}
+_docx.style-st	Style: {st}
+_docx.label-clear	{label} (Clear)
+_docx.page-page	Page {page}
+_docx.blue-accent-1	Blue, Accent 1
+_docx.distribute-j	Distribute (⇧⌘J)
+_docx.double-underline	Double Underline
+_docx.thick-underline	Thick Underline
+_docx.dash-dot-dot	Dash Dot Dot
+_docx.form-choice-1	Choice 1
+_docx.form-choice-2	Choice 2
+_docx.form-choice-3	Choice 3
+_docx.form-item-1	Item 1
+_docx.form-item-2	Item 2
+_docx.form-item-3	Item 3
+_docx.heading-level-skipped-from-prev-to-curr-title	Heading level skipped from {prev} to {curr} ({title})
+_docx.unclear-link-text-text-use-descriptive-text-that	Unclear link text ("{text}"). Use descriptive text that says where the link goes.
+_docx.check-results-errors-errors-warnings-warnings-no	Check results: {errors} errors, {warnings} warnings, {notices} hints
+_docx.index-heading-symbols	Symbols
+_docx.no-index-entries-found	No index entries found.
+_docx.hyphen	Hyphen
+_docx.period	Period
+_docx.colon	Colon
+_docx.em-dash	Em Dash
+_docx.en-dash	En Dash
+_docx.caption-seq-figure	SEQ Figure
+_docx.heading-reference-heading-1	Heading Reference (Heading 1)
+_docx.edit-field	Edit Field
+_docx.decimal	Decimal
+_docx.dotted-2	Dotted (…)
+_docx.thick-line	Thick Line
+_docx.double-line	Double Line
+_docx.dotted-line	Dotted Line
+_docx.dashed-line	Dashed Line
+_docx.dash-dot-line	Dash-Dot Line
+_docx.dash-dot-dot-line	Dash-Dot-Dot Line
+_docx.wavy-line	Wavy Line
+_docx.merged-result-docx	Merged Result.docx
+_docx.none-2	None
+_docx.not-bold	Not Bold
+_docx.not-italic	Not Italic
+_docx.not-underline	Not Underline
+_docx.not-strikethrough	Not Strikethrough
+_docx.remove-bold	Remove Bold
+_docx.remove-italic	Remove Italic
+_docx.remove-underline	Remove Underline
+_docx.remove-strikethrough	Remove Strikethrough
+_docx.content-control-placeholder	Click or tap here to enter text.
+_docx.black	Black
+_docx.gray-2	Gray
+_docx.red	Red
+_docx.blue	Blue
+_docx.green	Green
+_docx.orange	Orange
+_docx.round-dot	Round Dot
+_docx.dash	Dash
+_docx.dash-dot	Dash Dot
+_docx.dotted	Dotted
+_docx.cannot-accept-or-reject-changes-because-track-ch	Cannot accept or reject changes because Track Changes is locked.
+_docx.enter-a-field-code	Enter a field code.
+_docx.caption-text	Caption text
+_docx.caption-text-2	Caption text:
+_docx.count-results	{count} results
+_docx.in-line-with-text	In Line with Text
+_docx.tab-stop-position-pt	Tab Stop Position (pt)
+_docx.distribute-horizontally	Distribute Horizontally
+_docx.no-accessibility-issues-were-found-in-the-docume	No accessibility issues were found in the document.
+_docx.existing-bookmarks	Existing Bookmarks:
+_docx.enter-a-label	Enter a label.
+_docx.number-format	Number Format:
+_docx.change-picture	Change Picture…
+_docx.enter-a-number-for-the-tab-position	Enter a number for the tab position.
+_docx.leader	Leader
+_docx.distribute-vertically	Distribute Vertically
+_docx.headings-in-document	Headings in document:
+_docx.field-codes	Field codes:
+_docx.insert-caption	Insert Caption
+_docx.exclude-label-from-caption	Exclude label from caption
+_docx.shapes-and-pictures-n	Shapes and Pictures ({n})
+_docx.enter-a-value-greater-than-0-and-up-to-1584	Enter a value greater than 0 and up to 1584.
+_docx.tabs-and-leaders	Tabs and Leaders
+_docx.align-to-margin	Align to Margin
+_docx.track-changes-is-locked-so-it-can-t-be-turned-of	Track Changes is locked, so it can't be turned off.
+_docx.field-code	Field Code
+_docx.label	Label
+_docx.label-2	Label:
+_docx.include-chapter-number	Include chapter number
+_docx.floating	Floating
+_docx.the-document-has-changed-reopen-the-tabs-setting	The document has changed. Reopen the Tabs settings.
+_docx.select-the-target-cell-in-the-table	Select the target cell in the table.
+_docx.align-to-page	Align to Page

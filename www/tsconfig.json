@@ -1,0 +1,14 @@
+{
+  // main.ts compiles in place to main.js, next to the pkg/ that wasm-bindgen
+  // writes, so its imports resolve the same in the browser and for tsc.
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "strict": true,
+    "noEmitOnError": true,
+    "skipLibCheck": true
+  },
+  "files": ["main.ts"]
+}

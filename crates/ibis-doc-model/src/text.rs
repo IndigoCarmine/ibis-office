@@ -1,0 +1,1369 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) ibis inc.
+// Additional terms under AGPL-3.0 section 7(b): see NOTICE.
+//! Text in shapes: paragraphs, runs and their formatting.
+
+use crate::drawing::Rgb;
+use crate::geometry::Emu;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+    /// 両端揃え (`just`): the lines but the last spread to the width.
+    Justify,
+    /// 均等割り付け (`dist`): every line spread to the width.
+    Distributed,
+}
+
+/// The formatting of a whole text body, as the ribbon shows and edits it.
+///
+/// Runs and paragraphs may override parts of it; see [`RunStyle`] and
+/// [`Paragraph::align`]. Changing a field here with
+/// [`TextBody::apply_style`] drops those overrides, so the change shows on all
+/// of the text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextStyle {
+    /// Font size in hundredths of a point, as OOXML's `sz` attribute (1800 = 18 pt).
+    pub font_size: u32,
+    pub bold: bool,
+    pub italic: bool,
+    pub color: Rgb,
+    pub align: TextAlign,
+    /// Font family; `None` is the UI's default font.
+    pub font: Option<String>,
+    /// The run's other script's font, used when `font` is not installed.
+    pub fallback_font: Option<String>,
+}
+
+impl TextStyle {
+    pub const MIN_FONT_SIZE: u32 = 100;
+    pub const MAX_FONT_SIZE: u32 = 400_000;
+
+    pub fn font_size_pt(&self) -> f32 {
+        self.font_size as f32 / 100.0
+    }
+
+    pub fn with_font_size(mut self, font_size: u32) -> Self {
+        self.font_size = font_size.clamp(Self::MIN_FONT_SIZE, Self::MAX_FONT_SIZE);
+        self
+    }
+
+    /// This style with the overrides of `run` applied.
+    pub fn with_run(&self, run: &RunStyle) -> Self {
+        Self {
+            font_size: run.font_size.unwrap_or(self.font_size),
+            bold: run.bold.unwrap_or(self.bold),
+            italic: run.italic.unwrap_or(self.italic),
+            color: run.color.unwrap_or(self.color),
+            align: self.align,
+            font: run.font.clone().or_else(|| self.font.clone()),
+            fallback_font: run.fallback_font.clone().or_else(|| self.fallback_font.clone()),
+        }
+    }
+}
+
+impl Default for TextStyle {
+    /// PowerPoint's default for a new text box: 18 pt, black, left-aligned.
+    fn default() -> Self {
+        Self {
+            font_size: 1800,
+            bold: false,
+            italic: false,
+            color: Rgb::BLACK,
+            align: TextAlign::Left,
+            font: None,
+            fallback_font: None,
+        }
+    }
+}
+
+/// Font sizes offered by PowerPoint's size list, in hundredths of a point.
+pub const FONT_SIZE_STEPS: &[u32] = &[
+    800, 900, 1000, 1050, 1100, 1200, 1400, 1600, 1800, 2000, 2400, 2800, 3200, 3600, 4000,
+    4400, 4800, 5400, 6000, 6600, 7200, 8000, 8800, 9600,
+];
+
+/// The next larger (`grow = true`) or smaller size in [`FONT_SIZE_STEPS`],
+/// like PowerPoint's "Increase/Decrease Font Size".
+pub fn step_font_size(current: u32, grow: bool) -> u32 {
+    let next = if grow {
+        FONT_SIZE_STEPS.iter().copied().find(|&s| s > current)
+    } else {
+        FONT_SIZE_STEPS.iter().rev().copied().find(|&s| s < current)
+    };
+    next.unwrap_or(if grow { current + 1000 } else { current })
+        .clamp(TextStyle::MIN_FONT_SIZE, TextStyle::MAX_FONT_SIZE)
+}
+
+/// Whether a character is drawn with the East Asian font of a font set
+/// (as Office picks: from CJK radicals, U+2E80, up).
+pub fn is_east_asian(c: char) -> bool {
+    c as u32 >= 0x2e80
+}
+
+/// Typefaces by script: a theme's heading or body fonts.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FontSet {
+    pub latin: Option<String>,
+    pub east_asian: Option<String>,
+    /// Complex scripts (Arabic, Hebrew, Thai, …).
+    pub complex: Option<String>,
+}
+
+impl FontSet {
+    /// The typeface for `text`: the East Asian one when it has East Asian
+    /// characters, otherwise the Latin one (each falling back to the other).
+    pub fn for_text(&self, text: &str) -> Option<&str> {
+        let (first, second) = if text.chars().any(is_east_asian) { (&self.east_asian, &self.latin) } else { (&self.latin, &self.east_asian) };
+        first.as_deref().or(second.as_deref())
+    }
+
+    /// The typeface of the other script than [`for_text`](Self::for_text) picks.
+    pub fn other_for_text(&self, text: &str) -> Option<&str> {
+        if text.chars().any(is_east_asian) { self.latin.as_deref() } else { self.east_asian.as_deref() }
+    }
+}
+
+/// A document's theme fonts: text with no typeface of its own uses them
+/// (Office's `+mj-lt`, `+mn-ea`, …; Word's `majorHAnsi`, …).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThemeFonts {
+    /// Headings (titles).
+    pub major: FontSet,
+    /// Body text.
+    pub minor: FontSet,
+}
+
+/// Text a presentation computes rather than stores (`a:fld`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextField {
+    /// The number of the slide the text is on (`a:fld type="slidenum"`);
+    /// see [`crate::Presentation::renumber_slides`].
+    SlideNumber,
+    /// The date and time, updated (`a:fld type="datetime"`, `datetime1` to
+    /// `datetime13`, `datetimeyyyy`: `format` 0 to 14), in East Asian form if its language
+    /// is one (`a:rPr/@lang` ja, zh, ko); see [`crate::Presentation::refresh_dates`].
+    DateTime { format: u8, east_asian: bool },
+}
+
+/// Where a hyperlink (ハイパーリンク, `a:hlinkClick`) goes: a web page or a
+/// file (`Url`, its relationship external), a slide of the presentation, or
+/// a move in the show.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum SlideLink {
+    Url(String),
+    Slide(crate::model::SlideId),
+    NextSlide,
+    PreviousSlide,
+    FirstSlide,
+    LastSlide,
+    LastSlideViewed,
+    EndShow,
+}
+
+/// Character formatting of a run that differs from its body's [`TextStyle`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunStyle {
+    pub font_size: Option<u32>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underline: bool,
+    /// Background colour behind the text (`a:highlight`).
+    pub highlight: Option<Rgb>,
+    /// Outline around the characters (`a:ln`): colour and width in EMU.
+    pub outline: Option<(Rgb, i64)>,
+    /// The characters painted with a gradient or a pattern (`a:gradFill`,
+    /// `a:pattFill`) instead of `color` (which keeps its first colour, for
+    /// what draws in one colour).
+    pub fill: Option<crate::drawing::Fill>,
+    /// Drawn transparent: the text of a paragraph an animation has not
+    /// brought in yet (set on the copy a slide show draws, never saved).
+    pub invisible: bool,
+    /// Raised (positive) or lowered (negative) as superscript or subscript,
+    /// by this fraction of the font size in 100 000ths (OOXML's `baseline`).
+    pub baseline: i32,
+    /// Space added after each character, in hundredths of a point
+    /// (negative to tighten; OOXML's `spc`).
+    pub spacing: i32,
+    pub color: Option<Rgb>,
+    pub font: Option<String>,
+    /// The other script's font, for when `font` is not installed.
+    pub fallback_font: Option<String>,
+    /// The run's text is computed (a slide number), not typed.
+    pub field: Option<TextField>,
+    /// A line through the characters (`a:rPr/@strike`).
+    pub strike: Strike,
+    /// Letters drawn as capitals (`a:rPr/@cap`).
+    pub caps: Caps,
+    /// How the underline is drawn when `underline` is set (`a:rPr/@u`).
+    pub underline_kind: Underline,
+    /// The run is a hyperlink (`a:hlinkClick`).
+    pub link: Option<SlideLink>,
+    /// Tooltip / ScreenTip of the hyperlink (`a:hlinkClick/@tooltip`).
+    pub link_tooltip: Option<String>,
+    /// Shadow effect on characters (`a:outerShdw`).
+    pub shadow: Option<crate::drawing::Shadow>,
+    /// Proofing language code (`a:rPr/@lang`, e.g. "ja-JP", "en-US").
+    pub lang: Option<String>,
+}
+
+/// The kind of an underline (OOXML's `ST_TextUnderlineType`, but `none`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Underline {
+    /// `sng`.
+    #[default]
+    Single,
+    /// `words`: only under the words (PowerPoint for Mac draws it whole).
+    Words,
+    Double,
+    Heavy,
+    Dotted,
+    DottedHeavy,
+    Dash,
+    DashHeavy,
+    DashLong,
+    DashLongHeavy,
+    DotDash,
+    DotDashHeavy,
+    DotDotDash,
+    DotDotDashHeavy,
+    Wavy,
+    WavyHeavy,
+    WavyDouble,
+}
+
+impl Underline {
+    /// The kind for OOXML's `u` value (`None` for `none` and unknown values).
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "sng" => Self::Single,
+            "words" => Self::Words,
+            "dbl" => Self::Double,
+            "heavy" => Self::Heavy,
+            "dotted" => Self::Dotted,
+            "dottedHeavy" => Self::DottedHeavy,
+            "dash" => Self::Dash,
+            "dashHeavy" => Self::DashHeavy,
+            "dashLong" => Self::DashLong,
+            "dashLongHeavy" => Self::DashLongHeavy,
+            "dotDash" => Self::DotDash,
+            "dotDashHeavy" => Self::DotDashHeavy,
+            "dotDotDash" => Self::DotDotDash,
+            "dotDotDashHeavy" => Self::DotDotDashHeavy,
+            "wavy" => Self::Wavy,
+            "wavyHeavy" => Self::WavyHeavy,
+            "wavyDbl" => Self::WavyDouble,
+            _ => return None,
+        })
+    }
+}
+
+/// A line through the characters (OOXML's `ST_TextStrikeType`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Strike {
+    #[default]
+    None,
+    /// `sngStrike`.
+    Single,
+    /// `dblStrike`.
+    Double,
+}
+
+/// Letters drawn as capitals (OOXML's `ST_TextCapsType`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Caps {
+    #[default]
+    None,
+    /// `small`: lower-case letters as smaller capitals.
+    Small,
+    /// `all`: every letter a capital.
+    All,
+}
+
+/// A stretch of text with one character format.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Run {
+    pub text: String,
+    pub style: RunStyle,
+}
+
+/// The mark in front of a bulleted paragraph.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Bullet {
+    pub text: String,
+    /// A picture drawn as the bullet instead of `text` (`a:buBlip`).
+    pub picture: Option<crate::MediaId>,
+    /// Size relative to the paragraph's first run, in 100 000ths.
+    pub size: u32,
+    /// `None` uses the colour of the paragraph's first run.
+    pub color: Option<Rgb>,
+    /// A numbered bullet (`a:buAutoNum`): `text` is the label it shows now.
+    pub auto: Option<AutoNumber>,
+}
+
+/// How a numbered bullet counts (`a:buAutoNum`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutoNumber {
+    /// `ST_TextAutonumberScheme`, such as `arabicPeriod`.
+    pub scheme: String,
+    pub start_at: u32,
+}
+
+/// How runs of different sizes in a line line up (`a:pPr/@fontAlgn`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FontAlign {
+    /// Preserve the automatic OOXML alignment independently of an explicit baseline.
+    Auto,
+    /// On a shared baseline.
+    #[default]
+    Baseline,
+    Top,
+    /// Their middles on the line's middle.
+    Center,
+    Bottom,
+}
+
+/// Alignment of a tab stop in a paragraph (`a:tab/@algn`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextTabAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+    Decimal,
+}
+
+/// A tab stop on a slide's paragraph (`a:tab`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TextTabStop {
+    pub position: Emu,
+    pub align: TextTabAlign,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineSpacing {
+    /// Multiple of single spacing, in 100 000ths (100 000 = single).
+    Percent(u32),
+    /// Exact line pitch, in hundredths of a point.
+    Points(u32),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Paragraph {
+    pub runs: Vec<Run>,
+    /// `None` uses the body's alignment.
+    pub align: Option<TextAlign>,
+    /// Left margin of the text, in EMU.
+    pub margin_left: Emu,
+    /// Offset of the first line (and the bullet) from `margin_left`, in EMU;
+    /// negative for a hanging indent.
+    pub indent: Emu,
+    pub bullet: Option<Bullet>,
+    pub line_spacing: Option<LineSpacing>,
+    pub font_align: FontAlign,
+    /// Space above and below the paragraph, in hundredths of a point.
+    pub space_before: u32,
+    pub space_after: u32,
+    /// Formatting of the paragraph mark; sets the height of an empty paragraph.
+    pub end_style: RunStyle,
+    /// The paragraph is a line after a line break (Shift+Enter, `a:br`) of
+    /// the one before it: it shares that one's alignment, margin and line
+    /// spacing, and has no bullet, first-line indent or space above.
+    pub line_break: bool,
+    /// The outline level, 0 to 8 (`a:pPr/@lvl`): numbering counts within a
+    /// level.
+    pub level: u8,
+    /// Tab stops defined on this paragraph (`a:pPr/a:tabLst`).
+    pub tabs: Vec<TextTabStop>,
+}
+
+impl Paragraph {
+    fn char_count(&self) -> usize {
+        self.runs.iter().map(|r| r.text.chars().count()).sum()
+    }
+
+    /// Remove the characters from `start` to `end`, keeping the runs.
+    fn remove_chars(&mut self, start: usize, end: usize) {
+        let mut at = 0;
+        for run in &mut self.runs {
+            let len = run.text.chars().count();
+            let (from, to) = (start.clamp(at, at + len) - at, end.clamp(at, at + len) - at);
+            if from < to {
+                run.text = run.text.chars().take(from).chain(run.text.chars().skip(to)).collect();
+            }
+            at += len;
+        }
+    }
+
+    /// Insert `text` (one line) at character `offset`: into the run it
+    /// follows, or the first run at the start, or a new run with the
+    /// paragraph mark's format in an empty paragraph.
+    fn insert_chars(&mut self, offset: usize, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.runs.is_empty() {
+            self.runs.push(Run { text: text.to_string(), style: self.end_style.clone() });
+            return;
+        }
+        let mut at = 0;
+        let count = self.runs.len();
+        for (i, run) in self.runs.iter_mut().enumerate() {
+            let len = run.text.chars().count();
+            if offset <= at + len && (offset > at || at == 0 || i + 1 == count || len == 0) {
+                let local = offset - at;
+                let byte = run.text.char_indices().nth(local).map_or(run.text.len(), |(b, _)| b);
+                run.text.insert_str(byte, text);
+                return;
+            }
+            at += len;
+        }
+    }
+
+    /// Cut the paragraph at character `offset`; the part after it is
+    /// returned as a paragraph with the same format (bullet included, as a
+    /// new paragraph gets in PowerPoint and Word).
+    fn split_off(&mut self, offset: usize) -> Paragraph {
+        let mut tail_runs = Vec::new();
+        let mut at = 0;
+        let mut keep = Vec::new();
+        for run in std::mem::take(&mut self.runs) {
+            let len = run.text.chars().count();
+            if at + len <= offset {
+                keep.push(run);
+            } else if at >= offset {
+                tail_runs.push(run);
+            } else {
+                let local = offset - at;
+                let byte = run.text.char_indices().nth(local).map_or(run.text.len(), |(b, _)| b);
+                let (head, tail) = run.text.split_at(byte);
+                tail_runs.push(Run { text: tail.to_string(), style: run.style.clone() });
+                keep.push(Run { text: head.to_string(), style: run.style });
+            }
+            at += len;
+        }
+        self.runs = keep;
+        Paragraph { runs: tail_runs, line_break: false, ..self.clone() }
+    }
+
+    pub fn text(&self) -> String {
+        self.runs.iter().map(|r| r.text.as_str()).collect()
+    }
+}
+
+/// A change of character format for part of a text (each `Some` field is
+/// set, the others are left as they are).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CharacterFormat {
+    pub font_size: Option<u32>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underline: Option<bool>,
+    pub color: Option<Rgb>,
+    /// `Some(None)` returns to the theme's font.
+    pub font: Option<Option<String>>,
+    /// Latin and East Asian families, chosen for each target run by its script.
+    pub script_fonts: Option<(Option<String>, Option<String>)>,
+    pub highlight: Option<Option<Rgb>>,
+    /// Some(None) clears the outline; the inner value is colour and width in EMU.
+    pub outline: Option<Option<(Rgb, i64)>>,
+    pub baseline: Option<i32>,
+    pub spacing: Option<i32>,
+    pub strike: Option<Strike>,
+    pub caps: Option<Caps>,
+    /// `Some(None)` takes the hyperlink away.
+    pub link: Option<Option<SlideLink>>,
+    /// `Some(None)` takes the tooltip away; inner value is the tooltip text.
+    pub link_tooltip: Option<Option<String>>,
+    /// Some(None) clears the shadow effect; inner value is the shadow.
+    pub shadow: Option<Option<crate::drawing::Shadow>>,
+    /// `Some(None)` clears the proofing language.
+    pub lang: Option<Option<String>>,
+}
+
+impl CharacterFormat {
+    fn apply(&self, run: &mut RunStyle, text: &str) {
+        if let Some(v) = self.font_size {
+            run.font_size = Some(v.clamp(TextStyle::MIN_FONT_SIZE, TextStyle::MAX_FONT_SIZE));
+        }
+        if let Some(v) = self.bold {
+            run.bold = Some(v);
+        }
+        if let Some(v) = self.italic {
+            run.italic = Some(v);
+        }
+        if let Some(v) = self.underline {
+            run.underline = v;
+        }
+        if let Some(v) = self.color {
+            run.color = Some(v);
+        }
+        if let Some(v) = &self.font {
+            run.font = v.clone();
+            run.fallback_font = None;
+        }
+        if let Some((latin, east_asian)) = &self.script_fonts {
+            let (font, fallback) = if text.chars().any(is_east_asian) { (east_asian, latin) } else { (latin, east_asian) };
+            run.font = font.clone(); run.fallback_font = fallback.clone();
+        }
+        if let Some(v) = self.highlight {
+            run.highlight = v;
+        }
+        if let Some(v) = self.outline {
+            run.outline = v;
+        }
+        if let Some(v) = self.shadow {
+            run.shadow = v;
+        }
+        if let Some(v) = self.baseline {
+            run.baseline = v;
+        }
+        if let Some(v) = self.spacing {
+            run.spacing = v;
+        }
+        if let Some(v) = self.strike {
+            run.strike = v;
+        }
+        if let Some(v) = self.caps {
+            run.caps = v;
+        }
+        if let Some(v) = &self.link {
+            run.link = v.clone();
+            if v.is_none() {
+                run.link_tooltip = None;
+            }
+        }
+        if let Some(v) = &self.link_tooltip {
+            run.link_tooltip = v.clone();
+        }
+        if let Some(v) = &self.lang {
+            run.lang = v.clone();
+        }
+    }
+}
+
+/// The kind of mark a paragraph gets from 箇条書き / 番号付きリスト.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListKind {
+    None,
+    /// A bullet character (`•`).
+    Bullet,
+    /// Numbers `1.`, `2.`, … (`arabicPeriod`).
+    Numbered,
+    /// Another bullet character.
+    Symbol(char),
+    /// Numbers (or letters) of another scheme.
+    Scheme(NumberScheme),
+}
+
+/// The numbering schemes 番号付きリスト offers (`ST_TextAutonumberScheme`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumberScheme {
+    ArabicPeriod,
+    ArabicParenR,
+    AlphaLcPeriod,
+    AlphaUcPeriod,
+    AlphaLcParenR,
+    RomanLcPeriod,
+    RomanUcPeriod,
+}
+
+impl NumberScheme {
+    pub const ALL: [NumberScheme; 7] = [
+        NumberScheme::ArabicPeriod,
+        NumberScheme::ArabicParenR,
+        NumberScheme::AlphaLcPeriod,
+        NumberScheme::AlphaUcPeriod,
+        NumberScheme::AlphaLcParenR,
+        NumberScheme::RomanLcPeriod,
+        NumberScheme::RomanUcPeriod,
+    ];
+
+    /// The scheme's name in the file.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ArabicPeriod => "arabicPeriod",
+            Self::ArabicParenR => "arabicParenR",
+            Self::AlphaLcPeriod => "alphaLcPeriod",
+            Self::AlphaUcPeriod => "alphaUcPeriod",
+            Self::AlphaLcParenR => "alphaLcParenR",
+            Self::RomanLcPeriod => "romanLcPeriod",
+            Self::RomanUcPeriod => "romanUcPeriod",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name)
+    }
+
+    /// The label of item `n` (1, 2, …).
+    pub fn label(self, n: u32) -> String {
+        let alpha = |upper: bool| {
+            let mut s = String::new();
+            let mut k = n;
+            while k > 0 {
+                s.insert(0, (((k - 1) % 26) as u8 + if upper { b'A' } else { b'a' }) as char);
+                k = (k - 1) / 26;
+            }
+            s
+        };
+        let roman = |upper: bool| {
+            let table = [(1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"), (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")];
+            let (mut s, mut k) = (String::new(), n);
+            for (value, digits) in table {
+                while k >= value {
+                    s.push_str(digits);
+                    k -= value;
+                }
+            }
+            if upper { s.to_uppercase() } else { s }
+        };
+        match self {
+            Self::ArabicPeriod => format!("{n}."),
+            Self::ArabicParenR => format!("{n})"),
+            Self::AlphaLcPeriod => format!("{}.", alpha(false)),
+            Self::AlphaUcPeriod => format!("{}.", alpha(true)),
+            Self::AlphaLcParenR => format!("{})", alpha(false)),
+            Self::RomanLcPeriod => format!("{}.", roman(false)),
+            Self::RomanUcPeriod => format!("{}.", roman(true)),
+        }
+    }
+}
+
+impl ListKind {
+    /// The list a bullet makes a paragraph (Numbered for an arabicPeriod one).
+    pub fn of(bullet: Option<&Bullet>) -> ListKind {
+        match bullet {
+            None => ListKind::None,
+            Some(b) => match &b.auto {
+                Some(a) => match NumberScheme::from_name(&a.scheme) {
+                    Some(NumberScheme::ArabicPeriod) | None => ListKind::Numbered,
+                    Some(s) => ListKind::Scheme(s),
+                },
+                None if b.text.ends_with('.') && b.text.len() > 1 && b.text[..b.text.len() - 1].chars().all(|c| c.is_ascii_digit()) => ListKind::Numbered,
+                None => match b.text.chars().next() {
+                    Some('•') | None => ListKind::Bullet,
+                    Some(c) => ListKind::Symbol(c),
+                },
+            },
+        }
+    }
+}
+
+/// A change of paragraph format for the paragraphs of part of a text.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParagraphFormat {
+    pub font_align: Option<FontAlign>,
+    pub align: Option<TextAlign>,
+    pub line_spacing: Option<Option<LineSpacing>>,
+    pub space_before: Option<u32>,
+    pub space_after: Option<u32>,
+    pub list: Option<ListKind>,
+    /// Added to the left margin (インデントを増やす・減らす), in EMU; the
+    /// margin does not go below 0.
+    pub indent_by: Option<Emu>,
+    /// Explicit left margin, in EMU.
+    pub margin_left: Option<Emu>,
+    /// First-line indent offset from `margin_left`, in EMU (negative for hanging).
+    pub indent: Option<Emu>,
+    /// Tab stops defined on this paragraph.
+    pub tabs: Option<Vec<TextTabStop>>,
+}
+
+/// A kind of vertical writing (`a:bodyPr/@vert`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum VerticalKind {
+    /// `eaVert`: lines from right to left, East Asian characters upright and
+    /// the others turned a quarter turn.
+    #[default]
+    EastAsian,
+    /// `mongolianVert`: as `EastAsian`, but lines from left to right.
+    Mongolian,
+    /// `wordArtVert`: every character upright, stacked; lines from left to
+    /// right.
+    WordArt,
+    /// `wordArtVertRtl`: as `WordArt`, lines from right to left.
+    WordArtRtl,
+}
+
+impl VerticalKind {
+    /// The kind for OOXML's `vert` value (`None` for the horizontal and
+    /// turned ones).
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "eaVert" => Self::EastAsian,
+            "mongolianVert" => Self::Mongolian,
+            "wordArtVert" => Self::WordArt,
+            "wordArtVertRtl" => Self::WordArtRtl,
+            _ => return None,
+        })
+    }
+
+    pub fn ooxml(self) -> &'static str {
+        match self {
+            Self::EastAsian => "eaVert",
+            Self::Mongolian => "mongolianVert",
+            Self::WordArt => "wordArtVert",
+            Self::WordArtRtl => "wordArtVertRtl",
+        }
+    }
+}
+
+/// Where the text sits vertically in its shape.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VerticalAnchor {
+    #[default]
+    Top,
+    Middle,
+    Bottom,
+}
+
+/// Space between a shape's frame and its text, in EMU.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Insets {
+    pub left: Emu,
+    pub top: Emu,
+    pub right: Emu,
+    pub bottom: Emu,
+}
+
+impl Default for Insets {
+    /// OOXML's default: 0.1 in left and right, 0.05 in top and bottom.
+    fn default() -> Self {
+        Self { left: 91_440, top: 45_720, right: 91_440, bottom: 45_720 }
+    }
+}
+
+/// How text fits within its shape or frame (`a:bodyPr`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextAutofit {
+    /// Do not autofit text (`a:noAutofit`).
+    #[default]
+    None,
+    /// Shrink text on overflow (`a:normAutofit`).
+    Shrink,
+    /// Resize shape to fit text (`a:spAutoFit`).
+    ResizeShape,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextBody {
+    pub paragraphs: Vec<Paragraph>,
+    pub style: TextStyle,
+    pub insets: Insets,
+    pub anchor: VerticalAnchor,
+    /// Wrap lines at the frame's width.
+    pub wrap: bool,
+    /// How text fits within its shape or frame (`a:bodyPr`).
+    pub autofit: TextAutofit,
+    /// "Shrink text on overflow": font sizes are drawn at this fraction, in
+    /// 100 000ths (100 000 = unscaled).
+    pub font_scale: u32,
+    /// Vertical writing (`vert="eaVert"` and the others of
+    /// [`VerticalKind`]): characters run top to bottom.
+    pub vertical: bool,
+    /// Which vertical writing, when `vertical`.
+    pub vertical_kind: VerticalKind,
+    /// The text turned within its shape (`bodyPr/@rot`), clockwise, in
+    /// 60 000ths of a degree; laid out in the unturned text rectangle.
+    pub rotation: i32,
+    /// The whole text turned a quarter turn (`vert="vert"`: 5 400 000,
+    /// `vert="vert270"`: 16 200 000; 0 otherwise), laid out in the text
+    /// rectangle turned with it (its width and height swapped).
+    pub sideways: i32,
+    /// The text kept upright when the shape is turned or flipped
+    /// (`bodyPr/@upright`).
+    pub upright: bool,
+    /// Number of columns (`a:bodyPr/@numCol`), 1 to 16.
+    pub columns: u32,
+    /// Space between columns (`a:bodyPr/@spcCol`), in EMU.
+    pub column_spacing: Emu,
+    /// Preset text warp shape (`a:bodyPr/a:prstTxWarp/@prst`), e.g. "textArchUp", "textWave1".
+    pub warp: Option<String>,
+}
+
+impl Default for TextBody {
+    fn default() -> Self {
+        Self {
+            paragraphs: vec![Paragraph::default()],
+            style: TextStyle::default(),
+            insets: Insets::default(),
+            anchor: VerticalAnchor::Top,
+            wrap: true,
+            autofit: TextAutofit::None,
+            font_scale: 100_000,
+            vertical: false,
+            vertical_kind: VerticalKind::EastAsian,
+            rotation: 0,
+            sideways: 0,
+            upright: false,
+            columns: 1,
+            column_spacing: 0,
+            warp: None,
+        }
+    }
+}
+
+impl TextBody {
+    /// A body of unformatted paragraphs, one per `\n`-separated line.
+    pub fn plain(text: &str, style: TextStyle) -> Self {
+        let mut body = Self { style, ..Self::default() };
+        body.set_text(text);
+        body
+    }
+
+    /// The text, paragraphs separated by `\n`.
+    pub fn text(&self) -> String {
+        self.paragraphs.iter().map(Paragraph::text).collect::<Vec<_>>().join("\n")
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.text.is_empty()))
+    }
+
+    /// Replace the text, one paragraph per `\n`-separated line.
+    ///
+    /// Plain text carries no formatting, so each new paragraph takes the
+    /// paragraph and character format of the old first paragraph.
+    pub fn set_text(&mut self, text: &str) {
+        let template = self.paragraphs.first().cloned().unwrap_or_default();
+        let run_style = template.runs.first().map(|r| r.style.clone()).unwrap_or_else(|| template.end_style.clone());
+        self.paragraphs = text
+            .split('\n')
+            .map(|line| Paragraph {
+                runs: if line.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Run { text: line.to_string(), style: run_style.clone() }]
+                },
+                end_style: run_style.clone(),
+                ..template.clone()
+            })
+            .collect();
+    }
+
+    /// Replace `remove` characters at character `at` of [`text`](Self::text)
+    /// with `insert`, keeping the runs and their formatting: text typed
+    /// into a run takes its format, and a `\n` splits a paragraph (both
+    /// halves keeping its format). Runs are kept even when they become
+    /// empty, so that an edit inside one run changes nothing else (and a
+    /// writer can put it back where it came from). Positions past the end
+    /// are clamped.
+    pub fn splice(&mut self, at: usize, remove: usize, insert: &str) {
+        if self.paragraphs.is_empty() {
+            self.paragraphs.push(Paragraph::default());
+        }
+        let total = self.text().chars().count();
+        let at = at.min(total);
+        let end = (at + remove).min(total);
+        let (p1, o1) = self.locate(at);
+        let (p2, o2) = self.locate(end);
+        // Remove: within one paragraph, or joining the first and the last.
+        if p1 == p2 {
+            self.paragraphs[p1].remove_chars(o1, o2);
+        } else {
+            let tail = self.paragraphs[p2].split_off(o2);
+            self.paragraphs[p1].split_off(o1);
+            self.paragraphs[p1].runs.extend(tail.runs);
+            self.paragraphs.drain(p1 + 1..=p2);
+        }
+        // Insert, splitting the paragraph at each line break.
+        let mut paragraph = p1;
+        let mut offset = o1;
+        for (i, line) in insert.split('\n').enumerate() {
+            if i > 0 {
+                let tail = self.paragraphs[paragraph].split_off(offset);
+                paragraph += 1;
+                self.paragraphs.insert(paragraph, tail);
+                offset = 0;
+            }
+            self.paragraphs[paragraph].insert_chars(offset, line);
+            offset += line.chars().count();
+        }
+        self.unify_lines();
+    }
+
+    /// Replace a match, giving inserted characters the match's first run format.
+    /// Ordinary typing uses `splice` and keeps its caret-boundary semantics.
+    pub fn replace_text(&mut self, at: usize, remove: usize, insert: &str) {
+        if self.paragraphs.is_empty() { self.paragraphs.push(Paragraph::default()); }
+        let at = at.min(self.text().chars().count());
+        let (paragraph, offset) = self.locate(at);
+        let mut pos = 0;
+        let style = self.paragraphs[paragraph].runs.iter().find_map(|run| {
+            let end = pos + run.text.chars().count();
+            let found = (offset < end).then(|| run.style.clone());
+            pos = end;
+            found
+        }).unwrap_or_else(|| self.paragraphs[paragraph].end_style.clone());
+        self.splice(at, remove, insert);
+        let end = at + insert.chars().count();
+        if at == end { return; }
+        self.split_runs_at(end);
+        self.split_runs_at(at);
+        let mut pos = 0;
+        for paragraph in &mut self.paragraphs {
+            for run in &mut paragraph.runs {
+                let n = run.text.chars().count();
+                if n > 0 && pos >= at && pos + n <= end { run.style = style.clone(); }
+                pos += n;
+            }
+            pos += 1;
+        }
+    }
+
+    /// The paragraph and the character in it at character `at` of the text.
+    fn locate(&self, at: usize) -> (usize, usize) {
+        let mut rest = at;
+        for (i, p) in self.paragraphs.iter().enumerate() {
+            let len = p.char_count();
+            if rest <= len {
+                return (i, rest);
+            }
+            rest -= len + 1;
+        }
+        let last = self.paragraphs.len() - 1;
+        (last, self.paragraphs[last].char_count())
+    }
+
+    /// Keep lines after line breaks in step with the paragraph they belong
+    /// to (see [`Paragraph::line_break`]): the same alignment, margin and
+    /// line spacing, no bullet, indent or space above, and the space below
+    /// on the last line only.
+    pub fn unify_lines(&mut self) {
+        if let Some(first) = self.paragraphs.first_mut() {
+            first.line_break = false;
+        }
+        for i in 1..self.paragraphs.len() {
+            if !self.paragraphs[i].line_break {
+                continue;
+            }
+            let (head, tail) = self.paragraphs.split_at_mut(i);
+            let before = head.last_mut().expect("a paragraph before");
+            let line = &mut tail[0];
+            line.align = before.align;
+            line.margin_left = before.margin_left;
+            line.line_spacing = before.line_spacing;
+            line.font_align = before.font_align;
+            line.level = before.level;
+            line.bullet = None;
+            line.indent = 0;
+            line.space_before = 0;
+            // The space below goes to the group's last line.
+            line.space_after = line.space_after.max(before.space_after);
+            before.space_after = 0;
+        }
+    }
+
+    /// Cut runs at character `at` of [`text`](Self::text) (so a format
+    /// can be given from there).
+    fn split_runs_at(&mut self, at: usize) {
+        let (p, offset) = self.locate(at);
+        let paragraph = &mut self.paragraphs[p];
+        let mut pos = 0;
+        for i in 0..paragraph.runs.len() {
+            let len = paragraph.runs[i].text.chars().count();
+            if offset > pos && offset < pos + len {
+                let byte = paragraph.runs[i].text.char_indices().nth(offset - pos).map_or(paragraph.runs[i].text.len(), |(b, _)| b);
+                let tail = paragraph.runs[i].text.split_off(byte);
+                let style = paragraph.runs[i].style.clone();
+                paragraph.runs.insert(i + 1, Run { text: tail, style });
+                return;
+            }
+            pos += len;
+        }
+    }
+
+    /// Give characters `start..end` of the text the format `format`,
+    /// splitting runs at the ends. With an empty range, the format goes to
+    /// the paragraph mark of the paragraph there (for the text typed next).
+    pub fn format_runs(&mut self, start: usize, end: usize, format: &CharacterFormat) {
+        if self.paragraphs.is_empty() {
+            self.paragraphs.push(Paragraph::default());
+        }
+        let total = self.text().chars().count();
+        let (start, end) = (start.min(total), end.min(total).max(start.min(total)));
+        if start == end {
+            let (p, _) = self.locate(start);
+            format.apply(&mut self.paragraphs[p].end_style, "");
+            return;
+        }
+        self.split_runs_at(end);
+        self.split_runs_at(start);
+        if format.script_fonts.is_some() {
+            let mut position = 0;
+            for paragraph in &mut self.paragraphs {
+                paragraph.runs = std::mem::take(&mut paragraph.runs).into_iter().flat_map(|run| {
+                    let begin = position;
+                    position += run.text.chars().count();
+                    if run.text.is_empty() || begin < start || position > end { return vec![run]; }
+                    let mut parts: Vec<Run> = Vec::new();
+                    for c in run.text.chars() {
+                        let same_script = parts.last().is_some_and(|p| p.text.chars().last().is_some_and(|last| is_east_asian(last) == is_east_asian(c)));
+                        if same_script { parts.last_mut().unwrap().text.push(c); }
+                        else { parts.push(Run { text: c.to_string(), style: run.style.clone() }); }
+                    }
+                    parts
+                }).collect();
+                position += 1;
+            }
+        }
+        let mut at = 0;
+        for paragraph in &mut self.paragraphs {
+            let len = paragraph.char_count();
+            let mut pos = at;
+            for run in &mut paragraph.runs {
+                let n = run.text.chars().count();
+                if pos >= start && pos + n <= end && n > 0 {
+                    format.apply(&mut run.style, &run.text);
+                }
+                pos += n;
+            }
+            // A paragraph wholly inside keeps the format for its mark too.
+            if at >= start && at + len <= end && len > 0 {
+                format.apply(&mut paragraph.end_style, "");
+            }
+            at += len + 1;
+        }
+    }
+
+    /// 書式をクリア: characters `start..end` lose their own format (size,
+    /// bold, colour, font, highlight, …) and take the text's.
+    pub fn clear_run_formats(&mut self, start: usize, end: usize) {
+        let total = self.text().chars().count();
+        let (start, end) = (start.min(total), end.min(total).max(start.min(total)));
+        let plain = |style: &RunStyle| RunStyle { field: style.field.clone(), ..RunStyle::default() };
+        if start == end {
+            if self.paragraphs.is_empty() {
+                return;
+            }
+            let (p, _) = self.locate(start);
+            self.paragraphs[p].end_style = plain(&self.paragraphs[p].end_style);
+            return;
+        }
+        self.split_runs_at(end);
+        self.split_runs_at(start);
+        let mut at = 0;
+        for paragraph in &mut self.paragraphs {
+            let len = paragraph.char_count();
+            let mut pos = at;
+            for run in &mut paragraph.runs {
+                let n = run.text.chars().count();
+                if pos >= start && pos + n <= end && n > 0 {
+                    run.style = plain(&run.style);
+                }
+                pos += n;
+            }
+            if at >= start && at + len <= end && len > 0 {
+                paragraph.end_style = plain(&paragraph.end_style);
+            }
+            at += len + 1;
+        }
+    }
+
+    /// The paragraphs characters `start..end` touch, by index.
+    pub fn paragraphs_in(&self, start: usize, end: usize) -> std::ops::RangeInclusive<usize> {
+        let (a, _) = self.locate(start);
+        let last = if end > start { end - 1 } else { start };
+        let (b, _) = self.locate(last);
+        a..=b
+    }
+
+    /// Give the paragraphs characters `start..end` touch the format
+    /// `format`: whole paragraphs, lines after line breaks included (see
+    /// [`Paragraph::line_break`]).
+    pub fn format_paragraphs(&mut self, start: usize, end: usize, format: &ParagraphFormat) {
+        if self.paragraphs.is_empty() {
+            self.paragraphs.push(Paragraph::default());
+        }
+        let range = self.paragraphs_in(start, end);
+        let (mut first, mut last) = (*range.start(), *range.end());
+        while first > 0 && self.paragraphs[first].line_break {
+            first -= 1;
+        }
+        while last + 1 < self.paragraphs.len() && self.paragraphs[last + 1].line_break {
+            last += 1;
+        }
+        let mut number = 0;
+        let mut level: Option<u8> = None;
+        for paragraph in &mut self.paragraphs[first..=last] {
+            if let Some(value) = format.font_align { paragraph.font_align = value; }
+            if let Some(a) = format.align {
+                paragraph.align = Some(a);
+            }
+            if let Some(v) = format.line_spacing {
+                paragraph.line_spacing = v;
+            }
+            if let Some(d) = format.indent_by {
+                paragraph.margin_left = (paragraph.margin_left + d).max(0);
+            }
+            if let Some(m) = format.margin_left {
+                paragraph.margin_left = m.max(0);
+            }
+            if let Some(i) = format.indent {
+                paragraph.indent = i;
+            }
+            if let Some(ref t) = format.tabs {
+                paragraph.tabs = t.clone();
+            }
+            if paragraph.line_break {
+                continue;
+            }
+            if let Some(v) = format.space_before {
+                paragraph.space_before = v;
+            }
+            if let Some(v) = format.space_after {
+                paragraph.space_after = v;
+            }
+            match format.list {
+                Some(ListKind::None) => {
+                    paragraph.bullet = None;
+                    paragraph.indent = 0;
+                }
+                Some(kind) => {
+                    // An empty paragraph shows the number the next one gets
+                    // and does not count (as PowerPoint numbers).
+                    // A paragraph at another level starts again from 1 (as the
+                    // reader numbers).
+                    let has_text = paragraph.runs.iter().any(|r| !r.text.is_empty());
+                    if level != Some(paragraph.level) {
+                        number = 0;
+                    }
+                    let shown = number + 1;
+                    if has_text {
+                        number += 1;
+                        level = Some(paragraph.level);
+                    }
+                    let scheme = match kind {
+                        ListKind::Numbered => Some(NumberScheme::ArabicPeriod),
+                        ListKind::Scheme(s) => Some(s),
+                        _ => None,
+                    };
+                    let text = match (scheme, kind) {
+                        (Some(s), _) => s.label(shown),
+                        (None, ListKind::Symbol(c)) => c.to_string(),
+                        _ => "•".to_string(),
+                    };
+                    let auto = scheme.map(|s| AutoNumber { scheme: s.name().to_string(), start_at: 1 });
+                    paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, auto });
+                    // A hanging indent the width of the mark, as PowerPoint sets.
+                    if paragraph.indent >= 0 {
+                        let hang = if scheme.is_some() { 342_900 } else { 228_600 };
+                        paragraph.margin_left = paragraph.margin_left.max(hang);
+                        paragraph.indent = -hang;
+                    }
+                }
+                None => {}
+            }
+        }
+        // The margin a bullet set goes to the lines after it too.
+        self.unify_lines();
+    }
+
+    /// Refresh date fields to `t` (those with a known form), without
+    /// changing their character formatting; whether any changed. A field is
+    /// the runs in a row with it (split where the script changes:
+    /// `segments` splits text so, each piece East Asian or not), its new
+    /// text split the same way, each piece with the format of a run of its
+    /// script.
+    pub fn set_dates(&mut self, t: &crate::date_field::LocalTime, segments: &dyn Fn(&str) -> Vec<(String, bool)>) -> bool {
+        let mut changed = false;
+        for paragraph in &mut self.paragraphs {
+            let mut i = 0;
+            while i < paragraph.runs.len() {
+                let Some(field @ TextField::DateTime { format, east_asian }) = paragraph.runs[i].style.field else {
+                    i += 1;
+                    continue;
+                };
+                let end = (i..paragraph.runs.len()).find(|&k| paragraph.runs[k].style.field != Some(field)).unwrap_or(paragraph.runs.len());
+                let old: String = paragraph.runs[i..end].iter().map(|r| r.text.as_str()).collect();
+                match crate::date_field::slide_date_text(format, east_asian, t) {
+                    Some(text) if text != old => {
+                        let style_of = |ea: bool| {
+                            paragraph.runs[i..end]
+                                .iter()
+                                .find(|r| segments(&r.text).first().is_some_and(|s| s.1 == ea))
+                                .unwrap_or(&paragraph.runs[i])
+                                .style
+                                .clone()
+                        };
+                        let runs: Vec<Run> = segments(&text).into_iter().map(|(text, ea)| Run { text, style: style_of(ea) }).collect();
+                        let n = runs.len();
+                        paragraph.runs.splice(i..end, runs);
+                        changed = true;
+                        i += n.max(1);
+                    }
+                    _ => i = end,
+                }
+            }
+        }
+        changed
+    }
+
+    /// Refresh slide-number fields without changing their character formatting.
+    pub fn set_slide_number(&mut self, number: usize) {
+        let number = number.to_string();
+        for run in self.paragraphs.iter_mut().flat_map(|p| &mut p.runs) {
+            if run.style.field == Some(TextField::SlideNumber) { run.text = number.clone(); }
+        }
+    }
+
+    /// Set the body's style. Run and paragraph overrides of every field that
+    /// changes are dropped, so the new value applies to all of the text.
+    pub fn apply_style(&mut self, style: TextStyle) {
+        let old = std::mem::replace(&mut self.style, style);
+        let new = &self.style;
+        for paragraph in &mut self.paragraphs {
+            if new.align != old.align {
+                paragraph.align = None;
+            }
+            let runs = paragraph.runs.iter_mut().map(|r| &mut r.style);
+            for run in runs.chain(std::iter::once(&mut paragraph.end_style)) {
+                if new.font_size != old.font_size {
+                    run.font_size = None;
+                }
+                if new.bold != old.bold {
+                    run.bold = None;
+                }
+                if new.italic != old.italic {
+                    run.italic = None;
+                }
+                if new.color != old.color {
+                    run.color = None;
+                }
+                if new.font != old.font {
+                    run.font = None;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paragraph_format_excludes_next_paragraph_at_range_end() {
+        let mut body = TextBody::plain("first\nsecond", TextStyle::default());
+        body.format_paragraphs(0, 6, &ParagraphFormat { align: Some(TextAlign::Center), ..Default::default() });
+        assert_eq!(body.paragraphs[0].align, Some(TextAlign::Center));
+        assert_eq!(body.paragraphs[1].align, None);
+        body.format_paragraphs(6, 6, &ParagraphFormat { space_before: Some(325), ..Default::default() });
+        assert_eq!(body.paragraphs[0].space_before, 0);
+        assert_eq!(body.paragraphs[1].space_before, 325);
+    }
+
+
+    #[test]
+    fn script_fonts_preserve_unselected_and_empty_runs() {
+        let outer = Run { text: "外A".into(), style: RunStyle { bold: Some(true), ..Default::default() } };
+        let empty = Run { text: String::new(), style: RunStyle { field: Some(TextField::SlideNumber), ..Default::default() } };
+        let mut body = TextBody::plain("", TextStyle::default());
+        body.paragraphs[0].runs = vec![outer.clone(), empty.clone(), Run { text: "AB日本".into(), style: RunStyle::default() }, outer.clone()];
+        body.format_runs(2, 6, &CharacterFormat { script_fonts: Some((Some("Latin".into()), Some("East".into()))), ..Default::default() });
+        assert_eq!(body.text(), "外AAB日本外A");
+        assert_eq!(body.paragraphs[0].runs[0], outer);
+        assert_eq!(body.paragraphs[0].runs[1], empty);
+        assert_eq!(body.paragraphs[0].runs.last(), Some(&outer));
+        assert_eq!(body.paragraphs[0].runs[2].text, "AB");
+        assert_eq!(body.paragraphs[0].runs[2].style.font.as_deref(), Some("Latin"));
+        assert_eq!(body.paragraphs[0].runs[3].text, "日本");
+        assert_eq!(body.paragraphs[0].runs[3].style.font.as_deref(), Some("East"));
+        assert_eq!(body.paragraphs[0].runs[3].style.fallback_font.as_deref(), Some("Latin"));
+    }
+
+
+    #[test]
+    fn font_size_steps_follow_powerpoint_list() {
+        assert_eq!(step_font_size(1800, true), 2000);
+        assert_eq!(step_font_size(1800, false), 1600);
+        assert_eq!(step_font_size(1900, false), 1800);
+        assert_eq!(step_font_size(9600, true), 10600);
+        assert_eq!(step_font_size(800, false), 800);
+    }
+
+    #[test]
+    fn plain_text_round_trips() {
+        let body = TextBody::plain("一行目\n\n三行目", TextStyle::default());
+        assert_eq!(body.paragraphs.len(), 3);
+        assert_eq!(body.text(), "一行目\n\n三行目");
+    }
+
+    #[test]
+    fn set_text_keeps_first_paragraph_format() {
+        let mut body = TextBody {
+            paragraphs: vec![Paragraph {
+                runs: vec![Run { text: "a".into(), style: RunStyle { bold: Some(true), ..Default::default() } }],
+                align: Some(TextAlign::Center),
+                ..Default::default()
+            }],
+            ..TextBody::default()
+        };
+        body.set_text("x\ny");
+        assert_eq!(body.paragraphs.len(), 2);
+        assert!(body.paragraphs.iter().all(|p| p.align == Some(TextAlign::Center)));
+        assert_eq!(body.paragraphs[1].runs[0].style.bold, Some(true));
+    }
+
+    fn two_runs() -> TextBody {
+        let bold = RunStyle { bold: Some(true), ..Default::default() };
+        TextBody {
+            paragraphs: vec![
+                Paragraph { runs: vec![Run { text: "ab".into(), style: RunStyle::default() }, Run { text: "cd".into(), style: bold }], ..Default::default() },
+                Paragraph { runs: vec![Run { text: "ef".into(), style: RunStyle::default() }], ..Default::default() },
+            ],
+            ..TextBody::default()
+        }
+    }
+
+    #[test]
+    fn splice_inside_a_run_keeps_the_runs() {
+        let mut body = two_runs();
+        body.splice(3, 1, "X");
+        assert_eq!(body.text(), "abcX\nef");
+        assert_eq!(body.paragraphs[0].runs.len(), 2);
+        assert_eq!(body.paragraphs[0].runs[1].text, "cX");
+        // Typed at the end of a run, the text takes that run's format.
+        body.splice(2, 0, "Y");
+        assert_eq!(body.paragraphs[0].runs[0].text, "abY");
+        // Deleting a whole run keeps it, empty.
+        body.splice(3, 2, "");
+        assert_eq!(body.paragraphs[0].runs.len(), 2);
+        assert_eq!(body.text(), "abY\nef");
+    }
+
+    #[test]
+    fn splice_splits_and_joins_paragraphs() {
+        let mut body = two_runs();
+        body.splice(1, 0, "1\n2");
+        assert_eq!(body.text(), "a1\n2bcd\nef");
+        assert_eq!(body.paragraphs.len(), 3);
+        assert_eq!(body.paragraphs[1].runs.last().unwrap().style.bold, Some(true));
+        body.splice(2, 1, "");
+        assert_eq!(body.text(), "a12bcd\nef");
+        body.splice(5, 3, "");
+        assert_eq!(body.text(), "a12bcf");
+        assert_eq!(body.paragraphs.len(), 1);
+        let mut empty = TextBody::default();
+        empty.splice(0, 0, "new");
+        assert_eq!(empty.text(), "new");
+    }
+
+    #[test]
+    fn apply_style_drops_changed_overrides_only() {
+        let mut body = TextBody::default();
+        body.paragraphs[0].runs = vec![Run {
+            text: "a".into(),
+            style: RunStyle { font_size: Some(4000), bold: Some(true), ..Default::default() },
+        }];
+        let style = TextStyle { bold: true, ..body.style.clone() };
+        body.apply_style(style);
+        let run = &body.paragraphs[0].runs[0].style;
+        assert_eq!(run.bold, None);
+        assert_eq!(run.font_size, Some(4000));
+    }
+}

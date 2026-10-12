@@ -1,0 +1,12 @@
+[package]
+name = "ibis-eot"
+description = "Decodes Embedded OpenType fonts (MicroType Express) as embedded in PowerPoint files."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+ibis-pptx.workspace = true

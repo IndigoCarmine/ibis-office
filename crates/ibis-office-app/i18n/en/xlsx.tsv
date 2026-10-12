@@ -1,0 +1,1427 @@
+# ibisOffice UI text (English): xlsx 担当。キー<TAB>文字（shell/i18n.rs）。
+xlsx.sort	Sort Range
+xlsx.delete-row	Delete Row
+xlsx.delete-column	Delete Column
+xlsx.delete-cells	Delete Cells…
+xlsx.rename-sheet	Rename Sheet…
+xlsx.duplicate-sheet	Duplicate Sheet
+xlsx.hide-sheet	Hide Sheet
+xlsx.delete-sheet	Delete Sheet
+xlsx.freeze	Freeze
+xlsx.gridlines	Show Gridlines
+xlsx.headings	Show Headings
+xlsx.formula-bar	Show Formula Bar
+xlsx.page-break-preview	Page Break Preview
+xlsx.page-layout	Page Layout
+xlsx.zoom-selection	Zoom to Selection
+xlsx.custom-views	Custom Views…
+xlsx.hide-window	Hide Window
+xlsx.unhide-window	Unhide Window…
+xlsx.insert-row-above	Insert Row Above
+xlsx.insert-row-below	Insert Row Below
+xlsx.insert-column-left	Insert Column Left
+xlsx.insert-column-right	Insert Column Right
+xlsx.insert-cells	Insert Cells…
+xlsx.insert-sheet	New Sheet
+xlsx.insert-table	Table…
+xlsx.chart-format	Chart Format…
+xlsx.filter	Create Filter
+xlsx.protect	Protect Sheet and Ranges
+xlsx.named-ranges	Named Ranges
+xlsx.validation	Data Validation
+xlsx.validation.circle-invalid	Circle Invalid Data
+xlsx.validation.clear-circles	Clear Validation Circles
+xlsx.split-text	Split Text to Columns
+xlsx.cell-styles	Cell Styles
+xlsx.new-cell-style	New Cell Style…
+xlsx.new-cell-style-title	New Cell Style
+conditional.expression	Formula Is True
+xlsx.header-clear	Clear Contents
+xlsx.header-clear-formats	Clear Formats
+xlsx.fill-none	No Fill
+xlsx.number-format-custom	Custom…
+xlsx.merge-center	Merge & Center
+xlsx.merge-across	Merge Across
+xlsx.merge	Merge Cells
+xlsx.unmerge	Unmerge Cells
+xlsx.shrink	Shrink to Fit
+xlsx.unhide-sheet	Unhide Sheet
+xlsx.tab-color-none	No Color
+xlsx.move-sheet-left	Move Sheet Left
+xlsx.move-sheet-right	Move Sheet Right
+xlsx.split	Split
+xlsx.sort-manage	Sort Options…
+xlsx.remove-duplicates	Remove Duplicates…
+xlsx.goto-special	Go To Special…
+xlsx.text-to-columns	Text to Columns…
+xlsx.sort-descending	Sort Range (Descending)
+xlsx.export-csv	CSV UTF-8 (.csv, Current Sheet)
+xlsx.export-csv-sjis	CSV Shift_JIS (.csv, Current Sheet)
+xlsx.export-tsv	Text TSV (.tsv, Current Sheet)
+xlsx.insert-cells-right	Insert Cells (Shift Cells Right)
+xlsx.delete-cells-left	Delete Cells (Shift Cells Left)
+xlsx.group	Group
+xlsx.ungroup	Ungroup
+xlsx.collapse	Hide Detail
+xlsx.expand	Show Detail
+xlsx.conditional	Conditional Formatting
+xlsx.paste-skip-blanks	Skip Blanks
+xlsx.clear-all	Clear All
+xlsx.border-styles	Border Style
+xlsx.border-colors	Border Color
+xlsx.unhide-sheets	Unhide Sheets
+xlsx.tab-colors	Tab Color
+xlsx.compatibility-version	Calculation Compatibility Version
+xlsx.paste-special	Paste Special
+_xlsx.light-gray	Light Gray
+_xlsx.sum	Sum
+_xlsx.average	Average
+_xlsx.count-numbers	Count Numbers
+_xlsx.max	Max
+_xlsx.cannot-paste-here	Cannot paste here
+_xlsx.copy-cells-first-to-use-paste-special	Copy cells first to use Paste Special
+_xlsx.resolved	Resolved
+_xlsx.less-than	Less Than
+_xlsx.less-than-or-equal-to	Less Than or Equal To
+_xlsx.equal-to	Equal To
+_xlsx.not-equal-to	Not Equal To
+_xlsx.greater-than-or-equal-to	Greater Than or Equal To
+_xlsx.greater-than	Greater Than
+_xlsx.between	Between
+_xlsx.not-between	Not Between
+_xlsx.comparison-value-or-formula-e-g-10-a1-0	Comparison value or formula (e.g. 10, A1>0)
+_xlsx.second-comparison-value-or-formula	Second comparison value or formula
+_xlsx.the-sheet-or-rule-has-changed-reopen-it	The sheet or rule has changed. Reopen it.
+_xlsx.enter-a-valid-range-or-formula-and-a-6-digit-fil	Enter a valid range or formula and a 6-digit fill color.
+_xlsx.fill-color-rgb	Fill Color (RGB)
+_xlsx.stop-if-true-on	Stop If True: On
+_xlsx.stop-if-true-off	Stop If True: Off
+_xlsx.update-rule	Update Rule
+_xlsx.add-rule	Add Rule
+_xlsx.add-as-copy	Add as Copy
+_xlsx.delete-rules-in-selection	Delete Rules in Selection
+_xlsx.stop-on	Stop: On
+_xlsx.stop-off	Stop: Off
+_xlsx.apply-to-selection	Apply to Selection
+_xlsx.number-format-custom	Number Format (Custom)
+_xlsx.the-sheet-has-changed-reopen-it	The sheet has changed. Reopen it.
+_xlsx.enter-a-valid-cell-range	Enter a valid cell range.
+_xlsx.select-at-least-one-column	Select at least one column.
+_xlsx.check-the-range-and-headers	Check the range and headers.
+_xlsx.no-duplicate-values-were-found	No duplicate values were found.
+_xlsx.copy-cells	Copy Cells
+_xlsx.fill-series	Fill Series
+_xlsx.fill-formatting-only	Fill Formatting Only
+_xlsx.fill-without-formatting	Fill Without Formatting
+_xlsx.fill-days	Fill Days
+_xlsx.fill-weekdays	Fill Weekdays
+_xlsx.fill-months	Fill Months
+_xlsx.fill-years	Fill Years
+_xlsx.cannot-fill-here	Cannot fill here
+_xlsx.equals	Equals
+_xlsx.does-not-equal	Does Not Equal
+_xlsx.greater-than-2	Greater Than
+_xlsx.greater-than-or-equal-to-2	Greater Than or Equal To
+_xlsx.less-than-2	Less Than
+_xlsx.less-than-or-equal-to-2	Less Than or Equal To
+_xlsx.begins-with	Begins With
+_xlsx.does-not-begin-with	Does Not Begin With
+_xlsx.ends-with	Ends With
+_xlsx.does-not-end-with	Does Not End With
+_xlsx.contains	Contains
+_xlsx.does-not-contain	Does Not Contain
+_xlsx.after	After
+_xlsx.on-or-after	On or After
+_xlsx.before	Before
+_xlsx.on-or-before	On or Before
+_xlsx.tomorrow	Tomorrow
+_xlsx.today	Today
+_xlsx.yesterday	Yesterday
+_xlsx.next-week	Next Week
+_xlsx.this-week	This Week
+_xlsx.last-week	Last Week
+_xlsx.next-month	Next Month
+_xlsx.this-month	This Month
+_xlsx.last-month	Last Month
+_xlsx.next-quarter	Next Quarter
+_xlsx.this-quarter	This Quarter
+_xlsx.last-quarter	Last Quarter
+_xlsx.next-year	Next Year
+_xlsx.this-year	This Year
+_xlsx.last-year	Last Year
+_xlsx.year-to-date	Year to Date
+_xlsx.blanks	(Blanks)
+_xlsx.search	Search
+_xlsx.enter-a-date-such-as-10-7-2026	Enter a date such as 10/7/2026.
+_xlsx.enter-a-value	Enter a value.
+_xlsx.enter-a-number-from-1-to-100	Enter a number from 1 to 100.
+_xlsx.enter-a-number-from-1-to-500	Enter a number from 1 to 500.
+_xlsx.sort-ascending	Sort Ascending
+_xlsx.sort-descending	Sort Descending
+_xlsx.text-filters	Text Filters
+_xlsx.sort-smallest-to-largest	Sort Smallest to Largest
+_xlsx.sort-largest-to-smallest	Sort Largest to Smallest
+_xlsx.number-filters	Number Filters
+_xlsx.sort-oldest-to-newest	Sort Oldest to Newest
+_xlsx.sort-newest-to-oldest	Sort Newest to Oldest
+_xlsx.date-filters	Date Filters
+_xlsx.select-all-search-results	(Select All Search Results)
+_xlsx.select-all	(Select All)
+_xlsx.sort-by-cell-color	Sort by Cell Color
+_xlsx.filter-by-cell-color	Filter by Cell Color
+_xlsx.sort-by-font-color	Sort by Font Color
+_xlsx.filter-by-font-color	Filter by Font Color
+_xlsx.equals-2	Equals…
+_xlsx.does-not-equal-2	Does Not Equal…
+_xlsx.begins-with-2	Begins With…
+_xlsx.ends-with-2	Ends With…
+_xlsx.contains-2	Contains…
+_xlsx.does-not-contain-2	Does Not Contain…
+_xlsx.greater-than-3	Greater Than…
+_xlsx.greater-than-or-equal-to-3	Greater Than or Equal To…
+_xlsx.less-than-3	Less Than…
+_xlsx.less-than-or-equal-to-3	Less Than or Equal To…
+_xlsx.before-2	Before…
+_xlsx.after-2	After…
+_xlsx.between-2	Between…
+_xlsx.top-10	Top 10…
+_xlsx.above-average	Above Average
+_xlsx.below-average	Below Average
+_xlsx.all-dates-in-the-period	All Dates in the Period ▾
+_xlsx.all-dates-in-the-period-2	All Dates in the Period ▸
+_xlsx.custom-filter	Custom Filter…
+_xlsx.autofilter-options	AutoFilter Options
+_xlsx.none	(None)
+_xlsx.use-to-represent-any-single-character-use-to-rep	Use ? to represent any single character. Use * to represent any series of characters.
+_xlsx.top-10-autofilter	Top 10 AutoFilter
+_xlsx.top	Top ▾
+_xlsx.bottom	Bottom ▾
+_xlsx.percent	Percent ▾
+_xlsx.items	Items ▾
+_xlsx.find-what	Find what
+_xlsx.replace-with	Replace with
+_xlsx.include-formulas	Include formulas
+_xlsx.no-matching-cells-were-found	No matching cells were found.
+_xlsx.numbers	Numbers
+_xlsx.column	Column
+_xlsx.row	Row
+_xlsx.autofit-column-width	AutoFit Column Width
+_xlsx.autofit-row-height	AutoFit Row Height
+_xlsx.https-or-sheet1-a1	https://… or #Sheet1!A1
+_xlsx.no-link	(No link)
+_xlsx.sheet	Sheet
+_xlsx.fit-sheet-to-window	Fit Sheet to Window
+_xlsx.new-name	New Name
+_xlsx.use-selection	Use Selection
+_xlsx.name-selection	Name Selection
+_xlsx.name-manager	Name Manager
+_xlsx.add-name	Add Name
+_xlsx.update-name	Update Name
+_xlsx.refers-to-or-formula	Refers To or Formula
+_xlsx.refers-to-or-formula-e-g-sum-a1-a5-or-0-1	Refers to or formula (e.g. =SUM(A1:A5) or 0.1)
+_xlsx.normal	Normal
+_xlsx.narrow	Narrow
+_xlsx.wide	Wide
+_xlsx.orientation	Orientation
+_xlsx.scale	Scale
+_xlsx.fit-to-1-page	Fit to 1 Page
+_xlsx.print-area	Print Area
+_xlsx.clear	Clear
+_xlsx.print-area-none-used-range	Print Area: None (used range)
+_xlsx.insert-delete-above-selected-row	Insert/Delete Above Selected Row
+_xlsx.the-reference-is-not-valid	The reference is not valid.
+_xlsx.go-to	Go To
+_xlsx.reference	Reference:
+_xlsx.column-a-b	Column (A, B…)
+_xlsx.specify-column-names-within-the-range-each-colum	Specify column names within the range. Each column and key can be specified only once.
+_xlsx.range-to-sort	Range to Sort
+_xlsx.my-data-has-headers-on	My data has headers: On
+_xlsx.my-data-has-headers-off	My data has headers: Off
+_xlsx.select-column	Select column
+_xlsx.cell-values	Cell Values
+_xlsx.ascending	Ascending
+_xlsx.descending	Descending
+_xlsx.add-column	Add Column
+_xlsx.sort	Sort
+_xlsx.sort-2	Sort
+_xlsx.no-fill	(No Fill)
+_xlsx.automatic	(Automatic)
+_xlsx.tables-cannot-overlap	Tables cannot overlap.
+_xlsx.there-is-no-sheet	There is no sheet.
+_xlsx.a-range-containing-merged-cells-cannot-be-made-i	A range containing merged cells cannot be made into a table.
+_xlsx.the-cell-just-below-the-range-is-not-empty-so-a	The cell just below the range is not empty, so a header row cannot be added.
+_xlsx.create-table	Create Table
+_xlsx.specify-the-data-range-to-convert-to-a-table	Specify the data range to convert to a table
+_xlsx.my-table-has-headers	My table has headers
+_xlsx.text	Text
+_xlsx.light-orange	Light Orange
+_xlsx.number-2-decimal-places	Number (2 decimal places)
+_xlsx.currency	Currency
+_xlsx.accounting	Accounting
+_xlsx.short-date	Short Date
+_xlsx.long-date	Long Date
+_xlsx.time	Time
+_xlsx.percentage	Percentage
+_xlsx.fraction	Fraction
+_xlsx.scientific	Scientific
+_xlsx.cannot-move-part-of-a-merged-cell	Cannot move part of a merged cell
+_xlsx.this-name-cannot-be-used-as-a-sheet-name	This name cannot be used as a sheet name
+_xlsx.thin	Thin
+_xlsx.hairline	Hairline
+_xlsx.medium	Medium
+_xlsx.medium-dashed	Medium Dashed
+_xlsx.medium-dash-dot	Medium Dash-Dot
+_xlsx.medium-dash-dot-dot	Medium Dash-Dot-Dot
+_xlsx.slant-dash-dot	Slant Dash-Dot
+_xlsx.no-underline	No Underline
+_xlsx.single-underline	Single Underline
+_xlsx.double-underline	Double Underline
+_xlsx.single-accounting-underline	Single Accounting Underline
+_xlsx.double-accounting-underline	Double Accounting Underline
+_xlsx.all-borders	All Borders
+_xlsx.outside-borders	Outside Borders
+_xlsx.bottom-border	Bottom Border
+_xlsx.top-border	Top Border
+_xlsx.left-border	Left Border
+_xlsx.right-border	Right Border
+_xlsx.diagonal-up-border	Diagonal Up Border
+_xlsx.diagonal-down-border	Diagonal Down Border
+_xlsx.thick-bottom-border	Thick Bottom Border
+_xlsx.double-bottom-border	Double Bottom Border
+_xlsx.no-border	No Border
+_xlsx.center-across-selection	Center Across Selection
+_xlsx.fill	Fill
+_xlsx.decrease-indent	Decrease Indent
+_xlsx.increase-indent	Increase Indent
+_xlsx.version-1	Version 1
+_xlsx.version-2	Version 2
+_xlsx.all	All
+_xlsx.values	Values
+_xlsx.formats	Formats
+_xlsx.transpose	Transpose
+_xlsx.paste-link	Paste Link
+_xlsx.add	Add
+_xlsx.subtract	Subtract
+_xlsx.multiply	Multiply
+_xlsx.divide	Divide
+_xlsx.edit	Edit
+_xlsx.portrait	Portrait
+_xlsx.landscape	Landscape
+A4	A4
+B5	B5
+A3	A3
+_xlsx.letter	Letter
+_xlsx.underline-style	Underline Style
+_xlsx.find-next	Find Next
+100%	100%
+_xlsx.cut	Cut
+_xlsx.paste	Paste
+_xlsx.page-break	Page Break
+_xlsx.page-number	Page Number
+_xlsx.equation	Equation
+_xlsx.formula-is-true	Formula Is True
+_xlsx.conditional-formatting	Conditional Formatting
+xlsx.flash-fill	Flash Fill
+_xlsx.clear-filter-from-name	Clear Filter From "{name}"
+_xlsx.page-1-of	Page 1 of ?
+_xlsx.month-m	Month {m}
+_xlsx.exported-to-path	Exported to {path}
+_xlsx.this-operation-can-t-be-done-err	This operation can't be done ({err})
+_xlsx.chart-title	Chart Title
+_xlsx.format-chart	Format Chart
+_xlsx.select-a-chart	Select a chart.
+_xlsx.sheet-name	Sheet Name
+_xlsx.cell-color-color	Cell Color {color}
+_xlsx.rows-to-repeat-at-top	Rows to Repeat at Top
+_xlsx.rows-to-repeat-at-top-rows-printed-on-every-page	Rows to repeat at top: {rows} (printed on every page)
+_xlsx.rows-to-repeat-at-top-none	Rows to repeat at top: none
+_xlsx.table-n	Table{n}
+_xlsx.count-count	Count: {count}
+_xlsx.file-name	File Name
+_xlsx.font-color-color	Font Color {color}
+_xlsx.level-n	Level {n}
+_xlsx.column-name	Column {name}
+_xlsx.column-n	Column{n}
+_xlsx.a-different-chart-is-selected-open-format-chart	A different chart is selected. Open Format Chart again.
+_xlsx.print-area-range	Print area: {range}
+_xlsx.average-average-count-count-sum-sum	Average: {average}   Count: {count}   Sum: {sum}
+_xlsx.show-rows-where-name	Show rows where: {name}
+_xlsx.couldn-t-export-error	Couldn't export: {error}
+_xlsx.the-minimum-must-be-less-than-the-maximum	The minimum must be less than the maximum.
+_xlsx.enter-numbers-for-the-minimum-maximum-and-major	Enter numbers for the minimum, maximum and major unit (empty for Auto).
+_xlsx.gridlines	Gridlines
+_xlsx.major-unit	Major Unit
+_xlsx.the-major-unit-must-be-greater-than-0	The major unit must be greater than 0.
+_xlsx.quarter-q	Quarter {q}
+_xlsx.vertical-value-axis	Vertical (Value) Axis
+_xlsx.sort-by-color	Sort by Color
+_xlsx.filter-by-color	Filter by Color
+_xlsx.show	Show
+_xlsx.use-selected-rows	Use Selected Rows
+_xlsx.select-a-cell-in-a-table	Select a cell in a table.
+xlsx.chart-axis-min	Minimum
+xlsx.chart-axis-max	Maximum
+xlsx.text-direction	Orientation
+xlsx.font-effects	Superscript and Subscript
+xlsx.fill-pattern	Pattern Fill
+xlsx.pattern-color	Pattern Color
+xlsx.fill-gradient	Gradient Fill
+_xlsx.angle-counterclockwise	Angle Counterclockwise
+_xlsx.angle-clockwise	Angle Clockwise
+_xlsx.rotate-text-up	Rotate Text Up
+_xlsx.rotate-text-down	Rotate Text Down
+_xlsx.no-rotation	No Rotation
+_xlsx.normal-no-superscript-or-subscript	Normal (No Superscript or Subscript)
+_xlsx.75-gray	75% Gray
+_xlsx.50-gray	50% Gray
+_xlsx.25-gray	25% Gray
+_xlsx.12-5-gray	12.5% Gray
+_xlsx.6-25-gray	6.25% Gray
+_xlsx.horizontal-stripe	Horizontal Stripe
+_xlsx.vertical-stripe	Vertical Stripe
+_xlsx.reverse-diagonal-stripe	Reverse Diagonal Stripe
+_xlsx.diagonal-stripe	Diagonal Stripe
+_xlsx.diagonal-crosshatch	Diagonal Crosshatch
+_xlsx.thick-diagonal-crosshatch	Thick Diagonal Crosshatch
+_xlsx.thin-horizontal-stripe	Thin Horizontal Stripe
+_xlsx.thin-vertical-stripe	Thin Vertical Stripe
+_xlsx.thin-reverse-diagonal-stripe	Thin Reverse Diagonal Stripe
+_xlsx.thin-diagonal-stripe	Thin Diagonal Stripe
+_xlsx.thin-horizontal-crosshatch	Thin Horizontal Crosshatch
+_xlsx.thin-diagonal-crosshatch	Thin Diagonal Crosshatch
+xlsx.pivot-refresh	Refresh PivotTable
+xlsx.pivot-refresh-all	Refresh All
+_xlsx.select-a-cell-in-a-pivottable	Select a cell in a PivotTable.
+xlsx.pivot-insert	PivotTable…
+xlsx.pivot-fields	PivotTable Fields
+xlsx.pivot-value-settings	Value Field Settings…
+xlsx.pivot-options	PivotTable Options…
+xlsx.pivot-show-details	Show Details
+xlsx.pivot-calculated-field	Calculated Field…
+xlsx.pivot-calculated-item	Calculated Item…
+_xlsx.insert-calculated-field	Insert Calculated Field
+_xlsx.insert-field	Insert Field
+_xlsx.calculated-field-added	Calculated field added
+_xlsx.calculated-field-deleted	Calculated field deleted
+_xlsx.name	Name:
+_xlsx.formula	Formula:
+_xlsx.fields	Fields:
+_xlsx.please-enter-a-field-name	Please enter a field name
+_xlsx.please-enter-a-formula	Please enter a formula
+_xlsx.insert-calculated-item	Insert Calculated Item
+_xlsx.insert-item	Insert Item
+_xlsx.calculated-item-added	Calculated item added
+_xlsx.calculated-item-deleted	Calculated item deleted
+_xlsx.please-enter-an-item-name	Please enter an item name
+_xlsx.please-enter-a-formula-2	Please enter a formula
+_xlsx.items-2	Items:
+_xlsx.no-fields-available	No fields available
+xlsx.pivot-group	Group…
+xlsx.pivot-ungroup	Ungroup
+_xlsx.table-or-range	Table or range
+_xlsx.where-to-place-the-pivottable	Where to place the PivotTable
+_xlsx.new-worksheet	New worksheet
+_xlsx.existing-worksheet	Existing worksheet
+_xlsx.create	Create
+_xlsx.choose-fields-to-add-to-the-report	Choose fields to add to the report
+_xlsx.filters	Filters
+_xlsx.summarize	Summarize
+_xlsx.values-2	Σ Values
+_xlsx.pivottable	PivotTable
+_xlsx.the-data-range-is-not-valid	The data range is not valid.
+_xlsx.select-a-range-of-two-or-more-rows-with-a-headin	Select a range of two or more rows with a heading on each column.
+_xlsx.the-location-is-not-valid	The location is not valid.
+_xlsx.count	Count
+_xlsx.max-2	Max
+_xlsx.min	Min
+_xlsx.product	Product
+_xlsx.stddev	StdDev
+_xlsx.stddevp	StdDevp
+_xlsx.var	Var
+_xlsx.varp	Varp
+_xlsx.create-pivottable	Create PivotTable
+_xlsx.pivottable-fields	PivotTable Fields
+_xlsx.the-pivottable-would-overlap-other-cells-or-anot	The PivotTable would overlap other cells or another PivotTable, so it cannot be changed.
+_xlsx.select-field	Select field
+_xlsx.all-2	(All)
+_xlsx.blank	(blank)
+_xlsx.table-name	Table Name
+_xlsx.change	Change
+_xlsx.table-style-options	Table Style Options
+_xlsx.banded-rows	Banded Rows
+_xlsx.banded-columns	Banded Columns
+_xlsx.filter-button	Filter Button
+_xlsx.total-row-functions	Total Row Functions
+_xlsx.table-styles	Table Styles
+_xlsx.light	Light
+_xlsx.medium-2	Medium
+_xlsx.dark	Dark
+_xlsx.table-design	Table Design
+_xlsx.this-table-name-is-not-valid	This table name is not valid.
+_xlsx.this-name-is-already-in-use	This name is already in use.
+_xlsx.the-cells-just-below-the-table-are-not-empty-so	The cells just below the table are not empty, so the total row cannot be added.
+_xlsx.the-table-has-only-its-header-row	The table has only its header row.
+_xlsx.the-cells-just-above-the-table-are-not-empty-so	The cells just above the table are not empty, so the header row cannot be added.
+xlsx.table-design	Table Design…
+xlsx.theme-lighter	{name}, Lighter {n}%
+xlsx.theme-darker	{name}, Darker {n}%
+xlsx.theme-palette	Theme Color Palette
+xlsx.theme-colors	Theme Colors and Fonts…
+_xlsx.background-1	Background 1
+_xlsx.text-1	Text 1
+_xlsx.background-2	Background 2
+_xlsx.text-2	Text 2
+_xlsx.accent-1	Accent 1
+_xlsx.accent-2	Accent 2
+_xlsx.accent-3	Accent 3
+_xlsx.accent-4	Accent 4
+_xlsx.accent-5	Accent 5
+_xlsx.accent-6	Accent 6
+_xlsx.data-range	Data Range
+_xlsx.apply-range	Apply Range
+_xlsx.switch-row-column	Switch Row/Column
+_xlsx.the-data-range-of-this-chart-cannot-be-changed	The data range of this chart cannot be changed.
+_xlsx.cannot-read-the-data-range-example-sheet1-a-3-d	Cannot read the data range (example: Sheet1!$A$3:$D$8).
+_xlsx.use-a-range-of-at-least-2-rows-and-2-columns-who	Use a range of at least 2 rows and 2 columns whose first row and first column are headings (text).
+_xlsx.show-in-compact-form	Show in Compact Form
+_xlsx.show-in-outline-form	Show in Outline Form
+_xlsx.show-in-tabular-form	Show in Tabular Form
+_xlsx.do-not-show-subtotals	Do Not Show Subtotals
+_xlsx.show-all-subtotals-at-bottom-of-group	Show All Subtotals at Bottom of Group
+_xlsx.show-all-subtotals-at-top-of-group	Show All Subtotals at Top of Group
+_xlsx.show-grand-total-row	Show Grand Total Row
+_xlsx.show-grand-total-column	Show Grand Total Column
+_xlsx.repeat-all-item-labels	Repeat All Item Labels
+_xlsx.for-empty-cells-show	For Empty Cells Show
+_xlsx.for-error-values-show	For Error Values Show
+_xlsx.apply-captions	Apply Captions
+xlsx.goal-seek	Goal Seek…
+goalseek.found	A solution was found that makes cell {formula} {target}: {cell} = {value}
+_xlsx.goal-seek	Goal Seek
+_xlsx.set-cell	Set Cell
+_xlsx.to-value	To Value
+_xlsx.by-changing-cell	By Changing Cell
+_xlsx.run	Run
+_xlsx.set-cell-must-be-a-single-cell-on-this-sheet	Set Cell must be a single cell on this sheet.
+_xlsx.by-changing-cell-must-be-a-single-cell-on-this-s	By Changing Cell must be a single cell on this sheet.
+_xlsx.enter-a-number-for-to-value	Enter a number for To Value.
+_xlsx.by-changing-cell-must-be-a-number-cell-without-a	By Changing Cell must be a number cell without a formula.
+_xlsx.set-cell-must-be-a-cell-with-a-formula-that-retu	Set Cell must be a cell with a formula that returns a number.
+_xlsx.no-solution-was-found	No solution was found.
+xlsx.data-table	Data Table…
+_xlsx.data-table	Data Table
+_xlsx.row-input-cell	Row Input Cell
+_xlsx.column-input-cell	Column Input Cell
+_xlsx.select-the-cells-of-the-data-table-including-the	Select the cells of the data table (including the values across the top and down the left).
+_xlsx.an-input-cell-must-be-a-single-cell-on-this-shee	An input cell must be a single cell on this sheet.
+_xlsx.specify-a-row-input-cell-a-column-input-cell-or	Specify a row input cell, a column input cell or both.
+xlsx.advanced-filter	Advanced Filter…
+xlsx.consolidate	Consolidate…
+xlsx.subtotal	Subtotal…
+xlsx.cf-date-occurring	A Date Occurring…
+xlsx.cf-date.yesterday	Yesterday
+xlsx.cf-date.today	Today
+xlsx.cf-date.tomorrow	Tomorrow
+xlsx.cf-date.last7days	In the last 7 days
+xlsx.cf-date.last-week	Last week
+xlsx.cf-date.this-week	This week
+xlsx.cf-date.next-week	Next week
+xlsx.cf-date.last-month	Last month
+xlsx.cf-date.this-month	This month
+xlsx.cf-date.next-month	Next month
+_xlsx.case-sensitive-on	Case sensitive: On
+_xlsx.case-sensitive-off	Case sensitive: Off
+_xlsx.list-order	List Order
+_xlsx.reverse-list-order	Reverse List Order
+_xlsx.list-configured	List Configured ▾
+_xlsx.list	List…
+_xlsx.custom-list-comma-separated	Custom List (comma separated):
+_xlsx.clear-list-normal-order	Clear List (Normal Order)
+_xlsx.sun-sat	Sun–Sat
+_xlsx.sunday-saturday	Sunday–Saturday
+_xlsx.jan-dec	Jan–Dec
+_xlsx.q1-q4	Q1–Q4
+_xlsx.sun-sat-2	Sun–Sat
+_xlsx.sunday-saturday-2	Sunday–Saturday
+_xlsx.jan-dec-2	Jan–Dec
+_xlsx.e-g-sun-mon-tue-wed-thu-fri-sat	e.g. Sun, Mon, Tue, Wed, Thu, Fri, Sat
+xlsx.calc-options	Calculation Options
+xlsx.calc-auto	Automatic
+xlsx.calc-auto-no-table	Automatic Except Data Tables
+xlsx.calc-manual	Manual
+xlsx.calculate-now	Calculate Now
+xlsx.calculate-sheet	Calculate Sheet
+xlsx.scenario-manager	Scenario Manager…
+xlsx.sparklines	Sparklines
+xlsx.sparkline-line	Line…
+xlsx.sparkline-column	Column…
+xlsx.sparkline-winloss	Win/Loss…
+xlsx.clear-sparklines	Clear Sparklines
+xlsx.sparkline-clear-selected	Clear Selected Sparklines
+xlsx.sparkline-clear-group	Clear Selected Sparkline Groups
+xlsx.sparkline-styles	Sparkline Styles
+xlsx.sparkline-style-1	Style 1
+xlsx.sparkline-style-2	Style 2
+xlsx.sparkline-style-3	Style 3
+xlsx.sparkline-style-4	Style 4
+xlsx.sparkline-style-5	Style 5
+xlsx.sparkline-style-6	Style 6
+xlsx.sparkline-colors	Sparkline Line Color
+xlsx.sparkline-color-blue	Blue
+xlsx.sparkline-color-red	Red
+xlsx.sparkline-color-green	Green
+xlsx.sparkline-color-purple	Purple
+xlsx.sparkline-color-cyan	Cyan
+xlsx.sparkline-color-orange	Orange
+xlsx.sparkline-color-gray	Gray
+xlsx.sparkline-color-black	Black
+xlsx.sparkline-display-hidden	Show Data in Hidden Rows and Columns
+xlsx.sparkline-display-hidden-on	Show Data in Hidden Rows and Columns
+xlsx.sparkline-display-hidden-off	Hide Data in Hidden Rows and Columns
+xlsx.sparkline-date-axis-menu	Date Axis
+xlsx.sparkline-date-axis-on	Use Date Axis
+xlsx.sparkline-date-axis-off	General Axis (Equally Spaced)
+xlsx.protect-workbook	Protect Workbook…
+xlsx.unprotect-workbook	Unprotect Workbook…
+_xlsx.protect-structure-and-windows	Protect structure and windows
+_xlsx.protect	Protect
+_xlsx.structure	Structure
+_xlsx.windows	Windows
+_xlsx.protect-workbook	Protect Workbook
+_xlsx.unprotect-workbook	Unprotect Workbook
+_xlsx.protect-workbook-2	Protect Workbook
+_xlsx.select-at-least-one-element-to-protect	Select at least one element to protect.
+_xlsx.workbook-is-protected-and-cannot-be-changed	Workbook is protected and cannot be changed.
+xlsx.paste-validation	Validation
+xlsx.allow-edit-ranges	Allow Users to Edit Ranges…
+_xlsx.allow-users-to-edit-ranges	Allow Users to Edit Ranges
+_xlsx.ranges-unlocked-when-sheet-is-protected	Ranges unlocked when sheet is protected
+_xlsx.no-ranges-registered	No ranges registered
+_xlsx.refers-to-cells	Refers to cells
+_xlsx.range-password-optional	Range password (optional)
+_xlsx.add-apply	Add / Apply
+_xlsx.password-protected	Password Protected
+_xlsx.no-password	No Password
+xlsx.precision-as-displayed	Precision as Displayed
+xlsx.iterative-calculation	Enable Iterative Calculation
+xlsx.trace-precedents	Trace Precedents
+xlsx.trace-dependents	Trace Dependents
+xlsx.remove-arrows	Remove Arrows
+xlsx.remove-all-arrows	Remove All Arrows
+xlsx.remove-precedent-arrows	Remove Precedent Arrows
+xlsx.remove-dependent-arrows	Remove Dependent Arrows
+xlsx.evaluate-formula	Evaluate Formula...
+xlsx.watch-window	Watch Window...
+_xlsx.evaluate-formula	Evaluate Formula
+_xlsx.watch-window	Watch Window
+_xlsx.evaluation-cell	Evaluation Cell
+_xlsx.formula-and-step-evaluation	Formula and Step Evaluation
+_xlsx.step-in-available	Step In Available
+_xlsx.evaluate	Evaluate
+_xlsx.step-in	Step In
+_xlsx.step-out	Step Out
+xlsx.eval.restart	Restart
+_xlsx.the-cell-currently-being-evaluated-does-not-cont	The cell currently being evaluated does not contain a formula.
+_xlsx.add-watch	Add Watch
+_xlsx.delete-all	Delete All
+_xlsx.no-watch-cells-yet-click-add-watch-to-add	No watch cells yet. Click "Add Watch" to add.
+_xlsx.sort-by-value	Sort by Value
+xlsx.alt-text	Alt Text…
+xlsx.alt-text.title	Title
+xlsx.alt-text.description	Description
+xlsx.alt-text.hint	Enter a description of the image or shape to be read by screen readers.
+xlsx.alt-text.apply	Apply
+xlsx.comment-delete	Delete Comment
+comment.cell	Comment on cell {cell}
+_xlsx.type-a-reply-and-press-enter	Type a reply and press Enter
+_xlsx.post	Post
+xlsx.export-xltx	Excel Template (.xltx)
+xlsx.new-from-template	New from Template…
+xlsx.accessibility-check	Check Accessibility…
+xlsx.accessibility.title	Accessibility
+xlsx.accessibility.desc	Inspects workbook for accessibility issues.
+xlsx.accessibility.passed	No accessibility issues found.
+xlsx.accessibility.passed-sub	All pictures have alt text, table headers and sheet names are configured properly.
+xlsx.accessibility.recheck	Recheck
+xlsx.accessibility.recheck-done	Recheck complete
+xlsx.print-what	Print What
+xlsx.print-what.active-sheet	Active Sheet
+xlsx.print-what.entire-workbook	Entire Workbook
+xlsx.print-what.selection	Selection
+xlsx.header.custom	Custom Header…
+xlsx.footer.custom	Custom Footer…
+xlsx.header-edit.title	Edit Header
+xlsx.footer-edit.title	Edit Footer
+xlsx.hf.odd-page	Standard / Odd Pages
+xlsx.hf.even-page	Even Pages
+xlsx.hf.first-page	First Page
+xlsx.hf.left-section	Left Section
+xlsx.hf.center-section	Center Section
+xlsx.hf.right-section	Right Section
+xlsx.hf.insert-page	Page (&P)
+xlsx.hf.insert-pages	Pages (&N)
+xlsx.hf.insert-date	Date (&D)
+xlsx.hf.insert-time	Time (&T)
+xlsx.hf.insert-file	File (&F)
+xlsx.hf.insert-sheet	Sheet (&A)
+xlsx.hf.code-preview	Code
+xlsx.hf.apply-code	Load from Code
+xlsx.hf.diff-first	Different First Page
+xlsx.hf.diff-odd-even	Different Odd & Even Pages
+xlsx.hf.scale-with-doc	Scale with Document
+xlsx.hf.align-margins	Align with Page Margins
+xlsx.hf.apply	Apply
+xlsx.hf.clear	Clear
+xlsx.hf.back	← Back to Page Setup
+xlsx.insert-textbox	Text Box
+xlsx.insert-shape	Shapes
+xlsx.shape.rect	Rectangle
+xlsx.shape.round-rect	Rounded Rectangle
+xlsx.shape.ellipse	Ellipse
+xlsx.shape.triangle	Triangle
+xlsx.shape.right-arrow	Right Arrow
+xlsx.shape.star5	5-Point Star
+xlsx.shape.callout	Callout
+xlsx.shape.heart	Heart
+xlsx.shape.line	Line
+xlsx.shape.line-arrow	Arrow Line
+xlsx.insert-picture	Picture
+xlsx.image-file	Picture from File
+xlsx.order	Order
+xlsx.order-front	Bring to Front
+xlsx.order-back	Send to Back
+xlsx.order-forward	Bring Forward
+xlsx.order-backward	Send Backward
+xlsx.align	Align
+xlsx.align.left	Align Left
+xlsx.align.center	Align Center
+xlsx.align.right	Align Right
+xlsx.align.top	Align Top
+xlsx.align.middle	Align Middle
+xlsx.align.bottom	Align Bottom
+xlsx.distribute.horizontal	Distribute Horizontally
+xlsx.distribute.vertical	Distribute Vertically
+xlsx.frame-settings	Size and Properties...
+xlsx.selection-pane	Selection Pane...
+xlsx.shape-fill	Shape Fill
+xlsx.shape-fill.none	No Fill
+xlsx.shape-fill.black	Black
+xlsx.shape-fill.white	White
+xlsx.shape-fill.blue	Blue
+xlsx.shape-fill.cyan	Cyan
+xlsx.shape-fill.green	Green
+xlsx.shape-fill.yellow	Yellow
+xlsx.shape-fill.orange	Orange
+xlsx.shape-fill.red	Red
+xlsx.shape-fill.purple	Purple
+xlsx.shape-fill.gray	Gray
+xlsx.shape-stroke	Shape Outline
+xlsx.shape-stroke.none	No Outline
+xlsx.shape-stroke.black	Black
+xlsx.shape-stroke.white	White
+xlsx.shape-stroke.blue	Blue
+xlsx.shape-stroke.cyan	Cyan
+xlsx.shape-stroke.green	Green
+xlsx.shape-stroke.yellow	Yellow
+xlsx.shape-stroke.orange	Orange
+xlsx.shape-stroke.red	Red
+xlsx.shape-stroke.purple	Purple
+xlsx.shape-stroke.gray	Gray
+xlsx.shape-stroke.width	Weight
+xlsx.shape-stroke.width-0-5	0.5 pt
+xlsx.shape-stroke.width-0-75	0.75 pt
+xlsx.shape-stroke.width-1-5	1.5 pt
+xlsx.shape-stroke.width-2-25	2.25 pt
+xlsx.shape-stroke.width-3	3 pt
+xlsx.shape-stroke.width-4-5	4.5 pt
+xlsx.shape-stroke.width-6	6 pt
+xlsx.shape-stroke.dash	Dashes
+xlsx.shape-stroke.dash-solid	Solid
+xlsx.shape-stroke.dash-dash	Dash
+xlsx.shape-stroke.dash-dot	Dot
+xlsx.shape-stroke.dash-dash-dot	Dash Dot
+xlsx.shape-effect	Shape Effects
+xlsx.shape-effect.shadow-none	No Shadow
+xlsx.shape-effect.shadow-bottom-right	Offset: Bottom Right
+xlsx.shape-effect.shadow-right	Offset: Right
+xlsx.shape-effect.shadow-soft	Offset: Soft
+xlsx.chart-data-table	Data Table
+xlsx.group-shapes	Group
+xlsx.group-shapes.group	Group
+xlsx.group-shapes.ungroup	Ungroup
+xlsx.crop	Crop
+xlsx.crop.left	Crop Left 10%
+xlsx.crop.right	Crop Right 10%
+xlsx.crop.top	Crop Top 10%
+xlsx.crop.bottom	Crop Bottom 10%
+xlsx.crop.center	Crop All Sides 10%
+xlsx.crop.reset	Reset Crop
+xlsx.chart-trendline	Trendline
+xlsx.picture.color	Picture Color
+xlsx.picture.color.none	No Color Effect
+xlsx.picture.color.grayscale	Grayscale
+xlsx.picture.color.sepia	Sepia
+xlsx.picture.color.blue	Blue (Monotone)
+xlsx.picture.color.green	Green (Monotone)
+xlsx.picture.color.red	Red (Monotone)
+xlsx.picture.color.orange	Orange (Monotone)
+xlsx.picture.color.purple	Purple (Monotone)
+xlsx.picture.correction	Picture Corrections (Brightness & Contrast)
+xlsx.picture.lum.normal	Normal (Brightness 0%, Contrast 0%)
+xlsx.picture.lum.bright-p40	Brightness: +40%
+xlsx.picture.lum.bright-p20	Brightness: +20%
+xlsx.picture.lum.bright-m20	Brightness: -20%
+xlsx.picture.lum.bright-m40	Brightness: -40%
+xlsx.picture.lum.contrast-p40	Contrast: +40%
+xlsx.picture.lum.contrast-p20	Contrast: +20%
+xlsx.picture.lum.contrast-m20	Contrast: -20%
+xlsx.picture.lum.contrast-m40	Contrast: -40%
+xlsx.picture.lum.bright-contrast-high	Brightness: +20%, Contrast: +20%
+xlsx.picture.lum.bright-contrast-low	Brightness: -20%, Contrast: -20%
+xlsx.picture.corner	Rounded Corners
+xlsx.picture.corner.none	Square (No Corner)
+xlsx.picture.corner.small	Small (5%)
+xlsx.picture.corner.medium	Medium (10%)
+xlsx.picture.corner.large	Large (20%)
+xlsx.picture.corner.round	Round (50%)
+xlsx.picture.reset	Reset Picture Effects
+xlsx.chart-error-bars	Error Bars
+xlsx.chart-styles	Chart Styles
+xlsx.chart-style-none	No Style
+xlsx.chart-style-1	Style 1
+xlsx.chart-style-2	Style 2
+xlsx.chart-style-3	Style 3
+xlsx.chart-style-4	Style 4
+xlsx.chart-style-5	Style 5
+xlsx.chart-style-6	Style 6
+xlsx.chart-style-7	Style 7
+xlsx.chart-style-8	Style 8
+xlsx.chart-palettes	Chart Colors
+xlsx.chart-palette-1	Colorful 1
+xlsx.chart-palette-2	Colorful 2
+xlsx.chart-palette-3	Colorful 3
+xlsx.chart-palette-4	Colorful 4
+xlsx.chart-palette-5	Monochromatic 1
+xlsx.chart-palette-6	Monochromatic 2
+xlsx.chart-palette-7	Monochromatic 3
+xlsx.chart-palette-8	Monochromatic 4
+xlsx.chart-palette-9	Monochromatic 5
+xlsx.chart-palette-10	Monochromatic 6
+_xlsx.chart-colors	Chart Colors
+_xlsx.no-style	No Style
+_xlsx.style-1	Style 1
+_xlsx.style-2	Style 2
+_xlsx.style-3	Style 3
+_xlsx.style-4	Style 4
+_xlsx.style-5	Style 5
+_xlsx.style-6	Style 6
+_xlsx.style-7	Style 7
+_xlsx.style-8	Style 8
+_xlsx.colorful-1	Colorful 1
+_xlsx.colorful-2	Colorful 2
+_xlsx.colorful-3	Colorful 3
+_xlsx.colorful-4	Colorful 4
+_xlsx.monochromatic-1	Monochromatic 1
+_xlsx.monochromatic-2	Monochromatic 2
+_xlsx.monochromatic-3	Monochromatic 3
+_xlsx.monochromatic-4	Monochromatic 4
+_xlsx.monochromatic-5	Monochromatic 5
+_xlsx.monochromatic-6	Monochromatic 6
+xlsx.text-format	Text Format
+xlsx.text.bold	Bold
+xlsx.text.italic	Italic
+xlsx.text.underline	Underline
+xlsx.text.strikethrough	Strikethrough
+xlsx.text.color	Font Color
+xlsx.text.color-black	Black
+xlsx.text.color-white	White
+xlsx.text.color-blue	Blue
+xlsx.text.color-cyan	Cyan
+xlsx.text.color-green	Green
+xlsx.text.color-yellow	Yellow
+xlsx.text.color-orange	Orange
+xlsx.text.color-red	Red
+xlsx.text.color-purple	Purple
+xlsx.text.color-gray	Gray
+xlsx.text.size	Font Size
+xlsx.text-align	Text Alignment
+xlsx.text-box	Text Box Settings
+xlsx.text-vertical	Vertical Alignment
+xlsx.text-vertical.top	Top
+xlsx.text-vertical.middle	Middle
+xlsx.text-vertical.bottom	Bottom
+xlsx.text-direction.horizontal	Horizontal
+xlsx.text-direction.vertical	Vertical
+xlsx.text-direction.rotate-90	Rotate 90° Clockwise
+xlsx.text-direction.rotate-270	Rotate 90° Counterclockwise
+xlsx.text-insets	Internal Margins
+xlsx.text-insets.none	No Margins
+xlsx.text-insets.normal	Normal Margins
+xlsx.text-insets.wide	Wide Margins
+xlsx.text.wrap	Wrap Text in Shape
+xlsx.object-properties	Object Properties
+xlsx.placement.move-and-size	Move and Size with Cells
+xlsx.placement.move-only	Move but Don't Size with Cells
+xlsx.placement.free	Don't Move or Size with Cells
+xlsx.placement.print	Print Object
+xlsx.change-shape	Change Shape
+xlsx.change-shape.rect	Rectangle
+xlsx.change-shape.round-rect	Rounded Rectangle
+xlsx.change-shape.ellipse	Oval
+xlsx.change-shape.triangle	Isosceles Triangle
+xlsx.change-shape.rt-triangle	Right Triangle
+xlsx.change-shape.diamond	Diamond
+xlsx.change-shape.pentagon	Regular Pentagon
+xlsx.change-shape.hexagon	Hexagon
+xlsx.change-shape.right-arrow	Right Arrow
+xlsx.change-shape.left-arrow	Left Arrow
+xlsx.change-shape.up-arrow	Up Arrow
+xlsx.change-shape.down-arrow	Down Arrow
+xlsx.change-shape.star5	5-Point Star
+xlsx.change-shape.callout	Rectangular Callout
+xlsx.change-shape.cloud	Cloud
+xlsx.change-shape.heart	Heart
+xlsx.shape-textlink	Link to Cell
+xlsx.shape-textlink.current-cell	Link to Selected Cell
+xlsx.shape-textlink.clear	Remove Link to Cell
+xlsx.copy-as-picture	Copy as Picture
+_xlsx.properties	Properties
+_xlsx.object-positioning	Object Positioning:
+_xlsx.move-and-size-with-cells	Move and size with cells
+_xlsx.move-but-don-t-size-with-cells	Move but don't size with cells
+_xlsx.don-t-move-or-size-with-cells	Don't move or size with cells
+_xlsx.print-object	Print object
+_xlsx.objects	Objects
+_xlsx.row-differences	Row Differences
+_xlsx.column-differences	Column Differences
+_xlsx.precedents	Precedents
+_xlsx.dependents	Dependents
+_xlsx.same-condition	Same Condition
+_xlsx.same-validation	Same Validation
+_xlsx.direct-only	Direct Only
+_xlsx.all-levels	All Levels
+_xlsx.no-matching-objects-found	No matching objects found.
+xlsx.move-chart	Move Chart…
+_xlsx.move-chart	Move Chart
+_xlsx.choose-where-you-want-the-chart-to-be-placed	Choose where you want the chart to be placed:
+_xlsx.new-sheet	New sheet:
+_xlsx.object-in	Object in:
+_xlsx.cannot-create-a-new-sheet-because-the-workbook-s	Cannot create a new sheet because the workbook structure is protected.
+_xlsx.invalid-sheet-name	Invalid sheet name.
+_xlsx.a-sheet-with-this-name-already-exists	A sheet with this name already exists.
+_xlsx.please-select-a-destination-sheet	Please select a destination sheet.
+xlsx.chart-radar-style	Radar Style
+_xlsx.radar-style	Radar Style
+xlsx.import-text	From Text/CSV…
+import-text.done	Imported {rows} rows.
+import-text.file	File: {file}
+import-text.encoding	File origin: {encoding}
+import-text.delimiter	Delimiter: {delimiter}
+import-text.column	Column {n}: {format}
+_xlsx.load	Load
+_xlsx.no-file-chosen	(no file chosen)
+_xlsx.choose-file	Choose File…
+_xlsx.start-at-row	Start at row
+_xlsx.column-data-format-click-to-change	Column data format (click to change)
+_xlsx.make-all-columns-text	Make all columns Text
+_xlsx.choose-a-file-to-load	Choose a file to load.
+_xlsx.there-is-no-data-to-load	There is no data to load.
+_xlsx.there-is-already-data-here-press-load-again-to-r	There is already data here. Press Load again to replace it.
+_xlsx.do-not-import	Do not import
+_xlsx.date-ymd	Date: YMD
+_xlsx.date-mdy	Date: MDY
+_xlsx.date-dmy	Date: DMY
+_xlsx.date-dym	Date: DYM
+_xlsx.date-myd	Date: MYD
+_xlsx.date-ydm	Date: YDM
+_xlsx.from-text-csv	From Text/CSV
+xlsx.external-links	Workbook Links…
+external-links.updated	Updated the values from {name}.
+external-links.not-found	File not found: {path}
+external-links.broken	Broke the link to {name}.
+external-links.sheets	Sheets: {sheets}
+_xlsx.this-workbook-has-no-links	This workbook has no links.
+_xlsx.update-values	Update Values
+_xlsx.update-from-file	Update from File…
+_xlsx.break-link	Break Link
+_xlsx.update	Update
+_xlsx.workbook-links	Workbook Links
+_xlsx.insert-row	Insert Row
+_xlsx.insert-column	Insert Column
+_xlsx.clear-contents	Clear Contents
+_xlsx.create-or-remove-filter	Create or Remove Filter
+_xlsx.filter-by-selected-cell-s-value	Filter by Selected Cell's Value
+_xlsx.format-cells	Format Cells…
+_xlsx.hyperlink	Hyperlink…
+_xlsx.define-name	Define Name…
+_xlsx.protect-sheet	Protect Sheet…
+_xlsx.the-number-in-this-cell-is-formatted-as-text	The number in this cell is formatted as text
+_xlsx.the-formula-in-this-cell-results-in-an-error	The formula in this cell results in an error
+_xlsx.this-formula-differs-from-the-formulas-around-it	This formula differs from the formulas around it
+_xlsx.convert-to-number	Convert to Number
+_xlsx.ignore-error	Ignore Error
+_xlsx.edit-in-formula-bar	Edit in Formula Bar
+_xlsx.pick-from-drop-down-list	Pick from Drop-down List…
+_xlsx.filter-by-selected-cell-s-color	Filter by Selected Cell's Color
+_xlsx.filter-by-selected-cell-s-font-color	Filter by Selected Cell's Font Color
+xlsx.chart.no-data	There is no data to chart. Select cells with a heading row and column.
+xlsx.fill-down	Fill Down
+xlsx.fill-right	Fill Right
+_xlsx.indent	Indent
+_xlsx.set-size	Set size
+_xlsx.size-points	Size (points)
+_xlsx.sample	Sample: 
+_xlsx.set-font	Set font
+_xlsx.font-name	Font name
+_xlsx.locked	Locked
+_xlsx.locked-and-hidden-take-effect-when-the-sheet-is	Locked and Hidden take effect when the sheet is protected.
+_xlsx.top-2	Top
+_xlsx.underline	Underline
+_xlsx.bottom-2	Bottom
+_xlsx.protection	Protection
+_xlsx.right	Right
+_xlsx.left	Left
+_xlsx.wrap-text	Wrap text
+_xlsx.text-direction	Text direction
+_xlsx.diagonal-up	Diagonal up
+_xlsx.diagonal-down	Diagonal down
+_xlsx.horizontal	Horizontal
+_xlsx.line-style	Line style
+_xlsx.vertical	Vertical
+_xlsx.shrink-to-fit	Shrink to fit
+_xlsx.borders	Borders
+_xlsx.background-color	Background color
+_xlsx.hidden-hide-the-formula	Hidden (hide the formula)
+xlsx.cf-icons-reverse-menu	Reversed Icon Sets
+_xlsx.unnamed	(Unnamed)
+_xlsx.name-seconds-s	{name}, {seconds} s
+_xlsx.count-shapes-selected	{count} Shapes Selected
+_xlsx.hex-width-pt-dashed	#{hex}, {width} pt{dashed}
+_xlsx.dashed	, Dashed
+_xlsx.general	General
+_xlsx.f-label	{f} ({label})
+_xlsx.error-error	Error: {error}
+_xlsx.mark-filter-in-place	{mark} Filter in place
+_xlsx.mark-copy-to-another-location	{mark} Copy to another location
+_xlsx.mark-unique-records-only	{mark} Unique records only
+_xlsx.tag-summary-advice	[{tag}] {summary} {advice}
+_xlsx.title-message	{title}: {message}
+_xlsx.opening-url	Opening {url}
+_xlsx.invalid-reference-place	Invalid reference: {place}
+_xlsx.created-group	Created {group}
+_xlsx.sheet-current	{sheet} (current)
+_xlsx.this-action-is-unavailable-err	This action is unavailable ({err})
+_xlsx.style-num	Style {num}
+_xlsx.number-format-num-desc	Number Format ({num_desc})
+_xlsx.alignment-align-desc	Alignment ({align_desc})
+_xlsx.font-font-desc	Font ({font_desc})
+_xlsx.border-border-desc	Border ({border_desc})
+_xlsx.fill-fill-desc	Fill ({fill_desc})
+_xlsx.protection-protect-desc	Protection ({protect_desc})
+_xlsx.name-custom	{name} (Custom)
+_xlsx.sheet-name-cell-range-exceeds-the-older-version-	{sheet_name}: Cell range exceeds the older-version limit (65,536 rows / 256 columns) ({count})
+_xlsx.this-sheet-has-count-cells-beyond-the-excel-97-2	This sheet has {count} cells beyond the Excel 97-2003 maximum size (65,536 rows, 256 columns). When opened in an older version, data outside the range is lost (first cell: {cell_ref}).
+_xlsx.sheet-name-cell-ref-contains-unsupported-functio	{sheet_name}!{cell_ref}: Contains unsupported function “{func}”
+_xlsx.function-func-is-not-supported-in-excel-97-2003-	Function “{func}” is not supported in Excel 97-2003 and causes a #NAME? error when opened in an older version.
+_xlsx.sheet-name-cell-info-four-or-more-conditional-fo	{sheet_name}{cell_info}: Four or more conditional formatting rules are set
+_xlsx.sheet-name-cell-info-data-bar-conditional-format	{sheet_name}{cell_info}: Data bar conditional formatting is set
+_xlsx.sheet-name-cell-info-color-scale-conditional-for	{sheet_name}{cell_info}: Color scale conditional formatting is set
+_xlsx.sheet-name-cell-info-icon-set-conditional-format	{sheet_name}{cell_info}: Icon set conditional formatting is set
+_xlsx.sheet-name-table-tbl-name-will-be-converted-to-a	{sheet_name}: Table “{tbl_name}” will be converted to a normal range
+_xlsx.sheet-name-cell-info-sparklines-are-not-displaye	{sheet_name}{cell_info}: Sparklines are not displayed in older versions ({total_sparklines})
+_xlsx.sheet-name-gradient-fills-will-be-converted-to-s	{sheet_name}: Gradient fills will be converted to solid colors ({count})
+_xlsx.this-sheet-has-count-cells-with-gradient-fills-e	This sheet has {count} cells with gradient fills. Excel 97-2003 replaces them with an approximate solid color (first cell: {cell_ref}).
+_xlsx.name-name-contains-unsupported-function-func	Name “{name}”: contains unsupported function “{func}”
+_xlsx.the-function-func-in-this-defined-name-s-formula	The function “{func}” in this defined name’s formula is not supported in Excel 97-2003.
+_xlsx.formula-n	Formula{n}
+_xlsx.there-are-no-rules-to-delete-err	There are no rules to delete ({err})
+_xlsx.cell-value-label	Cell Value {label}
+_xlsx.applies-to-range	Applies to: {range}
+_xlsx.priority-priority-rule-group-number	Priority {priority}: Rule {group}-{number}
+_xlsx.field-number	Field{number}
+_xlsx.insert-row-above-2	Insert Row Above
+_xlsx.insert-column-left-2	Insert Column Left
+_xlsx.filter	Filter
+_xlsx.toggle-filter	Toggle Filter
+_xlsx.sort-smallest-to-largest-2	Sort Smallest to Largest
+_xlsx.sort-largest-to-smallest-2	Sort Largest to Smallest
+_xlsx.pick-from-drop-down-list-2	Pick From Drop-down List…
+_xlsx.sheet-name-default-sheet-name	{sheet_name}: Default sheet name
+_xlsx.consider-renaming-the-sheet-to-a-specific-name-t	Consider renaming the sheet to a specific name that describes its contents.
+_xlsx.object	Object
+_xlsx.sheet-name-missing-alternative-text-shape-name	{sheet_name}: Missing alternative text ({shape_name})
+_xlsx.add-alternative-text-so-screen-reader-users-can	Add alternative text so screen reader users can understand images and charts.
+_xlsx.add-alternative-text-to-the-shape-or-mark-it-as	Add alternative text to the shape, or mark it as decorative.
+_xlsx.add-alternative-text-to-the-text-box-or-mark-it	Add alternative text to the text box, or mark it as decorative.
+_xlsx.table	Table
+_xlsx.sheet-name-table-tbl-name-has-no-header-row	{sheet_name}: Table "{tbl_name}" has no header row
+_xlsx.set-a-header-row-so-screen-readers-can-correctly	Set a header row so screen readers can correctly recognize the table's column structure.
+_xlsx.sheet-name-cell-ref-unclear-hyperlink-text	{sheet_name}!{cell_ref}: Unclear hyperlink text
+_xlsx.use-descriptive-text-that-explains-what-the-link	Use descriptive text that explains what the link leads to.
+_xlsx.workbook-protection	Workbook Protection
+_xlsx.range-n	Range {n}
+_xlsx.recovered-file-name	[Recovered] {file_name}
+_xlsx.copied-kind-name-as-a-picture	Copied {kind_name} as a picture
+_xlsx.invalid-reference-text	Invalid reference: {text}
+_xlsx.backup-of-stem-ext	Backup of {stem}.{ext}
+_xlsx.could-not-create-the-backup-e	Could not create the backup: {e}
+_xlsx.delete-unit	Delete {unit}
+_xlsx.hide-unit	Hide {unit}
+_xlsx.unhide-unit	Unhide {unit}
+_xlsx.name-count-here	{name}(  {count}  ·  {here}
+_xlsx.df-name-ascending	{df_name} (Ascending)
+_xlsx.df-name-descending	{df_name} (Descending)
+_xlsx.name-solid	{name} (Solid)
+_xlsx.name-reverse	{name} (Reverse)
+_xlsx.could-not-create-the-folder-e	Could not create the folder: {e}
+_xlsx.could-not-save-the-template-e	Could not save the template: {e}
+_xlsx.template-name-was-saved	Template “{name}” was saved.
+_xlsx.could-not-load-the-template-e	Could not load the template: {e}
+_xlsx.applied-template-name	Applied template “{name}”.
+_xlsx.deleted-template-name	Deleted template “{name}”.
+_xlsx.error-e	Error: {e}
+_xlsx.mark-top-row	{mark} Top Row
+_xlsx.mark-left-column	{mark} Left Column
+_xlsx.mark-create-links-to-source-data	{mark} Create Links to Source Data
+_xlsx.this-name-cannot-be-used-name	This name cannot be used: {name}
+_xlsx.cannot-find-query	Cannot find "{query}"
+_xlsx.replaced-n-occurrence-s	Replaced {n} occurrence(s)
+_xlsx.rotate-90-clockwise	Rotate 90° Clockwise
+_xlsx.rotate-90-counterclockwise	Rotate 90° Counterclockwise
+_xlsx.2-2-table	2 × 2 Table
+_xlsx.3-3-table	3 × 3 Table
+_xlsx.3-4-table	3 × 4 Table
+_xlsx.4-4-table	4 × 4 Table
+_xlsx.5-5-table	5 × 5 Table
+_xlsx.6-4-table	6 × 4 Table
+_xlsx.dash-dot-dot	Dash Dot Dot
+_xlsx.number	Number
+_xlsx.number-2-decimal-places-2	Number (2 Decimal Places)
+_xlsx.date-year-month-day	Date (Year Month Day)
+_xlsx.hair	Hair
+_xlsx.medium-dash-dot-2	Medium Dash Dot
+_xlsx.medium-dash-dot-dot-2	Medium Dash Dot Dot
+_xlsx.slant-dash-dot-2	Slant Dash Dot
+_xlsx.single-accounting	Single Accounting
+_xlsx.double-accounting	Double Accounting
+_xlsx.formulas	Formulas
+_xlsx.pasted-the-image	Pasted the image
+_xlsx.can-t-paste-here	Can't paste here
+_xlsx.to-use-paste-special-copy-cells-first	To use Paste Special, copy cells first
+_xlsx.count-numbers-2	Count Numbers
+_xlsx.stddevp-2	StdDevp
+_xlsx.var-2	Var
+_xlsx.varp-2	Varp
+_xlsx.formula-2	Formula
+_xlsx.top-2-2	, Top
+_xlsx.middle-2	, Middle
+_xlsx.bottom-2-2	, Bottom
+_xlsx.wrap-text-2	, Wrap Text
+_xlsx.default-font	Default Font
+_xlsx.bold	, Bold
+_xlsx.italic	, Italic
+_xlsx.with-borders	With Borders
+_xlsx.unlocked	Unlocked
+_xlsx.in-excel-97-2003-only-the-first-three-rules-are-	In Excel 97-2003, only the first three rules are evaluated for the same cell range; later rules are ignored.
+_xlsx.data-bars-are-not-supported-in-excel-97-2003-and	Data bars are not supported in Excel 97-2003 and will not be displayed.
+_xlsx.color-scales-are-not-supported-in-excel-97-2003-	Color scales are not supported in Excel 97-2003 and will not be displayed.
+_xlsx.icon-sets-are-not-supported-in-excel-97-2003-and	Icon sets are not supported in Excel 97-2003 and will not be displayed.
+_xlsx.in-excel-97-2003-tables-are-converted-to-normal-	In Excel 97-2003, tables are converted to normal data ranges, and structured references and table formatting are removed.
+_xlsx.sparklines-were-introduced-in-excel-2010-so-they	Sparklines were introduced in Excel 2010, so they are not displayed in Excel 97-2003.
+_xlsx.conditional-formats	Conditional Formats
+_xlsx.same-conditional-format	Same Conditional Format
+_xlsx.same-data-validation	Same Data Validation
+_xlsx.rows	Rows
+_xlsx.columns	Columns
+_xlsx.trend	Trend
+_xlsx.count-2	Count
+_xlsx.min-2	Min
+_xlsx.please-enter-a-date-such-as-2026-10-7	Please enter a date such as 2026/10/7.
+_xlsx.please-enter-a-value	Please enter a value.
+_xlsx.please-enter-a-number-from-1-to-100	Please enter a number from 1 to 100.
+_xlsx.please-enter-a-number-from-1-to-500	Please enter a number from 1 to 500.
+_xlsx.sort-a-to-z	Sort A to Z
+_xlsx.sort-z-to-a	Sort Z to A
+_xlsx.sort-by-conditional-formatting-icon	Sort by Conditional Formatting Icon
+_xlsx.filter-by-conditional-formatting-icon	Filter by Conditional Formatting Icon
+_xlsx.enter-a-valid-range-or-formula-and-a-six-digit-f	Enter a valid range or formula and a six-digit fill color.
+_xlsx.formula-is-true-2	Formula is true
+_xlsx.inside-base	Inside Base
+_xlsx.inside-end	Inside End
+_xlsx.outside-end	Outside End
+_xlsx.ten-thousands	Ten Thousands
+_xlsx.plus	Plus
+_xlsx.minus	Minus
+_xlsx.gaps	Gaps
+_xlsx.zero	Zero
+_xlsx.connect-data-points-with-line	Connect Data Points with Line
+_xlsx.radar	Radar
+_xlsx.radar-with-markers	Radar with Markers
+_xlsx.thin-2	Thin
+_xlsx.standard	Standard
+_xlsx.thick-2	Thick
+_xlsx.text-axis	Text Axis
+_xlsx.monochrome-1	Monochrome 1
+_xlsx.monochrome-2	Monochrome 2
+_xlsx.monochrome-3	Monochrome 3
+_xlsx.monochrome-4	Monochrome 4
+_xlsx.monochrome-5	Monochrome 5
+_xlsx.monochrome-6	Monochrome 6
+_xlsx.header-page-of	&CPage &P of &N
+_xlsx.header-options	Header Options
+_xlsx.you-can-t-fill-here	You can't fill here.
+_xlsx.copied-the-selection-as-a-picture	Copied the selection as a picture
+_xlsx.select-a-cell-or-an-object-to-copy	Select a cell or an object to copy.
+_xlsx.invalid-reference	Invalid reference.
+_xlsx.wordart-default-text	Your Text Here
+_xlsx.sheet-count	Sheet Count
+_xlsx.data-cell-count	Data Cell Count
+_xlsx.defined-names-count	Defined Names Count
+_xlsx.chart-format	Chart Format
+_xlsx.apply-to-pages	Apply to Pages:
+_xlsx.options	Options:
+_xlsx.insert-field-into-section	Insert Field Into Section:
+_xlsx.number-2-decimals	Number (2 Decimals)
+_xlsx.percentage-2-decimals	Percentage (2 Decimals)
+_xlsx.no-calculation	No Calculation
+_xlsx.of-grand-total	% of Grand Total
+_xlsx.of-column-total	% of Column Total
+_xlsx.of-row-total	% of Row Total
+_xlsx.compact-form	Compact Form
+_xlsx.outline-form	Outline Form
+_xlsx.tabular-form	Tabular Form
+_xlsx.equal-to-2	Equal To…
+_xlsx.not-equal-to-2	Not Equal To…
+_xlsx.does-not-begin-with-2	Does Not Begin With…
+_xlsx.does-not-end-with-2	Does Not End With…
+_xlsx.not-between-2	Not Between…
+_xlsx.blank-2	(Blank)
+_xlsx.enter-a-number	Enter a number.
+_xlsx.label-filters	Label Filters
+_xlsx.value-filters	Value Filters
+_xlsx.percent-2	Percent
+_xlsx.number-2	Number
+_xlsx.alignment	Alignment
+_xlsx.left-indent	Left (Indent)
+_xlsx.right-indent	Right (Indent)
+_xlsx.distributed-indent	Distributed (Indent)
+_xlsx.vertical-text	Vertical Text
+_xlsx.top-border-2	Top Border
+_xlsx.bottom-border-2	Bottom Border
+_xlsx.left-border-2	Left Border
+_xlsx.right-border-2	Right Border
+_xlsx.diagonal-up-border-2	Diagonal Up Border
+_xlsx.diagonal-down-border-2	Diagonal Down Border
+_xlsx.3-arrows-gray	3 Arrows (Gray)
+_xlsx.4-arrows-gray	4 Arrows (Gray)
+_xlsx.5-arrows-gray	5 Arrows (Gray)
+_xlsx.3-traffic-lights-rimmed	3 Traffic Lights (Rimmed)
+_xlsx.3-signs	3 Signs
+_xlsx.4-traffic-lights	4 Traffic Lights
+_xlsx.4-red-to-black	4 Red to Black
+_xlsx.3-symbols-uncircled	3 Symbols (Uncircled)
+_xlsx.4-ratings	4 Ratings
+_xlsx.5-quartiles	5 Quartiles
+_xlsx.5-boxes	5 Boxes
+_xlsx.no-chart-is-selected	No chart is selected.
+_xlsx.downward-diagonal-stripe	Downward Diagonal Stripe
+_xlsx.upward-diagonal-stripe	Upward Diagonal Stripe
+_xlsx.light-horizontal-stripe	Light Horizontal Stripe
+_xlsx.light-vertical-stripe	Light Vertical Stripe
+_xlsx.light-downward-diagonal-stripe	Light Downward Diagonal Stripe
+_xlsx.light-upward-diagonal-stripe	Light Upward Diagonal Stripe
+_xlsx.small-grid	Small Grid
+_xlsx.narrow-diagonal-crosshatch	Narrow Diagonal Crosshatch
+_xlsx.automatic-black	Automatic / Black
+_xlsx.no-gradient	No Gradient
+_xlsx.horizontal-left-to-right	Horizontal (Left to Right)
+_xlsx.vertical-top-to-bottom	Vertical (Top to Bottom)
+_xlsx.diagonal-top-left-to-bottom-right	Diagonal (Top Left to Bottom Right)
+_xlsx.diagonal-top-right-to-bottom-left	Diagonal (Top Right to Bottom Left)
+_xlsx.from-center	From Center
+_xlsx.aqua	Aqua
+_xlsx.zeros	Zeros
+_xlsx.column-2	Column
+_xlsx.win-loss	Win/Loss
+_xlsx.do-not-import-column-skip	Do Not Import Column (Skip)
+_xlsx.import	Import
+_xlsx.enter-a-reference-range-or-formula	Enter a Reference Range or Formula
+_xlsx.light-yellow	Light Yellow
+_xlsx.black	Black
+_xlsx.the-filter-has-been-applied	The filter has been applied.
+_xlsx.copy-to	Copy to
+_xlsx.min-or-more-arguments	{min} or more arguments
+_xlsx.select-at-least-one-format	Select at least one format.
+_xlsx.axis-title	Axis Title
+_xlsx.save-as-template	Save as Template…
+_xlsx.horizontal-category-axis	Horizontal (Category) Axis
+_xlsx.display-units	Display Units
+_xlsx.series-axis	Series Axis
+_xlsx.show-data-table	Show Data Table
+_xlsx.display-equation-on-chart	Display Equation on Chart
+_xlsx.error-amount	Error Amount
+_xlsx.show-data-in-hidden-rows-and-columns	Show Data in Hidden Rows and Columns
+_xlsx.references	References
+_xlsx.consolidate	Consolidate
+_xlsx.views	Views:
+_xlsx.hidden-rows-and-columns-and-filter-settings	Hidden Rows and Columns, and Filter Settings
+_xlsx.enter-a-positive-number-for-the-height	Enter a positive number for the height.
+_xlsx.enter-a-number-for-the-vertical-position	Enter a number for the vertical position.
+_xlsx.name-custom-name	Name (custom name):
+_xlsx.subtotals	Subtotals:
+_xlsx.enter-a-number-greater-than-0	Enter a number greater than 0.
+_xlsx.and	and
+_xlsx.quarters	Quarters
+_xlsx.grand-total	Grand Total
+_xlsx.layout-format	Layout & Format
+_xlsx.allow-multiple-filters-per-field	Allow Multiple Filters per Field
+_xlsx.row-label-display-name	Row label display name:
+_xlsx.refresh-data-when-opening-the-file	Refresh Data When Opening the File
+_xlsx.footer-code	Footer: {code}
+_xlsx.the-reference-cell-range-is-not-valid	The reference cell range is not valid.
+_xlsx.line-n	Line {n}
+_xlsx.enter-a-data-range-and-a-location-range	Enter a data range and a location range.
+_xlsx.edit-sparkline	Edit Sparkline
+_xlsx.location-range	Location Range
+_xlsx.last-point	Last Point
+_xlsx.show-empty-cells-as	Show Empty Cells As
+_xlsx.select-at-least-one-column-to-subtotal	Select at least one column to subtotal.
+_xlsx.add-subtotal-to	Add Subtotal To
+_xlsx.subtotal	Subtotal
+_xlsx.unhide-workbook	Unhide workbook:
+_xlsx.to-show-the-workbook-again-choose-unhide-window	To show the workbook again, choose Unhide Window.
+_xlsx.enter-the-list-range-correctly-for-example-a1-c1	Enter the list range correctly (for example, A1:C10).
+_xlsx.advanced	Advanced
+_xlsx.min-to-max-arguments	{min} to {max} arguments
+_xlsx.style-name	Style Name
+_xlsx.enter-a-whole-number-from-0-to-500-for-the-eleme	Enter a whole number from 0 to 500 for the element spacing.
+_xlsx.apply-template	Apply Template…
+_xlsx.show-axis-title	Show Axis Title
+_xlsx.minor-gridlines	Minor Gridlines
+_xlsx.series-options	Series Options
+_xlsx.show-legend-keys	Show Legend Keys
+_xlsx.display-r-squared-value-on-chart	Display R-Squared Value on Chart
+_xlsx.end-cap	End Cap
+_xlsx.please-add-a-source-range	Please add a source range.
+_xlsx.all-references	All References
+_xlsx.custom-views-can-t-be-used-because-the-workbook	Custom views can't be used because the workbook contains tables.
+_xlsx.no-views-have-been-added	(No views have been added)
+_xlsx.add-view	Add View
+_xlsx.custom-views	Custom Views
+_xlsx.enter-a-positive-number-for-the-width	Enter a positive number for the width.
+_xlsx.expanded-the-detail-data	Expanded the detail data.
+_xlsx.summarize-values-by	Summarize Values By:
+_xlsx.show-subtotals	Show Subtotals
+_xlsx.units	Units
+_xlsx.row-labels	Row Labels
+_xlsx.merge-and-center-cells	Merge and Center Cells
+_xlsx.show-row-grand-totals	Show Row Grand Totals
+_xlsx.column-labels-caption	Column Labels Caption:
+_xlsx.pivottable-options	PivotTable Options
+_xlsx.text-box-n	Text Box {n}
+_xlsx.object-n	Object {n}
+_xlsx.enter-a-valid-data-range	Enter a valid data range.
+_xlsx.create-sparklines	Create Sparklines
+_xlsx.high-point	High Point
+_xlsx.show-axis	Show Axis
+_xlsx.clear-selected-sparklines	Clear Selected Sparklines
+_xlsx.range	Range
+_xlsx.replace-current-subtotals	Replace Current Subtotals
+_xlsx.circle-invalid-data	Circle Invalid Data
+_xlsx.no-hidden-workbooks	(No hidden workbooks)
+_xlsx.unhide	Unhide…
+_xlsx.enter-a-valid-criteria-range-for-example-e1-f2	Enter a valid criteria range (for example, E1:F2).
+_xlsx.list-range	List range
+_xlsx.select-a-shape-or-chart	Select a shape or chart.
+_xlsx.argument-n	Argument {n}
+_xlsx.style-includes	Style includes
+_xlsx.enter-an-integer-from-100-to-100-for-series-over	Enter an integer from -100 to 100 for series overlap.
+_xlsx.data-labels	Data Labels
+_xlsx.axis-type	Axis Type
+_xlsx.logarithmic-scale	Logarithmic scale
+_xlsx.gap-width	Gap Width
+_xlsx.horizontal-border	Horizontal Border
+_xlsx.show-error-bars	Show Error Bars
+_xlsx.hidden-and-empty-cells	Hidden and Empty Cells
+_xlsx.consolidation-complete	Consolidation complete.
+_xlsx.no-ranges-have-been-added	(No ranges have been added)
+_xlsx.enter-a-name-for-the-view	Enter a name for the view.
+_xlsx.include-print-settings	• Include print settings
+_xlsx.settings-to-include-in-view	Settings to include in view:
+_xlsx.failed-to-parse-the-formula	Failed to parse the formula.
+_xlsx.enter-the-rotation-as-a-number	Enter the rotation as a number.
+_xlsx.select-a-data-cell-in-the-pivottable	Select a data cell in the PivotTable.
+_xlsx.show-values-as	Show values as:
+_xlsx.show-subtotals-at-top-of-group	Show subtotals at top of group
+_xlsx.starting-at	Starting at
+_xlsx.column-labels	Column Labels
+_xlsx.autofit-column-widths-on-update	Autofit column widths on update
+_xlsx.show-grand-totals-for-columns	Show grand totals for columns
+_xlsx.header-code	Header: {code}
+_xlsx.document-properties	Document Properties
+_xlsx.picture-n	Picture {n}
+_xlsx.there-are-no-shapes-or-pictures	There are no shapes or pictures.
+_xlsx.enter-a-valid-location-range	Enter a valid location range.
+_xlsx.line-color	Line Color
+_xlsx.negative-points	Negative Points
+_xlsx.date-axis	Date axis
+_xlsx.clear-group	Clear Group
+_xlsx.at-each-change-in	At each change in:
+_xlsx.page-break-between-groups	Page break between groups
+_xlsx.clear-validation-circles	Clear Validation Circles
+_xlsx.unhide-window	Unhide Window
+_xlsx.enter-a-valid-extract-range-for-example-h1	Enter a valid extract range (for example, H1).
+_xlsx.criteria-range	Criteria range
+_xlsx.n-arguments	{n} arguments
+_xlsx.enter-a-style-name	Enter a style name.
+_xlsx.new-cell-style	New Cell Style
+_xlsx.marker	Marker
+_xlsx.categories-in-reverse-order	Categories in reverse order
+_xlsx.secondary-value-axis	Secondary Value Axis
+_xlsx.series-overlap	Series Overlap
+_xlsx.vertical-border	Vertical Border
+_xlsx.function	Function
+_xlsx.use-labels-in	Use labels in
+_xlsx.a-view-with-this-name-already-exists	A view with this name already exists.
+_xlsx.include-hidden-rows-columns-and-filter-settings	• Include hidden rows, columns, and filter settings
+_xlsx.print-settings	Print Settings
+_xlsx.enter-a-number-for-the-horizontal-position	Enter a number for the horizontal position.
+_xlsx.there-are-no-value-fields	There are no value fields.
+_xlsx.calculation-type-show-values-as	Calculation type (show values as):
+_xlsx.layout	Layout:
+_xlsx.field	Field
+_xlsx.ending-at	Ending at
+_xlsx.pivottable-name	PivotTable name:
+_xlsx.preserve-cell-formatting-on-update	Preserve cell formatting on update
+_xlsx.grand-total-caption	Grand total caption:
+_xlsx.enter-a-title	Enter a title.
+_xlsx.chart-n	Chart {n}
+_xlsx.enter-a-number-in-the-first-cell	Enter a number in the first cell.
+_xlsx.the-data-range-and-the-destination-range-don-t-h	The data range and the destination range don't have the same shape.
+_xlsx.first-point	First point
+_xlsx.date-range	Date range
+_xlsx.sparklines	Sparklines
+_xlsx.use-function	Use function
+_xlsx.summary-below-data	Summary below data
+_xlsx.this-can-t-be-done-because-the-workbook-window-i	This can't be done because the workbook window is protected.
+_xlsx.the-workbook-is-hidden	The workbook is hidden.
+_xlsx.flash-fill-could-not-determine-values	Flash Fill could not determine the values. Enter examples in the column and try again.
+_xlsx.enter-a-scenario-name	Enter a scenario name.
+_xlsx.specify-the-changing-cells	Specify the changing cells.
+_xlsx.specify-the-result-cells	Specify the result cells.
+_xlsx.scenarios-colon	Scenarios:
+_xlsx.no-scenarios-defined	(No scenarios defined)
+_xlsx.changing-cells-colon	Changing cells:
+_xlsx.comment-colon	Comment:
+_xlsx.edit-ellipsis	Edit…
+_xlsx.merge-ellipsis	Merge…
+_xlsx.summary-ellipsis	Summary…
+_xlsx.scenario-name-colon	Scenario name:
+_xlsx.load-values	Load Values
+_xlsx.values-for-each-changing-cell-colon	Values for each changing cell:
+_xlsx.scenario-summary-report	Scenario Summary
+_xlsx.result-cells-colon	Result cells (comma-separated or a range):
+_xlsx.merge-scenarios	Merge Scenarios
+_xlsx.select-the-sheet-to-copy-scenarios-from	Select the sheet to copy scenarios from:
+_xlsx.no-other-sheets	(No other sheets)
+_xlsx.scenario-manager	Scenario Manager

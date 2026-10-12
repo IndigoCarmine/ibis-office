@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["crates/ibis-calc", "crates/ibis-doc-model", "crates/ibis-ooxml", "crates/ibis-emf", "crates/ibis-eot", "crates/ibis-imgdiff", "crates/ibis-pptx", "crates/ibis-office-app", "tools/ibis-bench"]
+# The GPUI forks under forks/ are separate packages patched in below, not members.
+exclude = ["forks"]
+
+[workspace.package]
+edition = "2024"
+version = "0.8.0"
+publish = false
+
+[workspace.dependencies]
+ibis-calc = { path = "crates/ibis-calc" }
+ibis-doc-model = { path = "crates/ibis-doc-model" }
+ibis-pptx = { path = "crates/ibis-pptx" }
+ibis-ooxml = { path = "crates/ibis-ooxml" }
+ibis-emf = { path = "crates/ibis-emf" }
+ibis-eot = { path = "crates/ibis-eot" }
+# gpui-kit pins the exact gpui-pre snapshot it was built against.
+gpui-kit = "=0.6.6"
+
+# ibisOffice's forks of gpui-pre 0.3.6 (Apache-2.0): gpui-pre adds
+# Window::paint_glyph_transformed for rotated text and more; gpui-pre-macos and
+# gpui-pre-web fix text on macOS and in the browser (full-width Japanese
+# symbols). They are git submodules under forks/; see AGENTS.md.
+[patch.crates-io]
+gpui-pre = { path = "forks/gpui-pre" }
+gpui-pre-macos = { path = "forks/gpui-pre-macos" }
+gpui-pre-web = { path = "forks/gpui-pre-web" }
+gpui-pre-windows = { path = "forks/gpui-pre-windows" }

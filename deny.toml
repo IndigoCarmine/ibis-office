@@ -1,0 +1,16 @@
+# cargo-deny: dependencies must allow commercial use and must not be copyleft,
+# so ibisOffice can be offered under both the AGPL and a commercial licence
+# (see AGENTS.md). Run: cargo deny check licenses
+[licenses]
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
+  "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016", "CC0-1.0", "BSL-1.0", "0BSD", "OFL-1.1",
+  # BSD-style: keep the copyright notice.
+  "bzip2-1.0.6",
+  # Only while its sources are used unmodified (see AGENTS.md).
+  "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+ignore = true

@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) ibis inc.
+// Additional terms under AGPL-3.0 section 7(b): see NOTICE.
+//! テーマの配色とフォント (表示形式 > テーマの配色 / テーマの色とフォント…):
+//! ブックのテーマ（12色のカラースキームおよび見出し・本文フォント）の切り替え・編集。
+
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::*;
+use ibis_doc_model::{Command, FontSet, Rgb, ThemeFonts};
+
+use crate::pptx::theme_panel::{COLORS, THEME_PALETTES};
+use crate::shell::chrome::SidebarPanel;
+use crate::shell::editor::SlideEditor;
+
+pub(crate) struct XlsxThemePanel {
+    pub(crate) colors: Vec<(&'static str, &'static str, Entity<InputState>)>,
+    pub(crate) fonts: [Entity<InputState>; 4],
+    error: Option<SharedString>,
+}
+
+fn parse_hex(text: &str) -> Option<Rgb> {
+    let t = text.trim().trim_start_matches('#');
+    (t.len() == 6).then(|| u32::from_str_radix(t, 16).ok()).flatten().map(Rgb)
+}
+
+impl SlideEditor {
+    /// The workbook's 10 palette theme colors (lt1, dk1, lt2, dk2, accent1..6)
+    /// based on the current workbook model theme, falling back to source.
+    pub(crate) fn current_theme_palette_colors(&self) -> [Rgb; 10] {
+        if let Some(w) = self.presentation().workbook.as_ref() {
+            if !w.theme_colors.is_empty() {
+                return ibis_pptx::workbook_theme_colors_from_slice(&w.theme_colors);
+            }
+        }
+        ibis_pptx::workbook_theme_colors(self.source.as_deref())
+    }
+
+    /// Check if the workbook matches a predefined theme palette preset.
+    pub(crate) fn is_xlsx_theme_palette_active(&self, preset_id: &str) -> bool {
+        let Some(preset) = THEME_PALETTES.iter().find(|p| p.id == preset_id) else { return false };
+        let current_colors = self.presentation().workbook.as_ref().map(|w| &w.theme_colors).unwrap_or(&self.presentation().theme_colors);
+        if current_colors.is_empty() {
+            return preset_id == "office";
+        }
+        preset.colors.iter().all(|(name, rgb)| current_colors.iter().find(|(n, _)| n == name).is_some_and(|(_, c)| c == rgb))
+    }
+
+    /// Apply a predefined theme color palette preset to the workbook.
+    pub(crate) fn apply_xlsx_theme_palette(&mut self, preset_id: &str, cx: &mut Context<Self>) {
+        let Some(preset) = THEME_PALETTES.iter().find(|p| p.id == preset_id) else { return };
+        let mut colors = self.presentation().workbook.as_ref().map(|w| w.theme_colors.clone()).unwrap_or_else(|| self.presentation().theme_colors.clone());
+        for (name, rgb) in preset.colors {
+            if let Some(entry) = colors.iter_mut().find(|(n, _)| n == name) {
+                entry.1 = rgb;
+            } else {
+                colors.push((name.to_string(), rgb));
+            }
+        }
+        let fonts = self.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| self.presentation().theme_fonts.clone());
+        self.commit_cell_edit(cx);
+        self.run_sheet(vec![Command::SetTheme { colors, fonts }], cx);
+        if let Some(state) = self.sheet_state_mut() {
+            *state.panels.cell_styles.borrow_mut() = None;
+        }
+        cx.notify();
+    }
+
+    /// Open the workbook theme colors and fonts editing sidebar panel.
+    pub(crate) fn open_xlsx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let have = self.presentation().workbook.as_ref().map(|w| w.theme_colors.clone()).unwrap_or_else(|| self.presentation().theme_colors.clone());
+        let fonts = self.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| self.presentation().theme_fonts.clone()).unwrap_or_default();
+        let colors = COLORS
+            .iter()
+            .filter_map(|(name, label)| {
+                let rgb = have.iter().find(|(n, _)| n == name).map(|(_, c)| *c).unwrap_or(Rgb(0x000000));
+                let input = cx.new(|cx| InputState::new(window, cx).default_value(format!("#{:06X}", rgb.0 & 0xffffff)));
+                Some((*name, *label, input))
+            })
+            .collect::<Vec<_>>();
+        let font = |window: &mut Window, cx: &mut Context<Self>, v: &Option<String>| cx.new(|cx| InputState::new(window, cx).default_value(v.clone().unwrap_or_default()));
+        let fonts = [
+            font(window, cx, &fonts.major.latin),
+            font(window, cx, &fonts.major.east_asian),
+            font(window, cx, &fonts.minor.latin),
+            font(window, cx, &fonts.minor.east_asian),
+        ];
+        if let Some(s) = self.sheet_state_mut() {
+            s.panels.close();
+            s.panels.theme = Some(XlsxThemePanel { colors, fonts, error: None });
+        }
+        self.sidebar_open = true;
+        cx.notify();
+    }
+
+    pub(crate) fn close_xlsx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s) = self.sheet_state_mut() {
+            s.panels.theme = None;
+        }
+        self.sidebar_open = false;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn apply_xlsx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.sheet_state().and_then(|s| s.panels.theme.as_ref()) else { return };
+        let mut colors = self.presentation().workbook.as_ref().map(|w| w.theme_colors.clone()).unwrap_or_else(|| self.presentation().theme_colors.clone());
+        for (name, _, input) in &panel.colors {
+            let Some(rgb) = parse_hex(input.read(cx).value().as_ref()) else {
+                if let Some(p) = self.sheet_state_mut().and_then(|s| s.panels.theme.as_mut()) {
+                    p.error = Some(crate::shell::i18n::text("pptx.theme-panel.enter-colors-rrggbb").into());
+                }
+                return cx.notify();
+            };
+            if let Some(entry) = colors.iter_mut().find(|(n, _)| n == name) {
+                entry.1 = rgb;
+            } else {
+                colors.push((name.to_string(), rgb));
+            }
+        }
+        let text = |i: usize| Some(panel.fonts[i].read(cx).value().trim().to_string()).filter(|t| !t.is_empty());
+        let old = self.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| self.presentation().theme_fonts.clone());
+        let fonts = ThemeFonts {
+            major: FontSet { latin: text(0), east_asian: text(1), complex: old.as_ref().and_then(|f| f.major.complex.clone()) },
+            minor: FontSet { latin: text(2), east_asian: text(3), complex: old.as_ref().and_then(|f| f.minor.complex.clone()) },
+        };
+        let fonts = Some(fonts).filter(|f| old.is_some() || *f != ThemeFonts::default());
+        self.commit_cell_edit(cx);
+        self.run_sheet(vec![Command::SetTheme { colors, fonts }], cx);
+        if let Some(state) = self.sheet_state_mut() {
+            *state.panels.cell_styles.borrow_mut() = None;
+        }
+        self.close_xlsx_theme_panel(window, cx);
+    }
+
+    pub(crate) fn xlsx_theme_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        let panel = self.sheet_state()?.panels.theme.as_ref()?;
+        let t = crate::shell::i18n::text;
+        let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
+        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.));
+
+        let mut palette_row = h_flex().gap_1().flex_wrap();
+        for preset in &THEME_PALETTES {
+            let pid = preset.id;
+            let active = self.is_xlsx_theme_palette_active(pid);
+            let btn = Button::new(format!("xlsx-preset-{pid}")).small().ghost().label(t(preset.label_key));
+            let btn = if active { btn.border_1() } else { btn };
+            palette_row = palette_row.child(btn.on_click(cx.listener(move |e, _, w, cx| {
+                e.apply_xlsx_theme_palette(pid, cx);
+                e.open_xlsx_theme_panel(w, cx);
+            })));
+        }
+        body = body.child(label(&t("xlsx.theme-palette"))).child(palette_row);
+
+        for (_, name, input) in &panel.colors {
+            body = body.child(label(&t(name))).child(Input::new(input).small());
+        }
+        for (name, input) in [
+            ("pptx.theme-panel.heading-font-latin", &panel.fonts[0]),
+            ("pptx.theme-panel.heading-font-east-asian", &panel.fonts[1]),
+            ("pptx.theme-panel.body-font-latin", &panel.fonts[2]),
+            ("pptx.theme-panel.body-font-east-asian", &panel.fonts[3]),
+        ] {
+            body = body.child(label(&t(name))).child(Input::new(input).small());
+        }
+        if let Some(error) = &panel.error {
+            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error.clone()));
+        }
+        let body = body.child(
+            h_flex()
+                .gap_1()
+                .child(Button::new("xlsx-theme-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_xlsx_theme_panel(w, cx))))
+                .child(Button::new("xlsx-theme-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_xlsx_theme_panel(w, cx)))),
+        );
+        Some(SidebarPanel { title: t("xlsx.theme-colors"), body: body.into_any_element() })
+    }
+}
