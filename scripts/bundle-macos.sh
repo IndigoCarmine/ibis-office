@@ -13,7 +13,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-cargo build --release --locked -p ibis-office-app
+# The paths of this machine (the home folder, the repository) are not to go
+# into the executable (Rust keeps source paths for panics and the like): they
+# are rewritten to short relative ones, in a target directory of its own so
+# that the everyday builds (target/release) are not rebuilt by the flags.
+REMAP="--remap-path-prefix=$HOME/.cargo/registry/src=crates.io --remap-path-prefix=$HOME/.cargo/git/checkouts=git --remap-path-prefix=$HOME/.rustup=rustup --remap-path-prefix=$(pwd)=."
+RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build --release --locked -p ibis-office-app
 
 # The version shown for macOS, from version.txt (a platform, a tab and its
 # version, per line).
@@ -23,7 +28,7 @@ VERSION=$(awk -F'\t' '$1 == "macOS" { sub(/\r$/, "", $2); print $2 }' version.tx
 APP=target/release/ibisOffice.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/ibisOffice "$APP/Contents/MacOS/ibisOffice"
+cp target/dist/release/ibisOffice "$APP/Contents/MacOS/ibisOffice"
 cp crates/ibis-office-app/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # The third-party components in the app and the notices their licences ask
 # for (made afresh from the dependencies), and Carlito's licence on its own

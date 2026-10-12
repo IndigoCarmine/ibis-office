@@ -37,8 +37,14 @@ fn load() -> Option<ArtBorderPictures> {
     if let Some(dir) = std::env::current_exe().ok().as_deref().and_then(std::path::Path::parent) {
         places.push(dir.join("../Resources/artborders").join(ZIP));
     }
-    // A build run from the source tree.
-    places.push(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/artborders").join(ZIP));
+    // A build run from the source tree (target/<dir>/release/ibisOffice, or
+    // the tests' target/release/deps/…), found from the executable so that
+    // no path of the build machine goes into it.
+    if let Some(dir) = std::env::current_exe().ok().as_deref().and_then(std::path::Path::parent) {
+        for up in ["../..", "../../..", "../../../.."] {
+            places.push(dir.join(up).join("crates/ibis-office-app/data/artborders").join(ZIP));
+        }
+    }
     for place in places {
         let Ok(bytes) = std::fs::read(&place) else { continue };
         match ArtBorderPictures::new(bytes.into()) {

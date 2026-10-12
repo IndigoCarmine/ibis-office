@@ -18,10 +18,13 @@ if [[ "${1:-}" == "--release" ]]; then PROFILE=release; FLAGS=(--release); fi
 
 # A deep UI tree needs more than wasm-ld's default 1 MiB stack in debug builds
 # (gpui-component's own web gallery does the same).
-cargo rustc -p ibis-office-app --lib --crate-type cdylib --target wasm32-unknown-unknown ${FLAGS[@]+"${FLAGS[@]}"} -- \
+# The paths of this machine are not to go into the wasm (see bundle-macos.sh):
+# rewritten, in a target directory of its own.
+REMAP="--remap-path-prefix=$HOME/.cargo/registry/src=crates.io --remap-path-prefix=$HOME/.cargo/git/checkouts=git --remap-path-prefix=$HOME/.rustup=rustup --remap-path-prefix=$(pwd)=."
+RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo rustc -p ibis-office-app --lib --crate-type cdylib --target wasm32-unknown-unknown ${FLAGS[@]+"${FLAGS[@]}"} -- \
   -C link-arg=-zstack-size=8388608
 
-WASM="target/wasm32-unknown-unknown/$PROFILE/ibis_office_app.wasm"
+WASM="target/dist/wasm32-unknown-unknown/$PROFILE/ibis_office_app.wasm"
 wasm-bindgen "$WASM" --out-dir www/pkg --target web
 
 if [[ "$PROFILE" == release ]] && command -v wasm-opt >/dev/null; then

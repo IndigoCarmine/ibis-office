@@ -2802,7 +2802,15 @@ impl Writer<'_> {
                 r#"</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice></mc:AlternateContent>"#
             ),
             cx = cx, cy = cy, id = id, fill = fill, line = line, geometry = geometry, l = i.left, t = i.top, r = i.right, b = i.bottom,
-            name = if text.is_some() { "テキスト ボックス" } else if is_line { "直線" } else { "図形" },
+            // As Word names them, in the UI's language.
+            name = match (crate::english_names(), text.is_some(), is_line) {
+                (false, true, _) => "テキスト ボックス", // i18n-ok（文書に保存する名前。ibis-pptx は表を持たない）
+                (false, false, true) => "直線", // i18n-ok（同上）
+                (false, false, false) => "図形", // i18n-ok（同上）
+                (true, true, _) => "Text Box",
+                (true, false, true) => "Straight Connector",
+                (true, false, false) => "Shape",
+            },
             csp = if text.is_some() { r#"<wps:cNvSpPr txBox="1"/>"# } else if is_line { r#"<wps:cNvCnPr/>"# } else { r#"<wps:cNvSpPr/>"# },
             txbx = if text.is_some() { format!("<wps:txbx><w:txbxContent>{paragraphs}</w:txbxContent></wps:txbx>") } else { String::new() },
         );

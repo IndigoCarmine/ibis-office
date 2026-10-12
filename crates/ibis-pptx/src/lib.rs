@@ -10,6 +10,21 @@
 //! master's own shapes become each slide's backdrop. Charts are read from
 //! the values cached in their parts; tables are kept as placeholders.
 
+/// Whether the names ibisOffice gives what it makes in a document (a shape's
+/// name when a document is saved) are English, as the app's UI language is
+/// (set by the app; Japanese by default).
+static ENGLISH_NAMES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Give the names made in documents in English (`true`) or Japanese, as the
+/// UI shows.
+pub fn set_english_names(english: bool) {
+    ENGLISH_NAMES.store(english, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn english_names() -> bool {
+    ENGLISH_NAMES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 mod animation;
 mod comments;
 pub mod art_borders;

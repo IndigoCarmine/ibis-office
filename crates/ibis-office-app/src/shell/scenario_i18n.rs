@@ -9,7 +9,7 @@ use crate::shell::i18n::{self, Language, LanguageSetting};
 use crate::shell::scenario::Scenario;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
-    vec![("shell::i8_language_switch_and_kept", i8_language_switch_and_kept), ("shell::i8_panels_and_status_in_english", i8_panels_and_status_in_english), ("shell::fix16_font_names_in_english", fix16_font_names_in_english), ("shell::i8_docx_panels_in_english", i8_docx_panels_in_english)]
+    vec![("shell::i8_language_switch_and_kept", i8_language_switch_and_kept), ("shell::i8_panels_and_status_in_english", i8_panels_and_status_in_english), ("shell::fix16_font_names_in_english", fix16_font_names_in_english), ("shell::i8_docx_panels_in_english", i8_docx_panels_in_english), ("shell::fix34_start_view_in_english", fix34_start_view_in_english), ("shell::fix34_new_file_names_in_english", fix34_new_file_names_in_english)]
 }
 
 /// The label of the menu item `id` and of the ファイル menu, as shown now.
@@ -96,4 +96,26 @@ fn i8_docx_panels_in_english() {
     s.update(|e, window, cx| e.open_watermark_panel(window, cx));
     s.screenshot("english-watermark");
     i18n::show(Language::Japanese);
+}
+
+/// #34: the start view in English (a picture to look at).
+fn fix34_start_view_in_english() {
+    let mut s = Scenario::start_view();
+    i18n::show(Language::English);
+    s.update(|_, _, _| {});
+    s.screenshot("english-start");
+    i18n::show(Language::Japanese);
+    s.update(|_, _, _| {});
+}
+
+/// #34: the names a new file shows until it is saved follow the UI's language
+/// (Word's Document1, PowerPoint's Presentation1; Japanese as before).
+fn fix34_new_file_names_in_english() {
+    use ibis_pptx::Kind;
+    i18n::show(Language::English);
+    assert_eq!(crate::shell::file_actions::new_file_name(Kind::Document), "Document1.docx");
+    assert_eq!(crate::shell::file_actions::new_file_name(Kind::Presentation), "Presentation1.pptx");
+    i18n::show(Language::Japanese);
+    assert_eq!(crate::shell::file_actions::new_file_name(Kind::Document), "文書 1.docx");
+    assert_eq!(crate::shell::file_actions::new_file_name(Kind::Presentation), "プレゼンテーション 1.pptx");
 }
