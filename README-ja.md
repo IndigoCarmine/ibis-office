@@ -21,6 +21,11 @@ ibisOffice は、Word・Excel・PowerPoint の文書を、表示し、編集し�
 
 目指しているのは、「Microsoft Office で作った文書を開いても、見た目が崩れない」ことです。行の折り返し、ページの区切り、表の罫線、グラフの目盛りまで、Office と同じ結果になるように作っています。
 
+## すぐに始める
+
+- **デスクトップアプリ版をダウンロード**：[Releases](https://github.com/ibisjp/ibis-office/releases/latest) から `ibisOffice-<版>-macOS.zip` をダウンロードし、展開した `ibisOffice.app` をアプリケーション フォルダに移してください（macOS 11 以降）。
+- **Web 版を試す**：インストールせずに、ブラウザで [playground](https://ibisjp.github.io/ibis-office/) を開いてください（WebGPU に対応したブラウザ）。見本の文書（Word・Excel・PowerPoint）を開いて、すぐに試せます。
+
 ## ゴール
 
 ibisOffice は、世界でトップクラスのオープンソースのオフィス スイートになることを目指しています。

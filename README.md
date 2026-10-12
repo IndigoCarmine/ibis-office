@@ -21,6 +21,11 @@ ibisOffice is an office suite for viewing, editing and saving Word, Excel and Po
 
 Our aim is simple: a document made in Microsoft Office should look the same when you open it in ibisOffice. Line breaks, page breaks, table borders, even chart tick marks — we build every part to produce the same result as Office.
 
+## Get started
+
+- **Download the desktop app**: get `ibisOffice-<version>-macOS.zip` from [Releases](https://github.com/ibisjp/ibis-office/releases/latest), unzip it and move `ibisOffice.app` to your Applications folder (macOS 11 or later).
+- **Try the web version**: open the [playground](https://ibisjp.github.io/ibis-office/) in your browser — no installation (a browser with WebGPU). Open the sample Word, Excel and PowerPoint documents and try it right away.
+
 ## Goals
 
 ibisOffice aims to be a world-class open-source office suite.
