@@ -1425,3 +1425,6 @@ _xlsx.merge-scenarios	Merge Scenarios
 _xlsx.select-the-sheet-to-copy-scenarios-from	Select the sheet to copy scenarios from:
 _xlsx.no-other-sheets	(No other sheets)
 _xlsx.scenario-manager	Scenario Manager
+xlsx.format-pane.custom	Custom
+xlsx.format-pane.border-inside	Inside
+xlsx.format-pane.border-hint	Click a line in the sample to add or remove it. Choose the line style and color above.

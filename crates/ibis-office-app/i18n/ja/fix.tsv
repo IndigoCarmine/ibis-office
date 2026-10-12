@@ -177,8 +177,8 @@ xlsx.backupsave.backup-now-done	バックアップを作成しました
 xlsx.backupsave.backup-now-failed	バックアップの作成に失敗しました
 xlsx.backupsave.need-save-first	ブックがまだ保存されていません。先に名前を付けて保存してください。
 xlsx.backupsave.save-settings-btn	設定を保存
-xlsx.open-and-repair	破損ブックの開いて修復…
-xlsx.repair.title	破損ブックの開いて修復
+xlsx.open-and-repair	破損ブックの修復…
+xlsx.repair.title	破損ブックの修復
 xlsx.repair.desc	破損して正常に開けない Excel ブックの修復、または数式・値のデータ抽出を行います。
 xlsx.repair.file-label	修復対象のファイル:
 xlsx.repair.browse-btn	参照…
@@ -473,3 +473,14 @@ fix.font-name.ms-mincho	ＭＳ 明朝
 fix.font-name.ms-gothic	ＭＳ ゴシック
 fix.font-name.biz-udp-mincho	BIZ UDP明朝
 fix.font-name.biz-udp-gothic	BIZ UDPゴシック
+help.update-log	更新のログを表示
+fix.update.found	ibisOffice の新しいバージョンが見つかりました。更新しますか？
+fix.update.found.detail	バージョン {version}（今は {current}）。更新すると ibisOffice を閉じて開き直します。
+fix.update.yes	はい
+fix.update.open-site	ダウンロードのページを開く
+fix.update.no	いいえ
+fix.update.failed	更新できませんでした。
+fix.update.failed.detail	ダウンロードのページから入れ直してください。{url}
+fix.update.setting	起動時に更新を確かめる
+fix.update.setting.note	新しいバージョンがあれば、ダウンロードして更新するかどうかを聞きます。
+fix.update.log-path	更新のログ：{log}

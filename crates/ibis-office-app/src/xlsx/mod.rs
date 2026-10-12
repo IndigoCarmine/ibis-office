@@ -19,6 +19,7 @@ pub(crate) mod sort_edit;
 pub(crate) mod dedupe_edit;
 pub(crate) mod edit_panels;
 pub(crate) mod phonetic;
+pub(crate) mod spelling_panel;
 pub(crate) mod error_check;
 pub(crate) mod external_links;
 pub(crate) mod import_text;
@@ -150,6 +151,8 @@ pub(crate) struct State {
     pub(crate) last_fill: Option<(ibis_doc_model::CellRange, u32, u32, fill::FillMode)>,
     /// 検索と置換, when open in the sidebar.
     pub(crate) find: Option<find::FindPanel>,
+    /// スペル チェック, when open in the sidebar.
+    pub(crate) spelling: Option<spelling_panel::SpellPanel>,
     /// The link panel, when open in the sidebar.
     pub(crate) link: Option<links::LinkPanel>,
     /// ページ設定, when open in the sidebar.
@@ -158,6 +161,8 @@ pub(crate) struct State {
     pub(crate) header_footer_edit: Option<header_footer_edit::HeaderFooterEditPanel>,
     /// 表示形式（ユーザー定義）, when open in the sidebar.
     pub(crate) custom_format: Option<custom_format::FormatPanel>,
+    /// Which sections of セルの書式設定 are open (表示形式・配置・フォント・罫線・塗りつぶし・保護), kept while the window lives.
+    pub(crate) format_open: [bool; 6],
     pub(crate) conditional_edit: Option<conditional_edit::ConditionalPanel>,
     pub(crate) sort_edit: Option<sort_edit::SortPanel>,
     /// The panels of the editing basics (重複の削除, 区切り位置, …).
@@ -255,7 +260,7 @@ impl FormatEditor for Workbook {
 
     /// The sidebar: the name manager when it is open.
     fn sidebar(editor: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
-        editor.symbol_panel(cx).or_else(|| editor.custom_format_panel(cx)).or_else(|| editor.page_setup_panel(cx)).or_else(|| editor.cell_link_panel(cx)).or_else(|| editor.sheet_find_panel(cx)).or_else(|| editor.validation_panel(cx)).or_else(|| editor.names_panel(cx)).or_else(|| editor.conditional_panel(cx)).or_else(|| editor.sort_panel(cx)).or_else(|| editor.edit_panel(cx)).or_else(|| editor.sheet_chart_panel(cx)).or_else(|| editor.right_tab_hint(cx))
+        editor.symbol_panel(cx).or_else(|| editor.custom_format_panel(cx)).or_else(|| editor.page_setup_panel(cx)).or_else(|| editor.cell_link_panel(cx)).or_else(|| editor.sheet_find_panel(cx)).or_else(|| editor.sheet_spelling_panel(cx)).or_else(|| editor.validation_panel(cx)).or_else(|| editor.names_panel(cx)).or_else(|| editor.conditional_panel(cx)).or_else(|| editor.sort_panel(cx)).or_else(|| editor.edit_panel(cx)).or_else(|| editor.sheet_chart_panel(cx)).or_else(|| editor.right_tab_hint(cx))
     }
 
     /// 書式設定・グラフ エディター・データの入力規則, side by side across the top.
@@ -283,7 +288,7 @@ impl FormatEditor for Workbook {
             _ => None,
         });
         conditional::apply_ahead(sheets.collect());
-        FormatState::Workbook(State { cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), clip: None, header_geometry: Default::default(), header_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, tab_start: None, painter: None, names: None, validation: None, list_popup: None, filter_panel: None, comment_hover: None, table_dialog: None, chart_edit: None, last_fill: None, find: None, link: None, page_setup: false, header_footer_edit: None, custom_format: None, conditional_edit: None, sort_edit: None, panels: Default::default(), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), right_tab: None, show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, shape_selection: Vec::new(), disable_autorecover_for_workbook: false, last_autorecover_at: None, always_create_backup: None })
+        FormatState::Workbook(State { cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), clip: None, header_geometry: Default::default(), header_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, tab_start: None, painter: None, names: None, validation: None, list_popup: None, filter_panel: None, comment_hover: None, table_dialog: None, chart_edit: None, last_fill: None, find: None, spelling: None, link: None, page_setup: false, header_footer_edit: None, custom_format: None, format_open: [true; 6], conditional_edit: None, sort_edit: None, panels: Default::default(), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), right_tab: None, show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, shape_selection: Vec::new(), disable_autorecover_for_workbook: false, last_autorecover_at: None, always_create_backup: None })
     }
 
     /// A worksheet at its own zoom, as Excel shows it.

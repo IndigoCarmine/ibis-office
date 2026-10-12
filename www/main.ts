@@ -82,19 +82,33 @@ const progress = document.getElementById('progress');
 const progressFill = progress?.firstElementChild as HTMLElement | null;
 
 /**
- * Download the app's wasm, filling the progress bar against Content-Length.
- * The bar stays hidden until the size is known (no Content-Length, or a
- * compressed transfer whose header counts different bytes, keeps it hidden).
+ * The wasm's uncompressed size, written next to it by build-web.sh, or 0.
+ */
+async function wasmSize(): Promise<number> {
+  try {
+    const response = await fetch(new URL('./pkg/ibis_office_app_bg.wasm.size', import.meta.url));
+    return response.ok ? Number((await response.text()).trim()) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Download the app's wasm, filling the progress bar against its size: the
+ * size build-web.sh wrote (the bytes the browser hands over are the
+ * uncompressed ones, while a server that compresses, as GitHub Pages does,
+ * counts the compressed ones in Content-Length), else Content-Length when the
+ * transfer is not compressed. The bar stays hidden when neither is known.
  */
 async function fetchWasm(): Promise<Response> {
   const url = new URL('./pkg/ibis_office_app_bg.wasm', import.meta.url);
-  const response = await fetch(url);
+  const [response, size] = await Promise.all([fetch(url), wasmSize()]);
   if (!response.ok) {
     throw new Error(`${url.pathname}: HTTP ${response.status}`);
   }
-  const total = Number(response.headers.get('Content-Length'));
   const compressed = response.headers.has('Content-Encoding');
-  if (!response.body || !(total > 0) || compressed) {
+  const total = size > 0 ? size : compressed ? 0 : Number(response.headers.get('Content-Length'));
+  if (!response.body || !(total > 0)) {
     return response;
   }
   if (progress) {

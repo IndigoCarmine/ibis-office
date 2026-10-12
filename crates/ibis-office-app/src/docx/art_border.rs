@@ -36,6 +36,8 @@ fn load() -> Option<ArtBorderPictures> {
     // In the app bundle: Contents/MacOS/ibisOffice → Contents/Resources.
     if let Some(dir) = std::env::current_exe().ok().as_deref().and_then(std::path::Path::parent) {
         places.push(dir.join("../Resources/artborders").join(ZIP));
+        // Windows: Resources\artborders\ beside ibisOffice.exe.
+        places.push(dir.join("Resources/artborders").join(ZIP));
     }
     // A build run from the source tree (target/<dir>/release/ibisOffice, or
     // the tests' target/release/deps/…), found from the executable so that

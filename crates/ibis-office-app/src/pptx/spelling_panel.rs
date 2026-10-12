@@ -7,8 +7,6 @@
 //! 変更, 無視, すべて無視, 辞書に追加.
 use std::collections::HashSet;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Command, Presentation, ShapeKind, TextBody};
 
@@ -198,41 +196,9 @@ impl SlideEditor {
 
     pub(crate) fn spelling_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.pptx()?.spelling.as_ref()?;
-        let t = crate::shell::i18n::text;
-        let heading = |label: &str| div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(t(label));
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
-        if !crate::spelling::available() {
-            body = body.child(div().text_size(px(12.)).child(t("pptx.spelling-panel.spell-checking-not-available")));
-        } else if p.issues.is_empty() {
-            body = body.child(div().text_size(px(13.)).child(t("pptx.spelling-panel.no-spelling-errors-found")));
-        } else {
-            let issue = &p.issues[p.current.min(p.issues.len() - 1)];
-            body = body
-                .child(div().text_size(px(12.)).text_color(rgb(0x888888)).child(crate::shell::i18n::format("_pptx.n-of-total", &[("n", &(p.current + 1)), ("total", &p.issues.len())])))
-                .child(div().text_size(px(16.)).font_weight(FontWeight::BOLD).text_color(rgb(0xb3261e)).child(issue.word.clone()))
-                .child(heading("pptx.spelling-panel.suggestions"));
-            if p.suggestions.is_empty() {
-                body = body.child(div().text_size(px(12.)).text_color(rgb(0x888888)).child(t("pptx.spelling-panel.no-suggestions")));
-            }
-            for (i, s) in p.suggestions.iter().enumerate() {
-                let text = s.clone();
-                body = body.child(Button::new(ElementId::Name(format!("pptx-spell-suggestion-{i}").into())).small().ghost().label(s.clone()).on_click(cx.listener(move |e, _, w, cx| e.spelling_change(&text, false, w, cx))));
-            }
-            let first = p.suggestions.first().cloned();
-            let (first_one, first_all) = (first.clone(), first);
-            body = body
-                .child(h_flex().gap_1().flex_wrap()
-                    .child(Button::new("pptx-spell-change").small().label(t("_xlsx.change")).on_click(cx.listener(move |e, _, w, cx| if let Some(s) = &first_one { e.spelling_change(s, false, w, cx) })))
-                    .child(Button::new("pptx-spell-change-all").small().label(t("pptx.spelling-panel.change-all")).on_click(cx.listener(move |e, _, w, cx| if let Some(s) = &first_all { e.spelling_change(s, true, w, cx) }))))
-                .child(h_flex().gap_1().flex_wrap()
-                    .child(Button::new("pptx-spell-ignore").small().ghost().label(t("pptx.spelling-panel.ignore")).on_click(cx.listener(|e, _, w, cx| e.spelling_ignore(false, w, cx))))
-                    .child(Button::new("pptx-spell-ignore-all").small().ghost().label(t("pptx.spelling-panel.ignore-all")).on_click(cx.listener(|e, _, w, cx| e.spelling_ignore(true, w, cx))))
-                    .child(Button::new("pptx-spell-learn").small().ghost().label(t("pptx.spelling-panel.add-dictionary")).on_click(cx.listener(|e, _, w, cx| e.spelling_learn(w, cx)))))
-                .child(h_flex().gap_1()
-                    .child(Button::new("pptx-spell-previous").small().ghost().label(t("_shell.previous")).on_click(cx.listener(|e, _, w, cx| e.spelling_next(false, w, cx))))
-                    .child(Button::new("pptx-spell-next").small().ghost().label(t("_shell.next")).on_click(cx.listener(|e, _, w, cx| e.spelling_next(true, w, cx)))));
-        }
-        body = body.child(Button::new("pptx-spell-close").small().ghost().label(t("_shell.close")).on_click(cx.listener(|e, _, w, cx| e.close_spelling(w, cx))));
-        Some(SidebarPanel { title: t("pptx.spelling-panel.spelling"), body: body.into_any_element() })
+        let current = p.current.min(p.issues.len().saturating_sub(1));
+        let view = crate::shell::spell_panel::SpellView { prefix: "pptx-spell", current, total: p.issues.len(), word: p.issues.get(current).map(|i| i.word.as_str()), suggestions: &p.suggestions };
+        let actions = crate::shell::spell_panel::SpellActions { change: Self::spelling_change, ignore: Self::spelling_ignore, learn: Self::spelling_learn, step: Self::spelling_next, close: Self::close_spelling };
+        Some(crate::shell::spell_panel::sidebar(view, actions, cx))
     }
 }

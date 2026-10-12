@@ -6,6 +6,7 @@
 //! one's settings on the right. 一般 > 言語 chooses the UI's language (the
 //! system's, English or Japanese); every window shows it at once.
 use gpui_kit::component::button::Button;
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Root, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -26,13 +27,14 @@ thread_local! {
 
 /// Open the settings window, or bring it to the front.
 pub(crate) fn open(cx: &mut App) {
-    let parent = cx.active_window().and_then(|w| w.update(cx, |_, window, _| window.bounds()).ok());
-    open_over(parent, cx);
+    let parent = cx.active_window().and_then(|w| w.update(cx, |_, window, cx| (window.bounds(), window.display(cx).map(|d| d.id()))).ok());
+    open_over(parent.map(|p| p.0), parent.and_then(|p| p.1), cx);
 }
 
 /// Open the settings window in the middle of `parent` (the window the user
-/// is in), or bring it to the front.
-pub(crate) fn open_over(parent: Option<Bounds<Pixels>>, cx: &mut App) {
+/// is in, on the same display: a window's bounds are relative to its display,
+/// so the display is given too), or bring it to the front.
+pub(crate) fn open_over(parent: Option<Bounds<Pixels>>, display: Option<DisplayId>, cx: &mut App) {
     if let Some(handle) = OPEN.with(|o| *o.borrow())
         && handle.update(cx, |_, window, _| window.activate_window()).is_ok()
     {
@@ -46,6 +48,7 @@ pub(crate) fn open_over(parent: Option<Bounds<Pixels>>, cx: &mut App) {
     };
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        display_id: display,
         titlebar: Some(TitlebarOptions { title: Some(i18n::text("settings.title")), ..Default::default() }),
         ..Default::default()
     };
@@ -127,6 +130,21 @@ impl Render for SettingsWindow {
             .child(div().text_lg().child(categories[self.category.min(categories.len() - 1)].clone()))
             .child(language)
             .child(div().text_sm().text_color(theme.muted_foreground).child(i18n::text("settings.language.note")));
+        // 起動時に更新を確かめる (no update in the browser).
+        #[cfg(not(target_family = "wasm"))]
+        let detail = detail
+            .child(
+                div().mt_3().child(
+                    Checkbox::new("settings-check-updates")
+                        .label(i18n::text("fix.update.setting"))
+                        .checked(crate::shell::update::check_enabled())
+                        .on_click(cx.listener(|_, checked: &bool, _, cx| {
+                            crate::shell::update::set_check_enabled(*checked);
+                            cx.notify();
+                        })),
+                ),
+            )
+            .child(div().text_sm().text_color(theme.muted_foreground).child(i18n::text("fix.update.setting.note")));
         h_flex().id("settings").track_focus(&self.focus).size_full().items_start().bg(theme.background).text_color(theme.foreground).child(list).child(detail)
     }
 }

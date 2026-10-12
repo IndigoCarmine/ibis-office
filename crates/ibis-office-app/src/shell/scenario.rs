@@ -70,6 +70,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     let mut all = crate::shell::scenario_examples::all();
     all.extend(crate::shell::scenario_i18n::all());
     all.extend(crate::shell::scenario_fix::all());
+    all.extend(crate::shell::scenario_menus::all());
     all.extend(<crate::pptx::Presentation as FormatEditor>::scenarios());
     all.extend(<crate::xlsx::Workbook as FormatEditor>::scenarios());
     all.extend(<crate::docx::Document as FormatEditor>::scenarios());
@@ -560,7 +561,7 @@ impl Scenario {
     pub(crate) fn toolbar(&mut self, id: &str) {
         let Some(ToolItem::Button(b)) = self.tool(id) else { panic!("no toolbar button {id}") };
         assert!(b.enabled(), "toolbar button {id} is disabled");
-        let handler = b.handler.unwrap_or_else(|| panic!("toolbar button {id} opens a menu; use toolbar_menu"));
+        let handler = b.handler.or(b.quick).unwrap_or_else(|| panic!("toolbar button {id} opens a menu; use toolbar_menu"));
         self.update(|e, window, cx| handler(e, window, cx));
     }
 
@@ -723,6 +724,7 @@ pub(crate) fn find_item<'a>(entries: &'a [MenuEntry], id: &str) -> Option<&'a cr
     entries.iter().find_map(|entry| match entry {
         MenuEntry::Item(item) if item.id == id => Some(item),
         MenuEntry::Submenu(sub) => find_item(&sub.items, id),
+        MenuEntry::Palette(p) => p.find(id),
         _ => None,
     })
 }

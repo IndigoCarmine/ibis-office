@@ -116,6 +116,8 @@ pub(crate) enum MenuEntry {
     Item(MenuItem),
     Separator,
     Submenu(Submenu),
+    /// The squares of a colour palette (`color_palette.rs`).
+    Palette(crate::shell::color_palette::Palette),
 }
 
 /// A menu item. It is enabled when it has a handler and is not disabled.
@@ -229,6 +231,7 @@ impl Menus {
             for entry in entries {
                 match entry {
                     MenuEntry::Item(item) if item.id == id => return Some(entry.clone()),
+                    MenuEntry::Palette(p) if p.find(id).is_some() => return p.find(id).cloned().map(MenuEntry::Item),
                     MenuEntry::Submenu(sub) => {
                         if sub.id == id {
                             return Some(entry.clone());
@@ -251,6 +254,11 @@ impl Menus {
             for entry in entries {
                 match entry {
                     MenuEntry::Item(item) if item.id == id => return Some(item),
+                    MenuEntry::Palette(p) => {
+                        if let Some(found) = p.find_mut(id) {
+                            return Some(found);
+                        }
+                    }
                     MenuEntry::Submenu(sub) => {
                         if let Some(found) = find(&mut sub.items, id) {
                             return Some(found);
@@ -293,16 +301,19 @@ pub(crate) struct ToolButton {
     /// A menu opened by the button (a ▼ is drawn after the icon).
     pub menu: Option<Vec<MenuEntry>>,
     pub handler: Option<Handler>,
+    /// A split button (as Office's): what the left half does at once (the last used choice), the ▼ on the
+    /// right having the menu.
+    pub quick: Option<Handler>,
 }
 
 impl ToolButton {
     pub(crate) fn new(id: &'static str, icon: &'static str, tooltip: impl Into<SharedString>) -> Self {
-        Self { id, icon: Some(icon), text: None, tooltip: tooltip.into(), on: false, disabled: false, color: None, menu: None, handler: None }
+        Self { id, icon: Some(icon), text: None, tooltip: tooltip.into(), on: false, disabled: false, color: None, menu: None, handler: None, quick: None }
     }
 
     /// A text button.
     pub(crate) fn text(id: &'static str, text: impl Into<SharedString>, tooltip: impl Into<SharedString>) -> Self {
-        Self { id, icon: None, text: Some(text.into()), tooltip: tooltip.into(), on: false, disabled: false, color: None, menu: None, handler: None }
+        Self { id, icon: None, text: Some(text.into()), tooltip: tooltip.into(), on: false, disabled: false, color: None, menu: None, handler: None, quick: None }
     }
 
     pub(crate) fn on(mut self, on: bool) -> Self {
@@ -317,6 +328,34 @@ impl ToolButton {
 
     pub(crate) fn color(mut self, color: Hsla) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    /// A button of a palette (`color_palette.rs`): its left half sets the colour last picked from it in this window
+    /// (else `default`) and shows it as the bar under the icon; the ▼ opens the palette. `id` names the button's
+    /// last colour.
+    pub(crate) fn palette(mut self, editor: &SlideEditor, id: &'static str, default: u32, mut items: Vec<MenuEntry>) -> Self {
+        let last = editor.last_colors.get(id).copied().unwrap_or(ibis_doc_model::Rgb(default));
+        let mut pick = None;
+        for entry in &mut items {
+            if let MenuEntry::Palette(p) = entry {
+                p.button = Some(id);
+                pick = p.pick.clone();
+                // Picking a square (here or by the scenarios) is the button's last colour from then on.
+                for swatch in p.theme.iter_mut().flatten().chain(p.standard.iter_mut()) {
+                    let (rgb, inner) = (swatch.rgb, swatch.item.handler.clone());
+                    swatch.item.handler = inner.map(|inner| -> Handler {
+                        Rc::new(move |e, w, cx| {
+                            e.last_colors.insert(id, rgb);
+                            inner(e, w, cx)
+                        })
+                    });
+                }
+            }
+        }
+        self.color = Some(rgb(last.0).into());
+        self.quick = pick.map(|pick| -> Handler { Rc::new(move |e, w, cx| pick(e, Some(last), w, cx)) });
+        self.menu = Some(items);
         self
     }
 
@@ -429,17 +468,7 @@ fn listener(editor: &WeakEntity<SlideEditor>, handler: &Handler) -> impl Fn(&Cli
     }
 }
 
-/// `entries` into `menu`.
-pub(crate) fn fill_menu(mut menu: PopupMenu, entries: &[MenuEntry], editor: &WeakEntity<SlideEditor>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
-    for entry in entries {
-        menu = match entry {
-            MenuEntry::Separator => menu.separator(),
-            MenuEntry::Submenu(sub) => {
-                let (items, editor) = (sub.items.clone(), editor.clone());
-                let icon = sub.icon.map(menu_icon);
-                menu.submenu_with_icon(icon, crate::shell::i18n::text(&sub.label), window, cx, move |m, window, cx| fill_menu(m, &items, &editor, window, cx))
-            }
-            MenuEntry::Item(item) => {
+pub(crate) fn menu_item_row(item: &MenuItem, editor: &WeakEntity<SlideEditor>) -> PopupMenuItem {
                 // Icon (or ✓) in the menu's icon column, the label, the shortcut.
                 // The code's words in the UI's language; a document's names (sheets,
                 // layouts, styles, fonts, files) as they are.
@@ -464,8 +493,49 @@ pub(crate) fn fill_menu(mut menu: PopupMenu, entries: &[MenuEntry], editor: &Wea
                 if let Some(handler) = &item.handler {
                     row = row.on_click(listener(editor, handler));
                 }
-                menu.item(row)
+    row
+}
+
+/// `entries` without the submenus that have nothing to show (no items, or
+/// only separators), and without the separators that would be left at the
+/// start, at the end or twice in a row. Applied to every submenu too.
+pub(crate) fn prune_entries(entries: Vec<MenuEntry>) -> Vec<MenuEntry> {
+    let mut out: Vec<MenuEntry> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        match entry {
+            MenuEntry::Submenu(mut sub) => {
+                sub.items = prune_entries(std::mem::take(&mut sub.items));
+                if !sub.items.is_empty() {
+                    out.push(MenuEntry::Submenu(sub));
+                }
             }
+            MenuEntry::Separator => {
+                if !matches!(out.last(), None | Some(MenuEntry::Separator)) {
+                    out.push(MenuEntry::Separator);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    while matches!(out.last(), Some(MenuEntry::Separator)) {
+        out.pop();
+    }
+    out
+}
+
+/// `entries` into `menu`.
+pub(crate) fn fill_menu(mut menu: PopupMenu, entries: &[MenuEntry], editor: &WeakEntity<SlideEditor>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+    let entries = prune_entries(entries.to_vec());
+    for entry in &entries {
+        menu = match entry {
+            MenuEntry::Separator => menu.separator(),
+            MenuEntry::Submenu(sub) => {
+                let (items, editor) = (sub.items.clone(), editor.clone());
+                let icon = sub.icon.map(menu_icon);
+                menu.submenu_with_icon(icon, crate::shell::i18n::text(&sub.label), window, cx, move |m, window, cx| fill_menu(m, &items, &editor, window, cx))
+            }
+            MenuEntry::Palette(palette) => crate::shell::color_palette::fill_palette(menu, palette, editor, cx),
+            MenuEntry::Item(item) => menu.item(menu_item_row(item, editor)),
         };
     }
     menu
@@ -491,8 +561,25 @@ fn icon(name: &'static str, size: f32, color: Hsla) -> Icon {
 impl SlideEditor {
     /// The menus for the open document: the shell's, then the format's additions.
     pub(crate) fn menus(&self) -> Menus {
+        let mut menus = self.menus_unpruned();
+        for (_, entries) in &mut menus.menus {
+            *entries = prune_entries(std::mem::take(entries));
+        }
+        menus
+    }
+
+    /// The menus as the shell and the format built them, before the empty
+    /// submenus are left out (for the scenario that lists them).
+    pub(crate) fn menus_unpruned(&self) -> Menus {
         let mut menus = crate::shell::chrome_defaults::menus(self);
         with_format!(self, menus(self, &mut menus));
+        crate::shell::menu_bridge::fill(&mut menus, || {
+            let mut tools = self.toolbar_items();
+            if self.kind() == ibis_pptx::Kind::Presentation {
+                tools.extend(crate::pptx::chrome::menu_buttons(self));
+            }
+            tools
+        });
         menus
     }
 
@@ -562,9 +649,7 @@ impl SlideEditor {
                     if sidebar_open { fill_icon("dock_to_left", 20.0, rgb(ICON).into()) } else { icon("dock_to_left", 20.0, rgb(ICON).into()) },
                     if sidebar_open { "_shell.hide-sidebar" } else { "view.sidebar" },
                     Some(Rc::new(|this: &mut SlideEditor, window, cx| {
-                        this.sidebar_open = !this.sidebar_open;
-                        cx.notify();
-                        window.refresh();
+                        this.toggle_sidebar(window, cx);
                     })),
                     &editor,
                 ))
@@ -820,7 +905,7 @@ fn title_button_icon(id: &'static str, icon: Icon, tooltip: &'static str, handle
 }
 
 /// One part of the toolbar.
-fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<SlideEditor>) -> AnyElement {
+pub(crate) fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<SlideEditor>) -> AnyElement {
     match item {
         ToolItem::Separator => div().w(px(1.)).h(px(20.)).mx(px(4.)).bg(rgb(DIVIDER)).flex_none().into_any_element(),
         ToolItem::Button(b) => tool_button(b, index, editor),
@@ -901,6 +986,34 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
         })
         .when_some(b.text.clone(), |d, text| d.child(div().px(px(3.)).text_size(px(14.)).text_color(if enabled { rgb(TEXT).into() } else { disabled_color() }).child(crate::shell::i18n::text(&text))))
         .when(b.menu.is_some(), |d| d.child(div().ml(px(-2.)).child(icon("arrow_drop_down", 16.0, color))));
+    // A split button: the icon (what was last used is done at once) and the ▼ (the menu) are two buttons side by side.
+    if let (Some(menu), Some(quick), true) = (&b.menu, &b.quick, enabled) {
+        let left = Button::new(SharedString::from(format!("{}-{index}", b.id)))
+            .ghost()
+            .xsmall()
+            .h(px(28.))
+            .min_w(px(28.))
+            .px(px(3.))
+            .rounded_l(px(4.))
+            .tooltip(crate::shell::i18n::text(&b.tooltip))
+            .child(h_flex().items_center().justify_center().when_some(b.icon, |d, name| match b.color {
+                Some(bar) => d.child(v_flex().items_center().pt(px(2.)).child(icon(name, 18.0, color)).child(div().w(px(18.)).h(px(3.)).mt(px(-1.)).rounded(px(1.)).bg(bar))),
+                None => d.child(icon(name, 20.0, color)),
+            }))
+            .on_click(listener(editor, quick));
+        let (menu, editor) = (Rc::new(menu.clone()), editor.clone());
+        let right = Button::new(SharedString::from(format!("{}-{index}-menu", b.id)))
+            .ghost()
+            .xsmall()
+            .h(px(28.))
+            .w(px(16.))
+            .px(px(0.))
+            .rounded_r(px(4.))
+            .tooltip(crate::shell::i18n::text(&b.tooltip))
+            .child(icon("arrow_drop_down", 16.0, color))
+            .dropdown_menu(move |m, window, cx| fill_menu(m.min_w(px(220.)), &menu, &editor, window, cx));
+        return h_flex().items_center().child(left).child(right).into_any_element();
+    }
     let button = Button::new(SharedString::from(format!("{}-{index}", b.id)))
         .ghost()
         .xsmall()
@@ -959,6 +1072,26 @@ mod tests {
         assert!(menus.connect("b", |_: &mut SlideEditor, _: &mut Window, _: &mut Context<SlideEditor>| {}));
         assert!(menus.find_mut("b").unwrap().enabled());
         assert!(!menus.connect("missing", |_: &mut SlideEditor, _: &mut Window, _: &mut Context<SlideEditor>| {}));
+    }
+
+    #[test]
+    fn empty_submenus_and_stray_separators_are_pruned() {
+        let empty = |id| Submenu::new(id, "add", "E", vec![MenuEntry::Separator]);
+        let entries = vec![
+            MenuEntry::Separator,
+            MenuItem::new("a", "A").into(),
+            MenuEntry::Separator,
+            empty("e1").into(),
+            MenuEntry::Separator,
+            Submenu::new("outer", "add", "O", vec![empty("e2").into(), MenuItem::new("b", "B").into(), empty("e3").into()]).into(),
+            MenuEntry::Separator,
+            empty("e4").into(),
+        ];
+        let out = super::prune_entries(entries);
+        assert_eq!(out.len(), 3);
+        assert!(matches!(out[0], MenuEntry::Item(_)) && matches!(out[1], MenuEntry::Separator));
+        let MenuEntry::Submenu(outer) = &out[2] else { panic!("outer") };
+        assert_eq!(outer.items.len(), 1);
     }
 
     #[test]

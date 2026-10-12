@@ -628,7 +628,11 @@ pub(crate) fn read_file_with(path: &std::path::Path, password: Option<&str>) -> 
         data = ibis_pptx::decrypt(&data, password).map_err(|e| if e == ibis_pptx::DecryptError::WrongPassword { WRONG_PASSWORD.to_string() } else { e.to_string() })?;
         used = Some(password.to_string());
     }
-    let opened = ibis_pptx::open(data).map_err(|e| e.to_string())?;
+    let opened = ibis_pptx::open(data).map_err(|e| {
+        xlsx::repair::note_open_failed(path);
+        e.to_string()
+    })?;
+    xlsx::repair::note_opened(path);
     timing::mark("parsed");
     render::preload::Preload::start_for_next(&opened.presentation);
     Ok(Loaded { presentation: opened.presentation, source: std::sync::Arc::new(opened.source), password: used })
@@ -860,6 +864,10 @@ pub fn run_native() {
             }
             rest.into_iter().for_each(|p| open_path_in_app(p, cx));
             timing::mark("window");
+            // Look for a newer version in the background (not in the timing runs).
+            if !quit_after_first_frame {
+                crate::shell::update::start(cx);
+            }
             // The frame after the one scheduled now: the window drawn once.
             if let Some(window) = cx.windows().first().copied() {
                 window

@@ -48,20 +48,7 @@ pub(super) const FONTS: &[&str] = &["游ゴシック", "游明朝", "ＭＳ Ｐ�
 /// Fill colours (the light ones first, as a highlight).
 /// The theme colours in SpreadsheetML's order: Excel's names, the menu ids, and the tints its palette gives each (millionths).
 const THEME_NAMES: [&str; 10] = ["_xlsx.background-1", "_xlsx.text-1", "_xlsx.background-2", "_xlsx.text-2", "_xlsx.accent-1", "_xlsx.accent-2", "_xlsx.accent-3", "_xlsx.accent-4", "_xlsx.accent-5", "_xlsx.accent-6"];
-const THEME_IDS: [&str; 10] = ["xlsx.theme.0", "xlsx.theme.1", "xlsx.theme.2", "xlsx.theme.3", "xlsx.theme.4", "xlsx.theme.5", "xlsx.theme.6", "xlsx.theme.7", "xlsx.theme.8", "xlsx.theme.9"];
-const THEME_TINTS: [[i32; 6]; 10] = [
-    [0, -50_000, -150_000, -250_000, -350_000, -500_000],
-    [0, 500_000, 350_000, 250_000, 150_000, 50_000],
-    [0, -100_000, -250_000, -500_000, -750_000, -900_000],
-    [0, 900_000, 750_000, 500_000, 250_000, 100_000],
-    [0, 800_000, 600_000, 400_000, -250_000, -500_000],
-    [0, 800_000, 600_000, 400_000, -250_000, -500_000],
-    [0, 800_000, 600_000, 400_000, -250_000, -500_000],
-    [0, 800_000, 600_000, 400_000, -250_000, -500_000],
-    [0, 800_000, 600_000, 400_000, -250_000, -500_000],
-    [0, 800_000, 600_000, 400_000, -250_000, -500_000],
-];
-pub(super) const FILLS: &[(&str, u32)] = &[("_xlsx.light-yellow", 0xfff2cc), ("_shell.light-green", 0xe2efda), ("_shell.light-blue", 0xddebf7), ("_xlsx.light-orange", 0xfce4d6), ("_xlsx.light-gray", 0xededed), ("_shell.yellow", 0xffff00), ("_shell.green", 0x92d050), ("_shell.blue", 0x9bc2e6), ("_shell.gray", 0xbfbfbf), ("_shell.black", 0x000000)];
+pub(super) const FILLS: &[(&str, u32)] = &[("_xlsx.light-yellow", 0xfff2cc), ("_shell.light-green", 0xe2efda), ("_shell.light-blue", 0xddebf7), ("_xlsx.light-orange", 0xfce4d6), ("_xlsx.light-gray", 0xededed), ("_shell.yellow", 0xffff00), ("_shell.green", 0x92d050), ("_shell.blue", 0x9bc2e6), ("_shell.gray", 0xbfbfbf), ("_xlsx.black", 0x000000)];
 pub(super) const COLORS: &[(&str, u32)] = &[("_xlsx.black", 0x000000), ("_shell.dark-red", 0xc00000), ("_shell.red", 0xff0000), ("_shell.orange", 0xffc000), ("_shell.yellow", 0xffff00), ("_shell.light-green", 0x92d050), ("_shell.green", 0x00b050), ("_shell.light-blue", 0x00b0f0), ("_shell.blue", 0x0070c0), ("_shell.dark-blue", 0x002060), ("_shell.purple", 0x7030a0), ("_shell.white", 0xffffff)];
 /// Number formats of 表示形式の詳細 (123 ▼).
 pub(super) const NUMBER_FORMATS: &[(&str, &str)] = &[
@@ -147,11 +134,42 @@ impl SlideEditor {
 
     /// Borders on the selected range: every line (格子), the outside, the bottom, or none.
     pub(super) fn set_borders(&mut self, kind: &'static str, cx: &mut Context<Self>) {
+        self.apply_borders(kind, false, cx);
+    }
+
+    /// The border line of `edge` of the selected range at its cell `along` (0 = the first), as the cells have it.
+    pub(crate) fn range_edge(&self, kind: &str) -> Option<Border> {
+        let r = self.selected_range()?;
+        let (_, sheet) = self.current_sheet()?;
+        let at = |column: u32, row: u32| sheet.cell(row, column).and_then(|c| sheet.styles.get(c.style as usize)).cloned().unwrap_or_default();
+        let (cells, pick): (Vec<(u32, u32)>, fn(&CellStyle) -> Option<Border>) = match kind {
+            "top" => ((r.first_column..=r.last_column).map(|c| (c, r.first_row)).collect(), |s| s.top),
+            "bottom" => ((r.first_column..=r.last_column).map(|c| (c, r.last_row)).collect(), |s| s.bottom),
+            "left" => ((r.first_row..=r.last_row).map(|row| (r.first_column, row)).collect(), |s| s.left),
+            "right" => ((r.first_row..=r.last_row).map(|row| (r.last_column, row)).collect(), |s| s.right),
+            "inside-h" => ((r.first_column..=r.last_column).flat_map(|c| (r.first_row..r.last_row).map(move |row| (c, row))).collect(), |s| s.bottom),
+            "inside-v" => ((r.first_row..=r.last_row).flat_map(|row| (r.first_column..r.last_column).map(move |c| (c, row))).collect(), |s| s.right),
+            "diagonal-up" => (vec![(r.first_column, r.first_row)], |s| s.diagonal_up),
+            "diagonal-down" => (vec![(r.first_column, r.first_row)], |s| s.diagonal_down),
+            _ => return None,
+        };
+        let first = pick(&at(cells.first()?.0, cells.first()?.1))?;
+        cells.iter().all(|&(c, row)| pick(&at(c, row)).is_some()).then_some(first)
+    }
+
+    /// A line of the format pane's sample was pressed: the line is taken off if the cells have it, else drawn.
+    pub(crate) fn toggle_border(&mut self, kind: &'static str, cx: &mut Context<Self>) {
+        let has = self.range_edge(kind).is_some();
+        self.apply_borders(kind, has, cx);
+    }
+
+    /// `set_borders`, or (`remove`) the lines of `kind` taken off.
+    pub(crate) fn apply_borders(&mut self, kind: &'static str, remove: bool, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let Some(r) = self.selected_range() else { return };
         let slide = self.current_slide;
         let chosen = Border { line: self.wb().border_line, color: self.wb().border_color };
-        let line = Some(chosen);
+        let line = (!remove).then_some(chosen);
         let edge = |ranges: Vec<CellRange>, e: Edge, b: Option<Border>| Command::Sheet(SheetCommand::SetFormat { slide, ranges, change: StyleChange::Border(e, b) });
         let row = |i: u32| CellRange { first_row: i, last_row: i, ..r };
         let column = |i: u32| CellRange { first_column: i, last_column: i, ..r };
@@ -162,6 +180,10 @@ impl SlideEditor {
             "top" => vec![edge(vec![row(r.first_row)], Edge::Top, line)],
             "left" => vec![edge(vec![column(r.first_column)], Edge::Left, line)],
             "right" => vec![edge(vec![column(r.last_column)], Edge::Right, line)],
+            "inside-h" if r.last_row > r.first_row => vec![edge(vec![CellRange { last_row: r.last_row - 1, ..r }], Edge::Bottom, line)],
+            "inside-v" if r.last_column > r.first_column => vec![edge(vec![CellRange { last_column: r.last_column - 1, ..r }], Edge::Right, line)],
+            "inside" => [(r.last_row > r.first_row).then(|| edge(vec![CellRange { last_row: r.last_row - 1, ..r }], Edge::Bottom, line)), (r.last_column > r.first_column).then(|| edge(vec![CellRange { last_column: r.last_column - 1, ..r }], Edge::Right, line))].into_iter().flatten().collect(),
+            "inside-h" | "inside-v" => return,
             "diagonal-up" => vec![edge(vec![r], Edge::DiagonalUp, line)],
             "diagonal-down" => vec![edge(vec![r], Edge::DiagonalDown, line)],
             "thick-bottom" => vec![edge(vec![row(r.last_row)], Edge::Bottom, Some(Border { line: BorderLine::Thick, ..chosen }))],
@@ -744,56 +766,65 @@ fn step_decimals(code: &str, more: bool) -> String {
         .join(";")
 }
 
-pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
-    let style = editor.current_style();
+/// The palette of 文字の色 (`fill` false) or 塗りつぶし (true) for the selected cells: the toolbar's and the
+/// format pane's.
+pub(crate) fn cell_color_menu(editor: &SlideEditor, fill: bool) -> Vec<MenuEntry> {
     let format = |change: StyleChange| move |this: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>| this.format_cells(change.clone(), cx);
-    let color_menu = |fill: bool| -> Vec<MenuEntry> {
-        let mut items: Vec<MenuEntry> = (if fill { FILLS } else { COLORS })
-            .iter()
-            .map(|&(name, c)| {
-                let change = if fill { StyleChange::Fill(Some(Rgb(c))) } else { StyleChange::Color(Rgb(c)) };
-                MenuItem::new(if fill { "xlsx.fill" } else { "xlsx.color" }, crate::shell::i18n::text(name)).on(format(change)).into()
-            })
-            .collect();
-        // テーマの色: the workbook's ten theme colours, each with its five tints.
-        let colors = editor.current_theme_palette_colors();
-        let theme_items: Vec<MenuEntry> = (0..10)
-            .map(|i| {
-                let name = crate::shell::i18n::text(THEME_NAMES[i]);
-                let items: Vec<MenuEntry> = THEME_TINTS[i]
-                    .iter()
-                    .map(|&tint| {
-                        let theme = ibis_doc_model::ThemeColor { index: i as u8, tint };
-                        let rgb = ibis_pptx::tinted(colors[i], tint);
-                        let change = if fill { StyleChange::FillTheme(rgb, theme) } else { StyleChange::ColorTheme(rgb, theme) };
-                        let label = match tint {
-                            0 => name.to_string(),
-                            t if t > 0 => crate::shell::i18n::format("xlsx.theme-lighter", &[("name", &name), ("n", &(t / 10_000))]),
-                            t => crate::shell::i18n::format("xlsx.theme-darker", &[("name", &name), ("n", &(-t / 10_000))]),
-                        };
-                        MenuItem::new(if fill { "xlsx.theme-fill" } else { "xlsx.theme-color" }, label).on(format(change)).into()
-                    })
-                    .collect();
-                Submenu::new(THEME_IDS[i], "palette", name, items).into()
-            })
-            .collect();
-        items.insert(0, MenuEntry::Separator);
-        items.splice(0..0, theme_items);
-        if fill {
-            items.insert(0, MenuItem::tr("xlsx.fill-none").on(format(StyleChange::Fill(None))).into());
+    use crate::shell::color_palette::{Palette, PickColor, Swatch, THEME_TINTS};
+    let apply = move |this: &mut SlideEditor, change: StyleChange, cx: &mut Context<SlideEditor>| this.format_cells(change, cx);
+    // Picking a colour from the lately used ones, or a standard one.
+    let pick: PickColor = std::rc::Rc::new(move |this, c, _, cx| {
+        let change = match (fill, c) {
+            (true, c) => StyleChange::Fill(c),
+            (false, Some(c)) => StyleChange::Color(c),
+            (false, None) => return,
+        };
+        apply(this, change, cx);
+    });
+    // テーマの色: the workbook's ten theme colours, each with its five tints.
+    let colors = editor.current_theme_palette_colors();
+    let theme: Vec<Vec<Swatch>> = (0..6)
+        .map(|row| {
+            (0..10)
+                .map(|i| {
+                    let tint = THEME_TINTS[i][row];
+                    let theme = ibis_doc_model::ThemeColor { index: i as u8, tint };
+                    let rgb = ibis_pptx::tinted(colors[i], tint);
+                    let name = crate::shell::i18n::text(THEME_NAMES[i]);
+                    let label = match tint {
+                        0 => name.to_string(),
+                        t if t > 0 => crate::shell::i18n::format("xlsx.theme-lighter", &[("name", &name), ("n", &(t / 10_000))]),
+                        t => crate::shell::i18n::format("xlsx.theme-darker", &[("name", &name), ("n", &(-t / 10_000))]),
+                    };
+                    let change = if fill { StyleChange::FillTheme(rgb, theme) } else { StyleChange::ColorTheme(rgb, theme) };
+                    Swatch { rgb, item: MenuItem::new(if fill { "xlsx.theme-fill" } else { "xlsx.theme-color" }, label).on(format(change)) }
+                })
+                .collect()
+        })
+        .collect();
+    let standard: Vec<Swatch> = (if fill { FILLS } else { COLORS })
+        .iter()
+        .map(|&(name, c)| Swatch::with_id(if fill { "xlsx.fill" } else { "xlsx.color" }, Rgb(c), crate::shell::i18n::text(name), false, &pick))
+        .collect();
+    let none = fill.then(|| MenuItem::tr("xlsx.fill-none").icon("format_color_reset").on(format(StyleChange::Fill(None))));
+    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None })]
+}
+
+/// The palette of the colour new border lines are drawn in.
+pub(crate) fn border_color_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let colors: Vec<(SharedString, Rgb, &'static str)> = COLORS.iter().map(|&(label, c)| (SharedString::from(crate::shell::i18n::text(label)), Rgb(c), "xlsx.border-color")).collect();
+    let theme = editor.current_theme_palette_colors();
+    crate::shell::color_palette::simple_palette(None, Some(&theme), &colors, Some(editor.wb().border_color), std::rc::Rc::new(|this, c, _, cx| {
+        if let Some(c) = c {
+            this.wb_mut().border_color = c;
+            cx.notify();
         }
-        items
-    };
-    let mut number_menu: Vec<MenuEntry> = NUMBER_FORMATS.iter().map(|&(name, code)| MenuItem::new("xlsx.number-format", crate::shell::i18n::text(name)).checked(style.number_format == code).on(format(StyleChange::NumberFormat(code.into()))).into()).collect();
-    number_menu.push(MenuEntry::Separator);
-    number_menu.push(MenuItem::tr("xlsx.number-format-custom").on(|this, window, cx| this.open_custom_format(window, cx)).into());
-    let font = style.font.clone().unwrap_or_else(|| "游ゴシック".into()); // i18n-ok（既定のフォント名（スタイルに保存される値））
-    let font_menu: Vec<MenuEntry> = FONTS.iter().map(|&f| MenuItem::new("xlsx.font", f).checked(font == f).on(format(StyleChange::Font(Some(f.into())))).into()).collect();
-    let size = style.font_size;
-    let halign = |id: &'static str, icon: &'static str, label: &'static str, a: CellAlign| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).checked(style.align == a).on(format(StyleChange::Align(a))).into() };
-    let valign = |id: &'static str, icon: &'static str, label: &'static str, a: CellVerticalAlign| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).checked(style.vertical == a).on(format(StyleChange::Vertical(a))).into() };
-    let border = |id: &'static str, icon: &'static str, label: &'static str, kind: &'static str| -> MenuEntry { MenuItem::new(id, label).icon(icon).on(move |this, _, cx| this.set_borders(kind, cx)).into() };
-    let border_styles = BorderLine::ALL.into_iter().map(|line| {
+    }))
+}
+
+/// The items for the line style of new border lines.
+pub(crate) fn border_style_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    BorderLine::ALL.into_iter().map(|line| {
         let label = match line {
             BorderLine::Thin => crate::shell::i18n::text("_xlsx.thin"), BorderLine::Hair => crate::shell::i18n::text("_xlsx.hair"), BorderLine::Medium => crate::shell::i18n::text("_xlsx.medium"), BorderLine::Thick => crate::shell::i18n::text("_shell.thick"),
             BorderLine::Double => crate::shell::i18n::text("_shell.double"), BorderLine::Dotted => crate::shell::i18n::text("_shell.dotted"), BorderLine::Dashed => crate::shell::i18n::text("_shell.dashed"),
@@ -807,8 +838,23 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             BorderLine::MediumDashDot => "ibis/border-mediumdashdot", BorderLine::MediumDashDotDot => "ibis/border-mediumdashdotdot", BorderLine::SlantDashDot => "ibis/border-slantdashdot",
         };
         MenuItem::new(line.ooxml(), label).icon(icon).checked(editor.wb().border_line == line).on(move |this, _, cx| { this.wb_mut().border_line = line; cx.notify(); }).into()
-    }).collect();
-    let border_colors = COLORS.iter().map(|&(label, color)| MenuItem::new(label, crate::shell::i18n::text(label)).checked(editor.wb().border_color == Rgb(color)).on(move |this, _, cx| { this.wb_mut().border_color = Rgb(color); cx.notify(); }).into()).collect();
+    }).collect()
+}
+
+pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
+    let style = editor.current_style();
+    let format = |change: StyleChange| move |this: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>| this.format_cells(change.clone(), cx);
+    let mut number_menu: Vec<MenuEntry> = NUMBER_FORMATS.iter().map(|&(name, code)| MenuItem::new("xlsx.number-format", crate::shell::i18n::text(name)).checked(style.number_format == code).on(format(StyleChange::NumberFormat(code.into()))).into()).collect();
+    number_menu.push(MenuEntry::Separator);
+    number_menu.push(MenuItem::tr("xlsx.number-format-custom").on(|this, window, cx| this.open_custom_format(window, cx)).into());
+    let font = style.font.clone().unwrap_or_else(|| "游ゴシック".into()); // i18n-ok（既定のフォント名（スタイルに保存される値））
+    let font_menu: Vec<MenuEntry> = FONTS.iter().map(|&f| MenuItem::new("xlsx.font", f).checked(font == f).on(format(StyleChange::Font(Some(f.into())))).into()).collect();
+    let size = style.font_size;
+    let halign = |id: &'static str, icon: &'static str, label: &'static str, a: CellAlign| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).checked(style.align == a).on(format(StyleChange::Align(a))).into() };
+    let valign = |id: &'static str, icon: &'static str, label: &'static str, a: CellVerticalAlign| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).checked(style.vertical == a).on(format(StyleChange::Vertical(a))).into() };
+    let border = |id: &'static str, icon: &'static str, label: &'static str, kind: &'static str| -> MenuEntry { MenuItem::new(id, label).icon(icon).on(move |this, _, cx| this.set_borders(kind, cx)).into() };
+    let border_styles = border_style_items(editor);
+    let border_colors = border_color_menu(editor);
     let halign_icon = match style.align {
         CellAlign::Center | CellAlign::CenterAcross => "format_align_center",
         CellAlign::Right => "format_align_right",
@@ -837,9 +883,9 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             let label = match u { ibis_doc_model::CellUnderline::None => crate::shell::i18n::text("_xlsx.no-underline"), ibis_doc_model::CellUnderline::Single => crate::shell::i18n::text("_xlsx.single-underline"), ibis_doc_model::CellUnderline::Double => crate::shell::i18n::text("_xlsx.double-underline"), ibis_doc_model::CellUnderline::SingleAccounting => crate::shell::i18n::text("_xlsx.single-accounting"), ibis_doc_model::CellUnderline::DoubleAccounting => crate::shell::i18n::text("_xlsx.double-accounting") };
             MenuItem::new(u.ooxml(), label).checked(style.underline == u).on(format(StyleChange::UnderlineKind(u))).into()
         }).collect()).into(),
-        ToolButton::new("text-color", "format_color_text", "_shell.font-color").color(rgb(style.color.0).into()).menu(color_menu(false)).into(),
+        ToolButton::new("text-color", "format_color_text", "_shell.font-color").palette(editor, "text-color", 0xff0000, cell_color_menu(editor, false)).into(),
         sep(),
-        ToolButton::new("fill", "format_color_fill", "_shell.fill-color").color(rgb(style.fill.map_or(0xffffff, |c| c.0)).into()).menu(color_menu(true)).into(),
+        ToolButton::new("fill", "format_color_fill", "_shell.fill-color").palette(editor, "fill", 0xffff00, cell_color_menu(editor, true)).into(),
         ToolButton::new("borders", "border_all", "_shell.line")
             .menu(vec![
                 border("xlsx.border-all", "border_all", "_xlsx.all-borders", "all"),
@@ -898,6 +944,24 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             .menu(super::autosum::FUNCTIONS.iter().map(|&(f, label)| MenuItem::new("xlsx.function", format!("{f}（{}）", crate::shell::i18n::text(label))).on(move |this, _, cx| this.auto_function(f, cx)).into()).collect()) // i18n-ok（関数名の括弧）
             .into(),
     ]
+}
+
+/// Put `new` at the end of the submenu `id` (in whatever menu it is).
+fn push_into(entries: &mut Vec<MenuEntry>, id: &str, new: MenuEntry) -> Result<(), MenuEntry> {
+    let mut new = new;
+    for e in entries.iter_mut() {
+        if let MenuEntry::Submenu(sub) = e {
+            if sub.id == id {
+                sub.items.push(new);
+                return Ok(());
+            }
+            match push_into(&mut sub.items, id, new) {
+                Ok(()) => return Ok(()),
+                Err(back) => new = back,
+            }
+        }
+    }
+    Err(new)
 }
 
 /// Put `new` after the item `id` (in whatever menu or submenu it is).
@@ -982,6 +1046,8 @@ fn text_warp_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 }
 
 pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
+    // ツール > スペル > スペルチェック…
+    fill_submenu(menus, "tools.spelling", vec![MenuItem::tr("pptx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_sheet_spelling(w, cx)).into()]);
     // 編集 > 画像としてコピー (after コピー).
     let mut copy_as_pic: MenuEntry = MenuItem::tr("xlsx.copy-as-picture").icon("image").shortcut("⌥⇧⌘C").on(|this, _, cx| this.copy_as_picture(cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
@@ -1012,8 +1078,12 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.hide-sheet", |this, _, cx| this.hide_sheet(cx));
     menus.connect("xlsx.duplicate-sheet", |this, window, cx| this.copy_sheet(window, cx));
     // 見出しの色, after シートの名前を変更.
-    let mut colors: Vec<MenuEntry> = vec![MenuItem::tr("xlsx.tab-color-none").on(|this, _, cx| this.set_tab_color(None, cx)).into()];
-    colors.extend(COLORS.iter().map(|&(name, c)| -> MenuEntry { MenuItem::new("xlsx.tab-color", crate::shell::i18n::text(name)).on(move |this, _, cx| this.set_tab_color(Some(Rgb(c)), cx)).into() }));
+    let colors: Vec<MenuEntry> = {
+        let list: Vec<(SharedString, Rgb, &'static str)> = COLORS.iter().map(|&(name, c)| (SharedString::from(crate::shell::i18n::text(name)), Rgb(c), "xlsx.tab-color")).collect();
+        let theme = editor.current_theme_palette_colors();
+        let none = MenuItem::tr("xlsx.tab-color-none").icon("format_color_reset").on(|this, _, cx| this.set_tab_color(None, cx));
+        crate::shell::color_palette::simple_palette(Some(none), Some(&theme), &list, None, std::rc::Rc::new(|this, c, _, cx| this.set_tab_color(c, cx)))
+    };
     let mut tab: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.tab-colors", "palette", colors).into();
     for (_, entries) in menus.menus.iter_mut() {
         match insert_after(entries, "xlsx.rename-sheet", tab) {
@@ -1122,7 +1192,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autorecover-settings").icon("settings_backup_restore").on(|this, window, cx| this.open_xlsx_autorecover_settings_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.recover-unsaved").icon("restore_page").on(|this, window, cx| this.open_xlsx_recover_unsaved_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.backup-save-settings").icon("save_as").on(|this, window, cx| this.open_xlsx_backup_save_settings_panel(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.open-and-repair").icon("cleaning_services").on(|this, window, cx| this.open_xlsx_repair_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.open-and-repair").icon("cleaning_services").disabled(super::repair::damaged_workbook().is_none()).on(|this, window, cx| this.open_xlsx_repair_damaged(window, cx)).into());
     let style = editor.current_style();
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.lock-cells").checked(!style.unlocked).on(|this, _, cx| this.toggle_cell_protection(false, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.hide-formulas").checked(style.formula_hidden).on(|this, _, cx| this.toggle_cell_protection(true, cx)).into());
@@ -1335,7 +1405,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         .on(|this, window, cx| this.new_from_template(window, cx))
         .into();
     for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "file.new.workbook", tmpl_entry) {
+        match push_into(entries, "file.new", tmpl_entry) {
             Ok(()) => break,
             Err(back) => tmpl_entry = back,
         }
@@ -1356,7 +1426,8 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     // ファイル > 開いて修復… (XLSX-FILE-020)
     let mut repair_file_entry: MenuEntry = MenuItem::tr("xlsx.open-and-repair")
         .icon("cleaning_services")
-        .on(|this, window, cx| this.open_xlsx_repair_panel(window, cx))
+        .disabled(super::repair::damaged_workbook().is_none())
+        .on(|this, window, cx| this.open_xlsx_repair_damaged(window, cx))
         .into();
     for (_, entries) in menus.menus.iter_mut() {
         match insert_after(entries, "xlsx.recover-unsaved", repair_file_entry) {
@@ -1571,7 +1642,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.autorecover-settings", |this, window, cx| this.open_xlsx_autorecover_settings_panel(window, cx));
     menus.connect("xlsx.recover-unsaved", |this, window, cx| this.open_xlsx_recover_unsaved_panel(window, cx));
     menus.connect("xlsx.backup-save-settings", |this, window, cx| this.open_xlsx_backup_save_settings_panel(window, cx));
-    menus.connect("xlsx.open-and-repair", |this, window, cx| this.open_xlsx_repair_panel(window, cx));
+    menus.connect("xlsx.open-and-repair", |this, window, cx| this.open_xlsx_repair_damaged(window, cx));
     menus.connect("xlsx.print-active-sheet", |this, _, cx| this.set_print_what(super::PrintWhat::ActiveSheet, cx));
     menus.connect("xlsx.print-entire-workbook", |this, _, cx| this.set_print_what(super::PrintWhat::EntireWorkbook, cx));
     menus.connect("xlsx.print-selection", |this, _, cx| this.set_print_what(super::PrintWhat::Selection, cx));

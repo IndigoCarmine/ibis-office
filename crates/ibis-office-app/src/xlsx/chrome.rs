@@ -358,18 +358,23 @@ fn new_slide_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     layout_items(editor)
 }
 
-fn color_menu(_id: &'static str, none: Option<&'static str>, f: impl Fn(&mut SlideEditor, Option<Rgb>, &mut Window, &mut Context<SlideEditor>) + Clone + 'static) -> Vec<MenuEntry> {
-    let mut items: Vec<MenuEntry> = Vec::new();
-    if let Some(label) = none {
+/// The colours a button offers, as a palette (`shell/color_palette.rs`): "none" when `none` names it, the
+/// workbook's theme colours with their tints, the standard colours, those used lately.
+fn color_menu(editor: &SlideEditor, _id: &'static str, none: Option<&'static str>, f: impl Fn(&mut SlideEditor, Option<Rgb>, &mut Window, &mut Context<SlideEditor>) + Clone + 'static) -> Vec<MenuEntry> {
+    use crate::shell::color_palette::{theme_rows, Palette, PickColor, Swatch};
+    let pick: PickColor = std::rc::Rc::new(f.clone());
+    let none = none.map(|label| {
         let g = f.clone();
-        items.push(MenuItem::new("color.none", label).icon("format_color_reset").on(move |this, window, cx| g(this, None, window, cx)).into());
-        items.push(MenuEntry::Separator);
-    }
-    for &(label, rgb, color_id) in COLORS {
-        let g = f.clone();
-        items.push(MenuItem::new(color_id, label).icon("circle").on(move |this, window, cx| g(this, Some(Rgb(rgb)), window, cx)).into());
-    }
-    items
+        MenuItem::new("color.none", label).icon("format_color_reset").on(move |this, window, cx| g(this, None, window, cx))
+    });
+    let theme = theme_rows(&editor.current_theme_palette_colors(), &pick, None);
+    // The standard colours: the ten of the colour list that are not shades of grey.
+    let standard = COLORS
+        .iter()
+        .filter(|&&(_, rgb, _)| !matches!(rgb, 0x000000 | 0x404040 | 0x7f7f7f | 0xd9d9d9 | 0xffffff | 0x4472c4))
+        .map(|&(label, rgb, id)| Swatch::with_id(id, Rgb(rgb), label, false, &pick))
+        .collect();
+    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None })]
 }
 
 fn fill_presets(background: bool) -> Vec<MenuEntry> {
@@ -392,7 +397,7 @@ fn fill_presets(background: bool) -> Vec<MenuEntry> {
 
 /// 背景: a colour, or the layout's background back.
 fn background_menu() -> Vec<MenuEntry> {
-    let mut items = color_menu("pptx.background", None, |this, rgb, _, cx| {
+    let mut items = color_menu(editor, "pptx.background", None, |this, rgb, _, cx| {
         if let Some(rgb) = rgb {
             this.set_background(Fill::Solid(Color::opaque(rgb)), cx);
         }
@@ -570,7 +575,7 @@ fn outline_buttons(editor: &SlideEditor, line: bool) -> Vec<ToolItem> {
     vec![
         ToolButton::new("border-color", "border_color", color_label)
             .color(color)
-            .menu(color_menu("pptx.stroke-color", (!line).then_some("pptx.chrome.no-border"), move |this, rgb, _, cx| {
+            .menu(color_menu(editor, "pptx.stroke-color", (!line).then_some("pptx.chrome.no-border"), move |this, rgb, _, cx| {
                 this.stroke_selected(move |s| rgb.map(|rgb| Stroke { color: Color::opaque(rgb), ..base(s) }), cx)
             }))
             .into(),
@@ -674,7 +679,7 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("text-color", "format_color_text", "_shell.font-color")
             .color(text_color)
             .disabled(!on)
-            .menu(color_menu("pptx.text-color", None, |this, rgb, window, cx| {
+            .menu(color_menu(editor, "pptx.text-color", None, |this, rgb, window, cx| {
                 if let Some(rgb) = rgb {
                     this.format_characters(window, cx, CharacterFormat { color: Some(rgb), ..Default::default() });
                 }
@@ -713,7 +718,7 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("indent-more", "format_indent_increase", "_shell.increase-indent").disabled(!on).click(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { indent_by: Some(457_200), ..Default::default() })).into(),
         ToolButton::new("highlight", "ink_highlighter", "pptx.chrome.highlight-color")
             .disabled(!on)
-            .menu(color_menu("pptx.highlight", Some("pptx.chrome.no-color"), |this, rgb, window, cx| {
+            .menu(color_menu(editor, "pptx.highlight", Some("pptx.chrome.no-color"), |this, rgb, window, cx| {
                 this.format_characters(window, cx, ibis_doc_model::CharacterFormat { highlight: Some(rgb), ..Default::default() })
             }))
             .into(),
@@ -765,7 +770,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         },
         _ => None,
     });
-    let mut fill_items = color_menu("pptx.fill", Some("_shell.no-fill"), |this, rgb, _, cx| {
+    let mut fill_items = color_menu(editor, "pptx.fill", Some("_shell.no-fill"), |this, rgb, _, cx| {
         this.fill_selected(rgb.map_or(Fill::None, |rgb| Fill::Solid(Color::opaque(rgb))), cx)
     });
     fill_items.push(MenuEntry::Separator);

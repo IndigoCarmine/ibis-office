@@ -26,6 +26,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix_docx_image_look", fix_docx_image_look),
         ("shell::fix17_print_is_bound", fix17_print_is_bound),
         ("shell::fix10_settings_window_centered_and_app_menu", fix10_settings_window_centered_and_app_menu),
+        ("shell::fix_xlsx_new_menu_and_first_right_pane", fix_xlsx_new_menu_and_first_right_pane),
         ("shell::fix_xlsx_headings_and_formula_bar", fix_xlsx_headings_and_formula_bar),
         ("shell::fix_xlsx_zoom", fix_xlsx_zoom),
         ("shell::fix_xlsx_page_break_preview", fix_xlsx_page_break_preview),
@@ -58,6 +59,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix_docx_table_of_figures", fix_docx_table_of_figures),
         ("shell::fix_status_bar_and_zoom_i18n", fix_status_bar_and_zoom_i18n),
         ("shell::fix21_pptx_sidebar_close_zoom_fit_benchmark", fix21_pptx_sidebar_close_zoom_fit_benchmark),
+        ("shell::pptx_sidebar_starts_closed", pptx_sidebar_starts_closed),
         ("shell::fix_xlsx_file017_doc_properties", fix_xlsx_file017_doc_properties),
         ("shell::fix_xlsx_sheet_tabs_scrollbar_and_fixed_add", fix_xlsx_sheet_tabs_scrollbar_and_fixed_add),
         ("shell::fix27_status_bar_tab_scrollbar_place", fix27_status_bar_tab_scrollbar_place),
@@ -184,6 +186,26 @@ fn fix10_settings_window_centered_and_app_menu() {
     assert_eq!(name, "ibisOffice");
     assert_eq!(items.first().map(String::as_str), Some("ibisOffice について"), "{items:?}");
     assert!(items.iter().any(|i| i == "設定…"), "{items:?}");
+}
+
+/// ファイル > 新規 ends with テンプレートから新規作成…; a workbook's right pane
+/// opened for the first time shows the 書式設定 tab.
+fn fix_xlsx_new_menu_and_first_right_pane() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let last = s.with(|e, _| match e.menus().find_entry("file.new") {
+        Some(crate::shell::chrome::MenuEntry::Submenu(sub)) => sub.items.last().and_then(|i| match i {
+            crate::shell::chrome::MenuEntry::Item(item) => Some(item.id),
+            _ => None,
+        }),
+        _ => None,
+    });
+    assert_eq!(last, Some("xlsx.new-from-template"), "the template item is the last of the New submenu");
+    assert!(!s.with(|e, _| e.sidebar_open), "a workbook starts with the right pane closed");
+    s.update(|e, window, cx| e.toggle_sidebar(window, cx));
+    s.settle();
+    assert!(s.with(|e, _| e.sidebar_open));
+    assert_eq!(s.with(|e, _| e.sheet_state().and_then(|w| w.right_tab)), Some("fix.right-tabs.format"));
+    assert!(s.with(|e, _| e.sheet_state().is_some_and(|w| w.custom_format.is_some())), "the cell-format panel is shown");
 }
 
 fn cell_text(s: &mut Scenario, column: u32, row: u32) -> String {
@@ -2993,10 +3015,14 @@ fn fix_status_bar_and_zoom_i18n() {
 /// スライド自動フィットのベンチマーク計測
 pub(crate) fn fix21_pptx_sidebar_close_zoom_fit_benchmark() {
     let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
-    assert!(s.with(|e, _| e.sidebar_open), "初期状態で右ペイン（サイドバー）が開いていること");
+    assert!(!s.with(|e, _| e.sidebar_open), "開いた直後は右ペイン（サイドバー）が閉じていること");
     assert!(s.with(|e, _| e.zoom.is_none()), "初期状態で自動フィットモードであること");
-
+    let closed_scale = s.with(|e, _| e.slide_layout().map(|l| l.scale)).expect("slide_layout exists");
+    s.menu("view.sidebar");
+    s.settle();
+    assert!(s.with(|e, _| e.sidebar_open), "メニューで右ペインが開くこと");
     let initial_scale = s.with(|e, _| e.slide_layout().map(|l| l.scale)).expect("slide_layout exists");
+    assert!(initial_scale < closed_scale, "右ペインを開くと、スライドの自動フィットが狭い幅で計算されること");
 
     eprintln!("--- START BENCHMARK ---");
     let start = crate::clock::Instant::now();
@@ -3008,11 +3034,33 @@ pub(crate) fn fix21_pptx_sidebar_close_zoom_fit_benchmark() {
     let new_scale = s.with(|e, _| e.slide_layout().map(|l| l.scale)).expect("slide_layout exists");
     assert!(!s.with(|e, _| e.sidebar_open), "サイドバーが閉じていること");
     assert!(new_scale > initial_scale, "サイドバーが閉じて表示領域が広がり、スライドが拡大フィットしていること: initial={initial_scale}, new={new_scale}");
+    assert!((new_scale - closed_scale).abs() < closed_scale * 1e-3, "閉じた後の倍率は、最初から閉じていたときと同じ: {new_scale} / {closed_scale}");
 
     eprintln!("\n=======================================================");
     eprintln!("[BENCHMARK-FIX-21] Right pane close & slide auto-fit elapsed: {:?}", elapsed);
     eprintln!("Initial scale: {:.4}, New fitted scale: {:.4}", initial_scale, new_scale);
     eprintln!("=======================================================\n");
+}
+
+/// pptx の右ペインは、新規作成でも、開いたときでも、閉じた状態で始まる。
+/// ツールバー（view.sidebar）で開ける。docx の右ペインは今までどおり開いている。
+pub(crate) fn pptx_sidebar_starts_closed() {
+    let mut s = Scenario::new_document(ibis_pptx::Kind::Presentation);
+    assert!(!s.with(|e, _| e.sidebar_open), "新しいプレゼンテーションでは右ペインが閉じている");
+    let closed_scale = s.with(|e, _| e.slide_layout().map(|l| l.scale)).expect("slide_layout");
+    s.menu("view.sidebar");
+    s.settle();
+    assert!(s.with(|e, _| e.sidebar_open), "開くボタンで右ペインが開く");
+    let open_scale = s.with(|e, _| e.slide_layout().map(|l| l.scale)).expect("slide_layout");
+    assert!(open_scale < closed_scale, "開くとスライドの自動フィットが狭くなる: {open_scale} / {closed_scale}");
+
+    drop(s); // One scenario window at a time.
+    let mut s = Scenario::open("test/editing/pptx-comment-newline-enter.pptx");
+    assert!(!s.with(|e, _| e.sidebar_open), "pptx を開いたとき右ペインは閉じている");
+    drop(s);
+
+    let mut s = Scenario::new_document(ibis_pptx::Kind::Document);
+    assert!(s.with(|e, _| e.sidebar_open), "docx の右ペインは開いたまま");
 }
 
 /// XLSX-FILE-017: ファイル > 情報 (file.info) によるブックプロパティパネル

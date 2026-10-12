@@ -13,11 +13,14 @@
 pub(crate) mod editor;
 pub(crate) mod file_actions;
 pub(crate) mod chrome;
+pub(crate) mod color_palette;
 pub(crate) mod chrome_defaults;
 pub(crate) mod format;
 pub(crate) mod i18n;
 pub(crate) mod settings;
 pub(crate) mod settings_window;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod update;
 pub(crate) mod about_window;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod password_window;
@@ -27,6 +30,7 @@ pub(crate) mod input;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod recent_files;
 pub(crate) mod status_bar;
+pub(crate) mod spell_panel;
 pub(crate) mod symbols;
 pub(crate) mod user_name;
 pub(crate) mod save;
@@ -36,6 +40,9 @@ pub(crate) mod scenario;
 pub(crate) mod scenario_examples;
 #[cfg(all(target_os = "macos", feature = "scenarios"))]
 pub(crate) mod scenario_i18n;
+#[cfg(all(target_os = "macos", feature = "scenarios"))]
+pub(crate) mod scenario_menus;
+pub(crate) mod menu_bridge;
 #[cfg(all(target_os = "macos", feature = "scenarios"))]
 pub(crate) mod scenario_fix;
 pub(crate) mod start_view;

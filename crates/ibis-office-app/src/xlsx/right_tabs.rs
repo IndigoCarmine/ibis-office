@@ -52,6 +52,19 @@ pub(super) fn tabs() -> Vec<SidebarTab> {
 }
 
 impl SlideEditor {
+    /// The right pane's button / 表示 > サイドバー: show or hide the pane. A
+    /// workbook's pane opened for the first time shows the 書式設定 tab (no
+    /// other panel being open).
+    pub(crate) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_open = !self.sidebar_open;
+        if self.sidebar_open && self.is_workbook() && self.sheet_state().is_some_and(|s| s.right_tab.is_none()) && <super::Workbook as crate::shell::format::FormatEditor>::sidebar(self, window, cx).is_none() {
+            self.close_tab_panels(FORMAT);
+            self.open_custom_format(window, cx);
+        }
+        cx.notify();
+        window.refresh();
+    }
+
     /// Close the three tabs' panels (before one of them opens) and remember
     /// the tab chosen.
     fn close_tab_panels(&mut self, chosen: &'static str) {

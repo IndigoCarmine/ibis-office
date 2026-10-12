@@ -14,7 +14,7 @@ ibisOffice の macOS 版（`ibisOffice.app`）に含まれる、ibisOffice 以�
 | Lucide | アイコン（実行ファイルに埋め込み） | ISC |
 | Material Symbols（Google） | タイトル行・メニュー・ツールバー・サイドバーのアイコン（実行ファイルに埋め込み） | Apache-2.0 |
 
-## Rust の部品（470 件）
+## Rust の部品（471 件）
 
 | 名前 | 版 | ライセンス | 入手先 |
 |---|---|---|---|
@@ -203,6 +203,7 @@ ibisOffice の macOS 版（`ibisOffice.app`）に含まれる、ibisOffice 以�
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hybrid-array |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 | https://github.com/strawlab/iana-time-zone |
 | ibis-calc | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-calc |
+| ibis-office-updater | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-office-updater |
 | ibis-ooxml | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-ooxml |
 | icu_collections | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_locale_core | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |

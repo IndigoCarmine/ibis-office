@@ -8,8 +8,9 @@
 #
 # A bare executable opened from Finder starts in Terminal; an .app bundle does not.
 # UI icons and fonts are embedded in the executable; the bundle adds the app icon
-# (crates/ibis-office-app/macos/AppIcon.icns, made by scripts/gen-macos-icon.sh) and the
-# third-party licences (Contents/Resources/Licenses).
+# (crates/ibis-office-app/macos/AppIcon.icns, made by scripts/gen-macos-icon.sh), the
+# third-party licences (Contents/Resources/Licenses), and the automatic update's
+# ibisOfficeUpdater (Contents/MacOS).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -18,7 +19,7 @@ cd "$(dirname "$0")/.."
 # are rewritten to short relative ones, in a target directory of its own so
 # that the everyday builds (target/release) are not rebuilt by the flags.
 REMAP="--remap-path-prefix=$HOME/.cargo/registry/src=crates.io --remap-path-prefix=$HOME/.cargo/git/checkouts=git --remap-path-prefix=$HOME/.rustup=rustup --remap-path-prefix=$(pwd)=."
-RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build --release --locked -p ibis-office-app
+RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build --release --locked -p ibis-office-app -p ibis-office-updater
 
 # The version shown for macOS, from version.txt (a platform, a tab and its
 # version, per line).
@@ -29,6 +30,10 @@ APP=target/release/ibisOffice.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/dist/release/ibisOffice "$APP/Contents/MacOS/ibisOffice"
+# The automatic update (todo-fix #35): ibisOffice starts the ibisOfficeUpdater of
+# the NEW app it downloaded, which swaps the apps. It is inside the signed (and
+# notarized) app, so it cannot be swapped for another.
+cp target/dist/release/ibisOfficeUpdater "$APP/Contents/MacOS/ibisOfficeUpdater"
 cp crates/ibis-office-app/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # The third-party components in the app and the notices their licences ask
 # for (made afresh from the dependencies), and Carlito's licence on its own
@@ -104,7 +109,9 @@ cat > "$APP/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-# Ad-hoc signature so Apple Silicon runs the copied executable.
+# Ad-hoc signature so Apple Silicon runs the copied executables (the updater is
+# signed on its own first, then the app seals it).
+codesign --force --sign - "$APP/Contents/MacOS/ibisOfficeUpdater"
 codesign --force --sign - "$APP"
 
 # Tell Finder and the Dock the app changed, so they show the current icon

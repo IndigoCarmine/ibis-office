@@ -267,7 +267,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::cell018_date_time_keys", cell018_date_time_keys),
         ("xlsx::cell019_fill_down_right", cell019_fill_down_right),
         ("xlsx::cell020_format_and_filter_keys", cell020_format_and_filter_keys),
-        ("xlsx::format021_cell_format_panel", format021_cell_format_panel),
+        ("xlsx::format021_cell_format_pane", format021_cell_format_pane),
         ("xlsx::clip022_system_clipboard", clip022_system_clipboard),
         ("xlsx::xsc58_outline", xsc58_outline),
         ("xlsx::xsc57_copy_move_sheet", xsc57_copy_move_sheet),
@@ -287,6 +287,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::xsc17_wrap_and_indent", xsc17_wrap_and_indent),
         ("xlsx::xsc36_grid_lines", xsc36_grid_lines),
         ("xlsx::xsc34_tabs", xsc34_tabs),
+        ("xlsx::split_color_buttons", split_color_buttons),
         ("xlsx::xsc44_point_references", xsc44_point_references),
         ("xlsx::xsc32_large_table", xsc32_large_table),
         ("xlsx::xsc23_sort", xsc23_sort),
@@ -371,6 +372,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::cell005_rich_text_edit", cell005_rich_text_edit),
         ("xlsx::xsc28_print_titles_and_footer", xsc28_print_titles_and_footer),
         ("xlsx::xsc_english_panels", xsc_english_panels),
+        ("xlsx::spelling_check", spelling_check),
         ("xlsx::xsc25_conditional", xsc25_conditional),
         ("xlsx::xsc25_conditional_cell_is", xsc25_conditional_cell_is),
         ("xlsx::xsc25_conditional_opaque_edit", xsc25_conditional_opaque_edit),
@@ -1936,45 +1938,145 @@ fn cell020_format_and_filter_keys() {
     assert!(s.with(|e, _| e.sheet_state().is_some_and(|st| st.custom_format.is_some())), "the format settings open");
 }
 
-/// ⌘1, セルの書式設定: the panel with its six tabs (表示形式・配置・フォント・罫線・塗りつぶし・保護),
-/// each drawn; the number tab's buttons set the format of the selected cells.
-fn format021_cell_format_panel() {
+/// ⌘1, セルの書式設定: the pane with its six sections (表示形式・配置・フォント・罫線・塗りつぶし・保護), each a
+/// row with a triangle that opens and closes it (kept when the pane is opened again); the choices are
+/// drop-downs, the font size has − and +, the colours open the palette, and the border lines are drawn on
+/// a sample that is pressed to draw or take off a line.
+fn format021_cell_format_pane() {
     use super::custom_format::FormatTab;
+    use crate::shell::chrome::MenuEntry;
+    use crate::shell::i18n::{self, Language};
+    let t = |id: &str| i18n::text(id).to_string();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     s.click_cell("B4");
     s.key("cmd-1");
-    assert_eq!(s.with(|e, _| e.sheet_state().and_then(|st| st.custom_format.as_ref().map(|p| p.tab))), Some(FormatTab::Number));
-    s.screenshot("number");
-    for (name, tab) in [("alignment", FormatTab::Alignment), ("font", FormatTab::Font), ("border", FormatTab::Border), ("fill", FormatTab::Fill), ("protection", FormatTab::Protection)] {
-        s.update(move |e, window, cx| e.open_cell_format(tab, window, cx));
-        assert_eq!(s.with(|e, _| e.sheet_state().and_then(|st| st.custom_format.as_ref().map(|p| p.tab))), Some(tab));
-        s.screenshot(name);
-    }
-    // The buttons: pressed on their tabs, each changes the selected cell's format, and one undo takes it back.
-    fn press(s: &mut Scenario, id: &str) {
+    let open = |s: &mut Scenario| s.with(|e, _| e.sheet_state().unwrap().format_open);
+    assert_eq!(open(&mut s), [true; 6], "all the sections are open at first");
+    s.screenshot("sections");
+    fn bounds(s: &mut Scenario, id: &str) -> Bounds<gpui_kit::Pixels> {
         let id = id.to_string();
-        let b = s.with(|e, _| *e.sheet_state().and_then(|st| st.custom_format.as_ref()).expect("the panel").ui.borrow().get(&id).unwrap_or_else(|| panic!("button not found: {id}")));
+        s.with(|e, _| *e.sheet_state().and_then(|st| st.custom_format.as_ref()).expect("the pane").ui.borrow().get(&id).unwrap_or_else(|| panic!("not found in the pane: {id}")))
+    }
+    fn press(s: &mut Scenario, id: &str) {
+        let b = bounds(s, id);
         s.click((f32::from(b.origin.x + b.size.width / 2.0), f32::from(b.origin.y + b.size.height / 2.0)));
     }
+    /// The item of drop-down `id` named `label`, found among the items and the palette's squares.
+    fn choose(s: &mut Scenario, id: &str, label: &str) {
+        let (id, label) = (id.to_string(), label.to_string());
+        let handler = s.with(|e, _| {
+            let menus = e.sheet_state().and_then(|st| st.custom_format.as_ref()).expect("the pane").menus.borrow();
+            let entries = menus.get(&id).unwrap_or_else(|| panic!("no drop-down {id}"));
+            entries.iter().find_map(|entry| match entry {
+                MenuEntry::Item(i) if i.label.as_ref() == label => i.handler.clone(),
+                MenuEntry::Palette(p) => p.find(&label).and_then(|i| i.handler.clone()),
+                _ => None,
+            })
+        });
+        let handler = handler.unwrap_or_else(|| panic!("{id} has no item {label}"));
+        s.update(|e, window, cx| handler(e, window, cx));
+    }
     let style = |s: &mut Scenario| s.with(|e, _| e.current_style());
-    s.click_cell("B4");
-    press(&mut s, "cell-format-tab-Alignment");
-    assert_eq!(s.with(|e, _| e.sheet_state().and_then(|st| st.custom_format.as_ref().map(|p| p.tab))), Some(FormatTab::Alignment), "a press on a tab shows it");
-    press(&mut s, "cell-format-halign-3");
+    // Only the section `n` open (the others closed), so that its parts are in view to be pressed.
+    fn only(s: &mut Scenario, n: usize) {
+        s.update(move |e, _, cx| {
+            let mut open = [false; 6];
+            open[n] = true;
+            e.wb_mut().format_open = open;
+            cx.notify();
+        });
+    }
+    // A triangle row closes its section and opens it again; the state is kept when the pane is opened again.
+    press(&mut s, "cell-format-section-Number");
+    assert!(!open(&mut s)[0] && open(&mut s)[1], "the number section is closed");
+    s.screenshot("number-closed");
+    s.key("cmd-1");
+    assert!(!open(&mut s)[0], "kept when the pane is opened again");
+    press(&mut s, "cell-format-section-Number");
+    assert!(open(&mut s)[0]);
+    // 表示形式: the category is a drop-down.
+    press(&mut s, "cell-format-number");
+    s.screenshot("number-dropdown");
+    s.key("escape");
+    choose(&mut s, "cell-format-number", &t("_xlsx.percentage"));
+    assert_eq!(style(&mut s).number_format, "0%");
+    s.key("cmd-z");
+    // 配置: 横位置, 縦位置 and 文字の方向 are drop-downs.
+    choose(&mut s, "cell-format-halign", &t("_xlsx.right-indent"));
     assert_eq!(style(&mut s).align, ibis_doc_model::CellAlign::Right);
-    s.key("cmd-z");
-    assert_ne!(style(&mut s).align, ibis_doc_model::CellAlign::Right, "undone");
-    press(&mut s, "cell-format-tab-Border");
+    choose(&mut s, "cell-format-valign", &t("_shell.center-2"));
+    assert_eq!(style(&mut s).vertical, ibis_doc_model::CellVerticalAlign::Center);
+    choose(&mut s, "cell-format-rotation", "45°");
+    assert_eq!(style(&mut s).rotation, 45);
+    s.screenshot("alignment");
+    only(&mut s, 2);
+    // フォント: the size with − and +, the toolbar's buttons, the colour's palette.
+    let size = style(&mut s).font_size;
+    press(&mut s, "cell-format-size-more");
+    assert!(style(&mut s).font_size > size, "+ makes it bigger");
+    press(&mut s, "cell-format-size-less");
+    assert_eq!(style(&mut s).font_size, size, "− takes it back");
+    let typed = s.with(|e, cx| e.sheet_state().unwrap().custom_format.as_ref().unwrap().size.read(cx).value().to_string());
+    assert_eq!(typed, format!("{}", size as f32 / 100.0), "the field follows the buttons");
+    let bold = style(&mut s).bold;
+    press(&mut s, "cell-format-bold");
+    assert_ne!(style(&mut s).bold, bold, "bold toggled");
+    press(&mut s, "cell-format-strike");
+    assert!(style(&mut s).strike);
+    press(&mut s, "cell-format-color");
+    s.screenshot("color-dropdown");
+    s.key("escape");
+    choose(&mut s, "cell-format-color", &t("_shell.red"));
+    assert_eq!(style(&mut s).color.0, 0xff0000);
+    s.screenshot("font");
+    only(&mut s, 3);
+    s.click_cell("H20");
+    // 罫線: pressing a line of the sample draws it in the chosen style and colour, and again takes it off.
+    choose(&mut s, "cell-format-line", &t("_shell.thick"));
+    choose(&mut s, "cell-format-border-color", &t("_shell.red"));
+    assert!(style(&mut s).top.is_none());
+    press(&mut s, "cell-format-sample-top");
+    let top = style(&mut s).top.expect("the top line is drawn");
+    assert_eq!((top.line, top.color.0), (ibis_doc_model::BorderLine::Thick, 0xff0000));
+    s.screenshot("border-top");
+    press(&mut s, "cell-format-sample-top");
+    assert!(style(&mut s).top.is_none(), "taken off");
     press(&mut s, "cell-format-border-outside");
-    let border = s.with(|e, _| { let st = e.current_style(); st.left.is_some() && st.right.is_some() && st.top.is_some() && st.bottom.is_some() });
-    assert!(border, "the outside lines are set");
-    s.key("cmd-z");
-    press(&mut s, "cell-format-tab-Protection");
+    assert!(style(&mut s).left.is_some() && style(&mut s).bottom.is_some(), "the outside preset");
+    press(&mut s, "cell-format-border-diagonal-down");
+    assert!(style(&mut s).diagonal_down.is_some());
+    s.screenshot("border-outside");
+    press(&mut s, "cell-format-border-none");
+    assert!(style(&mut s).left.is_none() && style(&mut s).diagonal_down.is_none(), "none takes them all off");
+    // Several cells: the inside lines.
+    s.click_cell("H20");
+    s.key("shift-right");
+    s.key("shift-down");
+    choose(&mut s, "cell-format-line", &t("_shell.dashed"));
+    press(&mut s, "cell-format-border-inside");
+    assert!(style(&mut s).right.is_some() && style(&mut s).bottom.is_some(), "the lines between the cells");
+    s.screenshot("border-inside");
+    press(&mut s, "cell-format-border-none");
+    only(&mut s, 4);
+    // 塗りつぶし.
+    choose(&mut s, "cell-format-fill", &t("_shell.yellow"));
+    assert_eq!(style(&mut s).fill.map(|f| f.0), Some(0xffff00));
+    s.screenshot("fill");
+    choose(&mut s, "cell-format-fill", &t("xlsx.fill-none"));
+    assert!(style(&mut s).fill.is_none());
+    only(&mut s, 5);
+    // 保護.
     let was = style(&mut s).unlocked;
     press(&mut s, "cell-format-locked");
     assert_ne!(style(&mut s).unlocked, was, "the lock toggled");
-    s.key("cmd-z");
-    assert_eq!(style(&mut s).unlocked, was);
+    s.screenshot("protection");
+    s.update(move |e, window, cx| e.open_cell_format(FormatTab::Number, window, cx));
+    assert!(open(&mut s)[0], "opening a section by its name shows it");
+    // English: the whole pane, with no Japanese left (a picture to look at).
+    i18n::show(Language::English);
+    s.update(|_, _, _| {});
+    s.screenshot("english");
+    i18n::show(Language::Japanese);
 }
 
 /// The system clipboard: the text typed into a cell is copied, cut and pasted
@@ -6950,6 +7052,27 @@ fn cf011_threshold_types() {
 }
 
 /// P1 XF-09: every line style and palette color can be selected and applied.
+/// 分割ボタン（文字の色・塗りつぶし）: ▼ のパレットで選んだ色が、左半分の「最後に使った色」になり、左を押すと
+/// すぐ別のセルに付く。初めは既定の色。
+fn split_color_buttons() {
+    use ibis_doc_model::Rgb;
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    // At first the button's own colour (red for the text).
+    s.toolbar("text-color");
+    assert_eq!(style_at(&mut s, "A1").color, Rgb(0xff0000), "the colour at first");
+    // A colour of the palette; the left half then does that one.
+    s.toolbar_menu("text-color", "xlsx.color");
+    s.click_cell("B1");
+    s.toolbar("text-color");
+    let first = super::toolbar::COLORS[0].1;
+    assert_eq!(style_at(&mut s, "B1").color, Rgb(first));
+    // The fill: its own at first, then the picked.
+    s.toolbar("fill");
+    assert_eq!(style_at(&mut s, "B1").fill, Some(Rgb(0xffff00)));
+    s.screenshot("split");
+}
+
 fn xsc13_border_styles() {
     use ibis_doc_model::{Border, BorderLine, Rgb};
     let mut s = new_sheet(); s.size(1500., 800.);
@@ -6959,7 +7082,7 @@ fn xsc13_border_styles() {
             let address = ibis_doc_model::cell_name(column as u32, row as u32);
             s.click_cell(&address);
             s.toolbar_menu("borders", line.ooxml());
-            s.toolbar_menu("borders", label);
+            s.toolbar_menu("borders", &crate::shell::i18n::text(label));
             s.toolbar_menu("borders", "xlsx.border-bottom");
             let border = Some(Border { line, color: Rgb(color) });
             assert_eq!(style_at(&mut s, &address).bottom, border);
@@ -14244,12 +14367,7 @@ fn file020_open_and_repair_damaged_workbook() {
     use ibis_pptx::repair::RepairMode;
     use ibis_pptx::ibis_ooxml::zip::{EntryMeta, Writer};
 
-    // 1. メニューから「開いて修復…」を開く
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("xlsx.open-and-repair");
-    s.settle();
-
-    assert!(s.with(|e, _| e.wb().panels.repair.is_some()), "repair panel opened");
 
     // 2. 壊れたワークブック（制御文字・タグ未完・数式あり）を作成
     let temp_dir = std::env::temp_dir().join(format!("ibis_test_repair_{}", std::process::id()));
@@ -14300,6 +14418,12 @@ fn file020_open_and_repair_damaged_workbook() {
 
     // 通常の open だとエラーになることを確認
     assert!(crate::read_file(&damaged_file).is_err(), "damaged workbook normally fails to parse");
+
+    // 開けなかったブックが記録され、メニュー「破損ブックの修復…」からそのブックの修復パネルが開く
+    assert_eq!(s.menu_state("xlsx.open-and-repair").map(|m| m.0), Some(true), "repair menu enabled while a damaged workbook is known");
+    s.menu("xlsx.open-and-repair");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.wb().panels.repair.as_ref().and_then(|p| p.file_path.clone())), Some(damaged_file.clone()), "repair panel opened for the damaged workbook");
 
     // 3. パネルから「修復 (Repair)」を実行
     s.update(|e, window, cx| {
@@ -14871,3 +14995,87 @@ pub(crate) fn fn_ppmt() {
 
 
 
+
+/// スペル チェック (ツール > スペル): a misspelling in text cells is listed with
+/// suggestions, changed (one, or every one of the same spelling in one step),
+/// ignored, undone; formulas' results are not checked; in English no Japanese.
+fn spelling_check() {
+    use crate::shell::i18n::{self, Language};
+    if !crate::spelling::available() {
+        return;
+    }
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.click_cell("J2");
+    s.enter("We recieve it", "enter");
+    s.click_cell("J3");
+    s.enter("recieve plan", "enter");
+    s.click_cell("J4");
+    s.enter("zzqxv", "enter");
+    s.click_cell("J5");
+    s.enter("=\"recieve\"&\"x\"", "enter");
+    let found = s.with(|e, _| {
+        let sheet = sheet_of_slide(e.slide()).unwrap();
+        crate::xlsx::spelling_panel::scan(sheet, None, (0, 0), &Default::default()).iter().filter(|i| i.word == "recieve").count()
+    });
+    if found != 2 {
+        // No English dictionary here.
+        return;
+    }
+    // A single cell selected: the whole sheet from it on.
+    s.click_cell("J3");
+    s.menu("pptx.spelling.check");
+    let (first, count) = s.with(|e, _| {
+        let p = e.sheet_state().unwrap().spelling.as_ref().expect("the panel is open");
+        (p.issues[0].clone(), p.issues.len())
+    });
+    assert_eq!((first.row, first.column, first.word.as_str()), (2, 9, "recieve"), "starts at the selected cell");
+    assert!(count >= 2, "{count}");
+    assert_eq!(s.selected(), "J3");
+    let suggestions = s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().suggestions.clone());
+    assert!(suggestions.iter().any(|x| x == "receive"), "{suggestions:?}");
+    s.screenshot("spelling");
+    // 変更: this one only.
+    s.update(|e, w, cx| e.sheet_spelling_change("receive", false, w, cx));
+    assert_eq!(s.value("J3"), CellValue::Text("receive plan".into()));
+    assert_eq!(s.value("J2"), CellValue::Text("We recieve it".into()));
+    // すべて変更: the other one (the panel went on to 'zzqxv' after the change).
+    s.update(|e, w, cx| e.sheet_spelling_step(true, w, cx));
+    assert_eq!(s.selected(), "J2");
+    s.update(|e, w, cx| e.sheet_spelling_change("receive", true, w, cx));
+    assert_eq!(s.value("J2"), CellValue::Text("We receive it".into()));
+    // 無視: the next word is not told again; すべて無視 likewise.
+    let word = s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().issues.first().map(|i| i.word.clone()));
+    if let Some(word) = word {
+        s.update(|e, w, cx| e.sheet_spelling_ignore(true, w, cx));
+        assert!(s.with(move |e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().issues.iter().all(|i| i.word != word)));
+    }
+    s.update(|e, w, cx| e.close_sheet_spelling(w, cx));
+    assert!(s.with(|e, _| e.sheet_state().unwrap().spelling.is_none()));
+    // Undone: all in one step.
+    s.click_cell("J3");
+    s.key("cmd-z");
+    assert_eq!(s.value("J2"), CellValue::Text("We recieve it".into()));
+    s.key("cmd-z");
+    assert_eq!(s.value("J3"), CellValue::Text("recieve plan".into()));
+    // A range: only its cells.
+    s.update(|e, _, _| {
+        let slide = e.current_slide;
+        let st = e.wb_mut();
+        st.cells.insert(slide, (9, 2));
+        st.cell_ends.insert(slide, (9, 2));
+    });
+    s.menu("pptx.spelling.check");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().range.is_none()), "one cell: the sheet");
+    s.update(|e, w, cx| e.close_sheet_spelling(w, cx));
+    // English: the menu and the panel have no Japanese.
+    i18n::show(Language::English);
+    s.menu("pptx.spelling.check");
+    let title = s.update(|e, _, cx| e.sheet_spelling_panel(cx).map(|p| p.title.to_string()));
+    assert_eq!(title.as_deref(), Some("Spelling"));
+    s.screenshot("spelling-english");
+    let label = s.with(|e, _| e.menus().find_mut("pptx.spelling.check").map(|i| i.label.to_string()));
+    assert_eq!(label.as_deref(), Some("Spelling…"));
+    s.update(|e, w, cx| e.close_sheet_spelling(w, cx));
+    i18n::show(Language::Japanese);
+    s.update(|_, _, _| {});
+}

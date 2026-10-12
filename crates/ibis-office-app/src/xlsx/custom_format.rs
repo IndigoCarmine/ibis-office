@@ -1,19 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! 表示形式 > ユーザー定義: a number format code typed for the selected
-//! cells, with what the selected cell would show.
+//! セルの書式設定 (⌘1), in the sidebar: 表示形式・配置・フォント・罫線・塗りつぶし・保護 as sections
+//! (a row with a triangle: pressing it opens or closes the section; which are open is kept while the
+//! window lives). The choices are drop-downs (the colours open the palette of the toolbar, with a
+//! rounded square of the colour now in use), the font size has − and +, bold/italic/underline/strike
+//! are the toolbar's buttons, and the border lines are drawn on a sample (as Excel's 罫線 tab): press
+//! a line of it to draw or take it off.
+
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::DropdownMenu as _;
+use gpui_kit::component::{Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use ibis_doc_model::{BorderLine, CellAlign, CellVerticalAlign, StyleChange};
+use ibis_doc_model::{Border, BorderLine, CellAlign, CellVerticalAlign, StyleChange};
 
-use crate::shell::chrome::SidebarPanel;
+use crate::shell::chrome::{Handler, MenuEntry, MenuItem, SidebarPanel, ToolButton, ToolItem, fill_menu, tool_item};
 use crate::shell::editor::SlideEditor;
+use crate::shell::icons::Material;
 
-/// The tabs of セルの書式設定 (Excel's dialog).
+/// The sections of セルの書式設定 (Excel's tabs of the dialog).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum FormatTab {
     #[default]
@@ -26,7 +37,7 @@ pub(crate) enum FormatTab {
 }
 
 impl FormatTab {
-    const ALL: [FormatTab; 6] = [Self::Number, Self::Alignment, Self::Font, Self::Border, Self::Fill, Self::Protection];
+    pub(crate) const ALL: [FormatTab; 6] = [Self::Number, Self::Alignment, Self::Font, Self::Border, Self::Fill, Self::Protection];
 
     fn label(self) -> &'static str {
         match self {
@@ -40,23 +51,158 @@ impl FormatTab {
     }
 }
 
+/// Where the parts are (set when painted), for the scenarios.
+pub(crate) type PaneBounds = Rc<RefCell<BTreeMap<String, Bounds<Pixels>>>>;
+/// The items of the drop-downs by the id of the drop-down, for the scenarios.
+pub(crate) type PaneMenus = Rc<RefCell<BTreeMap<String, Vec<MenuEntry>>>>;
+
 pub(crate) struct FormatPanel {
     pub(crate) code: Entity<InputState>,
-    pub(crate) tab: FormatTab,
     /// The font's name and size (点) typed in フォント.
     pub(crate) font: Entity<InputState>,
     pub(crate) size: Entity<InputState>,
-    /// Where the buttons are (set when painted), for the scenarios.
-    pub(crate) ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
+    pub(crate) ui: PaneBounds,
+    pub(crate) menus: PaneMenus,
+    _subscriptions: Vec<Subscription>,
 }
 
-impl SlideEditor {
-    pub(crate) fn open_custom_format(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_cell_format(FormatTab::Number, window, cx);
+/// What the parts of the pane share while it is built.
+#[derive(Clone)]
+struct Pane {
+    ui: PaneBounds,
+    menus: PaneMenus,
+    editor: WeakEntity<SlideEditor>,
+}
+
+impl Pane {
+    /// `element` with its place noted when painted, under `id`.
+    fn marked(&self, id: &str, element: impl IntoElement) -> AnyElement {
+        let (ui, id) = (self.ui.clone(), id.to_string());
+        div().relative().child(element).child(canvas(|_, _, _| {}, move |bounds, _, _, _| { ui.borrow_mut().insert(id.clone(), bounds); }).absolute().top_0().left_0().size_full()).into_any_element()
     }
 
-    /// セルの書式設定 (⌘1), on the tab `tab`.
+    /// A drop-down: the choice now made (with a rounded square of its colour when `chip` has one) and, when
+    /// pressed, `menu`.
+    fn select(&self, id: &str, chip: Option<Hsla>, label: SharedString, menu: Vec<MenuEntry>) -> AnyElement {
+        self.menus.borrow_mut().insert(id.to_string(), menu.clone());
+        let (menu, editor) = (Rc::new(menu), self.editor.clone());
+        let button = Button::new(SharedString::from(id.to_string()))
+            .outline()
+            .small()
+            .w_full()
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap(px(6.))
+                    .items_center()
+                    .when_some(chip, |d, color| d.child(color_chip(color)))
+                    .child(div().flex_1().truncate().text_size(px(13.)).child(label))
+                    .child(Icon::new(Material("arrow_drop_down")).size(px(18.))),
+            )
+            .dropdown_menu(move |m, window, cx| fill_menu(m.min_w(px(240.)), &menu, &editor, window, cx));
+        self.marked(id, button)
+    }
+}
+
+/// A rounded square of `color`, such as a drop-down's left end shows.
+fn color_chip(color: Hsla) -> Div {
+    div().w(px(16.)).h(px(12.)).flex_none().rounded(px(3.)).bg(color).border_1().border_color(gpui_kit::rgb(0xc7c7c7))
+}
+
+fn rgb_hsla(c: ibis_doc_model::Rgb) -> Hsla {
+    gpui_kit::rgb(c.0).into()
+}
+
+/// The name of colour `c` among `names` (the toolbar's), else `#RRGGBB`.
+fn color_name(c: ibis_doc_model::Rgb, names: &[(&str, u32)]) -> SharedString {
+    match names.iter().find(|(_, v)| *v == c.0) {
+        Some((name, _)) => crate::shell::i18n::text(name),
+        None => format!("#{:06X}", c.0).into(),
+    }
+}
+
+/// One line of the sample: its pieces, absolutely placed in the sample (`from` to `to`), as `border` draws them.
+fn sample_line(from: (f32, f32), to: (f32, f32), border: Border) -> Vec<AnyElement> {
+    let (thickness, pattern): (f32, &[f32]) = match border.line {
+        BorderLine::Thin => (1.0, &[]),
+        BorderLine::Hair => (1.0, &[1.0, 1.0]),
+        BorderLine::Medium => (2.0, &[]),
+        BorderLine::Thick => (3.0, &[]),
+        BorderLine::Double => (1.0, &[]),
+        BorderLine::Dotted => (1.0, &[2.0, 2.0]),
+        BorderLine::Dashed => (1.0, &[6.0, 3.0]),
+        BorderLine::DashDot => (1.0, &[6.0, 3.0, 2.0, 3.0]),
+        BorderLine::DashDotDot => (1.0, &[6.0, 3.0, 2.0, 3.0, 2.0, 3.0]),
+        BorderLine::MediumDashed => (2.0, &[6.0, 3.0]),
+        BorderLine::MediumDashDot => (2.0, &[6.0, 3.0, 2.0, 3.0]),
+        BorderLine::MediumDashDotDot => (2.0, &[6.0, 3.0, 2.0, 3.0, 2.0, 3.0]),
+        BorderLine::SlantDashDot => (2.0, &[8.0, 3.0, 3.0, 3.0]),
+    };
+    let color = rgb_hsla(border.color);
+    let length = ((to.0 - from.0).powi(2) + (to.1 - from.1).powi(2)).sqrt();
+    // The stretches along the line that are drawn.
+    let mut stretches = Vec::new();
+    if pattern.is_empty() {
+        stretches.push((0.0, length));
+    } else {
+        let (mut at, mut i) = (0.0, 0);
+        while at < length {
+            let len = pattern[i % pattern.len()].min(length - at);
+            if i % 2 == 0 {
+                stretches.push((at, len));
+            }
+            at += pattern[i % pattern.len()];
+            i += 1;
+        }
+    }
+    // A double line is two thin ones 2 px apart.
+    let rows: &[f32] = if border.line == BorderLine::Double { &[-1.5, 1.5] } else { &[0.0] };
+    let mut out = Vec::new();
+    let piece = |x: f32, y: f32, w: f32, h: f32| div().absolute().left(px(x)).top(px(y)).w(px(w)).h(px(h)).bg(color).into_any_element();
+    if (from.1 - to.1).abs() < 0.01 {
+        for &row in rows {
+            for &(start, len) in &stretches {
+                out.push(piece(from.0.min(to.0) + start, from.1 + row - thickness / 2.0, len, thickness));
+            }
+        }
+    } else if (from.0 - to.0).abs() < 0.01 {
+        for &row in rows {
+            for &(start, len) in &stretches {
+                out.push(piece(from.0 + row - thickness / 2.0, from.1.min(to.1) + start, thickness, len));
+            }
+        }
+    } else {
+        let (dx, dy) = ((to.0 - from.0) / length, (to.1 - from.1) / length);
+        let t = thickness.max(1.5);
+        for &(start, len) in &stretches {
+            let mut s = start;
+            while s < start + len {
+                out.push(piece(from.0 + dx * s - t / 2.0, from.1 + dy * s - t / 2.0, t, t));
+                s += 1.0;
+            }
+        }
+    }
+    out
+}
+
+/// The sample's size and the margin around the cell in it.
+const SAMPLE_W: f32 = 168.0;
+const SAMPLE_H: f32 = 96.0;
+const MARGIN: f32 = 10.0;
+
+impl SlideEditor {
+    /// セルの書式設定 (⌘1): the sections open as they were left.
+    pub(crate) fn open_custom_format(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_cell_format_with(FormatTab::Number, false, window, cx);
+    }
+
+    /// セルの書式設定, with the section `tab` opened (for the scenarios).
+    #[allow(dead_code)]
     pub(crate) fn open_cell_format(&mut self, tab: FormatTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_cell_format_with(tab, true, window, cx);
+    }
+
+    fn open_cell_format_with(&mut self, tab: FormatTab, show: bool, window: &mut Window, cx: &mut Context<Self>) {
         let style = self.current_style();
         let code = cx.new(|cx| InputState::new(window, cx).placeholder("#,##0"));
         code.update(cx, |i, cx| {
@@ -69,164 +215,334 @@ impl SlideEditor {
         font.update(cx, |i, cx| i.set_value(style.font.clone().unwrap_or_default(), window, cx));
         let size = cx.new(|cx| InputState::new(window, cx).placeholder("11"));
         size.update(cx, |i, cx| i.set_value(format!("{}", style.font_size as f32 / 100.0), window, cx));
+        // Enter in the size or the name applies it.
+        let on_size = cx.subscribe_in(&size, window, |this: &mut Self, input, event: &InputEvent, _, cx| {
+            if let InputEvent::PressEnter { .. } = event {
+                let text = input.read(cx).value().trim().to_string();
+                this.apply_pane_size(&text, cx);
+            }
+        });
+        let on_font = cx.subscribe_in(&font, window, |this: &mut Self, input, event: &InputEvent, _, cx| {
+            if let InputEvent::PressEnter { .. } = event {
+                let name = input.read(cx).value().trim().to_string();
+                this.format_cells(StyleChange::Font((!name.is_empty()).then_some(name)), cx);
+            }
+        });
         if let Some(s) = self.sheet_state_mut() {
             s.names = None;
             s.validation = None;
             s.find = None;
             s.link = None;
             s.page_setup = false;
-            s.custom_format = Some(FormatPanel { code, tab, font, size, ui: Default::default() });
+            if show {
+                s.format_open[tab as usize] = true;
+            }
+            s.custom_format = Some(FormatPanel { code, font, size, ui: Default::default(), menus: Default::default(), _subscriptions: vec![on_size, on_font] });
         }
         self.sidebar_open = true;
         cx.notify();
     }
 
+    /// The size (点) typed in the pane, applied to the selected cells.
+    fn apply_pane_size(&mut self, text: &str, cx: &mut Context<Self>) {
+        if let Ok(points) = text.parse::<f32>()
+            && (1.0..=409.0).contains(&points)
+        {
+            self.format_cells(StyleChange::FontSize((points * 100.0).round() as u32), cx);
+        }
+    }
+
     pub(crate) fn custom_format_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let panel = self.sheet_state()?.custom_format.as_ref()?;
-        let (code, font, size, tab, ui) = (panel.code.clone(), panel.font.clone(), panel.size.clone(), panel.tab, panel.ui.clone());
-        // A button with its place noted when painted (`ui`).
-        let mark_ui = move |id: &str, child: Button| -> AnyElement {
-            let ui = ui.clone();
-            let id = id.to_string();
-            div().relative().child(child).child(canvas(|_, _, _| {}, move |bounds, _, _, _| { ui.borrow_mut().insert(id.clone(), bounds); }).absolute().top_0().left_0().size_full()).into_any_element()
-        };
+        let (code, font, size) = (panel.code.clone(), panel.font.clone(), panel.size.clone());
+        let pane = Pane { ui: panel.ui.clone(), menus: panel.menus.clone(), editor: cx.entity().downgrade() };
+        let open = self.wb().format_open;
+        pane.menus.borrow_mut().clear();
         let style = self.current_style();
         let text = |s: &str| SharedString::from(crate::shell::i18n::text(s).to_string());
+        let caption = |s: &str| div().text_size(px(12.)).text_color(crate::shell::chrome::text_secondary()).child(text(s));
         let mark = |on: bool, label: &str| SharedString::from(format!("{} {}", if on { "●" } else { "○" }, crate::shell::i18n::text(label)));
         // A button that changes the selected cells' format.
         let change = |id: String, label: SharedString, change: StyleChange, cx: &mut Context<Self>| {
-            mark_ui(&id.clone(), Button::new(SharedString::from(id)).small().label(label).on_click(cx.listener(move |this, _, _, cx| this.format_cells(change.clone(), cx))))
+            pane.marked(&id.clone(), Button::new(SharedString::from(id)).small().label(label).on_click(cx.listener(move |this, _, _, cx| this.format_cells(change.clone(), cx))))
         };
-        let mut tabs = h_flex().gap_1().flex_wrap();
-        for t in FormatTab::ALL {
-            tabs = tabs.child(mark_ui(&format!("cell-format-tab-{t:?}"), Button::new(SharedString::from(format!("cell-format-tab-{t:?}"))).small().label(mark(t == tab, t.label())).on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(p) = this.sheet_state_mut().and_then(|s| s.custom_format.as_mut()) {
-                    p.tab = t;
-                }
-                cx.notify();
-            }))));
-        }
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).child(tabs);
-        match tab {
-            FormatTab::Number => {
-                let typed = code.read(cx).value().to_string();
-                // What the selected cell shows in it.
-                let sample = self.current_cell().and_then(|(c, r)| self.current_sheet().and_then(|(_, s)| s.cell(r, c).map(|x| x.value.clone()))).map(|v| ibis_calc::numfmt::format(&v, &typed, false).text).unwrap_or_default();
-                let c2 = code.clone();
-                let mut kinds = h_flex().gap_1().flex_wrap();
-                for (i, &(name, format)) in super::toolbar::NUMBER_FORMATS.iter().enumerate() {
-                    kinds = kinds.child(change(format!("cell-format-number-{i}"), mark(style.number_format == format, &crate::shell::i18n::text(name)), StyleChange::NumberFormat(format.into()), cx));
-                }
-                body = body
-                    .child(kinds)
-                    .child(Input::new(&code).small())
-                    .child(div().text_size(px(12.)).child(SharedString::from(format!("{}{sample}", crate::shell::i18n::text("_xlsx.sample")))))
-                    .child(Button::new("custom-format-apply").primary().small().label(text("_xlsx.apply-to-selection")).on_click(cx.listener(move |this, _, _, cx| {
-                        let code = c2.read(cx).value().trim().to_string();
-                        if !code.is_empty() {
-                            this.format_cells(StyleChange::NumberFormat(code), cx);
-                        }
-                    })));
+        // A menu item that changes the selected cells' format.
+        let choice = |id: &'static str, label: SharedString, on: bool, change: StyleChange| -> MenuEntry {
+            MenuItem::new(id, label).checked(on).on(move |this, _, cx| this.format_cells(change.clone(), cx)).into()
+        };
+
+        let mut body = v_flex().gap_1().px(px(10.)).py(px(8.));
+        for (n, tab) in FormatTab::ALL.into_iter().enumerate() {
+            let is_open = open[n];
+            body = body.child(self.pane_section_header(&pane, n, tab, is_open, cx));
+            if !is_open {
+                continue;
             }
-            FormatTab::Alignment => {
-                let horizontal = [("_xlsx.general", CellAlign::General), ("_xlsx.left-indent", CellAlign::Left), ("_shell.center-2", CellAlign::Center), ("_xlsx.right-indent", CellAlign::Right), ("_xlsx.fill", CellAlign::Fill), ("align.justify", CellAlign::Justify), ("_xlsx.center-across-selection", CellAlign::CenterAcross), ("_xlsx.distributed-indent", CellAlign::Distributed)];
-                let vertical = [("_xlsx.top-2", CellVerticalAlign::Top), ("_shell.center-2", CellVerticalAlign::Center), ("_xlsx.bottom-2", CellVerticalAlign::Bottom), ("align.justify", CellVerticalAlign::Justify), ("_shell.distributed", CellVerticalAlign::Distributed)];
-                let mut h = h_flex().gap_1().flex_wrap();
-                for (i, (name, a)) in horizontal.into_iter().enumerate() {
-                    h = h.child(change(format!("cell-format-halign-{i}"), mark(style.align == a, name), StyleChange::Align(a), cx));
+            let mut section = v_flex().gap_2().px(px(6.)).pt(px(4.)).pb(px(10.));
+            match tab {
+                FormatTab::Number => {
+                    let typed = code.read(cx).value().to_string();
+                    // What the selected cell shows in it.
+                    let sample = self.current_cell().and_then(|(c, r)| self.current_sheet().and_then(|(_, s)| s.cell(r, c).map(|x| x.value.clone()))).map(|v| ibis_calc::numfmt::format(&v, &typed, false).text).unwrap_or_default();
+                    let c2 = code.clone();
+                    let current = super::toolbar::NUMBER_FORMATS.iter().find(|(_, f)| *f == style.number_format).map(|(name, _)| text(name)).unwrap_or_else(|| text("xlsx.format-pane.custom"));
+                    let items: Vec<MenuEntry> = super::toolbar::NUMBER_FORMATS.iter().map(|&(name, format)| choice("xlsx.number-format", text(name), style.number_format == format, StyleChange::NumberFormat(format.into()))).collect();
+                    section = section
+                        .child(pane.select("cell-format-number", None, current, items))
+                        .child(caption("_xlsx.number-format-custom"))
+                        .child(Input::new(&code).small())
+                        .child(div().text_size(px(12.)).child(SharedString::from(format!("{}{sample}", crate::shell::i18n::text("_xlsx.sample")))))
+                        .child(Button::new("custom-format-apply").primary().small().label(text("_xlsx.apply-to-selection")).on_click(cx.listener(move |this, _, _, cx| {
+                            let code = c2.read(cx).value().trim().to_string();
+                            if !code.is_empty() {
+                                this.format_cells(StyleChange::NumberFormat(code), cx);
+                            }
+                        })));
                 }
-                let mut v = h_flex().gap_1().flex_wrap();
-                for (i, (name, a)) in vertical.into_iter().enumerate() {
-                    v = v.child(change(format!("cell-format-valign-{i}"), mark(style.vertical == a, name), StyleChange::Vertical(a), cx));
+                FormatTab::Alignment => {
+                    let horizontal = [("_xlsx.general", CellAlign::General), ("_xlsx.left-indent", CellAlign::Left), ("_shell.center-2", CellAlign::Center), ("_xlsx.right-indent", CellAlign::Right), ("_xlsx.fill", CellAlign::Fill), ("align.justify", CellAlign::Justify), ("_xlsx.center-across-selection", CellAlign::CenterAcross), ("_xlsx.distributed-indent", CellAlign::Distributed)];
+                    let vertical = [("_xlsx.top-2", CellVerticalAlign::Top), ("_shell.center-2", CellVerticalAlign::Center), ("_xlsx.bottom-2", CellVerticalAlign::Bottom), ("align.justify", CellVerticalAlign::Justify), ("_shell.distributed", CellVerticalAlign::Distributed)];
+                    let turns = [("0°", 0u8), ("45°", 45), ("90°", 90), ("135°", 135), ("180°", 180), ("_xlsx.vertical-text", 255)];
+                    let h_label = horizontal.iter().find(|(_, a)| *a == style.align).map(|(n, _)| text(n)).unwrap_or_default();
+                    let v_label = vertical.iter().find(|(_, a)| *a == style.vertical).map(|(n, _)| text(n)).unwrap_or_default();
+                    let t_label = turns.iter().find(|(_, d)| *d == style.rotation).map(|(n, _)| text(n)).unwrap_or_else(|| SharedString::from(format!("{}°", style.rotation)));
+                    let h_items: Vec<MenuEntry> = horizontal.into_iter().map(|(n, a)| choice("xlsx.halign", text(n), style.align == a, StyleChange::Align(a))).collect();
+                    let v_items: Vec<MenuEntry> = vertical.into_iter().map(|(n, a)| choice("xlsx.valign", text(n), style.vertical == a, StyleChange::Vertical(a))).collect();
+                    let t_items: Vec<MenuEntry> = turns.into_iter().map(|(n, d)| choice("xlsx.rotation", text(n), style.rotation == d, StyleChange::Rotation(d))).collect();
+                    section = section
+                        .child(caption("_xlsx.horizontal"))
+                        .child(pane.select("cell-format-halign", None, h_label, h_items))
+                        .child(caption("_xlsx.vertical"))
+                        .child(pane.select("cell-format-valign", None, v_label, v_items))
+                        .child(caption("_xlsx.text-direction"))
+                        .child(pane.select("cell-format-rotation", None, t_label, t_items))
+                        .child(h_flex().gap_1().flex_wrap()
+                            .child(change("cell-format-wrap".into(), mark(style.wrap, "_xlsx.wrap-text"), StyleChange::Wrap(!style.wrap), cx))
+                            .child(change("cell-format-shrink".into(), mark(style.shrink, "_xlsx.shrink-to-fit"), StyleChange::Shrink(!style.shrink), cx)))
+                        .child(h_flex().gap_1().items_center()
+                            .child(text("_xlsx.indent"))
+                            .child(change("cell-format-indent-less".into(), "−".into(), StyleChange::Indent(style.indent.saturating_sub(1)), cx))
+                            .child(SharedString::from(format!("{}", style.indent)))
+                            .child(change("cell-format-indent-more".into(), "+".into(), StyleChange::Indent(style.indent + 1), cx)));
                 }
-                let mut turn = h_flex().gap_1().flex_wrap();
-                for (i, (name, degrees)) in [("0°", 0u8), ("45°", 45), ("90°", 90), ("135°", 135), ("180°", 180), ("_xlsx.vertical-text", 255)].into_iter().enumerate() {
-                    turn = turn.child(change(format!("cell-format-rotation-{i}"), mark(style.rotation == degrees, name), StyleChange::Rotation(degrees), cx));
+                FormatTab::Font => {
+                    let editor = pane.editor.clone();
+                    let f2 = font.clone();
+                    // − [size] + ; the buttons step as the toolbar's.
+                    let step = |id: &'static str, icon: &'static str, tip: &'static str, grow: bool| -> AnyElement {
+                        let size = size.clone();
+                        let handler: Handler = Rc::new(move |this: &mut SlideEditor, window, cx| {
+                            let next = ibis_doc_model::step_font_size(this.current_style().font_size, grow);
+                            this.format_cells(StyleChange::FontSize(next), cx);
+                            size.update(cx, |i, cx| i.set_value(format!("{}", next as f32 / 100.0), window, cx));
+                        });
+                        pane.marked(id, tool_item(&ToolItem::from(ToolButton::new(id, icon, tip).click(move |this, window, cx| handler(this, window, cx))), 3000, &editor))
+                    };
+                    // Bold, italic, underline and strike: the toolbar's buttons.
+                    let toggle = |id: &'static str, icon: &'static str, tip: &'static str, on: bool, change: StyleChange| -> AnyElement {
+                        pane.marked(id, tool_item(&ToolItem::from(ToolButton::new(id, icon, tip).on(on).click(move |this, _, cx| this.format_cells(change.clone(), cx))), 3001, &editor))
+                    };
+                    let color = style.color;
+                    let color_menu = crate::shell::color_palette::mark_current(super::toolbar::cell_color_menu(self, false), color);
+                    section = section
+                        .child(caption("_xlsx.font-name"))
+                        .child(h_flex().gap_1()
+                            .child(div().flex_1().child(Input::new(&font).small()))
+                            .child(Button::new("cell-format-font-set").small().label(text("_xlsx.set-font")).on_click(cx.listener(move |this, _, _, cx| {
+                                let name = f2.read(cx).value().trim().to_string();
+                                this.format_cells(StyleChange::Font((!name.is_empty()).then_some(name)), cx);
+                            }))))
+                        .child(caption("_xlsx.size-points"))
+                        .child(h_flex().gap_1().items_center()
+                            .child(step("cell-format-size-less", "remove", "_shell.decrease-font-size", false))
+                            .child(div().w(px(72.)).child(Input::new(&size).small()))
+                            .child(step("cell-format-size-more", "add", "_shell.increase-font-size", true)))
+                        .child(h_flex().gap_1()
+                            .child(toggle("cell-format-bold", "format_bold", "_shell.bold-b", style.bold, StyleChange::Bold(!style.bold)))
+                            .child(toggle("cell-format-italic", "format_italic", "_shell.italic-i", style.italic, StyleChange::Italic(!style.italic)))
+                            .child(toggle("cell-format-underline", "format_underlined", "_shell.underline-u", style.underline.enabled(), StyleChange::Underline(!style.underline.enabled())))
+                            .child(toggle("cell-format-strike", "format_strikethrough", "pptx.chrome.strikethrough", style.strike, StyleChange::Strike(!style.strike))))
+                        .child(caption("docx.common.color"))
+                        .child(pane.select("cell-format-color", Some(rgb_hsla(color)), color_name(color, super::toolbar::COLORS), color_menu));
                 }
-                body = body
-                    .child(text("_xlsx.horizontal"))
-                    .child(h)
-                    .child(text("_xlsx.vertical"))
-                    .child(v)
-                    .child(h_flex().gap_1().flex_wrap()
-                        .child(change("cell-format-wrap".into(), mark(style.wrap, "_xlsx.wrap-text"), StyleChange::Wrap(!style.wrap), cx))
-                        .child(change("cell-format-shrink".into(), mark(style.shrink, "_xlsx.shrink-to-fit"), StyleChange::Shrink(!style.shrink), cx)))
-                    .child(h_flex().gap_1().items_center()
-                        .child(text("_xlsx.indent"))
-                        .child(change("cell-format-indent-less".into(), "−".into(), StyleChange::Indent(style.indent.saturating_sub(1)), cx))
-                        .child(SharedString::from(format!("{}", style.indent)))
-                        .child(change("cell-format-indent-more".into(), "+".into(), StyleChange::Indent(style.indent + 1), cx)))
-                    .child(text("_xlsx.text-direction"))
-                    .child(turn);
+                FormatTab::Border => {
+                    let wb = self.wb();
+                    let (line, line_color) = (wb.border_line, wb.border_color);
+                    let colors = crate::shell::color_palette::mark_current(super::toolbar::border_color_menu(self), line_color);
+                    let range = self.selected_range();
+                    let multi_rows = range.is_some_and(|r| r.last_row > r.first_row);
+                    let multi_columns = range.is_some_and(|r| r.last_column > r.first_column);
+                    section = section
+                        .child(caption("_xlsx.line-style"))
+                        .child(pane.select("cell-format-line", None, border_line_label(line), super::toolbar::border_style_items(self)))
+                        .child(caption("docx.common.color"))
+                        .child(pane.select("cell-format-border-color", Some(rgb_hsla(line_color)), color_name(line_color, super::toolbar::COLORS), colors))
+                        .child(caption("_xlsx.borders"))
+                        .child(self.border_sample(&pane, multi_rows, multi_columns, cx));
+                }
+                FormatTab::Fill => {
+                    let fill = style.fill;
+                    let mut entries = super::toolbar::cell_color_menu(self, true);
+                    if let Some(f) = fill {
+                        entries = crate::shell::color_palette::mark_current(entries, f);
+                    }
+                    let label = fill.map(|f| color_name(f, super::toolbar::FILLS)).unwrap_or_else(|| text("xlsx.fill-none"));
+                    section = section
+                        .child(caption("_xlsx.background-color"))
+                        .child(pane.select("cell-format-fill", Some(fill.map(rgb_hsla).unwrap_or_else(|| gpui_kit::rgb(0xffffff).into())), label, entries));
+                }
+                FormatTab::Protection => {
+                    section = section
+                        .child(change("cell-format-locked".into(), mark(!style.unlocked, "_xlsx.locked"), StyleChange::Locked(style.unlocked), cx))
+                        .child(change("cell-format-hidden".into(), mark(style.formula_hidden, "_xlsx.hidden-hide-the-formula"), StyleChange::FormulaHidden(!style.formula_hidden), cx))
+                        .child(div().text_size(px(12.)).child(text("_xlsx.locked-and-hidden-take-effect-when-the-sheet-is")));
+                }
             }
-            FormatTab::Font => {
-                let (f2, s2) = (font.clone(), size.clone());
-                body = body
-                    .child(text("_xlsx.font-name"))
-                    .child(Input::new(&font).small())
-                    .child(Button::new("cell-format-font-set").small().label(text("_xlsx.set-font")).on_click(cx.listener(move |this, _, _, cx| {
-                        let name = f2.read(cx).value().trim().to_string();
-                        this.format_cells(StyleChange::Font((!name.is_empty()).then_some(name)), cx);
-                    })))
-                    .child(text("_xlsx.size-points"))
-                    .child(Input::new(&size).small())
-                    .child(Button::new("cell-format-size-set").small().label(text("_xlsx.set-size")).on_click(cx.listener(move |this, _, _, cx| {
-                        if let Ok(points) = s2.read(cx).value().trim().parse::<f32>()
-                            && (1.0..=409.0).contains(&points)
-                        {
-                            this.format_cells(StyleChange::FontSize((points * 100.0).round() as u32), cx);
-                        }
-                    })))
-                    .child(h_flex().gap_1().flex_wrap()
-                        .child(change("cell-format-bold".into(), mark(style.bold, "_shell.bold"), StyleChange::Bold(!style.bold), cx))
-                        .child(change("cell-format-italic".into(), mark(style.italic, "docx.common.italic"), StyleChange::Italic(!style.italic), cx))
-                        .child(change("cell-format-underline".into(), mark(style.underline.enabled(), "_xlsx.underline"), StyleChange::Underline(!style.underline.enabled()), cx))
-                        .child(change("cell-format-strike".into(), mark(style.strike, "pptx.chrome.strikethrough"), StyleChange::Strike(!style.strike), cx)))
-                    .child(text("docx.common.color"));
-                let mut colors = h_flex().gap_1().flex_wrap();
-                for (i, &(name, rgb_value)) in super::toolbar::COLORS.iter().enumerate() {
-                    colors = colors.child(change(format!("cell-format-color-{i}"), mark(style.color.0 == rgb_value && style.color_theme.is_none(), &crate::shell::i18n::text(name)), StyleChange::Color(ibis_doc_model::Rgb(rgb_value)), cx));
-                }
-                body = body.child(colors);
-            }
-            FormatTab::Border => {
-                let mut kinds = h_flex().gap_1().flex_wrap();
-                for (i, (name, line)) in [("pptx.chrome.solid", BorderLine::Thin), ("_shell.thick", BorderLine::Thick), ("_shell.double", BorderLine::Double), ("_shell.dotted", BorderLine::Dotted), ("_shell.dashed", BorderLine::Dashed)].into_iter().enumerate() {
-                    let on = self.wb().border_line == line;
-                    kinds = kinds.child(Button::new(SharedString::from(format!("cell-format-line-{i}"))).small().label(mark(on, name)).on_click(cx.listener(move |this, _, _, cx| {
-                        this.wb_mut().border_line = line;
-                        cx.notify();
-                    })));
-                }
-                let mut places = h_flex().gap_1().flex_wrap();
-                for (name, kind) in [("_shell.none", "none"), ("_xlsx.outside-borders", "outside"), ("_xlsx.all-borders", "all"), ("_xlsx.top-border-2", "top"), ("_xlsx.bottom-border-2", "bottom"), ("_xlsx.left-border-2", "left"), ("_xlsx.right-border-2", "right"), ("_xlsx.diagonal-up-border-2", "diagonal-up"), ("_xlsx.diagonal-down-border-2", "diagonal-down")] {
-                    places = places.child(mark_ui(&format!("cell-format-border-{kind}"), Button::new(SharedString::from(format!("cell-format-border-{kind}"))).small().label(text(name)).on_click(cx.listener(move |this, _, _, cx| this.set_borders(kind, cx)))));
-                }
-                let mut colors = h_flex().gap_1().flex_wrap();
-                for (i, &(name, rgb_value)) in super::toolbar::COLORS.iter().enumerate() {
-                    let on = self.wb().border_color.0 == rgb_value;
-                    colors = colors.child(Button::new(SharedString::from(format!("cell-format-border-color-{i}"))).small().label(mark(on, name)).on_click(cx.listener(move |this, _, _, cx| {
-                        this.wb_mut().border_color = ibis_doc_model::Rgb(rgb_value);
-                        cx.notify();
-                    })));
-                }
-                body = body.child(text("_xlsx.line-style")).child(kinds).child(text("docx.common.color")).child(colors).child(text("_xlsx.borders")).child(places);
-            }
-            FormatTab::Fill => {
-                let mut colors = h_flex().gap_1().flex_wrap();
-                colors = colors.child(change("cell-format-fill-none".into(), mark(style.fill.is_none(), "pptx.chrome.no-color"), StyleChange::Fill(None), cx));
-                for (i, &(name, rgb_value)) in super::toolbar::FILLS.iter().enumerate() {
-                    colors = colors.child(change(format!("cell-format-fill-{i}"), mark(style.fill.is_some_and(|f| f.0 == rgb_value) && style.fill_theme.is_none(), &crate::shell::i18n::text(name)), StyleChange::Fill(Some(ibis_doc_model::Rgb(rgb_value))), cx));
-                }
-                body = body.child(text("_xlsx.background-color")).child(colors);
-            }
-            FormatTab::Protection => {
-                body = body
-                    .child(change("cell-format-locked".into(), mark(!style.unlocked, "_xlsx.locked"), StyleChange::Locked(style.unlocked), cx))
-                    .child(change("cell-format-hidden".into(), mark(style.formula_hidden, "_xlsx.hidden-hide-the-formula"), StyleChange::FormulaHidden(!style.formula_hidden), cx))
-                    .child(div().text_size(px(12.)).child(text("_xlsx.locked-and-hidden-take-effect-when-the-sheet-is")));
-            }
+            body = body.child(section);
         }
         Some(SidebarPanel { title: "fix.protection.format-cells".into(), body: body.into_any_element() })
     }
+
+    /// A section's row: the triangle and the name; pressing it opens or closes the section.
+    fn pane_section_header(&self, pane: &Pane, n: usize, tab: FormatTab, open: bool, cx: &mut Context<Self>) -> AnyElement {
+        let id = format!("cell-format-section-{tab:?}");
+        let row = h_flex()
+            .id(SharedString::from(id.clone()))
+            .h(px(30.))
+            .px(px(4.))
+            .gap(px(2.))
+            .items_center()
+            .rounded(px(4.))
+            .cursor_pointer()
+            .bg(hsla(0.0, 0.0, 0.5, 0.08))
+            .hover(|s| s.bg(hsla(0.0, 0.0, 0.5, 0.16)))
+            .child(Icon::new(Material(if open { "arrow_drop_down" } else { "arrow_right" })).size(px(20.)))
+            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(crate::shell::i18n::text(tab.label())))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let open = &mut this.wb_mut().format_open[n];
+                *open = !*open;
+                cx.notify();
+            }));
+        pane.marked(&id, row)
+    }
+
+    /// The border lines' sample (Excel's 罫線 tab): the presets, and the cell with its lines, which are drawn in
+    /// the style and the colour they have; pressing a line (or its button) draws it or takes it off.
+    fn border_sample(&self, pane: &Pane, multi_rows: bool, multi_columns: bool, cx: &mut Context<Self>) -> AnyElement {
+        let text = |s: &str| SharedString::from(crate::shell::i18n::text(s).to_string());
+        let (left, top, right, bottom) = (MARGIN, MARGIN, MARGIN + SAMPLE_W, MARGIN + SAMPLE_H);
+        let (mid_x, mid_y) = ((left + right) / 2.0, (top + bottom) / 2.0);
+        let preset = |id: &'static str, icon: &'static str, tip: &'static str, kind: &'static str, enabled: bool| -> AnyElement {
+            pane.marked(id, Button::new(SharedString::from(id)).ghost().small().icon(Icon::new(Material(icon))).label(text(tip)).disabled(!enabled).on_click(cx.listener(move |this, _, _, cx| this.set_borders(kind, cx))))
+        };
+        // The line buttons of the sides, as Excel's.
+        let side = |kind: &'static str, icon: Option<&'static str>, glyph: &'static str, tip: &'static str, enabled: bool| -> AnyElement {
+            let id = format!("cell-format-border-{kind}");
+            let on = self.range_edge(kind).is_some();
+            let button = Button::new(SharedString::from(id.clone())).ghost().small().selected(on).disabled(!enabled).tooltip(text(tip));
+            let button = match icon {
+                Some(i) => button.icon(Icon::new(Material(i))),
+                None => button.label(glyph),
+            };
+            pane.marked(&id, button.on_click(cx.listener(move |this, _, _, cx| this.toggle_border(kind, cx))))
+        };
+        let mut sample = div().relative().w(px(SAMPLE_W + 2.0 * MARGIN)).h(px(SAMPLE_H + 2.0 * MARGIN)).flex_none().overflow_hidden().rounded(px(4.)).border_1().border_color(gpui_kit::rgb(0xc7c7c7)).bg(gpui_kit::rgb(0xffffff));
+        // The cell, with the guides of where the inside lines go.
+        sample = sample.child(div().absolute().left(px(left)).top(px(top)).w(px(SAMPLE_W)).h(px(SAMPLE_H)).bg(gpui_kit::rgb(0xf6f6f6)));
+        let guide = Border { line: BorderLine::Hair, color: ibis_doc_model::Rgb(0xbfbfbf) };
+        for (from, to, shown) in [((left, mid_y), (right, mid_y), multi_rows), ((mid_x, top), (mid_x, bottom), multi_columns)] {
+            if shown {
+                for piece in sample_line(from, to, guide) {
+                    sample = sample.child(piece);
+                }
+            }
+        }
+        let lines = [
+            ("top", (left, top), (right, top)),
+            ("bottom", (left, bottom), (right, bottom)),
+            ("left", (left, top), (left, bottom)),
+            ("right", (right, top), (right, bottom)),
+            ("inside-h", (left, mid_y), (right, mid_y)),
+            ("inside-v", (mid_x, top), (mid_x, bottom)),
+            ("diagonal-up", (left, bottom), (right, top)),
+            ("diagonal-down", (left, top), (right, bottom)),
+        ];
+        for (kind, from, to) in lines {
+            if let Some(border) = self.range_edge(kind) {
+                for piece in sample_line(from, to, border) {
+                    sample = sample.child(piece);
+                }
+            }
+        }
+        // The places to press: strips over the sides and the middle.
+        let zone = |kind: &'static str, x: f32, y: f32, w: f32, h: f32| -> AnyElement {
+            let id = format!("cell-format-sample-{kind}");
+            let ui = pane.ui.clone();
+            let key = id.clone();
+            div()
+                .id(SharedString::from(id))
+                .absolute()
+                .left(px(x))
+                .top(px(y))
+                .w(px(w))
+                .h(px(h))
+                .cursor_pointer()
+                .hover(|s| s.bg(hsla(0.6, 0.8, 0.5, 0.18)))
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_border(kind, cx)))
+                .child(canvas(|_, _, _| {}, move |bounds, _, _, _| { ui.borrow_mut().insert(key.clone(), bounds); }).absolute().top_0().left_0().size_full())
+                .into_any_element()
+        };
+        let strip = 8.0;
+        sample = sample
+            .child(zone("top", left, top - strip / 2.0, SAMPLE_W, strip))
+            .child(zone("bottom", left, bottom - strip / 2.0, SAMPLE_W, strip))
+            .child(zone("left", left - strip / 2.0, top, strip, SAMPLE_H))
+            .child(zone("right", right - strip / 2.0, top, strip, SAMPLE_H));
+        if multi_rows {
+            sample = sample.child(zone("inside-h", left, mid_y - strip / 2.0, SAMPLE_W, strip));
+        }
+        if multi_columns {
+            sample = sample.child(zone("inside-v", mid_x - strip / 2.0, top, strip, SAMPLE_H));
+        }
+        v_flex()
+            .gap_2()
+            .child(h_flex().gap_1().flex_wrap()
+                .child(preset("cell-format-border-none", "border_clear", "_shell.none", "none", true))
+                .child(preset("cell-format-border-outside", "border_outer", "_xlsx.outside-borders", "outside", true))
+                .child(preset("cell-format-border-inside", "border_inner", "xlsx.format-pane.border-inside", "inside", multi_rows || multi_columns)))
+            .child(h_flex().gap_1()
+                .child(v_flex().gap_1().justify_between()
+                    .child(side("top", Some("border_top"), "", "_xlsx.top-border-2", true))
+                    .child(side("inside-h", Some("border_horizontal"), "", "_xlsx.horizontal-border", multi_rows))
+                    .child(side("bottom", Some("border_bottom"), "", "_xlsx.bottom-border-2", true)))
+                .child(sample))
+            .child(h_flex().gap_1()
+                .child(side("left", Some("border_left"), "", "_xlsx.left-border-2", true))
+                .child(side("inside-v", Some("border_vertical"), "", "_xlsx.vertical-border", multi_columns))
+                .child(side("right", Some("border_right"), "", "_xlsx.right-border-2", true))
+                .child(side("diagonal-up", None, "╱", "_xlsx.diagonal-up-border-2", true))
+                .child(side("diagonal-down", None, "╲", "_xlsx.diagonal-down-border-2", true)))
+            .child(div().text_size(px(12.)).text_color(crate::shell::chrome::text_secondary()).child(text("xlsx.format-pane.border-hint")))
+            .into_any_element()
+    }
+}
+
+/// The name of a border line style in the UI's language.
+pub(crate) fn border_line_label(line: BorderLine) -> SharedString {
+    let id = match line {
+        BorderLine::Thin => "_xlsx.thin",
+        BorderLine::Hair => "_xlsx.hair",
+        BorderLine::Medium => "_xlsx.medium",
+        BorderLine::Thick => "_shell.thick",
+        BorderLine::Double => "_shell.double",
+        BorderLine::Dotted => "_shell.dotted",
+        BorderLine::Dashed => "_shell.dashed",
+        BorderLine::DashDot => "docx.picture.border.dash.dashdot",
+        BorderLine::DashDotDot => "_xlsx.dash-dot-dot",
+        BorderLine::MediumDashed => "_xlsx.medium-dashed",
+        BorderLine::MediumDashDot => "_xlsx.medium-dash-dot-2",
+        BorderLine::MediumDashDotDot => "_xlsx.medium-dash-dot-dot-2",
+        BorderLine::SlantDashDot => "_xlsx.slant-dash-dot-2",
+    };
+    crate::shell::i18n::text(id)
 }

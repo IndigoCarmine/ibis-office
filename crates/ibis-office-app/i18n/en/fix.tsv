@@ -368,8 +368,8 @@ xlsx.backupsave.backup-now-done	Backup created
 xlsx.backupsave.backup-now-failed	Failed to create backup
 xlsx.backupsave.need-save-first	Workbook is not saved yet. Please save the workbook first.
 xlsx.backupsave.save-settings-btn	Save Settings
-xlsx.open-and-repair	Open and Repair Damaged Workbook…
-xlsx.repair.title	Open and Repair Damaged Workbook
+xlsx.open-and-repair	Repair Damaged Workbook…
+xlsx.repair.title	Repair Damaged Workbook
 xlsx.repair.desc	Repair corrupted Excel workbooks or extract formulas and values.
 xlsx.repair.file-label	Workbook to repair:
 xlsx.repair.browse-btn	Browse…
@@ -465,3 +465,14 @@ fix.font-name.ms-mincho	MS Mincho
 fix.font-name.ms-gothic	MS Gothic
 fix.font-name.biz-udp-mincho	BIZ UDPMincho
 fix.font-name.biz-udp-gothic	BIZ UDPGothic
+help.update-log	Show Update Log
+fix.update.found	A new version of ibisOffice is available. Do you want to update?
+fix.update.found.detail	Version {version} (you have {current}). ibisOffice will quit and open again to update.
+fix.update.yes	Yes
+fix.update.open-site	Open the download page
+fix.update.no	No
+fix.update.failed	ibisOffice could not be updated.
+fix.update.failed.detail	Please download and install it again from the download page: {url}
+fix.update.setting	Check for updates at startup
+fix.update.setting.note	If there is a newer version, ibisOffice downloads it and asks whether to update.
+fix.update.log-path	Update log: {log}

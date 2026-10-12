@@ -1299,7 +1299,7 @@ pub(crate) fn english_ui() {
                     out.push((sub.id.to_string(), sub.label.to_string()));
                     walk(&sub.items, out);
                 }
-                MenuEntry::Separator => {}
+                MenuEntry::Palette(_) | MenuEntry::Separator => {}
             }
         }
     }
@@ -1632,7 +1632,7 @@ pub(crate) fn distribute_table_rows_and_columns() {
 pub(crate) fn background_applied_to_all() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.page(2);
-    s.toolbar_menu("background", "color.light-gray");
+    s.toolbar_menu("background", "color.light-blue");
     let fill = s.with(|e, _| e.slide().background.clone());
     s.toolbar_menu("background", "background.apply-all");
     assert!(s.with(|e, _| e.presentation().slides.iter().all(|sl| sl.background == fill)));
@@ -2121,12 +2121,12 @@ pub(crate) fn edit_table_cells() {
     s.toolbar("bold");
     assert!(s.with(|e, _| e.text_editing().is_some()), "still editing");
     // The cell's fill.
-    s.toolbar_menu("fill", "color.gray");
+    s.toolbar_menu("fill", "color.blue");
     let fill = s.with(|e, _| match &e.slide().shapes[shape].kind {
         ShapeKind::Table(t) => t.rows[1].cells[2].fill.clone(),
         _ => unreachable!(),
     });
-    assert_eq!(fill, Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x7f7f7f))));
+    assert_eq!(fill, Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x0070c0))));
     // The cell's lines (罫線): red on every edge of the cell.
     s.toolbar_menu("border-color", "color.red");
     let borders = s.with(|e, _| match &e.slide().shapes[shape].kind {
@@ -2294,6 +2294,7 @@ pub(crate) fn text_shortcuts_align_and_copy_format() {
 /// Option+ドラッグ: 図形の複製を、ドラッグした先に置く（元の図形は動かない）。元に戻せる。
 pub(crate) fn option_drag_copies_the_shape() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("view.sidebar"); // Placed by the layout with the right pane.
     s.page(3);
     let (id, frame) = s.with(|e, _| e.slide().shapes.iter().find(|sh| e.slide().placeholders.get(&sh.id).is_none() && matches!(sh.kind, ShapeKind::Auto(_))).map(|sh| (sh.id, sh.frame)).expect("a shape"));
     let before = s.shapes();
@@ -2648,6 +2649,43 @@ pub(crate) fn typed_list_marks_become_lists() {
     s.key("enter");
     s.type_text("a - b");
     assert!(s.with(|e, _| e.edited_text()).is_some_and(|t| t.ends_with("a - b")), "a hyphen in the middle stays");
+}
+
+/// カラーパレット: 色のボタンの ▼ は、色の名前の一覧でなく、色の四角を並べたパレット（テーマの色の行、標準の色、
+/// 最近使った色）を開く。四角を選ぶと文字・図形の色が変わり、最近使った色に入る。
+pub(crate) fn color_palette_in_the_toolbar() {
+    use crate::shell::chrome::{MenuEntry, ToolItem};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(3);
+    let (id, _) = s.with(|e, _| e.slide().shapes.iter().find(|sh| e.slide().placeholders.get(&sh.id).is_none() && matches!(sh.kind, ShapeKind::Auto(_))).map(|sh| (sh.id, sh.frame)).expect("a shape"));
+    s.update(|e, _, _| e.set_selection(vec![id]));
+    let menu = s.with(|e, _| e.toolbar_items().into_iter().find_map(|t| match t { ToolItem::Button(b) if b.id == "fill" => b.menu, _ => None })).expect("the fill menu");
+    let palette = menu.iter().find_map(|m| match m { MenuEntry::Palette(p) => Some(p.clone()), _ => None }).expect("a palette, not a list of names");
+    assert!(palette.none.is_some(), "塗りつぶしなし");
+    assert_eq!(palette.theme.len(), 6, "the theme colours and five tints");
+    assert!(palette.theme.iter().all(|r| r.len() == 10));
+    assert_eq!(palette.standard.len(), 10);
+    // The picture of it, opened as a menu.
+    s.update(|e, w, cx| e.open_popup_entries(menu.clone(), gpui_kit::point(gpui_kit::px(560.), gpui_kit::px(90.)), w, cx));
+    s.screenshot("palette");
+    s.key("escape");
+    // A square picks: the shape's fill is that colour; it is then the lately used colour.
+    let theme_square = palette.theme[0][4].clone();
+    s.update(|e, w, cx| (theme_square.item.handler.clone().unwrap())(e, w, cx));
+    let fill = s.with(|e, _| match &e.slide().shape(id).unwrap().kind { ShapeKind::Auto(a) => a.fill.clone(), _ => unreachable!() });
+    assert_eq!(fill, ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(theme_square.rgb)));
+    s.toolbar_menu("fill", "color.orange");
+    let orange = s.with(|e, _| match &e.slide().shape(id).unwrap().kind { ShapeKind::Auto(a) => a.fill.clone(), _ => unreachable!() });
+    assert_ne!(orange, fill, "the standard orange");
+    s.toolbar_menu("fill", "color.none");
+    assert!(s.with(|e, _| matches!(&e.slide().shape(id).unwrap().kind, ShapeKind::Auto(a) if a.fill == ibis_doc_model::Fill::None)));
+    // The split button: its left half sets the colour last picked from it (the orange), at once.
+    s.toolbar("fill");
+    let again = s.with(|e, _| match &e.slide().shape(id).unwrap().kind { ShapeKind::Auto(a) => a.fill.clone(), _ => unreachable!() });
+    assert_eq!(again, orange, "the left half does the last colour");
+    let bar = s.with(|e, _| e.toolbar_items().into_iter().find_map(|t| match t { ToolItem::Button(b) if b.id == "fill" => b.color, _ => None }));
+    assert_eq!(bar, Some(gpui_kit::rgb(0xffc000).into()), "its bar shows that colour");
+    s.screenshot("split");
 }
 
 /// Tab・⇧Tab: 文字を編集していないとき、次・前の図形を選ぶ（重なり順の、背面から。最後の次は最初）。
@@ -5110,6 +5148,7 @@ pub(crate) fn lock_aspect_ratio() {
 /// shape drawn gets; a line's too.
 pub(crate) fn default_shape_look() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("view.sidebar"); // Placed by the layout with the right pane.
     s.page(4);
     s.toolbar_menu("insert-shape", "shape.roundRect");
     let (a, b) = (s.at(EmuPoint::new(1_000_000, 4_800_000)), s.at(EmuPoint::new(3_000_000, 6_000_000)));
@@ -6959,7 +6998,7 @@ pub(crate) fn text_insets_reject_changed_body() {
     s.menu("pptx.text.insets-custom");assert!(s.with(|e,_|e.slide().shapes[1].text_body().unwrap().text().contains("未確定")));s.key("cmd-a");s.type_text("0.9");s.menu("pptx.insets.apply");assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_none()));s.save_as("insets-ime-reopened.pptx");assert_eq!(s.reopen().slides[0].shapes[1].text_body().unwrap().insets.left,324_000);
 
     undo_all_and_redo(&mut s);drop(s);
-    let mut s=Scenario::open("test/benchmark/earnings-presentation.pptx");let (page,shape)=s.with(|e,_|e.presentation().slides.iter().enumerate().find_map(|(i,sl)|sl.shapes.iter().position(|sh|matches!(sh.kind,ShapeKind::Table(_))).map(|j|(i,j)))).unwrap();s.page(page+1);let cell=cell_middle(&mut s,shape,1,1);s.double_click(cell);s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");
+    let mut s=Scenario::open("test/benchmark/earnings-presentation.pptx");s.menu("view.sidebar");let (page,shape)=s.with(|e,_|e.presentation().slides.iter().enumerate().find_map(|(i,sl)|sl.shapes.iter().position(|sh|matches!(sh.kind,ShapeKind::Table(_))).map(|j|(i,j)))).unwrap();s.page(page+1);let cell=cell_middle(&mut s,shape,1,1);s.double_click(cell);s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");
     s.double_click(cell);s.key("cmd-a");s.type_text("cell replacement");s.key("escape");let before=s.with(|e,_|e.slide().shapes[shape].clone());s.menu("pptx.insets.apply");assert_eq!(s.with(|e,_|e.slide().shapes[shape].clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_some()));s.menu("pptx.insets.cancel");
     s.double_click(cell);s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");s.menu("pptx.insets.apply");s.save_as("insets-cell-reopened.pptx");let reread=s.reopen();let ShapeKind::Table(t)=&reread.slides[page].shapes[shape].kind else {panic!("table")};assert_eq!(t.rows[1].cells[1].text.insets.left,252_000);assert_eq!(t.rows[1].cells[1].text.text(),"cell replacement");undo_all_and_redo(&mut s);
 
@@ -7205,6 +7244,7 @@ pub(crate) fn paragraph_panel_rejects_changed_body() {
     assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.is_none()));
     drop(s);
     let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
+    s.menu("view.sidebar"); // Placed by the layout with the right pane.
     let (page, shape) = s.with(|e, _| e.presentation().slides.iter().enumerate().find_map(|(i, sl)| sl.shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Table(_))).map(|j| (i, j)))).unwrap();
     s.page(page + 1); let cell = cell_middle(&mut s, shape, 1, 1); s.double_click(cell);
     s.menu("pptx.paragraph.settings"); s.menu("pptx.paragraph.points");
@@ -13162,6 +13202,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::merge_table_cells", merge_table_cells),
         ("pptx::table_cell_size_panel", table_cell_size_panel),
         ("pptx::tab_selects_the_next_shape", tab_selects_the_next_shape),
+        ("pptx::color_palette_in_the_toolbar", color_palette_in_the_toolbar),
         ("pptx::typed_list_marks_become_lists", typed_list_marks_become_lists),
         ("pptx::cells_copied_from_a_worksheet_paste_as_a_table", cells_copied_from_a_worksheet_paste_as_a_table),
         ("pptx::typed_addresses_become_links", typed_addresses_become_links),

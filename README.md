@@ -23,8 +23,13 @@ Our aim is simple: a document made in Microsoft Office should look the same when
 
 ## Get started
 
-- **Download the desktop app**: get `ibisOffice-<version>-macOS.zip` from [Releases](https://github.com/ibisjp/ibis-office/releases/latest), unzip it and move `ibisOffice.app` to your Applications folder (macOS 11 or later).
+- **Download the desktop app** from [Releases](https://github.com/ibisjp/ibis-office/releases/latest):
+  - macOS (11 or later): get `ibisOffice-<version>-macOS.zip`, unzip it and move `ibisOffice.app` to your Applications folder.
+  - Windows (64-bit): get `ibisOffice-<version>-Windows.zip`, unzip it and run `ibisOffice.exe` in the `ibisOffice` folder.
 - **Try the web version**: open the [playground](https://ibisjp.github.io/ibis-office/) in your browser — no installation (a browser with WebGPU). Open the sample Word, Excel and PowerPoint documents and try it right away.
+- **Watch the video**: an introduction to ibisOffice (YouTube).
+
+  [![ibisOffice introduction video](asset/video-en.jpg)](https://www.youtube.com/watch?v=nk2BRzMC2vw)
 
 ## Goals
 

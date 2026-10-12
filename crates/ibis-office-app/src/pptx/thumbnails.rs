@@ -506,7 +506,13 @@ impl SlideEditor {
     /// Open context menu for the given slide at pointer `position`.
     pub(crate) fn open_slide_context_menu(&mut self, slide_id: ibis_doc_model::SlideId, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.select_slide(slide_id, window, cx);
-        let entries = std::rc::Rc::new(self.slide_context_menu_entries());
+        let entries = self.slide_context_menu_entries();
+        self.open_popup_entries(entries, position, window, cx);
+    }
+
+    /// A menu of `entries` open at `position` (the window's), as the slide's context menu is.
+    pub(crate) fn open_popup_entries(&mut self, entries: Vec<MenuEntry>, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let entries = std::rc::Rc::new(entries);
         let editor = cx.entity().downgrade();
         let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
             crate::shell::chrome::fill_menu(menu.min_w(px(220.)), &entries, &editor, window, cx)

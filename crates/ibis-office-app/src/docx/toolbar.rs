@@ -370,28 +370,46 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             .into()
     }).collect();
 
-    let mut color_menu: Vec<MenuEntry> = vec![
-        MenuItem::new("docx.color.black", crate::shell::i18n::text("docx.toolbar.automatic-black"))
-            .checked(style.as_ref().is_some_and(|s| s.color == Rgb(0)) && cur_theme_color.is_none())
-            .on(|this, _, cx| this.set_text_color(Rgb(0), cx))
-            .into(),
-        crate::shell::chrome::Submenu::new("docx.theme-colors", "palette", crate::shell::i18n::text("docx.toolbar.theme-colors"), theme_items).into(),
-        MenuEntry::Separator,
-    ];
-    for &(item_id, name, c) in &COLORS[1..] {
-        let is_checked = style.as_ref().is_some_and(|s| s.color == Rgb(c)) && cur_theme_color.is_none();
-        color_menu.push(
-            MenuItem::new(item_id, crate::shell::i18n::text(name))
-                .checked(is_checked)
-                .on(move |this, _, cx| this.set_text_color(Rgb(c), cx))
-                .into()
+    // 文字の色: a palette: the theme's colours (the colours themselves keep their theme name, the tints are plain
+    // colours), the standard colours, "自動".
+    let color_menu: Vec<MenuEntry> = {
+        use crate::shell::color_palette::{Palette, PickColor, Swatch, THEME_TINTS};
+        let pick: PickColor = std::rc::Rc::new(|this, c, _, cx| this.set_text_color(c.unwrap_or(Rgb(0)), cx));
+        let current = style.as_ref().map(|s| s.color).filter(|_| cur_theme_color.is_none());
+        // Word's order: background 1, text 1, background 2, text 2, accents 1 to 6.
+        let order = ["docx.theme-color.bg1", "docx.theme-color.text1", "docx.theme-color.bg2", "docx.theme-color.text2", "docx.theme-color.accent1", "docx.theme-color.accent2", "docx.theme-color.accent3", "docx.theme-color.accent4", "docx.theme-color.accent5", "docx.theme-color.accent6"];
+        let base: Vec<&(&str, &str, u32, &str, Option<&str>, Option<&str>)> = order.iter().filter_map(|id| THEME_COLORS.iter().find(|t| t.0 == *id)).collect();
+        let mut theme: Vec<Vec<Swatch>> = Vec::new();
+        theme.push(
+            base.iter()
+                .map(|&&(item_id, label, rgb_val, theme_name, tint, shade)| {
+                    let checked = cur_theme_color.as_ref().is_some_and(|tc| tc.name == theme_name && tc.tint.as_deref() == tint && tc.shade.as_deref() == shade);
+                    let tc = ibis_doc_model::FlowThemeColor::new(theme_name, tint, shade);
+                    Swatch { rgb: Rgb(rgb_val), item: MenuItem::new(item_id, crate::shell::i18n::text(label)).checked(checked).on(move |this, _, cx| this.set_theme_color(Rgb(rgb_val), tc.clone(), cx)) }
+                })
+                .collect(),
         );
-    }
-    color_menu.push(MenuEntry::Separator);
-    color_menu.push(MenuItem::tr("docx.color.custom").on(|this, window, cx| this.open_color_edit(false, window, cx)).into());
-    let mut highlight_menu: Vec<MenuEntry> = HIGHLIGHTS.iter().map(|&(item_id, name, c)| MenuItem::new(item_id, crate::shell::i18n::text(name)).checked(style.as_ref().is_some_and(|s| s.highlight == Some(Rgb(c)))).on(move |this, _, cx| this.set_highlight(Some(Rgb(c)), cx)).into()).collect();
-    highlight_menu.push(MenuEntry::Separator);
-    highlight_menu.push(MenuItem::tr("docx.highlight-none").checked(style.as_ref().is_some_and(|s| s.highlight.is_none())).on(|this, _, cx| this.set_highlight(None, cx)).into());
+        if base.len() == 10 {
+            for row in 1..6 {
+                theme.push((0..10).map(|i| {
+                    let rgb = ibis_pptx::tinted(Rgb(base[i].2), THEME_TINTS[i][row]);
+                    Swatch::new(rgb, format!("#{:06X}", rgb.0), current == Some(rgb), &pick)
+                }).collect());
+            }
+        }
+        let standard: Vec<Swatch> = COLORS[1..].iter().map(|&(item_id, name, c)| Swatch::with_id(item_id, Rgb(c), crate::shell::i18n::text(name), current == Some(Rgb(c)), &pick)).collect();
+        let none = MenuItem::new("docx.color.black", crate::shell::i18n::text("docx.toolbar.automatic-black")).icon("format_color_reset").checked(current == Some(Rgb(0))).on(|this, _, cx| this.set_text_color(Rgb(0), cx));
+        let more = MenuItem::tr("docx.color.custom").on(|this, window, cx| this.open_color_edit(false, window, cx));
+        vec![MenuEntry::Palette(Palette { none: Some(none), theme, standard, pick: Some(pick), more: Some(more), button: None })]
+    };
+    // 蛍光ペンの色: Word's sixteen, and "色なし".
+    let highlight_menu: Vec<MenuEntry> = {
+        let pick: crate::shell::color_palette::PickColor = std::rc::Rc::new(|this, c, _, cx| this.set_highlight(c, cx));
+        let current = style.as_ref().and_then(|s| s.highlight);
+        let list: Vec<(SharedString, Rgb, &'static str)> = HIGHLIGHTS.iter().map(|&(item_id, name, c)| (SharedString::from(crate::shell::i18n::text(name)), Rgb(c), item_id)).collect();
+        let none = MenuItem::tr("docx.highlight-none").icon("format_color_reset").checked(style.as_ref().is_some_and(|s| s.highlight.is_none())).on(|this, _, cx| this.set_highlight(None, cx));
+        crate::shell::color_palette::simple_palette(Some(none), None, &list, current, pick)
+    };
     let align_item = |id: &'static str, icon: &'static str, label: &'static str, a: FlowAlign| -> MenuEntry {
         MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).checked(align == Some(a)).on(move |this, _, cx| this.set_alignment(a, cx)).into()
     };
@@ -418,8 +436,8 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("bold", "format_bold", crate::shell::i18n::text("_shell.bold-b")).on(style.as_ref().is_some_and(|s| s.bold)).disabled(!editing).click(|this, _, cx| this.toggle_bold(cx)).into(),
         ToolButton::new("italic", "format_italic", crate::shell::i18n::text("_shell.italic-i")).on(style.as_ref().is_some_and(|s| s.italic)).disabled(!editing).click(|this, _, cx| this.toggle_italic(cx)).into(),
         ToolButton::new("underline", "format_underlined", crate::shell::i18n::text("_shell.underline-u")).on(style.as_ref().is_some_and(|s| s.underline)).disabled(!editing).click(|this, _, cx| this.toggle_underline(cx)).into(),
-        ToolButton::new("text-color", "format_color_text", crate::shell::i18n::text("_shell.font-color")).color(rgb(color).into()).disabled(!editing).menu(color_menu).into(),
-        ToolButton::new("highlight", "ink_highlighter", crate::shell::i18n::text("docx.toolbar.highlight-color")).color(rgb(style.as_ref().and_then(|s| s.highlight).map_or(0xfff59d, |h| h.0)).into()).disabled(!editing).menu(highlight_menu).into(),
+        ToolButton::new("text-color", "format_color_text", crate::shell::i18n::text("_shell.font-color")).disabled(!editing).palette(editor, "text-color", 0xff0000, color_menu).into(),
+        ToolButton::new("highlight", "ink_highlighter", crate::shell::i18n::text("docx.toolbar.highlight-color")).disabled(!editing).palette(editor, "highlight", 0xffff00, highlight_menu).into(),
         sep(),
         ToolButton::new("link", "link", crate::shell::i18n::text("docx.toolbar.insert-link-k")).on(editor.link_at_selection().is_some()).disabled(!editing).click(|this, window, cx| this.open_link(window, cx)).into(),
         ToolButton::new("image", "image", crate::shell::i18n::text("_shell.insert-picture")).disabled(!editing).click(|this, window, cx| this.doc_pick_picture(window, cx)).into(),
@@ -2892,19 +2910,11 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         MenuItem::tr("docx.watermark").on(|this, window, cx| this.open_watermark_panel(window, cx)).into(),
         {
             let current_page_color = _editor.flow().and_then(|d| d.page_color);
-            let mut page_color_menu: Vec<MenuEntry> = PAGE_COLORS.iter().map(|&(item_id, name, c)| {
-                MenuItem::new(item_id, crate::shell::i18n::text(name))
-                    .checked(current_page_color == Some(Rgb(c)))
-                    .on(move |this, _, cx| this.set_page_color(Some(Rgb(c)), cx))
-                    .into()
-            }).collect();
-            page_color_menu.push(MenuEntry::Separator);
-            page_color_menu.push(
-                MenuItem::tr("docx.page.color.none")
-                    .checked(current_page_color.is_none())
-                    .on(|this, _, cx| this.set_page_color(None, cx))
-                    .into()
-            );
+            let page_color_menu: Vec<MenuEntry> = {
+                let list: Vec<(SharedString, Rgb, &'static str)> = PAGE_COLORS.iter().map(|&(item_id, name, c)| (SharedString::from(crate::shell::i18n::text(name)), Rgb(c), item_id)).collect();
+                let none = MenuItem::tr("docx.page.color.none").icon("format_color_reset").checked(current_page_color.is_none()).on(|this, _, cx| this.set_page_color(None, cx));
+                crate::shell::color_palette::simple_palette(Some(none), None, &list, current_page_color, std::rc::Rc::new(|this, c, _, cx| this.set_page_color(c, cx)))
+            };
             crate::shell::chrome::Submenu::tr("docx.page.color", "format_color_fill", page_color_menu).into()
         },
     ];

@@ -26,7 +26,7 @@ thread_local! {
 
 /// Open the About window in the middle of `parent` (the window the user is
 /// in), or bring it to the front.
-pub(crate) fn open_over(parent: Option<Bounds<Pixels>>, cx: &mut App) {
+pub(crate) fn open_over(parent: Option<Bounds<Pixels>>, display: Option<DisplayId>, cx: &mut App) {
     if let Some(handle) = OPEN.with(|o| *o.borrow())
         && handle.update(cx, |_, window, _| window.activate_window()).is_ok()
     {
@@ -39,6 +39,7 @@ pub(crate) fn open_over(parent: Option<Bounds<Pixels>>, cx: &mut App) {
     };
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        display_id: display,
         titlebar: Some(TitlebarOptions { title: Some(i18n::text("help.about")), ..Default::default() }),
         ..Default::default()
     };
@@ -55,8 +56,8 @@ pub(crate) fn open_over(parent: Option<Bounds<Pixels>>, cx: &mut App) {
 
 /// Open it over the window the user is in (the app menu's item).
 pub(crate) fn open(cx: &mut App) {
-    let parent = cx.active_window().and_then(|w| w.update(cx, |_, window, _| window.bounds()).ok());
-    open_over(parent, cx);
+    let parent = cx.active_window().and_then(|w| w.update(cx, |_, window, cx| (window.bounds(), window.display(cx).map(|d| d.id()))).ok());
+    open_over(parent.map(|p| p.0), parent.and_then(|p| p.1), cx);
 }
 
 /// The About window, while it is open.

@@ -23,8 +23,13 @@ ibisOffice は、Word・Excel・PowerPoint の文書を、表示し、編集し�
 
 ## すぐに始める
 
-- **デスクトップアプリ版をダウンロード**：[Releases](https://github.com/ibisjp/ibis-office/releases/latest) から `ibisOffice-<版>-macOS.zip` をダウンロードし、展開した `ibisOffice.app` をアプリケーション フォルダに移してください（macOS 11 以降）。
+- **デスクトップアプリ版をダウンロード**：[Releases](https://github.com/ibisjp/ibis-office/releases/latest) から
+  - macOS（11 以降）：`ibisOffice-<版>-macOS.zip` をダウンロードし、展開した `ibisOffice.app` をアプリケーション フォルダに移してください。
+  - Windows（64 ビット）：`ibisOffice-<版>-Windows.zip` をダウンロードし、展開した `ibisOffice` フォルダの `ibisOffice.exe` を起動してください。
 - **Web 版を試す**：インストールせずに、ブラウザで [playground](https://ibisjp.github.io/ibis-office/) を開いてください（WebGPU に対応したブラウザ）。見本の文書（Word・Excel・PowerPoint）を開いて、すぐに試せます。
+- **動画で見る**：ibisOffice の紹介動画（YouTube）。
+
+  [![ibisOffice の紹介動画](asset/video-ja.jpg)](https://www.youtube.com/watch?v=0yjHdK_Cb_8)
 
 ## ゴール
 

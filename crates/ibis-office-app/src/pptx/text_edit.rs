@@ -260,7 +260,7 @@ impl SlideEditor {
         let marker: String = chars[start..space_at].iter().collect();
         let numbered = !marker.is_empty() && marker.len() <= 4 && marker.chars().last().is_some_and(|c| c == '.' || c == ')') && marker[..marker.len() - 1].chars().all(|c| c.is_ascii_digit()) && marker.len() > 1;
         let kind = match marker.as_str() {
-            "-" | "*" | "\u{2022}" | "\u{30fb}" | "\u{2013}" => ibis_doc_model::ListKind::Bullet,
+            "-" | "*" | "•" | "・" | "–" => ibis_doc_model::ListKind::Bullet, // i18n-ok（入力の記号）
             _ if numbered => ibis_doc_model::ListKind::Numbered,
             _ => return,
         };

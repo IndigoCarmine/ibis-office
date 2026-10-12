@@ -88,15 +88,21 @@ pub(crate) fn menus(editor: &SlideEditor) -> Menus {
                 item("tools.word-count", "numbers").shortcut("⇧⌘C").into(),
                 SEP,
                 item("tools.accessibility", "accessibility_new").into(),
-                item("tools.settings", "settings").shortcut("⌘,").on(|_, window, cx| crate::shell::settings_window::open_over(Some(window.bounds()), cx)).into(),
+                item("tools.settings", "settings").shortcut("⌘,").on(|_, window, cx| crate::shell::settings_window::open_over(Some(window.bounds()), window.display(cx).map(|d| d.id()), cx)).into(),
             ],
-            MenuId::Help => vec![
-                item("help.search", "search").shortcut("⌥/").into(),
-                item("help.help", "help").into(),
-                item("help.shortcuts", "keyboard").shortcut("⌘/").into(),
-                SEP,
-                item("help.about", "info").on(|_, window, cx| crate::shell::about_window::open_over(Some(window.bounds()), cx)).into(),
-            ],
+            MenuId::Help => {
+                let mut entries: Vec<MenuEntry> = vec![
+                    item("help.search", "search").shortcut("⌥/").into(),
+                    item("help.help", "help").into(),
+                    item("help.shortcuts", "keyboard").shortcut("⌘/").into(),
+                    SEP,
+                ];
+                // The automatic update's log (no update in the browser).
+                #[cfg(not(target_family = "wasm"))]
+                entries.push(item("help.update-log", "description").on(|_, _, cx| crate::shell::update::reveal_log(cx)).into());
+                entries.push(item("help.about", "info").on(|_, window, cx| crate::shell::about_window::open_over(Some(window.bounds()), window.display(cx).map(|d| d.id()), cx)).into());
+                entries
+            }
         };
         menus.menus.push((id, entries));
     }
@@ -487,9 +493,7 @@ fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
         MenuItem::tr("view.sidebar")
             .checked(editor.sidebar_open)
             .on(|this, window, cx| {
-                this.sidebar_open = !this.sidebar_open;
-                cx.notify();
-                window.refresh();
+                this.toggle_sidebar(window, cx);
             })
             .into(),
         MenuItem::tr("view.menus")

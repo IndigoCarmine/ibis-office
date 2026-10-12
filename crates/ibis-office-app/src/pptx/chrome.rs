@@ -665,7 +665,6 @@ pub(crate) fn proofing_language_menu_items(editor: &SlideEditor) -> Vec<MenuEntr
 
 pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     let has = !editor.selected_ids().is_empty();
-    let several = editor.selected_ids().len() >= 2;
     menus.connect("pptx.duplicate-slide", |this, window, cx| this.duplicate_current_slide(window, cx));
     // スライドのコピー・切り取り・貼り付け, after 複製.
     {
@@ -1196,28 +1195,28 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         menus.connect("pptx.rotate.left", |this, _, cx| this.rotate_selected(-90, cx));
         menus.connect("pptx.rotate.flip-h", |this, _, cx| this.flip_selected(true, cx));
         menus.connect("pptx.rotate.flip-v", |this, _, cx| this.flip_selected(false, cx));
-        let align = |id: &'static str, icon: &'static str, a: Align| -> MenuEntry { MenuItem::tr(id).icon(icon).on(move |this, _, cx| this.align_selected(a, cx)).into() };
-        fill_submenu(menus, "pptx.align", vec![
-            align("pptx.align.left", "align_horizontal_left", Align::Left),
-            align("pptx.align.center", "align_horizontal_center", Align::Center),
-            align("pptx.align.right", "align_horizontal_right", Align::Right),
-            MenuEntry::Separator,
-            align("pptx.align.top", "align_vertical_top", Align::Top),
-            align("pptx.align.middle", "align_vertical_center", Align::Middle),
-            align("pptx.align.bottom", "align_vertical_bottom", Align::Bottom),
-            MenuEntry::Separator,
-            MenuItem::tr("pptx.align.to-slide").icon("crop_landscape").checked(editor.pptx().is_some_and(|s| s.align_to_slide)).on(|this, _, cx| {
-                if let Some(s) = this.pptx_mut() {
-                    s.align_to_slide = !s.align_to_slide;
-                }
-                cx.notify();
-            }).into(),
-        ]);
-        fill_submenu(menus, "pptx.center", vec![
-            MenuItem::tr("pptx.center.h").icon("align_horizontal_center").on(|this, _, cx| this.center_selected(true, cx)).into(),
-            MenuItem::tr("pptx.center.v").icon("align_vertical_center").on(|this, _, cx| this.center_selected(false, cx)).into(),
-        ]);
     }
+    let align = |id: &'static str, icon: &'static str, a: Align| -> MenuEntry { MenuItem::tr(id).icon(icon).disabled(!has).on(move |this, _, cx| this.align_selected(a, cx)).into() };
+    fill_submenu(menus, "pptx.align", vec![
+        align("pptx.align.left", "align_horizontal_left", Align::Left),
+        align("pptx.align.center", "align_horizontal_center", Align::Center),
+        align("pptx.align.right", "align_horizontal_right", Align::Right),
+        MenuEntry::Separator,
+        align("pptx.align.top", "align_vertical_top", Align::Top),
+        align("pptx.align.middle", "align_vertical_center", Align::Middle),
+        align("pptx.align.bottom", "align_vertical_bottom", Align::Bottom),
+        MenuEntry::Separator,
+        MenuItem::tr("pptx.align.to-slide").icon("crop_landscape").checked(editor.pptx().is_some_and(|s| s.align_to_slide)).on(|this, _, cx| {
+            if let Some(s) = this.pptx_mut() {
+                s.align_to_slide = !s.align_to_slide;
+            }
+            cx.notify();
+        }).into(),
+    ]);
+    fill_submenu(menus, "pptx.center", vec![
+        MenuItem::tr("pptx.center.h").icon("align_horizontal_center").disabled(!has).on(|this, _, cx| this.center_selected(true, cx)).into(),
+        MenuItem::tr("pptx.center.v").icon("align_vertical_center").disabled(!has).on(|this, _, cx| this.center_selected(false, cx)).into(),
+    ]);
     {
         use ibis_doc_model::shape_merge::MergeOp;
         let can = editor.can_merge_shapes();
@@ -1230,7 +1229,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             item("pptx.merge.subtract", "cell_merge", MergeOp::Subtract),
         ]);
     }
-    if several {
+    {
         fill_submenu(menus, "pptx.distribute", vec![
             MenuItem::tr("pptx.distribute.h").icon("horizontal_distribute").disabled(editor.selected_ids().len() < 3).on(|this, _, cx| this.distribute_selected(true, cx)).into(),
             MenuItem::tr("pptx.distribute.v").icon("vertical_distribute").disabled(editor.selected_ids().len() < 3).on(|this, _, cx| this.distribute_selected(false, cx)).into(),
@@ -1585,18 +1584,28 @@ fn new_slide_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     layout_items(editor)
 }
 
-fn color_menu(_id: &'static str, none: Option<SharedString>, f: impl Fn(&mut SlideEditor, Option<Rgb>, &mut Window, &mut Context<SlideEditor>) + Clone + 'static) -> Vec<MenuEntry> {
-    let mut items: Vec<MenuEntry> = Vec::new();
-    if let Some(label) = none {
+/// The colours a button offers, as a palette (`shell/color_palette.rs`): "none" when `none` names it, the
+/// presentation's theme colours with their tints, the standard colours, those used lately.
+fn color_menu(editor: &SlideEditor, _id: &'static str, none: Option<SharedString>, f: impl Fn(&mut SlideEditor, Option<Rgb>, &mut Window, &mut Context<SlideEditor>) + Clone + 'static) -> Vec<MenuEntry> {
+    use crate::shell::color_palette::{theme_rows, Palette, PickColor, Swatch};
+    let pick: PickColor = std::rc::Rc::new(f.clone());
+    let none = none.map(|label| {
         let g = f.clone();
-        items.push(MenuItem::new("color.none", label).icon("format_color_reset").on(move |this, window, cx| g(this, None, window, cx)).into());
-        items.push(MenuEntry::Separator);
-    }
-    for &(rgb, color_id) in COLORS {
-        let g = f.clone();
-        items.push(MenuItem::tr(color_id).icon("circle").on(move |this, window, cx| g(this, Some(Rgb(rgb)), window, cx)).into());
-    }
-    items
+        MenuItem::new("color.none", label).icon("format_color_reset").on(move |this, window, cx| g(this, None, window, cx))
+    });
+    let theme_color = |name: &str| editor.presentation().theme_colors.iter().find(|(n, _)| n == name).map(|(_, c)| *c);
+    let names = ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6"];
+    let theme = match names.map(theme_color) {
+        [Some(a), Some(b), Some(c), Some(d), Some(e), Some(f2), Some(g), Some(h), Some(i), Some(j)] => theme_rows(&[a, b, c, d, e, f2, g, h, i, j], &pick, None),
+        _ => Vec::new(),
+    };
+    // The standard colours: the ten of the colour list that are not shades of grey.
+    let standard = COLORS
+        .iter()
+        .filter(|(rgb, _)| !matches!(rgb, 0x000000 | 0x404040 | 0x7f7f7f | 0xd9d9d9 | 0xffffff | 0x4472c4))
+        .map(|&(rgb, id)| Swatch::with_id(id, Rgb(rgb), crate::shell::i18n::text(id), false, &pick))
+        .collect();
+    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None })]
 }
 
 fn fill_presets(background: bool) -> Vec<MenuEntry> {
@@ -1619,7 +1628,7 @@ fn fill_presets(background: bool) -> Vec<MenuEntry> {
 
 /// 背景: a colour, or the layout's background back.
 fn background_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
-    let mut items = color_menu("pptx.background", None, |this, rgb, _, cx| {
+    let mut items = color_menu(editor, "pptx.background", None, |this, rgb, _, cx| {
         if let Some(rgb) = rgb {
             this.set_background(Fill::Solid(Color::opaque(rgb)), cx);
         }
@@ -2059,8 +2068,7 @@ fn outline_buttons(editor: &SlideEditor, line: bool) -> Vec<ToolItem> {
     ].into_iter().map(|(id, compound)| MenuItem::tr(id).checked(stroke.as_ref().is_some_and(|s| s.compound == compound)).on(move |e, _, cx| e.stroke_selected(move |s| Some(Stroke { compound, ..base(s) }), cx)).into()).collect()).into());
     vec![
         ToolButton::new("border-color", "border_color", color_label)
-            .color(color)
-            .menu(color_menu("pptx.stroke-color", (!line).then(|| crate::shell::i18n::text("pptx.chrome.no-border")), move |this, rgb, _, cx| {
+            .palette(editor, "border-color", 0x4472c4, color_menu(editor, "pptx.stroke-color", (!line).then(|| crate::shell::i18n::text("pptx.chrome.no-border")), move |this, rgb, _, cx| {
                 this.stroke_selected(move |s| rgb.map(|rgb| Stroke { color: Color::opaque(rgb), ..base(s) }), cx)
             }))
             .into(),
@@ -2134,6 +2142,14 @@ fn line_end_menu(editor: &SlideEditor, head: bool) -> Vec<MenuEntry> {
     items
 }
 
+/// The text and line buttons whatever is selected (grey when they cannot be used), for the Format menu's
+/// submenus (`shell/menu_bridge.rs`).
+pub(crate) fn menu_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
+    let mut items = text_buttons(editor);
+    items.extend(outline_buttons(editor, false));
+    items
+}
+
 fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
     let style = editor.selected_text_style();
     let on = style.is_some();
@@ -2203,9 +2219,9 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
             .menu(proofing_language_menu_items(editor))
             .into(),
         ToolButton::new("text-color", "format_color_text", crate::shell::i18n::text("_shell.font-color"))
-            .color(text_color)
             .disabled(!on)
-            .menu(color_menu("pptx.text-color", None, |this, rgb, window, cx| {
+            // The colour at first: red, as Office's (the colours of the buttons at first are our own picks).
+            .palette(editor, "text-color", 0xff0000, color_menu(editor, "pptx.text-color", None, |this, rgb, window, cx| {
                 if let Some(rgb) = rgb {
                     this.format_characters(window, cx, CharacterFormat { color: Some(rgb), ..Default::default() });
                 }
@@ -2319,7 +2335,7 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("indent-more", "format_indent_increase", crate::shell::i18n::text("_shell.increase-indent")).disabled(!on).click(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { indent_by: Some(457_200), ..Default::default() })).into(),
         ToolButton::new("highlight", "ink_highlighter", crate::shell::i18n::text("pptx.chrome.highlight-color"))
             .disabled(!on)
-            .menu(color_menu("pptx.highlight", Some(crate::shell::i18n::text("pptx.chrome.no-color")), |this, rgb, window, cx| {
+            .palette(editor, "highlight", 0xffff00, color_menu(editor, "pptx.highlight", Some(crate::shell::i18n::text("pptx.chrome.no-color")), |this, rgb, window, cx| {
                 this.format_characters(window, cx, ibis_doc_model::CharacterFormat { highlight: Some(rgb), ..Default::default() })
             }))
             .into(),
@@ -2373,15 +2389,13 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         },
         _ => None,
     });
-    let mut fill_items = color_menu("pptx.fill", Some(crate::shell::i18n::text("_shell.no-fill")), |this, rgb, _, cx| {
+    let mut fill_items = color_menu(editor, "pptx.fill", Some(crate::shell::i18n::text("_shell.no-fill")), |this, rgb, _, cx| {
         this.fill_selected(rgb.map_or(Fill::None, |rgb| Fill::Solid(Color::opaque(rgb))), cx)
     });
     fill_items.push(MenuEntry::Separator);
     fill_items.extend(fill_presets(false));
     fill_items.push(MenuItem::tr("pptx.fill.picture").icon("image").on(|this, w, cx| this.pick_fill_picture(w, cx)).into());
-    let fill = ToolButton::new("fill", "format_color_fill", crate::shell::i18n::text("pptx.common.fill"))
-        .color(fill_color.unwrap_or(rgb(0xffffff).into()))
-        .menu(fill_items);
+    let fill = ToolButton::new("fill", "format_color_fill", crate::shell::i18n::text("pptx.common.fill")).palette(editor, "fill", 0xffc000, fill_items);
     let options = ToolButton::text("format-options", crate::shell::i18n::text("_shell.format-options"), crate::shell::i18n::text("pptx.chrome.format-options-sidebar")).click(|this, _, cx| {
         this.sidebar_open = true;
         cx.notify();
@@ -3152,14 +3166,14 @@ fn chart_series_format_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let make_series_menu = |idx: Option<usize>| -> Vec<MenuEntry> {
         let mut entries = Vec::new();
         // 塗りつぶし
-        let fill_entries = color_menu("pptx.chart.series.fill", Some(crate::shell::i18n::text("_shell.no-fill")), move |this, rgb, _, cx| {
+        let fill_entries = color_menu(editor, "pptx.chart.series.fill", Some(crate::shell::i18n::text("_shell.no-fill")), move |this, rgb, _, cx| {
             let fill = rgb.map_or(Fill::None, |r| Fill::Solid(Color::opaque(r)));
             this.set_chart_series_fill(idx, fill, cx);
         });
         entries.push(Submenu::tr("pptx.chart.series.fill", "format_color_fill", fill_entries).into());
 
         // 枠線
-        let mut outline_entries = color_menu("pptx.chart.series.outline", Some(crate::shell::i18n::text("pptx.chrome.no-border")), move |this, rgb, _, cx| {
+        let mut outline_entries = color_menu(editor, "pptx.chart.series.outline", Some(crate::shell::i18n::text("pptx.chrome.no-border")), move |this, rgb, _, cx| {
             let stroke = rgb.map(|r| Stroke::solid(Color::opaque(r), 19_050));
             this.set_chart_series_stroke(idx, stroke, cx);
         });
@@ -3220,9 +3234,9 @@ fn chart_series_format_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 }
 
 /// プロット領域の書式設定メニュー項目（背景の塗りつぶし）
-fn chart_plot_area_items(_editor: &SlideEditor) -> Vec<MenuEntry> {
+fn chart_plot_area_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let mut entries = Vec::new();
-    let fill_entries = color_menu("pptx.chart.plot-area.fill", Some(crate::shell::i18n::text("_shell.no-fill")), |this, rgb, _, cx| {
+    let fill_entries = color_menu(editor, "pptx.chart.plot-area.fill", Some(crate::shell::i18n::text("_shell.no-fill")), |this, rgb, _, cx| {
         let fill = rgb.map_or(Fill::None, |r| Fill::Solid(Color::opaque(r)));
         this.set_chart_plot_background(fill, cx);
     });

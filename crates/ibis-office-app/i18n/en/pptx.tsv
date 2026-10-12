@@ -1574,6 +1574,21 @@ pptx.cell-size-panel.cell-size	Cell Size
 pptx.cell-size-panel.height-width-must-numbers-0	Height and width must be numbers from 0.25 to 1584 cm
 pptx.align.to-slide	Align to Slide
 pptx.autorecover.wasm-save-unsupported	AutoRecover saving is not available in the web version.
+color.palette.theme	Theme Colors
+color.palette.standard	Standard Colors
+color.palette.recent	Recent Colors
+color.theme.bg1	Background 1
+color.theme.text1	Text 1
+color.theme.bg2	Background 2
+color.theme.text2	Text 2
+color.theme.accent1	Accent 1
+color.theme.accent2	Accent 2
+color.theme.accent3	Accent 3
+color.theme.accent4	Accent 4
+color.theme.accent5	Accent 5
+color.theme.accent6	Accent 6
+color.theme.lighter	{name}, Lighter {n}%
+color.theme.darker	{name}, Darker {n}%
 _pptx.title-value	Title: {value}
 _pptx.author-value	Author: {value}
 _pptx.subject-value	Subject: {value}

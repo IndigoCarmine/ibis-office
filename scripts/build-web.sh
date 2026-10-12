@@ -32,6 +32,11 @@ if [[ "$PROFILE" == release ]] && command -v wasm-opt >/dev/null; then
     www/pkg/ibis_office_app_bg.wasm -o www/pkg/ibis_office_app_bg.wasm
 fi
 
+# The wasm's size, for the download's progress bar: a server that compresses
+# it (GitHub Pages sends gzip) gives Content-Length of the compressed bytes,
+# while the browser hands main.ts the uncompressed ones.
+stat -f %z www/pkg/ibis_office_app_bg.wasm > www/pkg/ibis_office_app_bg.wasm.size
+
 # main.ts imports the typings wasm-bindgen just wrote.
 if [[ ! -x node_modules/.bin/tsc ]]; then
   echo "TypeScript is not installed; run: npm ci" >&2

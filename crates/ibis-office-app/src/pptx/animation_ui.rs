@@ -1577,6 +1577,10 @@ pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         }
         items.push(MenuItem::tr("pptx.anim.options-dialog").on(|e, _, cx| e.open_selected_animation_options_panel(cx)).into());
     }
+    if items.is_empty() {
+        // Nothing to set (no effect selected): the item is shown grey, as Office does.
+        items.push(MenuItem::tr("pptx.anim.options-dialog").into());
+    }
     items
 }
 

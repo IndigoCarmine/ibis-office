@@ -380,6 +380,10 @@ pub struct SlideEditor {
     /// what is saved is protected again with it.
     #[cfg(not(target_family = "wasm"))]
     pub(crate) protection_password: Option<String>,
+    /// The colours picked lately from a palette, the last first (for the palette's row of them).
+    pub(crate) recent_colors: Vec<ibis_doc_model::Rgb>,
+    /// The colour last picked from each toolbar palette button (by its id), for the split button's left half.
+    pub(crate) last_colors: std::collections::HashMap<&'static str, ibis_doc_model::Rgb>,
     /// Scrolling of the recent files list of the start view.
     #[cfg(not(target_family = "wasm"))]
     pub(crate) recent_scroll: ScrollHandle,
@@ -564,6 +568,8 @@ impl SlideEditor {
             recent_files: crate::shell::recent_files::load(),
             #[cfg(not(target_family = "wasm"))]
             protection_password: None,
+            recent_colors: Vec::new(),
+            last_colors: Default::default(),
             #[cfg(not(target_family = "wasm"))]
             recent_scroll: ScrollHandle::new(),
             has_document: false,
@@ -643,9 +649,11 @@ impl SlideEditor {
         }
         self.current_slide = presentation.slides[0].id;
         self.format = FormatState::for_model(&presentation, window, cx);
-        // A workbook's right pane is there when asked for (its tabs have no
-        // panel to show until one is chosen, and it would take the sheet's room).
-        self.sidebar_open = self.format.kind() != ibis_pptx::Kind::Workbook;
+        // A workbook's and a presentation's right pane is there when asked
+        // for (a workbook's tabs have no panel to show until one is chosen;
+        // either would take the room of the sheet or the slide, which is
+        // fitted to the width without it).
+        self.sidebar_open = self.format.kind() == ibis_pptx::Kind::Document;
         let is_reading = presentation.flow.as_ref().is_some_and(|f| f.view_mode == ibis_doc_model::DocumentViewMode::Reading);
         let is_outline = presentation.flow.as_ref().is_some_and(|f| f.view_mode == ibis_doc_model::DocumentViewMode::Outline);
         self.document = Document::new(presentation);

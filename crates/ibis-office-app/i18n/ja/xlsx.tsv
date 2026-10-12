@@ -1422,3 +1422,6 @@ _xlsx.merge-scenarios	シナリオの統合
 _xlsx.select-the-sheet-to-copy-scenarios-from	シナリオをコピーする元のシートを選択してください:
 _xlsx.no-other-sheets	（他のシートがありません）
 _xlsx.scenario-manager	シナリオの登録と管理
+xlsx.format-pane.custom	ユーザー定義
+xlsx.format-pane.border-inside	内側
+xlsx.format-pane.border-hint	見本の線をクリックすると、線を付けたり外したりできます。線のスタイルと色は、上で選びます。

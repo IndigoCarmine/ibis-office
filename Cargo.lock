@@ -3247,6 +3247,7 @@ dependencies = [
  "ibis-emf",
  "ibis-eot",
  "ibis-office-app",
+ "ibis-office-updater",
  "ibis-pptx",
  "image",
  "js-sys",
@@ -3260,6 +3261,10 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
+
+[[package]]
+name = "ibis-office-updater"
+version = "0.8.0"
 
 [[package]]
 name = "ibis-ooxml"

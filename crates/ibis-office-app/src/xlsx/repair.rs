@@ -19,6 +19,38 @@ use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
 use crate::shell::icons::Material;
 
+/// The workbook that could not be opened most recently (a damaged file the
+/// repair can be tried on). The File menu's 「破損ブックの修復…」 is enabled
+/// only while there is one; opening the same file later clears it.
+static DAMAGED_WORKBOOK: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+fn is_workbook_path(path: &std::path::Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| ["xlsx", "xlsm", "xltx", "xltm"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
+/// `path` could not be parsed.
+pub(crate) fn note_open_failed(path: &std::path::Path) {
+    if is_workbook_path(path) {
+        if let Ok(mut d) = DAMAGED_WORKBOOK.lock() {
+            *d = Some(path.to_path_buf());
+        }
+    }
+}
+
+/// `path` was opened.
+pub(crate) fn note_opened(path: &std::path::Path) {
+    if let Ok(mut d) = DAMAGED_WORKBOOK.lock() {
+        if d.as_deref() == Some(path) {
+            *d = None;
+        }
+    }
+}
+
+/// The damaged workbook the repair is offered for, if any.
+pub(crate) fn damaged_workbook() -> Option<PathBuf> {
+    DAMAGED_WORKBOOK.lock().ok().and_then(|d| d.clone())
+}
+
 /// Panel state for opening and repairing a damaged workbook.
 pub(crate) struct RepairWorkbookPanel {
     pub(crate) file_path: Option<PathBuf>,
@@ -57,6 +89,14 @@ impl RepairWorkbookPanel {
 }
 
 impl SlideEditor {
+    /// ファイル/ツール > 破損ブックの修復…: the panel for the workbook that could not be opened.
+    pub(crate) fn open_xlsx_repair_damaged(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match damaged_workbook() {
+            Some(path) => self.open_xlsx_repair_file(path, window, cx),
+            None => {}
+        }
+    }
+
     pub(crate) fn open_xlsx_repair_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.sheet_state().is_none() {
             return;

@@ -166,8 +166,8 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | html5ever | 0.27.0 | MIT OR Apache-2.0 | https://github.com/servo/html5ever |
 | http | 1.5.0 | MIT OR Apache-2.0 | https://github.com/hyperium/http |
 | http-body | 1.1.0 | MIT | https://github.com/hyperium/http-body |
-| ibis-calc | 0.1.0 | AGPL-3.0-only | https://crates.io/crates/ibis-calc |
-| ibis-ooxml | 0.1.0 | AGPL-3.0-only | https://crates.io/crates/ibis-ooxml |
+| ibis-calc | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-calc |
+| ibis-ooxml | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-ooxml |
 | icu_collections | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_locale_core | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_normalizer | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |

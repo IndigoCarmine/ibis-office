@@ -1201,6 +1201,21 @@ pptx.clip.trim.start-1s	最初の 1 秒をカット
 pptx.clip.trim.start-2s	最初の 2 秒をカット
 pptx.clip.trim.start-5s	最初の 5 秒をカット
 pptx.autorecover.wasm-save-unsupported	Web 版では自動回復の保存は使えません。
+color.palette.theme	テーマの色
+color.palette.standard	標準の色
+color.palette.recent	最近使った色
+color.theme.bg1	背景 1
+color.theme.text1	テキスト 1
+color.theme.bg2	背景 2
+color.theme.text2	テキスト 2
+color.theme.accent1	アクセント 1
+color.theme.accent2	アクセント 2
+color.theme.accent3	アクセント 3
+color.theme.accent4	アクセント 4
+color.theme.accent5	アクセント 5
+color.theme.accent6	アクセント 6
+color.theme.lighter	{name}、基本色より {n}% 明るく
+color.theme.darker	{name}、基本色より {n}% 暗く
 pptx.chrome.no-name	（名前なし）
 pptx.common.circle	円
 pptx.chrome.square	四角

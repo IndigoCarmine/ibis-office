@@ -32,6 +32,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::a6_native_table_selection", a6_native_table_selection),
         ("docx::a6_character_formatting", a6_character_formatting),
         ("docx::a6_highlight_colors", a6_highlight_colors),
+        ("docx::split_text_color_button", split_text_color_button),
         ("docx::a11_tracked_table_rejection", a11_tracked_table_rejection),
         ("docx::a11_hidden_source", a11_hidden_source),
         ("docx::a11_format_brush", a11_format_brush),
@@ -3525,6 +3526,21 @@ fn a9_paragraph_decoration_range() {
     let saved=s.reopen();assert!(body(flow(&saved)).iter().all(|p|p.shading==Some(ibis_doc_model::Rgb(0xfff2cc))));
 }
 
+/// 分割ボタン（文字の色）: 左を押すと、最後に使った色（初めは既定の色）がすぐ付き、▼のパレットで選んだ色が次の色になる。
+fn split_text_color_button() {
+    let mut s=Scenario::open(REPORT);
+    let (_,id,_)=text_paragraph(&mut s,12);
+    s.click_text(FlowPos::new(id,1));for _ in 0..3 {s.key("shift-right");}
+    let color=|s:&mut Scenario| s.with(|e,_| e.toolbar_items().into_iter().find_map(|t| match t {crate::shell::chrome::ToolItem::Button(b) if b.id=="text-color" => b.color,_=>None}));
+    let before=color(&mut s);
+    assert!(before.is_some(), "the bar of the button");
+    s.toolbar("text-color");
+    s.toolbar_menu("text-color","docx.color.blue");
+    s.key("shift-right");
+    assert_ne!(color(&mut s),before,"the button now shows the picked colour");
+    s.screenshot("split");
+}
+
 fn a6_highlight_colors() {
     let mut s=Scenario::open(REPORT);
     let (_,id,text)=text_paragraph(&mut s,12);
@@ -3535,7 +3551,7 @@ fn a6_highlight_colors() {
         assert_eq!(s.selection(),selection);
         assert!(s.with(|e,_| e.toolbar_items().into_iter().any(|item| {
             if let crate::shell::chrome::ToolItem::Button(b)=item && b.id=="highlight" {
-                return b.menu.unwrap_or_default().into_iter().any(|entry| matches!(entry,crate::shell::chrome::MenuEntry::Item(i) if i.id==menu && i.checked && i.enabled()));
+                return b.menu.unwrap_or_default().into_iter().any(|entry| match entry {crate::shell::chrome::MenuEntry::Item(i)=>i.id==menu && i.checked && i.enabled(),crate::shell::chrome::MenuEntry::Palette(p)=>p.find(menu).is_some_and(|i| i.checked && i.enabled()),_=>false});
             }
             false
         })));
