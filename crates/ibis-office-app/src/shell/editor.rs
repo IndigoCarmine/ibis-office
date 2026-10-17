@@ -60,6 +60,10 @@ fn wheel_scroll_lines() -> f32 {
 /// How often to look for newly decoded pictures, in milliseconds: a frame.
 const PICTURE_POLL_MS: u64 = 16;
 
+/// How long after the last step of a resize the thumbnails are drawn again,
+/// in milliseconds (`pace_thumbnails`).
+const THUMBNAIL_REFRESH_MS: u64 = 200;
+
 /// Space kept around the slide inside the workspace, in pixels.
 const WORKSPACE_MARGIN: f32 = 40.0;
 /// Space kept around a slide fitted to the workspace, in pixels: room for
@@ -338,6 +342,9 @@ pub struct SlideEditor {
     pub(crate) editing: Option<TextEdit>,
     /// Bounds of the workspace around the slide, from the last prepaint.
     pub(crate) workspace_bounds: Option<Bounds<Pixels>>,
+    /// The window's size when `workspace_bounds` was last brought up to
+    /// date (`predict_workspace_bounds`).
+    workspace_viewport: Size<Pixels>,
     /// Scrolling of the workspace when the zoomed slide does not fit.
     pub(crate) workspace_scroll: ScrollHandle,
     /// Zoom chosen in the status bar, 1.0 being 100%; `None` fits the slide
@@ -366,6 +373,13 @@ pub struct SlideEditor {
     pub(crate) resources: Resources,
     /// Redraws the editor as pictures decode (`watch_pictures`).
     picture_watch: Option<Task<()>>,
+    /// The slide list's pictures of the slides, cached views (`thumbnails.rs`).
+    pub(crate) thumbnail_previews: std::cell::RefCell<std::collections::HashMap<ibis_doc_model::SlideId, Entity<crate::pptx::thumbnails::ThumbnailPreview>>>,
+    /// Counts the frames that draw the thumbnails again: every frame but
+    /// those of a resize, which reuse them.
+    pub(crate) thumbnail_epoch: u64,
+    /// Draws the thumbnails again once a resize has stopped.
+    thumbnail_refresh: Option<Task<()>>,
     /// Name of the open file; `None` for a new presentation.
     pub(crate) file_name: Option<SharedString>,
     /// Progress or error of the last file operation, for the status bar.
@@ -547,6 +561,7 @@ impl SlideEditor {
             drag: None,
             editing: None,
             workspace_bounds: None,
+            workspace_viewport: Size::default(),
             workspace_scroll: ScrollHandle::new(),
             zoom: None,
             zoom_slider,
@@ -561,6 +576,9 @@ impl SlideEditor {
             slideshow: None,
             resources,
             picture_watch: None,
+            thumbnail_previews: Default::default(),
+            thumbnail_epoch: 0,
+            thumbnail_refresh: None,
             file_name: None,
             status: None,
             chart_ranges: None,
@@ -632,6 +650,7 @@ impl SlideEditor {
         self.selection = None;
         self.tool = Tool::Select;
         self.symbol = None;
+        self.thumbnail_previews.borrow_mut().clear();
         let timing = crate::clock::debug_timing::start();
         self.resources = Resources::new(&presentation, cx);
         self.watch_pictures(window, cx);
@@ -2270,6 +2289,42 @@ impl SlideEditor {
         self.set_focus_mode(next, window, cx);
     }
 
+    /// When the window has been resized, the workspace's bounds as they will
+    /// be: grown or shrunk by as much as the window, which gives or takes
+    /// that room to the workspace (it fills what the panes around it
+    /// leave). The workspace's bounds are otherwise known only once the
+    /// frame is laid out: a frame drawn at the old ones and another at the
+    /// new ones for each step of a resize, twice the work. If the guess is
+    /// wrong (the panes changed too), the bounds observer draws again.
+    /// Whether the window was resized.
+    fn predict_workspace_bounds(&mut self, window: &Window) -> bool {
+        let viewport = window.viewport_size();
+        let resized = viewport != self.workspace_viewport && self.workspace_viewport != Size::default();
+        if resized && let Some(ws) = self.workspace_bounds {
+            let grow = |v: Pixels, d: Pixels| (v + d).max(px(0.));
+            let size = size(grow(ws.size.width, viewport.width - self.workspace_viewport.width), grow(ws.size.height, viewport.height - self.workspace_viewport.height));
+            self.workspace_bounds = Some(Bounds::new(ws.origin, size));
+        }
+        self.workspace_viewport = viewport;
+        resized
+    }
+
+    /// A frame of a resize keeps the thumbnails drawn before (they are the
+    /// same; a poster's take as long to draw as the slide itself), and draws
+    /// them again once the resize has stopped, in case something else
+    /// changed meanwhile. Any other frame draws them again.
+    fn pace_thumbnails(&mut self, resized: bool, cx: &mut Context<Self>) {
+        if !resized {
+            self.thumbnail_epoch += 1;
+            self.thumbnail_refresh = None;
+            return;
+        }
+        self.thumbnail_refresh = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(THUMBNAIL_REFRESH_MS)).await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        }));
+    }
+
     /// Keep the status bar's slider on the zoom shown, which changes with
     /// the window size while the slide is fitted.
     fn sync_zoom_slider(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3118,6 +3173,8 @@ impl Focusable for SlideEditor {
 
 impl Render for SlideEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let resized = self.predict_workspace_bounds(window);
+        self.pace_thumbnails(resized, cx);
         self.sync_zoom_slider(window, cx);
         if self.zoom_menu_open && !self.has_document {
             self.zoom_menu_open = false;

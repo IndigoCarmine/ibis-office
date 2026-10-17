@@ -38,6 +38,29 @@ impl Render for DraggedSlideView {
     }
 }
 
+/// A thumbnail's picture of its slide, a view of its own so that it can be
+/// cached: a frame of a resize reuses it rather than draw every shape of
+/// every thumbnail again (a poster's hundreds, as many as the slide's own).
+/// The editor has it drawn again on any other frame (`thumbnail_epoch`).
+pub(crate) struct ThumbnailPreview {
+    editor: WeakEntity<SlideEditor>,
+    slide: ibis_doc_model::SlideId,
+    scale: f32,
+}
+
+impl Render for ThumbnailPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let preview = div().size_full().relative();
+        let Some(editor) = self.editor.upgrade() else { return preview };
+        let editor = editor.read(cx);
+        let Some(slide) = editor.presentation().slide(self.slide) else { return preview };
+        let scale = self.scale;
+        preview
+            .child(slide_backdrop(slide, scale, &editor.resources))
+            .children(slide.shown_shapes().map(|shape| shape_element(shape, shape.frame, scale, &editor.resources, None)))
+    }
+}
+
 const THUMBNAIL_WIDTH: f32 = 168.0;
 const PANE_WIDTH: f32 = 216.0;
 const OUTLINE_PANE_WIDTH: f32 = 250.0;
@@ -92,7 +115,6 @@ impl SlideEditor {
         visible_bottom: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = cx.theme();
         let size = self.presentation().size_of(slide);
         let scale = (THUMBNAIL_WIDTH / size.width.max(1) as f32).min(THUMBNAIL_WIDTH / size.height.max(1) as f32);
         let (width, height) = (size.width as f32 * scale, size.height as f32 * scale);
@@ -108,14 +130,8 @@ impl SlideEditor {
         let should_render = in_view || current;
 
         let ready = should_render && self.resources.preload.slide_ready(slide);
-        let shapes: Vec<AnyElement> = if ready {
-            slide
-                .shown_shapes()
-                .map(|shape| shape_element(shape, shape.frame, scale, &self.resources, None))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let preview = ready.then(|| self.thumbnail_preview(id, scale, cx));
+        let theme = cx.theme();
 
         h_flex()
             .id(("slide-thumbnail", id.0))
@@ -184,11 +200,34 @@ impl SlideEditor {
                     .border_color(if chosen { theme.primary } else { theme.border })
                     .rounded_sm()
                     .bg(gpui_kit::white())
-                    .when(ready, |d| d.child(slide_backdrop(slide, scale, &self.resources)))
-                    .children(shapes)
+                    .when_some(preview, |d, preview| {
+                        // Under an id that changes with the epoch: a new one
+                        // has no cached drawing, so the picture is drawn again.
+                        d.child(
+                            div()
+                                .id(ElementId::NamedInteger("thumbnail-epoch".into(), self.thumbnail_epoch))
+                                .size_full()
+                                .child(preview.cached(StyleRefinement::default().size_full())),
+                        )
+                    })
                     .when(slide.hidden, |d| d.opacity(0.45)),
             )
             .into_any_element()
+    }
+
+    /// The cached view drawing slide `id`'s thumbnail at `scale`.
+    fn thumbnail_preview(&self, id: ibis_doc_model::SlideId, scale: f32, cx: &mut Context<Self>) -> Entity<ThumbnailPreview> {
+        let mut previews = self.thumbnail_previews.borrow_mut();
+        if let Some(preview) = previews.get(&id) {
+            if preview.read(cx).scale != scale {
+                preview.update(cx, |preview, _| preview.scale = scale);
+            }
+            return preview.clone();
+        }
+        let editor = cx.entity().downgrade();
+        let preview = cx.new(|_| ThumbnailPreview { editor, slide: id, scale });
+        previews.insert(id, preview.clone());
+        preview
     }
 
     fn render_thumbnail_items(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
