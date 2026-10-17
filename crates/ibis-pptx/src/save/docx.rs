@@ -442,15 +442,17 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
                 link_rels.insert(url, rid);
             }
         }
+        let objects = object_rels(package, &part, current, baseline, new, &added)?;
         let pristine = package.xml(&part)?;
         let doc = package.xml_mut(&part)?;
         let root = doc.root_element();
-        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_blocks, new_blocks: &new_blocks, pictures: &pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, empty_parent: if fresh { root } else { None }, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
+        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_blocks, new_blocks: &new_blocks, pictures: &pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, objects: &objects, empty_parent: if fresh { root } else { None }, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
         writer.resolve_nodes();
         writer.list(old, new)?;
         if body {
             writer.sections(base, cur, &wanted)?;
         }
+        prune_objects(package, &part)?;
     }
     if base.watermark != cur.watermark || base.section_watermarks != cur.section_watermarks {
         let mut parts: Vec<&String> = part_of.iter().filter(|((_, k), _)| !k.is_footer()).map(|(_, p)| p).collect();
@@ -542,7 +544,7 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
         let doc = package.xml_mut(&part)?;
         let root = doc.root_element().ok_or_else(|| unsupported("空の脚注のパーツ"))?;
         let element = if endnote { "endnote" } else { "footnote" };
-        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_notes, new_blocks: &new_notes, pictures: &pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, empty_parent: None, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
+        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_notes, new_blocks: &new_notes, pictures: &pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, objects: &HashMap::new(), empty_parent: None, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
         writer.resolve_nodes();
         let find = |w: &Writer, id: u32| {
             w.doc.elements(root).find(|&e| {
@@ -623,7 +625,7 @@ fn write_comments(package: &mut Package, map: &SourceMap, old: &[ibis_doc_model:
             doc.set_attr(root, "xmlns:w14", W14_NS);
         }
         let w14 = doc.lookup_prefix(root, W14_NS).unwrap_or_else(|| "w14".into());
-        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_blocks, new_blocks: &new_blocks, pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, empty_parent: None, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
+        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_blocks, new_blocks: &new_blocks, pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, objects: &HashMap::new(), empty_parent: None, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
         writer.resolve_nodes();
         let find = |w: &Writer, id: u32| w.doc.elements(root).find(|&e| w.doc.local_name(e) == "comment" && w.doc.attr_local(e, "id") == Some(id.to_string().as_str()));
         for c in old {
@@ -1004,6 +1006,9 @@ struct Writer<'a> {
     added: &'a HashMap<MediaId, String>,
     /// Pictures new to the part that are SVGs.
     svg_media: &'a HashSet<MediaId>,
+    /// The embedded objects of the part's pictures: the relationships to their
+    /// pictures and parts.
+    objects: &'a HashMap<ibis_doc_model::OleId, ObjectRels>,
     /// The element new paragraphs go into when there are none to copy (a
     /// new header's root).
     empty_parent: Option<NodeId>,
@@ -3009,6 +3014,51 @@ impl Writer<'_> {
         }
     }
 
+    /// A new `w:object`: the object's picture as VML (`v:shape`/`v:imagedata`)
+    /// at `cx` × `cy`, and the object (`o:OLEObject`, embedded), as Word writes one.
+    fn new_object(&mut self, object: &ObjectRels, cx: i64, cy: i64) -> NodeId {
+        let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
+        // A shape id and an object id of their own in the part (VML's `_x0000_iNNNN`).
+        let nodes = self.doc.descendants(root);
+        let used = nodes.iter().filter(|&&n| self.doc.is_element(n) && self.doc.local_name(n) == "OLEObject").count() + 1;
+        let last = nodes
+            .iter()
+            .filter(|&&n| self.doc.is_element(n))
+            .filter_map(|&n| self.doc.attr(n, "id").or_else(|| self.doc.attr(n, "ShapeID")))
+            .filter_map(|v| v.strip_prefix("_x0000_i").and_then(|d| d.parse::<u32>().ok()))
+            .max()
+            .unwrap_or(1024);
+        let shape_id = format!("_x0000_i{}", last + 1);
+        let pt = |emu: i64| format!("{:.2}", emu as f64 / 12_700.0);
+        let xml = format!(
+            concat!(
+                r#"<w:object xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" w:dxaOrig="{dxa}" w:dyaOrig="{dya}">"#,
+                r#"<v:shape id="{shape_id}" style="width:{w}pt;height:{h}pt" o:ole=""><v:imagedata r:id="{image}" o:title=""/></v:shape>"#,
+                r#"<o:OLEObject Type="Embed" ProgID="{prog_id}" ShapeID="{shape_id}" DrawAspect="{aspect}" ObjectID="_{object_id}" r:id="{ole}"/>"#,
+                r#"</w:object>"#
+            ),
+            dxa = cx / 635,
+            dya = cy / 635,
+            w = pt(cx),
+            h = pt(cy),
+            shape_id = shape_id,
+            image = object.image,
+            prog_id = super::pptx_new::escape_attr(&object.prog_id),
+            aspect = if object.as_icon { "Icon" } else { "Content" },
+            object_id = 1_000_000_000 + used,
+            ole = object.ole,
+        );
+        let parsed = XmlDocument::parse(xml.as_bytes()).expect("the object's XML");
+        let element = parsed.root_element().expect("the object");
+        let node = self.doc.import(&parsed, element);
+        for (prefix, ns) in [("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main"), ("v", "urn:schemas-microsoft-com:vml"), ("o", "urn:schemas-microsoft-com:office:office"), ("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")] {
+            if self.doc.lookup_prefix(root, ns).as_deref() == Some(prefix) {
+                self.doc.remove_attr(node, &format!("xmlns:{prefix}"));
+            }
+        }
+        node
+    }
+
     fn new_picture(&mut self, rid: &str, cx: i64, cy: i64, is_svg: bool) -> NodeId {
         // An id for its drawing objects, above those of the part.
         let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
@@ -4279,6 +4329,20 @@ impl Writer<'_> {
                     extra.push(next);
                     run = next;
                 }
+                AtomKey::Picture(media, cx, cy, look) if look.ole.is_some() => {
+                    // An embedded object: kept as it was, or written anew (edited, resized, inserted).
+                    flush(self, run, &mut text);
+                    let node = match original {
+                        Some(n) => self.doc.deep_clone(n),
+                        None => {
+                            let object = look.ole.and_then(|o| self.objects.get(&o)).ok_or_else(|| unsupported("埋め込みオブジェクトの挿入"))?.clone();
+                            let _ = media;
+                            self.new_object(&object, *cx, *cy)
+                        }
+                    };
+                    let end = self.doc.children(run).len();
+                    self.doc.insert(run, end, node);
+                }
                 AtomKey::Picture(media, cx, cy, look) => {
                     flush(self, run, &mut text);
                     let node = match original {
@@ -4321,6 +4385,7 @@ impl Writer<'_> {
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
                             name: pic.name.clone(),
+                            ole: pic.ole,
                         };
                         let node = match original {
                             Some(n) => self.doc.deep_clone(n),
@@ -5120,7 +5185,7 @@ fn write_styles(package: &mut Package, map: &SourceMap, old: &ibis_doc_model::Fl
     let none_added = HashMap::new();
     let none_svg = HashSet::new();
     let none_links = HashMap::new();
-    let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &none_blocks, new_blocks: &none_blocks, pictures: &none_pictures, nodes: HashMap::new(), added: &none_added, svg_media: &none_svg, empty_parent: None, link_rels: &none_links, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
+    let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &none_blocks, new_blocks: &none_blocks, pictures: &none_pictures, nodes: HashMap::new(), added: &none_added, svg_media: &none_svg, objects: &HashMap::new(), empty_parent: None, link_rels: &none_links, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
     let element_of = |doc: &XmlDocument, id: &str| doc.children_named(root, "style").find(|&e| doc.attr(e, "w:styleId") == Some(id));
     for (id, style) in &new.styles {
         let was = old.styles.get(id);
@@ -5420,6 +5485,130 @@ fn pictures_in(blocks: &[Block], out: &mut HashSet<MediaId>) {
 }
 
 const IMAGE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const OLE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject";
+const OLE_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.oleObject";
+
+/// What a `w:object` written anew refers to.
+#[derive(Clone, Debug)]
+struct ObjectRels {
+    /// The relationship to its picture.
+    image: String,
+    /// The relationship to its part.
+    ole: String,
+    prog_id: String,
+    as_icon: bool,
+}
+
+/// The inline pictures of `blocks` (tables' too) that show embedded objects.
+fn objects_in(blocks: &[Block], out: &mut Vec<(MediaId, ibis_doc_model::OleId)>) {
+    for b in blocks {
+        match b {
+            Block::Paragraph(p) => {
+                for r in &p.runs {
+                    if let FlowRunKind::Picture { media, look, .. } = &r.kind
+                        && let Some(ole) = look.ole
+                    {
+                        out.push((*media, ole));
+                    }
+                }
+            }
+            Block::Table(t) => {
+                for cell in t.rows.iter().flat_map(|r| &r.cells) {
+                    objects_in(&cell.blocks, out);
+                }
+            }
+        }
+    }
+}
+
+/// The relationship of `part` (of `kind`) to a part holding `data`: one it has, or a new one.
+fn related_by_bytes(package: &Package, part: &str, kind: &str, data: &[u8]) -> Result<Option<String>, Error> {
+    for rel in package.relationships(part)? {
+        if rel.kind == kind
+            && !rel.external
+            && let Some(target) = rel.target_part(part)
+            && package.read(&target).is_ok_and(|b| b.as_slice() == data)
+        {
+            return Ok(Some(rel.id));
+        }
+    }
+    Ok(None)
+}
+
+/// The relationships each embedded object of `blocks` needs to be written
+/// anew: its picture's (new to the part in `added`, or one the part has) and
+/// its part's (`word/embeddings/oleObjectN.bin`, added when the part has none
+/// of its bytes).
+fn object_rels(package: &mut Package, part: &str, current: &Presentation, baseline: &Presentation, blocks: &[Block], added: &HashMap<MediaId, String>) -> Result<HashMap<ibis_doc_model::OleId, ObjectRels>, Error> {
+    let mut found = Vec::new();
+    objects_in(blocks, &mut found);
+    let mut out = HashMap::new();
+    for (media, ole) in found {
+        if out.contains_key(&ole) {
+            continue;
+        }
+        let object = current.ole(ole).or_else(|| baseline.ole(ole)).ok_or_else(|| unsupported("元の無い埋め込みオブジェクト"))?.clone();
+        let picture = current.media(media).or_else(|| baseline.media(media)).ok_or_else(|| unsupported("元の無い画像"))?.clone();
+        let image = match added.get(&media) {
+            Some(rid) => rid.clone(),
+            None => match related_by_bytes(package, part, IMAGE_REL, &picture.data)? {
+                Some(rid) => rid,
+                None => add_media(package, part, &picture)?,
+            },
+        };
+        let ole_rel = match related_by_bytes(package, part, OLE_REL, &object.data)? {
+            Some(rid) => rid,
+            None => {
+                let dir = part.rsplit_once('/').map_or("", |(d, _)| d);
+                let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+                let n = (1..).find(|n| !package.contains(&format!("{prefix}embeddings/oleObject{n}.bin"))).expect("a free name");
+                package.set_bytes(&format!("{prefix}embeddings/oleObject{n}.bin"), object.data.clone());
+                package.set_override(&format!("{prefix}embeddings/oleObject{n}.bin"), OLE_CONTENT_TYPE)?;
+                package.add_relationship(part, OLE_REL, &format!("embeddings/oleObject{n}.bin"), false)?
+            }
+        };
+        out.insert(ole, ObjectRels { image, ole: ole_rel, prog_id: object.prog_id.clone(), as_icon: object.as_icon });
+    }
+    Ok(out)
+}
+
+/// The embedded objects' relationships of `part` that nothing in it names
+/// any more (an object edited or removed), taken off, and the object parts
+/// nothing relates to.
+fn prune_objects(package: &mut Package, part: &str) -> Result<(), Error> {
+    let rels: Vec<_> = package.relationships(part)?.into_iter().filter(|r| r.kind == OLE_REL && !r.external).collect();
+    if rels.is_empty() {
+        return Ok(());
+    }
+    let named: HashSet<String> = {
+        let doc = package.xml(part)?;
+        let root = doc.root_element();
+        root.map(|r| doc.descendants(r)).unwrap_or_default().into_iter().filter(|&n| doc.is_element(n)).flat_map(|n| doc.attributes(n).iter().map(|a| a.value.clone()).collect::<Vec<_>>()).collect()
+    };
+    let mut orphans = Vec::new();
+    for rel in rels.into_iter().filter(|r| !named.contains(&r.id)) {
+        package.remove_relationship(part, &rel.id)?;
+        orphans.extend(rel.target_part(part));
+    }
+    // A part another relationship still points at stays.
+    let names: Vec<String> = package.names().filter(|n| n.ends_with(".rels")).map(str::to_string).collect();
+    for orphan in orphans {
+        let mut used = false;
+        for rels_part in &names {
+            let source = rels_part.replace("_rels/", "").trim_end_matches(".rels").to_string();
+            let source = if source.is_empty() || rels_part == "_rels/.rels" { String::new() } else { source };
+            if package.relationships(&source)?.iter().any(|r| r.target_part(&source).as_deref() == Some(orphan.as_str())) {
+                used = true;
+                break;
+            }
+        }
+        if !used {
+            package.remove(&orphan);
+            package.remove_override(&orphan)?;
+        }
+    }
+    Ok(())
+}
 
 /// A new media part (`word/media/imageN.ext`) with `media`'s bytes, related
 /// from `part`; its relationship's id.

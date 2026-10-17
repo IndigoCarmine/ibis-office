@@ -115,6 +115,7 @@ impl SlideEditor {
             shadow: None,
             reflection: None,
             soft_edge: None,
+            ole: None,
         };
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let slide = self.current_slide;

@@ -4,7 +4,8 @@
 //! Saving shapes added to or removed from a sheet: a text box, a shape, a
 //! line or a picture added gets an anchor (`xdr:twoCellAnchor`, a picture's
 //! `oneCell`) in the sheet's drawing, which is made when the sheet has none;
-//! one removed (or a chart) loses its anchor.
+//! one removed (or a chart) loses its anchor. Embedded objects are added
+//! and removed on the sheet itself (`xlsx_objects.rs`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -51,6 +52,11 @@ pub(super) fn write_shape_edits(package: &mut Package, map: &SourceMap, baseline
                     remove_chart_parts(package, &source.drawing, &source.chart)?;
                     handled.insert(shape.id);
                 }
+                ShapeKind::Picture(_) if map.objects.iter().any(|s| s.shape == shape.id) => {
+                    let source = map.objects.iter().find(|s| s.shape == shape.id).expect("found above");
+                    super::objects::remove_object(package, source)?;
+                    handled.insert(shape.id);
+                }
                 _ => {
                     let source = map.shapes.iter().find(|s| s.shape == shape.id).ok_or_else(|| unsupported("この図形の削除"))?;
                     remove_anchor(package, &source.drawing, &source.c_nv_pr_id, "")?;
@@ -64,6 +70,12 @@ pub(super) fn write_shape_edits(package: &mut Package, map: &SourceMap, baseline
             }
             if !addable(shape) && !matches!(shape.kind, ShapeKind::Chart(_)) {
                 return Err(unsupported("この種類の図形（グラフなど）の追加"));
+            }
+            // An embedded object: on the sheet itself, not in its drawing.
+            if matches!(&shape.kind, ShapeKind::Picture(p) if p.ole.is_some()) {
+                super::objects::add_object(package, &sheet_part, new_sheet, shape, current)?;
+                handled.insert(shape.id);
+                continue;
             }
             let drawing = match package.relationships(&sheet_part)?.into_iter().find(|r| r.kind == REL_DRAWING && !r.external) {
                 Some(rel) => rel.target_part(&sheet_part).ok_or_else(|| unsupported("シートの描画パート"))?,
@@ -186,7 +198,7 @@ fn add_shape(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Sheet
 }
 
 /// The image of media `id` written as `xl/media/imageN.ext`.
-fn write_image(package: &mut Package, current: &Presentation, id: MediaId) -> Result<String, Error> {
+pub(super) fn write_image(package: &mut Package, current: &Presentation, id: MediaId) -> Result<String, Error> {
     let m = current.media(id).ok_or_else(|| Error::new("画像のデータがありません"))?;
     let (ext, content_type) = match m.format {
         MediaFormat::Png => ("png", "image/png"),

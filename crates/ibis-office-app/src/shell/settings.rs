@@ -37,6 +37,11 @@ mod store {
             .collect()
     }
 
+    /// The directory the settings are in (the external editors' manifests are beside them).
+    pub(super) fn dir() -> Option<PathBuf> {
+        path()?.parent().map(PathBuf::from)
+    }
+
     pub(super) fn get(key: &str) -> Option<String> {
         read().into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
@@ -92,4 +97,10 @@ pub(crate) fn get(key: &str) -> Option<String> {
 /// Set `key` to `value` (kept).
 pub(crate) fn set(key: &str, value: &str) {
     store::set(key, value)
+}
+
+/// The directory the settings file is in.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn dir() -> Option<std::path::PathBuf> {
+    store::dir()
 }

@@ -1595,6 +1595,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     insert.push(MenuItem::tr("xlsx.insert-textbox").icon("text_fields").on(|this, window, cx| { this.insert_sheet_textbox(window, cx); }).into());
     insert.push(crate::shell::chrome::Submenu::tr("xlsx.insert-shape", "shapes", shape_entries.clone()).into());
     insert.push(MenuItem::tr("xlsx.insert-picture").icon("image").on(|this, window, cx| { this.pick_sheet_picture(window, cx); }).into());
+    insert.push(crate::shell::embed::insert_menu());
     insert.push(MenuItem::tr("xlsx.insert.wordart").icon("title").on(|this, _, cx| { this.insert_sheet_wordart(0, None, cx); }).into());
     insert.push(crate::shell::chrome::Submenu::tr("xlsx.insert.wordart-styles", "title", wordart_insert_items()).into());
 

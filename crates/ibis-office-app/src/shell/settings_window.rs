@@ -4,7 +4,8 @@
 //! ツール > 設定… (⌘,): the settings window, master–detail as the system's
 //! settings are: the categories on the left (一般 for now), the selected
 //! one's settings on the right. 一般 > 言語 chooses the UI's language (the
-//! system's, English or Japanese); every window shows it at once.
+//! system's, English or Japanese); every window shows it at once. 外部エディター
+//! lists the editors of embedded objects registered (their manifests' folder).
 use gpui_kit::component::button::Button;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
@@ -96,7 +97,12 @@ fn choice_label(setting: LanguageSetting) -> SharedString {
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&i18n::text("settings.title"));
+        #[cfg(not(target_family = "wasm"))]
+        let editors = (self.category == 1).then(|| editors_detail(cx));
         let theme = cx.theme();
+        #[cfg(not(target_family = "wasm"))]
+        let categories = [i18n::text("settings.general"), i18n::text("settings.editors")];
+        #[cfg(target_family = "wasm")]
         let categories = [i18n::text("settings.general")];
         let current = i18n::setting();
         let list = v_flex().w(px(180.)).h_full().p_2().gap_1().justify_start().items_stretch().bg(theme.sidebar).border_r_1().border_color(theme.border).children(categories.iter().enumerate().map(|(i, name)| {
@@ -145,6 +151,53 @@ impl Render for SettingsWindow {
                 ),
             )
             .child(div().text_sm().text_color(theme.muted_foreground).child(i18n::text("fix.update.setting.note")));
+        #[cfg(not(target_family = "wasm"))]
+        let detail = editors.unwrap_or(detail);
         h_flex().id("settings").track_focus(&self.focus).size_full().items_start().bg(theme.background).text_color(theme.foreground).child(list).child(detail)
     }
+}
+
+/// 外部エディター: the editors registered, the manifests that could not be read,
+/// and their folder.
+#[cfg(not(target_family = "wasm"))]
+fn editors_detail(cx: &mut Context<SettingsWindow>) -> Div {
+    let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
+    let reload = cx.listener(|_, _: &ClickEvent, _, cx| {
+        crate::shell::embed::reload_handlers();
+        cx.notify();
+    });
+    let dir = crate::shell::embed::handlers_dir();
+    let read = dir.as_deref().map(ibis_embed_protocol::load_manifest_dir).unwrap_or_default();
+    let english = i18n::language() == Language::English;
+    let rows = read.into_iter().map(|(path, manifest)| match manifest {
+        Ok(m) => v_flex()
+            .gap_0p5()
+            .child(div().child(if english { m.name.en.clone() } else { m.name.ja.clone() }))
+            .child(div().text_sm().text_color(muted).child(format!("{} — {}", m.prog_ids.join(", "), m.command.display()))),
+        Err(e) => v_flex().gap_0p5().child(div().text_color(danger).child(path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())).child(div().text_sm().text_color(muted).child(e.to_string())),
+    });
+    let rows: Vec<Div> = rows.collect();
+    let empty = rows.is_empty();
+    let folder = dir.clone();
+    v_flex()
+        .flex_1()
+        .p_4()
+        .gap_3()
+        .child(div().text_lg().child(i18n::text("settings.editors")))
+        .child(div().text_sm().text_color(muted).child(i18n::format("settings.editors.note", &[("dir", &dir.as_ref().map(|d| d.display().to_string()).unwrap_or_default())])))
+        .when(empty, |d| d.child(div().text_color(muted).child(i18n::text("settings.editors.none"))))
+        .children(rows)
+        .child(
+            h_flex()
+                .gap_2()
+                .child(Button::new("settings-editors-folder").small().label(i18n::text("settings.editors.open-folder")).on_click(move |_, _, cx| {
+                    if let Some(dir) = &folder {
+                        if let Err(e) = std::fs::create_dir_all(dir) {
+                            log::warn!("{}: {e}", dir.display());
+                        }
+                        cx.open_with_system(dir);
+                    }
+                }))
+                .child(Button::new("settings-editors-reload").small().label(i18n::text("settings.editors.reload")).on_click(reload)),
+        )
 }

@@ -443,7 +443,7 @@ fn new_shapes(p: &mut Presentation) -> Vec<Shape> {
     let picture = Shape::new(
         p.new_shape_id(),
         EmuRect::new(6_400_800, 4_572_000, 1_219_200, 914_400),
-        ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new() }),
+        ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new(), ole: None }),
     );
     vec![text_box, rect, oval, round, line, picture]
 }
@@ -5072,6 +5072,7 @@ fn insert_and_save_svg_picture_round_trip() {
         alt_text: Default::default(),
         decorative: false,
         name: String::new(),
+        ole: None,
     };
     let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
     let index = s.p().slides[0].shapes.len();
@@ -6432,6 +6433,7 @@ fn test_media_playback_options_round_trip() {
             alt_text: Default::default(),
             decorative: false,
             name: "Video 1".to_string(),
+            ole: None,
         }),
     );
 
@@ -6471,6 +6473,7 @@ fn test_media_playback_options_round_trip() {
             alt_text: Default::default(),
             decorative: false,
             name: "Audio 1".to_string(),
+            ole: None,
         }),
     );
 
@@ -6734,6 +6737,7 @@ fn test_media_trim_and_fade_options_round_trip() {
             alt_text: Default::default(),
             decorative: false,
             name: "Video 1".to_string(),
+            ole: None,
         }),
     );
 
@@ -6766,6 +6770,7 @@ fn test_media_trim_and_fade_options_round_trip() {
             alt_text: Default::default(),
             decorative: false,
             name: "Audio 1".to_string(),
+            ole: None,
         }),
     );
 
@@ -6936,6 +6941,7 @@ fn test_media_bookmarks_round_trip() {
             alt_text: Default::default(),
             decorative: false,
             name: "Video 1".to_string(),
+            ole: None,
         }),
     );
 
@@ -6968,6 +6974,7 @@ fn test_media_bookmarks_round_trip() {
             alt_text: Default::default(),
             decorative: false,
             name: "Audio 1".to_string(),
+            ole: None,
         }),
     );
 
@@ -7117,6 +7124,7 @@ fn test_media_captions_round_trip() {
             alt_text: Default::default(),
             decorative: false,
             name: "Video 1".to_string(),
+            ole: None,
         }),
     );
 
@@ -7234,6 +7242,7 @@ fn test_video_border_shape_and_effects_round_trip() {
             alt_text: Default::default(),
             decorative: false,
             name: "Styled Video".to_string(),
+            ole: None,
         }),
     );
 
@@ -7569,6 +7578,7 @@ fn test_insert_icon_save_and_round_trip() {
         shadow: None,
         reflection: None,
         soft_edge: None,
+        ole: None,
     };
     let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
 
@@ -8875,6 +8885,7 @@ fn linked_video_round_trip() {
         alt_text: Default::default(),
         decorative: false,
         name: String::new(),
+        ole: None,
     };
     let index = s.p().slides[0].shapes.len();
     let shape = Shape::new(id, EmuRect::new(1_000_000, 1_000_000, 3_200_000, 1_800_000), ShapeKind::Picture(picture));

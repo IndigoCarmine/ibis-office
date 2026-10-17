@@ -173,6 +173,7 @@ impl SlideEditor {
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
                             name: pic.name.clone(),
+                            ole: pic.ole,
                         });
                     }
                 }

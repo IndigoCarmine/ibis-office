@@ -8,6 +8,8 @@
 
 pub(crate) mod doc_ui;
 pub(crate) mod editing;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod embed;
 pub(crate) mod text_format;
 pub(crate) mod block_tree;
 pub(crate) mod clipboard;

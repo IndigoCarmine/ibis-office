@@ -34,43 +34,89 @@ fn u64_at(d: &[u8], at: usize) -> Option<u64> {
 struct Entry {
     name: String,
     kind: u8,
+    left: u32,
+    right: u32,
+    child: u32,
+    clsid: [u8; 16],
     start: u32,
     size: u64,
 }
 
-/// The bytes of the stream called `name` (in the root).
-pub fn stream(data: &[u8], name: &str) -> Result<Vec<u8>, Error> {
-    let bad = || Error::new("複合ファイルを読めませんでした");
-    if !is_cfb(data) {
-        return Err(bad());
+/// A compound file opened for reading: its directory and the tables to follow its chains.
+struct Reader<'a> {
+    data: &'a [u8],
+    sector_size: usize,
+    mini_size: usize,
+    mini_cutoff: u64,
+    fat: Vec<u32>,
+    mini_fat: Vec<u32>,
+    mini_stream: Vec<u8>,
+    entries: Vec<Entry>,
+}
+
+fn bad() -> Error {
+    Error::new("複合ファイルを読めませんでした")
+}
+
+impl<'a> Reader<'a> {
+    fn open(data: &'a [u8]) -> Result<Self, Error> {
+        if !is_cfb(data) {
+            return Err(bad());
+        }
+        let sector_size = 1usize << u16_at(data, 30).ok_or_else(bad)?.min(16);
+        let mini_size = 1usize << u16_at(data, 32).ok_or_else(bad)?.min(16);
+        let dir_start = u32_at(data, 48).ok_or_else(bad)?;
+        let mini_cutoff = u32_at(data, 56).ok_or_else(bad)? as u64;
+        let mini_fat_start = u32_at(data, 60).ok_or_else(bad)?;
+        let difat_start = u32_at(data, 68).ok_or_else(bad)?;
+        let mut reader = Self { data, sector_size, mini_size, mini_cutoff, fat: Vec::new(), mini_fat: Vec::new(), mini_stream: Vec::new(), entries: Vec::new() };
+        // The sectors of the FAT: 109 in the header, then the DIFAT's chain.
+        let mut fat_sectors: Vec<u32> = (0..109).filter_map(|i| u32_at(data, 76 + i * 4)).filter(|&s| s < FREE).collect();
+        let mut next = difat_start;
+        let mut guard = 0;
+        while next < FREE && guard < 100_000 {
+            let s = reader.sector(next).ok_or_else(bad)?;
+            let per = sector_size / 4;
+            fat_sectors.extend((0..per - 1).filter_map(|i| u32_at(s, i * 4)).filter(|&x| x < FREE));
+            next = u32_at(s, (per - 1) * 4).ok_or_else(bad)?;
+            guard += 1;
+        }
+        for s in fat_sectors {
+            let b = reader.sector(s).ok_or_else(bad)?;
+            reader.fat.extend((0..sector_size / 4).filter_map(|i| u32_at(b, i * 4)));
+        }
+        let dir = reader.read_chain(dir_start)?;
+        reader.entries = (0..dir.len() / 128)
+            .filter_map(|i| {
+                let e = &dir[i * 128..(i + 1) * 128];
+                let len = (u16_at(e, 64)? as usize).saturating_sub(2).min(64);
+                let units: Vec<u16> = (0..len / 2).filter_map(|k| u16_at(e, k * 2)).collect();
+                Some(Entry {
+                    name: String::from_utf16_lossy(&units),
+                    kind: e[66],
+                    left: u32_at(e, 68)?,
+                    right: u32_at(e, 72)?,
+                    child: u32_at(e, 76)?,
+                    clsid: e[80..96].try_into().ok()?,
+                    start: u32_at(e, 116)?,
+                    size: u64_at(e, 120)?,
+                })
+            })
+            .collect();
+        // Short streams are in the mini stream (the root's data), by the mini FAT.
+        let root_start = reader.entries.first().ok_or_else(bad)?.start;
+        reader.mini_stream = reader.read_chain(root_start)?;
+        let mini_fat_bytes = reader.read_chain(mini_fat_start)?;
+        reader.mini_fat = (0..mini_fat_bytes.len() / 4).filter_map(|i| u32_at(&mini_fat_bytes, i * 4)).collect();
+        Ok(reader)
     }
-    let sector_size = 1usize << u16_at(data, 30).ok_or_else(bad)?;
-    let mini_size = 1usize << u16_at(data, 32).ok_or_else(bad)?;
-    let dir_start = u32_at(data, 48).ok_or_else(bad)?;
-    let mini_cutoff = u32_at(data, 56).ok_or_else(bad)? as u64;
-    let mini_fat_start = u32_at(data, 60).ok_or_else(bad)?;
-    let difat_start = u32_at(data, 68).ok_or_else(bad)?;
-    let sector = |i: u32| -> Option<&[u8]> {
-        let at = (i as usize + 1).checked_mul(sector_size)?;
-        data.get(at..at + sector_size)
-    };
-    // The sectors of the FAT: 109 in the header, then the DIFAT's chain.
-    let mut fat_sectors: Vec<u32> = (0..109).filter_map(|i| u32_at(data, 76 + i * 4)).filter(|&s| s < FREE).collect();
-    let mut next = difat_start;
-    let mut guard = 0;
-    while next < FREE && guard < 100_000 {
-        let s = sector(next).ok_or_else(bad)?;
-        let per = sector_size / 4;
-        fat_sectors.extend((0..per - 1).filter_map(|i| u32_at(s, i * 4)).filter(|&x| x < FREE));
-        next = u32_at(s, (per - 1) * 4).ok_or_else(bad)?;
-        guard += 1;
+
+    fn sector(&self, i: u32) -> Option<&'a [u8]> {
+        let at = (i as usize + 1).checked_mul(self.sector_size)?;
+        self.data.get(at..at.checked_add(self.sector_size)?)
     }
-    let mut fat: Vec<u32> = Vec::new();
-    for s in fat_sectors {
-        let b = sector(s).ok_or_else(bad)?;
-        fat.extend((0..sector_size / 4).filter_map(|i| u32_at(b, i * 4)));
-    }
-    let chain = |start: u32, table: &[u32]| -> Result<Vec<u32>, Error> {
+
+    fn chain(start: u32, table: &[u32]) -> Result<Vec<u32>, Error> {
         let mut out = Vec::new();
         let mut s = start;
         while s < FREE {
@@ -81,59 +127,122 @@ pub fn stream(data: &[u8], name: &str) -> Result<Vec<u8>, Error> {
             s = *table.get(s as usize).ok_or_else(bad)?;
         }
         Ok(out)
-    };
-    let read_chain = |start: u32| -> Result<Vec<u8>, Error> {
+    }
+
+    fn read_chain(&self, start: u32) -> Result<Vec<u8>, Error> {
         let mut out = Vec::new();
-        for s in chain(start, &fat)? {
-            out.extend_from_slice(sector(s).ok_or_else(bad)?);
+        for s in Self::chain(start, &self.fat)? {
+            out.extend_from_slice(self.sector(s).ok_or_else(bad)?);
         }
         Ok(out)
-    };
-    let dir = read_chain(dir_start)?;
-    let entries: Vec<Entry> = (0..dir.len() / 128)
-        .filter_map(|i| {
-            let e = &dir[i * 128..(i + 1) * 128];
-            let len = (u16_at(e, 64)? as usize).saturating_sub(2).min(64);
-            let units: Vec<u16> = (0..len / 2).filter_map(|k| u16_at(e, k * 2)).collect();
-            Some(Entry { name: String::from_utf16_lossy(&units), kind: e[66], start: u32_at(e, 116)?, size: u64_at(e, 120)? })
-        })
-        .collect();
-    let target = entries.iter().find(|e| e.kind == 2 && e.name == name).ok_or_else(|| Error::new(format!("{name} のデータがありません")))?;
-    if target.size >= mini_cutoff {
-        let mut bytes = read_chain(target.start)?;
-        bytes.truncate(target.size as usize);
-        return Ok(bytes);
     }
-    // A short stream: in the mini stream (the root's data), by the mini FAT.
-    let root = entries.first().ok_or_else(bad)?;
-    let mini_stream = read_chain(root.start)?;
-    let mini_fat_bytes = read_chain(mini_fat_start)?;
-    let mini_fat: Vec<u32> = (0..mini_fat_bytes.len() / 4).filter_map(|i| u32_at(&mini_fat_bytes, i * 4)).collect();
-    let mut out = Vec::new();
-    for s in chain(target.start, &mini_fat)? {
-        let at = s as usize * mini_size;
-        out.extend_from_slice(mini_stream.get(at..at + mini_size).ok_or_else(bad)?);
+
+    /// The bytes of the stream entry `e`.
+    fn bytes(&self, e: &Entry) -> Result<Vec<u8>, Error> {
+        if e.size == 0 {
+            return Ok(Vec::new());
+        }
+        let mut out = if e.size >= self.mini_cutoff {
+            self.read_chain(e.start)?
+        } else {
+            let mut out = Vec::new();
+            for s in Self::chain(e.start, &self.mini_fat)? {
+                let at = s as usize * self.mini_size;
+                out.extend_from_slice(self.mini_stream.get(at..at + self.mini_size).ok_or_else(bad)?);
+            }
+            out
+        };
+        if out.len() < e.size as usize {
+            return Err(bad());
+        }
+        out.truncate(e.size as usize);
+        Ok(out)
     }
-    out.truncate(target.size as usize);
-    Ok(out)
+
+    /// The members of the storage whose child tree starts at `child`, in directory order.
+    fn siblings(&self, child: u32, out: &mut Vec<usize>, depth: usize) -> Result<(), Error> {
+        if child == NOSTREAM {
+            return Ok(());
+        }
+        if depth > 64 || out.len() > self.entries.len() {
+            return Err(bad());
+        }
+        let e = self.entries.get(child as usize).ok_or_else(bad)?;
+        self.siblings(e.left, out, depth + 1)?;
+        out.push(child as usize);
+        self.siblings(e.right, out, depth + 1)
+    }
+}
+
+/// The bytes of the stream called `name` (in any storage).
+pub fn stream(data: &[u8], name: &str) -> Result<Vec<u8>, Error> {
+    let reader = Reader::open(data)?;
+    let target = reader.entries.iter().find(|e| e.kind == 2 && e.name == name).ok_or_else(|| Error::new(format!("{name} のデータがありません")))?;
+    reader.bytes(target)
+}
+
+/// Everything in a compound file: the root's class id and its storages and streams, each storage before what is in it.
+pub struct Contents {
+    pub clsid: [u8; 16],
+    pub items: Vec<Item>,
+}
+
+/// The whole of a compound file, as [`write_with`] takes it back.
+pub fn read(data: &[u8]) -> Result<Contents, Error> {
+    let reader = Reader::open(data)?;
+    let root = reader.entries.first().ok_or_else(bad)?;
+    let mut items = Vec::new();
+    // Depth first, from the root's children: (child tree, path of the storage).
+    let mut stack = vec![(root.child, String::new())];
+    let mut seen = 0usize;
+    while let Some((child, prefix)) = stack.pop() {
+        let mut ids = Vec::new();
+        reader.siblings(child, &mut ids, 0)?;
+        for id in ids {
+            seen += 1;
+            if seen > reader.entries.len() {
+                return Err(bad());
+            }
+            let e = &reader.entries[id];
+            let path = if prefix.is_empty() { e.name.clone() } else { format!("{prefix}/{}", e.name) };
+            match e.kind {
+                1 => {
+                    items.push(Item { path: path.clone(), data: None, clsid: e.clsid });
+                    stack.push((e.child, path));
+                }
+                2 => items.push(Item { path, data: Some(reader.bytes(e)?), clsid: [0; 16] }),
+                _ => {}
+            }
+        }
+    }
+    // Storages before what is in them: the stack gives that already, but keep the order stable for writing back.
+    items.sort_by_key(|i| i.path.matches('/').count());
+    Ok(Contents { clsid: root.clsid, items })
 }
 
 
 /// A storage or stream to write: `path` names it from the root with `/`
 /// between storages (`"\u{6}DataSpaces/Version"`).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
     pub path: String,
     /// The bytes of a stream; `None` for a storage.
     pub data: Option<Vec<u8>>,
+    /// The class of a storage (all zero for none, and for streams).
+    pub clsid: [u8; 16],
 }
 
 impl Item {
     pub fn stream(path: &str, data: Vec<u8>) -> Self {
-        Self { path: path.to_string(), data: Some(data) }
+        Self { path: path.to_string(), data: Some(data), clsid: [0; 16] }
     }
 
     pub fn storage(path: &str) -> Self {
-        Self { path: path.to_string(), data: None }
+        Self { path: path.to_string(), data: None, clsid: [0; 16] }
+    }
+
+    pub fn is_stream(&self) -> bool {
+        self.data.is_some()
     }
 }
 
@@ -147,6 +256,7 @@ const DIFSECT: u32 = 0xFFFF_FFFC;
 struct Node {
     name: String,
     kind: u8,
+    clsid: [u8; 16],
     data: Vec<u8>,
     children: Vec<usize>,
     left: u32,
@@ -190,8 +300,13 @@ fn link(nodes: &mut [Node], ids: &[usize]) -> u32 {
 
 /// A compound file holding `items` (storages must come before what is in them, as `a`, `a/b`).
 pub fn write(items: &[Item]) -> Vec<u8> {
+    write_with([0; 16], items)
+}
+
+/// A compound file whose root is of the class `clsid` (an OLE object's), holding `items`.
+pub fn write_with(clsid: [u8; 16], items: &[Item]) -> Vec<u8> {
     // The tree of entries: node 0 is the root storage.
-    let mut nodes = vec![Node { name: "Root Entry".into(), kind: 5, data: Vec::new(), children: Vec::new(), left: NOSTREAM, right: NOSTREAM, child: NOSTREAM, red: false, start: END }];
+    let mut nodes = vec![Node { name: "Root Entry".into(), kind: 5, clsid, data: Vec::new(), children: Vec::new(), left: NOSTREAM, right: NOSTREAM, child: NOSTREAM, red: false, start: END }];
     let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     index.insert(String::new(), 0);
     for item in items {
@@ -201,7 +316,7 @@ pub fn write(items: &[Item]) -> Vec<u8> {
         };
         let parent = *index.get(&parent).expect("a storage before what is in it");
         let id = nodes.len();
-        nodes.push(Node { name, kind: if item.data.is_some() { 2 } else { 1 }, data: item.data.clone().unwrap_or_default(), children: Vec::new(), left: NOSTREAM, right: NOSTREAM, child: NOSTREAM, red: false, start: END });
+        nodes.push(Node { name, kind: if item.data.is_some() { 2 } else { 1 }, clsid: if item.data.is_some() { [0; 16] } else { item.clsid }, data: item.data.clone().unwrap_or_default(), children: Vec::new(), left: NOSTREAM, right: NOSTREAM, child: NOSTREAM, red: false, start: END });
         nodes[parent].children.push(id);
         index.insert(item.path.clone(), id);
     }
@@ -298,6 +413,7 @@ pub fn write(items: &[Item]) -> Vec<u8> {
         e[68..72].copy_from_slice(&node.left.to_le_bytes());
         e[72..76].copy_from_slice(&node.right.to_le_bytes());
         e[76..80].copy_from_slice(&node.child.to_le_bytes());
+        e[80..96].copy_from_slice(&node.clsid);
         let size = if node.kind == 5 { mini_stream.len() as u64 } else { node.data.len() as u64 };
         let start = if node.kind == 1 { 0 } else { node.start };
         e[116..120].copy_from_slice(&start.to_le_bytes());
@@ -400,6 +516,27 @@ mod tests {
         let data = bytes(9_000_000, 9);
         let file = write(&[Item::stream("EncryptedPackage", data.clone())]);
         assert_eq!(stream(&file, "EncryptedPackage").unwrap(), data);
+    }
+
+    #[test]
+    fn the_whole_file_is_read_back_with_its_classes() {
+        let clsid = [0x21, 0x6D, 0xBA, 0x41, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let mut inner = Item::storage("Sub");
+        inner.clsid = [9; 16];
+        let items = vec![
+            Item::stream("\u{1}CompObj", bytes(90, 1)),
+            Item::stream("CONTENTS", bytes(10_000, 2)),
+            inner,
+            Item::stream("Sub/A", bytes(5, 3)),
+            Item::stream("Sub/Empty", Vec::new()),
+        ];
+        let read_back = read(&write_with(clsid, &items)).unwrap();
+        assert_eq!(read_back.clsid, clsid);
+        let mut want = items.clone();
+        want.sort_by(|a, b| a.path.cmp(&b.path));
+        let mut got = read_back.items;
+        got.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(got, want);
     }
 
     #[test]

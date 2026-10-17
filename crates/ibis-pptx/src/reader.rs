@@ -187,6 +187,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
         package: &package,
         presentation: Presentation::empty(size),
         media: HashMap::new(),
+        oles: HashMap::new(),
         default_text: child(root, "defaultTextStyle"),
         table_styles: table_styles_part.as_deref().and_then(|p| docs.get(p)).map(|d| d.root_element()),
         user_shapes: user_shapes.iter().map(|(chart, drawing)| (chart.clone(), (docs[drawing.as_str()].root_element(), rels[drawing.as_str()].clone()))).collect(),
@@ -737,6 +738,8 @@ struct Reader<'p, 'd, 'i> {
     presentation: Presentation,
     /// Media already stored, by part name.
     media: HashMap<String, (MediaId, MediaFormat)>,
+    /// The embedded objects read so far, by part.
+    oles: HashMap<String, ibis_doc_model::OleId>,
     default_text: Option<Node<'d, 'i>>,
     /// `a:tblStyleLst` of the presentation's table styles part.
     table_styles: Option<Node<'d, 'i>>,
@@ -1987,7 +1990,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 Some(ibis_doc_model::Clip { media: clip, audio: format.is_audio(), options, link })
             });
             let name = child(node, "nvPicPr").and_then(|n| child(n, "cNvPr")).and_then(|c| attr(c, "name")).unwrap_or("").to_string();
-            ShapeKind::Picture(Picture { media, crop, stroke, corner, duotone, clear, luminance, clip, shadow, reflection, soft_edge, alt_text: Default::default(), decorative: false, name })
+            ShapeKind::Picture(Picture { media, crop, stroke, corner, duotone, clear, luminance, clip, shadow, reflection, soft_edge, alt_text: Default::default(), decorative: false, name, ole: None })
         } else {
             ShapeKind::Placeholder(Placeholder::Picture(format))
         };
@@ -2026,10 +2029,18 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             self.diagram_shapes(ctx, data, rels, frame);
             ShapeKind::Placeholder(Placeholder::Diagram)
         } else {
-            // OLE objects and the like carry a picture of their content.
+            // OLE objects and the like carry a picture of their content. Of
+            // the choices of an `mc:AlternateContent`, the one with the picture.
             let pic = data.descendants().find(|n| n.has_tag_name("pic"))?;
             let mut shape = self.picture(ctx, pic, rels, Level::Layout, transform)?;
             shape.frame = frame;
+            if uri.ends_with("/ole")
+                && let Some(ole) = pic.parent().filter(|p| p.tag_name().name() == "oleObj").or_else(|| data.descendants().find(|n| n.tag_name().name() == "oleObj" && attr_rid(*n).is_some()))
+                && let Some(id) = self.ole(ole, rels)
+                && let ShapeKind::Picture(p) = &mut shape.kind
+            {
+                p.ole = Some(id);
+            }
             return Some(shape);
         };
         let id = self.presentation.new_shape_id();
@@ -2116,12 +2127,27 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let (x, y, w, h) = drawing.bounds;
         let frame = transform.rect(x.round() as i64, y.round() as i64, w.round() as i64, h.round() as i64);
         let media = self.presentation.add_media(MediaFormat::Svg, drawing.svg.into_bytes());
-        let kind = ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new() });
+        let kind = ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new(), ole: None });
         let id = self.presentation.new_shape_id();
         Some(Shape { id, frame, rotation: 0, flip_h: false, flip_v: false, kind, floating: None })
     }
 
     /// Store (once) the media part `rid` points to.
+    /// The embedded object of a `p:oleObj` (an embedded one: a linked object's file is elsewhere).
+    fn ole(&mut self, node: Node, rels: &Rels) -> Option<ibis_doc_model::OleId> {
+        let rel = rels.get(attr_rid(node)?).filter(|r| !r.external)?;
+        if let Some(found) = self.oles.get(&rel.target) {
+            return Some(*found);
+        }
+        let data = self.package.read(&rel.target).ok()?;
+        let prog_id = attr(node, "progId").unwrap_or("").to_string();
+        // PowerPoint's `showAsIcon`, Excel's `dvAspect`.
+        let as_icon = attr(node, "showAsIcon").is_some_and(|v| v == "1" || v == "true") || attr(node, "dvAspect") == Some("DVASPECT_ICON");
+        let id = self.presentation.add_ole(prog_id, data, as_icon);
+        self.oles.insert(rel.target.clone(), id);
+        Some(id)
+    }
+
     fn media(&mut self, rels: &Rels, rid: &str) -> Option<(MediaId, MediaFormat)> {
         let rel = rels.get(rid).filter(|r| !r.external)?;
         if let Some(found) = self.media.get(&rel.target) {
@@ -3097,6 +3123,7 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
     let mut presentation = Presentation::empty(EmuSize::WIDESCREEN);
     let mut chart_sources: Vec<crate::save::xlsx::ChartSource> = Vec::new();
     let mut xlsx_shape_sources: Vec<crate::save::xlsx::XlsxShapeSource> = Vec::new();
+    let mut xlsx_object_sources: Vec<crate::save::xlsx::XlsxObjectSource> = Vec::new();
     let mut media = HashMap::new();
     let mut slide_of_part: HashMap<String, ibis_doc_model::SlideId> = HashMap::new();
     for (number, (name, part, print_area)) in sheets.iter().enumerate() {
@@ -3244,8 +3271,15 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
             .into_iter()
             .flat_map(drawing_anchors)
             .collect();
-        // Cover the cells the drawings reach, then place them.
+        // The embedded objects (`oleObjects`), with the anchors Excel 2010 gives them.
+        let objects = sheet_objects(sheet_root);
+        // Cover the cells the drawings and objects reach, then place them.
         let (mut columns, mut rows) = (0u32, 0u32);
+        for corner in objects.iter().filter_map(|(_, anchor)| *anchor).flat_map(|a| [child(a, "from"), child(a, "to")]).flatten() {
+            let (c, r) = anchor_cell(corner);
+            columns = columns.max(c.0 + 1);
+            rows = rows.max(r.0 + 1);
+        }
         for anchor in &anchors {
             for corner in [child(*anchor, "from"), child(*anchor, "to")].into_iter().flatten() {
                 let (c, r) = anchor_cell(corner);
@@ -3283,6 +3317,7 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
             package: &package,
             presentation: std::mem::replace(&mut presentation, Presentation::empty(EmuSize::WIDESCREEN)),
             media: std::mem::take(&mut media),
+            oles: HashMap::new(),
             default_text: None,
             table_styles: None,
             user_shapes: chart_drawings.iter().map(|(chart, d)| (chart.clone(), (docs[d.as_str()].root_element(), rels[d.as_str()].clone()))).collect(),
@@ -3435,6 +3470,30 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
                 reader.anchor = None;
             }
         }
+        // Embedded objects: their pictures where their anchors put them, pointing at them.
+        for (object, anchor) in &objects {
+            let (Some(anchor), Some(object_rel)) = (*anchor, attr_rid(*object)) else { continue };
+            let (Some(from), Some(to)) = (child(anchor, "from"), child(anchor, "to")) else { continue };
+            let pr = child(*object, "objectPr");
+            let image_rel = pr.and_then(attr_rid);
+            let Some((media, _)) = image_rel.and_then(|rid| reader.media(&sheet_rels, rid)) else { continue };
+            let Some(ole) = reader.ole(*object, &sheet_rels) else { continue };
+            let ((x0, y0), (x1, y1)) = (at(anchor_cell(from)), at(anchor_cell(to)));
+            let frame = EmuRect::new(x0, y0, (x1 - x0).max(0), (y1 - y0).max(0));
+            extent = (extent.0.max(frame.right()), extent.1.max(frame.bottom()));
+            let mut picture = Picture::new(media);
+            picture.ole = Some(ole);
+            let id = reader.presentation.new_shape_id();
+            slide.shapes.push(Shape { id, frame, rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Picture(picture), floating: None });
+            let moves = unqualified_attribute(anchor, "moveWithCells").is_some_and(|v| v == "1" || v == "true");
+            let sizes = unqualified_attribute(anchor, "sizeWithCells").is_some_and(|v| v == "1" || v == "true");
+            slide.shape_placements.insert(id, match (moves, sizes) {
+                (true, true) => ibis_doc_model::ObjectPlacement::MoveAndSize,
+                (true, false) => ibis_doc_model::ObjectPlacement::MoveOnly,
+                _ => ibis_doc_model::ObjectPlacement::Free,
+            });
+            xlsx_object_sources.push(crate::save::xlsx::XlsxObjectSource { shape: id, sheet: part.clone(), object_rel: object_rel.to_string(), image_rel: image_rel.map(str::to_string) });
+        }
         // Pictures in cells: each drawn in its cell (scaled to fit, centred).
         for image in &cell_images {
             let Some(rid) = rich_rel_rids.get(image.index as usize) else { continue };
@@ -3583,6 +3642,7 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
         digit,
         charts: chart_sources,
         shapes: xlsx_shape_sources,
+        objects: xlsx_object_sources,
         external_parts,
     };
     Ok((presentation, map))
@@ -3637,6 +3697,21 @@ fn drawing_anchors<'d, 'i>(root: Node<'d, 'i>) -> Vec<Node<'d, 'i>> {
 }
 
 /// A cell anchor's column and row, each with its offset in EMU.
+/// A sheet's embedded objects (`oleObjects/oleObject`, or the Choice of the
+/// `mc:AlternateContent` Excel 2010 wraps each in), with their anchors
+/// (`objectPr/anchor`, which Excel 2007's have not).
+fn sheet_objects<'a, 'i>(sheet: Node<'a, 'i>) -> Vec<(Node<'a, 'i>, Option<Node<'a, 'i>>)> {
+    let Some(list) = child(sheet, "oleObjects") else { return Vec::new() };
+    elements(list)
+        .filter_map(|entry| match entry.tag_name().name() {
+            "oleObject" => Some(entry),
+            "AlternateContent" => child(entry, "Choice").and_then(|c| child(c, "oleObject")).or_else(|| child(entry, "Fallback").and_then(|c| child(c, "oleObject"))),
+            _ => None,
+        })
+        .map(|object| (object, child(object, "objectPr").and_then(|p| child(p, "anchor"))))
+        .collect()
+}
+
 fn anchor_cell(corner: Node) -> ((u32, i64), (u32, i64)) {
     let number = |name: &str| child(corner, name).and_then(|n| n.text()).and_then(|t| t.trim().parse::<i64>().ok()).unwrap_or(0);
     ((number("col").max(0) as u32, number("colOff")), (number("row").max(0) as u32, number("rowOff")))

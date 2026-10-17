@@ -764,6 +764,8 @@ pub struct PictureLook {
     pub decorative: bool,
     /// Object name (`wp:docPr/@name`).
     pub name: String,
+    /// The embedded object the picture is the preview of (`w:object`).
+    pub ole: Option<crate::model::OleId>,
 }
 
 impl PictureLook {

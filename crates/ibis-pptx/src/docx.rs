@@ -553,6 +553,8 @@ struct Reader<'p, 'd, 'i> {
     style_nodes: HashMap<String, Node<'d, 'i>>,
     presentation: &'p mut Presentation,
     media: HashMap<String, MediaId>,
+    /// The embedded objects read so far, by part.
+    oles: HashMap<String, ibis_doc_model::OleId>,
     /// The last id given to a paragraph or table.
     last_id: u32,
     /// The part being read, and where things came from.
@@ -761,6 +763,22 @@ impl ParaRead<'_, '_> {
 }
 
 /// The picture an `a:blip` shows: its SVG version (`asvg:svgBlip`), else its own `r:embed`.
+/// A VML length (`85pt`, `1.5in`, `3cm`, `20mm`, `100px`; points when bare) in EMU.
+fn vml_length(v: &str) -> Option<i64> {
+    let split = v.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(v.len());
+    let number: f64 = v[..split].trim().parse().ok()?;
+    let per = match v[split..].trim() {
+        "" | "pt" => 12_700.0,
+        "in" => 914_400.0,
+        "cm" => 360_000.0,
+        "mm" => 36_000.0,
+        "px" => 9_525.0,
+        "pc" => 152_400.0,
+        _ => return None,
+    };
+    Some((number * per).round() as i64)
+}
+
 fn blip_embed<'a>(blip: Node<'a, '_>) -> Option<&'a str> {
     let svg = blip.descendants().find(|n| n.is_element() && n.tag_name().name() == "svgBlip").and_then(|n| rattr(n, "embed").or_else(|| attr(n, "embed")));
     svg.or_else(|| rattr(blip, "embed"))
@@ -1368,9 +1386,68 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                         out.push(make(drawing));
                     }
                 }
+                // An embedded object (`w:object`): its preview, inline, pointing at the object.
+                "object" => {
+                    if let Some(object) = self.ole_object(node, rels) {
+                        read.in_run(r, node, 1);
+                        out.push(make(object));
+                    }
+                }
                 _ => {}
             }
         }
+    }
+
+    /// `w:object`: the picture of the object (`v:imagedata`, or a
+    /// `w:drawing`'s blip) at the size its shape has, and the object
+    /// (`o:OLEObject`, embedded) it shows. A linked object's file is elsewhere:
+    /// only its picture is read.
+    fn ole_object(&mut self, object: Node, rels: &Rels) -> Option<FlowRunKind> {
+        let ole = object.descendants().find(|n| n.is_element() && n.tag_name().name() == "OLEObject");
+        // A newer Word's object holds a drawing: that is its picture.
+        if let Some(drawing) = elements(object).find(|n| n.tag_name().name() == "drawing")
+            && let Some(FlowRunKind::Picture { media, size, mut look }) = self.picture(drawing, rels)
+        {
+            look.ole = ole.and_then(|o| self.ole(o, rels));
+            return Some(FlowRunKind::Picture { media, size, look });
+        }
+        let shape = object.descendants().find(|n| n.is_element() && n.tag_name().name() == "shape")?;
+        let image = shape.descendants().find(|n| n.is_element() && n.tag_name().name() == "imagedata")?;
+        let rid = rattr(image, "id").or_else(|| image.attributes().find(|a| a.name() == "relid").map(|a| a.value()))?;
+        let rel = rels.get(rid).filter(|r| !r.external)?;
+        let media = match self.media.get(&rel.target) {
+            Some(id) => *id,
+            None => {
+                let data = self.package.read(&rel.target).ok()?;
+                let id = self.presentation.add_media(MediaFormat::from_path(&rel.target), data);
+                self.media.insert(rel.target.clone(), id);
+                id
+            }
+        };
+        // The size: the shape's style (`width:85pt;height:40pt`), else the object's own (twips).
+        let style = attr(shape, "style").unwrap_or("");
+        let from_style = |name: &str| style.split(';').filter_map(|d| d.split_once(':')).find(|(k, _)| k.trim() == name).and_then(|(_, v)| vml_length(v.trim()));
+        let twips = |name: &str| attr(object, name).and_then(|v| v.parse::<i64>().ok()).map(|t| t * 635);
+        let size = EmuSize::new(from_style("width").or_else(|| twips("dxaOrig"))?, from_style("height").or_else(|| twips("dyaOrig"))?);
+        let look = ibis_doc_model::PictureLook { ole: ole.and_then(|o| self.ole(o, rels)), ..Default::default() };
+        Some(FlowRunKind::Picture { media, size, look })
+    }
+
+    /// The embedded object an `o:OLEObject` (or the like) names by `r:id`.
+    fn ole(&mut self, node: Node, rels: &Rels) -> Option<ibis_doc_model::OleId> {
+        if attr(node, "Type").is_some_and(|t| t == "Link") {
+            return None;
+        }
+        let rel = rels.get(rattr(node, "id")?).filter(|r| !r.external)?;
+        if let Some(found) = self.oles.get(&rel.target) {
+            return Some(*found);
+        }
+        let data = self.package.read(&rel.target).ok()?;
+        let prog_id = attr(node, "ProgID").or_else(|| attr(node, "progId")).unwrap_or("").to_string();
+        let as_icon = attr(node, "DrawAspect").is_some_and(|a| a == "Icon");
+        let id = self.presentation.add_ole(prog_id, data, as_icon);
+        self.oles.insert(rel.target.clone(), id);
+        Some(id)
     }
 
     fn drawing(&mut self, drawing: Node, rels: &Rels) -> Option<FlowRunKind> {
@@ -1553,6 +1630,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 alt_text: look.alt_text.clone(),
                 decorative: look.decorative,
                 name: look.name.clone(),
+                ole: look.ole,
             };
             let shape = Shape {
                 id,
@@ -2485,6 +2563,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         style_nodes,
         presentation: &mut presentation,
         media: HashMap::new(),
+        oles: HashMap::new(),
         last_id: 0,
         part: main.clone(),
         sources,

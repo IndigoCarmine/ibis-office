@@ -1,0 +1,40 @@
+[package]
+name = "ibis-embed-protocol"
+description = "IPC protocol between ibisOffice and external editors of embedded (OLE) objects: messages, framing, host and handler sessions, handler manifests."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+
+# Local sockets and process spawning do not exist in the browser build.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+interprocess = "2.4"
+getrandom = "0.3"
+
+# The host's side (ibisOffice): OLE objects to and from messages, previews
+# drawn. Editors leave it off.
+[features]
+host = ["dep:ibis-ooxml", "dep:resvg"]
+
+[dependencies.ibis-ooxml]
+workspace = true
+optional = true
+
+# The version GPUI already has (MPL-2.0): SVG previews drawn to PNG for Office.
+[dependencies.resvg]
+version = "=0.46.0"
+default-features = false
+features = ["text", "system-fonts", "raster-images"]
+optional = true
+
+# End to end with a presentation (tests/presentation.rs): an object read,
+# edited in the mock editor and saved.
+[dev-dependencies]
+ibis-doc-model.workspace = true
+ibis-pptx.workspace = true

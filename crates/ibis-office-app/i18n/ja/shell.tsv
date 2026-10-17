@@ -710,3 +710,19 @@ _shell.close-slide-master-view-and-notes-formatting-bef	スライド マスタ�
 _shell.could-not-create-the-gif	GIF を作れませんでした
 _shell.exporting-png	PNG に書き出しています…
 _shell.exporting-gif	GIF に書き出しています…
+embed.edit	オブジェクトを編集
+embed.no-editor	このオブジェクトを編集できるエディターが登録されていません
+embed.no-editor.detail	種類: {prog_id}。外部エディターのマニフェスト（.toml）を次のフォルダーに置いてください: {dir}
+embed.unreadable	埋め込みオブジェクトを読めませんでした
+embed.opening	{name} を起動しています…
+embed.failed	外部エディターでの編集に失敗しました
+embed.ok	OK
+embed.insert	オブジェクト
+embed.from-file	ファイルから…
+embed.no-importer.detail	.{extension} のファイルを取り込めるエディターがありません。外部エディターのマニフェストの import_extensions に書かれた種類だけを挿入できます。
+embed.not-here	ここにはオブジェクトを挿入できません
+settings.editors	外部エディター
+settings.editors.note	埋め込みオブジェクトをダブルクリックすると、その種類（ProgID）に登録されたエディターで開きます。エディターごとのマニフェスト（.toml）を次のフォルダーに置きます: {dir}
+settings.editors.none	登録されたエディターはありません
+settings.editors.open-folder	フォルダーを開く
+settings.editors.reload	読み込み直す

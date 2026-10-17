@@ -528,6 +528,8 @@ fn image_items() -> Vec<MenuEntry> {
         MenuItem::tr("image.file").icon("upload").on(|this, window, cx| this.pick_picture(window, cx)).into(),
         MenuEntry::Separator,
         Submenu::tr("pptx.insert.icon", "category", icon_menu_items()).into(),
+        #[cfg(not(target_family = "wasm"))]
+        crate::shell::embed::insert_menu(),
     ]
 }
 

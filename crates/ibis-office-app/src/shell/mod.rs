@@ -11,6 +11,8 @@
 //! editor (format.rs).
 
 pub(crate) mod editor;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod embed;
 pub(crate) mod file_actions;
 pub(crate) mod chrome;
 pub(crate) mod color_palette;

@@ -931,6 +931,10 @@ pub(crate) fn shape_xml(x: &Prefixes, shape: &Shape, id: u32, picture_rel: Optio
             line_xml(x, Some(stroke)),
             n = id - 1,
         ),
+        ShapeKind::Picture(picture) if picture.ole.is_some() => {
+            let ole = OLE_RELS.with(|o| o.borrow().get(&shape.id).cloned()).ok_or_else(|| unsupported("埋め込みオブジェクトの追加"))?;
+            ole_frame_xml(x, shape, picture, id, picture_rel.ok_or_else(|| unsupported("埋め込みオブジェクトの追加"))?, &ole)
+        }
         ShapeKind::Picture(picture) => picture_xml(x, picture, &xfrm, id, shape.id, picture_rel.ok_or_else(|| unsupported("画像の追加"))?)?,
         ShapeKind::Table(table) => table_xml(x, shape, table, id)?,
         _ => return Err(unsupported("この種類の図形（グラフなど）の追加")),
@@ -1051,6 +1055,49 @@ fn c_nv_sp_pr(x: &Prefixes, text_box: bool, shape: ibis_doc_model::ShapeId) -> S
 /// `noChangeAspect` for a new shape's locks, if it keeps its proportions.
 fn aspect_attr(shape: ibis_doc_model::ShapeId) -> &'static str {
     if ASPECT_LOCKED.with(|c| c.borrow().contains(&shape)) { " noChangeAspect=\"1\"" } else { "" }
+}
+
+thread_local! {
+    static OLE_RELS: std::cell::RefCell<std::collections::HashMap<ibis_doc_model::ShapeId, OleRel>> = Default::default();
+}
+
+/// The relationship of an embedded object of the slide being written, with
+/// what its `p:oleObj` says of it.
+#[derive(Clone, Debug)]
+pub(crate) struct OleRel {
+    pub rel: String,
+    pub prog_id: String,
+    pub as_icon: bool,
+}
+
+/// The relationships of the embedded objects of the slide being written, by shape.
+pub(crate) fn set_ole_rels(rels: std::collections::HashMap<ibis_doc_model::ShapeId, OleRel>) {
+    OLE_RELS.with(|o| *o.borrow_mut() = rels);
+}
+
+pub(crate) const OLE_URI: &str = "http://schemas.openxmlformats.org/presentationml/2006/ole";
+
+/// A new embedded object: a `p:graphicFrame` holding the `p:oleObj` (the
+/// object's part by `ole_rel`) and its preview picture (by `picture_rel`), in
+/// the plain form without the VML alternative.
+fn ole_frame_xml(x: &Prefixes, shape: &ibis_doc_model::Shape, picture: &Picture, id: u32, picture_rel: &str, ole: &OleRel) -> String {
+    let (a, p, r) = (&x.a, &x.p, &x.r);
+    let frame_xfrm = xfrm_xml(x, &format!("{p}xfrm"), shape);
+    let pic_xfrm = xfrm_xml(x, &format!("{a}xfrm"), shape);
+    let blip_ext = if is_svg_media(picture.media) {
+        format!(
+            r#"<{a}extLst><{a}ext uri="{{96DAC542-7B81-4868-9F9E-1EA1F31DC1F3}}"><asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" {r}embed="{picture_rel}"/></{a}ext></{a}extLst>"#
+        )
+    } else {
+        String::new()
+    };
+    let name = if picture.name.is_empty() { format!("Object {}", id - 1) } else { escape_attr(&picture.name) };
+    let icon = if ole.as_icon { " showAsIcon=\"1\"" } else { "" };
+    let ole_rel = &ole.rel;
+    format!(
+        "<{p}graphicFrame><{p}nvGraphicFramePr><{p}cNvPr id=\"{id}\" name=\"{name}\"/><{p}cNvGraphicFramePr><{a}graphicFrameLocks noChangeAspect=\"1\"/></{p}cNvGraphicFramePr><{p}nvPr/></{p}nvGraphicFramePr>{frame_xfrm}<{a}graphic><{a}graphicData uri=\"{OLE_URI}\"><{p}oleObj{icon} {r}id=\"{ole_rel}\" progId=\"{prog_id}\"><{p}embed/><{p}pic><{p}nvPicPr><{p}cNvPr id=\"0\" name=\"\"/><{p}cNvPicPr/><{p}nvPr/></{p}nvPicPr><{p}blipFill><{a}blip {r}embed=\"{picture_rel}\">{blip_ext}</{a}blip><{a}stretch><{a}fillRect/></{a}stretch></{p}blipFill><{p}spPr>{pic_xfrm}<{a}prstGeom prst=\"rect\"><{a}avLst/></{a}prstGeom></{p}spPr></{p}pic></{p}oleObj></{a}graphicData></{a}graphic></{p}graphicFrame>",
+        prog_id = escape_attr(&ole.prog_id),
+    )
 }
 
 thread_local! {

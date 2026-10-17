@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ibis_doc_model::{EmuRect, Fill, MediaFormat, MediaId, Presentation, Shape, ShapeId, ShapeKind, Slide, Stroke, TextBody};
+use ibis_doc_model::{EmuRect, Fill, MediaFormat, MediaId, OleId, Presentation, Shape, ShapeId, ShapeKind, Slide, Stroke, TextBody};
 use ibis_ooxml::{NodeId, Package, XmlDocument};
 
 use super::pptx::{ShapeSource, SourceMap, Target, next_part_name, relative};
@@ -19,11 +19,14 @@ use super::unsupported;
 use crate::Error;
 
 pub(super) const REL_IMAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+pub(crate) const REL_OLE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject";
+pub(crate) const OLE_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.oleObject";
 
-/// Media parts written in this save, by media id.
+/// Media parts written in this save, by media id, and the embedded objects' parts.
 #[derive(Default)]
 pub(crate) struct MediaParts {
     parts: HashMap<MediaId, String>,
+    oles: HashMap<OleId, String>,
 }
 
 /// The chart part the graphic frame at `path` of slide part `part` shows.
@@ -83,6 +86,20 @@ pub(crate) fn write_slide(
     let mut picture_rels: HashMap<ShapeId, String> = HashMap::new();
     let mut clip_rels: HashMap<ShapeId, (String, String)> = HashMap::new();
     let mut slide_media_rels: HashMap<MediaId, String> = HashMap::new();
+    // Relationships for new embedded objects, and for objects edited.
+    let mut ole_rels: HashMap<ShapeId, new::OleRel> = HashMap::new();
+    for shape in &slide.shapes {
+        let ShapeKind::Picture(picture) = &shape.kind else { continue };
+        let Some(id) = picture.ole else { continue };
+        let old = target.old.iter().find(|old| old.id == shape.id);
+        if old.is_some_and(|old| matches!(&old.kind, ShapeKind::Picture(o) if o.ole == Some(id))) {
+            continue;
+        }
+        let object = current.ole(id).ok_or_else(|| Error::new("埋め込みオブジェクトのデータがありません"))?;
+        let part = ole_part(package, current, id, media)?;
+        let rel = package.add_relationship(&target.part, REL_OLE, &relative(&target.part, &part), false)?;
+        ole_rels.insert(shape.id, new::OleRel { rel, prog_id: object.prog_id.clone(), as_icon: object.as_icon });
+    }
     for shape in slide.shapes.iter().filter(|s| {
         !old_ids.contains(&s.id)
             || match (&s.kind, target.old.iter().find(|old| old.id == s.id).map(|old| &old.kind)) {
@@ -180,6 +197,7 @@ pub(crate) fn write_slide(
     super::pptx_new::set_media_rels(slide_media_rels.clone());
     super::pptx_new::set_svg_media(svg_media_ids);
     super::pptx_new::set_clip_rels(clip_rels);
+    super::pptx_new::set_ole_rels(ole_rels.clone());
     super::pptx_new::set_aspect_locked(slide.aspect_locked.clone());
 
     // New charts (挿入 > グラフ): their parts from the template, then the
@@ -282,7 +300,7 @@ pub(crate) fn write_slide(
                 nodes.insert(shape.id, new_node);
                 created_ids.insert(shape.id, drawing_id.to_string());
             } else {
-                write_shape(doc, node, source, &old, shape, picture_rels.get(&shape.id).map(String::as_str))?;
+                write_shape(doc, node, source, &old, shape, picture_rels.get(&shape.id).map(String::as_str), ole_rels.get(&shape.id))?;
             }
         }
     }
@@ -557,7 +575,7 @@ fn remove_animations(doc: &mut XmlDocument, root: NodeId, spid: &str) {
 }
 
 /// Write the changes from `old` to `new` of one shape.
-fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &Shape, new: &Shape, picture_rel: Option<&str>) -> Result<(), Error> {
+fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &Shape, new: &Shape, picture_rel: Option<&str>, ole_rel: Option<&new::OleRel>) -> Result<(), Error> {
     // What may change: the frame, rotation and flips, text inside runs, fill and outline.
     let mut rest = old.clone();
     rest.frame = new.frame;
@@ -584,6 +602,8 @@ fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &
         }
         (ShapeKind::Picture(a), ShapeKind::Picture(b)) => {
             a.stroke = b.stroke.clone(); a.crop = b.crop; a.media = b.media;
+            // An embedded object edited: its part and preview (`p:oleObj` in a `p:graphicFrame`).
+            if doc.local_name(node) == "graphicFrame" && a.ole.is_some() && b.ole.is_some() { a.ole = b.ole; }
             // Removing known colour effects is supported; creating/replacing them is not.
             if b.duotone.is_none() { a.duotone = None; }
             if b.clear.is_none() { a.clear = None; }
@@ -628,40 +648,14 @@ fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &
             if a.soft_edge != b.soft_edge { write_shape_soft_edge(doc, node, a, b)?; }
             if a.bevel != b.bevel { write_shape_bevel(doc, node, a, b)?; }
         }
+        (ShapeKind::Picture(a), ShapeKind::Picture(b)) if doc.local_name(node) == "graphicFrame" => {
+            write_ole_frame(doc, node, a, b, picture_rel, ole_rel)?;
+        }
         (ShapeKind::Picture(a), ShapeKind::Picture(b)) => {
             if a.media != b.media {
                 let rel = picture_rel.ok_or_else(|| Error::new("置換画像の関係がありません"))?;
                 let blip = doc.path(node, &["blipFill", "blip"]).ok_or_else(|| unsupported("この画像の置換"))?;
-                let x = Prefixes::at(doc, blip);
-                doc.set_attr(blip, &format!("{}embed", x.r), rel);
-                let is_svg = super::pptx_new::is_svg_media(b.media);
-                let svg_blip = doc.descendants(blip).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "svgBlip");
-                if is_svg {
-                    if let Some(svg) = svg_blip {
-                        doc.set_attr(svg, &format!("{}embed", x.r), rel);
-                    } else {
-                        let ext_lst = match doc.child(blip, "extLst") {
-                            Some(e) => e,
-                            None => {
-                                let e = x.import(doc, &format!("<{}extLst/>", x.a))?;
-                                let at = doc.children(blip).len();
-                                doc.insert(blip, at, e);
-                                e
-                            }
-                        };
-                        let ext_xml = format!(
-                            r#"<{}ext uri="{{96DAC542-7B81-4868-9F9E-1EA1F31DC1F3}}"><asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" {}embed="{rel}"/></{}ext>"#,
-                            x.a, x.r, x.a
-                        );
-                        let ext = x.import(doc, &ext_xml)?;
-                        let at = doc.children(ext_lst).len();
-                        doc.insert(ext_lst, at, ext);
-                    }
-                } else if let Some(svg) = svg_blip {
-                    if let Some(parent_ext) = doc.parent(svg) {
-                        doc.detach(parent_ext);
-                    }
-                }
+                set_blip(doc, blip, rel, super::pptx_new::is_svg_media(b.media))?;
             }
             if a.stroke != b.stroke { write_stroke(doc, node, a.stroke.as_ref(), b.stroke.as_ref())?; }
             if a.crop != b.crop { write_picture_crop(doc, node, b.crop)?; }
@@ -1644,6 +1638,99 @@ fn write_text(doc: &mut XmlDocument, source: &ShapeSource, old: &TextBody, new: 
 const REL_VIDEO: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/video";
 const REL_AUDIO: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio";
 const REL_MEDIA_2010: &str = "http://schemas.microsoft.com/office/2007/relationships/media";
+
+/// The part of the embedded object `id`, written once in this save (`ppt/embeddings/oleObjectN.bin`).
+pub(super) fn ole_part(package: &mut Package, current: &Presentation, id: OleId, media: &mut MediaParts) -> Result<String, Error> {
+    if let Some(part) = media.oles.get(&id) {
+        return Ok(part.clone());
+    }
+    let object = current.ole(id).ok_or_else(|| Error::new("埋め込みオブジェクトのデータがありません"))?;
+    let part = next_part_name(package, "ppt/embeddings/oleObject1.bin");
+    package.set_bytes(&part, object.data.clone());
+    // By name, not by extension: `.bin` is also printer settings and the like.
+    package.set_override(&part, OLE_CONTENT_TYPE)?;
+    media.oles.insert(id, part.clone());
+    Ok(part)
+}
+
+/// An embedded object's frame after editing: its preview picture and, for
+/// a new object, its part. The VML alternative PowerPoint also writes
+/// (`mc:Choice Requires="v"`) would show the old picture, so the frame keeps
+/// the plain `p:oleObj` with its `p:pic` only.
+fn write_ole_frame(doc: &mut XmlDocument, node: NodeId, a: &ibis_doc_model::Picture, b: &ibis_doc_model::Picture, picture_rel: Option<&str>, ole_rel: Option<&new::OleRel>) -> Result<(), Error> {
+    let mut rest = a.clone();
+    rest.media = b.media;
+    rest.ole = b.ole;
+    if rest != *b {
+        return Err(unsupported("埋め込みオブジェクトの書式の変更"));
+    }
+    let Some(data) = doc.path(node, &["graphic", "graphicData"]) else { return Err(unsupported("この埋め込みオブジェクトの変更")) };
+    let objects: Vec<NodeId> = doc.descendants(data).into_iter().filter(|&n| doc.is_element(n) && doc.local_name(n) == "oleObj").collect();
+    // The one with the picture (the `mc:Fallback`'s), else the only one.
+    let object = objects.iter().copied().find(|&o| doc.child(o, "pic").is_some()).or_else(|| objects.first().copied()).ok_or_else(|| unsupported("この埋め込みオブジェクトの変更"))?;
+    if doc.child(object, "pic").is_none() {
+        return Err(unsupported("プレビュー画像のない埋め込みオブジェクトの変更"));
+    }
+    let mut alternate = doc.parent(object);
+    while let Some(n) = alternate.filter(|&n| n != data && doc.local_name(n) != "AlternateContent") {
+        alternate = doc.parent(n);
+    }
+    if let Some(alternate) = alternate.filter(|&n| n != data) {
+        doc.detach(object);
+        doc.insert_before(alternate, object);
+        doc.detach(alternate);
+    }
+    let x = Prefixes::at(doc, object);
+    if a.ole != b.ole {
+        let ole = ole_rel.ok_or_else(|| Error::new("埋め込みオブジェクトの関係がありません"))?;
+        doc.set_attr(object, &format!("{}id", x.r), &ole.rel);
+        doc.set_attr(object, "progId", &ole.prog_id);
+        // The size of the old picture and the VML shape it named no longer apply.
+        for name in ["spid", "imgW", "imgH"] {
+            doc.remove_attr(object, name);
+        }
+    }
+    if a.media != b.media {
+        let rel = picture_rel.ok_or_else(|| Error::new("置換画像の関係がありません"))?;
+        let blip = doc.path(object, &["pic", "blipFill", "blip"]).ok_or_else(|| unsupported("この埋め込みオブジェクトの画像の置換"))?;
+        set_blip(doc, blip, rel, super::pptx_new::is_svg_media(b.media))?;
+    }
+    Ok(())
+}
+
+/// `a:blip` pointing at `rel`, with the `asvg:svgBlip` extension an SVG picture also needs (and without it for others).
+fn set_blip(doc: &mut XmlDocument, blip: NodeId, rel: &str, is_svg: bool) -> Result<(), Error> {
+    let x = Prefixes::at(doc, blip);
+    doc.set_attr(blip, &format!("{}embed", x.r), rel);
+    let svg_blip = doc.descendants(blip).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "svgBlip");
+    if is_svg {
+        if let Some(svg) = svg_blip {
+            doc.set_attr(svg, &format!("{}embed", x.r), rel);
+        } else {
+            let ext_lst = match doc.child(blip, "extLst") {
+                Some(e) => e,
+                None => {
+                    let e = x.import(doc, &format!("<{}extLst/>", x.a))?;
+                    let at = doc.children(blip).len();
+                    doc.insert(blip, at, e);
+                    e
+                }
+            };
+            let ext_xml = format!(
+                r#"<{}ext uri="{{96DAC542-7B81-4868-9F9E-1EA1F31DC1F3}}"><asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" {}embed="{rel}"/></{}ext>"#,
+                x.a, x.r, x.a
+            );
+            let ext = x.import(doc, &ext_xml)?;
+            let at = doc.children(ext_lst).len();
+            doc.insert(ext_lst, at, ext);
+        }
+    } else if let Some(svg) = svg_blip
+        && let Some(parent_ext) = doc.parent(svg)
+    {
+        doc.detach(parent_ext);
+    }
+    Ok(())
+}
 
 pub(super) fn media_part(package: &mut Package, current: &Presentation, id: MediaId, media: &mut MediaParts) -> Result<String, Error> {
     if let Some(part) = media.parts.get(&id) {

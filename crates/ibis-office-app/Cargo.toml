@@ -48,6 +48,8 @@ subsetter = { version = "=0.2.6", optional = true }
 # Automatic update (shell/update.rs): the log, paths and versions it shares with ibisOfficeUpdater.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 ibis-office-updater = { path = "../ibis-office-updater" }
+# 埋め込みオブジェクトの外部エディタ (shell/embed.rs).
+ibis-embed-protocol = { workspace = true, features = ["host"] }
 
 # macOS only.
 [target.'cfg(target_os = "macos")'.dependencies]
