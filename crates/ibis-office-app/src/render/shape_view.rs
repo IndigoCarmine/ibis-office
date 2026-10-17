@@ -2491,13 +2491,8 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                         } else if stroke.dashed {
                             for (points, closed) in &subpaths {
                                 let pieces = dash_pieces(points, *closed, stroke, f32::from(width));
-                                for piece in &pieces {
-                                    for (line, w) in compound_lines(piece, false, f32::from(width), stroke.compound) {
-                                        if let Some(p) = polygon_styled(&line, Some(px(w)), false, stroke.cap, stroke.join) {
-                                            window.paint_path(p, hsla(stroke.color));
-                                        }
-                                    }
-                                }
+                                let lines = pieces.iter().flat_map(|piece| compound_lines(piece, false, f32::from(width), stroke.compound));
+                                paint_open_lines(window, lines, stroke.cap, stroke.join, hsla(stroke.color));
                                 if stroke.cap == ibis_doc_model::LineCap::Round {
                                     let w_px = f32::from(width);
                                     if stroke.compound != ibis_doc_model::LineCompound::Single && w_px >= 1.5 {
@@ -2670,6 +2665,25 @@ pub(crate) fn compound_path_styled(
 
 pub(crate) fn compound_path(subpaths: &[(Vec<Point<Pixels>>, bool)], stroke: Option<Pixels>) -> Option<Path<Pixels>> {
     compound_path_styled(subpaths, stroke, LineCap::Flat, LineJoin::Miter)
+}
+
+/// Paint open `lines`, each with its width, as one path for each width:
+/// the dashes of a line are many short lines, and a path apiece made a
+/// poster's dashed lines a thousand paths a frame to tessellate, sort and
+/// draw.
+fn paint_open_lines(window: &mut Window, lines: impl IntoIterator<Item = (Vec<Point<Pixels>>, f32)>, cap: LineCap, join: LineJoin, color: Hsla) {
+    let mut by_width: Vec<(f32, Vec<(Vec<Point<Pixels>>, bool)>)> = Vec::new();
+    for (line, w) in lines {
+        match by_width.iter_mut().find(|(width, _)| *width == w) {
+            Some((_, group)) => group.push((line, false)),
+            None => by_width.push((w, vec![(line, false)])),
+        }
+    }
+    for (w, group) in by_width {
+        if let Some(p) = compound_path_styled(&group, Some(px(w)), cap, join) {
+            window.paint_path(p, color);
+        }
+    }
 }
 
 /// Rotation and flips of a shape, applied to points in its frame.
@@ -2981,13 +2995,8 @@ fn line_element(shape: &Shape, stroke: Stroke, frame: EmuRect, scale: f32) -> Di
                         }
                     }
                 }
-                for piece in &pieces {
-                    for (line, w) in compound_lines(piece, false, f32::from(width), stroke.compound) {
-                        if let Some(p) = polygon(&line, Some(px(w)), false) {
-                            window.paint_path(p, color);
-                        }
-                    }
-                }
+                let lines = pieces.iter().flat_map(|piece| compound_lines(piece, false, f32::from(width), stroke.compound));
+                paint_open_lines(window, lines, LineCap::Flat, LineJoin::Miter, color);
                 if stroke.cap == ibis_doc_model::LineCap::Round
                     && stroke.compound != ibis_doc_model::LineCompound::Single
                     && f32::from(width) >= 1.5
