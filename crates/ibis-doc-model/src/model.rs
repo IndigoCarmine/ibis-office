@@ -20,6 +20,10 @@ pub struct ShapeId(pub u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MediaId(pub u64);
 
+/// An embedded OLE object of the presentation (see [`OleObject`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct OleId(pub u64);
+
 /// A slide layout of a presentation (see [`Layout`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LayoutId(pub u64);
@@ -246,6 +250,22 @@ pub struct Media {
     pub data: Arc<[u8]>,
 }
 
+/// An embedded OLE object (埋め込みオブジェクト): the compound file of the
+/// application that edits it (`oleObjectN.bin`), kept whole so that what
+/// ibisOffice does not understand in it is not lost. A [`Picture`] shows its
+/// preview and points at it; editing it means a new object, as a new
+/// picture means new media, so undoing goes back to the old one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OleObject {
+    pub id: OleId,
+    /// Which application's (`ChemDraw.Document.6.0`): what picks the editor.
+    pub prog_id: String,
+    /// The compound file.
+    pub data: Arc<[u8]>,
+    /// Shown as an icon instead of its content (`showAsIcon`, `DrawAspect="Icon"`).
+    pub as_icon: bool,
+}
+
 /// A font file embedded in the presentation, as stored (for PowerPoint, an
 /// Embedded OpenType file). It may only be used to show and edit this
 /// presentation, as its embedding permission allows.
@@ -344,6 +364,8 @@ pub struct Picture {
     pub decorative: bool,
     /// Object name (`wp:docPr/@name`).
     pub name: String,
+    /// The embedded object this picture is the preview of.
+    pub ole: Option<OleId>,
 }
 
 impl Picture {
@@ -363,6 +385,7 @@ impl Picture {
             alt_text: AltText::default(),
             decorative: false,
             name: String::new(),
+            ole: None,
         }
     }
 }
@@ -982,6 +1005,8 @@ pub struct Presentation {
     pub slides: Vec<Slide>,
     pub sections: Vec<Section>,
     pub media: Vec<Media>,
+    /// The embedded OLE objects, shared by the pictures showing them.
+    pub oles: Vec<OleObject>,
     pub fonts: Vec<EmbeddedFont>,
     /// A flowing document (Word), laid out into the slides as pages by the
     /// viewer.
@@ -1302,7 +1327,7 @@ impl Presentation {
     /// A presentation with no slides yet, for a reader to fill. It must end up
     /// with at least one slide.
     pub fn empty(slide_size: EmuSize) -> Self {
-        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), fonts: Vec::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), next_id: 1 }
+        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), oles: Vec::new(), fonts: Vec::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), next_id: 1 }
     }
 
     /// Look up a custom show by its numeric identifier.
@@ -1501,6 +1526,17 @@ impl Presentation {
 
     pub fn media(&self, id: MediaId) -> Option<&Media> {
         self.media.iter().find(|m| m.id == id)
+    }
+
+    /// Store an embedded object and return its id.
+    pub fn add_ole(&mut self, prog_id: impl Into<String>, data: impl Into<Arc<[u8]>>, as_icon: bool) -> OleId {
+        let id = OleId(self.next_id());
+        self.oles.push(OleObject { id, prog_id: prog_id.into(), data: data.into(), as_icon });
+        id
+    }
+
+    pub fn ole(&self, id: OleId) -> Option<&OleObject> {
+        self.oles.iter().find(|o| o.id == id)
     }
 
     pub fn slide(&self, id: SlideId) -> Option<&Slide> {

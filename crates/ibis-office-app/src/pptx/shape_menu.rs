@@ -19,7 +19,18 @@ impl SlideEditor {
         let has_selection = !self.selected_ids().is_empty();
         let range = self.text_editing().is_some_and(|e| !e.range().is_empty());
         let can_copy = if editing { range } else { has_selection && self.selected_shapes().iter().all(|s| ibis_pptx::save::check_shape_insertion(s).is_ok()) };
-        let mut entries: Vec<MenuEntry> = vec![
+        let mut entries: Vec<MenuEntry> = Vec::new();
+        // An embedded object: its editor first, as a double click opens it.
+        #[cfg(not(target_family = "wasm"))]
+        if !editing
+            && let [id] = self.selected_ids()[..]
+            && self.is_embedded(crate::shell::embed::Target::Shape { slide: self.current_slide, shape: id })
+        {
+            let target = crate::shell::embed::Target::Shape { slide: self.current_slide, shape: id };
+            entries.push(MenuItem::tr("embed.edit").icon("edit").on(move |e, w, cx| e.edit_embedded(target, w, cx)).into());
+            entries.push(MenuEntry::Separator);
+        }
+        entries.extend(vec![
             MenuItem::tr("edit.cut").icon("content_cut").shortcut("⌘X").disabled(!can_copy).on(|e, _, cx| {
                 if e.text_editing().is_some() {
                     e.copy_edited_text(true, cx);
@@ -41,7 +52,7 @@ impl SlideEditor {
                     e.paste_from_clipboards(w, cx);
                 }
             }).into(),
-        ];
+        ]);
         if editing || !has_selection {
             return entries;
         }

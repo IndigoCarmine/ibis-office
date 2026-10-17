@@ -4,7 +4,8 @@
 //! 図の圧縮 and picture replacement leave the old picture's part behind (its
 //! relationship still in the slide): when the pictures the slides show
 //! changed, the relationships no slide names are taken off, and the media
-//! parts nothing relates to.
+//! parts nothing relates to. So for an embedded object edited (a new
+//! `oleObjectN.bin`) or removed.
 
 use std::collections::HashSet;
 
@@ -14,6 +15,7 @@ use ibis_ooxml::Package;
 use crate::Error;
 
 const REL_IMAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const REL_OLE: &str = super::pptx_shapes::REL_OLE;
 
 /// The pictures the slides show: (shape, medium).
 fn pictures(p: &Presentation) -> Vec<(ibis_doc_model::ShapeId, ibis_doc_model::MediaId)> {
@@ -22,6 +24,18 @@ fn pictures(p: &Presentation) -> Vec<(ibis_doc_model::ShapeId, ibis_doc_model::M
         .flat_map(|s| s.shapes.iter())
         .filter_map(|s| match &s.kind {
             ShapeKind::Picture(pic) => Some((s.id, pic.media)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The embedded objects the slides show: (shape, object).
+fn objects(p: &Presentation) -> Vec<(ibis_doc_model::ShapeId, ibis_doc_model::OleId)> {
+    p.slides
+        .iter()
+        .flat_map(|s| s.shapes.iter())
+        .filter_map(|s| match &s.kind {
+            ShapeKind::Picture(ibis_doc_model::Picture { ole: Some(ole), .. }) => Some((s.id, *ole)),
             _ => None,
         })
         .collect()
@@ -37,7 +51,10 @@ fn diagrams(p: &Presentation) -> Vec<ibis_doc_model::ShapeId> {
 pub(crate) fn changed(baseline: &Presentation, current: &Presentation) -> bool {
     let now = pictures(current);
     let diagrams_now = diagrams(current);
-    pictures(baseline).iter().any(|(shape, media)| now.iter().any(|(s, m)| s == shape && m != media)) || diagrams(baseline).iter().any(|d| !diagrams_now.contains(d))
+    let objects_now = objects(current);
+    pictures(baseline).iter().any(|(shape, media)| now.iter().any(|(s, m)| s == shape && m != media))
+        || diagrams(baseline).iter().any(|d| !diagrams_now.contains(d))
+        || objects(baseline).iter().any(|o| !objects_now.contains(o))
 }
 
 /// A relationship to a part of a SmartArt graphic (`dgm:relIds` and the
@@ -59,7 +76,7 @@ pub(crate) fn prune(package: &mut Package, parts: &[String]) -> Result<(), Error
             root.map(|r| doc.descendants(r)).unwrap_or_default().into_iter().filter(|&n| doc.is_element(n)).flat_map(|n| doc.attributes(n).iter().map(|a| a.value.clone()).collect::<Vec<_>>()).collect()
         };
         for rel in package.relationships(part)? {
-            if (rel.kind == REL_IMAGE || is_diagram_rel(&rel.kind) && !rel.kind.ends_with("/diagramDrawing")) && !rel.external && !named.contains(&rel.id) {
+            if (rel.kind == REL_IMAGE || rel.kind == REL_OLE || is_diagram_rel(&rel.kind) && !rel.kind.ends_with("/diagramDrawing")) && !rel.external && !named.contains(&rel.id) {
                 package.remove_relationship(part, &rel.id)?;
             }
         }
@@ -96,7 +113,8 @@ pub(crate) fn prune(package: &mut Package, parts: &[String]) -> Result<(), Error
             }
         }
     }
-    for name in names.iter().filter(|n| n.starts_with("ppt/media/") || n.starts_with("ppt/diagrams/") && !n.contains("_rels/")) {
+    let swept = |n: &str| n.starts_with("ppt/media/") || n.starts_with("ppt/embeddings/oleObject") || n.starts_with("ppt/diagrams/") && !n.contains("_rels/");
+    for name in names.iter().filter(|n| swept(n)) {
         if !referenced.contains(name) {
             package.remove(name);
             package.remove_override(name)?;

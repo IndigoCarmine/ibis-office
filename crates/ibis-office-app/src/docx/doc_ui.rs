@@ -793,6 +793,16 @@ impl SlideEditor {
                 return;
             }
         }
+        // Two clicks on an embedded object: its editor (埋め込みオブジェクトの編集).
+        #[cfg(not(target_family = "wasm"))]
+        if event.click_count == 2
+            && let Some(at) = self.inline_object_near(pos)
+        {
+            self.set_caret(at, false, cx);
+            self.set_caret(ibis_doc_model::FlowPos::new(at.para, at.offset + 1), true, cx);
+            self.edit_embedded(crate::shell::embed::Target::Inline(at), window, cx);
+            return;
+        }
         if event.click_count == 2 {
             let (a, b) = self.word_at(pos);
             self.set_caret(a, false, cx);

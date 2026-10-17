@@ -1129,6 +1129,16 @@ impl SlideEditor {
                     }
                     return;
                 }
+                // Two clicks on an embedded object: its editor (埋め込みオブジェクトの編集).
+                #[cfg(not(target_family = "wasm"))]
+                if event.click_count >= 2 {
+                    let target = crate::shell::embed::Target::Shape { slide: self.current_slide, shape: id };
+                    if self.is_embedded(target) {
+                        self.set_selection(vec![id]);
+                        self.edit_embedded(target, window, cx);
+                        return;
+                    }
+                }
                 if event.click_count >= 2 && self.slide().shape(id).is_some_and(|s| s.text_body().is_some()) {
                     self.set_selection(vec![id]);
                     self.begin_text_edit(id, false, false, window, cx);

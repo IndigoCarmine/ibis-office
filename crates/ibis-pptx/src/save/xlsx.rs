@@ -49,6 +49,8 @@ mod slicers;
 mod externals;
 #[path = "xlsx_shapes.rs"]
 mod shape_edits;
+#[path = "xlsx_objects.rs"]
+mod objects;
 
 /// Where the things of a workbook's model came from.
 #[derive(Clone, Debug, Default)]
@@ -71,6 +73,8 @@ pub struct SourceMap {
     pub charts: Vec<ChartSource>,
     /// The sheets' shapes in drawings as read, for saving changes to them (e.g. alt text).
     pub shapes: Vec<XlsxShapeSource>,
+    /// The sheets' embedded objects (`oleObjects`) as read, for saving them edited.
+    pub objects: Vec<XlsxObjectSource>,
     /// Each external workbook link's part (`xl/externalLinks/externalLink1.xml`),
     /// in the order `[1]`… number them.
     pub external_parts: Vec<Option<String>>,
@@ -84,6 +88,17 @@ pub struct ChartSource {
     pub chart: String,
     pub drawing: String,
     pub frame_id: Option<String>,
+}
+
+/// Where an embedded object on a sheet came from: its sheet part, its
+/// `oleObject`'s relationship and its preview's (`objectPr/@r:id`), both of
+/// the sheet part.
+#[derive(Clone, Debug)]
+pub struct XlsxObjectSource {
+    pub shape: ibis_doc_model::ShapeId,
+    pub sheet: String,
+    pub object_rel: String,
+    pub image_rel: Option<String>,
 }
 
 /// Where a shape, picture, or graphic frame on a sheet came from in drawings:
@@ -262,6 +277,8 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
         // Slicers deleted: their parts go (below); the rest is compared.
         let removed: Vec<ibis_doc_model::Shape> = old_shapes.iter().filter(|s| matches!(s.kind, ShapeKind::Slicer(_)) && !new_shapes.iter().any(|n| n.id == s.id)).cloned().collect();
         let old_shapes: Vec<ibis_doc_model::Shape> = old_shapes.into_iter().filter(|s| !removed.iter().any(|r| r.id == s.id)).collect();
+        // Embedded objects edited (their content and picture): written apart.
+        let old_shapes = write_object_edits(writer.package, &writer.map.objects, current, new, old_shapes, &new_shapes)?;
         if old_shapes != new_shapes {
             write_charts(writer.package, &writer.map.charts, new, &old_shapes, &new_shapes, chart_data)?;
         }
@@ -2414,6 +2431,80 @@ fn move_chart_drawings(
     }
 
     Ok(moved_chart_ids)
+}
+
+/// The embedded objects of a sheet edited in their editors: the new object
+/// written over its part, its new picture related from `objectPr` (and the
+/// ProgID set, if it changed); one moved or resized gets its anchors set
+/// anew. They are then like the new ones in `old`, for the rest to be
+/// compared. Another change (rotation, a picture format) is not saved yet.
+fn write_object_edits(package: &mut Package, sources: &[XlsxObjectSource], current: &Presentation, sheet: &Sheet, mut old: Vec<ibis_doc_model::Shape>, new: &[ibis_doc_model::Shape]) -> Result<Vec<ibis_doc_model::Shape>, Error> {
+    for a in old.iter_mut() {
+        let Some(source) = sources.iter().find(|s| s.shape == a.id) else { continue };
+        let Some(b) = new.iter().find(|n| n.id == a.id) else { continue };
+        if *a == *b {
+            continue;
+        }
+        let (ShapeKind::Picture(pa), ShapeKind::Picture(pb)) = (&a.kind, &b.kind) else { return Err(unsupported("ブックの埋め込みオブジェクトの変更")) };
+        let mut rest = pa.clone();
+        rest.media = pb.media;
+        rest.ole = pb.ole;
+        if rest != *pb || (a.rotation, a.flip_h, a.flip_v) != (b.rotation, b.flip_h, b.flip_v) {
+            return Err(unsupported("ブックの埋め込みオブジェクトの回転・書式の変更"));
+        }
+        if a.frame != b.frame {
+            objects::move_object(package, source, sheet, b.frame)?;
+        }
+        if pa.ole != pb.ole {
+            let object = pb.ole.and_then(|id| current.ole(id)).ok_or_else(|| unsupported("ブックの埋め込みオブジェクトの削除"))?;
+            let rels = package.relationships(&source.sheet)?;
+            let target = rels.iter().find(|r| r.id == source.object_rel).and_then(|r| r.target_part(&source.sheet)).ok_or_else(|| Error::new("埋め込みオブジェクトのパーツがありません"))?;
+            package.set_bytes(&target, object.data.clone());
+            let prog_id = object.prog_id.clone();
+            let doc = package.xml_mut(&source.sheet)?;
+            let root = doc.root_element().ok_or_else(|| Error::new("シートが空です"))?;
+            let objects: Vec<NodeId> = doc.descendants(root).into_iter().filter(|&n| doc.is_element(n) && doc.local_name(n) == "oleObject").collect();
+            for n in objects {
+                if doc.attributes(n).iter().any(|at| at.name.ends_with(":id") && at.value == source.object_rel) && doc.attr(n, "progId") != Some(prog_id.as_str()) {
+                    doc.set_attr(n, "progId", &prog_id);
+                }
+            }
+        }
+        if pa.media != pb.media {
+            let image_rel = source.image_rel.as_deref().ok_or_else(|| unsupported("プレビューの無い埋め込みオブジェクトの変更"))?;
+            let part = shape_edits::write_image(package, current, pb.media)?;
+            objects::set_vml_image(package, source, &part)?;
+            let rel = package.add_relationship(&source.sheet, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image", &super::pptx::relative(&source.sheet, &part), false)?;
+            let doc = package.xml_mut(&source.sheet)?;
+            let root = doc.root_element().ok_or_else(|| Error::new("シートが空です"))?;
+            let prs: Vec<NodeId> = doc.descendants(root).into_iter().filter(|&n| doc.is_element(n) && doc.local_name(n) == "objectPr").collect();
+            for pr in prs {
+                let names: Vec<String> = doc.attributes(pr).iter().filter(|at| at.name.ends_with(":id") && at.value == image_rel).map(|at| at.name.clone()).collect();
+                for name in names {
+                    doc.set_attr(pr, &name, &rel);
+                }
+            }
+            // The old picture, if nothing else shows it.
+            let old_target = package.relationships(&source.sheet)?.into_iter().find(|r| r.id == image_rel).and_then(|r| r.target_part(&source.sheet));
+            package.remove_relationship(&source.sheet, image_rel)?;
+            if let Some(old_target) = old_target {
+                let still = package.names().filter(|n| n.ends_with(".rels")).map(str::to_string).collect::<Vec<_>>();
+                let mut used = false;
+                for rels in still {
+                    let owner = rels.replace("_rels/", "").trim_end_matches(".rels").to_string();
+                    if package.relationships(&owner)?.iter().any(|r| r.target_part(&owner).as_deref() == Some(old_target.as_str())) {
+                        used = true;
+                        break;
+                    }
+                }
+                if !used {
+                    package.remove(&old_target);
+                }
+            }
+        }
+        *a = b.clone();
+    }
+    Ok(old)
 }
 
 /// A sheet's charts changed in the app: one moved or resized gets its

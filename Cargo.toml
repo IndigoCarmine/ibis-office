@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ibis-calc", "crates/ibis-doc-model", "crates/ibis-ooxml", "crates/ibis-emf", "crates/ibis-eot", "crates/ibis-imgdiff", "crates/ibis-pptx", "crates/ibis-office-updater", "crates/ibis-office-app", "tools/ibis-bench"]
+members = ["crates/ibis-calc", "crates/ibis-doc-model", "crates/ibis-ooxml", "crates/ibis-emf", "crates/ibis-eot", "crates/ibis-imgdiff", "crates/ibis-pptx", "crates/ibis-office-updater", "crates/ibis-office-app", "crates/ibis-embed-protocol", "tools/ibis-bench", "tools/ibis-embed-mock", "tools/ibis-embed-mock-app"]
 # The GPUI forks under forks/ are separate packages patched in below, not members.
 exclude = ["forks"]
 
@@ -16,6 +16,7 @@ ibis-pptx = { path = "crates/ibis-pptx" }
 ibis-ooxml = { path = "crates/ibis-ooxml" }
 ibis-emf = { path = "crates/ibis-emf" }
 ibis-eot = { path = "crates/ibis-eot" }
+ibis-embed-protocol = { path = "crates/ibis-embed-protocol" }
 # gpui-kit pins the exact gpui-pre snapshot it was built against.
 gpui-kit = "=0.6.6"
 

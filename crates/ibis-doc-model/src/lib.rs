@@ -58,7 +58,7 @@ pub use animation::{Animation, AnimationAfterEffect, AnimationClass, AnimationLo
 pub use model::{
     AltText, AutoShape, Clip, ClipOptions, Crop, CustomShow, EmbeddedFont, FloatingAnchor, Layout, LayoutId, LayoutPlaceholder, LayoutScale, Master, MasterId, NotesDate, NotesMarks, MediaBookmark, MediaCaptionTrack, MediaStart, MediaVolume, PlaceholderRef, SlidePlaceholder, Media, MediaFormat, MediaId, Picture, PictureWrapType, Placeholder, Presentation, Shape,
     Section, ShapeGroup, GroupMember, ShapeId, ShapeKind, ShowProperties, ShowSlideRange, ShowType, Slide, SlideId, Tilt, Transition, TransitionSound,
-    ModifyVerifier, ObjectDefaults, ObjectPlacement, ShapeDefault,
+    ModifyVerifier, ObjectDefaults, ObjectPlacement, OleId, OleObject, ShapeDefault,
 };
 pub use shape_geometry::{FormulaGeometry, GeometryDef, GeometryPath, Guide, Outline, PathFill, PathOp, Subpath};
 pub use sheet::{

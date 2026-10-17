@@ -712,3 +712,19 @@ _shell.close-slide-master-view-and-notes-formatting-bef	Close Slide Master View 
 _shell.could-not-create-the-gif	Could not create the GIF.
 _shell.exporting-png	Exporting PNG…
 _shell.exporting-gif	Exporting GIF…
+embed.edit	Edit Object
+embed.no-editor	No editor is registered for this object
+embed.no-editor.detail	Kind: {prog_id}. Put the external editor's manifest (.toml) in this folder: {dir}
+embed.unreadable	Could not read the embedded object
+embed.opening	Starting {name}…
+embed.failed	Editing in the external editor failed
+embed.ok	OK
+embed.insert	Object
+embed.from-file	From File…
+embed.no-importer.detail	No editor imports .{extension} files. Only the kinds in an external editor manifest's import_extensions can be inserted.
+embed.not-here	An object cannot be inserted here
+settings.editors	External Editors
+settings.editors.note	Double-clicking an embedded object opens it in the editor registered for its kind (ProgID). Put a manifest (.toml) for each editor in this folder: {dir}
+settings.editors.none	No editors are registered
+settings.editors.open-folder	Open Folder
+settings.editors.reload	Reload

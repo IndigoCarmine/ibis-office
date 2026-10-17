@@ -2284,6 +2284,9 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             sub.items.push(MenuItem::tr("docx.image.file").icon("upload_file").on(|this, window, cx| this.doc_pick_picture(window, cx)).into());
         }
     }
+    // 挿入 > オブジェクト: the external editors' objects.
+    #[cfg(not(target_family = "wasm"))]
+    menus.items_mut(MenuId::Insert).push(crate::shell::embed::insert_menu());
     // 挿入 > 表: tables of a few sizes.
     for entry in menus.items_mut(MenuId::Insert) {
         if let MenuEntry::Submenu(sub) = entry

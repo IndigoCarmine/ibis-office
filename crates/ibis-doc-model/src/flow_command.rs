@@ -1265,6 +1265,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             alt_text: look.alt_text.clone(),
                             decorative: look.decorative,
                             name: look.name.clone(),
+                            ole: look.ole,
                         };
                         let shape = crate::model::Shape {
                             id: crate::model::ShapeId(shape_id as u64),
@@ -1294,6 +1295,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
                             name: pic.name.clone(),
+                            ole: pic.ole,
                         };
                         run.kind = FlowRunKind::Picture { media, size, look };
                     } else {
@@ -1341,6 +1343,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
                             name: pic.name.clone(),
+                            ole: pic.ole,
                         };
                         run.kind = FlowRunKind::Picture { media, size, look };
                     } else {
@@ -1363,6 +1366,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         alt_text: look.alt_text.clone(),
                         decorative: look.decorative,
                         name: look.name.clone(),
+                        ole: look.ole,
                     };
                     let shape = crate::model::Shape {
                         id: crate::model::ShapeId(shape_id as u64),

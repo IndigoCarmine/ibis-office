@@ -371,6 +371,9 @@ pub struct SlideEditor {
     pub(crate) slideshow: Option<crate::pptx::slideshow::Slideshow>,
     /// Decoded pictures and fonts for the open presentation.
     pub(crate) resources: Resources,
+    /// The external editors open on embedded objects of the document.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) embed_sessions: crate::shell::embed::Sessions,
     /// Redraws the editor as pictures decode (`watch_pictures`).
     picture_watch: Option<Task<()>>,
     /// The slide list's pictures of the slides, cached views (`thumbnails.rs`).
@@ -575,6 +578,8 @@ impl SlideEditor {
             _zoom_dialog_subscription: zoom_dialog_subscription,
             slideshow: None,
             resources,
+            #[cfg(not(target_family = "wasm"))]
+            embed_sessions: Default::default(),
             picture_watch: None,
             thumbnail_previews: Default::default(),
             thumbnail_epoch: 0,
@@ -676,6 +681,8 @@ impl SlideEditor {
         let is_reading = presentation.flow.as_ref().is_some_and(|f| f.view_mode == ibis_doc_model::DocumentViewMode::Reading);
         let is_outline = presentation.flow.as_ref().is_some_and(|f| f.view_mode == ibis_doc_model::DocumentViewMode::Outline);
         self.document = Document::new(presentation);
+        #[cfg(not(target_family = "wasm"))]
+        self.embed_sessions.close_all();
         self.source = None;
         #[cfg(not(target_family = "wasm"))]
         {
@@ -2941,6 +2948,15 @@ impl SlideEditor {
             }
         }
         if event.click_count >= 2 {
+            // An embedded object: its editor (埋め込みオブジェクトの編集).
+            #[cfg(not(target_family = "wasm"))]
+            {
+                let target = crate::shell::embed::Target::Shape { slide: self.current_slide, shape };
+                if self.is_embedded(target) {
+                    self.set_selection(vec![shape]);
+                    return self.edit_embedded(target, window, cx);
+                }
+            }
             return self.begin_edit(shape, false, window, cx);
         }
         self.commit_edit(window, cx);

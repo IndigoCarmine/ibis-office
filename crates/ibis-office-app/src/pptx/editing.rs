@@ -2275,7 +2275,7 @@ impl SlideEditor {
         let media = self.document.ids().add_media(format, data.clone());
         self.resources.add_picture(media, format, &data);
         let id = self.document.ids().new_shape_id();
-        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name: String::new(), shadow: None, reflection: None, soft_edge: None };
+        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name: String::new(), shadow: None, reflection: None, soft_edge: None, ole: None };
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let slide = self.current_slide;
         let mut commands = Vec::new();
@@ -2316,7 +2316,7 @@ impl SlideEditor {
         self.resources.add_picture(media, format, &data);
         let id = self.document.ids().new_shape_id();
         let name = format!("Icon: {icon_name}");
-        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name, shadow: None, reflection: None, soft_edge: None };
+        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name, shadow: None, reflection: None, soft_edge: None, ole: None };
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let slide = self.current_slide;
         let mut commands = Vec::new();

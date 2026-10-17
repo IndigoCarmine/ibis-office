@@ -1,0 +1,12 @@
+# Copy into ibisOffice's embed-handlers/ folder (設定 > 外部エディター > フォルダーを開く)
+# and set command to the built program (target/debug/ibis-embed-mock-app).
+id = "jp.ibis.embed-mock-app"
+command = "/path/to/ibis-embed-mock-app"
+prog_ids = ["IbisOffice.Mock", "Example.Drawing"]
+new_object = true
+import_extensions = ["txt"]
+export_extensions = ["txt"]
+
+[name]
+ja = "モック（テキスト）"
+en = "Mock (text)"
