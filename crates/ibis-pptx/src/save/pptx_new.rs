@@ -1068,6 +1068,15 @@ pub(crate) struct OleRel {
     pub rel: String,
     pub prog_id: String,
     pub as_icon: bool,
+    /// `imgW` and `imgH`: the size the object's application draws it at.
+    pub natural: Option<(i64, i64)>,
+}
+
+impl OleRel {
+    /// ` imgW="…" imgH="…"`, when the size is known.
+    pub(crate) fn img_size_attrs(&self) -> String {
+        self.natural.map(|(w, h)| format!(" imgW=\"{w}\" imgH=\"{h}\"")).unwrap_or_default()
+    }
 }
 
 /// The relationships of the embedded objects of the slide being written, by shape.
@@ -1093,6 +1102,7 @@ fn ole_frame_xml(x: &Prefixes, shape: &ibis_doc_model::Shape, picture: &Picture,
     };
     let name = if picture.name.is_empty() { format!("Object {}", id - 1) } else { escape_attr(&picture.name) };
     let icon = if ole.as_icon { " showAsIcon=\"1\"" } else { "" };
+    let icon = format!("{icon}{}", ole.img_size_attrs());
     let ole_rel = &ole.rel;
     format!(
         "<{p}graphicFrame><{p}nvGraphicFramePr><{p}cNvPr id=\"{id}\" name=\"{name}\"/><{p}cNvGraphicFramePr><{a}graphicFrameLocks noChangeAspect=\"1\"/></{p}cNvGraphicFramePr><{p}nvPr/></{p}nvGraphicFramePr>{frame_xfrm}<{a}graphic><{a}graphicData uri=\"{OLE_URI}\"><{p}oleObj{icon} {r}id=\"{ole_rel}\" progId=\"{prog_id}\"><{p}embed/><{p}pic><{p}nvPicPr><{p}cNvPr id=\"0\" name=\"\"/><{p}cNvPicPr/><{p}nvPr/></{p}nvPicPr><{p}blipFill><{a}blip {r}embed=\"{picture_rel}\">{blip_ext}</{a}blip><{a}stretch><{a}fillRect/></{a}stretch></{p}blipFill><{p}spPr>{pic_xfrm}<{a}prstGeom prst=\"rect\"><{a}avLst/></{a}prstGeom></{p}spPr></{p}pic></{p}oleObj></{a}graphicData></{a}graphic></{p}graphicFrame>",

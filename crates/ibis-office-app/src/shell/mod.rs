@@ -13,6 +13,8 @@
 pub(crate) mod editor;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod embed;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod ole_clipboard;
 pub(crate) mod file_actions;
 pub(crate) mod chrome;
 pub(crate) mod color_palette;

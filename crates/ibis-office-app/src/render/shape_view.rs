@@ -198,6 +198,13 @@ impl Resources {
         }
     }
 
+    /// A picture drawn in place of `media`, which cannot be drawn itself (an
+    /// embedded object's vector EMF, drawn again by the object's editor).
+    /// Only the screen shows it: the document keeps `media`.
+    pub(crate) fn set_stand_in(&mut self, media: MediaId, png: &[u8]) {
+        self.images.insert(media, Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec())));
+    }
+
     /// The original pixel dimensions of `media`.
     pub(crate) fn image_size(&self, media: MediaId) -> Option<(u32, u32)> {
         self.sizes.get(&media).copied()

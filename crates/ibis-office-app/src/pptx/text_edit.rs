@@ -409,6 +409,15 @@ impl SlideEditor {
     /// apart by a blank line). The shapes themselves are kept here (for pasting here).
     pub(crate) fn write_shapes_to_system_clipboard(&mut self, cx: &mut Context<Self>) {
         let shapes: Vec<ibis_doc_model::Shape> = self.selected_shapes().into_iter().cloned().collect();
+        // One embedded object: as the object, for Office and its application.
+        #[cfg(not(target_family = "wasm"))]
+        if let [one] = shapes.as_slice()
+            && let ibis_doc_model::ShapeKind::Picture(p) = &one.kind
+            && p.ole.is_some()
+            && self.copy_embedded(p, (one.frame.width, one.frame.height))
+        {
+            return;
+        }
         let picture = match shapes.as_slice() {
             [one] => match &one.kind {
                 ibis_doc_model::ShapeKind::Picture(p) => self.presentation().media(p.media).and_then(|m| {
@@ -455,6 +464,11 @@ impl SlideEditor {
 
     /// ⌘V with no text edited and no shapes copied: the clipboard's text in a new text box in the middle of the slide.
     pub(crate) fn paste_text_as_text_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // An object copied in its application (OLE) stays one.
+        #[cfg(not(target_family = "wasm"))]
+        if self.paste_embedded(cx) {
+            return true;
+        }
         // A picture (a screenshot, a copied image) or picture files (copied in the Finder) come first.
         if let Some(item) = cx.read_from_clipboard() {
             let mut inserted = false;

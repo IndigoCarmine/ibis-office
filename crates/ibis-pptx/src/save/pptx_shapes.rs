@@ -98,7 +98,7 @@ pub(crate) fn write_slide(
         let object = current.ole(id).ok_or_else(|| Error::new("埋め込みオブジェクトのデータがありません"))?;
         let part = ole_part(package, current, id, media)?;
         let rel = package.add_relationship(&target.part, REL_OLE, &relative(&target.part, &part), false)?;
-        ole_rels.insert(shape.id, new::OleRel { rel, prog_id: object.prog_id.clone(), as_icon: object.as_icon });
+        ole_rels.insert(shape.id, new::OleRel { rel, prog_id: object.prog_id.clone(), as_icon: object.as_icon, natural: object.natural });
     }
     for shape in slide.shapes.iter().filter(|s| {
         !old_ids.contains(&s.id)
@@ -1688,6 +1688,11 @@ fn write_ole_frame(doc: &mut XmlDocument, node: NodeId, a: &ibis_doc_model::Pict
         // The size of the old picture and the VML shape it named no longer apply.
         for name in ["spid", "imgW", "imgH"] {
             doc.remove_attr(object, name);
+        }
+        // The new one's, so Office keeps the object's scale when its application changes it.
+        if let Some((w, h)) = ole.natural {
+            doc.set_attr(object, "imgW", &w.to_string());
+            doc.set_attr(object, "imgH", &h.to_string());
         }
     }
     if a.media != b.media {

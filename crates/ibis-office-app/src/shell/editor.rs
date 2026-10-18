@@ -724,6 +724,9 @@ impl SlideEditor {
         } else {
             self.focus_handle.focus(window, cx);
         }
+        // Embedded objects whose pictures cannot be drawn here, drawn by their editors.
+        #[cfg(not(target_family = "wasm"))]
+        self.render_embedded_previews(window, cx);
         cx.notify();
     }
 

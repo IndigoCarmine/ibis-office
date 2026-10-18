@@ -87,6 +87,11 @@ impl SlideEditor {
         let item = cx.read_from_clipboard();
         let text = item.as_ref().and_then(|c| c.text()).unwrap_or_default();
         let clip = self.sheet_state().and_then(|s| s.clip.clone()).filter(|c| c.text == text);
+        // An object copied in its application (OLE) stays one.
+        #[cfg(not(target_family = "wasm"))]
+        if clip.is_none() && !plain && self.paste_embedded(cx) {
+            return;
+        }
         if clip.is_none() && text.is_empty() {
             if let Some(item) = &item {
                 if let Some(ClipboardEntry::Image(image)) = item.entries().iter().find(|e| matches!(e, ClipboardEntry::Image(_))) {

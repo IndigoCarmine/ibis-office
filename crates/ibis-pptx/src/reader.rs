@@ -2144,6 +2144,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         // PowerPoint's `showAsIcon`, Excel's `dvAspect`.
         let as_icon = attr(node, "showAsIcon").is_some_and(|v| v == "1" || v == "true") || attr(node, "dvAspect") == Some("DVASPECT_ICON");
         let id = self.presentation.add_ole(prog_id, data, as_icon);
+        let emu = |name: &str| attr(node, name).and_then(|v| v.trim().parse::<i64>().ok());
+        self.presentation.set_ole_natural(id, emu("imgW").zip(emu("imgH")));
         self.oles.insert(rel.target.clone(), id);
         Some(id)
     }

@@ -264,6 +264,10 @@ pub struct OleObject {
     pub data: Arc<[u8]>,
     /// Shown as an icon instead of its content (`showAsIcon`, `DrawAspect="Icon"`).
     pub as_icon: bool,
+    /// The size its application draws it at, in EMU (PowerPoint's `imgW` and
+    /// `imgH`): against the frame, the scale it is shown at, which Office
+    /// keeps when the application changes the object.
+    pub natural: Option<(i64, i64)>,
 }
 
 /// A font file embedded in the presentation, as stored (for PowerPoint, an
@@ -1531,8 +1535,15 @@ impl Presentation {
     /// Store an embedded object and return its id.
     pub fn add_ole(&mut self, prog_id: impl Into<String>, data: impl Into<Arc<[u8]>>, as_icon: bool) -> OleId {
         let id = OleId(self.next_id());
-        self.oles.push(OleObject { id, prog_id: prog_id.into(), data: data.into(), as_icon });
+        self.oles.push(OleObject { id, prog_id: prog_id.into(), data: data.into(), as_icon, natural: None });
         id
+    }
+
+    /// The size the application of object `id` draws it at (see [`OleObject::natural`]).
+    pub fn set_ole_natural(&mut self, id: OleId, natural: Option<(i64, i64)>) {
+        if let Some(object) = self.oles.iter_mut().find(|o| o.id == id) {
+            object.natural = natural.filter(|&(w, h)| w > 0 && h > 0);
+        }
     }
 
     pub fn ole(&self, id: OleId) -> Option<&OleObject> {

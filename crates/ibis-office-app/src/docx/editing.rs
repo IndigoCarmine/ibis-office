@@ -2200,6 +2200,11 @@ impl SlideEditor {
 
     /// 通常の貼り付け (Word Options の貼付の既定動作に従う, DOCX-OPTIONS-006).
     pub(crate) fn paste_text(&mut self, cx: &mut Context<Self>) {
+        // An object copied in its application (OLE) stays one.
+        #[cfg(not(target_family = "wasm"))]
+        if self.default_paste_mode != crate::shell::editor::DefaultPasteMode::KeepTextOnly && self.paste_embedded(cx) {
+            return;
+        }
         if self.paste_clipboard_image(cx) {
             return;
         }

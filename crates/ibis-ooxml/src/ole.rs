@@ -74,6 +74,12 @@ impl OleStorage {
 
     /// The class, ProgID and user type, written to the root and `\u{1}CompObj`.
     pub fn set_class(&mut self, clsid: [u8; 16], prog_id: &str, user_type: &str) {
+        // The same class keeps `\u{1}CompObj` as its application wrote it
+        // (with what else it names, such as its clipboard format).
+        let same = self.clsid == clsid && self.prog_id.as_deref() == Some(prog_id) && self.user_type.as_deref() == Some(user_type);
+        if same && self.items.iter().any(|i| i.path == COMP_OBJ) {
+            return;
+        }
         self.clsid = clsid;
         self.prog_id = Some(prog_id.to_string());
         self.user_type = Some(user_type.to_string());
@@ -273,5 +279,28 @@ mod tests {
         ansi(&mut d, "Old.Prog.1");
         assert_eq!(parse_comp_obj(&d), (Some("Old Type".into()), Some("Old.Prog.1".into())));
         assert_eq!(parse_comp_obj(&[0; 10]), (None, None));
+    }
+
+    #[test]
+    fn the_applications_comp_obj_stays_for_the_same_class() {
+        let clsid = clsid_from_str(CLSID).unwrap();
+        // ANSI names with a registered clipboard format, an empty Unicode part.
+        let mut comp_obj = vec![0u8; 12];
+        comp_obj.extend_from_slice(&clsid);
+        ansi(&mut comp_obj, "Example Document");
+        ansi(&mut comp_obj, "Example Native Format");
+        ansi(&mut comp_obj, "Example.Document.1");
+        comp_obj.extend_from_slice(&UNICODE_MARKER.to_le_bytes());
+        comp_obj.extend_from_slice(&[0; 12]);
+        let mut object = OleStorage::new(clsid, "x", "y", Vec::new());
+        object.items.iter_mut().find(|i| i.path == COMP_OBJ).unwrap().data = Some(comp_obj.clone());
+        let mut object = OleStorage::parse(&object.to_bytes()).unwrap();
+        let comp_obj_of = |o: &OleStorage| o.items.iter().find(|i| i.path == COMP_OBJ).and_then(|i| i.data.clone());
+
+        object.set_class(clsid, "Example.Document.1", "Example Document");
+        assert_eq!(comp_obj_of(&object), Some(comp_obj.clone()), "byte for byte");
+        object.set_class(clsid, "Example.Document.2", "Example Document");
+        assert_ne!(comp_obj_of(&object), Some(comp_obj));
+        assert_eq!(OleStorage::parse(&object.to_bytes()).unwrap().prog_id.as_deref(), Some("Example.Document.2"));
     }
 }
