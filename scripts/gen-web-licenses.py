@@ -3,18 +3,21 @@
 # Copyright (c) ibis inc.
 # Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 """Write the lists of third-party components shipped and the notices their
-licences require: www/license.md for the browser version, and
+licences require: www/license.md for the browser version,
 crates/ibis-office-app/macos/license.md for the desktop app (copied into
-ibisOffice.app by scripts/bundle-macos.sh).
+ibisOffice.app by scripts/bundle-macos.sh), and
+crates/ibis-office-app/linux/license.md for the Linux AppImage (copied into
+it by scripts/bundle-linux.sh).
 
-    scripts/gen-web-licenses.py          # both
+    scripts/gen-web-licenses.py          # all
     scripts/gen-web-licenses.py web      # www/license.md only
-    scripts/gen-web-licenses.py macos    # the desktop app's only
+    scripts/gen-web-licenses.py macos    # the macOS app's only
+    scripts/gen-web-licenses.py linux    # the Linux AppImage's only
 
 Rust crates are those linked into each build (cargo tree for
-wasm32-unknown-unknown, and aarch64-apple-darwin); their copyright lines are
-taken from each crate's own licence files. Run it again after changing
-dependencies.
+wasm32-unknown-unknown, aarch64-apple-darwin and x86_64-unknown-linux-gnu,
+with the AppImage's runtime for Linux); their copyright lines are taken from
+each crate's own licence files. Run it again after changing dependencies.
 """
 import json
 import os
@@ -27,17 +30,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILDS = {
     "web": (os.path.join(ROOT, "www", "license.md"), "wasm32-unknown-unknown", "Web 版"),
     "macos": (os.path.join(ROOT, "crates", "ibis-office-app", "macos", "license.md"), "aarch64-apple-darwin", "macOS 版"),
+    "linux": (os.path.join(ROOT, "crates", "ibis-office-app", "linux", "license.md"), "x86_64-unknown-linux-gnu", "Linux 版"),
 }
-OWN = {"ibis-office-app", "ibis-doc-model", "ibis-pptx", "ibis-emf", "ibis-eot", "ibis-imgdiff"}
+# What each build ships besides the app: the AppImage's runtime is in the Linux one.
+EXTRA_PACKAGES = {"linux": ["ibis-appimage"]}
+OWN = {"ibis-office-app", "ibis-doc-model", "ibis-pptx", "ibis-emf", "ibis-eot", "ibis-imgdiff", "ibis-appimage"}
 
 
 def run(*args):
     return subprocess.run(args, cwd=ROOT, check=True, capture_output=True, text=True).stdout
 
 
-def crates(target):
-    tree = run("cargo", "tree", "--locked", "-p", "ibis-office-app", "--target", target,
-               "-e", "normal", "--prefix", "none", "-f", "{p}")
+def crates(target, extra=()):
+    tree = ""
+    for package in ["ibis-office-app", *extra]:
+        tree += run("cargo", "tree", "--locked", "-p", package, "--target", target,
+                    "-e", "normal", "--prefix", "none", "-f", "{p}")
     names = set()
     for line in tree.splitlines():
         m = re.match(r"(\S+) v(\S+)", line.strip())
@@ -104,7 +112,7 @@ def main():
 
 def write(build):
     out_path, target, label = BUILDS[build]
-    packages = crates(target)
+    packages = crates(target, EXTRA_PACKAGES.get(build, ()))
     licences = {}
     rows = []
     notices = []
@@ -210,7 +218,7 @@ def write(build):
     bundled.append(("Material Symbols（Google）", "タイトル行・メニュー・ツールバー・サイドバーのアイコン（実行ファイルに埋め込み）", "Apache-2.0"))
     material_readme = open(os.path.join(ROOT, "crates", "ibis-office-app", "icons", "material", "README.md"), encoding="utf-8").read()
     material_source = next((l[2:] for l in material_readme.splitlines() if l.startswith("- 出典")), "")
-    where = " Web 版（`www/`）" if build == "web" else " macOS 版（`ibisOffice.app`）"
+    where = {"web": " Web 版（`www/`）", "macos": " macOS 版（`ibisOffice.app`）", "linux": " Linux 版（AppImage）"}[build]
     md = [f"# サードパーティのライセンス（{label}）",
           "",
           f"ibisOffice の{where}に含まれる、ibisOffice 以外の部品と、そのライセンスが求める表示です。"

@@ -15,8 +15,8 @@ use std::sync::Arc;
 use gpui_kit::*;
 use ibis_doc_model::flow_command::{self, Container};
 use ibis_doc_model::{
-    Block, CaseConversion, Command, DocumentProtection, FlowAlign, FlowCommand, FlowDocument, FlowParagraph, FlowPos, FlowRunKind, InsertFormat, LineHeight, ParaChange, Rgb,
-    RunChange, RunFormat,
+    Block, CaseConversion, Command, DocumentProtection, FlowAlign, FlowCommand, FlowDocument, FlowParagraph, FlowPos, FlowRun, FlowRunKind, FlowRunStyle, FormFieldData, FormFieldKind, InsertFormat, LineHeight, ParaChange, Rgb,
+    RunChange, RunFormat, ThemeFontLang,
 };
 
 use crate::docx::flow_layout::{Item, pages};
@@ -105,6 +105,8 @@ actions!(
         FindPrevious,
         /// ジャンプ (⌥⌘G, F5).
         OpenGoTo,
+        /// 類義語辞典 (⇧F7 / DOCX-REVIEW-019).
+        OpenThesaurus,
         /// リンク (⌘K).
         OpenLink,
         /// 文字種の変換 (DOCX-JA-020).
@@ -149,6 +151,28 @@ actions!(
         ChangeUserName,
         /// ウィンドウの分割の切り替え (⌥⌘S / Alt+Ctrl+S DOCX-VIEW-019).
         ToggleSplit,
+        /// アウトライン: 見出しのレベルを上げる・下げる、上へ・下へ移動 (Word の Mac は ⌃⇧←→↑↓、Windows は Alt+Shift+←→↑↓)。
+        OutlinePromote,
+        OutlineDemote,
+        OutlineMoveUp,
+        OutlineMoveDown,
+        /// Delete the word before or after the caret (⌥⌫・⌥⌦ on a Mac, Ctrl+Backspace・Ctrl+Delete elsewhere).
+        DeleteWordBackward,
+        DeleteWordForward,
+        /// A screen up or down (Page Up・Page Down), and selecting it with Shift.
+        PageUp,
+        PageDown,
+        SelectPageUp,
+        SelectPageDown,
+        /// Line spacing single, 1.5 and double (⌘1・⌘5・⌘2, Ctrl+1・5・2).
+        LineSpacingSingle,
+        LineSpacingOneAndHalf,
+        LineSpacingDouble,
+        /// The styles Heading 1 to 3 (⌘⌥1…3, Ctrl+Alt+1…3) and Normal (⌘⇧N, Ctrl+Shift+N).
+        ApplyHeading1,
+        ApplyHeading2,
+        ApplyHeading3,
+        ApplyNormalStyle,
     ]
 );
 
@@ -157,7 +181,25 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
     let c = Some(TEXT_CONTEXT);
     let m = |k: &str| if cfg!(target_os = "macos") { format!("cmd-{k}") } else { format!("ctrl-{k}") };
     let word = |k: &str| if cfg!(target_os = "macos") { format!("alt-{k}") } else { format!("ctrl-{k}") };
+    let outline = |k: &str| if cfg!(target_os = "macos") { format!("ctrl-shift-{k}") } else { format!("alt-shift-{k}") };
     vec![
+        KeyBinding::new(&word("backspace"), DeleteWordBackward, c),
+        KeyBinding::new(&word("delete"), DeleteWordForward, c),
+        KeyBinding::new("pageup", PageUp, c),
+        KeyBinding::new("pagedown", PageDown, c),
+        KeyBinding::new("shift-pageup", SelectPageUp, c),
+        KeyBinding::new("shift-pagedown", SelectPageDown, c),
+        KeyBinding::new(&m("1"), LineSpacingSingle, c),
+        KeyBinding::new(&m("5"), LineSpacingOneAndHalf, c),
+        KeyBinding::new(&m("2"), LineSpacingDouble, c),
+        KeyBinding::new(&(if cfg!(target_os = "macos") { "alt-cmd-1" } else { "alt-ctrl-1" }), ApplyHeading1, c),
+        KeyBinding::new(&(if cfg!(target_os = "macos") { "alt-cmd-2" } else { "alt-ctrl-2" }), ApplyHeading2, c),
+        KeyBinding::new(&(if cfg!(target_os = "macos") { "alt-cmd-3" } else { "alt-ctrl-3" }), ApplyHeading3, c),
+        KeyBinding::new(&m("shift-n"), ApplyNormalStyle, c),
+        KeyBinding::new(&outline("left"), OutlinePromote, c),
+        KeyBinding::new(&outline("right"), OutlineDemote, c),
+        KeyBinding::new(&outline("up"), OutlineMoveUp, c),
+        KeyBinding::new(&outline("down"), OutlineMoveDown, c),
         KeyBinding::new("insert", ToggleOvertype, c),
         KeyBinding::new("backspace", DeleteBackward, c),
         KeyBinding::new("shift-backspace", DeleteBackward, c),
@@ -231,6 +273,7 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("alt-cmd-g", OpenGoTo, c),
         KeyBinding::new("alt-ctrl-g", OpenGoTo, c),
         KeyBinding::new("f5", OpenGoTo, c),
+        KeyBinding::new("shift-f7", OpenThesaurus, c),
         KeyBinding::new("alt-cmd-c", CopyFormat, c),
         KeyBinding::new("alt-ctrl-c", CopyFormat, c),
         KeyBinding::new("ctrl-shift-c", CopyFormat, c),
@@ -486,6 +529,12 @@ impl SlideEditor {
     /// Put the caret at `pos` (extending the selection if `extend`).
     pub(crate) fn set_caret(&mut self, pos: FlowPos, extend: bool, cx: &mut Context<Self>) {
         let pos = self.visible_position(pos);
+        let active_comment_id = self.flow().and_then(|d| flow_command::comment_at_pos(d, pos)).map(|id| {
+            self.flow().and_then(|d| d.comments.iter().find(|cm| cm.id == id).and_then(|cm| cm.parent)).unwrap_or(id)
+        });
+        let in_hf = self.flow().is_some_and(|d| {
+            matches!(flow_command::locate(d, pos.para), Some((Container::Header | Container::Footer | Container::Part { .. }, _)))
+        });
         let Some(state) = self.doc_state_mut() else { return };
         if extend {
             if state.anchor.is_none() {
@@ -500,7 +549,55 @@ impl SlideEditor {
         if state.anchor == state.caret {
             state.anchor = None;
         }
+        if let Some(c) = state.comments.as_mut() {
+            c.active_comment_id = active_comment_id;
+        }
+        self.resources.hide_document_text = !self.show_document_text && in_hf;
         cx.notify();
+    }
+
+    /// Check whether a click on page `page` at `(x, y)` (points) hits a comment marker/bubble in the margin.
+    pub(crate) fn comment_at_point(&self, page: usize, x: f32, y: f32) -> Option<u32> {
+        let doc = self.flow()?;
+        let lines = self.flow_lines();
+        let page_w = doc.page.size.width as f32 / 12_700.0;
+        let bubble_x = page_w + 8.0;
+        if x < bubble_x - 10.0 || x > bubble_x + 35.0 {
+            return None;
+        }
+        for c in &doc.comments {
+            if c.parent.is_some() {
+                continue;
+            }
+            let Some((from, to)) = flow_command::comment_range(doc, c.id) else { continue };
+            for l in &lines {
+                if l.page != page {
+                    continue;
+                }
+                let in_range = if l.para < from.para || l.para > to.para {
+                    false
+                } else if from.para == to.para {
+                    let min_off = l.stops.first().map_or(0, |s| s.0);
+                    let max_off = l.stops.last().map_or(min_off, |s| s.0);
+                    max_off >= from.offset && min_off <= to.offset
+                } else if l.para == from.para {
+                    l.stops.last().is_some_and(|s| s.0 >= from.offset)
+                } else if l.para == to.para {
+                    l.stops.first().is_some_and(|s| s.0 <= to.offset)
+                } else {
+                    true
+                };
+                if in_range && y >= l.y - 4.0 && y <= l.y + l.h + 4.0 {
+                    return Some(c.id);
+                }
+            }
+            if let Some((c_page, _cx, cy, ch)) = self.caret_box(&lines, to) {
+                if c_page == page && y >= cy - 8.0 && y <= cy + ch + 8.0 {
+                    return Some(c.id);
+                }
+            }
+        }
+        None
     }
 
     /// The lines of the laid-out pages.
@@ -545,6 +642,46 @@ impl SlideEditor {
     pub(crate) fn position_at(&self, page: usize, x: f32, y: f32) -> Option<FlowPos> {
         let lines = self.flow_lines();
         let on_page: Vec<&LineGeom> = lines.iter().filter(|l| l.page == page).collect();
+
+        // Horizontal line: if Y is within line height and X is beyond the rightmost character, return the end of line.
+        let right_space_line = on_page.iter().filter(|l| {
+            if l.vertical {
+                false
+            } else {
+                let right = l.x + l.stops.last().map_or(0.0, |s| s.1);
+                y >= l.y && y <= l.y + l.h && x > right
+            }
+        }).min_by(|a, b| {
+            let right_a = a.x + a.stops.last().map_or(0.0, |s| s.1);
+            let right_b = b.x + b.stops.last().map_or(0.0, |s| s.1);
+            (x - right_a).total_cmp(&(x - right_b))
+        });
+
+        if let Some(line) = right_space_line {
+            if let Some(&(offset, _)) = line.stops.last() {
+                return Some(FlowPos::new(line.para, offset));
+            }
+        }
+
+        let bottom_space_line = on_page.iter().filter(|l| {
+            if l.vertical {
+                let bottom = l.y + l.stops.last().map_or(0.0, |s| s.1);
+                x >= l.x && x <= l.x + l.h && y > bottom
+            } else {
+                false
+            }
+        }).min_by(|a, b| {
+            let bottom_a = a.y + a.stops.last().map_or(0.0, |s| s.1);
+            let bottom_b = b.y + b.stops.last().map_or(0.0, |s| s.1);
+            (y - bottom_a).total_cmp(&(y - bottom_b))
+        });
+
+        if let Some(line) = bottom_space_line {
+            if let Some(&(offset, _)) = line.stops.last() {
+                return Some(FlowPos::new(line.para, offset));
+            }
+        }
+
         // A line under the point, else the nearest by height/width; among those
         // the one nearest sideways (table cells side by side, columns).
         let distance = |l: &LineGeom| {
@@ -810,6 +947,19 @@ impl SlideEditor {
                 goal = Some(g);
                 to
             }
+            (Move::Page(lines), _) => {
+                // A screen on: the caret goes that many lines (the column kept), down or up.
+                let mut at = caret;
+                for _ in 0..lines.unsigned_abs() {
+                    let (next, g) = self.vertical(at, lines > 0);
+                    goal = Some(g);
+                    if next == at {
+                        break;
+                    }
+                    at = next;
+                }
+                at
+            }
             (Move::LineStart, _) => self.line_edge(caret, false),
             (Move::LineEnd, _) => self.line_edge(caret, true),
             (Move::DocumentStart, _) => self.document_edge(false).unwrap_or(caret),
@@ -862,6 +1012,7 @@ impl SlideEditor {
                 FlowCommand::SetRunFormat { .. }
                 | FlowCommand::SetCharStyle { .. }
                 | FlowCommand::SetStyle { .. }
+                | FlowCommand::SetDocumentParagraphSpacing { .. }
                 | FlowCommand::SetNoteStyle { .. }
                 | FlowCommand::TrackFormat { .. } => true,
                 FlowCommand::SetParagraphFormat { change, .. } => {
@@ -916,6 +1067,8 @@ impl SlideEditor {
                             | FlowCommand::SelectDropDownItem { .. }
                             | FlowCommand::SetDatePickerDate { .. }
                             | FlowCommand::SetContentControlText { .. }
+                            | FlowCommand::SetFormFieldText { .. }
+                            | FlowCommand::SetFormFieldMeta { .. }
                     )
                 });
                 if !is_form_cmd {
@@ -1063,9 +1216,270 @@ impl SlideEditor {
 
     /// Replace the selection (or insert at the caret) with `text`: `\n`
     /// ends a paragraph, `\t` is a tab, `\u{b}` a line break.
+    /// ツール > オートコレクト: the replacements as typed on or off.
+    pub(crate) fn toggle_autocorrect(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = self.doc_state_mut() {
+            state.autocorrect_off = !state.autocorrect_off;
+        }
+        cx.notify();
+    }
+
+    /// ツール > オートコレクトのオプション…: the panel shared with the workbook's (its settings are the same).
+    pub(crate) fn open_doc_autocorrect_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let panel = crate::shell::autocorrect::AutoCorrectPanel::new(window, cx);
+        if let Some(state) = self.doc_state_mut() {
+            state.find = None;
+            state.link = None;
+            state.ruby = None;
+            state.style_edit = None;
+            state.font_edit = None;
+            state.color_edit = None;
+            state.paragraph_edit = None;
+            state.picture_edit = None;
+            state.text_box = None;
+            state.merge = None;
+            state.table_size = None;
+            state.comments = None;
+            state.control = None;
+            state.autocorrect = Some(panel);
+        }
+        self.sidebar_open = true;
+        cx.notify();
+    }
+
+    /// The docx panels shown by the editor's own state go (a shared panel is about to be shown).
+    fn close_doc_panels(&mut self) {
+        if let Some(state) = self.doc_state_mut() {
+            state.find = None;
+            state.link = None;
+            state.ruby = None;
+            state.style_edit = None;
+            state.font_edit = None;
+            state.color_edit = None;
+            state.paragraph_edit = None;
+            state.picture_edit = None;
+            state.text_box = None;
+            state.merge = None;
+            state.table_size = None;
+            state.comments = None;
+            state.control = None;
+            state.autocorrect = None;
+            state.helper = Default::default();
+        }
+    }
+
+    /// ツール > 自動回復の設定… (DOCX-FILE-014).
+    pub(crate) fn open_doc_autorecover_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_doc_panels();
+        self.open_autorecover_settings(window, cx);
+    }
+
+    /// ファイル > 未保存のファイルの回復… (DOCX-FILE-015).
+    pub(crate) fn open_doc_recover_unsaved(&mut self, cx: &mut Context<Self>) {
+        self.close_doc_panels();
+        self.open_recover_unsaved(cx);
+    }
+
+    /// 自動回復用データの保存間隔（分、ECMA-376 Part 1 §17.15.1.72 w:saveFrequency、DOCX-OPTIONS-012）。
+    pub(crate) fn save_frequency(&self) -> Option<u32> {
+        self.flow().and_then(|f| f.save_frequency)
+    }
+
+    /// 自動回復用データの保存間隔を設定（DOCX-OPTIONS-012）。
+    pub(crate) fn set_save_frequency(&mut self, minutes: Option<u32>, cx: &mut Context<Self>) {
+        self.run_flow(vec![FlowCommand::SetSaveFrequency(minutes)], cx);
+    }
+
+    /// この文書で自動回復が無効化されているか（DOCX-OPTIONS-012）。
+    pub(crate) fn is_autorecover_disabled_for_doc(&self) -> bool {
+        if let Some(f) = self.save_frequency() {
+            f == 0
+        } else {
+            self.autorecover_off
+        }
+    }
+
+    /// この文書の自動回復の有効／無効をトグル（DOCX-OPTIONS-012）。
+    pub(crate) fn toggle_autorecover_disabled_for_doc(&mut self, cx: &mut Context<Self>) {
+        let cur = self.is_autorecover_disabled_for_doc();
+        let new_disabled = !cur;
+        let new_freq = if new_disabled { Some(0) } else { None };
+        self.set_save_frequency(new_freq, cx);
+    }
+
+    // --- Font embedding & compatibility options (Word Options, DOCX-OPTIONS-013) ---
+
+    /// ファイルにフォントを埋め込む（DOCX-OPTIONS-013）。
+    pub(crate) fn embed_true_type_fonts(&self) -> bool {
+        self.flow().is_some_and(|f| f.embed_true_type_fonts)
+    }
+
+    pub(crate) fn is_embed_true_type_fonts(&self) -> bool {
+        self.embed_true_type_fonts()
+    }
+
+    pub(crate) fn set_embed_true_type_fonts(&mut self, embed: bool, cx: &mut Context<Self>) {
+        let (sys, sub) = (self.embed_system_fonts(), self.save_subset_fonts());
+        self.set_font_embedding(embed, sys, sub, cx);
+    }
+
+    pub(crate) fn toggle_embed_true_type_fonts(&mut self, cx: &mut Context<Self>) {
+        let cur = self.embed_true_type_fonts();
+        self.set_embed_true_type_fonts(!cur, cx);
+    }
+
+    /// 標準のシステム フォントを埋め込む（DOCX-OPTIONS-013）。
+    pub(crate) fn embed_system_fonts(&self) -> bool {
+        self.flow().is_some_and(|f| f.embed_system_fonts)
+    }
+
+    pub(crate) fn is_embed_system_fonts(&self) -> bool {
+        self.embed_system_fonts()
+    }
+
+    pub(crate) fn set_embed_system_fonts(&mut self, embed: bool, cx: &mut Context<Self>) {
+        let (tt, sub) = (self.embed_true_type_fonts(), self.save_subset_fonts());
+        self.set_font_embedding(tt, embed, sub, cx);
+    }
+
+    pub(crate) fn toggle_embed_system_fonts(&mut self, cx: &mut Context<Self>) {
+        let cur = self.embed_system_fonts();
+        self.set_embed_system_fonts(!cur, cx);
+    }
+
+    /// 文書で使用されている文字だけを埋め込む（DOCX-OPTIONS-013）。
+    pub(crate) fn save_subset_fonts(&self) -> bool {
+        self.flow().is_some_and(|f| f.save_subset_fonts)
+    }
+
+    pub(crate) fn is_save_subset_fonts(&self) -> bool {
+        self.save_subset_fonts()
+    }
+
+    pub(crate) fn set_save_subset_fonts(&mut self, subset: bool, cx: &mut Context<Self>) {
+        let (tt, sys) = (self.embed_true_type_fonts(), self.embed_system_fonts());
+        self.set_font_embedding(tt, sys, subset, cx);
+    }
+
+    pub(crate) fn toggle_save_subset_fonts(&mut self, cx: &mut Context<Self>) {
+        let cur = self.save_subset_fonts();
+        self.set_save_subset_fonts(!cur, cx);
+    }
+
+    pub(crate) fn set_font_embedding(&mut self, embed_true_type_fonts: bool, embed_system_fonts: bool, save_subset_fonts: bool, cx: &mut Context<Self>) {
+        self.run_flow(vec![FlowCommand::SetFontEmbedding {
+            embed_true_type_fonts,
+            embed_system_fonts,
+            save_subset_fonts,
+        }], cx);
+    }
+
+    /// 互換性モード（DOCX-OPTIONS-013, DOCX-FILE-011）。
+    pub(crate) fn compatibility_mode(&self) -> Option<u32> {
+        self.flow().and_then(|f| f.compatibility_mode)
+    }
+
+    /// 文書が互換モード（Word 2003=11, 2007=12, 2010=14 など < 15）かどうか（DOCX-FILE-011）。
+    pub(crate) fn is_docx_compatibility_mode(&self) -> bool {
+        self.flow().is_some_and(|f| f.is_compatibility_mode())
+    }
+
+    /// 現在の互換モードの形式名（"Word 2003", "Word 2007", "Word 2010", "Word 2013-2024"）。
+    pub(crate) fn docx_compatibility_mode_name(&self) -> &'static str {
+        self.flow().map_or("Word 2013-2024", |f| f.compatibility_mode_version_name())
+    }
+
+    /// 互換モードの文書を現行形式（Word 2013-2024, compatibilityMode=15）に変換する（DOCX-FILE-011）。
+    pub(crate) fn convert_docx_to_current_format(&mut self, cx: &mut Context<Self>) {
+        let (fe, shift) = (self.use_fe_layout(), self.do_not_expand_shift_return());
+        self.set_compatibility_options(Some(15), fe, shift, cx);
+        let msg = crate::shell::i18n::text("docx.file.convert.done");
+        if let Some(panel) = self.doc_state_mut().and_then(|s| s.compatibility_panel.as_mut()) {
+            panel.message = Some(msg.to_string());
+        }
+        self.status = Some(msg);
+        cx.notify();
+    }
+
+    pub(crate) fn set_compatibility_mode(&mut self, mode: Option<u32>, cx: &mut Context<Self>) {
+        let (fe, shift) = (self.use_fe_layout(), self.do_not_expand_shift_return());
+        self.set_compatibility_options(mode, fe, shift, cx);
+    }
+
+    /// 東アジアのレイアウト規則を使用する（DOCX-OPTIONS-013）。
+    pub(crate) fn use_fe_layout(&self) -> bool {
+        self.flow().is_some_and(|f| f.use_fe_layout)
+    }
+
+    pub(crate) fn is_use_fe_layout(&self) -> bool {
+        self.use_fe_layout()
+    }
+
+    pub(crate) fn set_use_fe_layout(&mut self, use_fe: bool, cx: &mut Context<Self>) {
+        let (mode, shift) = (self.compatibility_mode(), self.do_not_expand_shift_return());
+        self.set_compatibility_options(mode, use_fe, shift, cx);
+    }
+
+    pub(crate) fn toggle_use_fe_layout(&mut self, cx: &mut Context<Self>) {
+        let cur = self.use_fe_layout();
+        self.set_use_fe_layout(!cur, cx);
+    }
+
+    /// Shift+Return で終わる行の文字間隔を広げない（DOCX-OPTIONS-013）。
+    pub(crate) fn do_not_expand_shift_return(&self) -> bool {
+        self.flow().is_some_and(|f| f.do_not_expand_shift_return)
+    }
+
+    pub(crate) fn is_do_not_expand_shift_return(&self) -> bool {
+        self.do_not_expand_shift_return()
+    }
+
+    pub(crate) fn set_do_not_expand_shift_return(&mut self, do_not_expand: bool, cx: &mut Context<Self>) {
+        let (mode, fe) = (self.compatibility_mode(), self.use_fe_layout());
+        self.set_compatibility_options(mode, fe, do_not_expand, cx);
+    }
+
+    pub(crate) fn toggle_do_not_expand_shift_return(&mut self, cx: &mut Context<Self>) {
+        let cur = self.do_not_expand_shift_return();
+        self.set_do_not_expand_shift_return(!cur, cx);
+    }
+
+    pub(crate) fn set_compatibility_options(&mut self, compatibility_mode: Option<u32>, use_fe_layout: bool, do_not_expand_shift_return: bool, cx: &mut Context<Self>) {
+        self.run_flow(vec![FlowCommand::SetCompatibilityOptions {
+            compatibility_mode,
+            use_fe_layout,
+            do_not_expand_shift_return,
+        }], cx);
+    }
+
+    pub(crate) fn doc_autocorrect_panel(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
+        self.doc_state()?.autocorrect.as_ref()?;
+        crate::shell::autocorrect::render_panel(
+            self,
+            crate::shell::autocorrect::PanelAccess {
+                get: |e| e.doc_state_mut().and_then(|s| s.autocorrect.as_mut()),
+                apply: |e, cx| {
+                    if let Some(p) = e.doc_state_mut().and_then(|s| s.autocorrect.take()) {
+                        crate::shell::autocorrect::set_settings(p.working);
+                    }
+                    cx.notify();
+                },
+                close: |e| {
+                    if let Some(s) = e.doc_state_mut() {
+                        s.autocorrect = None;
+                    }
+                },
+            },
+            cx,
+        )
+    }
+
     pub(crate) fn type_text(&mut self, text: &str, cx: &mut Context<Self>) {
         if text == " " && self.toggle_checkbox_around_caret(cx) {
             return;
+        }
+        if self.has_extra_selections() && !text.contains('\n') && !text.contains('\r') && self.flow().is_some_and(|d| !d.track_changes) {
+            return self.type_into_ranges(text, cx);
         }
         let Some((start, mut end)) = self.ordered_selection() else { return };
         if self.reject_hidden_history_range(start, end, cx) { return; }
@@ -1111,14 +1525,129 @@ impl SlideEditor {
         let first_new = doc.new_id();
         let last_segment = text.rsplit('\n').next().unwrap_or("");
         let typed = last_segment.chars().count();
-        commands.push(FlowCommand::InsertText { at: start, text: text.clone(), format });
+        // Typed over a content control's prompt, the text is the control's from its start.
+        let prompt_start = (!replacing && breaks == 0 && !doc.form_design_mode).then(|| {
+            let p = flow_command::paragraph(doc, start.para)?;
+            let (run, at) = p.control_at(start.offset)?;
+            let is_prompt = match &p.runs[run].kind {
+                FlowRunKind::RichText { placeholder: true, .. }
+                | FlowRunKind::PlainText { placeholder: true, .. }
+                | FlowRunKind::BuildingBlockGallery { placeholder: true, .. } => true,
+                FlowRunKind::RepeatingSection { items, selected, .. } => {
+                    items.get(*selected).map_or(false, |s| s == ibis_doc_model::DEFAULT_REPEATING_SECTION_ITEM_PROMPT)
+                }
+                _ => false,
+            };
+            is_prompt.then_some(at)
+        }).flatten();
+        // 自動の箇条書き・段落番号: a space typed after `*`, `-`, `1.`… that is all the paragraph has so far makes the paragraph a list item.
+        if !replacing && !track && breaks == 0 && text == " " && prompt_start.is_none() && !self.doc_state().is_some_and(|s| s.autocorrect_off) && crate::shell::autocorrect::settings().auto_lists {
+            let marker = flow_command::paragraph(doc, start.para).filter(|p| p.list.is_none() && p.len() == start.offset && p.runs.iter().all(|r| matches!(r.kind, FlowRunKind::Text(_)))).map(|p| p.text());
+            if let Some(kind) = marker.as_deref().and_then(crate::shell::autocorrect::auto_list_marker) {
+                let bullet = kind == crate::shell::autocorrect::AutoList::Bullet;
+                let numbering = &doc.styles.numbering;
+                let mut commands = vec![FlowCommand::Delete { from: FlowPos::new(start.para, 0), to: start }];
+                let id = match numbering.find(bullet) {
+                    Some(id) => id,
+                    None => {
+                        let (with, id) = numbering.with_new_list(bullet);
+                        commands.push(FlowCommand::SetNumbering { numbering: with });
+                        id
+                    }
+                };
+                commands.push(FlowCommand::SetParagraphFormat { first: start.para, last: start.para, change: ParaChange::List(Some(id)) });
+                if self.run_flow(commands, cx) {
+                    self.set_caret(FlowPos::new(start.para, 0), false, cx);
+                }
+                return;
+            }
+        }
+        // オートコレクト (DOCX-OPTIONS-007): a typed character that ends one of the replaced
+        // strings ((c) → ©, --> → →…) replaces it, in the same step.
+        let replacement = (!replacing && !track && breaks == 0 && typed == 1 && prompt_start.is_none() && !self.doc_state().is_some_and(|s| s.autocorrect_off)).then(|| {
+            let p = flow_command::paragraph(doc, start.para)?;
+            let before: String = p.text().chars().take(start.offset).collect();
+            crate::shell::autocorrect::settings().correct_typing(&before, text.chars().next()?)
+        }).flatten();
+        if let Some((length, ref to)) = replacement {
+            commands.push(FlowCommand::InsertText { at: start, text: text.clone(), format: format.clone() });
+            commands.push(FlowCommand::Delete { from: FlowPos::new(start.para, start.offset + 1 - length), to: FlowPos::new(start.para, start.offset + 1) });
+            commands.push(FlowCommand::InsertText { at: FlowPos::new(start.para, start.offset + 1 - length), text: to.clone(), format: format.clone() });
+        } else {
+            commands.push(FlowCommand::InsertText { at: start, text: text.clone(), format: format.clone() });
+        }
         if track && breaks == 0 && typed > 0 {
             let revision = ibis_doc_model::Revision { kind: ibis_doc_model::RevisionKind::Insert, author: who.author.clone(), date: who.date.clone() };
             commands.push(FlowCommand::MarkRevision { from: start, to: FlowPos::new(start.para, start.offset + typed), revision: Some(revision) });
         }
         if self.run_flow(commands, cx) {
-            let caret = if breaks == 0 { FlowPos::new(start.para, start.offset + typed) } else { FlowPos::new(first_new + breaks as u32 - 1, typed) };
+            let caret = if let Some((length, ref to)) = replacement { FlowPos::new(start.para, start.offset + 1 - length + to.chars().count()) } else if breaks == 0 { FlowPos::new(start.para, prompt_start.unwrap_or(start.offset) + typed) } else { FlowPos::new(first_new + breaks as u32 - 1, typed) };
             self.set_caret(caret, false, cx);
+            if breaks > 0 {
+                if let Some(state) = self.doc_state_mut() {
+                    state.pending = format;
+                }
+            }
+            self.scroll_to_caret(cx);
+        }
+    }
+
+    /// Text typed (or pasted as text, in a line) with a selection of several ranges: it takes the place of each range, as one step.
+    /// The caret goes after the text of the first range.
+    fn type_into_ranges(&mut self, text: &str, cx: &mut Context<Self>) {
+        // The ranges and the caret (an empty range too: the carets left after the first typed text).
+        let mut ranges = self.doc_state().map(|s| s.extra_selections.clone()).unwrap_or_default();
+        if let Some(own) = self.ordered_selection() {
+            ranges.push(own);
+        }
+        if let Some(doc) = self.flow() {
+            let order = order(doc);
+            let key = |p: FlowPos| (order.iter().position(|&id| id == p.para).unwrap_or(usize::MAX), p.offset);
+            ranges.sort_by_key(|&(a, _)| key(a));
+        }
+        if ranges.iter().any(|&(a, b)| self.reject_hidden_history_range(a, b, cx)) {
+            return;
+        }
+        let Some(doc) = self.flow() else { return };
+        let pending = self.doc_state().and_then(|s| s.pending.clone());
+        let typed = text.chars().count();
+        let mut commands = Vec::new();
+        // From the last range up, so that each leaves the offsets of those before it.
+        for &(from, to) in ranges.iter().rev() {
+            let format = pending.clone().or_else(|| {
+                let p = flow_command::paragraph(doc, from.para)?;
+                let (format, char_style, _) = visible_format_at(p, from.offset + 1);
+                Some(InsertFormat { format, char_style })
+            });
+            if from != to {
+                commands.push(FlowCommand::Delete { from, to });
+            }
+            commands.push(FlowCommand::InsertText { at: from, text: text.to_string(), format });
+        }
+        // Where the caret of each range is after its text, in the document as it is then (an edit earlier in the same paragraph moves the
+        // offsets after it); None when a range ran over paragraphs.
+        let mut shift: std::collections::HashMap<u32, i64> = std::collections::HashMap::new();
+        let mut carets: Option<Vec<FlowPos>> = Some(Vec::new());
+        for &(from, to) in &ranges {
+            if from.para != to.para {
+                carets = None;
+                break;
+            }
+            let moved = shift.entry(from.para).or_insert(0);
+            if let Some(list) = carets.as_mut() {
+                list.push(FlowPos::new(from.para, (from.offset as i64 + *moved) as usize + typed));
+            }
+            *moved += typed as i64 - (to.offset as i64 - from.offset as i64);
+        }
+        let first = ranges[0].0;
+        if self.run_flow(commands, cx) {
+            self.set_caret(FlowPos::new(first.para, first.offset + typed), false, cx);
+            // The other ranges stay as carets after their texts: what is typed next goes to each.
+            if let Some(carets) = carets
+                && let Some(state) = self.doc_state_mut()
+            {
+                state.extra_selections = carets.into_iter().skip(1).map(|c| (c, c)).collect();
+            }
             self.scroll_to_caret(cx);
         }
     }
@@ -1184,11 +1713,56 @@ impl SlideEditor {
 
     /// Enter: an empty list item stops being one; else a new paragraph.
     pub(crate) fn enter_key(&mut self, cx: &mut Context<Self>) {
+        if self.auto_border_on_enter(cx) {
+            return;
+        }
         if self.list_item_at_start().is_some_and(|p| p.is_empty()) {
             self.apply_para_change(ParaChange::List(None), cx);
         } else {
             self.type_text("\n", cx);
         }
+    }
+
+    /// 自動の罫線: Enter at the end of a paragraph that is only `---`, `___`, `===`, `***`, `~~~` or `###` (three or more) takes the
+    /// characters away and gives the paragraph the border below it, and a new paragraph follows (as one step). Whether it was done.
+    fn auto_border_on_enter(&mut self, cx: &mut Context<Self>) -> bool {
+        use crate::shell::autocorrect::AutoBorder;
+        use ibis_doc_model::{BorderStyle, FlowBorder};
+        let Some((start, end)) = self.ordered_selection() else { return false };
+        if start != end || self.doc_state().is_some_and(|s| s.autocorrect_off) || !crate::shell::autocorrect::settings().auto_borders {
+            return false;
+        }
+        let Some(doc) = self.flow() else { return false };
+        let Some(p) = flow_command::paragraph(doc, start.para) else { return false };
+        if doc.track_changes || p.len() != start.offset || p.list.is_some() || !p.runs.iter().all(|r| matches!(r.kind, FlowRunKind::Text(_))) {
+            return false;
+        }
+        let Some(kind) = crate::shell::autocorrect::auto_border_marker(&p.text()) else { return false };
+        let Some((container, index)) = flow_command::locate(doc, start.para) else { return false };
+        let (style, width) = match kind {
+            AutoBorder::Thin => (BorderStyle::Single, 9525),
+            AutoBorder::Thick => (BorderStyle::Single, 28575),
+            AutoBorder::Double => (BorderStyle::Double, 9525),
+            AutoBorder::Dotted => (BorderStyle::Dotted, 9525),
+            AutoBorder::Wave => (BorderStyle::Wave, 9525),
+            AutoBorder::Triple => (BorderStyle::ThinThickThinSmallGap, 9525),
+        };
+        let mut line = p.clone();
+        line.runs.clear();
+        line.direct.borders[2] = Some(Some(FlowBorder { style, width, color: ibis_doc_model::Rgb(0), space: 12_700, art: None }));
+        line.resolve(&doc.styles);
+        let mut next = p.clone();
+        next.id = doc.new_id();
+        next.runs.clear();
+        next.direct.borders = Default::default();
+        next.resolve(&doc.styles);
+        let next_id = next.id;
+        let command = FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(line), Block::Paragraph(next)] };
+        if self.run_flow(vec![command], cx) {
+            self.set_caret(FlowPos::new(next_id, 0), false, cx);
+            self.scroll_to_caret(cx);
+        }
+        true
     }
 
     /// Toggle checkbox at position `pos`:
@@ -1204,6 +1778,11 @@ impl SlideEditor {
                 if matches!(run.kind, FlowRunKind::CheckBox { .. }) {
                     target_offset = Some(offset);
                     break;
+                } else if let FlowRunKind::FormField(field) = &run.kind {
+                    if matches!(field.kind, FormFieldKind::CheckBox { .. }) {
+                        target_offset = Some(offset);
+                        break;
+                    }
                 }
             }
             offset += len;
@@ -1256,14 +1835,116 @@ impl SlideEditor {
         let Some((start, _)) = self.ordered_selection() else { return };
         let Some(doc) = self.flow() else { return };
         let Some(p) = flow_command::paragraph(doc, start.para) else { return };
-        if let Some(first_run) = p.runs.first() && matches!(first_run.kind, FlowRunKind::CheckBox { .. }) {
+        if let Some(first_run) = p.runs.first() && (matches!(first_run.kind, FlowRunKind::CheckBox { .. }) || matches!(&first_run.kind, FlowRunKind::FormField(f) if matches!(f.kind, FormFieldKind::CheckBox { .. }))) {
             self.toggle_checkbox_at(FlowPos::new(start.para, 0), cx);
         } else {
             self.insert_checkbox(cx);
         }
     }
 
-    /// ドロップダウン リストまたはコンボボックス項目の選択 (DOCX-FORM-006):
+    /// テキスト フォーム フィールドの新規挿入 (DOCX-FORM-016):
+    pub(crate) fn insert_legacy_form_text(&mut self, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.ordered_selection() else { return };
+        let ff = FormFieldData {
+            name: "Text1".into(),
+            enabled: true,
+            calc_on_exit: false,
+            kind: FormFieldKind::TextInput {
+                value: String::new(),
+                default: String::new(),
+                max_length: 0,
+            },
+        };
+        let mut run = FlowRun::new(FlowRunKind::FormField(ff), FlowRunStyle::default());
+        run.style.highlight = Some(ibis_doc_model::Rgb(0xd9d9d9));
+        self.run_flow(vec![
+            FlowCommand::InsertText { at: start, text: " ".to_string(), format: None },
+            FlowCommand::InsertField { at: start, kind: run.kind },
+        ], cx);
+        self.set_caret(FlowPos::new(start.para, start.offset + 5), false, cx);
+    }
+
+    /// チェック ボックス フォーム フィールドの新規挿入 (DOCX-FORM-017):
+    pub(crate) fn insert_legacy_form_checkbox(&mut self, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.ordered_selection() else { return };
+        let ff = FormFieldData {
+            name: "Check1".into(),
+            enabled: true,
+            calc_on_exit: false,
+            kind: FormFieldKind::CheckBox {
+                checked: false,
+                default: false,
+                size_auto: true,
+            },
+        };
+        let mut run = FlowRun::new(FlowRunKind::FormField(ff), FlowRunStyle::default());
+        run.style.highlight = Some(ibis_doc_model::Rgb(0xd9d9d9));
+        self.run_flow(vec![
+            FlowCommand::InsertField { at: start, kind: run.kind },
+            FlowCommand::InsertText { at: FlowPos::new(start.para, start.offset + 1), text: " ".to_string(), format: None },
+        ], cx);
+        self.set_caret(FlowPos::new(start.para, start.offset + 2), false, cx);
+    }
+
+    /// ドロップダウン フォーム フィールドの新規挿入 (DOCX-FORM-018):
+    pub(crate) fn insert_legacy_form_dropdown(&mut self, items: Vec<String>, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.ordered_selection() else { return };
+        let items = if items.is_empty() {
+            vec![
+                crate::shell::i18n::text("_docx.form-choice-1").to_string(),
+                crate::shell::i18n::text("_docx.form-choice-2").to_string(),
+            ]
+        } else {
+            items
+        };
+        let display_len = items.first().map_or(0, |s| s.chars().count());
+        let ff = FormFieldData {
+            name: "DropDown1".into(),
+            enabled: true,
+            calc_on_exit: false,
+            kind: FormFieldKind::DropDown {
+                items,
+                selected: 0,
+                default: 0,
+            },
+        };
+        let mut run = FlowRun::new(FlowRunKind::FormField(ff), FlowRunStyle::default());
+        run.style.highlight = Some(ibis_doc_model::Rgb(0xd9d9d9));
+        self.run_flow(vec![
+            FlowCommand::InsertField { at: start, kind: run.kind },
+            FlowCommand::InsertText { at: FlowPos::new(start.para, start.offset + display_len), text: " ".to_string(), format: None },
+        ], cx);
+        self.set_caret(FlowPos::new(start.para, start.offset + display_len + 1), false, cx);
+    }
+
+    /// テキスト フォーム フィールドの値設定 (DOCX-FORM-016):
+    pub(crate) fn set_form_field_text_at(&mut self, pos: FlowPos, text: String, cx: &mut Context<Self>) -> bool {
+        let Some(doc) = self.flow() else { return false };
+        let Some(p) = flow_command::paragraph(doc, pos.para) else { return false };
+        let mut offset = 0;
+        let mut target_offset = None;
+        for run in &p.runs {
+            let len = run.len();
+            if (pos.offset >= offset && pos.offset < offset + len) || (pos.offset == offset && len == 0) {
+                if let FlowRunKind::FormField(ff) = &run.kind {
+                    if matches!(ff.kind, FormFieldKind::TextInput { .. }) {
+                        target_offset = Some(offset);
+                        break;
+                    }
+                }
+            }
+            offset += len;
+        }
+        if let Some(target) = target_offset {
+            let at = FlowPos::new(pos.para, target);
+            self.run_flow(vec![FlowCommand::SetFormFieldText { at, text }], cx);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// ドロップダウン リストまたはコンボボックス項目の選択 (DOCX-FORM-006, DOCX-FORM-018):
     #[allow(dead_code)]
     pub(crate) fn select_dropdown_item_at(&mut self, pos: FlowPos, index: usize, cx: &mut Context<Self>) -> bool {
         let Some(doc) = self.flow() else { return false };
@@ -1276,6 +1957,11 @@ impl SlideEditor {
                 if matches!(run.kind, FlowRunKind::DropDownList { .. }) {
                     target_offset = Some(offset);
                     break;
+                } else if let FlowRunKind::FormField(field) = &run.kind {
+                    if matches!(field.kind, FormFieldKind::DropDown { .. }) {
+                        target_offset = Some(offset);
+                        break;
+                    }
                 }
             }
             offset += len;
@@ -1289,7 +1975,7 @@ impl SlideEditor {
         }
     }
 
-    /// ドロップダウン リスト項目の順送り切り替え (DOCX-FORM-006):
+    /// ドロップダウン リスト項目の順送り切り替え (DOCX-FORM-006, DOCX-FORM-018):
     pub(crate) fn cycle_dropdown_item_at(&mut self, pos: FlowPos, cx: &mut Context<Self>) -> bool {
         let Some(doc) = self.flow() else { return false };
         let Some(p) = flow_command::paragraph(doc, pos.para) else { return false };
@@ -1303,6 +1989,14 @@ impl SlideEditor {
                         let next = (*selected + 1) % items.len();
                         target_info = Some((offset, next));
                         break;
+                    }
+                } else if let FlowRunKind::FormField(field) = &run.kind {
+                    if let FormFieldKind::DropDown { items, selected, .. } = &field.kind {
+                        if !items.is_empty() {
+                            let next = (*selected + 1) % items.len();
+                            target_info = Some((offset, next));
+                            break;
+                        }
                     }
                 }
             }
@@ -1353,6 +2047,14 @@ impl SlideEditor {
             FlowCommand::InsertText { at: FlowPos::new(start.para, start.offset + display_len), text: " ".to_string(), format: None },
         ], cx);
         self.set_caret(FlowPos::new(start.para, start.offset + display_len + 1), false, cx);
+    }
+
+    /// 注の区切り線: the line above the footnotes (`endnote` false) or the endnotes.
+    pub(crate) fn set_note_separator(&mut self, endnote: bool, kind: ibis_doc_model::NoteSeparator, cx: &mut Context<Self>) {
+        if self.flow().is_some_and(|d| d.note_separators[usize::from(endnote)] == kind) {
+            return;
+        }
+        self.run_flow(vec![FlowCommand::SetNoteSeparator { endnote, kind }], cx);
     }
 
     /// 日付選択コントロールの日付送り (+days) (DOCX-FORM-007):
@@ -1413,27 +2115,33 @@ impl SlideEditor {
     /// リッチテキスト コンテンツ コントロールの新規挿入 (DOCX-FORM-001):
     pub(crate) fn insert_rich_text_control(&mut self, text: Option<String>, cx: &mut Context<Self>) {
         let Some((start, _)) = self.ordered_selection() else { return };
+        let placeholder = text.is_none();
         let text = text.unwrap_or_else(|| crate::shell::i18n::text("_docx.content-control-placeholder").to_string());
         let display_len = text.chars().count();
-        let kind = FlowRunKind::RichText { text };
+        let kind = FlowRunKind::RichText { text, placeholder };
+        // The space after it first, so that it is not typed into the control;
+        // the caret stays at the control's end, where typing replaces the prompt.
         self.run_flow(vec![
+            FlowCommand::InsertText { at: start, text: " ".to_string(), format: None },
             FlowCommand::InsertField { at: start, kind },
-            FlowCommand::InsertText { at: FlowPos::new(start.para, start.offset + display_len), text: " ".to_string(), format: None },
         ], cx);
-        self.set_caret(FlowPos::new(start.para, start.offset + display_len + 1), false, cx);
+        self.set_caret(FlowPos::new(start.para, start.offset + display_len), false, cx);
     }
 
     /// プレーンテキスト コンテンツ コントロールの新規挿入 (DOCX-FORM-002):
     pub(crate) fn insert_plain_text_control(&mut self, text: Option<String>, cx: &mut Context<Self>) {
         let Some((start, _)) = self.ordered_selection() else { return };
+        let placeholder = text.is_none();
         let text = text.unwrap_or_else(|| crate::shell::i18n::text("_docx.content-control-placeholder").to_string());
         let display_len = text.chars().count();
-        let kind = FlowRunKind::PlainText { text };
+        let kind = FlowRunKind::PlainText { text, placeholder };
+        // The space after it first, so that it is not typed into the control;
+        // the caret stays at the control's end, where typing replaces the prompt.
         self.run_flow(vec![
+            FlowCommand::InsertText { at: start, text: " ".to_string(), format: None },
             FlowCommand::InsertField { at: start, kind },
-            FlowCommand::InsertText { at: FlowPos::new(start.para, start.offset + display_len), text: " ".to_string(), format: None },
         ], cx);
-        self.set_caret(FlowPos::new(start.para, start.offset + display_len + 1), false, cx);
+        self.set_caret(FlowPos::new(start.para, start.offset + display_len), false, cx);
     }
 
     /// コンテンツ コントロールのテキスト更新 (DOCX-FORM-001, DOCX-FORM-002):
@@ -1445,7 +2153,7 @@ impl SlideEditor {
         for run in &p.runs {
             let len = run.len();
             if (pos.offset >= offset && pos.offset < offset + len) || (pos.offset == offset && len == 0) {
-                if matches!(run.kind, FlowRunKind::RichText { .. } | FlowRunKind::PlainText { .. }) {
+                if matches!(run.kind, FlowRunKind::RichText { .. } | FlowRunKind::PlainText { .. } | FlowRunKind::BuildingBlockGallery { .. } | FlowRunKind::RepeatingSection { .. } | FlowRunKind::Group { .. }) {
                     found_target = Some(offset);
                     break;
                 }
@@ -1454,11 +2162,513 @@ impl SlideEditor {
         }
         if let Some(target) = found_target {
             let at = FlowPos::new(pos.para, target);
-            self.run_flow(vec![FlowCommand::SetContentControlText { at, text }], cx);
+            self.run_flow(vec![FlowCommand::SetContentControlText { at, text, placeholder: false }], cx);
             true
         } else {
             false
         }
+    }
+
+    /// 画像コンテンツ コントロールの新規挿入 (DOCX-FORM-003):
+    pub(crate) fn insert_picture_control(&mut self, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.ordered_selection() else { return };
+        let data = ibis_doc_model::DEFAULT_PICTURE_CONTROL_PLACEHOLDER_PNG.to_vec();
+        let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, data.clone());
+        self.resources.images.insert(media, Arc::new(Image::from_bytes(ImageFormat::Png, data)));
+        let size = ibis_doc_model::EmuSize::new(
+            ibis_doc_model::DEFAULT_PICTURE_CONTROL_WIDTH_EMU,
+            ibis_doc_model::DEFAULT_PICTURE_CONTROL_HEIGHT_EMU,
+        );
+        self.run_flow(vec![
+            FlowCommand::InsertText { at: start, text: " ".to_string(), format: None },
+            FlowCommand::InsertPictureControl { at: start, media, size, placeholder: true },
+        ], cx);
+        self.set_caret(FlowPos::new(start.para, start.offset + 1), false, cx);
+    }
+
+    /// pos が画像コンテンツ コントロールの位置かどうか
+    pub(crate) fn is_picture_control_at(&self, pos: FlowPos) -> bool {
+        let Some(p) = self.paragraph_of(pos.para) else { return false };
+        let mut offset = 0;
+        for run in &p.runs {
+            if offset == pos.offset {
+                return matches!(run.kind, FlowRunKind::PictureControl { .. });
+            }
+            offset += run.len();
+        }
+        false
+    }
+
+    /// キャレット位置またはその前後の画像コンテンツ コントロール
+    pub(crate) fn picture_control_at_caret(&self) -> Option<(FlowPos, ibis_doc_model::MediaId, ibis_doc_model::EmuSize, bool)> {
+        let (start, _) = self.ordered_selection()?;
+        let p = self.paragraph_of(start.para)?;
+        let mut offset = 0;
+        let mut previous = None;
+        for run in &p.runs {
+            if let FlowRunKind::PictureControl { media, size, placeholder, .. } = &run.kind {
+                let found = Some((FlowPos::new(p.id, offset), *media, *size, *placeholder));
+                if offset == start.offset {
+                    return found;
+                }
+                if offset + 1 == start.offset {
+                    previous = found;
+                }
+            }
+            offset += run.len();
+        }
+        previous
+    }
+
+    /// 画像コンテンツ コントロールの画像を差し替える (DOCX-FORM-003)
+    pub(crate) fn replace_picture_control_at(&mut self, at: FlowPos, data: Vec<u8>, format: ibis_doc_model::MediaFormat, keep_size: bool, cx: &mut Context<Self>) -> bool {
+        self.doc_replace_picture(at, data, format, keep_size, cx)
+    }
+
+    /// キャレット周辺の画像コンテンツ コントロールの画像を差し替える
+    pub(crate) fn replace_picture_control_around_caret(&mut self, data: Vec<u8>, format: ibis_doc_model::MediaFormat, keep_size: bool, cx: &mut Context<Self>) -> bool {
+        let Some((at, ..)) = self.picture_control_at_caret() else { return false };
+        self.replace_picture_control_at(at, data, format, keep_size, cx)
+    }
+
+    /// 画像コンテンツ コントロールを初期プレースホルダーに戻す (DOCX-FORM-003)
+    pub(crate) fn reset_picture_control_at(&mut self, at: FlowPos, cx: &mut Context<Self>) -> bool {
+        let placeholder_bytes = ibis_doc_model::DEFAULT_PICTURE_CONTROL_PLACEHOLDER_PNG.to_vec();
+        let placeholder_media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, placeholder_bytes.clone());
+        self.resources.images.insert(placeholder_media, Arc::new(Image::from_bytes(ImageFormat::Png, placeholder_bytes)));
+        let size = ibis_doc_model::EmuSize::new(
+            ibis_doc_model::DEFAULT_PICTURE_CONTROL_WIDTH_EMU,
+            ibis_doc_model::DEFAULT_PICTURE_CONTROL_HEIGHT_EMU,
+        );
+        self.run_flow(vec![FlowCommand::ResetPictureControl { at, placeholder_media, size }], cx)
+    }
+
+    /// キャレット周辺の画像コンテンツ コントロールをプレースホルダーに戻す
+    pub(crate) fn reset_picture_control_around_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((at, ..)) = self.picture_control_at_caret() else { return false };
+        self.reset_picture_control_at(at, cx)
+    }
+
+    /// 画像コンテンツ コントロールの差し替えファイルを選択して実行
+    pub(crate) fn doc_pick_replace_picture_control(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                extensions: Vec::new(),
+                multiple: false,
+                prompt: Some(crate::shell::i18n::text("_shell.insert")),
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let Some(path) = paths.into_iter().next() else { return };
+                let Ok(data) = std::fs::read(&path) else { return };
+                let format = ibis_doc_model::MediaFormat::from_path(&path.to_string_lossy());
+                this.update(cx, |this, cx| {
+                    this.replace_picture_control_around_caret(data, format, false, cx);
+                }).ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = (window, cx);
+    }
+
+    /// 文書パーツギャラリー コンテンツ コントロールの新規挿入 (DOCX-FORM-008):
+    pub(crate) fn insert_building_block_gallery(&mut self, gallery: Option<String>, category: Option<String>, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.ordered_selection() else { return };
+        let gallery = gallery.unwrap_or_else(|| ibis_doc_model::DEFAULT_BUILDING_BLOCK_GALLERY_NAME.to_string());
+        let category = category.unwrap_or_else(|| ibis_doc_model::DEFAULT_BUILDING_BLOCK_GALLERY_CATEGORY.to_string());
+        let text = crate::shell::i18n::text("_docx.building-block-gallery-placeholder").to_string();
+        let display_len = text.chars().count();
+        let kind = FlowRunKind::BuildingBlockGallery {
+            gallery,
+            category,
+            text,
+            placeholder: true,
+        };
+        self.run_flow(vec![
+            FlowCommand::InsertText { at: start, text: " ".to_string(), format: None },
+            FlowCommand::InsertField { at: start, kind },
+        ], cx);
+        self.set_caret(FlowPos::new(start.para, start.offset + display_len), false, cx);
+    }
+
+    /// キャレット位置またはその前後の文書パーツギャラリー コンテンツ コントロール
+    pub(crate) fn building_block_gallery_at_caret(&self) -> Option<(FlowPos, String, String, String, bool)> {
+        let (start, _) = self.ordered_selection()?;
+        let p = self.paragraph_of(start.para)?;
+        let mut offset = 0;
+        let mut previous = None;
+        for run in &p.runs {
+            if let FlowRunKind::BuildingBlockGallery { gallery, category, text, placeholder } = &run.kind {
+                let len = run.len();
+                let found = Some((FlowPos::new(p.id, offset), gallery.clone(), category.clone(), text.clone(), *placeholder));
+                if start.offset >= offset && start.offset < offset + len {
+                    return found;
+                }
+                if start.offset == offset + len {
+                    previous = found;
+                }
+            }
+            offset += run.len();
+        }
+        previous
+    }
+
+    /// 文書パーツギャラリー コンテンツ コントロールの候補を次に切り替える (DOCX-FORM-008)
+    pub(crate) fn cycle_building_block_gallery_at(&mut self, pos: FlowPos, cx: &mut Context<Self>) -> bool {
+        let Some(doc) = self.flow() else { return false };
+        let Some(p) = flow_command::paragraph(doc, pos.para) else { return false };
+        let mut offset = 0;
+        let mut target = None;
+        for run in &p.runs {
+            let len = run.len();
+            if (pos.offset >= offset && pos.offset < offset + len) || (pos.offset == offset && len == 0) {
+                if let FlowRunKind::BuildingBlockGallery { gallery, category, text, placeholder } = &run.kind {
+                    target = Some((offset, gallery.clone(), category.clone(), text.clone(), *placeholder));
+                    break;
+                }
+            }
+            offset += len;
+        }
+        let Some((target_offset, gallery, _, current_text, placeholder)) = target else { return false };
+        let at = FlowPos::new(pos.para, target_offset);
+        let presets = [
+            format!("{gallery} 1"),
+            format!("{gallery} 2"),
+            format!("{gallery} 3"),
+        ];
+        let next_text = if placeholder {
+            presets[0].clone()
+        } else {
+            let idx = presets.iter().position(|p| p == &current_text);
+            match idx {
+                Some(i) => presets[(i + 1) % presets.len()].clone(),
+                None => presets[0].clone(),
+            }
+        };
+        let status_msg = crate::shell::i18n::format("docx.form.gallery.cycled", &[("part", &next_text)]);
+        if self.run_flow(vec![FlowCommand::SetContentControlText { at, text: next_text, placeholder: false }], cx) {
+            self.status = Some(status_msg.into());
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// キャレット周辺の文書パーツギャラリー コンテンツ コントロールの候補を次に切り替える
+    pub(crate) fn cycle_building_block_gallery_around_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((at, ..)) = self.building_block_gallery_at_caret() else { return false };
+        self.cycle_building_block_gallery_at(at, cx)
+    }
+
+    /// 文書パーツギャラリー コンテンツ コントロールを初期プレースホルダーに戻す (DOCX-FORM-008)
+    pub(crate) fn reset_building_block_gallery_at(&mut self, pos: FlowPos, cx: &mut Context<Self>) -> bool {
+        let Some(doc) = self.flow() else { return false };
+        let Some(p) = flow_command::paragraph(doc, pos.para) else { return false };
+        let mut offset = 0;
+        let mut target_offset = None;
+        for run in &p.runs {
+            let len = run.len();
+            if (pos.offset >= offset && pos.offset < offset + len) || (pos.offset == offset && len == 0) {
+                if matches!(run.kind, FlowRunKind::BuildingBlockGallery { .. }) {
+                    target_offset = Some(offset);
+                    break;
+                }
+            }
+            offset += len;
+        }
+        let Some(target_offset) = target_offset else { return false };
+        let at = FlowPos::new(pos.para, target_offset);
+        let prompt = crate::shell::i18n::text("_docx.building-block-gallery-placeholder").to_string();
+        if self.run_flow(vec![FlowCommand::SetContentControlText { at, text: prompt, placeholder: true }], cx) {
+            self.status = Some(crate::shell::i18n::text("docx.form.gallery.reset-done"));
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// キャレット周辺の文書パーツギャラリー コンテンツ コントロールをプレースホルダーに戻す
+    pub(crate) fn reset_building_block_gallery_around_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((at, ..)) = self.building_block_gallery_at_caret() else { return false };
+        self.reset_building_block_gallery_at(at, cx)
+    }
+
+    /// 繰返しセクション コンテンツ コントロールの新規挿入 (DOCX-FORM-009):
+    pub(crate) fn insert_repeating_section(&mut self, section_title: Option<String>, initial_text: Option<String>, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.ordered_selection() else { return };
+        let section_title = section_title.unwrap_or_else(|| ibis_doc_model::DEFAULT_REPEATING_SECTION_TITLE.to_string());
+        let text = initial_text.unwrap_or_else(|| crate::shell::i18n::text("_docx.repeating-section-placeholder").to_string());
+        let display_len = text.chars().count();
+        let kind = FlowRunKind::RepeatingSection {
+            section_title,
+            items: vec![text],
+            selected: 0,
+            do_not_allow_insert_delete: false,
+        };
+        self.run_flow(vec![
+            FlowCommand::InsertText { at: start, text: " ".to_string(), format: None },
+            FlowCommand::InsertField { at: start, kind },
+        ], cx);
+        self.set_caret(FlowPos::new(start.para, start.offset + display_len), false, cx);
+    }
+
+    /// キャレット位置またはその前後の繰返しセクション コンテンツ コントロール
+    pub(crate) fn repeating_section_at_caret(&self) -> Option<(FlowPos, String, Vec<String>, usize, bool)> {
+        let (start, _) = self.ordered_selection()?;
+        let p = self.paragraph_of(start.para)?;
+        let mut offset = 0;
+        let mut previous = None;
+        for run in &p.runs {
+            if let FlowRunKind::RepeatingSection { section_title, items, selected, do_not_allow_insert_delete } = &run.kind {
+                let len = run.len();
+                let found = Some((FlowPos::new(p.id, offset), section_title.clone(), items.clone(), *selected, *do_not_allow_insert_delete));
+                if start.offset >= offset && start.offset < offset + len {
+                    return found;
+                }
+                if start.offset == offset + len {
+                    previous = found;
+                }
+            }
+            offset += run.len();
+        }
+        previous
+    }
+
+    /// 繰返しセクションに新しいセクション項目を追加する (DOCX-FORM-009)
+    pub(crate) fn add_repeating_section_item_at(&mut self, pos: FlowPos, text: Option<String>, cx: &mut Context<Self>) -> bool {
+        let Some(doc) = self.flow() else { return false };
+        let Some(p) = flow_command::paragraph(doc, pos.para) else { return false };
+        let mut offset = 0;
+        let mut target = None;
+        for run in &p.runs {
+            let len = run.len();
+            if (pos.offset >= offset && pos.offset < offset + len) || (pos.offset == offset && len == 0) {
+                if let FlowRunKind::RepeatingSection { section_title, items, selected, .. } = &run.kind {
+                    target = Some((offset, section_title.clone(), items.len(), *selected));
+                    break;
+                }
+            }
+            offset += len;
+        }
+        let Some((target_offset, title, len, selected)) = target else { return false };
+        let at = FlowPos::new(pos.para, target_offset);
+        let insert_idx = selected + 1;
+        let new_text = text.unwrap_or_else(|| format!("{title} {}", len + 1));
+        let status_msg = crate::shell::i18n::format("docx.form.repeating.added", &[("section", &title)]);
+        if self.run_flow(vec![FlowCommand::InsertRepeatingSectionItem { at, index: insert_idx, text: new_text, restore_selected: None }], cx) {
+            self.status = Some(status_msg.into());
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// キャレット周辺の繰返しセクションに新しいセクション項目を追加する
+    pub(crate) fn add_repeating_section_item_around_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((at, ..)) = self.repeating_section_at_caret() else { return false };
+        self.add_repeating_section_item_at(at, None, cx)
+    }
+
+    /// 繰返しセクションから現在のセクション項目を削除する (DOCX-FORM-009)
+    pub(crate) fn delete_repeating_section_item_at(&mut self, pos: FlowPos, cx: &mut Context<Self>) -> bool {
+        let Some(doc) = self.flow() else { return false };
+        let Some(p) = flow_command::paragraph(doc, pos.para) else { return false };
+        let mut offset = 0;
+        let mut target = None;
+        for run in &p.runs {
+            let len = run.len();
+            if (pos.offset >= offset && pos.offset < offset + len) || (pos.offset == offset && len == 0) {
+                if let FlowRunKind::RepeatingSection { section_title, items, selected, .. } = &run.kind {
+                    if items.len() > 1 {
+                        target = Some((offset, section_title.clone(), *selected));
+                    }
+                    break;
+                }
+            }
+            offset += len;
+        }
+        let Some((target_offset, title, selected)) = target else { return false };
+        let at = FlowPos::new(pos.para, target_offset);
+        let status_msg = crate::shell::i18n::format("docx.form.repeating.deleted", &[("section", &title)]);
+        if self.run_flow(vec![FlowCommand::DeleteRepeatingSectionItem { at, index: selected, restore_selected: None }], cx) {
+            self.status = Some(status_msg.into());
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// キャレット周辺の繰返しセクションから現在のセクション項目を削除する
+    pub(crate) fn delete_repeating_section_item_around_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((at, ..)) = self.repeating_section_at_caret() else { return false };
+        self.delete_repeating_section_item_at(at, cx)
+    }
+
+    /// 繰返しセクションの項目を巡回して切り替える (DOCX-FORM-009)
+    pub(crate) fn cycle_repeating_section_at(&mut self, pos: FlowPos, cx: &mut Context<Self>) -> bool {
+        let Some(doc) = self.flow() else { return false };
+        let Some(p) = flow_command::paragraph(doc, pos.para) else { return false };
+        let mut offset = 0;
+        let mut target = None;
+        for run in &p.runs {
+            let len = run.len();
+            if (pos.offset >= offset && pos.offset < offset + len) || (pos.offset == offset && len == 0) {
+                if let FlowRunKind::RepeatingSection { section_title, items, selected, .. } = &run.kind {
+                    if items.len() > 1 {
+                        target = Some((offset, section_title.clone(), items.len(), *selected));
+                    }
+                    break;
+                }
+            }
+            offset += len;
+        }
+        let Some((target_offset, title, len, selected)) = target else { return false };
+        let next_idx = (selected + 1) % len;
+        let at = FlowPos::new(pos.para, target_offset);
+        let status_msg = crate::shell::i18n::format("docx.form.repeating.cycled", &[("section", &title)]);
+        if self.run_flow(vec![FlowCommand::SelectRepeatingSectionItem { at, index: next_idx }], cx) {
+            self.status = Some(status_msg.into());
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// キャレット周辺の繰返しセクションの項目を巡回して切り替える
+    pub(crate) fn cycle_repeating_section_around_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((at, ..)) = self.repeating_section_at_caret() else { return false };
+        self.cycle_repeating_section_at(at, cx)
+    }
+
+    /// グループ化コンテンツ コントロールの新規挿入 (DOCX-FORM-014):
+    pub(crate) fn insert_group_control(&mut self, text: Option<String>, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.ordered_selection() else { return };
+        let placeholder = text.is_none();
+        let text = text.unwrap_or_else(|| crate::shell::i18n::text("_docx.group-placeholder").to_string());
+        let display_len = text.chars().count();
+        let kind = FlowRunKind::Group { text, placeholder };
+        self.run_flow(vec![
+            FlowCommand::InsertText { at: start, text: " ".to_string(), format: None },
+            FlowCommand::InsertField { at: start, kind },
+        ], cx);
+        self.set_caret(FlowPos::new(start.para, start.offset + display_len), false, cx);
+    }
+
+    /// キャレット位置またはその前後のグループ化コンテンツ コントロール (DOCX-FORM-014)
+    pub(crate) fn group_control_at_caret(&self) -> Option<(FlowPos, String, bool)> {
+        let (start, _) = self.ordered_selection()?;
+        let p = self.paragraph_of(start.para)?;
+        let mut offset = 0;
+        let mut previous = None;
+        for run in &p.runs {
+            if let FlowRunKind::Group { text, placeholder } = &run.kind {
+                let len = run.len();
+                let found = Some((FlowPos::new(p.id, offset), text.clone(), *placeholder));
+                if start.offset >= offset && start.offset < offset + len {
+                    return found;
+                }
+                if start.offset == offset + len {
+                    previous = found;
+                }
+            }
+            offset += run.len();
+        }
+        previous
+    }
+
+    /// グループ化の解除 (DOCX-FORM-014)
+    pub(crate) fn ungroup_control_at(&mut self, pos: FlowPos, cx: &mut Context<Self>) -> bool {
+        let Some(doc) = self.flow() else { return false };
+        let Some(p) = flow_command::paragraph(doc, pos.para) else { return false };
+        let mut offset = 0;
+        let mut target = None;
+        for run in &p.runs {
+            let len = run.len();
+            if (pos.offset >= offset && pos.offset < offset + len) || (pos.offset == offset && len == 0) {
+                if matches!(run.kind, FlowRunKind::Group { .. }) {
+                    target = Some(offset);
+                    break;
+                }
+            }
+            offset += len;
+        }
+        let Some(target_offset) = target else { return false };
+        let at = FlowPos::new(pos.para, target_offset);
+        let status_msg = crate::shell::i18n::text("docx.form.ungrouped").to_string();
+        if self.run_flow(vec![FlowCommand::UngroupControl { at, restore: None }], cx) {
+            self.status = Some(status_msg.into());
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// キャレット周辺のグループ化を解除する (DOCX-FORM-014)
+    pub(crate) fn ungroup_control_around_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((at, ..)) = self.group_control_at_caret() else { return false };
+        self.ungroup_control_at(at, cx)
+    }
+
+    /// グループ化の実行 (DOCX-FORM-014):
+    /// 選択範囲がある場合はそのテキストをグループ化し、選択範囲がない場合はキャレット位置のグループ化またはプレースホルダー挿入を行う
+    pub(crate) fn group_control_at_selection_or_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((start, end)) = self.ordered_selection() else { return false };
+        if start != end {
+            let sel = self.selected_text();
+            if !sel.is_empty() {
+                let display_len = sel.chars().count();
+                let status_msg = crate::shell::i18n::text("docx.form.grouped").to_string();
+                let kind = FlowRunKind::Group { text: sel, placeholder: false };
+                let mut commands = Vec::new();
+                commands.push(FlowCommand::Delete { from: start, to: end });
+                commands.push(FlowCommand::InsertText { at: start, text: " ".to_string(), format: None });
+                commands.push(FlowCommand::InsertField { at: start, kind });
+                if self.run_flow(commands, cx) {
+                    self.set_caret(FlowPos::new(start.para, start.offset + display_len), false, cx);
+                    self.status = Some(status_msg.into());
+                    cx.notify();
+                    return true;
+                }
+                return false;
+            }
+        }
+        if let Some((at, ..)) = self.group_control_at_caret() {
+            return self.ungroup_control_at(at, cx);
+        }
+        let status_msg = crate::shell::i18n::text("docx.form.grouped").to_string();
+        self.insert_group_control(None, cx);
+        self.status = Some(status_msg.into());
+        cx.notify();
+        true
+    }
+
+    /// コンテンツ コントロールのデザイン モードが有効かどうか。
+    pub fn form_design_mode(&self) -> bool {
+        self.flow().is_some_and(|d| d.form_design_mode)
+    }
+
+    /// コンテンツ コントロールのデザイン モードを切り替える（1ステップ完全 Undo/Redo）。
+    pub fn toggle_form_design_mode(&mut self, cx: &mut Context<Self>) {
+        let current = self.form_design_mode();
+        let target = !current;
+        self.run_flow(vec![ibis_doc_model::flow_command::FlowCommand::SetFormDesignMode(target)], cx);
+        let msg = if target {
+            crate::shell::i18n::text("docx.form.design-mode.enabled")
+        } else {
+            crate::shell::i18n::text("docx.form.design-mode.disabled")
+        };
+        self.status = Some(msg.to_string().into());
+        cx.notify();
     }
 
     /// 箇条書き・番号付きリスト: the paragraphs become items of a list of
@@ -1489,6 +2699,39 @@ impl SlideEditor {
             state.anchor = (a != c).then_some(a);
             state.caret = Some(c);
         }
+    }
+
+    /// ⌥⌫・⌥⌦ (Ctrl+Backspace・Delete): the selection, else the word before or after the caret.
+    pub(crate) fn delete_word(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let Some((anchor, caret)) = self.text_selection() else { return };
+        if anchor == caret {
+            let to = self.word_step(caret, forward);
+            if to == caret {
+                return;
+            }
+            if let Some(state) = self.doc_state_mut() {
+                state.anchor = Some(caret);
+                state.caret = Some(to);
+            }
+        }
+        self.delete_char(forward, cx);
+    }
+
+    /// Line spacing `lines` times the single (⌘1・⌘5・⌘2): 240 is single, 360 one and a half, 480 double.
+    pub(crate) fn set_line_spacing_multiple(&mut self, twips: i64, cx: &mut Context<Self>) {
+        self.apply_para_change(ParaChange::Line(LineHeight::Auto(twips as _)), cx);
+    }
+
+    /// The style named `name` (`heading 1`) for the paragraphs of the selection, or the normal one (`None`).
+    pub(crate) fn apply_named_style(&mut self, name: Option<&str>, cx: &mut Context<Self>) {
+        let id = match name {
+            Some(n) => match self.flow().and_then(|d| d.styles.paragraph_style_named(n).map(str::to_string)) {
+                Some(id) => Some(id),
+                None => return,
+            },
+            None => None,
+        };
+        self.apply_style(id, cx);
     }
 
     /// Backspace (`forward` false) or Delete.
@@ -1788,7 +3031,8 @@ impl SlideEditor {
     }
 
     pub(crate) fn set_theme_color(&mut self, color: Rgb, theme_color: ibis_doc_model::FlowThemeColor, cx: &mut Context<Self>) {
-        self.apply_run_change(RunChange::ThemeColor { color, theme_color }, cx);
+        let resolved = theme_color.resolve(&self.presentation().theme_colors).unwrap_or(color);
+        self.apply_run_change(RunChange::ThemeColor { color: resolved, theme_color }, cx);
     }
 
     pub(crate) fn set_highlight(&mut self, color: Option<Rgb>, cx: &mut Context<Self>) {
@@ -1847,6 +3091,22 @@ impl SlideEditor {
     /// Format commands for all touched paragraphs across the selection,
     /// including selections that span multiple table cells or the whole table.
     pub(crate) fn selected_paragraph_format_commands(&self, change: ParaChange) -> Vec<FlowCommand> {
+        // A selection of several ranges: the paragraphs of all of them.
+        if self.has_extra_selections()
+            && let Some(doc) = self.flow()
+        {
+            let order = order(doc);
+            let mut ids: Vec<u32> = Vec::new();
+            for (a, b) in self.selection_ranges() {
+                let (Some(i), Some(j)) = (order.iter().position(|&p| p == a.para), order.iter().position(|&p| p == b.para)) else { continue };
+                for &id in &order[i.min(j)..=i.max(j)] {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+            }
+            return ids.into_iter().map(|id| FlowCommand::SetParagraphFormat { first: id, last: id, change: change.clone() }).collect();
+        }
         let Some((start, end)) = self.ordered_selection() else { return Vec::new() };
         let Some(doc) = self.flow() else { return Vec::new() };
         let same = flow_command::locate(doc, start.para).map(|l| l.0) == flow_command::locate(doc, end.para).map(|l| l.0);
@@ -1867,9 +3127,14 @@ impl SlideEditor {
 
     pub(crate) fn apply_para_change(&mut self, change: ParaChange, cx: &mut Context<Self>) {
         let keep = self.text_selection();
+        let extras = self.doc_state().map(|s| (s.extra_selections.clone(), s.anchor, s.caret));
         let commands = self.selected_paragraph_format_commands(change);
-        if !commands.is_empty() {
-            self.run_flow(commands, cx);
+        if !commands.is_empty() && self.run_flow(commands, cx) {
+            // A paragraph's format moves no offsets: the ranges stay.
+            if let Some((extras, anchor, caret)) = extras.filter(|(e, _, _)| !e.is_empty()) {
+                self.restore_extra_selections(extras, anchor, caret);
+                return;
+            }
         }
         if let (Some((a, c)), Some(state)) = (keep, self.doc_state_mut()) {
             state.anchor = (a != c).then_some(a);
@@ -2015,6 +3280,75 @@ impl SlideEditor {
         self.paragraph_of(start.para).map_or(false, |p| p.suppress_auto_hyphens)
     }
 
+    /// キャレット位置の段落のドロップ キャップ設定。
+    pub(crate) fn caret_drop_cap(&self) -> Option<ibis_doc_model::DropCap> {
+        let (start, _) = self.ordered_selection()?;
+        self.paragraph_of(start.para).and_then(|p| p.drop_cap)
+    }
+
+    /// キャレット位置の段落のドロップ キャップ配置（None / Drop / Margin）。
+    pub(crate) fn caret_drop_cap_location(&self) -> ibis_doc_model::DropCapLocation {
+        self.caret_drop_cap().map_or(ibis_doc_model::DropCapLocation::None, |dc| dc.location)
+    }
+
+    /// ドロップ キャップの配置（なし / ドロップ / 余白）を設定。
+    pub(crate) fn set_drop_cap_location(&mut self, location: ibis_doc_model::DropCapLocation, cx: &mut Context<Self>) {
+        if location == ibis_doc_model::DropCapLocation::None {
+            self.apply_para_change(ibis_doc_model::ParaChange::DropCap(None), cx);
+        } else {
+            let mut dc = self.caret_drop_cap().unwrap_or_default();
+            dc.location = location;
+            self.apply_para_change(ibis_doc_model::ParaChange::DropCap(Some(dc)), cx);
+        }
+    }
+
+    /// ドロップ キャップの行数を設定（2〜5行など）。
+    pub(crate) fn set_drop_cap_lines(&mut self, lines: u32, cx: &mut Context<Self>) {
+        let mut dc = self.caret_drop_cap().unwrap_or(ibis_doc_model::DropCap {
+            location: ibis_doc_model::DropCapLocation::Drop,
+            lines: 3,
+            space: 0,
+        });
+        dc.lines = lines.clamp(1, 10);
+        self.apply_para_change(ibis_doc_model::ParaChange::DropCap(Some(dc)), cx);
+    }
+
+    /// ドロップ キャップの本文からの距離を設定（EMU）。
+    pub(crate) fn set_drop_cap_distance(&mut self, space: ibis_doc_model::Emu, cx: &mut Context<Self>) {
+        let mut dc = self.caret_drop_cap().unwrap_or(ibis_doc_model::DropCap {
+            location: ibis_doc_model::DropCapLocation::Drop,
+            lines: 3,
+            space: 0,
+        });
+        dc.space = space;
+        self.apply_para_change(ibis_doc_model::ParaChange::DropCap(Some(dc)), cx);
+    }
+
+    /// キャレット位置の図形・テキスト ボックスの垂直配置（上揃え / 中央揃え / 下揃え）。
+    pub(crate) fn caret_shape_anchor(&self) -> Option<ibis_doc_model::VerticalAnchor> {
+        self.text_box_at_caret().map(|i| i.anchor)
+    }
+
+    /// キャレット位置の図形・テキスト ボックスの垂直配置を設定。
+    pub(crate) fn set_shape_anchor(&mut self, anchor: ibis_doc_model::VerticalAnchor, cx: &mut Context<Self>) {
+        let Some(info) = self.text_box_at_caret() else { return };
+        if info.anchor == anchor {
+            return;
+        }
+        let keep = self.text_selection();
+        if self.run_flow(vec![ibis_doc_model::FlowCommand::SetShapeAnchor { at: info.at, anchor }], cx) {
+            if let (Some((a, c)), Some(state)) = (keep, self.doc_state_mut()) {
+                state.anchor = Some(a);
+                state.caret = Some(c);
+            }
+            if let Some(state) = self.doc_state_mut().and_then(|s| s.text_box.as_mut()) {
+                state.anchor = anchor;
+                state.initial.anchor = anchor;
+            }
+        }
+        cx.notify();
+    }
+
     /// Every range of the selection, in document order: the ranges added
     /// with ⌘ and the caret's, when it is not empty.
     pub(crate) fn selection_ranges(&self) -> Vec<(FlowPos, FlowPos)> {
@@ -2055,7 +3389,7 @@ impl SlideEditor {
     }
 
     /// The text from `start` to `end` (paragraphs joined with line feeds).
-    fn range_text(&self, start: FlowPos, end: FlowPos) -> String {
+    pub(crate) fn range_text(&self, start: FlowPos, end: FlowPos) -> String {
         let Some(doc) = self.flow() else { return String::new() };
         let order = order(doc);
         let (Some(i), Some(j)) = (order.iter().position(|&p| p == start.para), order.iter().position(|&p| p == end.para)) else {
@@ -2144,12 +3478,33 @@ impl SlideEditor {
         self.type_text(&text, cx);
     }
 
+    /// 挿入 > 表紙 (DOCX-PAGE-022): cover `design` put at the top of the document, with the first heading as the title and the user's
+    /// name and today's date; one step of undo.
+    pub(crate) fn insert_cover_page(&mut self, design: usize, cx: &mut Context<Self>) {
+        let Some(doc) = self.flow() else { return };
+        let who = crate::docx::comments::comment_author();
+        let title = doc
+            .body
+            .iter()
+            .find_map(|b| match b {
+                Block::Paragraph(p) if flow_command::heading_level(&doc.styles, p).is_some() && !p.text().trim().is_empty() => Some(p.text()),
+                _ => None,
+            })
+            .unwrap_or_else(|| crate::shell::i18n::text("docx.cover.title-placeholder").to_string());
+        let date: String = who.date.chars().take(10).collect();
+        let blocks = ibis_doc_model::cover::cover_blocks(doc, design, &title, &who.author, &date);
+        if self.run_flow(vec![FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove: 0, blocks }], cx) {
+            self.status = Some(crate::shell::i18n::text("docx.cover.inserted").into());
+            cx.notify();
+        }
+    }
+
     /// 校閲 > 比較: the file picked is the original; this document is the revised one, and the changes between them are
     /// marked as tracked changes in it (one step of undo).
     pub(crate) fn pick_compare_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(crate::shell::i18n::text("_shell.open")) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_shell.open")) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -2161,6 +3516,24 @@ impl SlideEditor {
         let _ = (window, cx);
     }
 
+    /// 比較の設定: `which` 0 formatting, 1 case, 2 tables, 3 white space, 4 headers, 5 footnotes, 6 comments, 7 fields.
+    pub(crate) fn toggle_compare_option(&mut self, which: u8, cx: &mut Context<Self>) {
+        if let Some(state) = self.doc_state_mut() {
+            let o = &mut state.compare_options;
+            match which {
+                0 => o.format = !o.format,
+                1 => o.case = !o.case,
+                2 => o.tables = !o.tables,
+                3 => o.white_space = !o.white_space,
+                4 => o.headers = !o.headers,
+                5 => o.footnotes = !o.footnotes,
+                6 => o.comments = !o.comments,
+                _ => o.fields = !o.fields,
+            }
+        }
+        cx.notify();
+    }
+
     /// The changes from the document in the file at `path` to this one, as tracked changes.
     pub(crate) fn compare_with_file(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
         let original = std::fs::read(path).ok().and_then(|data| ibis_pptx::read(&data).ok()).and_then(|p| p.flow);
@@ -2170,10 +3543,96 @@ impl SlideEditor {
         };
         let Some(doc) = self.flow() else { return };
         let who = crate::docx::comments::comment_author();
-        let blocks = ibis_doc_model::compare::compare_blocks(&original.body, &doc.body, &who.author, &who.date);
+        let opts = self.doc_state().map(|s| s.compare_options).unwrap_or_default();
+        let compared = ibis_doc_model::compare::compare_documents_with(&original, doc, &who.author, &who.date, &opts);
         let remove = doc.body.len();
-        if self.run_flow(vec![FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove, blocks }], cx) {
+        let mut commands = vec![
+            FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove, blocks: compared.body },
+            FlowCommand::SetTrackChanges(true),
+        ];
+        if opts.headers {
+            commands.push(FlowCommand::ReplaceBlocks { container: Container::Header, index: 0, remove: doc.header.len(), blocks: compared.header });
+            commands.push(FlowCommand::ReplaceBlocks { container: Container::Footer, index: 0, remove: doc.footer.len(), blocks: compared.footer });
+        }
+        if opts.comments {
+            commands.push(FlowCommand::SetComments(compared.comments));
+        }
+        if self.run_flow(commands, cx) {
             self.status = Some(crate::shell::i18n::text("docx.editing.changes-were-marked-tracked").into());
+            cx.notify();
+        }
+    }
+
+    /// 校閲 > 比較 > 比較結果を新しい文書として作成… (Word's Compare into New Document)
+    pub(crate) fn pick_compare_file_new_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_shell.open")) });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let Some(path) = paths.into_iter().next() else { return };
+                this.update(cx, |this, cx| this.compare_with_file_new_doc(&path, cx)).ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = (window, cx);
+    }
+
+    /// Compares this document with `path` and opens the result as a new document ("比較結果" / Compare Result).
+    pub(crate) fn compare_with_file_new_doc(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.path = None;
+        }
+        self.file_name = Some(crate::shell::i18n::text("docx.compare.result-title").into());
+        self.compare_with_file(path, cx);
+    }
+
+    /// 校閲 > 文書の結合 (DOCX-REVIEW-016 / docx.combine):
+    /// The file picked is combined with this document; revisions from both authors are preserved.
+    pub(crate) fn pick_combine_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_shell.open")) });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let Some(path) = paths.into_iter().next() else { return };
+                this.update(cx, |this, cx| this.combine_with_file(&path, cx)).ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = (window, cx);
+    }
+
+    /// Combines the document in the file at `path` with this one, merging revisions and comments.
+    pub(crate) fn combine_with_file(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        let other = std::fs::read(path).ok().and_then(|data| ibis_pptx::read(&data).ok()).and_then(|p| p.flow);
+        let Some(other) = other else {
+            self.status = Some(crate::shell::i18n::text("docx.merge-panel.cannot-read-file").into());
+            return cx.notify();
+        };
+        let Some(doc) = self.flow() else { return };
+        let who = crate::docx::comments::comment_author();
+        let opts = self.doc_state().map(|s| s.compare_options).unwrap_or_default();
+        let blocks = ibis_doc_model::compare::combine_blocks_with(&other.body, &doc.body, &who.author, &who.date, &opts);
+        let remove = doc.body.len();
+        let mut commands = vec![FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove, blocks }];
+        if !other.comments.is_empty() {
+            let mut merged_comments = doc.comments.clone();
+            let mut max_comment_id = merged_comments.iter().map(|c| c.id).max().unwrap_or(0);
+            for mut comment in other.comments.clone() {
+                if merged_comments.iter().any(|c| c.id == comment.id) {
+                    max_comment_id += 1;
+                    comment.id = max_comment_id;
+                }
+                merged_comments.push(comment);
+            }
+            commands.push(FlowCommand::SetComments(merged_comments));
+        }
+        if self.run_flow(commands, cx) {
+            self.status = Some(crate::shell::i18n::text("docx.editing.documents-combined").into());
             cx.notify();
         }
     }
@@ -2200,6 +3659,10 @@ impl SlideEditor {
 
     /// 通常の貼り付け (Word Options の貼付の既定動作に従う, DOCX-OPTIONS-006).
     pub(crate) fn paste_text(&mut self, cx: &mut Context<Self>) {
+        // A selection of several ranges: the text of the clipboard in each (one line).
+        if self.has_extra_selections() {
+            return self.paste_plain_text(cx);
+        }
         if self.paste_clipboard_image(cx) {
             return;
         }
@@ -2234,6 +3697,8 @@ impl SlideEditor {
 /// How the caret moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Move {
+    /// A screen of lines (the number of them), up (negative) or down.
+    Page(i32),
     Left,
     Right,
     WordLeft,
@@ -2684,7 +4149,7 @@ impl SlideEditor {
     pub(crate) fn doc_pick_picture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(crate::shell::i18n::text("_shell.insert")) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_shell.insert")) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -2701,7 +4166,7 @@ impl SlideEditor {
     /// Replace the picture at `at` with new image `data`.
     /// If `keep_size` is true, the current size on screen is preserved;
     /// otherwise, the new image's natural dimensions (adjusted to fit page width) are used.
-    pub(crate) fn doc_replace_picture(&mut self, at: FlowPos, data: Vec<u8>, format: ibis_doc_model::MediaFormat, keep_size: bool, cx: &mut Context<Self>) {
+    pub(crate) fn doc_replace_picture(&mut self, at: FlowPos, data: Vec<u8>, format: ibis_doc_model::MediaFormat, keep_size: bool, cx: &mut Context<Self>) -> bool {
         let image_format = match format {
             ibis_doc_model::MediaFormat::Png => Some(ImageFormat::Png),
             ibis_doc_model::MediaFormat::Jpeg => Some(ImageFormat::Jpeg),
@@ -2718,7 +4183,7 @@ impl SlideEditor {
         let size = if keep_size {
             None
         } else {
-            let Some(doc) = self.flow() else { return };
+            let Some(doc) = self.flow() else { return false; };
             let (w, h) = picture_pixels(&data).unwrap_or((400, 300));
             let (mut cx_emu, mut cy_emu) = (w as i64 * 9525, h as i64 * 9525);
             let room = doc.page.size.width - doc.page.left - doc.page.right;
@@ -2728,7 +4193,55 @@ impl SlideEditor {
             }
             Some(ibis_doc_model::EmuSize::new(cx_emu, cy_emu))
         };
-        self.run_flow(vec![FlowCommand::ReplacePicture { at, media, size }], cx);
+        self.run_flow(vec![FlowCommand::ReplacePicture { at, media, size }], cx)
+    }
+
+    /// 図の箇条書き: the paragraphs of the selection become items of a new list whose bullets are the picture `data` (the file's bytes).
+    pub(crate) fn apply_picture_bullet(&mut self, data: Vec<u8>, format: ibis_doc_model::MediaFormat, cx: &mut Context<Self>) {
+        let Some(doc) = self.flow().cloned() else { return };
+        let image_format = match format {
+            ibis_doc_model::MediaFormat::Png => Some(ImageFormat::Png),
+            ibis_doc_model::MediaFormat::Jpeg => Some(ImageFormat::Jpeg),
+            ibis_doc_model::MediaFormat::Gif => Some(ImageFormat::Gif),
+            ibis_doc_model::MediaFormat::Bmp => Some(ImageFormat::Bmp),
+            ibis_doc_model::MediaFormat::Tiff => Some(ImageFormat::Tiff),
+            ibis_doc_model::MediaFormat::Svg => Some(ImageFormat::Svg),
+            _ => None,
+        };
+        if image_format.is_none() {
+            return;
+        }
+        let media = self.document.ids().add_media(format, data.clone());
+        if let Some(f) = image_format {
+            self.resources.images.insert(media, Arc::new(Image::from_bytes(f, data)));
+        }
+        let (numbering, id) = doc.styles.numbering.with_new_picture_list(media, None);
+        let keep = self.text_selection();
+        let mut commands = vec![FlowCommand::SetNumbering { numbering }];
+        commands.extend(self.selected_paragraph_format_commands(ParaChange::List(Some(id))));
+        self.run_flow(commands, cx);
+        if let (Some((a, c)), Some(state)) = (keep, self.doc_state_mut()) {
+            state.anchor = (a != c).then_some(a);
+            state.caret = Some(c);
+        }
+    }
+
+    /// 図の箇条書き…: pick a picture file for the bullets.
+    pub(crate) fn doc_pick_picture_bullet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("docx.bullet.picture").to_string().into()) });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let Some(path) = paths.into_iter().next() else { return };
+                let Ok(data) = std::fs::read(&path) else { return };
+                let format = ibis_doc_model::MediaFormat::from_path(&path.to_string_lossy());
+                this.update(cx, |this, cx| this.apply_picture_bullet(data, format, cx)).ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = (window, cx);
     }
 
     /// 画像の変更…: pick a picture file and replace the picture at the caret.
@@ -2736,7 +4249,7 @@ impl SlideEditor {
         let Some((target, _, _)) = self.picture_at_caret() else { return };
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(crate::shell::i18n::text("_docx.change-picture").to_string().into()) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_docx.change-picture").to_string().into()) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -2827,6 +4340,36 @@ impl SlideEditor {
         if page != doc.page {
             self.run_flow(vec![FlowCommand::SetPage { page }], cx);
         }
+    }
+
+    /// 複数ページ設定の変更（通常、見開きページ、袋とじ、本（袋とじ）、1枚に2ページ）。
+    /// 文書全体の設定として各セクションにも一括適用し、1ステップで Undo/Redo 可能。
+    pub(crate) fn set_multiple_pages(&mut self, mp: ibis_doc_model::MultiplePages, sheets: Option<u32>, cx: &mut Context<Self>) {
+        let Some(doc) = self.flow() else { return };
+        let mut state = ibis_doc_model::flow_command::section_state(doc, &ibis_doc_model::flow_command::section_paragraphs(doc));
+        let is_mirrored = mp.is_mirrored();
+        state.page.multiple_pages = mp;
+        state.page.book_fold_sheets = sheets;
+        state.page.mirror_margins = is_mirrored;
+        for (_, _, setup) in state.breaks.iter_mut() {
+            if let Some(setup) = setup {
+                let setup = std::sync::Arc::make_mut(setup);
+                setup.page.multiple_pages = mp;
+                setup.page.book_fold_sheets = sheets;
+                setup.page.mirror_margins = is_mirrored;
+            }
+        }
+        self.run_flow(vec![FlowCommand::SetSections { state: Box::new(state) }], cx);
+    }
+
+    /// 現在の複数ページ設定を取得。
+    pub(crate) fn caret_multiple_pages(&self) -> ibis_doc_model::MultiplePages {
+        self.caret_page().map(|p| p.multiple_pages).unwrap_or_default()
+    }
+
+    /// 現在の袋とじ印刷枚数を取得。
+    pub(crate) fn caret_book_fold_sheets(&self) -> Option<u32> {
+        self.caret_page().and_then(|p| p.book_fold_sheets)
     }
 
     /// 行グリッドの行送り（None でグリッドなし）。
@@ -3064,7 +4607,723 @@ impl SlideEditor {
         }
         self.run_flow(vec![ibis_doc_model::FlowCommand::SetPageColor(color)], cx);
     }
+
+    /// ドキュメント全体の段落の間隔のプリセット.
+    pub(crate) fn document_paragraph_spacing_preset(&self) -> Option<ibis_doc_model::ParagraphSpacingPreset> {
+        self.flow().and_then(|d| d.paragraph_spacing_preset)
+    }
+
+    pub(crate) fn set_document_paragraph_spacing(&mut self, preset: ibis_doc_model::ParagraphSpacingPreset, cx: &mut Context<Self>) {
+        self.run_flow(vec![ibis_doc_model::FlowCommand::SetDocumentParagraphSpacing { preset: Some(preset), styles: None }], cx);
+    }
+
+    /// ドキュメント全体のスタイル セットのプリセット.
+    pub(crate) fn document_style_set_preset(&self) -> Option<ibis_doc_model::StyleSetPreset> {
+        self.flow().and_then(|d| d.style_set_preset)
+    }
+
+    pub(crate) fn set_document_style_set(&mut self, preset: ibis_doc_model::StyleSetPreset, cx: &mut Context<Self>) {
+        self.run_flow(vec![ibis_doc_model::FlowCommand::SetDocumentStyleSet { preset: Some(preset), styles: None }], cx);
+    }
+
+    /// ドキュメントのテーマ色のプリセットID（DOCX-STYLE-013）。
+    pub(crate) fn current_docx_theme_colors_preset(&self) -> Option<&'static str> {
+        let colors = &self.presentation().theme_colors;
+        if colors.is_empty() {
+            return Some("office");
+        }
+        for preset in &DOCX_THEME_COLORS_PRESETS {
+            let matched = preset.colors.iter().all(|(name, rgb)| {
+                colors
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                    .is_some_and(|(_, c)| *c == *rgb)
+            });
+            if matched {
+                return Some(preset.id);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn is_docx_theme_colors_active(&self, preset_id: &str) -> bool {
+        self.current_docx_theme_colors_preset() == Some(preset_id)
+    }
+
+    /// ドキュメントのテーマ色を適用（DOCX-STYLE-013）。
+    pub(crate) fn apply_docx_theme_colors(&mut self, preset_id: &str, cx: &mut Context<Self>) {
+        let Some(preset) = DOCX_THEME_COLORS_PRESETS.iter().find(|p| p.id == preset_id) else { return };
+        let mut colors = self.presentation().theme_colors.clone();
+        for (name, rgb) in preset.colors {
+            if let Some(entry) = colors.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                entry.1 = rgb;
+            } else {
+                colors.push((name.to_string(), rgb));
+            }
+        }
+        let fonts = self.presentation().theme_fonts.clone();
+        let _ = self.document.execute(vec![ibis_doc_model::Command::SetTheme { colors, fonts }]);
+        self.sync_document_peers(cx);
+        self.status = Some(crate::shell::i18n::format("docx.design.theme-colors.applied", &[("name", &crate::shell::i18n::text(preset.label_key))]).into());
+        cx.notify();
+    }
+
+    /// ドキュメントの文書テーマ（色・フォント・効果の一括設定）のプリセットID（DOCX-STYLE-012）。
+    pub(crate) fn current_docx_theme_preset(&self) -> Option<&'static str> {
+        let color_id = self.current_docx_theme_colors_preset()?;
+        let font_id = self.current_docx_theme_fonts_preset().unwrap_or("office");
+        for preset in &DOCX_DOCUMENT_THEME_PRESETS {
+            if preset.color_id == color_id && preset.font_id == font_id && self.is_docx_theme_effects_active(preset.effect_id) {
+                return Some(preset.id);
+            }
+        }
+        for preset in &DOCX_DOCUMENT_THEME_PRESETS {
+            if preset.color_id == color_id && preset.font_id == font_id {
+                return Some(preset.id);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn is_docx_theme_active(&self, theme_id: &str) -> bool {
+        self.current_docx_theme_preset() == Some(theme_id)
+    }
+
+    /// ドキュメントの文書テーマ（色・フォント・効果）を一括適用（DOCX-STYLE-012、1ステップUndo/Redo）。
+    pub(crate) fn apply_docx_theme(&mut self, theme_id: &str, cx: &mut Context<Self>) {
+        let Some(theme) = DOCX_DOCUMENT_THEME_PRESETS.iter().find(|t| t.id == theme_id) else { return };
+        let Some(color_preset) = DOCX_THEME_COLORS_PRESETS.iter().find(|p| p.id == theme.color_id) else { return };
+        let Some(font_preset) = DOCX_THEME_FONTS_PRESETS.iter().find(|p| p.id == theme.font_id) else { return };
+        let mut colors = self.presentation().theme_colors.clone();
+        for (name, rgb) in color_preset.colors {
+            if let Some(entry) = colors.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                entry.1 = rgb;
+            } else {
+                colors.push((name.to_string(), rgb));
+            }
+        }
+        let fonts = ibis_doc_model::ThemeFonts {
+            major: ibis_doc_model::FontSet {
+                latin: Some(font_preset.major_latin.to_string()),
+                east_asian: Some(font_preset.major_ea.to_string()),
+                complex: None,
+            },
+            minor: ibis_doc_model::FontSet {
+                latin: Some(font_preset.minor_latin.to_string()),
+                east_asian: Some(font_preset.minor_ea.to_string()),
+                complex: None,
+            },
+        };
+        let mut cmds = vec![ibis_doc_model::Command::SetTheme { colors, fonts: Some(fonts) }];
+        if let Some(effect_preset) = ibis_pptx::theme_effects::find_effect_preset(theme.effect_id) {
+            cmds.push(ibis_doc_model::Command::SetThemeEffects { name: Some(effect_preset.name.to_string()) });
+        }
+        let _ = self.document.execute(cmds);
+        self.sync_document_peers(cx);
+        self.status = Some(crate::shell::i18n::format("docx.design.themes.applied", &[("name", &crate::shell::i18n::text(theme.label_key))]).into());
+        cx.notify();
+    }
+
+    /// テーマの色とフォントのカスタマイズ パネルを開く（DOCX-STYLE-012, DOCX-STYLE-013）。
+    pub(crate) fn open_docx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_kit::component::input::InputState;
+        let p = self.presentation();
+        let have = p.theme_colors.clone();
+        let default_colors = DOCX_THEME_COLORS_PRESETS[0].colors;
+        let colors = crate::pptx::theme_panel::COLORS
+            .iter()
+            .map(|(name, label)| {
+                let rgb = have
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                    .map(|(_, c)| *c)
+                    .or_else(|| default_colors.iter().find(|(n, _)| *n == *name).map(|(_, c)| *c))
+                    .unwrap_or(ibis_doc_model::Rgb(0x000000));
+                let input = cx.new(|cx| InputState::new(window, cx).default_value(format!("#{:06X}", rgb.0 & 0xffffff)));
+                (*name, *label, input)
+            })
+            .collect::<Vec<_>>();
+        let fonts = p.theme_fonts.clone().unwrap_or_default();
+        let font = |window: &mut Window, cx: &mut Context<Self>, v: &Option<String>, fallback: &str| {
+            let val = v.clone().unwrap_or_else(|| fallback.to_string());
+            cx.new(|cx| InputState::new(window, cx).default_value(val))
+        };
+        let font_inputs = [
+            font(window, cx, &fonts.major.latin, "Aptos Display"),
+            font(window, cx, &fonts.major.east_asian, "Yu Gothic"),
+            font(window, cx, &fonts.minor.latin, "Aptos"),
+            font(window, cx, &fonts.minor.east_asian, "Yu Gothic"),
+        ];
+        if let Some(s) = self.doc_state_mut() {
+            s.theme_panel = Some(DocxThemePanel { colors, fonts: font_inputs, error: None });
+            s.compatibility_panel = None;
+            s.inspect_panel = None;
+            s.docx_math = None;
+            s.quick_parts = None;
+            s.table_formula = None;
+            s.table_size = None;
+            s.picture_edit = None;
+            s.font_edit = None;
+            s.color_edit = None;
+            s.paragraph_edit = None;
+            s.style_edit = None;
+            s.link = None;
+            s.find = None;
+            s.comments = None;
+            s.list_style = None;
+        }
+        self.sidebar_open = true;
+        cx.notify();
+    }
+
+    pub(crate) fn close_docx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s) = self.doc_state_mut() {
+            s.theme_panel = None;
+        }
+        self.sidebar_open = false;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn apply_docx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.doc_state().and_then(|s| s.theme_panel.as_ref()) else { return };
+        let parse_hex = |text: &str| -> Option<ibis_doc_model::Rgb> {
+            let t = text.trim().trim_start_matches('#');
+            (t.len() == 6).then(|| u32::from_str_radix(t, 16).ok()).flatten().map(ibis_doc_model::Rgb)
+        };
+        let mut colors = self.presentation().theme_colors.clone();
+        for (name, _, input) in &panel.colors {
+            let Some(rgb) = parse_hex(input.read(cx).value().as_ref()) else {
+                if let Some(p) = self.doc_state_mut().and_then(|s| s.theme_panel.as_mut()) {
+                    p.error = Some(crate::shell::i18n::text("pptx.theme-panel.enter-colors-rrggbb").into());
+                }
+                return cx.notify();
+            };
+            if let Some(entry) = colors.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                entry.1 = rgb;
+            } else {
+                colors.push((name.to_string(), rgb));
+            }
+        }
+        let text = |i: usize| Some(panel.fonts[i].read(cx).value().trim().to_string()).filter(|t| !t.is_empty());
+        let old = self.presentation().theme_fonts.clone();
+        let fonts = ibis_doc_model::ThemeFonts {
+            major: ibis_doc_model::FontSet {
+                latin: text(0),
+                east_asian: text(1),
+                complex: old.as_ref().and_then(|f| f.major.complex.clone()),
+            },
+            minor: ibis_doc_model::FontSet {
+                latin: text(2),
+                east_asian: text(3),
+                complex: old.as_ref().and_then(|f| f.minor.complex.clone()),
+            },
+        };
+        let fonts = Some(fonts).filter(|f| old.is_some() || *f != ibis_doc_model::ThemeFonts::default());
+        let _ = self.document.execute(vec![ibis_doc_model::Command::SetTheme { colors, fonts }]);
+        self.sync_document_peers(cx);
+        self.status = Some(crate::shell::i18n::text("docx.design.theme-colors.custom-applied"));
+        self.close_docx_theme_panel(window, cx);
+    }
+
+    pub(crate) fn docx_theme_panel(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
+        use gpui_kit::component::button::{Button, ButtonVariants as _};
+        use gpui_kit::component::input::Input;
+        use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+        let panel = self.doc_state()?.theme_panel.as_ref()?;
+        let t = crate::shell::i18n::text;
+        let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
+        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.));
+
+        let mut theme_row = h_flex().gap_1().flex_wrap();
+        for theme in &DOCX_DOCUMENT_THEME_PRESETS {
+            let tid = theme.id;
+            let active = self.is_docx_theme_active(tid);
+            let btn = Button::new(format!("docx-theme-preset-{tid}")).small().ghost().label(t(theme.label_key));
+            let btn = if active { btn.border_1() } else { btn };
+            theme_row = theme_row.child(btn.on_click(cx.listener(move |e, _, w, cx| {
+                e.apply_docx_theme(tid, cx);
+                e.open_docx_theme_panel(w, cx);
+            })));
+        }
+        body = body.child(label(&t("docx.design.themes"))).child(theme_row);
+
+        let mut palette_row = h_flex().gap_1().flex_wrap();
+        for preset in &DOCX_THEME_COLORS_PRESETS {
+            let pid = preset.id;
+            let active = self.is_docx_theme_colors_active(pid);
+            let btn = Button::new(format!("docx-color-preset-{pid}")).small().ghost().label(t(preset.label_key));
+            let btn = if active { btn.border_1() } else { btn };
+            palette_row = palette_row.child(btn.on_click(cx.listener(move |e, _, w, cx| {
+                e.apply_docx_theme_colors(pid, cx);
+                e.open_docx_theme_panel(w, cx);
+            })));
+        }
+        body = body.child(label(&t("docx.design.theme-colors"))).child(palette_row);
+
+        for (_, name, input) in &panel.colors {
+            body = body.child(label(&t(name))).child(Input::new(input).small());
+        }
+        for (name, input) in [
+            ("pptx.theme-panel.heading-font-latin", &panel.fonts[0]),
+            ("pptx.theme-panel.heading-font-east-asian", &panel.fonts[1]),
+            ("pptx.theme-panel.body-font-latin", &panel.fonts[2]),
+            ("pptx.theme-panel.body-font-east-asian", &panel.fonts[3]),
+        ] {
+            body = body.child(label(&t(name))).child(Input::new(input).small());
+        }
+        if let Some(error) = &panel.error {
+            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error.clone()));
+        }
+        let body = body.child(
+            h_flex()
+                .gap_1()
+                .child(Button::new("docx-theme-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_docx_theme_panel(w, cx))))
+                .child(Button::new("docx-theme-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_docx_theme_panel(w, cx)))),
+        );
+        Some(crate::shell::chrome::SidebarPanel { title: t("docx.design.theme-colors.customize"), body: body.into_any_element() })
+    }
+
+    /// ドキュメントのテーマ フォントのプリセットID.
+    pub(crate) fn current_docx_theme_fonts_preset(&self) -> Option<&'static str> {
+        let fonts = self.presentation().theme_fonts.as_ref()?;
+        let major = fonts.major.latin.as_deref().unwrap_or("");
+        let minor = fonts.minor.latin.as_deref().unwrap_or("");
+        for preset in &DOCX_THEME_FONTS_PRESETS {
+            if preset.major_latin.eq_ignore_ascii_case(major) && preset.minor_latin.eq_ignore_ascii_case(minor) {
+                return Some(preset.id);
+            }
+        }
+        None
+    }
+
+    /// ドキュメントのテーマ フォントを適用.
+    pub(crate) fn apply_docx_theme_fonts(&mut self, preset_id: &str, cx: &mut Context<Self>) {
+        let Some(preset) = DOCX_THEME_FONTS_PRESETS.iter().find(|p| p.id == preset_id) else { return };
+        let colors = self.presentation().theme_colors.clone();
+        let fonts = ibis_doc_model::ThemeFonts {
+            major: ibis_doc_model::FontSet {
+                latin: Some(preset.major_latin.to_string()),
+                east_asian: Some(preset.major_ea.to_string()),
+                complex: None,
+            },
+            minor: ibis_doc_model::FontSet {
+                latin: Some(preset.minor_latin.to_string()),
+                east_asian: Some(preset.minor_ea.to_string()),
+                complex: None,
+            },
+        };
+        let _ = self.document.execute(vec![ibis_doc_model::Command::SetTheme { colors, fonts: Some(fonts) }]);
+        self.sync_document_peers(cx);
+        cx.notify();
+    }
+
+    /// ドキュメントのテーマ効果プリセットID (または名前).
+    pub(crate) fn current_docx_theme_effects(&self) -> Option<&str> {
+        self.presentation().theme_effects.as_deref()
+    }
+
+    /// テーマ効果プリセットが現在アクティブかどうか.
+    pub(crate) fn is_docx_theme_effects_active(&self, preset_id: &str) -> bool {
+        let current = self.presentation().theme_effects.as_deref().unwrap_or("Office");
+        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return false };
+        current.eq_ignore_ascii_case(preset.id) || current.eq_ignore_ascii_case(preset.name)
+    }
+
+    /// ドキュメントのテーマ効果を適用.
+    pub(crate) fn apply_docx_theme_effects(&mut self, preset_id: &str, cx: &mut Context<Self>) {
+        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return };
+        let _ = self.document.execute(vec![ibis_doc_model::Command::SetThemeEffects { name: Some(preset.name.to_string()) }]);
+        self.sync_document_peers(cx);
+        self.status = Some(crate::shell::i18n::format("docx.design.effects.applied", &[("name", &crate::shell::i18n::text(preset.label_key))]).into());
+        cx.notify();
+    }
+
+    /// ドキュメントの書式設定（テーマ、フォント、段落の間隔）を新しい文書の既定として保存（docx.design.set-as-default）。
+    pub(crate) fn set_docx_design_as_default(&mut self, cx: &mut Context<Self>) {
+        let font_id = self.current_docx_theme_fonts_preset().unwrap_or("office");
+        crate::shell::settings::set("docx.default.theme_fonts", font_id);
+
+        let ps = self.document_paragraph_spacing_preset().unwrap_or(ibis_doc_model::ParagraphSpacingPreset::Default);
+        let s = match ps {
+            ibis_doc_model::ParagraphSpacingPreset::Default => "default",
+            ibis_doc_model::ParagraphSpacingPreset::NoSpace => "none",
+            ibis_doc_model::ParagraphSpacingPreset::Compact => "compact",
+            ibis_doc_model::ParagraphSpacingPreset::Tight => "tight",
+            ibis_doc_model::ParagraphSpacingPreset::Open => "open",
+            ibis_doc_model::ParagraphSpacingPreset::Relaxed => "relaxed",
+            ibis_doc_model::ParagraphSpacingPreset::Double => "double",
+        };
+        crate::shell::settings::set("docx.default.paragraph_spacing", s);
+
+        let colors = &self.presentation().theme_colors;
+        if !colors.is_empty() {
+            let serialized: String = colors
+                .iter()
+                .map(|(k, c)| format!("{}:{:06x}", k, c.0))
+                .collect::<Vec<_>>()
+                .join(";");
+            crate::shell::settings::set("docx.default.theme_colors", &serialized);
+        }
+
+        let style_set = self.document_style_set_preset().unwrap_or(ibis_doc_model::StyleSetPreset::Default);
+        crate::shell::settings::set("docx.default.style_set", style_set.as_str());
+
+        let effects_id = self.current_docx_theme_effects().unwrap_or("Office");
+        crate::shell::settings::set("docx.default.theme_effects", effects_id);
+
+        self.status = Some(crate::shell::i18n::text("docx.design.set-as-default.done"));
+        cx.notify();
+    }
+
+    /// 新規 Word 文書に既定のドキュメント書式設定（フォント、段落の間隔、テーマ色、スタイルセット、効果）を適用。
+    pub(crate) fn apply_docx_default_design(&mut self, cx: &mut Context<Self>) {
+        if let Some(font_id) = crate::shell::settings::get("docx.default.theme_fonts") {
+            self.apply_docx_theme_fonts(&font_id, cx);
+        }
+        if let Some(ps_str) = crate::shell::settings::get("docx.default.paragraph_spacing") {
+            let preset = match ps_str.as_str() {
+                "none" => Some(ibis_doc_model::ParagraphSpacingPreset::NoSpace),
+                "compact" => Some(ibis_doc_model::ParagraphSpacingPreset::Compact),
+                "tight" => Some(ibis_doc_model::ParagraphSpacingPreset::Tight),
+                "open" => Some(ibis_doc_model::ParagraphSpacingPreset::Open),
+                "relaxed" => Some(ibis_doc_model::ParagraphSpacingPreset::Relaxed),
+                "double" => Some(ibis_doc_model::ParagraphSpacingPreset::Double),
+                "default" => Some(ibis_doc_model::ParagraphSpacingPreset::Default),
+                _ => None,
+            };
+            if let Some(preset) = preset {
+                self.set_document_paragraph_spacing(preset, cx);
+            }
+        }
+        if let Some(set_str) = crate::shell::settings::get("docx.default.style_set") {
+            if let Some(set) = ibis_doc_model::StyleSetPreset::from_str(&set_str) {
+                self.set_document_style_set(set, cx);
+            }
+        }
+        if let Some(effects_id) = crate::shell::settings::get("docx.default.theme_effects") {
+            self.apply_docx_theme_effects(&effects_id, cx);
+        }
+        if let Some(colors_str) = crate::shell::settings::get("docx.default.theme_colors") {
+            let mut colors = Vec::new();
+            for part in colors_str.split(';').filter(|s| !s.is_empty()) {
+                if let Some((name, hex)) = part.split_once(':') {
+                    if let Ok(val) = u32::from_str_radix(hex, 16) {
+                        colors.push((name.to_string(), ibis_doc_model::Rgb(val)));
+                    }
+                }
+            }
+            if !colors.is_empty() {
+                let fonts = self.presentation().theme_fonts.clone();
+                let _ = self.document.execute(vec![ibis_doc_model::Command::SetTheme { colors, fonts }]);
+                self.sync_document_peers(cx);
+            }
+        }
+        cx.notify();
+    }
 }
+
+pub(crate) struct DocxThemePanel {
+    pub(crate) colors: Vec<(&'static str, &'static str, Entity<gpui_kit::component::input::InputState>)>,
+    pub(crate) fonts: [Entity<gpui_kit::component::input::InputState>; 4],
+    pub(crate) error: Option<SharedString>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DocxDocumentThemePreset {
+    pub(crate) id: &'static str,
+    pub(crate) action_id: &'static str,
+    pub(crate) label_key: &'static str,
+    pub(crate) color_id: &'static str,
+    pub(crate) font_id: &'static str,
+    pub(crate) effect_id: &'static str,
+}
+
+pub(crate) const DOCX_DOCUMENT_THEME_PRESETS: [DocxDocumentThemePreset; 10] = [
+    DocxDocumentThemePreset { id: "office", action_id: "docx.design.themes.office", label_key: "docx.design.themes.office", color_id: "office", font_id: "office", effect_id: "office" },
+    DocxDocumentThemePreset { id: "office_2013_2022", action_id: "docx.design.themes.office_2013_2022", label_key: "docx.design.themes.office_2013_2022", color_id: "office", font_id: "calibri", effect_id: "office" },
+    DocxDocumentThemePreset { id: "office_2007_2010", action_id: "docx.design.themes.office_2007_2010", label_key: "docx.design.themes.office_2007_2010", color_id: "office_2007_2010", font_id: "calibri", effect_id: "office_2007_2010" },
+    DocxDocumentThemePreset { id: "facet", action_id: "docx.design.themes.facet", label_key: "docx.design.themes.facet", color_id: "green", font_id: "century-gothic", effect_id: "metro" },
+    DocxDocumentThemePreset { id: "gallery", action_id: "docx.design.themes.gallery", label_key: "docx.design.themes.gallery", color_id: "violet", font_id: "arial", effect_id: "glossy" },
+    DocxDocumentThemePreset { id: "integral", action_id: "docx.design.themes.integral", label_key: "docx.design.themes.integral", color_id: "blue_green", font_id: "century-gothic", effect_id: "slate" },
+    DocxDocumentThemePreset { id: "ion", action_id: "docx.design.themes.ion", label_key: "docx.design.themes.ion", color_id: "red_orange", font_id: "century-gothic", effect_id: "bubbles" },
+    DocxDocumentThemePreset { id: "organic", action_id: "docx.design.themes.organic", label_key: "docx.design.themes.organic", color_id: "median", font_id: "times", effect_id: "median" },
+    DocxDocumentThemePreset { id: "retrospect", action_id: "docx.design.themes.retrospect", label_key: "docx.design.themes.retrospect", color_id: "orange", font_id: "calibri", effect_id: "aspect" },
+    DocxDocumentThemePreset { id: "slice", action_id: "docx.design.themes.slice", label_key: "docx.design.themes.slice", color_id: "blue", font_id: "arial", effect_id: "apex" },
+];
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DocxThemeColorsPreset {
+    pub(crate) id: &'static str,
+    pub(crate) action_id: &'static str,
+    pub(crate) label_key: &'static str,
+    pub(crate) colors: [(&'static str, ibis_doc_model::Rgb); 12],
+}
+
+pub(crate) const DOCX_THEME_COLORS_PRESETS: [DocxThemeColorsPreset; 12] = [
+    DocxThemeColorsPreset {
+        id: "office",
+        action_id: "docx.design.theme-colors.office",
+        label_key: "docx.design.theme-colors.office",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x44546a)), ("lt2", ibis_doc_model::Rgb(0xe7e6e6)),
+            ("accent1", ibis_doc_model::Rgb(0x4472c4)), ("accent2", ibis_doc_model::Rgb(0xed7d31)),
+            ("accent3", ibis_doc_model::Rgb(0xa5a5a5)), ("accent4", ibis_doc_model::Rgb(0xffc000)),
+            ("accent5", ibis_doc_model::Rgb(0x5b9bd5)), ("accent6", ibis_doc_model::Rgb(0x70ad47)),
+            ("hlink", ibis_doc_model::Rgb(0x0563c1)), ("folHlink", ibis_doc_model::Rgb(0x954f72)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "office_2007_2010",
+        action_id: "docx.design.theme-colors.office_2007_2010",
+        label_key: "docx.design.theme-colors.office_2007_2010",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x1f497d)), ("lt2", ibis_doc_model::Rgb(0xeeece1)),
+            ("accent1", ibis_doc_model::Rgb(0x4f81bd)), ("accent2", ibis_doc_model::Rgb(0xc0504d)),
+            ("accent3", ibis_doc_model::Rgb(0x9bbb59)), ("accent4", ibis_doc_model::Rgb(0x8064a2)),
+            ("accent5", ibis_doc_model::Rgb(0x4bacc6)), ("accent6", ibis_doc_model::Rgb(0xf79646)),
+            ("hlink", ibis_doc_model::Rgb(0x0000ff)), ("folHlink", ibis_doc_model::Rgb(0x800080)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "grayscale",
+        action_id: "docx.design.theme-colors.grayscale",
+        label_key: "docx.design.theme-colors.grayscale",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x333333)), ("lt2", ibis_doc_model::Rgb(0xe6e6e6)),
+            ("accent1", ibis_doc_model::Rgb(0x595959)), ("accent2", ibis_doc_model::Rgb(0x7f7f7f)),
+            ("accent3", ibis_doc_model::Rgb(0x999999)), ("accent4", ibis_doc_model::Rgb(0xb2b2b2)),
+            ("accent5", ibis_doc_model::Rgb(0xcccccc)), ("accent6", ibis_doc_model::Rgb(0xd9d9d9)),
+            ("hlink", ibis_doc_model::Rgb(0x404040)), ("folHlink", ibis_doc_model::Rgb(0x737373)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "blue_warm",
+        action_id: "docx.design.theme-colors.blue_warm",
+        label_key: "docx.design.theme-colors.blue_warm",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x232d4b)), ("lt2", ibis_doc_model::Rgb(0xe8edf5)),
+            ("accent1", ibis_doc_model::Rgb(0x4a66ac)), ("accent2", ibis_doc_model::Rgb(0x629dd1)),
+            ("accent3", ibis_doc_model::Rgb(0x297fd5)), ("accent4", ibis_doc_model::Rgb(0x7f8fa9)),
+            ("accent5", ibis_doc_model::Rgb(0x5a6e85)), ("accent6", ibis_doc_model::Rgb(0x8898ab)),
+            ("hlink", ibis_doc_model::Rgb(0x2b579a)), ("folHlink", ibis_doc_model::Rgb(0x604878)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "blue",
+        action_id: "docx.design.theme-colors.blue",
+        label_key: "docx.design.theme-colors.blue",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x263859)), ("lt2", ibis_doc_model::Rgb(0xe8eef5)),
+            ("accent1", ibis_doc_model::Rgb(0x386fa4)), ("accent2", ibis_doc_model::Rgb(0x59a5d8)),
+            ("accent3", ibis_doc_model::Rgb(0x84d2f6)), ("accent4", ibis_doc_model::Rgb(0x91e5f6)),
+            ("accent5", ibis_doc_model::Rgb(0x133c55)), ("accent6", ibis_doc_model::Rgb(0x588b8b)),
+            ("hlink", ibis_doc_model::Rgb(0x1a759f)), ("folHlink", ibis_doc_model::Rgb(0x184e77)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "blue_green",
+        action_id: "docx.design.theme-colors.blue_green",
+        label_key: "docx.design.theme-colors.blue_green",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x1e3f47)), ("lt2", ibis_doc_model::Rgb(0xe6f2f5)),
+            ("accent1", ibis_doc_model::Rgb(0x3494ba)), ("accent2", ibis_doc_model::Rgb(0x58b6c0)),
+            ("accent3", ibis_doc_model::Rgb(0x75bda7)), ("accent4", ibis_doc_model::Rgb(0x7a8c8e)),
+            ("accent5", ibis_doc_model::Rgb(0x84acb6)), ("accent6", ibis_doc_model::Rgb(0x2683c6)),
+            ("hlink", ibis_doc_model::Rgb(0x1f7a8c)), ("folHlink", ibis_doc_model::Rgb(0x4b6584)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "green",
+        action_id: "docx.design.theme-colors.green",
+        label_key: "docx.design.theme-colors.green",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x29421e)), ("lt2", ibis_doc_model::Rgb(0xebf2e6)),
+            ("accent1", ibis_doc_model::Rgb(0x549e39)), ("accent2", ibis_doc_model::Rgb(0x8ab833)),
+            ("accent3", ibis_doc_model::Rgb(0xc0cf3a)), ("accent4", ibis_doc_model::Rgb(0x029676)),
+            ("accent5", ibis_doc_model::Rgb(0x4ab5c4)), ("accent6", ibis_doc_model::Rgb(0x0989b1)),
+            ("hlink", ibis_doc_model::Rgb(0x3b7a26)), ("folHlink", ibis_doc_model::Rgb(0x5a734c)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "orange",
+        action_id: "docx.design.theme-colors.orange",
+        label_key: "docx.design.theme-colors.orange",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x52311c)), ("lt2", ibis_doc_model::Rgb(0xf7eee8)),
+            ("accent1", ibis_doc_model::Rgb(0xe48312)), ("accent2", ibis_doc_model::Rgb(0xbd582c)),
+            ("accent3", ibis_doc_model::Rgb(0x865640)), ("accent4", ibis_doc_model::Rgb(0x9b8357)),
+            ("accent5", ibis_doc_model::Rgb(0xc2bc80)), ("accent6", ibis_doc_model::Rgb(0x94a088)),
+            ("hlink", ibis_doc_model::Rgb(0xc65911)), ("folHlink", ibis_doc_model::Rgb(0x833c0c)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "red_orange",
+        action_id: "docx.design.theme-colors.red_orange",
+        label_key: "docx.design.theme-colors.red_orange",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x4f211c)), ("lt2", ibis_doc_model::Rgb(0xf5e8e6)),
+            ("accent1", ibis_doc_model::Rgb(0xd34817)), ("accent2", ibis_doc_model::Rgb(0x9b2d1f)),
+            ("accent3", ibis_doc_model::Rgb(0xa28e6a)), ("accent4", ibis_doc_model::Rgb(0x956251)),
+            ("accent5", ibis_doc_model::Rgb(0x918485)), ("accent6", ibis_doc_model::Rgb(0x855d5d)),
+            ("hlink", ibis_doc_model::Rgb(0xb83810)), ("folHlink", ibis_doc_model::Rgb(0x7a2518)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "violet",
+        action_id: "docx.design.theme-colors.violet",
+        label_key: "docx.design.theme-colors.violet",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x3b2847)), ("lt2", ibis_doc_model::Rgb(0xf0eaf5)),
+            ("accent1", ibis_doc_model::Rgb(0x8064a2)), ("accent2", ibis_doc_model::Rgb(0xa088b7)),
+            ("accent3", ibis_doc_model::Rgb(0xb2a1c7)), ("accent4", ibis_doc_model::Rgb(0x5c4776)),
+            ("accent5", ibis_doc_model::Rgb(0x9c85c0)), ("accent6", ibis_doc_model::Rgb(0x705697)),
+            ("hlink", ibis_doc_model::Rgb(0x6b4c9a)), ("folHlink", ibis_doc_model::Rgb(0x4a356b)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "aspect",
+        action_id: "docx.design.theme-colors.aspect",
+        label_key: "docx.design.theme-colors.aspect",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x242852)), ("lt2", ibis_doc_model::Rgb(0xe3e3e3)),
+            ("accent1", ibis_doc_model::Rgb(0xf0a22e)), ("accent2", ibis_doc_model::Rgb(0xa56110)),
+            ("accent3", ibis_doc_model::Rgb(0x90a437)), ("accent4", ibis_doc_model::Rgb(0x43896a)),
+            ("accent5", ibis_doc_model::Rgb(0x427891)), ("accent6", ibis_doc_model::Rgb(0x4e4273)),
+            ("hlink", ibis_doc_model::Rgb(0xd86a14)), ("folHlink", ibis_doc_model::Rgb(0x745a45)),
+        ],
+    },
+    DocxThemeColorsPreset {
+        id: "median",
+        action_id: "docx.design.theme-colors.median",
+        label_key: "docx.design.theme-colors.median",
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x444444)), ("lt2", ibis_doc_model::Rgb(0xefefef)),
+            ("accent1", ibis_doc_model::Rgb(0x775f55)), ("accent2", ibis_doc_model::Rgb(0x8c786e)),
+            ("accent3", ibis_doc_model::Rgb(0xa19187)), ("accent4", ibis_doc_model::Rgb(0xb6aaa1)),
+            ("accent5", ibis_doc_model::Rgb(0xcbc3bb)), ("accent6", ibis_doc_model::Rgb(0xe0ddd5)),
+            ("hlink", ibis_doc_model::Rgb(0x93381e)), ("folHlink", ibis_doc_model::Rgb(0x5f2e23)),
+        ],
+    },
+];
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DocxStyleSetPreset {
+    pub(crate) preset: ibis_doc_model::StyleSetPreset,
+    pub(crate) action_id: &'static str,
+    pub(crate) label_key: &'static str,
+}
+
+pub(crate) const DOCX_STYLE_SET_PRESETS: [DocxStyleSetPreset; 8] = [
+    DocxStyleSetPreset { preset: ibis_doc_model::StyleSetPreset::Default, action_id: "docx.design.style-set.default", label_key: "docx.design.style-set.default" },
+    DocxStyleSetPreset { preset: ibis_doc_model::StyleSetPreset::Casual, action_id: "docx.design.style-set.casual", label_key: "docx.design.style-set.casual" },
+    DocxStyleSetPreset { preset: ibis_doc_model::StyleSetPreset::Centered, action_id: "docx.design.style-set.centered", label_key: "docx.design.style-set.centered" },
+    DocxStyleSetPreset { preset: ibis_doc_model::StyleSetPreset::Formal, action_id: "docx.design.style-set.formal", label_key: "docx.design.style-set.formal" },
+    DocxStyleSetPreset { preset: ibis_doc_model::StyleSetPreset::Elegant, action_id: "docx.design.style-set.elegant", label_key: "docx.design.style-set.elegant" },
+    DocxStyleSetPreset { preset: ibis_doc_model::StyleSetPreset::Modern, action_id: "docx.design.style-set.modern", label_key: "docx.design.style-set.modern" },
+    DocxStyleSetPreset { preset: ibis_doc_model::StyleSetPreset::Simple, action_id: "docx.design.style-set.simple", label_key: "docx.design.style-set.simple" },
+    DocxStyleSetPreset { preset: ibis_doc_model::StyleSetPreset::Minimalist, action_id: "docx.design.style-set.minimalist", label_key: "docx.design.style-set.minimalist" },
+];
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DocxThemeFontsPreset {
+    pub(crate) id: &'static str,
+    pub(crate) action_id: &'static str,
+    pub(crate) label_key: &'static str,
+    pub(crate) major_latin: &'static str,
+    pub(crate) major_ea: &'static str,
+    pub(crate) minor_latin: &'static str,
+    pub(crate) minor_ea: &'static str,
+}
+
+pub(crate) const DOCX_THEME_FONTS_PRESETS: [DocxThemeFontsPreset; 6] = [
+    DocxThemeFontsPreset {
+        id: "office",
+        action_id: "docx.design.theme-fonts.office",
+        label_key: "docx.design.theme-fonts.office",
+        major_latin: "Aptos Display",
+        major_ea: "Yu Gothic",
+        minor_latin: "Aptos",
+        minor_ea: "Yu Gothic",
+    },
+    DocxThemeFontsPreset {
+        id: "calibri",
+        action_id: "docx.design.theme-fonts.calibri",
+        label_key: "docx.design.theme-fonts.calibri",
+        major_latin: "Calibri Light",
+        major_ea: "Yu Gothic Light",
+        minor_latin: "Calibri",
+        minor_ea: "Yu Gothic",
+    },
+    DocxThemeFontsPreset {
+        id: "arial",
+        action_id: "docx.design.theme-fonts.arial",
+        label_key: "docx.design.theme-fonts.arial",
+        major_latin: "Arial",
+        major_ea: "MS Gothic",
+        minor_latin: "Arial",
+        minor_ea: "MS PGothic",
+    },
+    DocxThemeFontsPreset {
+        id: "times",
+        action_id: "docx.design.theme-fonts.times",
+        label_key: "docx.design.theme-fonts.times",
+        major_latin: "Times New Roman",
+        major_ea: "MS Mincho",
+        minor_latin: "Times New Roman",
+        minor_ea: "MS PMincho",
+    },
+    DocxThemeFontsPreset {
+        id: "century-gothic",
+        action_id: "docx.design.theme-fonts.century-gothic",
+        label_key: "docx.design.theme-fonts.century-gothic",
+        major_latin: "Century Gothic",
+        major_ea: "Yu Gothic",
+        minor_latin: "Century Gothic",
+        minor_ea: "Yu Gothic",
+    },
+    DocxThemeFontsPreset {
+        id: "meiryo",
+        action_id: "docx.design.theme-fonts.meiryo",
+        label_key: "docx.design.theme-fonts.meiryo",
+        major_latin: "Meiryo UI",
+        major_ea: "Meiryo UI",
+        minor_latin: "Meiryo",
+        minor_ea: "Meiryo",
+    },
+];
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DocxThemeEffectPreset {
+    pub(crate) id: &'static str,
+    pub(crate) action_id: &'static str,
+    pub(crate) label_key: &'static str,
+}
+
+pub(crate) const DOCX_THEME_EFFECTS_PRESETS: [DocxThemeEffectPreset; 10] = [
+    DocxThemeEffectPreset { id: "office", action_id: "docx.design.effects.office", label_key: "docx.design.effects.office" },
+    DocxThemeEffectPreset { id: "office_2007_2010", action_id: "docx.design.effects.office_2007_2010", label_key: "docx.design.effects.office_2007_2010" },
+    DocxThemeEffectPreset { id: "metro", action_id: "docx.design.effects.metro", label_key: "docx.design.effects.metro" },
+    DocxThemeEffectPreset { id: "aspect", action_id: "docx.design.effects.aspect", label_key: "docx.design.effects.aspect" },
+    DocxThemeEffectPreset { id: "apex", action_id: "docx.design.effects.apex", label_key: "docx.design.effects.apex" },
+    DocxThemeEffectPreset { id: "slate", action_id: "docx.design.effects.slate", label_key: "docx.design.effects.slate" },
+    DocxThemeEffectPreset { id: "median", action_id: "docx.design.effects.median", label_key: "docx.design.effects.median" },
+    DocxThemeEffectPreset { id: "glossy", action_id: "docx.design.effects.glossy", label_key: "docx.design.effects.glossy" },
+    DocxThemeEffectPreset { id: "bubbles", action_id: "docx.design.effects.bubbles", label_key: "docx.design.effects.bubbles" },
+    DocxThemeEffectPreset { id: "shadow", action_id: "docx.design.effects.shadow", label_key: "docx.design.effects.shadow" },
+];
 
 /// Section breaks.
 impl SlideEditor {
@@ -3166,12 +5425,23 @@ impl SlideEditor {
         self.run_flow(vec![command], cx);
     }
 
+    /// Adding a header (footer): its style (ヘッダー, フッター) first when the
+    /// document lacks it (DOCX-HEADER-014).
+    pub(crate) fn add_header_commands(&self, footer: bool) -> Vec<FlowCommand> {
+        let mut commands = Vec::new();
+        if let Some((id, style)) = self.flow().and_then(|d| flow_command::missing_header_footer_style(&d.styles, footer)) {
+            commands.push(FlowCommand::SetStyle { id, style: Some(style) });
+        }
+        commands.push(FlowCommand::AddHeader { footer });
+        commands
+    }
+
     pub(crate) fn edit_header(&mut self, footer: bool, cx: &mut Context<Self>) {
         let Some(doc) = self.flow() else { return };
         let list = if footer { &doc.footer } else { &doc.header };
         if list.is_empty() {
             let id = doc.new_id();
-            if self.run_flow(vec![FlowCommand::AddHeader { footer }], cx) {
+            if self.run_flow(self.add_header_commands(footer), cx) {
                 self.set_caret(FlowPos::new(id, 0), false, cx);
             }
             return;
@@ -3218,7 +5488,7 @@ impl SlideEditor {
             Some(_) => return,
             None => {
                 let id = doc.new_id();
-                commands.push(FlowCommand::AddHeader { footer });
+                commands.extend(self.add_header_commands(footer));
                 commands.push(FlowCommand::InsertPageNumber { at: FlowPos::new(id, 0) });
                 id
             }
@@ -3309,8 +5579,18 @@ impl SlideEditor {
                 self.update_index(cx);
             }
         }
+        // The table of authorities is made again with the fields.
+        if range.is_none() && self.flow().is_some_and(|d| super::toa_fields::toa_field(d).is_some()) {
+            self.update_toa(cx);
+        }
+        // The bibliography is made again with the fields.
+        if range.is_none() && self.flow().is_some_and(|d| super::bibliography::bibliography_field(d).is_some()) {
+            self.update_bibliography(cx);
+        }
         let now = crate::clock::local_now();
-        let Some(commands) = self.flow().map(|d| flow_command::updated_fields_in_range(d, range, Some(&now))) else { return };
+        let include = self.include_text_resolver();
+        let Some(mut commands) = self.flow().map(|d| flow_command::updated_fields_in_range_with(d, range, Some(&now), Some(&include))) else { return };
+        commands.extend(self.linked_picture_commands(range));
         if commands.is_empty() {
             return;
         }
@@ -3331,9 +5611,107 @@ impl SlideEditor {
             self.update_index(cx);
         }
         let now = crate::clock::local_now();
-        let Some(commands) = self.flow().map(|d| flow_command::updated_fields_in_range(d, None, Some(&now))) else { return };
+        let include = self.include_text_resolver();
+        let Some(mut commands) = self.flow().map(|d| flow_command::updated_fields_in_range_with(d, None, Some(&now), Some(&include))) else { return };
+        commands.extend(self.linked_picture_commands(None));
         if !commands.is_empty() {
             self.run_flow(commands, cx);
+        }
+    }
+
+    /// The commands that read again the pictures that are the results of `INCLUDEPICTURE "file"` fields (all of them, or those in
+    /// `range`) from their files (next to the document when the path is relative), the new pictures kept the size of the old. A file
+    /// that cannot be read, or that is the picture as it is, gives none.
+    fn linked_picture_commands(&mut self, range: Option<(FlowPos, FlowPos)>) -> Vec<FlowCommand> {
+        #[cfg(not(target_family = "wasm"))]
+        let base = self.path.as_deref().and_then(|p| p.parent()).map(std::path::Path::to_path_buf);
+        #[cfg(target_family = "wasm")]
+        let base: Option<std::path::PathBuf> = None;
+        let Some(doc) = self.flow().cloned() else { return Vec::new() };
+        let order: Vec<u32> = doc.body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.id) } else { None }).collect();
+        let index = |id: u32| order.iter().position(|o| *o == id).unwrap_or(0);
+        let mut found: Vec<(FlowPos, String, ibis_doc_model::MediaId)> = Vec::new();
+        for block in &doc.body {
+            let Block::Paragraph(p) = block else { continue };
+            let mut offset = 0;
+            for run in &p.runs {
+                if let FlowRunKind::Picture { media, look, .. } = &run.kind
+                    && let Some(file) = &look.linked_file
+                {
+                    let pos = FlowPos::new(p.id, offset);
+                    let inside = range.is_none_or(|(a, b)| {
+                        let at = (index(pos.para), pos.offset);
+                        (index(a.para), a.offset) <= at && at < (index(b.para), b.offset)
+                    });
+                    if inside {
+                        found.push((pos, file.clone(), *media));
+                    }
+                }
+                offset += run.len();
+            }
+        }
+        let mut commands = Vec::new();
+        for (at, file, old_media) in found {
+            let path = std::path::Path::new(&file);
+            let full = if path.is_absolute() { path.to_path_buf() } else if let Some(b) = &base { b.join(path) } else { continue };
+            let Ok(data) = std::fs::read(&full) else { continue };
+            if self.presentation().media(old_media).is_some_and(|m| *m.data == *data) {
+                continue;
+            }
+            let format = ibis_doc_model::MediaFormat::from_path(&full.to_string_lossy());
+            let image_format = match format {
+                ibis_doc_model::MediaFormat::Png => Some(ImageFormat::Png),
+                ibis_doc_model::MediaFormat::Jpeg => Some(ImageFormat::Jpeg),
+                ibis_doc_model::MediaFormat::Gif => Some(ImageFormat::Gif),
+                ibis_doc_model::MediaFormat::Bmp => Some(ImageFormat::Bmp),
+                ibis_doc_model::MediaFormat::Tiff => Some(ImageFormat::Tiff),
+                ibis_doc_model::MediaFormat::Svg => Some(ImageFormat::Svg),
+                _ => None,
+            };
+            let media = self.document.ids().add_media(format, data.clone());
+            if let Some(f) = image_format {
+                self.resources.images.insert(media, Arc::new(Image::from_bytes(f, data)));
+            }
+            commands.push(FlowCommand::ReplacePicture { at, media, size: None });
+        }
+        commands
+    }
+
+    /// The text an `INCLUDETEXT "file" [bookmark]` field's instruction names, read from the file (next to the document when the
+    /// path is relative): the text of a .docx (its paragraphs, or those of the bookmark, one after another) or of a text file.
+    /// `None` when the file cannot be read (the result stays as it was).
+    fn include_text_resolver(&self) -> impl Fn(&str) -> Option<String> + use<> {
+        #[cfg(not(target_family = "wasm"))]
+        let base = self.path.as_deref().and_then(|p| p.parent()).map(std::path::Path::to_path_buf);
+        #[cfg(target_family = "wasm")]
+        let base: Option<std::path::PathBuf> = None;
+        move |instruction: &str| {
+            let words = super::index_fields::words(instruction);
+            let named = words.get(1).filter(|w| !w.starts_with('\\') || w.len() > 2)?;
+            // A Windows path as Word writes it in a field (`C:\\dir\\file.docx`).
+            let path = named.replace("\\\\", "/");
+            let path = std::path::Path::new(&path);
+            let full = if path.is_absolute() { path.to_path_buf() } else { base.as_ref()?.join(path) };
+            let data = std::fs::read(&full).ok()?;
+            let is_docx = full.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("docx"));
+            if !is_docx {
+                let text = ibis_pptx::csv::decode(&data).unwrap_or_else(|_| String::from_utf8_lossy(&data).into_owned());
+                return Some(text.lines().map(str::trim_end).collect::<Vec<_>>().join(" ").trim().to_string());
+            }
+            let presentation = ibis_pptx::read(&data).ok()?;
+            let doc = presentation.flow.as_ref()?;
+            let bookmark = words.get(2).filter(|w| !w.starts_with('\\'));
+            let paragraphs: Vec<&ibis_doc_model::FlowParagraph> = doc.body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p) } else { None }).collect();
+            let range = match bookmark {
+                Some(name) => {
+                    let start = paragraphs.iter().position(|p| p.bookmarks.iter().any(|b| b == name))?;
+                    let end = paragraphs[start..].iter().position(|p| p.bookmark_ends.iter().any(|b| b == name)).map_or(start, |o| start + o);
+                    start..=end
+                }
+                None => 0..=paragraphs.len().saturating_sub(1),
+            };
+            let text: Vec<String> = paragraphs.get(range)?.iter().map(|p| p.text().replace('\u{fffc}', "")).filter(|t| !t.is_empty()).collect();
+            Some(text.join(" "))
         }
     }
 
@@ -3373,6 +5751,17 @@ impl SlideEditor {
     /// 印刷前のリンクデータ更新設定を切り替える。
     pub(crate) fn toggle_update_links_before_printing(&mut self, cx: &mut Context<Self>) {
         self.update_links_before_printing = !self.update_links_before_printing;
+        cx.notify();
+    }
+
+    /// 表示 > ダークモード（ページ）: the page shown dark (the screen only; printing and exporting are as always).
+    pub(crate) fn is_dark_page(&self) -> bool {
+        self.resources.dark_page
+    }
+
+    pub(crate) fn toggle_dark_page(&mut self, cx: &mut Context<Self>) {
+        self.resources.dark_page = !self.resources.dark_page;
+        crate::docx::flow_layout::clear_layout_caches();
         cx.notify();
     }
 
@@ -3416,6 +5805,58 @@ impl SlideEditor {
     pub(crate) fn toggle_print_hidden_text(&mut self, cx: &mut Context<Self>) {
         let next = !self.is_print_hidden_text();
         self.set_print_hidden_text(next, cx);
+    }
+
+    /// 変更履歴とコメントを印刷するかどうか (Word Print > 設定 > 変更履歴の印刷 DOCX-SEC-014).
+    pub(crate) fn is_print_markup(&self) -> bool {
+        self.print_markup
+    }
+
+    /// 変更履歴とコメントの印刷設定を変更する。
+    pub(crate) fn set_print_markup(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.print_markup != on {
+            self.print_markup = on;
+            self.resources.print_markup = on;
+            crate::docx::flow_layout::clear_layout_caches();
+            cx.notify();
+        }
+    }
+
+    /// 変更履歴とコメントの印刷設定を切り替える。
+    pub(crate) fn toggle_print_markup(&mut self, cx: &mut Context<Self>) {
+        let next = !self.is_print_markup();
+        self.set_print_markup(next, cx);
+    }
+
+    /// 現在キャレットがヘッダーまたはフッター内にあるかどうか。
+    pub(crate) fn is_header_footer_editing(&self) -> bool {
+        let Some((_, caret)) = self.text_selection() else { return false };
+        let Some(doc) = self.flow() else { return false };
+        matches!(
+            ibis_doc_model::flow_command::locate(doc, caret.para),
+            Some((ibis_doc_model::flow_command::Container::Header | ibis_doc_model::flow_command::Container::Footer | ibis_doc_model::flow_command::Container::Part { .. }, _))
+        )
+    }
+
+    /// ヘッダー/フッター編集時に文書内のテキストを表示するかどうか (Word Header & Footer Tools > オプション > 文書内のテキストを表示).
+    pub(crate) fn is_show_document_text(&self) -> bool {
+        self.show_document_text
+    }
+
+    /// ヘッダー/フッター編集時の文書内テキスト表示設定を変更する。
+    pub(crate) fn set_show_document_text(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.show_document_text != on {
+            self.show_document_text = on;
+            self.resources.hide_document_text = !on && self.is_header_footer_editing();
+            crate::docx::flow_layout::clear_layout_caches();
+            cx.notify();
+        }
+    }
+
+    /// ヘッダー/フッター編集時の文書内テキスト表示設定を切り替える。
+    pub(crate) fn toggle_show_document_text(&mut self, cx: &mut Context<Self>) {
+        let next = !self.is_show_document_text();
+        self.set_show_document_text(next, cx);
     }
 
     /// 印刷またはPDF書き出し前の更新準備処理。
@@ -3490,6 +5931,7 @@ impl SlideEditor {
     }
 
     /// フィールドの編集: キャレット位置のフィールドのコードを編集する。
+    #[allow(dead_code)]
     pub(crate) fn edit_field_with_code(&mut self, new_code: &str, cx: &mut Context<Self>) {
         let Some((caret, _)) = self.ordered_selection() else { return };
         let Some(doc) = self.flow() else { return };
@@ -3781,7 +6223,7 @@ impl SlideEditor {
                 TocType::Figures(label)
             } else {
                 let instruction = flow_command::parse_toc_instruction(instr);
-                if !instruction.custom_styles.is_empty() {
+                if !instruction.custom_styles.is_empty() || instruction.tc_entries.is_some() {
                     TocType::Custom(instruction)
                 } else {
                     TocType::Headings(instruction.heading_levels.unwrap_or((1, 3)))
@@ -3960,6 +6402,124 @@ impl SlideEditor {
         }
     }
 
+    /// 挿入 > 引用文献目録: a table of authorities (TOA) of the citations the TA fields mark, before the caret's paragraph; if the document
+    /// has one, it is made again.
+    pub(crate) fn insert_toa(&mut self, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.ordered_selection() else { return };
+        if self.flow().and_then(|d| flow_command::locate(d, start.para)).map(|l| l.0) != Some(Container::Body) {
+            return;
+        }
+        if super::toa_fields::toa_field(self.flow().map(|d| &**d).unwrap_or(&FlowDocument::default())).is_some() {
+            return self.update_toa(cx);
+        }
+        self.run_toa(start.para, false, "TOA \\h \\c \"0\" \\p", cx);
+    }
+
+    /// 引用文献目録の更新: the table made again from the TA fields now.
+    pub(crate) fn update_toa(&mut self, cx: &mut Context<Self>) {
+        let Some((first, instruction)) = self.flow().and_then(|d| super::toa_fields::toa_field(d)) else { return };
+        self.run_toa(first, true, &instruction, cx);
+    }
+
+    fn run_toa(&mut self, before: u32, replace: bool, instruction: &str, cx: &mut Context<Self>) {
+        let Some(doc) = self.flow() else { return };
+        let page_of = self.index_page_of();
+        let commands = super::toa_fields::toa_commands(doc, before, replace, instruction, &page_of);
+        if self.run_flow(commands, cx) {
+            // The pages moved with the table: numbered again, in the same step of undo.
+            self.relayout_if_changed();
+            if let Some((first, instruction)) = self.flow().and_then(|d| super::toa_fields::toa_field(d)) {
+                let page_of = self.index_page_of();
+                if let Some(doc) = self.flow() {
+                    let again: Vec<Command> = super::toa_fields::toa_commands(doc, first, true, &instruction, &page_of).into_iter().filter(|c| matches!(c, FlowCommand::SetToc { .. })).map(Command::Flow).collect();
+                    let _ = self.document.amend_last(again);
+                }
+            }
+            cx.notify();
+        }
+    }
+
+    /// 引用文献の登録: a TA field after the selected text (the long citation is that text), in `category` (1 to 6).
+    pub(crate) fn mark_citation(&mut self, category: u32, cx: &mut Context<Self>) {
+        let Some((start, end)) = self.ordered_selection() else { return };
+        if start == end || start.para != end.para {
+            self.status = Some(crate::shell::i18n::text("docx.editing.select-text-mark-citation").into());
+            return cx.notify();
+        }
+        let text = self.selected_text().replace('"', "\\\"");
+        let kind = FlowRunKind::Field { instruction: format!("TA \\l \"{text}\" \\s \"{text}\" \\c {category} "), shown: String::new() };
+        if self.run_flow(vec![FlowCommand::InsertField { at: end, kind }], cx) {
+            self.set_caret(FlowPos::new(end.para, end.offset + 1), false, cx);
+        }
+    }
+
+    /// 引用文献の挿入 (DOCX-REF-014 / docx.reference.insert-citation):
+    /// Inserts a `{ CITATION <tag> \l 1041 }` field with shown `(<tag>)` at the caret or replaces selected text.
+    pub(crate) fn insert_citation(&mut self, tag: &str, cx: &mut Context<Self>) {
+        let tag = tag.trim();
+        if tag.is_empty() { return; }
+        let Some((start, end)) = self.ordered_selection() else { return };
+        let mut commands = Vec::new();
+        if start != end {
+            commands.push(FlowCommand::Delete { from: start, to: end });
+        }
+        let kind = FlowRunKind::Field {
+            instruction: format!("CITATION {tag} \\l 1041 "),
+            shown: format!("({tag})"),
+        };
+        commands.push(FlowCommand::InsertField { at: start, kind });
+        if self.run_flow(commands, cx) {
+            self.set_caret(FlowPos::new(start.para, start.offset + 1), false, cx);
+            let msg = crate::shell::i18n::format("docx.reference.citation.inserted", &[("tag", &tag)]);
+            self.status = Some(msg.into());
+            cx.notify();
+        }
+    }
+
+    /// 引用文献の挿入（選択テキストまたは既定タグ）
+    pub(crate) fn insert_citation_at_selection(&mut self, cx: &mut Context<Self>) {
+        let tag = if let Some((start, end)) = self.ordered_selection() && start != end && start.para == end.para {
+            self.selected_text()
+        } else {
+            let count = self.flow().map(|d| super::bibliography::collect_citations(d).len()).unwrap_or(0);
+            let default_prefix = crate::shell::i18n::text("docx.reference.citation.default-tag");
+            format!("{default_prefix}{}", count + 1)
+        };
+        self.insert_citation(&tag, cx);
+    }
+
+    /// 挿入 > 文献目録 (DOCX-REF-014 / docx.reference.bibliography):
+    /// Inserts a bibliography field before the caret's paragraph (or updates existing).
+    pub(crate) fn insert_bibliography(&mut self, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.ordered_selection() else { return };
+        if self.flow().and_then(|d| flow_command::locate(d, start.para)).map(|l| l.0) != Some(Container::Body) {
+            return;
+        }
+        if super::bibliography::bibliography_field(self.flow().map(|d| &**d).unwrap_or(&FlowDocument::default())).is_some() {
+            return self.update_bibliography(cx);
+        }
+        self.run_bibliography(start.para, false, "BIBLIOGRAPHY \\l 1041", cx);
+    }
+
+    /// 文献目録の更新: updates existing bibliography field from current citations.
+    pub(crate) fn update_bibliography(&mut self, cx: &mut Context<Self>) {
+        let Some((first, instruction)) = self.flow().and_then(|d| super::bibliography::bibliography_field(d)) else { return };
+        self.run_bibliography(first, true, &instruction, cx);
+    }
+
+    fn run_bibliography(&mut self, before: u32, replace: bool, instruction: &str, cx: &mut Context<Self>) {
+        let Some(doc) = self.flow() else { return };
+        let count = super::bibliography::collect_citations(doc).len();
+        let commands = super::bibliography::bibliography_commands(doc, before, replace, instruction);
+        if self.run_flow(commands, cx) {
+            let key = if replace { "docx.reference.bibliography.updated" } else { "docx.reference.bibliography.inserted" };
+            let count_str = count.to_string();
+            let msg = crate::shell::i18n::format(key, &[("count", &count_str)]);
+            self.status = Some(msg.into());
+            cx.notify();
+        }
+    }
+
     /// 索引登録: an XE field after the selected text, with that text as the entry (the selection in one paragraph).
     pub(crate) fn mark_index_entry(&mut self, cx: &mut Context<Self>) {
         let Some((start, end)) = self.ordered_selection() else { return };
@@ -3972,6 +6532,27 @@ impl SlideEditor {
         if self.run_flow(vec![FlowCommand::InsertField { at: end, kind }], cx) {
             self.set_caret(FlowPos::new(end.para, end.offset + 1), false, cx);
         }
+    }
+
+    /// 目次項目の登録: a TC field (`TC "text" \l level`) after the selected text, which `TOC \f` collects (the selection in one
+    /// paragraph).
+    pub(crate) fn mark_toc_entry(&mut self, level: u32, cx: &mut Context<Self>) {
+        let Some((start, end)) = self.ordered_selection() else { return };
+        if start == end || start.para != end.para {
+            self.status = Some(crate::shell::i18n::text("docx.editing.select-text-mark-toc-entry").into());
+            return cx.notify();
+        }
+        let text = self.selected_text().replace('"', "\\\"");
+        let kind = FlowRunKind::Field { instruction: format!("TC \"{text}\" \\l {level} "), shown: String::new() };
+        if self.run_flow(vec![FlowCommand::InsertField { at: end, kind }], cx) {
+            self.set_caret(FlowPos::new(end.para, end.offset + 1), false, cx);
+        }
+    }
+
+    /// 挿入 > 目次項目から作る目次: `TOC \f \l "1-9"` before the caret's paragraph (the one there is updated).
+    pub(crate) fn insert_toc_from_entries(&mut self, cx: &mut Context<Self>) {
+        let instruction = flow_command::TocInstruction { heading_levels: None, use_outline_levels: false, tc_entries: Some(None), ..Default::default() };
+        self.insert_toc_with_instruction(instruction, cx);
     }
 
     /// 任意スタイル指定（\t スイッチなど）の目次を挿入する。
@@ -4549,6 +7130,38 @@ impl SlideEditor {
         }
     }
 
+    /// 文書のテーマフォント言語・既定言語設定（ECMA-376 Part 1 §17.15.1.88 `w:themeFontLang`）を取得。
+    pub(crate) fn theme_font_lang(&self) -> Option<ThemeFontLang> {
+        self.flow().and_then(|d| d.theme_font_lang.clone())
+    }
+
+    /// 文書のテーマフォント言語・既定言語設定を設定する。
+    pub(crate) fn set_theme_font_lang(&mut self, lang: Option<ThemeFontLang>, cx: &mut Context<Self>) {
+        self.run_flow(vec![FlowCommand::SetThemeFontLang(lang)], cx);
+    }
+
+    /// 現在の選択位置・キャレット位置の書式言語を文書の既定言語（themeFontLang）として設定する（Word の「既定に設定…」）。
+    pub(crate) fn set_current_as_default_language(&mut self, cx: &mut Context<Self>) {
+        let current_format = self.current_format().map(|(f, _)| f);
+        let mut tfl = self.theme_font_lang().unwrap_or(ThemeFontLang {
+            val: Some("en-US".into()),
+            east_asia: Some("ja-JP".into()),
+            bidi: Some("ar-SA".into()),
+        });
+        if let Some(f) = current_format {
+            if let Some(l) = f.lang {
+                tfl.val = Some(l);
+            }
+            if let Some(ea) = f.lang_east_asia {
+                tfl.east_asia = Some(ea);
+            }
+            if let Some(b) = f.lang_bidi {
+                tfl.bidi = Some(b);
+            }
+        }
+        self.set_theme_font_lang(Some(tfl), cx);
+    }
+
     /// Word 標準の情報バー（編集制限 / 最終版 / 読み取り専用の推奨 / 閲覧モード）。
     pub(crate) fn render_docx_infobar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.is_protection_read_only() {
@@ -4999,13 +7612,75 @@ impl SlideEditor {
                     )
                     .into_any_element(),
             )
+        } else if self.is_docx_compatibility_mode() {
+            let mode_name = self.docx_compatibility_mode_name();
+            let title_text = format!("{} ({})", crate::shell::i18n::text("docx.infobar.compat.title"), mode_name);
+            Some(
+                div()
+                    .id("docx-infobar-compat")
+                    .w_full()
+                    .bg(rgb(0xfff4ce))
+                    .border_b_1()
+                    .border_color(rgb(0xedebe9))
+                    .px(px(16.))
+                    .py(px(6.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(0x323130))
+                                    .child(title_text),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(rgb(0x605e5c))
+                                    .child(crate::shell::i18n::text("docx.infobar.compat.message")),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("infobar-btn-convert-compat")
+                            .px(px(12.))
+                            .py(px(4.))
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0x8a8886))
+                            .bg(rgb(0xffffff))
+                            .text_size(px(12.))
+                            .text_color(rgb(0x323130))
+                            .cursor_pointer()
+                            .hover(|h| h.bg(rgb(0xf3f2f1)))
+                            .child(crate::shell::i18n::text("docx.infobar.compat.convert"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.convert_docx_to_current_format(cx);
+                            })),
+                    )
+                    .into_any_element(),
+            )
         } else {
             None
         }
     }
 
-    /// Escape キー押下時の処理 (Focus Mode 解除 > Read Mode / Viewing Mode 解除 > 書式のコピー/貼り付け解除)。
+    /// Escape キー押下時の処理 (Immersive Reader 解除 > Focus Mode 解除 > Read Mode / Viewing Mode 解除 > 書式のコピー/貼り付け解除)。
     pub(crate) fn handle_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_immersive_reader_enabled() {
+            self.close_immersive_reader(window, cx);
+            return;
+        }
         if self.is_focus_mode() {
             self.set_focus_mode(false, window, cx);
             return;
@@ -5043,6 +7718,7 @@ impl SlideEditor {
     }
 
     /// 上書き入力モードを設定。
+    #[allow(dead_code)]
     pub(crate) fn set_overtype(&mut self, overtype: bool, cx: &mut Context<Self>) {
         if let Some(state) = self.doc_state_mut() {
             state.overtype = overtype;
@@ -5137,6 +7813,502 @@ impl SlideEditor {
         crate::docx::flow_layout::set_shown_reviewers(self.reviewer_filter.clone());
         cx.notify();
     }
+
+    // =========================================================================
+    // マスター文書とサブ文書 (DOCX-TOC-016)
+    // =========================================================================
+
+    /// 文書内のすべてのサブ文書段落 `(para_id, SubdocumentInfo)` を返す (DOCX-TOC-016).
+    pub(crate) fn subdocuments(&self) -> Vec<(u32, ibis_doc_model::SubdocumentInfo)> {
+        let Some(doc) = self.flow() else { return Vec::new() };
+        let mut out = Vec::new();
+        for b in &doc.body {
+            if let ibis_doc_model::Block::Paragraph(p) = b
+                && let Some(ref sub) = p.subdoc
+            {
+                out.push((p.id, sub.clone()));
+            }
+        }
+        out
+    }
+
+    /// キャレット位置の段落のサブ文書情報を返す (DOCX-TOC-016).
+    pub(crate) fn subdocument_at_caret(&self) -> Option<(u32, ibis_doc_model::SubdocumentInfo)> {
+        let (start, _) = self.ordered_selection()?;
+        let p = self.paragraph_of(start.para)?;
+        p.subdoc.clone().map(|s| (p.id, s))
+    }
+
+    /// キャレット位置の段落にサブ文書への参照（`w:subDoc`）を設定・挿入（1ステップ Undo/Redo 対応、DOCX-TOC-016）.
+    pub(crate) fn insert_subdocument(&mut self, target: &str, cx: &mut Context<Self>) -> bool {
+        let target = target.trim();
+        if target.is_empty() {
+            return false;
+        }
+        let Some((start, _)) = self.ordered_selection() else { return false };
+        let Some(p) = self.paragraph_of(start.para) else { return false };
+        let existing_text = p.text();
+        let title = if existing_text.trim().is_empty() {
+            target.to_string()
+        } else {
+            existing_text.trim().to_string()
+        };
+        let subdoc = ibis_doc_model::SubdocumentInfo {
+            target: target.to_string(),
+            title,
+            expanded: true,
+            locked: false,
+            content_paragraphs: Vec::new(),
+        };
+        let ok = self.run_flow(
+            vec![ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+                para: start.para,
+                subdoc: Some(subdoc),
+            }],
+            cx,
+        );
+        cx.notify();
+        ok
+    }
+
+    /// 見出しセクション（現在の見出し段落と配下の本文段落）をサブ文書に変換（1ステップ Undo/Redo 対応、DOCX-TOC-016）.
+    pub(crate) fn create_subdocument_from_heading(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((start, _)) = self.ordered_selection() else { return false };
+        let Some(doc) = self.flow().cloned() else { return false };
+        let Some(idx) = doc.body.iter().position(|b| matches!(b, ibis_doc_model::Block::Paragraph(p) if p.id == start.para)) else {
+            return false;
+        };
+        let ibis_doc_model::Block::Paragraph(head_p) = &doc.body[idx] else { return false };
+        let head_id = head_p.id;
+        let head_lvl = ibis_doc_model::flow_command::heading_level(&doc.styles, head_p).unwrap_or(1);
+        let head_title = head_p.text().trim().to_string();
+        let slug: String = head_title
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+            .take(24)
+            .collect();
+        let target = if slug.is_empty() {
+            format!("subdoc_{head_id}.docx")
+        } else {
+            format!("{slug}.docx")
+        };
+
+        let mut content_paragraphs = Vec::new();
+        let mut last_body_para_id = None;
+        let mut last_body_para_len = 0;
+        for b in &doc.body[idx + 1..] {
+            match b {
+                ibis_doc_model::Block::Paragraph(p) => {
+                    if let Some(lvl) = ibis_doc_model::flow_command::heading_level(&doc.styles, p)
+                        && lvl <= head_lvl
+                    {
+                        break;
+                    }
+                    if p.subdoc.is_some() {
+                        break;
+                    }
+                    content_paragraphs.push(p.text());
+                    last_body_para_id = Some(p.id);
+                    last_body_para_len = p.len();
+                }
+                ibis_doc_model::Block::Table(_) => break,
+            }
+        }
+
+        let mut cmds = Vec::new();
+        if let Some(last_id) = last_body_para_id {
+            cmds.push(ibis_doc_model::FlowCommand::Delete {
+                from: ibis_doc_model::FlowPos::new(head_id, head_p.len()),
+                to: ibis_doc_model::FlowPos::new(last_id, last_body_para_len),
+            });
+        }
+        let subdoc = ibis_doc_model::SubdocumentInfo {
+            target,
+            title: if head_title.is_empty() { format!("Subdocument {head_id}") } else { head_title },
+            expanded: false,
+            locked: false,
+            content_paragraphs,
+        };
+        cmds.push(ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+            para: head_id,
+            subdoc: Some(subdoc),
+        });
+        let ok = self.run_flow(cmds, cx);
+        if ok {
+            self.set_caret(ibis_doc_model::FlowPos::new(head_id, 0), false, cx);
+        }
+        cx.notify();
+        ok
+    }
+
+    /// サブ文書のリンクを解除してマスター文書に統合・展開（1ステップ Undo/Redo 対応、DOCX-TOC-016）.
+    pub(crate) fn unlink_subdocument_at_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((para_id, subdoc)) = self.subdocument_at_caret() else { return false };
+        let Some(p) = self.paragraph_of(para_id) else { return false };
+        let end_offset = p.len();
+        let mut cmds = vec![ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+            para: para_id,
+            subdoc: None,
+        }];
+        if !subdoc.content_paragraphs.is_empty() {
+            let joined = format!("\n{}", subdoc.content_paragraphs.join("\n"));
+            cmds.push(ibis_doc_model::FlowCommand::InsertText {
+                at: ibis_doc_model::FlowPos::new(para_id, end_offset),
+                text: joined,
+                format: None,
+            });
+            cmds.push(ibis_doc_model::FlowCommand::SetParagraphFormat {
+                first: para_id,
+                last: para_id,
+                change: ibis_doc_model::ParaChange::Style(p.style.clone()),
+            });
+        }
+        let ok = self.run_flow(cmds, cx);
+        cx.notify();
+        ok
+    }
+
+    /// 文書内のすべてのサブ文書の展開 / 折りたたみを一括トグル (DOCX-TOC-016).
+    pub(crate) fn toggle_expand_subdocuments(&mut self, cx: &mut Context<Self>) -> bool {
+        let subs = self.subdocuments();
+        if subs.is_empty() {
+            return false;
+        }
+        let target_expanded = !subs.iter().all(|(_, s)| s.expanded);
+        let cmds: Vec<ibis_doc_model::FlowCommand> = subs
+            .into_iter()
+            .map(|(para, mut s)| {
+                s.expanded = target_expanded;
+                ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+                    para,
+                    subdoc: Some(s),
+                }
+            })
+            .collect();
+        let ok = self.run_flow(cmds, cx);
+        cx.notify();
+        ok
+    }
+
+    /// キャレット位置のサブ文書のロック（読み取り専用）をトグル (DOCX-TOC-016).
+    pub(crate) fn toggle_subdocument_lock_at_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((para, mut sub)) = self.subdocument_at_caret() else { return false };
+        sub.locked = !sub.locked;
+        let ok = self.run_flow(
+            vec![ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+                para,
+                subdoc: Some(sub),
+            }],
+            cx,
+        );
+        cx.notify();
+        ok
+    }
+
+    /// 指定した段落 `para` のサブ文書のロック状態を設定 (DOCX-TOC-016).
+    pub(crate) fn set_subdocument_locked(&mut self, para: u32, locked: bool, cx: &mut Context<Self>) -> bool {
+        let Some(p) = self.paragraph_of(para) else { return false };
+        let Some(mut sub) = p.subdoc.clone() else { return false };
+        sub.locked = locked;
+        let ok = self.run_flow(
+            vec![ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+                para,
+                subdoc: Some(sub),
+            }],
+            cx,
+        );
+        cx.notify();
+        ok
+    }
+
+    /// 隣接する2つのサブ文書を1つに結合（1ステップ Undo/Redo 対応、DOCX-TOC-016）.
+    pub(crate) fn merge_adjacent_subdocuments(&mut self, cx: &mut Context<Self>) -> bool {
+        let subs = self.subdocuments();
+        if subs.len() < 2 {
+            return false;
+        }
+        let caret_para = self.ordered_selection().map(|(s, _)| s.para);
+        let pos = subs
+            .iter()
+            .position(|(id, _)| Some(*id) == caret_para)
+            .unwrap_or(0);
+        let idx = if pos + 1 < subs.len() { pos } else { subs.len() - 2 };
+        let (first_id, mut first_sub) = subs[idx].clone();
+        let (second_id, second_sub) = subs[idx + 1].clone();
+        let Some(first_p) = self.paragraph_of(first_id) else { return false };
+        let Some(second_p) = self.paragraph_of(second_id) else { return false };
+
+        if !second_sub.title.is_empty() {
+            first_sub.content_paragraphs.push(second_sub.title.clone());
+        }
+        first_sub
+            .content_paragraphs
+            .extend(second_sub.content_paragraphs.iter().cloned());
+        let mut cmds = Vec::new();
+        if second_sub.locked {
+            let mut unlocked = second_sub.clone();
+            unlocked.locked = false;
+            cmds.push(ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+                para: second_id,
+                subdoc: Some(unlocked),
+            });
+        }
+        cmds.push(ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+            para: second_id,
+            subdoc: None,
+        });
+        cmds.push(ibis_doc_model::FlowCommand::Delete {
+            from: ibis_doc_model::FlowPos::new(first_id, first_p.len()),
+            to: ibis_doc_model::FlowPos::new(second_id, second_p.len()),
+        });
+        cmds.push(ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+            para: first_id,
+            subdoc: Some(first_sub),
+        });
+        let ok = self.run_flow(cmds, cx);
+        cx.notify();
+        ok
+    }
+
+    /// キャレット位置のサブ文書を2つのサブ文書に分割（1ステップ Undo/Redo 対応、DOCX-TOC-016）.
+    pub(crate) fn split_subdocument_at_caret(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((para_id, mut first_sub)) = self.subdocument_at_caret() else { return false };
+        let Some(doc) = self.flow() else { return false };
+        let Some(p) = self.paragraph_of(para_id) else { return false };
+        let new_para_id = doc.new_id();
+        let p_len = p.len();
+        let p_style = p.style.clone();
+
+        let second_content = if first_sub.content_paragraphs.len() >= 2 {
+            let mid = first_sub.content_paragraphs.len() / 2;
+            first_sub.content_paragraphs.split_off(mid)
+        } else {
+            Vec::new()
+        };
+        let stem = first_sub.target.trim_end_matches(".docx");
+        let second_target = format!("{stem}_part2.docx");
+        let second_title = format!("{} (2)", first_sub.title);
+        let second_sub = ibis_doc_model::SubdocumentInfo {
+            target: second_target,
+            title: second_title.clone(),
+            expanded: first_sub.expanded,
+            locked: false,
+            content_paragraphs: second_content,
+        };
+
+        let was_locked = first_sub.locked;
+        let mut cmds = Vec::new();
+        if was_locked {
+            let mut unlocked = first_sub.clone();
+            unlocked.locked = false;
+            cmds.push(ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+                para: para_id,
+                subdoc: Some(unlocked),
+            });
+        }
+        cmds.push(ibis_doc_model::FlowCommand::InsertText {
+            at: ibis_doc_model::FlowPos::new(para_id, p_len),
+            text: format!("\n{second_title}"),
+            format: None,
+        });
+        if let Some(style) = p_style {
+            cmds.push(ibis_doc_model::FlowCommand::SetParagraphFormat {
+                first: new_para_id,
+                last: new_para_id,
+                change: ibis_doc_model::ParaChange::Style(Some(style)),
+            });
+        }
+        first_sub.locked = was_locked;
+        cmds.push(ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+            para: para_id,
+            subdoc: Some(first_sub),
+        });
+        cmds.push(ibis_doc_model::FlowCommand::SetParagraphSubdocument {
+            para: new_para_id,
+            subdoc: Some(second_sub),
+        });
+        let ok = self.run_flow(cmds, cx);
+        cx.notify();
+        ok
+    }
+
+    /// マスター文書（サブ文書管理）サイドバーパネルを開く (DOCX-TOC-016).
+    pub(crate) fn open_master_doc_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_kit::component::input::InputState;
+        let default_target = self
+            .subdocument_at_caret()
+            .map(|(_, s)| s.target)
+            .unwrap_or_else(|| "chapter1.docx".to_string());
+        let target_input = cx.new(|cx| InputState::new(window, cx).default_value(default_target));
+        if let Some(s) = self.doc_state_mut() {
+            s.master_doc_panel = Some(MasterDocPanelState { target_input });
+            s.theme_panel = None;
+            s.compatibility_panel = None;
+            s.inspect_panel = None;
+            s.docx_math = None;
+            s.quick_parts = None;
+            s.table_formula = None;
+            s.table_size = None;
+            s.picture_edit = None;
+            s.font_edit = None;
+            s.color_edit = None;
+            s.paragraph_edit = None;
+            s.style_edit = None;
+            s.link = None;
+            s.find = None;
+            s.comments = None;
+            s.list_style = None;
+        }
+        self.sidebar_open = true;
+        cx.notify();
+    }
+
+    /// マスター文書サイドバーパネルを描画 (DOCX-TOC-016).
+    pub(crate) fn master_doc_panel(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
+        use gpui_kit::component::button::{Button, ButtonVariants as _};
+        use gpui_kit::component::input::Input;
+        use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
+        let panel = self.doc_state()?.master_doc_panel.as_ref()?;
+        let target_input = panel.target_input.clone();
+        let subs = self.subdocuments();
+        let caret_sub = self.subdocument_at_caret();
+        let t = crate::shell::i18n::text;
+
+        let mut body = v_flex()
+            .gap_2()
+            .px(px(18.))
+            .py(px(8.))
+            .child(div().text_sm().child(t("docx.master-doc.target-label")))
+            .child(Input::new(&target_input).small())
+            .child(
+                h_flex()
+                    .gap_1()
+                    .flex_wrap()
+                    .child(
+                        Button::new("master-doc-insert")
+                            .primary()
+                            .small()
+                            .label(t("docx.master-doc.insert"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let path = target_input.read(cx).value().trim().to_string();
+                                this.insert_subdocument(&path, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("master-doc-create-heading")
+                            .small()
+                            .label(t("docx.master-doc.create-from-heading"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.create_subdocument_from_heading(cx);
+                            })),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .flex_wrap()
+                    .child(
+                        Button::new("master-doc-toggle-expand")
+                            .small()
+                            .label(t("docx.master-doc.toggle-expand"))
+                            .disabled(subs.is_empty())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.toggle_expand_subdocuments(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("master-doc-lock")
+                            .small()
+                            .label(t("docx.master-doc.lock"))
+                            .disabled(caret_sub.is_none())
+                            .selected(caret_sub.as_ref().is_some_and(|(_, s)| s.locked))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.toggle_subdocument_lock_at_caret(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("master-doc-unlink")
+                            .small()
+                            .label(t("docx.master-doc.unlink"))
+                            .disabled(caret_sub.is_none())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.unlink_subdocument_at_caret(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("master-doc-merge")
+                            .small()
+                            .label(t("docx.master-doc.merge"))
+                            .disabled(subs.len() < 2)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.merge_adjacent_subdocuments(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("master-doc-split")
+                            .small()
+                            .label(t("docx.master-doc.split"))
+                            .disabled(caret_sub.is_none())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.split_subdocument_at_caret(cx);
+                            })),
+                    ),
+            );
+
+        if subs.is_empty() {
+            body = body.child(div().text_xs().text_color(rgb(0x5f6368)).child(t("docx.master-doc.empty")));
+        } else {
+            for (idx, (para_id, sub)) in subs.into_iter().enumerate() {
+                let locked = sub.locked;
+                let expanded = sub.expanded;
+                body = body.child(
+                    h_flex()
+                        .id(("subdoc-row", idx))
+                        .gap_1()
+                        .items_center()
+                        .p_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xe0e0e0))
+                        .child(
+                            div()
+                                .id(("subdoc-title", idx))
+                                .flex_1()
+                                .text_xs()
+                                .cursor_pointer()
+                                .child(format!(
+                                    "{} ({}){}{}",
+                                    sub.title,
+                                    sub.target,
+                                    if expanded { String::new() } else { format!(" {}", t("docx.master-doc.collapsed-tag")) },
+                                    if locked { " 🔒" } else { "" }
+                                ))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.jump_to(para_id, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new(("subdoc-lock-btn", idx))
+                                .small()
+                                .label(if locked { "🔒" } else { "🔓" })
+                                .selected(locked)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.set_subdocument_locked(para_id, !locked, cx);
+                                })),
+                        ),
+                );
+            }
+        }
+
+        Some(crate::shell::chrome::SidebarPanel {
+            title: t("docx.master-doc.title"),
+            body: body.into_any_element(),
+        })
+    }
+}
+
+pub(crate) struct MasterDocPanelState {
+    pub(crate) target_input: Entity<gpui_kit::component::input::InputState>,
 }
 
 

@@ -20,6 +20,7 @@ pub mod canon;
 pub mod base64;
 pub mod cfb;
 pub mod encryption;
+pub mod legacy_crypt;
 pub mod modify_password;
 pub mod package;
 pub mod xml;

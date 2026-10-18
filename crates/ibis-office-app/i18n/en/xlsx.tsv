@@ -8,11 +8,61 @@ xlsx.duplicate-sheet	Duplicate Sheet
 xlsx.hide-sheet	Hide Sheet
 xlsx.delete-sheet	Delete Sheet
 xlsx.freeze	Freeze
+xlsx.freeze-panes	Freeze Panes
+xlsx.unfreeze-panes	Unfreeze Panes
+xlsx.freeze-top-row	Freeze Top Row
+xlsx.freeze-first-column	Freeze First Column
+xlsx.print-area-menu	Print Area
+xlsx.print-area-set	Set Print Area
+xlsx.print-area-add	Add to Print Area
+xlsx.print-area-clear	Clear Print Area
+xlsx.cell-link-open	Open Hyperlink
+xlsx.cell-link-edit	Edit Hyperlink…
+xlsx.cell-link-remove	Remove Hyperlink
+xlsx.ruler	Ruler
+xlsx.ruler-unit	Ruler Units
+xlsx.ruler-unit.cm	Centimeters (cm)
+xlsx.ruler-unit.mm	Millimeters (mm)
+xlsx.ruler-unit.inch	Inches (in)
+xlsx.ruler-unit.point	Points (pt)
+xlsx.ruler-unit.pica	Picas (pica)
 xlsx.gridlines	Show Gridlines
 xlsx.headings	Show Headings
 xlsx.formula-bar	Show Formula Bar
+xlsx.show-formulas	Show Formulas
+xlsx.show-zeros	Show Zeros
+xlsx.hide-ink	Hide Ink
+xlsx.normal-view	Normal
 xlsx.page-break-preview	Page Break Preview
 xlsx.page-layout	Page Layout
+xlsx.clear-filter	Clear Filter
+xlsx.name-manager	Name Manager
+xlsx.define-name	Define Name…
+xlsx.page-setup	Page Setup…
+xlsx.margins	Margins…
+xlsx.header-footer	Header & Footer…
+xlsx.spelling.check	Spelling…
+xlsx.spelling	Spelling…
+xlsx.insert-link	Insert Link…
+xlsx.insert-symbol	Symbol…
+xlsx.logical-functions	Logical Functions
+xlsx.datetime-functions	Date & Time Functions
+xlsx.fn.ifs	IFS
+xlsx.fn.iferror	IFERROR
+xlsx.fn.and	AND
+xlsx.fn.or	OR
+xlsx.fn.not	NOT
+xlsx.underline-menu	Underline
+xlsx.underline-single	Single Underline
+xlsx.underline-double	Double Underline
+xlsx.screenshot	Screenshot
+xlsx.screenshot.available-windows	Available Windows
+xlsx.screenshot.clipping	Screen Clipping…
+xlsx.screenshot.clipboard	Screenshot from Clipboard
+xlsx.insert.screenshot	Screenshot
+xlsx.insert.screenshot.available-windows	Available Windows
+xlsx.insert.screenshot.clipping	Screen Clipping…
+xlsx.insert.screenshot.clipboard	Screenshot from Clipboard
 xlsx.zoom-selection	Zoom to Selection
 xlsx.custom-views	Custom Views…
 xlsx.hide-window	Hide Window
@@ -52,12 +102,19 @@ xlsx.move-sheet-right	Move Sheet Right
 xlsx.split	Split
 xlsx.sort-manage	Sort Options…
 xlsx.remove-duplicates	Remove Duplicates…
+xlsx.goto	Go To…
+xlsx.goto-destination	Go to:
+xlsx.goto-no-destinations	(No defined names or history)
+xlsx.goto-type-name	Name
+xlsx.goto-type-history	History
+xlsx.goto-special-button	Special…
 xlsx.goto-special	Go To Special…
 xlsx.text-to-columns	Text to Columns…
 xlsx.sort-descending	Sort Range (Descending)
 xlsx.export-csv	CSV UTF-8 (.csv, Current Sheet)
 xlsx.export-csv-sjis	CSV Shift_JIS (.csv, Current Sheet)
 xlsx.export-tsv	Text TSV (.tsv, Current Sheet)
+xlsx.export-ods	OpenDocument Spreadsheet (.ods, Whole Workbook)
 xlsx.insert-cells-right	Insert Cells (Shift Cells Right)
 xlsx.delete-cells-left	Delete Cells (Shift Cells Left)
 xlsx.group	Group
@@ -73,6 +130,15 @@ xlsx.unhide-sheets	Unhide Sheets
 xlsx.tab-colors	Tab Color
 xlsx.compatibility-version	Calculation Compatibility Version
 xlsx.paste-special	Paste Special
+xlsx.paste-special-dots	Paste Special...
+xlsx.paste-comments	Comments and Notes
+xlsx.paste-all-except-borders	All Except Borders
+xlsx.paste-column-widths	Column Widths
+xlsx.paste-formulas-and-number-formats	Formulas and Number Formats
+xlsx.paste-values-and-number-formats	Values and Number Formats
+xlsx.paste-operation	Operation
+xlsx.paste-none	None
+xlsx.paste-options	Options
 _xlsx.light-gray	Light Gray
 _xlsx.sum	Sum
 _xlsx.average	Average
@@ -252,6 +318,7 @@ _xlsx.a-range-containing-merged-cells-cannot-be-made-i	A range containing merged
 _xlsx.the-cell-just-below-the-range-is-not-empty-so-a	The cell just below the range is not empty, so a header row cannot be added.
 _xlsx.create-table	Create Table
 _xlsx.specify-the-data-range-to-convert-to-a-table	Specify the data range to convert to a table
+_xlsx.specify-the-new-data-range-for-your-table	Specify the new data range for your table
 _xlsx.my-table-has-headers	My table has headers
 _xlsx.text	Text
 _xlsx.light-orange	Light Orange
@@ -686,6 +753,13 @@ xlsx.shape.heart	Heart
 xlsx.shape.line	Line
 xlsx.shape.line-arrow	Arrow Line
 xlsx.insert-picture	Picture
+xlsx.insert-picture-menu	Pictures
+xlsx.insert-picture-in-cell	Place in Cell
+xlsx.insert-picture-over-cells	Place over Cells
+xlsx.place-in-cell	Place in Cell
+xlsx.place-over-cells	Place over Cells
+_xlsx.place-in-cell	Place in Cell
+_xlsx.place-over-cells	Place over Cells
 xlsx.image-file	Picture from File
 xlsx.order	Order
 xlsx.order-front	Bring to Front
@@ -766,6 +840,10 @@ xlsx.picture.color.green	Green (Monotone)
 xlsx.picture.color.red	Red (Monotone)
 xlsx.picture.color.orange	Orange (Monotone)
 xlsx.picture.color.purple	Purple (Monotone)
+xlsx.picture.remove-background	Remove Background (Transparent Color)
+xlsx.picture.color.transparent-white	Set Transparent Color (White)
+xlsx.picture.color.transparent-black	Set Transparent Color (Black)
+xlsx.picture.color.transparent-clear	Reset Transparent Color
 xlsx.picture.correction	Picture Corrections (Brightness & Contrast)
 xlsx.picture.lum.normal	Normal (Brightness 0%, Contrast 0%)
 xlsx.picture.lum.bright-p40	Brightness: +40%
@@ -911,6 +989,12 @@ _xlsx.invalid-sheet-name	Invalid sheet name.
 _xlsx.a-sheet-with-this-name-already-exists	A sheet with this name already exists.
 _xlsx.please-select-a-destination-sheet	Please select a destination sheet.
 xlsx.chart-radar-style	Radar Style
+xlsx.chart-3d-rotation	3-D Rotation
+xlsx.chart-3d-x-rotation	X Rotation
+xlsx.chart-3d-y-rotation	Y Rotation
+xlsx.chart-3d-right-angle-axes	Right Angle Axes
+xlsx.chart-3d-depth	Depth
+xlsx.chart-3d-reset-defaults	Reset to Defaults
 _xlsx.radar-style	Radar Style
 xlsx.import-text	From Text/CSV…
 import-text.done	Imported {rows} rows.
@@ -953,6 +1037,9 @@ _xlsx.create-or-remove-filter	Create or Remove Filter
 _xlsx.filter-by-selected-cell-s-value	Filter by Selected Cell's Value
 _xlsx.format-cells	Format Cells…
 _xlsx.hyperlink	Hyperlink…
+_xlsx.open-hyperlink	Open Hyperlink
+_xlsx.edit-hyperlink	Edit Hyperlink…
+_xlsx.remove-hyperlink	Remove Hyperlink
 _xlsx.define-name	Define Name…
 _xlsx.protect-sheet	Protect Sheet…
 _xlsx.the-number-in-this-cell-is-formatted-as-text	The number in this cell is formatted as text
@@ -1428,3 +1515,1007 @@ _xlsx.scenario-manager	Scenario Manager
 xlsx.format-pane.custom	Custom
 xlsx.format-pane.border-inside	Inside
 xlsx.format-pane.border-hint	Click a line in the sample to add or remove it. Choose the line style and color above.
+xlsx.toolbar.function-item	{name} ({label})
+xlsx.currency.jpy	¥ Japanese
+xlsx.currency.usd	$ English (United States)
+xlsx.currency.gbp	£ English (United Kingdom)
+xlsx.currency.eur	€ Euro (€ 123)
+xlsx.currency.cny	¥ Chinese (PRC)
+xlsx.currency.chf	CHF Swiss Franc
+xlsx.currency.more	More Accounting Formats…
+xlsx.analysis.out.column	Column
+xlsx.analysis.out.row	Row
+xlsx.analysis.out.x-variable	X Variable
+xlsx.analysis.out.mean	Mean
+xlsx.analysis.out.standard-error	Standard Error
+xlsx.analysis.out.median	Median
+xlsx.analysis.out.mode	Mode
+xlsx.analysis.out.standard-deviation	Standard Deviation
+xlsx.analysis.out.sample-variance	Sample Variance
+xlsx.analysis.out.kurtosis	Kurtosis
+xlsx.analysis.out.skewness	Skewness
+xlsx.analysis.out.range	Range
+xlsx.analysis.out.minimum	Minimum
+xlsx.analysis.out.maximum	Maximum
+xlsx.analysis.out.sum	Sum
+xlsx.analysis.out.count	Count
+xlsx.analysis.out.largest	Largest
+xlsx.analysis.out.smallest	Smallest
+xlsx.analysis.out.confidence-level	Confidence Level
+xlsx.analysis.out.point	Point
+xlsx.analysis.out.rank	Rank
+xlsx.analysis.out.percent	Percent
+xlsx.analysis.out.bin	Bin
+xlsx.analysis.out.frequency	Frequency
+xlsx.analysis.out.more	More
+xlsx.analysis.out.cumulative	Cumulative %
+xlsx.analysis.out.summary-output	SUMMARY OUTPUT
+xlsx.analysis.out.regression-statistics	Regression Statistics
+xlsx.analysis.out.multiple-r	Multiple R
+xlsx.analysis.out.r-square	R Square
+xlsx.analysis.out.adjusted-r-square	Adjusted R Square
+xlsx.analysis.out.observations	Observations
+xlsx.analysis.out.anova	ANOVA
+xlsx.analysis.out.df	df
+xlsx.analysis.out.ss	SS
+xlsx.analysis.out.ms	MS
+xlsx.analysis.out.f	F
+xlsx.analysis.out.significance-f	Significance F
+xlsx.analysis.out.regression	Regression
+xlsx.analysis.out.residual	Residual
+xlsx.analysis.out.total	Total
+xlsx.analysis.out.coefficients	Coefficients
+xlsx.analysis.out.t-stat	t Stat
+xlsx.analysis.out.p-value	P-value
+xlsx.analysis.out.lower	Lower
+xlsx.analysis.out.upper	Upper
+xlsx.analysis.out.intercept	Intercept
+xlsx.analysis.out.residual-output	RESIDUAL OUTPUT
+xlsx.analysis.out.observation	Observation
+xlsx.analysis.out.predicted-y	Predicted Y
+xlsx.analysis.out.residuals	Residuals
+xlsx.analysis.out.standard-residuals	Standard Residuals
+xlsx.analysis.out.t-paired	t-Test: Paired Two Sample for Means
+xlsx.analysis.out.t-equal	t-Test: Two-Sample Assuming Equal Variances
+xlsx.analysis.out.t-unequal	t-Test: Two-Sample Assuming Unequal Variances
+xlsx.analysis.out.z-test	z-Test: Two Sample for Means
+xlsx.analysis.out.f-test	F-Test Two-Sample for Variances
+xlsx.analysis.out.variable-1	Variable 1
+xlsx.analysis.out.variable-2	Variable 2
+xlsx.analysis.out.variance	Variance
+xlsx.analysis.out.pearson	Pearson Correlation
+xlsx.analysis.out.pooled-variance	Pooled Variance
+xlsx.analysis.out.hypothesized-diff	Hypothesized Mean Difference
+xlsx.analysis.out.p-t-one	P(T<=t) one-tail
+xlsx.analysis.out.t-crit-one	t Critical one-tail
+xlsx.analysis.out.p-t-two	P(T<=t) two-tail
+xlsx.analysis.out.t-crit-two	t Critical two-tail
+xlsx.analysis.out.known-variance	Known Variance
+xlsx.analysis.out.z	z
+xlsx.analysis.out.p-z-one	P(Z<=z) one-tail
+xlsx.analysis.out.z-crit-one	z Critical one-tail
+xlsx.analysis.out.p-z-two	P(Z<=z) two-tail
+xlsx.analysis.out.z-crit-two	z Critical two-tail
+xlsx.analysis.out.p-f-one	P(F<=f) one-tail
+xlsx.analysis.out.f-crit-one	F Critical one-tail
+xlsx.analysis.out.anova-single	Anova: Single Factor
+xlsx.analysis.out.anova-two-without	Anova: Two-Factor Without Replication
+xlsx.analysis.out.anova-two-with	Anova: Two-Factor With Replication
+xlsx.analysis.out.summary	SUMMARY
+xlsx.analysis.out.groups	Groups
+xlsx.analysis.out.sample-count	Count
+xlsx.analysis.out.average	Average
+xlsx.analysis.out.source	Source of Variation
+xlsx.analysis.out.between	Between Groups
+xlsx.analysis.out.within	Within Groups
+xlsx.analysis.out.f-crit	F crit
+xlsx.analysis.out.rows	Rows
+xlsx.analysis.out.columns	Columns
+xlsx.analysis.out.error	Error
+xlsx.analysis.out.sample	Sample
+xlsx.analysis.out.interaction	Interaction
+xlsx.analysis.out.within-error	Within
+xlsx.data-analysis	Data Analysis…
+xlsx.analysis.title	Data Analysis
+xlsx.analysis.tool.anova-single	Anova: Single Factor
+xlsx.analysis.tool.anova-two-with	Anova: Two-Factor With Replication
+xlsx.analysis.tool.anova-two-without	Anova: Two-Factor Without Replication
+xlsx.analysis.tool.correlation	Correlation
+xlsx.analysis.tool.covariance	Covariance
+xlsx.analysis.tool.descriptive	Descriptive Statistics
+xlsx.analysis.tool.exponential-smoothing	Exponential Smoothing
+xlsx.analysis.tool.f-test	F-Test Two-Sample for Variances
+xlsx.analysis.tool.fourier	Fourier Analysis
+xlsx.analysis.tool.histogram	Histogram
+xlsx.analysis.tool.moving-average	Moving Average
+xlsx.analysis.tool.random	Random Number Generation
+xlsx.analysis.tool.rank	Rank and Percentile
+xlsx.analysis.tool.regression	Regression
+xlsx.analysis.tool.sampling	Sampling
+xlsx.analysis.tool.t-paired	t-Test: Paired Two Sample for Means
+xlsx.analysis.tool.t-equal	t-Test: Two-Sample Assuming Equal Variances
+xlsx.analysis.tool.t-unequal	t-Test: Two-Sample Assuming Unequal Variances
+xlsx.analysis.tool.z-test	z-Test: Two Sample for Means
+xlsx.analysis.dist.uniform	Uniform
+xlsx.analysis.dist.normal	Normal
+xlsx.analysis.dist.bernoulli	Bernoulli
+xlsx.analysis.dist.binomial	Binomial
+xlsx.analysis.dist.poisson	Poisson
+xlsx.analysis.dist.patterned	Patterned
+xlsx.analysis.dist.discrete	Discrete
+xlsx.analysis.field.tool	Analysis tool
+xlsx.analysis.field.input	Input range
+xlsx.analysis.field.input-y	Input Y range
+xlsx.analysis.field.input-x	Input X range
+xlsx.analysis.field.variable-1	Variable 1 range
+xlsx.analysis.field.variable-2	Variable 2 range
+xlsx.analysis.field.bins	Bin range (optional)
+xlsx.analysis.field.discrete-range	Value and probability range
+xlsx.analysis.field.grouped-by	Grouped by
+xlsx.analysis.field.labels	Labels in first row (and column)
+xlsx.analysis.field.alpha	Alpha
+xlsx.analysis.field.rows-per-sample	Rows per sample
+xlsx.analysis.field.confidence-level	Confidence level (%)
+xlsx.analysis.field.kth-largest	Kth largest (blank: none)
+xlsx.analysis.field.kth-smallest	Kth smallest (blank: none)
+xlsx.analysis.field.hypothesized-diff	Hypothesized mean difference
+xlsx.analysis.field.variance-1	Variable 1 variance (known)
+xlsx.analysis.field.variance-2	Variable 2 variance (known)
+xlsx.analysis.field.interval	Interval
+xlsx.analysis.field.damping	Damping factor
+xlsx.analysis.field.period	Period (blank: random)
+xlsx.analysis.field.random-count	Number of random samples
+xlsx.analysis.field.variables	Number of variables
+xlsx.analysis.field.count	Number of random numbers
+xlsx.analysis.field.seed	Random seed (blank: any)
+xlsx.analysis.field.distribution	Distribution
+xlsx.analysis.field.between	Between
+xlsx.analysis.field.and	and
+xlsx.analysis.field.mean	Mean
+xlsx.analysis.field.standard-deviation	Standard deviation
+xlsx.analysis.field.p-value	p value
+xlsx.analysis.field.trials	Number of trials
+xlsx.analysis.field.lambda	Lambda
+xlsx.analysis.field.from	From
+xlsx.analysis.field.to	To
+xlsx.analysis.field.step	Step
+xlsx.analysis.field.repeat-each	Repeat each number
+xlsx.analysis.field.repeat-sequence	Repeat the sequence
+xlsx.analysis.field.output	Output range (top left cell)
+xlsx.analysis.flag.pareto	Pareto (sorted histogram)
+xlsx.analysis.flag.cumulative	Cumulative percentage
+xlsx.analysis.flag.constant-zero	Constant is zero
+xlsx.analysis.flag.residuals	Residuals
+xlsx.analysis.flag.standard-residuals	Standardized residuals
+xlsx.analysis.flag.standard-errors	Standard errors
+xlsx.analysis.flag.inverse	Inverse transform
+xlsx.analysis.flag.chart-output	Chart Output
+xlsx.analysis.message.bad-range	Enter a cell range such as A1:C10 (not “{text}”).
+xlsx.analysis.message.no-sheet	There is no sheet named “{name}”.
+xlsx.analysis.message.no-data	There is no data to analyze.
+xlsx.analysis.message.bad-number	Enter a number for “{name}”.
+xlsx.analysis.message.regression	The regression cannot be calculated (too few rows, or the X variables depend on each other).
+xlsx.analysis.message.paired-size	The two ranges of a paired test need the same number of values.
+xlsx.analysis.message.anova-blank	The input range has an empty or non-numeric cell.
+xlsx.analysis.message.anova-size	The input range needs at least two rows and two columns of data.
+xlsx.analysis.message.rows-per-sample	The rows per sample must divide the data rows evenly.
+xlsx.analysis.message.interval	Enter a whole number of 1 or more for the interval.
+xlsx.analysis.message.damping	The damping factor must be between 0 and 1.
+xlsx.analysis.message.sampling	Enter either a period or a number of random samples, not both.
+xlsx.analysis.message.random-size	Enter 1 to 256 variables and 1 to 100,000 numbers.
+xlsx.analysis.message.random-parameters	The parameters of the distribution are not valid.
+xlsx.analysis.message.discrete	A discrete distribution needs values in the first column and probabilities in the second.
+xlsx.analysis.message.fourier-blank	The Fourier input must be numbers only.
+xlsx.analysis.message.fourier-size	The number of values must be a power of 2, up to 4096.
+xlsx.analysis.message.done	Analysis written to {range}.
+xlsx.autocorrect	AutoCorrect Options…
+xlsx.autocorrect.title	AutoCorrect
+xlsx.autocorrect.two-initials	Correct TWo INitial CApitals
+xlsx.autocorrect.sentences	Capitalize first letter of sentences
+xlsx.autocorrect.days	Capitalize names of days
+xlsx.autocorrect.caps-lock	Correct accidental usage of cAPS LOCK key
+xlsx.autocorrect.replace	Replace text as you type
+xlsx.autocorrect.as-you-type	Use AutoCorrect as you type
+xlsx.autocorrect.spell-as-you-type	Mark misspelled words as you type
+xlsx.autocorrect.replace-box	Replace
+xlsx.autocorrect.with-box	With
+xlsx.solver	Solver…
+xlsx.solver.title	Solver Parameters
+xlsx.solver.objective	Set Objective
+xlsx.solver.goal-max	Max
+xlsx.solver.goal-min	Min
+xlsx.solver.goal-value	Value Of:
+xlsx.solver.variables	By Changing Variable Cells
+xlsx.solver.constraints	Subject to the Constraints
+xlsx.solver.cell-reference	Cell Reference
+xlsx.solver.constraint-value	Constraint (number or cell)
+xlsx.solver.add	Add
+xlsx.solver.change	Change
+xlsx.solver.delete	Delete
+xlsx.solver.non-negative	Make Unconstrained Variables Non-Negative
+xlsx.solver.method	Select a Solving Method
+xlsx.solver.precision	Constraint Precision
+xlsx.solver.convergence	Convergence
+xlsx.solver.integer-tolerance	Integer Optimality (%)
+xlsx.solver.max-iterations	Max Iterations (blank: none)
+xlsx.solver.max-time	Max Time in seconds (blank: none)
+xlsx.solver.solve	Solve
+xlsx.solver.keep	Keep Solver Solution
+xlsx.solver.restore	Restore Original Values
+xlsx.solver.answer-report	Answer Report
+xlsx.solver.sensitivity-report	Sensitivity Report
+xlsx.solver.limits-report	Limits Report
+xlsx.solver.bad-objective	Set Objective must be a single cell.
+xlsx.solver.bad-variables	Enter the variable cells, such as $B$1:$B$3.
+xlsx.solver.bad-constraint	A constraint needs a cell reference and, for <=, = and >=, a number or a cell.
+xlsx.solver.bad-number	Enter a number in the options.
+xlsx.solver.rel.le	<=
+xlsx.solver.rel.eq	=
+xlsx.solver.rel.ge	>=
+xlsx.solver.rel.int	int
+xlsx.solver.rel.bin	bin
+xlsx.solver.rel.dif	dif
+xlsx.solver.method.grg	GRG Nonlinear
+xlsx.solver.method.simplex	Simplex LP
+xlsx.solver.method.evolutionary	Evolutionary
+xlsx.solver.status.optimal	Solver found a solution. All constraints and optimality conditions are satisfied.
+xlsx.solver.status.converged	Solver has converged to the current solution. All constraints are satisfied.
+xlsx.solver.status.infeasible	Solver could not find a feasible solution.
+xlsx.solver.status.unbounded	The Set Objective cell values do not converge.
+xlsx.solver.status.iteration-limit	The maximum number of iterations was reached. All constraints are satisfied, but the solution may not be optimal.
+xlsx.solver.status.stopped	Solver stopped at the time limit. All constraints are satisfied.
+xlsx.solver.status.not-linear	The linearity conditions required by this LP Solver are not satisfied.
+xlsx.solver.status.missing-bounds	The Evolutionary method requires upper and lower bounds on all the variable cells.
+xlsx.solver.status.bad-model	The model could not be evaluated: a cell it uses is not a number.
+xlsx.solver.report.title	Answer Report
+xlsx.solver.report.worksheet	Worksheet: {sheet}
+xlsx.solver.report.goal-value	Value Of {value}
+xlsx.solver.report.objective-cell	Objective Cell ({goal})
+xlsx.solver.report.variable-cells	Variable Cells
+xlsx.solver.report.constraints	Constraints
+xlsx.solver.report.cell	Cell
+xlsx.solver.report.name	Name
+xlsx.solver.report.original	Original Value
+xlsx.solver.report.final	Final Value
+xlsx.solver.report.integer	Integer
+xlsx.solver.report.cell-value	Cell Value
+xlsx.solver.report.formula	Formula
+xlsx.solver.report.status	Status
+xlsx.solver.report.slack	Slack
+xlsx.solver.report.binding	Binding
+xlsx.solver.report.not-binding	Not Binding
+xlsx.solver.report.continuous	Contin
+xlsx.solver.report.reduced-cost	Reduced Cost
+xlsx.solver.report.objective-coefficient	Objective Coefficient
+xlsx.solver.report.allowable-increase	Allowable Increase
+xlsx.solver.report.allowable-decrease	Allowable Decrease
+xlsx.solver.report.shadow-price	Shadow Price
+xlsx.solver.report.constraint-rhs	Constraint R.H. Side
+xlsx.solver.report.value	Value
+xlsx.solver.report.lower-limit	Lower Limit
+xlsx.solver.report.upper-limit	Upper Limit
+xlsx.solver.report.objective-result	Objective Result
+xlsx.forecast-sheet	Forecast Sheet…
+xlsx.forecast.title	Forecast Sheet
+xlsx.forecast.field.timeline	Timeline Range
+xlsx.forecast.field.values	Values Range
+xlsx.forecast.field.end	Forecast End
+xlsx.forecast.field.confidence	Confidence Interval (%)
+xlsx.forecast.field.chart	Chart Type
+xlsx.forecast.chart-line	Line
+xlsx.forecast.chart-column	Column
+xlsx.forecast.field.statistics	Include forecast statistics
+xlsx.forecast.create	Create
+xlsx.forecast.sheet-name	Forecast
+xlsx.forecast.timeline	Timeline
+xlsx.forecast.values	Values
+xlsx.forecast.forecast	Forecast
+xlsx.forecast.lower	Lower Confidence Bound
+xlsx.forecast.upper	Upper Confidence Bound
+xlsx.forecast.statistics	Forecast Statistics
+xlsx.forecast.slope	Slope
+xlsx.forecast.intercept	Intercept
+xlsx.forecast.r-squared	R Square
+xlsx.forecast.standard-error	Standard Error
+xlsx.forecast.confidence-level	Confidence Level
+xlsx.forecast.message.sizes	The timeline and the values have different numbers of cells.
+xlsx.forecast.message.not-numbers	The timeline and the values must be numbers (dates) with no blanks or text.
+xlsx.forecast.message.end	Enter a date or a number for Forecast End.
+xlsx.forecast.message.done	Created the sheet "{name}".
+xlsx.forecast.error.too-few	At least 3 data points are needed.
+xlsx.forecast.error.not-ascending	The timeline must be in ascending order.
+xlsx.forecast.error.irregular	The timeline steps are not constant (it needs numbers at equal steps, or dates on the same day of each month or year).
+xlsx.forecast.error.end-too-early	Forecast End must be after the last data point.
+xlsx.forecast.error.confidence	The confidence interval must be more than 0 and less than 100.
+xlsx.forecast.error.too-long	The forecast is too long (up to 5000 points).
+xlsx.forecast.field.start	Forecast Start
+xlsx.forecast.field.seasonality	Seasonality
+xlsx.forecast.seasonality-auto	Detect automatically
+xlsx.forecast.seasonality-manual	Set manually
+xlsx.forecast.field.data-completion	Fill Missing Points Using
+xlsx.forecast.completion-interpolate	Interpolation
+xlsx.forecast.completion-zero	Zeros
+xlsx.forecast.field.aggregation	Aggregate Duplicates Using
+xlsx.forecast.agg-average	Average
+xlsx.forecast.agg-count	Count
+xlsx.forecast.agg-counta	CountA
+xlsx.forecast.agg-max	Max
+xlsx.forecast.agg-median	Median
+xlsx.forecast.agg-min	Min
+xlsx.forecast.agg-sum	Sum
+xlsx.forecast.message.start	Enter a date or a number for Forecast Start.
+xlsx.forecast.error.seasonality	Enter an integer 0 or greater for seasonality.
+xlsx.forecast.error.start-after-end	Forecast Start must be before Forecast End.
+xlsx.forecast.error.start-too-late	Forecast Start must be on or before the last data point.
+xlsx.forecast.error.start-too-early	Forecast Start must be on or after the first data point.
+xlsx.error-options	Error Checking Options…
+xlsx.error-options.title	Error Checking
+xlsx.error-options.background	Enable background error checking
+xlsx.error-options.number-as-text	Numbers formatted as text or preceded by an apostrophe
+xlsx.error-options.eval-error	Cells containing formulas that result in an error
+xlsx.error-options.inconsistent-formula	Formulas inconsistent with other formulas in the region
+xlsx.error-options.two-digit-year	Cells containing years represented as 2 digits
+xlsx.error-options.unlocked-formula	Unlocked cells containing formulas
+xlsx.error-options.empty-cell-reference	Formulas referring to empty cells
+xlsx.error-options.formula-range	Formulas which omit cells in a region
+xlsx.error-options.calculated-column	Inconsistent calculated column formula in tables
+xlsx.error-options.list-data-validation	Cells with invalid data in tables or lists
+xlsx.error-options.reset-ignored	Reset Ignored Errors
+xlsx.error.number-as-text	The number in this cell is formatted as text or preceded by an apostrophe.
+xlsx.error.eval-error	The formula in this cell results in an error.
+xlsx.error.inconsistent-formula	This formula is inconsistent with the formulas around it.
+xlsx.error.two-digit-year	This cell contains a year represented as 2 digits.
+xlsx.error.unlocked-formula	This cell contains a formula and is unlocked.
+xlsx.error.empty-cell-reference	This formula refers to an empty cell.
+xlsx.error.formula-range	This formula omits adjacent cells.
+xlsx.error.calculated-column	This formula is inconsistent with the other formulas in this column.
+xlsx.error.list-data-validation	The value in this cell does not match data validation restrictions.
+xlsx.error-restore-column	Restore to Calculated Column Formula
+xlsx.external.file-not-found	The workbook "{name}" was not found beside this workbook.
+xlsx.export-without-macros	Export Without Macros…
+xlsx.ink	Draw…
+xlsx.ink.title	Draw
+xlsx.ink.pen	Pen
+xlsx.ink.pencil	Pencil
+xlsx.ink.highlighter	Highlighter
+xlsx.ink.eraser	Eraser
+xlsx.ink.lasso	Lasso Select
+xlsx.ink.select	Select
+xlsx.ink.color	Color
+xlsx.ink.effects	Effects
+xlsx.ink.effect.rainbow	Rainbow
+xlsx.ink.effect.galaxy	Galaxy
+xlsx.ink.effect.lava	Lava
+xlsx.ink.effect.ocean	Ocean
+xlsx.ink.effect.rose-gold	Rose Gold
+xlsx.ink.effect.gold	Gold
+xlsx.ink.effect.silver	Silver
+xlsx.ink.effect.bronze	Bronze
+xlsx.ink.width	Thickness
+xlsx.ink.width-pt	{pt} pt
+xlsx.ink.mouse	Draw with mouse (off: pen or touch only)
+xlsx.ink.to-shape	Ink to Shape
+xlsx.ink.name	Ink {n}
+xlsx.ink.message.no-ink	Select an ink stroke first.
+xlsx.ink.message.not-recognized	The stroke does not look like a line, rectangle, ellipse or triangle.
+xlsx.ink.message.converted	The ink was changed to a shape.
+xlsx.slicer-insert	Slicer…
+xlsx.slicer-insert.title	Insert Slicers
+xlsx.slicer-insert.select-table	Select a cell in a table or a pivot table first.
+xlsx.slicer-insert.choose	Check at least one field.
+xlsx.slicer-insert.choose-fields	Fields to make slicers for
+xlsx.slicer-insert.cache-prefix	Slicer_
+xlsx.slicer-settings	Slicer Settings…
+xlsx.slicer-settings.title	Slicer Settings
+xlsx.slicer-settings.select	Select a slicer first.
+xlsx.slicer-settings.caption	Header caption
+xlsx.slicer-settings.show-caption	Display header
+xlsx.slicer-settings.columns	Number of columns
+xlsx.slicer-settings.height	Button height (pt)
+xlsx.slicer-settings.connections	Report connections: pivot tables the slicer filters
+xlsx.slicer-settings.bad-number	Columns: a whole number from 1 to 20; height: 5 to 200 pt.
+xlsx.slicer-settings.connect-one	Connect at least one pivot table.
+xlsx.links-banner.text	Security warning: this workbook links to {count} other workbook(s). The values are the ones last saved.
+xlsx.links-banner.update	Update Values
+xlsx.links-banner.edit	Edit Links...
+xlsx.links-banner.close	Dismiss
+xlsx.links-banner.updated	Updated the values of {count} link(s).
+xlsx.links-banner.partly	Updated {count} link(s). Files not found: {missing}
+xlsx.query-from-table	From Table/Range…
+xlsx.query-blank	Blank Query…
+xlsx.queries	Queries & Connections
+query.no-data	Select a cell with data.
+query.default-name	Query
+query.step-failed	Error in step {step}: {error}
+query.fill-in	Fill in "{field}".
+query.loaded	Loaded the result of the query.
+query.none	This workbook has no queries.
+query.summary	Source: {source}   Steps: {steps}
+query.edit	Edit
+query.refresh	Refresh
+query.delete	Delete
+query.deleted	Deleted the query {name}. The sheet it loaded stays.
+query.refresh-failed	Cannot refresh {name}: {error}
+query.refreshed	Refreshed {name} ({rows} rows).
+query.queries-title	Queries & Connections
+query.editor-title	Query Editor
+query.close-and-load	Close & Load
+query.cancel	Cancel
+query.advanced-editor	Advanced Editor
+query.manage-parameters	Manage Parameters
+query.parameters-note	Write the name of a parameter in curly braces in the text of a filter or a replacement to use its value.
+query.set-parameter	Set
+query.applied-steps	Applied Steps
+query.source	Source
+query.source-blank	Blank Query
+query.ok	OK
+query.hint	Choose an operation above. Select columns by their headings first to use them.
+query.status	{columns} columns, {rows} rows
+query.tab.home	Home
+query.tab.transform	Transform
+query.tab.add	Add Column
+query.tab.combine	Combine
+query.op.promote	Use First Row as Headers
+query.op.demote	Use Headers as First Row
+query.op.change-type	Change Type
+query.op.select-columns	Choose Columns
+query.op.remove-columns	Remove Columns
+query.op.rename	Rename Column
+query.op.reorder	Reorder Columns
+query.op.filter	Filter Rows
+query.op.keep-top	Keep Top Rows
+query.op.keep-bottom	Keep Bottom Rows
+query.op.remove-top	Remove Top Rows
+query.op.remove-bottom	Remove Bottom Rows
+query.op.remove-duplicates	Remove Duplicates
+query.op.remove-blank-rows	Remove Blank Rows
+query.op.remove-errors	Remove Errors
+query.op.replace-errors	Replace Errors
+query.op.sort	Sort
+query.op.split	Split Column
+query.op.merge-columns	Merge Columns
+query.op.replace	Replace Values
+query.op.replace-null	Replace Nulls
+query.op.fill-down	Fill Down
+query.op.fill-up	Fill Up
+query.op.transpose	Transpose
+query.op.reverse	Reverse Rows
+query.op.trim	Trim
+query.op.upper	UPPERCASE
+query.op.lower	lowercase
+query.op.pivot	Pivot Column
+query.op.unpivot	Unpivot Columns
+query.op.unpivot-other	Unpivot Other Columns
+query.op.group-by	Group By
+query.op.merge	Merge Queries
+query.op.append	Append Queries
+query.op.add-column	Custom Column
+query.op.add-conditional	Conditional Column
+query.op.add-index	Index Column
+query.field.column	Column
+query.field.columns	Columns (comma-separated)
+query.field.type	Type
+query.field.culture	Locale
+query.field.from	Old name
+query.field.to	New name
+query.field.comparison	Condition
+query.field.value	Value
+query.field.count	Number of rows
+query.field.with	Replace with
+query.field.order	Order
+query.field.column2	Second column
+query.field.order2	Second order
+query.field.by	Split by
+query.field.separator	Separator
+query.field.new-name	New column name
+query.field.find	Value to find
+query.field.whole	Match entire cell contents
+query.field.attribute	Column of the new column names
+query.field.values	Values column
+query.field.aggregate	Aggregate
+query.field.attribute-name	Attribute column name
+query.field.value-name	Value column name
+query.field.name1	Name of aggregation 1
+query.field.aggregate1	Aggregation 1
+query.field.column1	Column of aggregation 1
+query.field.name2	Name of aggregation 2 (optional)
+query.field.aggregate2	Aggregation 2
+query.field.right	Query or table to merge
+query.field.left-keys	Key columns of this table
+query.field.right-keys	Key columns of the other
+query.field.join	Join kind
+query.field.expand	Columns to expand
+query.field.other	Query or table to append
+query.field.formula	Formula (e.g. [Qty] * [Price])
+query.field.output	Then
+query.field.comparison2	Second condition
+query.field.value2	Second value
+query.field.output2	Second then
+query.field.otherwise	Otherwise
+query.field.start	Start
+query.field.step	Step
+query.field.parameter-name	Parameter name
+query.field.parameter-value	Current value
+query.type.any	Any
+query.type.text	Text
+query.type.whole	Whole number
+query.type.decimal	Decimal number
+query.type.date	Date
+query.type.datetime	Date/Time
+query.type.time	Time
+query.type.logical	True/False
+query.culture.invariant	Default
+query.culture.en-us	English (United States)
+query.culture.ja-jp	Japanese (Japan)
+query.culture.de-de	German (Germany)
+query.culture.fr-fr	French (France)
+query.cmp.equals	equals
+query.cmp.not-equals	does not equal
+query.cmp.greater	is greater than
+query.cmp.greater-or-equal	is greater than or equal to
+query.cmp.less	is less than
+query.cmp.less-or-equal	is less than or equal to
+query.cmp.contains	contains
+query.cmp.does-not-contain	does not contain
+query.cmp.begins-with	begins with
+query.cmp.ends-with	ends with
+query.cmp.is-null	is null
+query.cmp.is-not-null	is not null
+query.agg.sum	Sum
+query.agg.average	Average
+query.agg.min	Minimum
+query.agg.max	Maximum
+query.agg.count	Count rows
+query.agg.distinct	Count distinct
+query.agg.median	Median
+query.agg.first	Don't aggregate (first value)
+query.join.left	Left outer
+query.join.right	Right outer
+query.join.full	Full outer
+query.join.inner	Inner (matching rows only)
+query.join.left-anti	Left anti (rows only in the first)
+query.join.right-anti	Right anti (rows only in the second)
+query.order.ascending	Ascending
+query.order.descending	Descending
+query.split.delimiter	Delimiter
+query.split.length	Number of characters
+cells.insert-title	Insert
+cells.delete-title	Delete
+cells.insert-menu	Insert…
+cells.delete-menu	Delete…
+xlsx.forecast.alpha	Alpha
+xlsx.forecast.beta	Beta
+xlsx.forecast.gamma	Gamma
+xlsx.forecast.mase	MASE
+xlsx.forecast.smape	SMAPE
+xlsx.forecast.mae	MAE
+xlsx.forecast.rmse	RMSE
+import-text.fixed-on	Fixed width: on
+import-text.fixed-off	Fixed width: off
+import-text.breaks	Break positions (characters from the start, comma separated; empty for automatic)
+import-text.to-this-sheet	Load to: this sheet
+import-text.to-new-sheet	Load to: a new sheet
+xlsx.export-xls	Excel 97-2003 Workbook (.xls, Whole Workbook)
+xls.left-out	Saved. The old format (.xls) cannot hold these, so they were left out: {items}
+xls.item.drawings	{n} pictures, charts or shapes
+xls.item.other	{n} notes, conditional formats, validations or tables
+xls.item.formulas	{n} formulas saved as their values
+xls.item.cells	{n} cells beyond the row and column limits
+xls.separator	; 
+xlsx.timeline.all-periods	All Periods
+xlsx.timeline.level.years	Years
+xlsx.timeline.level.quarters	Quarters
+xlsx.timeline.level.months	Months
+xlsx.timeline.level.days	Days
+xlsx.timeline.year	{y}
+xlsx.timeline.quarter	Q{n}
+xlsx.timeline.month	{n}
+xlsx.timeline.year-quarter	{y} Q{n}
+xlsx.timeline.year-month	{y}/{n}
+xlsx.timeline.date	{y}/{m}/{d}
+xlsx.timeline.range	{a} - {b}
+xlsx.timeline-insert	Timeline…
+xlsx.timeline-insert.title	Insert Timelines
+xlsx.timeline-insert.select-pivot	Select a cell in a pivot table or table first.
+xlsx.timeline-insert.choose	Check at least one field.
+xlsx.timeline-insert.choose-fields	Fields to make timelines for
+xlsx.timeline-insert.cache-prefix	Timeline_
+xlsx.pivot-insert-timeline	Insert Timeline…
+xlsx.get-data	Get Data
+xlsx.insert-control	Insert Form Control
+xlsx.insert-control.button	Button
+xlsx.insert-control.checkbox	Check Box
+xlsx.insert-control.radio	Option Button
+xlsx.insert-control.dropdown	Combo Box
+xlsx.insert-control.list	List Box
+xlsx.insert-control.spin	Spin Button
+xlsx.insert-control.scroll	Scroll Bar
+xlsx.insert-control.groupbox	Group Box
+xlsx.insert-control.label	Label
+xlsx.control-properties	Format Control…
+xlsx.control-properties.title	Format Control
+xlsx.control-properties.select	Select a form control first.
+xlsx.control-properties.text	Caption text
+xlsx.control-properties.link	Cell link
+xlsx.control-properties.range	Input range
+xlsx.control-properties.min	Minimum value
+xlsx.control-properties.max	Maximum value
+xlsx.control-properties.step	Incremental change
+xlsx.control-properties.page	Page change
+xlsx.control-properties.three-d	3-D shading
+xlsx.control-properties.font	Font family
+xlsx.control-properties.font-size	Font size (pt)
+xlsx.control-properties.text-color	Text color (#RRGGBB)
+xlsx.design-mode	Design Mode
+xlsx.design-mode.enabled	Design Mode: Enabled
+xlsx.design-mode.disabled	Design Mode: Disabled
+xlsx.view-code	View Code
+xlsx.view-code.no-code	There is no VBA macro code associated with this sheet.
+xlsx.view-code.control-info	Control: {name} ({kind})
+xlsx.new-table-style	New Table Style…
+xlsx.new-table-style.title	New Table Style
+xlsx.new-table-style.select-table	Select a cell in a table first.
+xlsx.new-table-style.name	Table style name
+xlsx.xml-source	XML Source…
+xlsx.xml-source.title	XML Source
+xlsx.xml-source.maps-in-workbook	XML maps in this workbook
+xlsx.xml-source.no-maps	There are no XML maps in this workbook.
+xlsx.xml-map-properties	XML Map Properties…
+xlsx.xml-map-properties.title	XML Map Properties
+xlsx.xml-map-properties.name	Name
+xlsx.xml-map-properties.name-required	Please enter a name.
+xlsx.xml-map-properties.root-element	Root element
+xlsx.xml-map-properties.schema	Schema
+xlsx.xml-map-properties.validate	Validate data against schema for export
+xlsx.xml-map-properties.overwrite	Overwrite existing data with new data
+xlsx.3d-model	3D Model…
+xlsx.signature-line	Signature Line…
+xlsx.chart-ex.totals	Set as total (waterfall)
+xlsx.chart-ex.bins	Bins (histogram)
+xlsx.chart-ex.bin-width	Bin width
+xlsx.chart-ex.bin-count	Number of bins
+xlsx.chart-ex.underflow	Underflow bin (values at or below)
+xlsx.chart-ex.overflow	Overflow bin (values above)
+xlsx.chart-ex.closed-right	Include the right end of each interval
+xlsx.chart-ex.apply	Apply bins
+xlsx.chart-ex.bins-hint	Leave the width and the number empty for automatic bins.
+xlsx.chart-ex.box-whisker	Box and Whisker Settings
+xlsx.chart-ex.box-mean-marker	Show mean markers
+xlsx.chart-ex.box-mean-line	Show mean lines
+xlsx.chart-ex.box-outliers	Show outlier points
+xlsx.chart-ex.box-inclusive	Inclusive median in quartiles
+xlsx.chart-ex.treemap	Treemap Settings
+xlsx.chart-ex.treemap-overlapping	Overlapping parent labels
+xlsx.chart-ex.funnel	Funnel Settings
+xlsx.chart-ex.pareto	Pareto Settings
+xlsx.chart-ex.gap-width	Gap Width (%)
+xlsx.chart-ex.apply-gap	Apply Gap Width
+xlsx.image.curl-missing	curl was not found.
+xlsx.paste-picture	Picture
+xlsx.paste-linked-picture	Linked Picture
+xlsx.camera-tool	Camera
+xlsx.pasted-linked-picture	Pasted linked picture
+xlsx.pasted-picture	Pasted picture
+xlsx.external.change-source	Change Source…
+xlsx.external.source-changed	Changed link source to "{name}".
+xlsx.external.add-link	Add Link to External Workbook…
+xlsx.external.link-added	Added link to "{name}".
+xlsx.fill-menu	Fill
+xlsx.fill-up	Fill Up
+xlsx.fill-left	Fill Left
+xlsx.clear-menu	Clear
+xlsx.clear-formats	Clear Formats
+xlsx.clear-contents	Clear Contents
+xlsx.clear-hyperlinks	Clear Hyperlinks
+xlsx.comma-style	Comma Style
+xlsx.reapply-filter	Reapply
+xlsx.sparkline-points	Show Points
+xlsx.sparkline-high-point	High Point
+xlsx.sparkline-low-point	Low Point
+xlsx.sparkline-negative-points	Negative Points
+xlsx.sparkline-first-point	First Point
+xlsx.sparkline-last-point	Last Point
+xlsx.sparkline-markers	Markers
+xlsx.previous-comment	Previous Comment/Note
+xlsx.next-comment	Next Comment/Note
+xlsx.show-all-notes	Show All Notes
+xlsx.page-orientation	Orientation
+xlsx.orientation-portrait	Portrait
+xlsx.orientation-landscape	Landscape
+xlsx.paper-size	Paper Size
+xlsx.paper-a4	A4 (210 x 297 mm)
+xlsx.paper-a3	A3 (297 x 420 mm)
+xlsx.paper-b5	B5 (182 x 257 mm)
+xlsx.paper-letter	Letter (8.5 x 11 in)
+xlsx.print-titles	Print Titles…
+xlsx.print-titles-dialog	Page Setup (Print Titles)…
+xlsx.print-titles-set-rows	Set Selected Rows as Title Rows
+xlsx.print-titles-clear	Clear Print Titles
+xlsx.insert-function	Insert Function
+xlsx.recent-functions	Recently Used
+xlsx.financial-functions	Financial
+xlsx.text-functions	Text
+xlsx.lookup-functions	Lookup & Reference
+xlsx.math-functions	Math & Trig
+xlsx.other-functions	More Functions
+xlsx.use-in-formula	Use in Formula
+xlsx.use-in-formula-paste	Paste Names…
+xlsx.create-from-selection	Create from Selection…
+xlsx.create-names-top-row	Top row
+xlsx.create-names-left-col	Left column
+xlsx.create-names-both	Top row and left column
+xlsx.fn.sum	SUM (Sum)
+xlsx.fn.average	AVERAGE (Average)
+xlsx.fn.if	IF (Condition)
+xlsx.fn.count	COUNT (Count Numbers)
+xlsx.fn.max	MAX (Maximum)
+xlsx.fn.min	MIN (Minimum)
+xlsx.fn.vlookup	VLOOKUP (Vertical Lookup)
+xlsx.fn.xlookup	XLOOKUP (Array Lookup)
+xlsx.fn.pmt	PMT (Payment)
+xlsx.fn.fv	FV (Future Value)
+xlsx.fn.pv	PV (Present Value)
+xlsx.fn.npv	NPV (Net Present Value)
+xlsx.fn.irr	IRR (Internal Rate of Return)
+xlsx.fn.rate	RATE (Interest Rate)
+xlsx.fn.nper	NPER (Number of Periods)
+xlsx.fn.concat	CONCAT (Concatenate)
+xlsx.fn.text	TEXT (Format Text)
+xlsx.fn.left	LEFT (Left Characters)
+xlsx.fn.right	RIGHT (Right Characters)
+xlsx.fn.mid	MID (Middle Characters)
+xlsx.fn.len	LEN (Character Count)
+xlsx.fn.trim	TRIM (Trim Spaces)
+xlsx.fn.substitute	SUBSTITUTE (Substitute Text)
+xlsx.fn.hlookup	HLOOKUP (Horizontal Lookup)
+xlsx.fn.index	INDEX (Index Value)
+xlsx.fn.match	MATCH (Match Position)
+xlsx.fn.xmatch	XMATCH (Array Match)
+xlsx.fn.filter	FILTER (Filter Array)
+xlsx.fn.unique	UNIQUE (Unique Values)
+xlsx.fn.sort	SORT (Sort Array)
+xlsx.fn.sumif	SUMIF (Conditional Sum)
+xlsx.fn.sumifs	SUMIFS (Multi-condition Sum)
+xlsx.fn.round	ROUND (Round)
+xlsx.fn.roundup	ROUNDUP (Round Up)
+xlsx.fn.rounddown	ROUNDDOWN (Round Down)
+xlsx.fn.abs	ABS (Absolute Value)
+xlsx.fn.product	PRODUCT (Product)
+xlsx.fn.mod	MOD (Modulo)
+xlsx.fn.countif	COUNTIF (Conditional Count)
+xlsx.fn.countifs	COUNTIFS (Multi-condition Count)
+xlsx.fn.averageif	AVERAGEIF (Conditional Average)
+xlsx.fn.median	MEDIAN (Median)
+xlsx.fn.stdev-s	STDEV.S (Sample Standard Deviation)
+xlsx.fn.isblank	ISBLANK (Is Blank)
+xlsx.fn.iserror	ISERROR (Is Error)
+xlsx.theme-fonts	Theme Fonts
+xlsx.theme-fonts.customize	Customize Fonts…
+xlsx.theme-font.office	Office (Calibri / Yu Gothic)
+xlsx.theme-font.aptos	Aptos (Aptos / BIZ UDPGothic)
+xlsx.theme-font.arial	Arial
+xlsx.theme-font.century-gothic	Century Gothic
+xlsx.theme-font.meiryo	Meiryo
+xlsx.theme-font.yu-gothic	Yu Gothic
+xlsx.theme-fonts-applied	Theme fonts updated
+xlsx.theme-effects	Theme Effects
+xlsx.theme-effects.office	Office
+xlsx.theme-effects.subtle	Subtle
+xlsx.theme-effects.moderate	Moderate
+xlsx.theme-effects.intense	Intense
+xlsx.theme-effect.office	Office
+xlsx.theme-effect.subtle	Subtle
+xlsx.theme-effect.moderate	Moderate
+xlsx.theme-effect.intense	Intense
+xlsx.theme-effect-applied	Theme effect changed to {name}
+xlsx.pivot-change-data-source	Change Data Source…
+xlsx.pivot-source-range	Table/Range
+xlsx.pivot-source-changed	PivotTable data source changed
+xlsx.pivot-drill-buttons	+/- Buttons
+xlsx.pivot-drill-buttons-shown	PivotTable +/- buttons shown
+xlsx.pivot-drill-buttons-hidden	PivotTable +/- buttons hidden
+xlsx.recommended-charts	Recommended Charts
+xlsx.recommended-chart-inserted	Recommended chart inserted
+xlsx.thesaurus	Thesaurus
+xlsx.thesaurus.select-word	Select a cell containing a word
+xlsx.thesaurus.lookup	Searching synonyms for "{word}"
+xlsx.chart-quick-layout	Quick Layout
+xlsx.chart-quick-layout-1	Layout 1
+xlsx.chart-quick-layout-2	Layout 2
+xlsx.chart-quick-layout-3	Layout 3
+xlsx.chart-quick-layout-4	Layout 4
+xlsx.chart-quick-layout-5	Layout 5
+xlsx.chart-quick-layout-6	Layout 6
+xlsx.chart-quick-layout-7	Layout 7
+xlsx.chart-quick-layout-8	Layout 8
+xlsx.chart-quick-layout-9	Layout 9
+xlsx.chart-quick-layout-10	Layout 10
+xlsx.picture.compress	Compress Pictures
+xlsx.picture.compress.print	Print (220 ppi)
+xlsx.picture.compress.web	Web (150 ppi)
+xlsx.picture.compress.email	E-mail (96 ppi)
+xlsx.picture.compress.delete-crop	Delete Cropped Areas and Compress
+_xlsx.row-height	Row Height…
+_xlsx.row-height-pt	Row Height (pt)
+_xlsx.column-width	Column Width…
+_xlsx.column-width-chars	Column Width (characters)
+_xlsx.presets	Presets
+_xlsx.apply	Apply
+_xlsx.applied	Applied
+_xlsx.enter-a-valid-number	Please enter a valid number
+_xlsx.banded-rows-enabled	Banded rows enabled
+_xlsx.banded-rows-disabled	Banded rows disabled
+_xlsx.banded-columns-enabled	Banded columns enabled
+_xlsx.banded-columns-disabled	Banded columns disabled
+_xlsx.pivot-layout-updated	Report layout updated
+_xlsx.pivot-compact-layout	Show in Compact Form
+_xlsx.pivot-outline-layout	Show in Outline Form
+_xlsx.pivot-tabular-layout	Show in Tabular Form
+_xlsx.table-resize	Resize Table…
+_xlsx.table-resized	Table resized
+xlsx.pivot-clear	Clear
+xlsx.pivot-clear-all	Clear All
+xlsx.pivot-clear-filters	Clear Filters
+xlsx.pivot-select	Select
+xlsx.pivot-select-entire-table	Entire PivotTable
+xlsx.pivot-select-values	Values
+xlsx.pivot-select-labels	Labels
+xlsx.pivot-blank-rows	Blank Rows
+xlsx.pivot-insert-blank-line	Insert Blank Line After Each Item
+xlsx.pivot-remove-blank-line	Remove Blank Line After Each Item
+xlsx.pivot-move	Move PivotTable…
+xlsx.pivot-cleared	PivotTable cleared
+xlsx.pivot-filters-cleared	PivotTable filters cleared
+xlsx.recommended-pivots	Recommended PivotTables
+xlsx.recommended-pivot-inserted	Recommended PivotTable inserted
+xlsx.pivot-styles	PivotTable Styles
+xlsx.pivot-style-applied	PivotTable style applied
+xlsx.pivot-style.none	(None)
+xlsx.recommended-pivot-tables	Recommended PivotTables
+xlsx.pivot-row-headers	Row Headers
+xlsx.pivot-col-headers	Column Headers
+_xlsx.pivot-fields-cleared	PivotTable fields cleared
+_xlsx.pivot-table-selected	PivotTable selected
+_xlsx.pivot-table-moved	PivotTable moved
+_xlsx.blank-rows-inserted	Blank line inserted after each item
+_xlsx.blank-rows-removed	Blank line removed after each item
+_xlsx.row-headers-enabled	Row headers enabled
+_xlsx.row-headers-disabled	Row headers disabled
+_xlsx.col-headers-enabled	Column headers enabled
+_xlsx.col-headers-disabled	Column headers disabled
+_xlsx.pivot-style-applied	Applied PivotTable style "{style}"
+_xlsx.cannot-use-on-multiple-selections	That command cannot be used on multiple selections
+xlsx.match-entire-cell	Match entire cell contents
+xlsx.find-all	Find All
+_xlsx.find-matches-count	{n} cell(s) found
+xlsx.find-results	Search Results
+xlsx.comment-new	New Comment
+xlsx.comment-reply	Reply to Comment…
+xlsx.table-insert-row-above	Insert Table Rows Above
+xlsx.table-insert-row-below	Insert Table Rows Below
+xlsx.table-insert-col-left	Insert Table Columns to the Left
+xlsx.table-insert-col-right	Insert Table Columns to the Right
+xlsx.table-delete-row	Delete Table Rows
+xlsx.table-delete-col	Delete Table Columns
+_xlsx.cf-top	Top
+_xlsx.cf-bottom	Bottom
+_xlsx.cf-items	Items
+_xlsx.cf-percent	% of selected range
+_xlsx.repeat-item-labels	Repeat item labels
+xlsx.slicer-settings.name	Name
+xlsx.slicer-settings.name-in-use	This name is already in use.
+xlsx.slicer-settings.style	Style
+_xlsx.auto-fill	AutoFill
+xlsx.sparkline-show-axis	Show Axis
+xlsx.sparkline-right-to-left	Plot Data Right-to-Left
+xlsx.sparkline-min-individual	Min Value: Automatic for Each Sparkline
+xlsx.sparkline-min-group	Min Value: Same for All Sparklines
+xlsx.sparkline-min-custom	Min Value: Custom Value…
+xlsx.sparkline-max-individual	Max Value: Automatic for Each Sparkline
+xlsx.sparkline-max-group	Max Value: Same for All Sparklines
+xlsx.sparkline-max-custom	Max Value: Custom Value…
+_xlsx.vertical-axis-min	Vertical Axis Minimum
+_xlsx.vertical-axis-max	Vertical Axis Maximum
+_xlsx.automatic-for-each	Automatic
+_xlsx.same-for-all	Same for All
+_xlsx.custom-value	Custom
+xlsx.sparkline-marker-colors	Marker Color
+xlsx.sparkline-weight	Weight
+xlsx.sparkline-empty-cells	Empty Cells
+xlsx.find-and-select	Find & Select
+xlsx.select-formulas	Formulas
+xlsx.select-notes	Notes
+xlsx.select-conditional-formats	Conditional Formatting
+xlsx.select-constants	Constants
+xlsx.select-data-validation	Data Validation
+xlsx.select-objects	Select Objects
+xlsx.format-as-table	Format as Table
+xlsx.format-as-table.light-1	Light 1
+xlsx.format-as-table.light-9	Light 9
+xlsx.format-as-table.medium-2	Medium 2
+xlsx.format-as-table.medium-4	Medium 4
+xlsx.format-as-table.medium-9	Medium 9
+xlsx.format-as-table.dark-1	Dark 1
+xlsx.format-as-table.dark-2	Dark 2
+xlsx.scale-to-fit	Scale to Fit
+xlsx.scale-width-auto	Width: Automatic
+xlsx.scale-width-1	Width: 1 Page
+xlsx.scale-width-2	Width: 2 Pages
+xlsx.scale-height-auto	Height: Automatic
+xlsx.scale-height-1	Height: 1 Page
+xlsx.scale-height-2	Height: 2 Pages
+xlsx.scale-100	Scale: 100%
+xlsx.scale-80	Scale: 80%
+xlsx.scale-50	Scale: 50%
+xlsx.timeline.show-header	Header
+xlsx.timeline.show-selection-label	Selection Label
+xlsx.timeline.show-time-level	Time Level
+xlsx.timeline.show-scroll-bar	Scroll Bar
+xlsx.table-select	Select
+xlsx.table-select-all	Entire Table
+xlsx.table-select-data	Table Data
+xlsx.table-select-col	Table Column
+xlsx.table-select-col-data	Table Column Data
+xlsx.table-select-row	Table Row
+_xlsx.table-selected	Table selected
+xlsx.report-connections	Report Connections
+xlsx.names.scope	Scope
+xlsx.names.scope.workbook	Workbook
+xlsx.names.scope.sheet	Current Sheet
+xlsx.move-sheet-first	Move to Beginning
+xlsx.move-sheet-last	Move to End
+xlsx.unhide-all-sheets	Unhide All Sheets
+xlsx.status-bar-summary	Status Bar Summary
+xlsx.status-summary-average	Average
+xlsx.status-summary-count	Count
+xlsx.status-summary-num-count	Numerical Count
+xlsx.status-summary-min	Minimum
+xlsx.status-summary-max	Maximum
+xlsx.status-summary-sum	Sum
+xlsx.cf.preset-red	Light Red Fill with Dark Red Text
+xlsx.cf.preset-yellow	Yellow Fill with Dark Yellow Text
+xlsx.cf.preset-green	Green Fill with Dark Green Text
+xlsx.cf.preset-red-text	Red Text
+xlsx.cf.text-color-rgb	Text color (RGB)
+xlsx.cf.filter-sheet	This Worksheet
+xlsx.cf.filter-selection	Current Selection
+xlsx.validation.apply-same	Apply these changes to all other cells with the same settings
+xlsx.validation.select-same	Select Cells with Same Validation
+xlsx.validation.select-all	Select All Validation Cells
+xlsx.validation.next-invalid	Next Invalid Data
+xlsx.formula-auditing	Formula Auditing
+xlsx.filter-by-selected-icon	Filter by Selected Cell's Icon
+xlsx.sort-by-selected-color	Put Selected Cell's Color on Top
+xlsx.sort-by-selected-font-color	Put Selected Cell's Font Color on Top
+xlsx.sort-by-selected-icon	Put Selected Cell's Icon on Top
+xlsx.sort-copy-level	Copy Level
+xlsx.sort-icon-key	Conditional Formatting Icon: {set} ({id})
+xlsx.find-prev	Find Previous
+xlsx.find-within-workbook	Search Within Workbook
+xlsx.find-by-columns	Search By Columns
+xlsx.find-include-comments	Include Notes & Comments
+xlsx.link-display-text	Text to display
+xlsx.link-tooltip	ScreenTip
+xlsx.link-places-in-workbook	Place in This Document
+xlsx.select-blanks	Blanks
+xlsx.select-visible-cells	Visible Cells
+xlsx.select-current-region	Current Region
+xlsx.cell-select-special	Go To Special
+xlsx.use-selected-cell	Use Selected Cell
+xlsx.subtotal-select-all	Select All
+xlsx.subtotal-unselect-all	Clear All
+xlsx.subtotal-use-selection	Use Selection
+xlsx.data-tools	Data Tools
+xlsx.what-if-analysis	What-If Analysis
+xlsx.consolidate-add-selection	Add Selection
+xlsx.consolidate-clear-all	Clear All
+xlsx.scenario-duplicate	Duplicate
+xlsx.solver.reset-all	Reset All
+xlsx.pivot.sum-of	Sum of {name}
+xlsx.pivot.count-of	Count of {name}
+xlsx.size.preset-default-row	18.75 pt (Default)
+xlsx.size.preset-chars	{n} characters
+xlsx.size.preset-default-column	8.43 characters (Default)
+_xlsx.data-validation	Data Validation
+_xlsx.clear-all	Clear All
+_xlsx.remove-duplicates	Remove Duplicates

@@ -142,6 +142,30 @@ pub enum LabelPosition {
     BestFit,
 }
 
+/// The format of a chartEx chart that can be changed: its data labels, the range of its value axis, the fill of its series.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExFormat {
+    /// The data labels of the (first) series; `None`: none.
+    pub labels: Option<ExLabels>,
+    /// The value axis' least, greatest and major unit; `None`: automatic.
+    pub axis_min: Option<crate::Number>,
+    pub axis_max: Option<crate::Number>,
+    pub axis_major: Option<crate::Number>,
+    /// The fill of the series (a waterfall's increase, decrease and total; a box's box; the first of the others); `None`: the
+    /// chart's own colour.
+    pub fills: Vec<Option<crate::Rgb>>,
+}
+
+/// What a chartEx chart's data labels show (`cx:dataLabels`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExLabels {
+    pub value: bool,
+    pub category: bool,
+    pub series_name: bool,
+    /// `pos`: outside end, inside end, centre, inside base; `None`: the kind's own.
+    pub position: Option<LabelPosition>,
+}
+
 /// A piece of a data label's text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LabelPiece {
@@ -414,6 +438,8 @@ pub struct Series {
     pub x_values: Vec<Option<Number>>,
     /// A bubble series' sizes (`c:bubbleSize`).
     pub bubble_sizes: Vec<Option<Number>>,
+    /// A bubble series drawn as spheres (`c:bubble3D`).
+    pub bubble_3d: bool,
 }
 
 /// Series of one chart type drawn against one pair of axes.
@@ -425,6 +451,26 @@ pub struct ChartGroup {
     pub series: Vec<Series>,
     /// Ids of the category and value axes, in the file's order.
     pub axes: Vec<u32>,
+    /// The 3-D view of a `bar3DChart`, `line3DChart`, `area3DChart` or `pie3DChart`
+    /// (`c:view3D` of the chart); `None` for a flat group.
+    pub three_d: Option<View3D>,
+}
+
+/// `c:view3D`: how a 3-D chart is turned. Angles are degrees; `depth_percent` and
+/// `height_percent` are percentages (`c:depthPercent`, `c:hPercent`; 100 and automatic by default).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct View3D {
+    pub rot_x: i32,
+    pub rot_y: i32,
+    /// Right-angle axes (`c:rAngAx`): an oblique projection, the axes stay upright.
+    pub right_angle_axes: bool,
+    pub depth_percent: u32,
+}
+
+impl Default for View3D {
+    fn default() -> Self {
+        Self { rot_x: 15, rot_y: 20, right_angle_axes: true, depth_percent: 100 }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -583,6 +629,34 @@ impl Default for ChartDataTable {
     }
 }
 
+impl Chart {
+    /// A chart with nothing in it: the placeholder a new chart is written with and read back from.
+    pub fn empty() -> Self {
+        Chart {
+            groups: Vec::new(),
+            axes: Vec::new(),
+            legend: None,
+            title: None,
+            plot_area: None,
+            background: crate::Fill::None,
+            border: None,
+            plot_background: crate::Fill::None,
+            disp_blanks_as: None,
+            plot_vis_only: true,
+            data_table: None,
+            style: None,
+            pivot_source: None,
+            rounded_corners: false,
+            title_overlay: false,
+            ex: None,
+            ex_format: None,
+            excel_layout: false,
+            cell_refs: Vec::new(),
+            ex_source: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chart {
     pub groups: Vec<ChartGroup>,
@@ -612,9 +686,121 @@ pub struct Chart {
     /// What the new chart kinds (chartEx) draw that the groups do not: boxes
     /// over a chart's axes, or a whole treemap or sunburst.
     pub ex: Option<ChartEx>,
+    /// What of a chartEx chart's format can be changed besides its title and legend (`cx:dataLabels`, the value axis' range, the
+    /// colours of its series); `None` for a chart of the old kinds.
+    pub ex_format: Option<ExFormat>,
     /// Drawn as Excel's engine lays a chart out (a chart of a worksheet or of
     /// Word, not of PowerPoint): the margins and gaps of the plot differ.
     pub excel_layout: bool,
+    /// The cells each series takes its name, categories and values from (`c:f`), for a chart of a worksheet: the chart
+    /// follows them as the cells change. Empty where the chart holds its data itself.
+    pub cell_refs: Vec<SeriesCells>,
+    /// For a new kind of chart (chartEx) of a worksheet: what it is made again from when its cells change, and the
+    /// settings (totals, bins) written back into its part.
+    pub ex_source: Option<ExSourceRef>,
+}
+
+/// The cells a chartEx chart reads: each cell's text, number and number format, by row.
+pub type ExCells = Vec<Vec<(String, Option<f64>, String)>>;
+
+/// What a chartEx chart is made from: its part's XML and the cells its data names. Implemented where that XML is read.
+pub trait ChartExSource: Send + Sync {
+    /// The chart made from the cells `cells` gives (a sheet's name in lower case and a range).
+    fn rebuild(&self, cells: &dyn Fn(&str, crate::CellRange) -> Option<ExCells>) -> Option<Chart>;
+    /// The settings the part holds.
+    fn options(&self) -> ChartExOptions;
+    /// The same source with `options` in its part.
+    fn with_options(&self, options: &ChartExOptions) -> Option<ExSourceRef>;
+    /// The part's XML.
+    fn xml(&self) -> String;
+    /// The same source with its formula references rewritten by `f`, or `None` if none changed.
+    fn rewrite_references(&self, f: &dyn Fn(&str) -> String) -> Option<ExSourceRef> {
+        let _ = f;
+        None
+    }
+}
+
+/// A chartEx chart's source, compared by the settings and references it holds; `follows`: the chart is made again as its cells change.
+#[derive(Clone)]
+pub struct ExSourceRef(pub std::sync::Arc<dyn ChartExSource>, pub bool);
+
+impl PartialEq for ExSourceRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && (std::sync::Arc::ptr_eq(&self.0, &other.0) || self.0.options() == other.0.options())
+    }
+}
+
+impl Eq for ExSourceRef {}
+
+impl std::fmt::Debug for ExSourceRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ExSourceRef")
+    }
+}
+
+/// How a histogram's bins are made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BinBy {
+    #[default]
+    Auto,
+    /// A width (`binSize`).
+    Width(Number),
+    /// A number of bins (`binCount`).
+    Count(u32),
+}
+
+/// The settings of a chartEx chart that its format pane changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChartExOptions {
+    /// A waterfall's points that are totals (`cx:subtotals`), by index.
+    pub subtotals: Vec<usize>,
+    /// A histogram's bins.
+    pub bin_by: BinBy,
+    /// The values at and below which (above which) one bin is made (`underflow`, `overflow`).
+    pub underflow: Option<Number>,
+    pub overflow: Option<Number>,
+    /// Bins closed on the right (`intervalClosed="r"`, the default), else on the left.
+    pub closed_right: bool,
+    /// Box and Whisker: show mean marker (`meanMarker="1|0"`).
+    pub box_mean_marker: bool,
+    /// Box and Whisker: show mean line (`meanLine="1|0"`).
+    pub box_mean_line: bool,
+    /// Box and Whisker: show outlier points (`outliers="1|0"`).
+    pub box_outliers: bool,
+    /// Box and Whisker: use inclusive median for quartile calculation (`quartileMethod="inclusive"`).
+    pub box_inclusive: bool,
+    /// Treemap: show overlapping parent labels (`parentLabelLayout="overlapping"`).
+    pub treemap_overlapping: bool,
+    /// Gap width percentage (`<cx:catScaling gapWidth="..."/>`).
+    pub gap_width: Option<u32>,
+}
+
+impl Default for ChartExOptions {
+    fn default() -> Self {
+        Self {
+            subtotals: Vec::new(),
+            bin_by: BinBy::Auto,
+            underflow: None,
+            overflow: None,
+            closed_right: true,
+            box_mean_marker: true,
+            box_mean_line: false,
+            box_outliers: true,
+            box_inclusive: false,
+            treemap_overlapping: true,
+            gap_width: None,
+        }
+    }
+}
+
+/// The references (`Sheet1!$B$2:$B$5`) a series reads its data from; `None` where it holds that itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SeriesCells {
+    pub name: Option<String>,
+    pub categories: Option<String>,
+    pub values: Option<String>,
+    /// A bubble chart's sizes (`bubbleSize`).
+    pub sizes: Option<String>,
 }
 
 /// One box of a box and whisker chart: its quartiles, whiskers, mean and
@@ -645,13 +831,17 @@ pub struct TreeNode {
 /// like (those are read as groups).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChartEx {
-    /// A chartEx kind drawn as columns or the like (waterfall, histogram, Pareto, funnel).
-    Synthesized,
+    /// A chartEx kind drawn as columns or the like (waterfall, histogram, Pareto, funnel). `links`: a waterfall's
+    /// connector lines, each from the right edge of one column to the left edge of another: (the first column's
+    /// index, its level, the second's index, its level).
+    Synthesized { links: Vec<(usize, Number, usize, Number)> },
     /// 箱ひげ図: over the axes of one invisible group (which gives the scale
     /// and the categories).
     Box { boxes: Vec<BoxStats>, fill: Fill, mean_marker: bool, mean_line: bool, outliers: bool },
-    /// ツリーマップ.
-    Treemap(Vec<TreeNode>),
+    /// ツリーマップ. `overlapping`: a group's name is written over its first corner, on its members (no band of its
+    /// own, as Excel's "overlapping" parent labels); `values`: the numbers are written after the names; `labels_at_end`:
+    /// a member's name stands at the bottom of its rectangle, not the top.
+    Treemap { nodes: Vec<TreeNode>, overlapping: bool, values: bool, labels_at_end: bool },
     /// サンバースト.
     Sunburst(Vec<TreeNode>),
 }

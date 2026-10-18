@@ -62,8 +62,42 @@ fn parse_interactive_trigger(interactive_ctn: Node, shapes: &HashMap<String, Sha
 /// The effects of `timing` (a slide's `p:timing`), in order, for the shapes
 /// `shapes` names by drawing id.
 pub(crate) fn read(slide: Node, shapes: &HashMap<String, ShapeId>, groups: &HashMap<String, Vec<ShapeId>>) -> Vec<Animation> {
-    let targets = Targets { shapes, groups };
     let Some(timing) = child(slide, "timing") else { return Vec::new() };
+    let mut chart_builds: HashMap<String, (ibis_doc_model::ChartBuildStep, bool)> = HashMap::new();
+    let mut diagram_builds: HashMap<String, ibis_doc_model::DiagramBuildStep> = HashMap::new();
+    if let Some(bld_lst) = child(timing, "bldLst") {
+        for bld_chart in elements(bld_lst).filter(|n| n.tag_name().name() == "bldChart") {
+            if let Some(spid) = bld_chart.attribute("spid") {
+                let step = bld_chart
+                    .attribute("build")
+                    .or_else(|| bld_chart.attribute("bld"))
+                    .and_then(ibis_doc_model::ChartBuildStep::parse)
+                    .unwrap_or_default();
+                let anim_bg = bld_chart.attribute("animBg").map(|v| v == "1" || v == "true").unwrap_or(true);
+                chart_builds.insert(spid.to_string(), (step, anim_bg));
+            }
+        }
+        for bld_graphic in elements(bld_lst).filter(|n| n.tag_name().name() == "bldGraphic") {
+            if let Some(spid) = bld_graphic.attribute("spid") {
+                if let Some(bld_chart) = bld_graphic.descendants().find(|n| n.is_element() && n.tag_name().name() == "bldChart") {
+                    let step = bld_chart
+                        .attribute("bld")
+                        .or_else(|| bld_chart.attribute("build"))
+                        .and_then(ibis_doc_model::ChartBuildStep::parse)
+                        .unwrap_or_default();
+                    let anim_bg = bld_chart.attribute("animBg").map(|v| v == "1" || v == "true").unwrap_or(true);
+                    chart_builds.insert(spid.to_string(), (step, anim_bg));
+                }
+            }
+        }
+        for bld_dgm in elements(bld_lst).filter(|n| n.tag_name().name() == "bldDgm") {
+            if let Some(spid) = bld_dgm.attribute("spid") {
+                let step = bld_dgm.attribute("bld").and_then(ibis_doc_model::DiagramBuildStep::parse).unwrap_or_default();
+                diagram_builds.insert(spid.to_string(), step);
+            }
+        }
+    }
+    let targets = Targets { shapes, groups, chart_builds: &chart_builds, diagram_builds: &diagram_builds };
     let mut out = Vec::new();
 
     // 1. Main sequence effects (mainSeq)
@@ -110,19 +144,66 @@ pub(crate) fn read(slide: Node, shapes: &HashMap<String, ShapeId>, groups: &Hash
 fn read_effects(e: Node, group_delay: u32, targets: &Targets, trigger: &AnimationTrigger, out: &mut Vec<Animation>) {
     let Some(target_node) = e.descendants().find(|n| n.is_element() && n.tag_name().name() == "spTgt") else { return };
     let Some(target) = target_node.attribute("spid") else { return };
-    // A range of paragraphs (`txEl/pRg`); a range of characters moves the shape's text as a whole.
+    // A range of paragraphs (`txEl/pRg`).
     let paragraph = child(target_node, "txEl")
         .and_then(|t| child(t, "pRg"))
         .and_then(|r| Some((r.attribute("st")?.parse::<u32>().ok()?, r.attribute("end")?.parse::<u32>().ok()?)))
         .filter(|(st, end)| st <= end);
+    // A range of characters (`txEl/charRg`).
+    let chars = child(target_node, "txEl")
+        .and_then(|t| child(t, "charRg"))
+        .and_then(|r| Some((r.attribute("st")?.parse::<u32>().ok()?, r.attribute("end")?.parse::<u32>().ok()?)))
+        .filter(|(st, end)| st <= end);
+    // A chart element (`cEl/cChartEl`).
+    let chart_element = child(target_node, "cEl")
+        .and_then(|c| child(c, "cChartEl"))
+        .and_then(|el| {
+            let s = el.attribute("seriesIdx")?.parse::<i32>().ok()?;
+            let c = el.attribute("categoryIdx")?.parse::<i32>().ok()?;
+            Some(ibis_doc_model::ChartAnimationElement { series_idx: s, category_idx: c })
+        });
+    let chart_build = targets.chart_builds.get(target).copied();
+    // A diagram element (`graphicEl/dgm` or `subSp`).
+    let dgm_element = child(target_node, "graphicEl")
+        .and_then(|g| child(g, "dgm"))
+        .and_then(|d| {
+            let raw_id = d.attribute("id")?;
+            let id = raw_id
+                .strip_prefix('{')
+                .and_then(|s| s.strip_suffix("-0000-0000-0000-000000000000}"))
+                .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| raw_id.to_string());
+            let bld_step = d.attribute("bldStep").unwrap_or("sp").to_string();
+            Some(ibis_doc_model::DiagramAnimationElement { id, bld_step })
+        })
+        .or_else(|| {
+            child(target_node, "subSp").and_then(|s| {
+                let id = s.attribute("spid")?.to_string();
+                Some(ibis_doc_model::DiagramAnimationElement { id, bld_step: "sp".to_string() })
+            })
+        });
+    let dgm_build = targets.diagram_builds.get(target).copied();
     if let Some(&shape) = targets.shapes.get(target) {
-        out.extend(read_effect(e, group_delay, shape, trigger.clone()).map(|a| Animation { paragraph, ..a }));
+        out.extend(read_effect(e, group_delay, shape, trigger.clone()).map(|a| Animation {
+            paragraph,
+            chars: if paragraph.is_some() { None } else { chars },
+            chart_element,
+            chart_build,
+            dgm_element,
+            dgm_build,
+            ..a
+        }));
     } else if let Some(members) = targets.groups.get(target) {
         for (i, &shape) in members.iter().enumerate() {
             if let Some(mut animation) = read_effect(e, group_delay, shape, trigger.clone()) {
                 if i > 0 {
                     animation.start = AnimationStart::WithPrevious;
                 }
+                animation.chart_element = chart_element;
+                animation.chart_build = chart_build;
+                animation.dgm_element = dgm_element.clone();
+                animation.dgm_build = dgm_build;
                 out.push(animation);
             }
         }
@@ -133,6 +214,8 @@ fn read_effects(e: Node, group_delay: u32, targets: &Targets, trigger: &Animatio
 pub(crate) struct Targets<'a> {
     pub(crate) shapes: &'a HashMap<String, ShapeId>,
     pub(crate) groups: &'a HashMap<String, Vec<ShapeId>>,
+    pub(crate) chart_builds: &'a HashMap<String, (ibis_doc_model::ChartBuildStep, bool)>,
+    pub(crate) diagram_builds: &'a HashMap<String, ibis_doc_model::DiagramBuildStep>,
 }
 
 fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrigger) -> Option<Animation> {
@@ -174,6 +257,11 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
             1 => AnimationLook::Appear,
             // Fly in / out (スライドイン): the subtype says from where.
             2 => side(preset.1).map_or(AnimationLook::Fade, AnimationLook::Fly),
+            10 => AnimationLook::Fade,
+            22 => side(preset.1).map_or(AnimationLook::Wipe(AnimationSide::Bottom), AnimationLook::Wipe),
+            24 => AnimationLook::Zoom,
+            25 => AnimationLook::Float(if preset.1 == 2 { AnimationSide::Bottom } else { AnimationSide::Top }),
+            28 => AnimationLook::Replay,
             _ if has("animEffect") || has("anim") || has("animScale") => AnimationLook::Fade,
             _ => AnimationLook::Appear,
         },
@@ -239,7 +327,21 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
     let after_effect = e.attribute("fill")
         .or_else(|| behaviours.iter().filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("fill")))
         .map_or(AnimationAfterEffect::Hold, parse_after_effect);
-    Some(Animation { shape, class, start, look, delay: delay(e), duration, preset, repeat_count, auto_reverse, rewind, accel, decel, after_effect, trigger, paragraph: None, path })
+    // The text a word or a letter at a time (`p:iterate`).
+    let text_unit = child(e, "iterate").and_then(|it| {
+        let unit = match it.attribute("type") {
+            Some("wd") => ibis_doc_model::TextUnit::Word,
+            Some("lt") => ibis_doc_model::TextUnit::Letter,
+            _ => return None,
+        };
+        let gap = if let Some(v) = child(it, "tmPct").and_then(|t| t.attribute("val")).and_then(|v| v.parse().ok()) {
+            ibis_doc_model::UnitGap::Percent(v)
+        } else {
+            ibis_doc_model::UnitGap::Millis(child(it, "tmAbs").and_then(|t| t.attribute("val")).and_then(|v| v.parse().ok())?)
+        };
+        Some((unit, gap))
+    });
+    Some(Animation { shape, class, start, look, delay: delay(e), duration, preset, repeat_count, auto_reverse, rewind, accel, decel, after_effect, trigger, paragraph: None, chars: None, text_unit, path, chart_element: None, chart_build: None, dgm_element: None, dgm_build: None })
 }
 
 /// The points a motion path (`M 0 0 L 0.25 0 C … E`, fractions of the slide)
@@ -334,6 +436,22 @@ mod tests {
         let effects = read(doc.root_element(), &shapes, &groups);
         assert_eq!(effects.len(), 1);
         assert_eq!((effects[0].shape, effects[0].paragraph), (ShapeId(40), Some((2, 3))));
+        // Effects on characters (`p:txEl/p:charRg`) and by word or letter (`p:iterate`) keep what they say.
+        let by_chars = by_paragraph.replace(r#"<p:pRg st="2" end="3"/>"#, r#"<p:charRg st="4" end="9"/>"#);
+        let doc = roxmltree::Document::parse(&by_chars).unwrap();
+        assert_eq!(read(doc.root_element(), &shapes, &groups)[0].chars, Some((4, 9)));
+        let by_word = by_paragraph.replace(r#"</p:stCondLst><p:childTnLst><p:set>"#, r#"</p:stCondLst><p:iterate type="wd"><p:tmPct val="10000"/></p:iterate><p:childTnLst><p:set>"#).replace(r#"<p:pRg st="2" end="3"/>"#, "");
+        let doc = roxmltree::Document::parse(&by_word).unwrap();
+        let unit = read(doc.root_element(), &shapes, &groups)[0].text_unit;
+        assert_eq!(unit, Some((ibis_doc_model::TextUnit::Word, ibis_doc_model::UnitGap::Percent(10_000))));
+        // Diagram element ST_Guid (`{00000007-0000-0000-0000-000000000000}`) decodes back to `"7"`.
+        let by_dgm = xml.replace(
+            r#"<p:spTgt spid="9"/>"#,
+            r#"<p:spTgt spid="4"><p:graphicEl><a:dgm xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" id="{00000007-0000-0000-0000-000000000000}" bldStep="sp"/></p:graphicEl></p:spTgt>"#,
+        );
+        let doc = roxmltree::Document::parse(&by_dgm).unwrap();
+        let dgm_el = read(doc.root_element(), &shapes, &groups)[0].dgm_element.clone();
+        assert_eq!(dgm_el, Some(ibis_doc_model::DiagramAnimationElement { id: "7".to_string(), bld_step: "sp".to_string() }));
         // A shape that is neither is no effect.
         let doc = roxmltree::Document::parse(xml).unwrap();
         assert!(read(doc.root_element(), &shapes, &HashMap::new()).is_empty());

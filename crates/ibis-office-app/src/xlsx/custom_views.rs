@@ -176,8 +176,10 @@ impl SlideEditor {
                     zoom: sheet.zoom,
                     grid_lines: sheet.grid_lines,
                     headings: sheet.headings,
+                    show_ruler: sheet.show_ruler,
                     page_break_preview: sheet.page_break_preview,
                     frozen: sheet.frozen,
+                    split: sheet.split,
                     active_cell: None,
                     selection_range: None,
                     print: if include_print_settings { Some(sheet.print.clone()) } else { None },
@@ -185,6 +187,8 @@ impl SlideEditor {
                     hidden_columns: if include_hidden { Some(sheet.hidden_columns.clone()) } else { None },
                     auto_filter: if include_hidden { Some(sheet.auto_filter.clone()) } else { None },
                     filtered_rows: if include_hidden { Some(sheet.filtered_rows.clone()) } else { None },
+                    show_formulas: sheet.show_formulas,
+                    show_zeros: sheet.show_zeros,
                 };
                 if slide.id == current_slide_id {
                     if let Some(pos) = self.wb().cells.get(&slide.id).copied() {

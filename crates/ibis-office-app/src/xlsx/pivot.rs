@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use gpui_kit::{Context, TextSystem};
+use gpui_kit::{Context, TextSystem, rgb};
 use ibis_doc_model::{CellStyle, Command, EMU_PER_POINT, Presentation, Shape, ShapeId, ShapeKind, Sheet, SheetCommand, SlideId};
 
 use crate::render::shape_view::Resources;
@@ -115,6 +115,57 @@ impl SlideEditor {
         })
     }
 
+    /// Selected cell's PivotTable index, active data field index, summary function, and showDataAs mode.
+    pub(crate) fn active_pivot_data_field(&self) -> Option<(usize, usize, String, Option<String>)> {
+        let pivot_idx = self.pivot_at_selection()?;
+        let (_, sheet) = self.current_sheet()?;
+        let pivot = sheet.pivots.get(pivot_idx)?;
+        if pivot.data_fields.is_empty() {
+            return None;
+        }
+        let val_pos = if pivot.data_fields.len() > 1 {
+            if let Some((col, _)) = self.current_cell() {
+                let first_val_col = pivot.location.first_column + pivot.first_data_col;
+                if col >= first_val_col {
+                    ((col - first_val_col) as usize) % pivot.data_fields.len()
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let df = pivot.data_fields.get(val_pos)?;
+        Some((pivot_idx, val_pos, df.function.clone(), df.show_as.clone()))
+    }
+
+    /// Set the summary function (`sum`, `count`, `average`, `max`, `min`, `product`) for the
+    /// active value field of the PivotTable at selection.
+    pub(crate) fn set_pivot_summarize_by_at_selection(&mut self, function: &'static str, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let Some((pivot_idx, val_pos, _, _)) = self.active_pivot_data_field() else {
+            self.status = Some(crate::shell::i18n::text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let target = (self.current_slide, pivot_idx);
+        self.change_pivot(target, |p| p.set_function(val_pos, function), cx);
+    }
+
+    /// Set the calculation type (`showDataAs`: `None`, `Some("percentOfTotal")`, `Some("percentOfCol")`,
+    /// `Some("percentOfRow")`) for the active value field of the PivotTable at selection.
+    pub(crate) fn set_pivot_show_values_as_at_selection(&mut self, show_as: Option<&'static str>, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let Some((pivot_idx, val_pos, _, _)) = self.active_pivot_data_field() else {
+            self.status = Some(crate::shell::i18n::text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let target = (self.current_slide, pivot_idx);
+        let mode = show_as.map(str::to_string);
+        self.change_pivot(target, |p| p.set_show_as(val_pos, mode), cx);
+    }
+
     /// ピボットテーブルの更新 (`all`: すべて更新, every pivot table of the
     /// book): each built again from its source, in its style, its columns
     /// fitted as Excel fits them; one step to undo.
@@ -180,22 +231,7 @@ impl SlideEditor {
             let sheet = work.slide(slide.id).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(sheet) = &sh.kind { Some((**sheet).clone()) } else { None }));
             if let Some(sheet) = sheet {
                 for pivot in &sheet.pivots {
-                    if let Some(data) = ibis_pptx::pivot_source(self.presentation(), &sheet, pivot) {
-                        let built = pivot.build(&data);
-                        for sh in &slide.shapes {
-                            if let ShapeKind::Chart(c) = &sh.kind {
-                                if c.pivot_source.as_deref() == Some(&pivot.name) {
-                                    let mut updated_chart = (**c).clone();
-                                    ibis_doc_model::pivot::update_chart_from_pivot(&mut updated_chart, pivot, &built);
-                                    commands.push(Command::SetKind {
-                                        slide: slide.id,
-                                        shape: sh.id,
-                                        kind: Box::new(ShapeKind::Chart(Box::new(updated_chart))),
-                                    });
-                                }
-                            }
-                        }
-                    }
+                    commands.extend(self.sync_pivot_charts_commands(slide.id, &sheet, pivot));
                 }
             }
         }
@@ -244,12 +280,52 @@ impl SlideEditor {
     }
 }
 
-/// データ > ピボットテーブルの更新, すべて更新.
+/// データ > ピボットテーブルの更新, すべて更新, スタイルオプション, レイアウト.
 pub(crate) fn menu_items() -> Vec<MenuEntry> {
+    use crate::shell::chrome::Submenu;
     vec![
         MenuItem::tr("xlsx.pivot-fields").on(|this, window, cx| this.open_pivot_fields(window, cx)).into(),
         MenuItem::tr("xlsx.pivot-value-settings").on(|this, window, cx| this.open_pivot_value_settings(window, cx)).into(),
         MenuItem::tr("xlsx.pivot-options").on(|this, window, cx| this.open_pivot_options(window, cx)).into(),
+        MenuItem::tr("xlsx.pivot-insert-timeline").icon("timeline").on(|this, window, cx| this.open_timeline_insert_panel(window, cx)).into(),
+        Submenu::new("xlsx.pivot-clear-menu", "clear_all", text("xlsx.pivot-clear"), vec![
+            MenuItem::new("xlsx.pivot-clear-all", text("xlsx.pivot-clear-all")).on(|this, _, cx| this.clear_pivot_all(cx)).into(),
+            MenuItem::new("xlsx.pivot-clear-filters", text("xlsx.pivot-clear-filters")).on(|this, _, cx| this.clear_pivot_filters(cx)).into(),
+        ]).into(),
+        Submenu::new("xlsx.pivot-select-menu", "select_all", text("xlsx.pivot-select"), vec![
+            MenuItem::new("xlsx.pivot-select-entire-table", text("xlsx.pivot-select-entire-table")).on(|this, _, cx| this.select_pivot_part(0, cx)).into(),
+            MenuItem::new("xlsx.pivot-select-values", text("xlsx.pivot-select-values")).on(|this, _, cx| this.select_pivot_part(1, cx)).into(),
+            MenuItem::new("xlsx.pivot-select-labels", text("xlsx.pivot-select-labels")).on(|this, _, cx| this.select_pivot_part(2, cx)).into(),
+        ]).into(),
+        MenuItem::tr("xlsx.pivot-change-data-source").on(|this, window, cx| this.open_pivot_change_source(window, cx)).into(),
+        MenuItem::tr("xlsx.pivot-drill-buttons").on(|this, _, cx| this.toggle_pivot_drill_buttons(cx)).into(),
+        MenuItem::tr("xlsx.pivot-clear").on(|this, _, cx| this.clear_pivot_fields(cx)).into(),
+        MenuItem::tr("xlsx.pivot-select").on(|this, _, cx| this.select_entire_pivot(cx)).into(),
+        MenuItem::tr("xlsx.pivot-move").on(|this, window, cx| this.open_pivot_move(window, cx)).into(),
+        MenuItem::tr("xlsx.pivot-blank-rows").on(|this, _, cx| this.toggle_pivot_blank_rows(cx)).into(),
+        MenuItem::tr("xlsx.pivot-row-headers").on(|this, _, cx| this.toggle_pivot_row_headers(cx)).into(),
+        MenuItem::tr("xlsx.pivot-col-headers").on(|this, _, cx| this.toggle_pivot_col_headers(cx)).into(),
+        MenuItem::new("xlsx.pivot-banded-rows", text("_xlsx.banded-rows")).on(|this, _, cx| this.toggle_pivot_banded_rows(cx)).into(),
+        MenuItem::new("xlsx.pivot-banded-columns", text("_xlsx.banded-columns")).on(|this, _, cx| this.toggle_pivot_banded_columns(cx)).into(),
+        MenuItem::tr("xlsx.pivot-styles").on(|this, _, cx| this.set_pivot_style("PivotStyleLight16", cx)).into(),
+        Submenu::new("xlsx.pivot-styles-menu", "palette", text("xlsx.pivot-styles"), pivot_style_items()).into(),
+        Submenu::new("xlsx.pivot-report-layout", "table_rows", text("_xlsx.pivot-layout-updated"), vec![
+            MenuItem::new("xlsx.pivot-layout-compact", text("_xlsx.pivot-compact-layout")).on(|this, _, cx| this.set_pivot_report_layout(PivotReportLayout::Compact, cx)).into(),
+            MenuItem::new("xlsx.pivot-layout-outline", text("_xlsx.pivot-outline-layout")).on(|this, _, cx| this.set_pivot_report_layout(PivotReportLayout::Outline, cx)).into(),
+            MenuItem::new("xlsx.pivot-layout-tabular", text("_xlsx.pivot-tabular-layout")).on(|this, _, cx| this.set_pivot_report_layout(PivotReportLayout::Tabular, cx)).into(),
+            MenuItem::new("xlsx.pivot-repeat-labels", text("_xlsx.repeat-all-item-labels")).on(|this, _, cx| this.toggle_pivot_repeat_item_labels(cx)).into(),
+            MenuItem::new("xlsx.pivot-grand-rows", text("_xlsx.show-grand-total-row")).on(|this, _, cx| this.toggle_pivot_row_grand_totals(cx)).into(),
+            MenuItem::new("xlsx.pivot-grand-cols", text("_xlsx.show-grand-total-column")).on(|this, _, cx| this.toggle_pivot_col_grand_totals(cx)).into(),
+        ]).into(),
+        Submenu::new("xlsx.pivot-subtotals-menu", "functions", text("_xlsx.subtotals"), vec![
+            MenuItem::new("xlsx.pivot-subtotal-off", text("_xlsx.do-not-show-subtotals")).on(|this, _, cx| this.set_pivot_subtotals(0, cx)).into(),
+            MenuItem::new("xlsx.pivot-subtotal-bottom", text("_xlsx.show-all-subtotals-at-bottom-of-group")).on(|this, _, cx| this.set_pivot_subtotals(1, cx)).into(),
+            MenuItem::new("xlsx.pivot-subtotal-top", text("_xlsx.show-all-subtotals-at-top-of-group")).on(|this, _, cx| this.set_pivot_subtotals(2, cx)).into(),
+        ]).into(),
+        Submenu::new("xlsx.pivot-blank-rows-menu", "space_bar", text("xlsx.pivot-blank-rows"), vec![
+            MenuItem::new("xlsx.pivot-insert-blank-line", text("xlsx.pivot-insert-blank-line")).on(|this, _, cx| this.set_pivot_blank_line(true, cx)).into(),
+            MenuItem::new("xlsx.pivot-remove-blank-line", text("xlsx.pivot-remove-blank-line")).on(|this, _, cx| this.set_pivot_blank_line(false, cx)).into(),
+        ]).into(),
         MenuItem::tr("xlsx.pivot-show-details").on(|this, _, cx| this.show_pivot_details_at_selection(cx)).into(),
         MenuItem::tr("xlsx.pivot-calculated-field").on(|this, window, cx| this.open_pivot_calc_field(window, cx)).into(),
         MenuItem::tr("xlsx.pivot-calculated-item").on(|this, window, cx| this.open_pivot_calc_item(window, cx)).into(),
@@ -258,6 +334,39 @@ pub(crate) fn menu_items() -> Vec<MenuEntry> {
         MenuItem::tr("xlsx.pivot-refresh").on(|this, _, cx| this.refresh_pivots(false, cx)).into(),
         MenuItem::tr("xlsx.pivot-refresh-all").on(|this, _, cx| this.refresh_pivots(true, cx)).into(),
     ]
+}
+
+pub(crate) const PIVOT_STYLES: [(&str, &str, &str); 13] = [
+    ("xlsx.pivot-style.none", "", "_shell.none"),
+    ("xlsx.pivot-style.light-1", "PivotStyleLight1", "_xlsx.light"),
+    ("xlsx.pivot-style.light-2", "PivotStyleLight2", "_xlsx.light"),
+    ("xlsx.pivot-style.light-8", "PivotStyleLight8", "_xlsx.light"),
+    ("xlsx.pivot-style.light-9", "PivotStyleLight9", "_xlsx.light"),
+    ("xlsx.pivot-style.light-16", "PivotStyleLight16", "_xlsx.light"),
+    ("xlsx.pivot-style.medium-1", "PivotStyleMedium1", "_xlsx.medium-2"),
+    ("xlsx.pivot-style.medium-2", "PivotStyleMedium2", "_xlsx.medium-2"),
+    ("xlsx.pivot-style.medium-7", "PivotStyleMedium7", "_xlsx.medium-2"),
+    ("xlsx.pivot-style.medium-9", "PivotStyleMedium9", "_xlsx.medium-2"),
+    ("xlsx.pivot-style.medium-14", "PivotStyleMedium14", "_xlsx.medium-2"),
+    ("xlsx.pivot-style.dark-1", "PivotStyleDark1", "_xlsx.dark"),
+    ("xlsx.pivot-style.dark-3", "PivotStyleDark3", "_xlsx.dark"),
+];
+
+pub(crate) fn pivot_style_items() -> Vec<MenuEntry> {
+    PIVOT_STYLES
+        .iter()
+        .map(|&(id, name, group_label)| {
+            let label = if name.is_empty() {
+                text(group_label)
+            } else {
+                let num = name.trim_start_matches(|c: char| !c.is_ascii_digit());
+                SharedString::from(format!("{} {num}", text(group_label)))
+            };
+            MenuItem::new(id, label)
+                .on(move |this, _, cx| this.set_pivot_style_named(name, cx))
+                .into()
+        })
+        .collect()
 }
 
 use std::rc::Rc;
@@ -276,6 +385,8 @@ use crate::shell::i18n::text;
 /// table's fields (ピボットテーブルのフィールド).
 pub(crate) struct PivotPanel {
     pub(crate) create: Option<CreatePivot>,
+    pub(crate) change_source: Option<ChangePivotSource>,
+    pub(crate) move_pivot: Option<MovePivot>,
     /// The table whose fields are shown (its sheet and index).
     pub(crate) target: Option<(SlideId, usize)>,
     /// The value whose summary is being chosen.
@@ -296,7 +407,23 @@ pub(crate) struct CreatePivot {
     pub(crate) at: Entity<InputState>,
 }
 
+pub(crate) struct ChangePivotSource {
+    pub(crate) source: Entity<InputState>,
+}
+
+pub(crate) struct MovePivot {
+    pub(crate) destination: Entity<InputState>,
+}
+
 const AREAS: [(PivotAxis, &str); 4] = [(PivotAxis::Page, "_xlsx.filters"), (PivotAxis::Column, "_xlsx.columns"), (PivotAxis::Row, "_xlsx.rows"), (PivotAxis::Values, "_xlsx.values")];
+
+/// レポートのレイアウト
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PivotReportLayout {
+    Compact,
+    Outline,
+    Tabular,
+}
 
 impl SlideEditor {
     fn sheet_name_of(&self, slide: SlideId) -> Option<String> {
@@ -337,7 +464,7 @@ impl SlideEditor {
         };
         let at = self.current_cell().map(|(c, r)| format!("{}!{}", quote_sheet(&sheet), ibis_doc_model::cell_name(c, r))).unwrap_or_default();
         let create = CreatePivot { source: input(source, window, cx), new_sheet: true, at: input(at, window, cx) };
-        self.show_pivot_panel(PivotPanel { create: Some(create), target: None, value: None, value_name: None, field_selected: None, message: String::new(), missing: None, error: None }, cx);
+        self.show_pivot_panel(PivotPanel { create: Some(create), change_source: None, move_pivot: None, target: None, value: None, value_name: None, field_selected: None, message: String::new(), missing: None, error: None }, cx);
     }
 
     /// データ > ピボットテーブルのフィールド: the panel of the table the
@@ -357,7 +484,7 @@ impl SlideEditor {
         };
         let missing = input(pivot.as_ref().and_then(|p| p.missing_caption.clone()).unwrap_or_default(), window, cx);
         let error = input(pivot.as_ref().and_then(|p| p.error_caption.clone()).unwrap_or_default(), window, cx);
-        self.show_pivot_panel(PivotPanel { create: None, target, value: None, value_name: None, field_selected: None, message: String::new(), missing: Some(missing), error: Some(error) }, cx);
+        self.show_pivot_panel(PivotPanel { create: None, change_source: None, move_pivot: None, target, value: None, value_name: None, field_selected: None, message: String::new(), missing: Some(missing), error: Some(error) }, cx);
     }
 
     /// データ > 値フィールドの設定…: the panel of the table the selected cell is in,
@@ -399,6 +526,8 @@ impl SlideEditor {
         let val_name = input(pivot.data_fields.get(val_pos).map(|d| d.name.clone()).unwrap_or_default(), window, cx);
         self.show_pivot_panel(PivotPanel {
             create: None,
+            change_source: None,
+            move_pivot: None,
             target: Some(target),
             value: Some(val_pos),
             value_name: Some(val_name),
@@ -407,6 +536,717 @@ impl SlideEditor {
             missing: Some(missing),
             error: Some(error),
         }, cx);
+    }
+
+    /// データ > データ ソースの変更… (xlsx.pivot-change-data-source):
+    /// Open the change pivot source panel for the selected pivot table.
+    pub(crate) fn open_pivot_change_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let target = (self.current_slide, index);
+        let pivot = self.presentation().slide(self.current_slide).and_then(|s| {
+            s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { s.pivots.get(index).cloned() } else { None })
+        });
+        let Some(pivot) = pivot else { return };
+        let current_sheet = self.sheet_name_of(self.current_slide).unwrap_or_default();
+        let source_text = if let Some(name) = &pivot.source.name {
+            name.clone()
+        } else if let Some(range) = pivot.source.range {
+            let sheet = pivot.source.sheet.as_deref().unwrap_or(&current_sheet);
+            format!("{}!{}", quote_sheet(sheet), absolute(range))
+        } else {
+            String::new()
+        };
+        let input = {
+            let state = cx.new(|cx| InputState::new(window, cx));
+            state.update(cx, |i, cx| i.set_value(source_text, window, cx));
+            state
+        };
+        self.show_pivot_panel(PivotPanel {
+            create: None,
+            change_source: Some(ChangePivotSource { source: input }),
+            move_pivot: None,
+            target: Some(target),
+            value: None,
+            value_name: None,
+            field_selected: None,
+            message: String::new(),
+            missing: None,
+            error: None,
+        }, cx);
+    }
+
+    /// Apply the modified pivot table data source.
+    pub(crate) fn apply_change_pivot_source(&mut self, cx: &mut Context<Self>) {
+        let Some(cs) = self.sheet_state().and_then(|s| s.panels.pivot.as_ref()).and_then(|p| p.change_source.as_ref()) else { return };
+        let Some((slide, index)) = self.sheet_state().and_then(|s| s.panels.pivot.as_ref()).and_then(|p| p.target) else { return };
+        let source_text = cs.source.read(cx).value().to_string();
+        let current = self.sheet_name_of(slide).unwrap_or_default();
+        let parsed_ref = super::sheet_ui::parse_reference(&source_text);
+        let (source_sheet, range, source_name) = match parsed_ref {
+            Some(super::sheet_ui::Reference { sheet, target: super::sheet_ui::Target::Cells(range) }) => {
+                (sheet.unwrap_or_else(|| current.clone()), range, None)
+            }
+            Some(super::sheet_ui::Reference { target: super::sheet_ui::Target::Name(_), .. }) | None if super::sheet_ui::is_name(source_text.trim()) => {
+                let name = source_text.trim();
+                let mut found_table = None;
+                for s in &self.presentation().slides {
+                    let sh_name = s.name.clone().unwrap_or_default();
+                    if let Some(sh) = s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(sheet) = &sh.kind { Some(sheet.clone()) } else { None }) {
+                        if let Some(tbl) = sh.tables.iter().find(|t| t.name.eq_ignore_ascii_case(name)) {
+                            let r = ibis_doc_model::CellRange {
+                                first_row: tbl.range.first_row,
+                                last_row: tbl.range.last_row.saturating_sub(tbl.totals_rows),
+                                first_column: tbl.range.first_column,
+                                last_column: tbl.range.last_column,
+                            };
+                            found_table = Some((sh_name, r, Some(tbl.name.clone())));
+                            break;
+                        }
+                    }
+                }
+                let found_name = if found_table.is_none() {
+                    self.presentation().workbook.as_ref().and_then(|wb| {
+                        wb.names.iter().find(|n| n.name.eq_ignore_ascii_case(name)).and_then(|dn| {
+                            let trimmed = dn.formula.trim().trim_start_matches('=');
+                            let (sh_n, cell_part) = if let Some((s, c)) = trimmed.split_once('!') {
+                                (s.trim().trim_matches('\'').to_string(), c)
+                            } else {
+                                (current.clone(), trimmed)
+                            };
+                            let r = super::sheet_ui::parse_reference(cell_part).and_then(|re| match re.target {
+                                super::sheet_ui::Target::Cells(c) => Some(c),
+                                _ => None,
+                            })?;
+                            Some((sh_n, r, Some(dn.name.clone())))
+                        })
+                    })
+                } else {
+                    None
+                };
+
+                if let Some(t) = found_table.or(found_name) {
+                    t
+                } else {
+                    return self.pivot_message(text("_xlsx.the-data-range-is-not-valid"), cx);
+                }
+            }
+            _ => return self.pivot_message(text("_xlsx.the-data-range-is-not-valid"), cx),
+        };
+        let Some(source_slide) = self.slide_named(&source_sheet) else {
+            return self.pivot_message(text("_xlsx.the-data-range-is-not-valid"), cx);
+        };
+        let Some(data_sheet) = self.presentation().slide(source_slide).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some(s.clone()) } else { None })) else { return };
+        let data = ibis_doc_model::pivot::source_data(&data_sheet, range);
+        if range.last_row <= range.first_row || data.headings.iter().any(|h| h.trim().is_empty()) {
+            return self.pivot_message(text("_xlsx.select-a-range-of-two-or-more-rows-with-a-headin"), cx);
+        }
+        let Some(old_pivot) = self.presentation().slide(slide).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { s.pivots.get(index).cloned() } else { None })) else { return };
+        let mut new_pivot = old_pivot.clone();
+        new_pivot.source = PivotSource { sheet: Some(source_sheet), range: Some(range), name: source_name };
+        for h in &data.headings {
+            if !new_pivot.fields.iter().any(|f| f.name.eq_ignore_ascii_case(h)) {
+                new_pivot.fields.push(ibis_doc_model::PivotField { name: h.clone(), ..Default::default() });
+            }
+        }
+        let Some(mut sheet) = ibis_pptx::rebuilt_pivot(self.presentation(), slide, index, Some(new_pivot)) else {
+            return self.pivot_message(text("_xlsx.the-data-range-is-not-valid"), cx);
+        };
+        let default_size = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref()).map_or(11.0, |s| s.font_size as f32 / 100.0);
+        let ts = cx.text_system().clone();
+        for (column, width) in fitted_for(&sheet, &[index], default_size, &self.resources, &ts) {
+            if let Some(w) = sheet.columns.get_mut(column as usize) && *w > 0 {
+                *w = width;
+            }
+        }
+        let mut commands = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet.clone()) })];
+        if let Some(p) = sheet.pivots.get(index) {
+            commands.extend(self.sync_pivot_charts_commands(slide, &sheet, p));
+        }
+        self.run_sheet(commands, cx);
+        self.close_pivot_panel(cx);
+        self.status = Some(crate::shell::i18n::text("xlsx.pivot-source-changed").into());
+        cx.notify();
+    }
+
+    /// +/- ボタンの表示/非表示を切り替え (xlsx.pivot-drill-buttons)
+    pub(crate) fn toggle_pivot_drill_buttons(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        let Some(mut sheet) = self.presentation().slide(slide).and_then(|s| {
+            s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some((**s).clone()) } else { None })
+        }) else { return };
+        let Some(pivot) = sheet.pivots.get_mut(index) else { return };
+        pivot.show_drill = !pivot.show_drill;
+        let shown = pivot.show_drill;
+        self.run_sheet(vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet) })], cx);
+        self.status = Some(if shown {
+            crate::shell::i18n::text("xlsx.pivot-drill-buttons-shown").into()
+        } else {
+            crate::shell::i18n::text("xlsx.pivot-drill-buttons-hidden").into()
+        });
+        cx.notify();
+    }
+
+    /// 縞模様（行）の表示/非表示を切り替え (`xlsx.pivot-banded-rows`)
+    pub(crate) fn toggle_pivot_banded_rows(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        let on = self
+            .current_sheet()
+            .and_then(|(_, s)| s.pivots.get(index))
+            .and_then(|p| p.style.as_ref())
+            .is_none_or(|st| !st.row_stripes);
+        self.change_pivot(
+            (slide, index),
+            move |pivot| {
+                let style = pivot.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo {
+                    name: "PivotStyleLight16".into(),
+                    row_headers: true,
+                    col_headers: true,
+                    ..Default::default()
+                });
+                style.row_stripes = on;
+            },
+            cx,
+        );
+        self.status = Some(if on { text("_xlsx.banded-rows-enabled").into() } else { text("_xlsx.banded-rows-disabled").into() });
+        cx.notify();
+    }
+
+    /// 縞模様（列）の表示/非表示を切り替え (`xlsx.pivot-banded-columns`)
+    pub(crate) fn toggle_pivot_banded_columns(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        let on = self
+            .current_sheet()
+            .and_then(|(_, s)| s.pivots.get(index))
+            .and_then(|p| p.style.as_ref())
+            .is_none_or(|st| !st.col_stripes);
+        self.change_pivot(
+            (slide, index),
+            move |pivot| {
+                let style = pivot.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo {
+                    name: "PivotStyleLight16".into(),
+                    row_headers: true,
+                    col_headers: true,
+                    ..Default::default()
+                });
+                style.col_stripes = on;
+            },
+            cx,
+        );
+        self.status = Some(if on { text("_xlsx.banded-columns-enabled").into() } else { text("_xlsx.banded-columns-disabled").into() });
+        cx.notify();
+    }
+
+    /// ピボットテーブルのスタイルを設定 (`style_name`: "PivotStyleLight16" 等、空文字でクリア)
+    pub(crate) fn set_pivot_style_named(&mut self, style_name: &'static str, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        let is_none = style_name.is_empty() || style_name == "None";
+        self.change_pivot((slide, index), move |p| {
+            if is_none {
+                p.style = None;
+            } else {
+                let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo {
+                    name: style_name.to_string(),
+                    row_headers: true,
+                    col_headers: true,
+                    ..Default::default()
+                });
+                st.name = style_name.to_string();
+            }
+        }, cx);
+        self.status = Some(crate::shell::i18n::text("xlsx.pivot-style-applied").into());
+        cx.notify();
+    }
+
+    /// 選択中ピボットテーブルの現在のレポートレイアウトを取得
+    pub(crate) fn pivot_report_layout_at_selection(&self) -> Option<PivotReportLayout> {
+        let index = self.pivot_at_selection()?;
+        let (_, sheet) = self.current_sheet()?;
+        let pivot = sheet.pivots.get(index)?;
+        Some(match layout_of(pivot) {
+            ReportLayout::Compact => PivotReportLayout::Compact,
+            ReportLayout::Outline => PivotReportLayout::Outline,
+            ReportLayout::Tabular => PivotReportLayout::Tabular,
+        })
+    }
+
+    /// レポートのレイアウト（コンパクト形式・アウトライン形式・表形式）を設定
+    pub(crate) fn set_pivot_report_layout(&mut self, layout: PivotReportLayout, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        self.change_pivot(
+            (slide, index),
+            move |pivot| {
+                pivot.compact = matches!(layout, PivotReportLayout::Compact);
+                pivot.outline = !matches!(layout, PivotReportLayout::Tabular);
+                for f in &mut pivot.fields {
+                    f.compact = pivot.compact;
+                    f.outline = pivot.outline;
+                }
+            },
+            cx,
+        );
+        self.status = Some(text("_xlsx.pivot-layout-updated").into());
+        cx.notify();
+    }
+
+    /// 選択中ピボットテーブルの現在の小計モードを取得（0: 非表示, 1: グループの下部, 2: グループの上部）
+    pub(crate) fn pivot_subtotals_mode_at_selection(&self) -> Option<u8> {
+        let index = self.pivot_at_selection()?;
+        let (_, sheet) = self.current_sheet()?;
+        let pivot = sheet.pivots.get(index)?;
+        Some(match subtotals_of(pivot) {
+            Subtotals::Off => 0,
+            Subtotals::Bottom => 1,
+            Subtotals::Top => 2,
+        })
+    }
+
+    /// 小計の表示モード（0: 非表示, 1: グループの下部, 2: グループの上部）を設定
+    pub(crate) fn set_pivot_subtotals(&mut self, mode: u8, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        self.change_pivot(
+            (slide, index),
+            move |pivot| {
+                for f in &mut pivot.fields {
+                    f.default_subtotal = mode != 0;
+                    f.subtotal_top = mode == 2;
+                }
+            },
+            cx,
+        );
+        self.status = Some(text("_xlsx.pivot-layout-updated").into());
+        cx.notify();
+    }
+
+    /// 選択中ピボットテーブルの現在のスタイル名を取得（未設定は空文字列）
+    pub(crate) fn pivot_style_name_at_selection(&self) -> Option<String> {
+        let index = self.pivot_at_selection()?;
+        let (_, sheet) = self.current_sheet()?;
+        let pivot = sheet.pivots.get(index)?;
+        Some(pivot.style.as_ref().map(|s| s.name.clone()).unwrap_or_default())
+    }
+
+    /// 行の総計の表示/非表示を切り替え
+    pub(crate) fn toggle_pivot_row_grand_totals(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        self.change_pivot((slide, index), |p| p.row_grand_totals = !p.row_grand_totals, cx);
+        self.status = Some(text("_xlsx.pivot-layout-updated").into());
+        cx.notify();
+    }
+
+    /// 列の総計の表示/非表示を切り替え
+    pub(crate) fn toggle_pivot_col_grand_totals(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        self.change_pivot((slide, index), |p| p.col_grand_totals = !p.col_grand_totals, cx);
+        self.status = Some(text("_xlsx.pivot-layout-updated").into());
+        cx.notify();
+    }
+
+    /// すべてのアイテムのラベルを繰り返し表示の切り替え
+    pub(crate) fn toggle_pivot_repeat_item_labels(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        self.change_pivot(
+            (slide, index),
+            |p| {
+                p.fill_down_labels = !p.fill_down_labels;
+                for f in &mut p.fields {
+                    f.fill_down_labels = None;
+                }
+            },
+            cx,
+        );
+        self.status = Some(text("_xlsx.pivot-layout-updated").into());
+        cx.notify();
+    }
+
+    /// ピボットテーブルの全フィールドをクリア（初期化）
+    pub(crate) fn clear_pivot_all(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        self.change_pivot((slide, index), |p| {
+            p.row_fields.clear();
+            p.col_fields.clear();
+            p.data_fields.clear();
+            p.page_fields.clear();
+            p.filters.clear();
+            for f in &mut p.fields {
+                f.axis = None;
+                f.subtotal_top = true;
+                f.default_subtotal = true;
+            }
+        }, cx);
+        self.status = Some(text("xlsx.pivot-cleared").into());
+        cx.notify();
+    }
+
+    /// ピボットテーブルのフィルターをクリア
+    pub(crate) fn clear_pivot_filters(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        self.change_pivot((slide, index), |p| {
+            p.filters.clear();
+            for f in &mut p.fields {
+                for item in &mut f.items {
+                    item.hidden = false;
+                }
+            }
+        }, cx);
+        self.status = Some(text("xlsx.pivot-filters-cleared").into());
+        cx.notify();
+    }
+
+    /// 各アイテムの後に空行を挿入（または削除）
+    pub(crate) fn set_pivot_blank_line(&mut self, insert: bool, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        self.change_pivot((slide, index), |p| {
+            for &rf in &p.row_fields {
+                if rf >= 0 && (rf as usize) < p.fields.len() {
+                    p.fields[rf as usize].insert_blank_row = insert;
+                }
+            }
+        }, cx);
+        cx.notify();
+    }
+
+    /// ピボットテーブルの要素を選択（0: 全体, 1: 値, 2: ラベル）
+    pub(crate) fn select_pivot_part(&mut self, part: usize, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let (_, sheet) = self.current_sheet().unwrap();
+        let p = &sheet.pivots[index];
+        let (c1, r1, c2, r2) = match part {
+            1 => {
+                // 値エリア
+                let c1 = p.location.first_column + p.first_data_col;
+                let r1 = p.location.first_row + p.first_data_row;
+                (c1, r1, p.location.last_column, p.location.last_row)
+            }
+            2 => {
+                // ラベルエリア
+                let c2 = (p.location.first_column + p.first_data_col).saturating_sub(1);
+                (p.location.first_column, p.location.first_row, c2, p.location.last_row)
+            }
+            _ => {
+                // 全体
+                (p.location.first_column, p.location.first_row, p.location.last_column, p.location.last_row)
+            }
+        };
+        let slide = self.current_slide;
+        self.wb_mut().cells.insert(slide, (c1, r1));
+        self.wb_mut().cell_ends.insert(slide, (c2, r2));
+        cx.notify();
+    }
+
+    /// ピボットテーブルを別のセルへ移動
+    pub(crate) fn move_pivot_to_corner(&mut self, col: u32, row: u32, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        self.change_pivot((slide, index), |p| {
+            let width = p.location.last_column.saturating_sub(p.location.first_column);
+            let height = p.location.last_row.saturating_sub(p.location.first_row);
+            p.location = ibis_doc_model::CellRange {
+                first_column: col,
+                first_row: row,
+                last_column: col + width,
+                last_row: row + height,
+            };
+        }, cx);
+        self.set_cell(col, row);
+        self.status = Some(text("_xlsx.pivot-table-moved").into());
+        cx.notify();
+    }
+
+    /// おすすめピボットテーブル (`xlsx.recommended-pivot-tables`)
+    pub(crate) fn open_recommended_pivot_tables(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_create_pivot(window, cx);
+    }
+
+    /// 行の見出しの表示/非表示を切り替え (`xlsx.pivot-row-headers`)
+    pub(crate) fn toggle_pivot_row_headers(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        let on = self
+            .current_sheet()
+            .and_then(|(_, s)| s.pivots.get(index))
+            .and_then(|p| p.style.as_ref())
+            .is_some_and(|st| !st.row_headers);
+        self.change_pivot(
+            (slide, index),
+            move |pivot| {
+                let style = pivot.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo {
+                    name: "PivotStyleLight16".into(),
+                    row_headers: true,
+                    col_headers: true,
+                    ..Default::default()
+                });
+                style.row_headers = on;
+            },
+            cx,
+        );
+        self.status = Some(if on { text("_xlsx.row-headers-enabled").into() } else { text("_xlsx.row-headers-disabled").into() });
+        cx.notify();
+    }
+
+    /// 列の見出しの表示/非表示を切り替え (`xlsx.pivot-col-headers`)
+    pub(crate) fn toggle_pivot_col_headers(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        let on = self
+            .current_sheet()
+            .and_then(|(_, s)| s.pivots.get(index))
+            .and_then(|p| p.style.as_ref())
+            .is_some_and(|st| !st.col_headers);
+        self.change_pivot(
+            (slide, index),
+            move |pivot| {
+                let style = pivot.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo {
+                    name: "PivotStyleLight16".into(),
+                    row_headers: true,
+                    col_headers: true,
+                    ..Default::default()
+                });
+                style.col_headers = on;
+            },
+            cx,
+        );
+        self.status = Some(if on { text("_xlsx.col-headers-enabled").into() } else { text("_xlsx.col-headers-disabled").into() });
+        cx.notify();
+    }
+
+    /// 各アイテムの後に空行を挿入/削除 (`xlsx.pivot-blank-rows`)
+    pub(crate) fn toggle_pivot_blank_rows(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        let new_val = self
+            .current_sheet()
+            .and_then(|(_, s)| s.pivots.get(index))
+            .is_none_or(|pivot| {
+                !pivot
+                    .fields
+                    .iter()
+                    .filter(|f| f.axis == Some(PivotAxis::Row))
+                    .any(|f| f.insert_blank_row)
+            });
+        self.change_pivot(
+            (slide, index),
+            move |pivot| {
+                for f in &mut pivot.fields {
+                    if f.axis == Some(PivotAxis::Row) {
+                        f.insert_blank_row = new_val;
+                    }
+                }
+            },
+            cx,
+        );
+        self.status = Some(if new_val { text("_xlsx.blank-rows-inserted").into() } else { text("_xlsx.blank-rows-removed").into() });
+        cx.notify();
+    }
+
+    /// ピボットテーブルのフィールドを一括クリア (`xlsx.pivot-clear`)
+    pub(crate) fn clear_pivot_fields(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let target = (self.current_slide, index);
+        self.change_pivot(target, |pivot| {
+            pivot.row_fields.clear();
+            pivot.col_fields.clear();
+            pivot.page_fields.clear();
+            pivot.data_fields.clear();
+            for f in &mut pivot.fields {
+                f.axis = None;
+                f.items.clear();
+            }
+        }, cx);
+        self.status = Some(text("_xlsx.pivot-fields-cleared").into());
+        cx.notify();
+    }
+
+    /// ピボットテーブル全体を選択 (`xlsx.pivot-select`)
+    pub(crate) fn select_entire_pivot(&mut self, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let loc = {
+            let Some((_, sheet)) = self.current_sheet() else { return };
+            let Some(pivot) = sheet.pivots.get(index) else { return };
+            pivot.location
+        };
+        let slide = self.current_slide;
+        let s = self.wb_mut();
+        s.cells.insert(slide, (loc.first_column, loc.first_row));
+        s.cell_ends.insert(slide, (loc.last_column, loc.last_row));
+        self.status = Some(text("_xlsx.pivot-table-selected").into());
+        cx.notify();
+    }
+
+    /// ピボットテーブルの移動パネルを開く (`xlsx.pivot-move`)
+    pub(crate) fn open_pivot_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let sheet = self.sheet_name_of(self.current_slide).unwrap_or_default();
+        let at = self.current_cell().map(|(c, r)| format!("{}!{}", quote_sheet(&sheet), ibis_doc_model::cell_name(c, r))).unwrap_or_default();
+        let destination = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.set_value(at, window, cx);
+            s
+        });
+        self.show_pivot_panel(PivotPanel {
+            create: None,
+            change_source: None,
+            move_pivot: Some(MovePivot { destination }),
+            target: Some((self.current_slide, index)),
+            value: None,
+            value_name: None,
+            field_selected: None,
+            message: String::new(),
+            missing: None,
+            error: None,
+        }, cx);
+    }
+
+    /// ピボットテーブルの移動を適用
+    pub(crate) fn apply_move_pivot(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let (slide, index, destination) = {
+            let Some(p) = self.wb_mut().panels.pivot.as_ref() else { return };
+            let Some(target) = p.target else { return };
+            let Some(mv) = &p.move_pivot else { return };
+            (target.0, target.1, mv.destination.read(cx).value().trim().to_string())
+        };
+        let parsed_ref = super::sheet_ui::parse_reference(&destination);
+        let (col, row) = match parsed_ref {
+            Some(super::sheet_ui::Reference { target: super::sheet_ui::Target::Cells(range), .. }) => {
+                (range.first_column, range.first_row)
+            }
+            _ => {
+                if let Some(c) = ibis_calc::formula::parser::parse_cell(&destination) {
+                    (c.column, c.row)
+                } else {
+                    self.pivot_message(text("_xlsx.where-to-place-the-pivottable"), cx);
+                    return;
+                }
+            }
+        };
+
+        self.change_pivot((slide, index), |pivot| {
+            let width = pivot.location.last_column.saturating_sub(pivot.location.first_column);
+            let height = pivot.location.last_row.saturating_sub(pivot.location.first_row);
+            pivot.location.first_column = col;
+            pivot.location.first_row = row;
+            pivot.location.last_column = col + width;
+            pivot.location.last_row = row + height;
+        }, cx);
+        self.set_cell(col, row);
+        self.close_pivot_panel(cx);
+        self.status = Some(text("_xlsx.pivot-table-moved").into());
+        cx.notify();
+    }
+
+    /// ピボットテーブルのスタイルを設定 (`xlsx.pivot-styles`)
+    pub(crate) fn set_pivot_style(&mut self, name: &str, cx: &mut Context<Self>) {
+        let Some(index) = self.pivot_at_selection() else {
+            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        let style_name = name.to_string();
+        let is_none = style_name.is_empty() || style_name == "None";
+        self.change_pivot(
+            (slide, index),
+            move |pivot| {
+                if is_none {
+                    pivot.style = None;
+                } else {
+                    let style = pivot.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo {
+                        name: "PivotStyleLight16".into(),
+                        row_headers: true,
+                        col_headers: true,
+                        ..Default::default()
+                    });
+                    style.name = style_name.clone();
+                }
+            },
+            cx,
+        );
+        self.status = Some(crate::shell::i18n::format("_xlsx.pivot-style-applied", &[("style", &name)]).into());
+        cx.notify();
+    }
+
+    /// Close the pivot sidebar panel.
+    pub(crate) fn close_pivot_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.sheet_state_mut() {
+            s.panels.pivot = None;
+        }
+        self.sidebar_open = false;
+        cx.notify();
     }
 
     fn current_sheet_of(&self, slide: SlideId) -> Option<Arc<Sheet>> {
@@ -541,6 +1381,112 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// 挿入 > おすすめピボットテーブル (xlsx.recommended-pivots):
+    /// データ範囲を分析し、最適な行フィールドと値フィールドを設定したピボットテーブルを新規シートに配置する。
+    pub(crate) fn open_recommended_pivots(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let range = self.selected_range().filter(|r| r.first_row != r.last_row || r.first_column != r.last_column).or_else(|| self.current_region());
+        let Some(range) = range else {
+            self.status = Some(crate::shell::i18n::text("xlsx.chart.no-data").into());
+            cx.notify();
+            return;
+        };
+        let Some((_, data_sheet)) = self.current_sheet() else { return };
+        let data = ibis_doc_model::pivot::source_data(&data_sheet, range);
+        if range.last_row <= range.first_row || data.headings.iter().any(|h| h.trim().is_empty()) {
+            self.status = Some(text("_xlsx.select-a-range-of-two-or-more-rows-with-a-headin").into());
+            cx.notify();
+            return;
+        }
+
+        let source_sheet = self.sheet_name_of(self.current_slide).unwrap_or_default();
+        let count: usize = self.presentation().slides.iter().filter_map(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some(s.pivots.len()) } else { None })).sum();
+        let name = format!("{}{}", text("_xlsx.pivottable"), count + 1);
+        let source = PivotSource { sheet: Some(source_sheet), range: Some(range), name: None };
+
+        // 新規シートを作成（A3に配置）
+        let Some(wb) = self.presentation().workbook.clone() else { return };
+        let index = wb.sheets.iter().position(|s| s.slide == Some(self.current_slide)).unwrap_or(0);
+        let mut n = wb.sheets.len() + 1;
+        let sheet_name = loop {
+            let name = format!("Sheet{n}");
+            if ibis_doc_model::sheet_ops::valid_sheet_name(self.presentation(), &name, None) {
+                break name;
+            }
+            n += 1;
+        };
+        let (slide, shape) = (self.document.ids().new_slide_id(), self.document.ids().new_shape_id());
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::AddSheet { index, name: sheet_name, slide, shape })]) {
+            self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
+            cx.notify();
+            return;
+        }
+
+        let mut pivot = PivotTable::new(&name, source, &data, 2, 0);
+
+        // データフィールドとカテゴリフィールドの判別
+        let mut num_cols = Vec::new();
+        let mut cat_cols = Vec::new();
+        for (i, _) in data.headings.iter().enumerate() {
+            let num_count = data.records.iter().filter(|r| matches!(r.get(i), Some(ibis_doc_model::CellValue::Number(_)))).count();
+            if num_count > data.records.len() / 2 {
+                num_cols.push(i);
+            } else {
+                cat_cols.push(i);
+            }
+        }
+
+        let row_col = cat_cols.first().copied().unwrap_or(0);
+        pivot.row_fields.push(row_col as i32);
+        if let Some(f) = pivot.fields.get_mut(row_col) {
+            f.axis = Some(PivotAxis::Row);
+        }
+
+        if let Some(&num_col) = num_cols.first() {
+            let h = &data.headings[num_col];
+            pivot.data_fields.push(ibis_doc_model::PivotDataField {
+                name: crate::shell::i18n::format("xlsx.pivot.sum-of", &[("name", h)]),
+                field: num_col as u32,
+                function: "sum".to_string(),
+                show_as: None,
+                number_format: None,
+            });
+        } else {
+            let target_col = if cat_cols.len() > 1 { cat_cols[1] } else { 0 };
+            let h = &data.headings[target_col];
+            pivot.data_fields.push(ibis_doc_model::PivotDataField {
+                name: crate::shell::i18n::format("xlsx.pivot.count-of", &[("name", h)]),
+                field: target_col as u32,
+                function: "count".to_string(),
+                show_as: None,
+                number_format: None,
+            });
+        }
+
+        let pivot_index = self.presentation().slide(slide).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some(s.pivots.len()) } else { None })).unwrap_or(0);
+        let Some(mut sheet) = ibis_pptx::rebuilt_pivot(self.presentation(), slide, pivot_index, Some(pivot)) else { return };
+
+        let default_size = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref()).map_or(11.0, |s| s.font_size as f32 / 100.0);
+        let ts = cx.text_system().clone();
+        for (column, width) in fitted_for(&sheet, &[pivot_index], default_size, &self.resources, &ts) {
+            if let Some(w) = sheet.columns.get_mut(column as usize) && *w > 0 {
+                *w = width;
+            }
+        }
+
+        let command = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet) })];
+        if let Err(err) = self.document.amend_last(command) {
+            self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
+            cx.notify();
+            return;
+        }
+
+        self.select_slide(slide, window, cx);
+        self.set_cell(0, 2);
+        self.status = Some(crate::shell::i18n::text("xlsx.recommended-pivot-inserted").into());
+        cx.notify();
+    }
+
     /// The table `target` changed by `change`, built again; one step to undo.
     pub(crate) fn change_pivot(&mut self, target: (SlideId, usize), change: impl FnOnce(&mut PivotTable), cx: &mut Context<Self>) {
         let (slide, index) = target;
@@ -565,16 +1511,34 @@ impl SlideEditor {
             }
         }
         let mut commands = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet.clone()) })];
-        if let (Some(s), Some(p)) = (self.presentation().slide(slide), sheet.pivots.get(index)) {
-            if let Some(data) = ibis_pptx::pivot_source(self.presentation(), &sheet, p) {
-                let built = p.build(&data);
-                for sh in &s.shapes {
-                    if let ShapeKind::Chart(c) = &sh.kind {
-                        if c.pivot_source.as_deref() == Some(&p.name) {
-                            let mut updated_chart = (**c).clone();
-                            ibis_doc_model::pivot::update_chart_from_pivot(&mut updated_chart, p, &built);
+        if let Some(p) = sheet.pivots.get(index) {
+            commands.extend(self.sync_pivot_charts_commands(slide, &sheet, p));
+        }
+        self.status = match self.document.execute(commands) {
+            Ok(_) => None,
+            Err(err) => Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into()),
+        };
+        let message = self.status.clone().unwrap_or_default();
+        self.pivot_message(message, cx);
+    }
+
+    /// Build `SetKind` commands to update all PivotCharts in the workbook linked to `pivot` on `pivot_slide`.
+    fn sync_pivot_charts_commands(&self, pivot_slide: SlideId, sheet: &Sheet, pivot: &PivotTable) -> Vec<Command> {
+        let Some(data) = ibis_pptx::pivot_source(self.presentation(), sheet, pivot) else {
+            return Vec::new();
+        };
+        let built = pivot.build(&data);
+        let pivot_sheet_name = self.sheet_name_of(pivot_slide);
+        let mut commands = Vec::new();
+        for s in &self.presentation().slides {
+            for sh in &s.shapes {
+                if let ShapeKind::Chart(c) = &sh.kind {
+                    if ibis_doc_model::pivot::pivot_source_matches(c.pivot_source.as_deref(), pivot_sheet_name.as_deref(), &pivot.name) {
+                        let mut updated_chart = (**c).clone();
+                        ibis_doc_model::pivot::update_chart_from_pivot(&mut updated_chart, pivot, &built);
+                        if &updated_chart != c.as_ref() {
                             commands.push(Command::SetKind {
-                                slide,
+                                slide: s.id,
                                 shape: sh.id,
                                 kind: Box::new(ShapeKind::Chart(Box::new(updated_chart))),
                             });
@@ -583,12 +1547,7 @@ impl SlideEditor {
                 }
             }
         }
-        self.status = match self.document.execute(commands) {
-            Ok(_) => None,
-            Err(err) => Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into()),
-        };
-        let message = self.status.clone().unwrap_or_default();
-        self.pivot_message(message, cx);
+        commands
     }
 
     /// Insert a PivotChart linked to the pivot table at `target` (slide, pivot_index).
@@ -688,6 +1647,38 @@ impl SlideEditor {
                 .child(div().text_size(px(12.)).child(SharedString::from(message)))
                 .child(Button::new("pivot-create").primary().small().label(text("_xlsx.create")).on_click(cx.listener(|this, _, window, cx| this.create_pivot(window, cx))));
             return Some(SidebarPanel { title: "_xlsx.create-pivottable".into(), body: body.into_any_element() });
+        }
+        if let Some(cs) = &p.change_source {
+            let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
+            let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+            body = body.child(label(&crate::shell::i18n::text("xlsx.pivot-source-range")));
+            body = body.child(Input::new(&cs.source).small());
+            if !message.is_empty() {
+                body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(message));
+            }
+            body = body.child(
+                h_flex()
+                    .gap_1()
+                    .child(Button::new("xlsx-pivot-change-src-ok").primary().small().label("OK").on_click(cx.listener(|this, _, _, cx| this.apply_change_pivot_source(cx))))
+                    .child(Button::new("xlsx-pivot-change-src-cancel").small().ghost().label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_panel(cx))))
+            );
+            return Some(SidebarPanel { title: crate::shell::i18n::text("xlsx.pivot-change-data-source"), body: body.into_any_element() });
+        }
+        if let Some(mv) = &p.move_pivot {
+            let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
+            let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+            body = body.child(label(&text("_xlsx.where-to-place-the-pivottable")));
+            body = body.child(Input::new(&mv.destination).small());
+            if !message.is_empty() {
+                body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(message));
+            }
+            body = body.child(
+                h_flex()
+                    .gap_1()
+                    .child(Button::new("xlsx-pivot-move-ok").primary().small().label("OK").on_click(cx.listener(|this, _, window, cx| this.apply_move_pivot(window, cx))))
+                    .child(Button::new("xlsx-pivot-move-cancel").small().ghost().label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_panel(cx))))
+            );
+            return Some(SidebarPanel { title: crate::shell::i18n::text("xlsx.pivot-move"), body: body.into_any_element() });
         }
         let target = p.target?;
         let selected_value = p.value;
@@ -947,6 +1938,34 @@ impl SlideEditor {
                             );
                         }
                         field_settings = field_settings.child(layout_choices);
+                        let repeat_labels = target_field.fill_down_labels.unwrap_or(pivot.fill_down_labels);
+                        field_settings = field_settings.child(
+                            Button::new(id("toggle-repeat-labels"))
+                                .small()
+                                .label(format!("{} {}", if repeat_labels { "☑" } else { "☐" }, text("_xlsx.repeat-item-labels")))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.change_pivot(target, |p| {
+                                        let table_default = p.fill_down_labels;
+                                        if let Some(fld) = p.fields.get_mut(f) {
+                                            let next = !fld.fill_down_labels.unwrap_or(table_default);
+                                            fld.fill_down_labels = Some(next);
+                                        }
+                                    }, cx);
+                                }))
+                        );
+                        let blank_row = target_field.insert_blank_row;
+                        field_settings = field_settings.child(
+                            Button::new(id("toggle-blank-row"))
+                                .small()
+                                .label(format!("{} {}", if blank_row { "☑" } else { "☐" }, text("xlsx.pivot-blank-rows")))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.change_pivot(target, |p| {
+                                        if let Some(fld) = p.fields.get_mut(f) {
+                                            fld.insert_blank_row = !fld.insert_blank_row;
+                                        }
+                                    }, cx);
+                                }))
+                        );
 
                         body = body.child(field_settings);
                     }
@@ -1000,12 +2019,13 @@ fn subtotals_of(p: &PivotTable) -> Subtotals {
 }
 
 impl SlideEditor {
-    /// デザイン: レポートのレイアウト, 小計, 総計, 項目ラベルの繰り返し, and the captions of empty and error values.
+    /// デザイン: レポートのレイアウト, 小計, 総計, 項目ラベルの繰り返し, 空行の挿入, スタイル オプション, スタイル, and the captions of empty and error values.
     fn pivot_design_section(&mut self, pivot: &PivotTable, target: (SlideId, usize), cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let mark = |on: bool| if on { "◉" } else { "○" };
         let check = |on: bool| if on { "☑" } else { "☐" };
         let layout = layout_of(pivot);
         let subtotals = subtotals_of(pivot);
+        let blank_rows = pivot.fields.iter().filter(|f| f.axis == Some(PivotAxis::Row)).any(|f| f.insert_blank_row);
         let mut body = v_flex().gap_1().pt(px(8.)).child(div().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(text("_shell.layout")));
         let mut layouts = h_flex().gap_1().flex_wrap();
         for (id, label, kind) in [("pivot-layout-compact", "_xlsx.show-in-compact-form", ReportLayout::Compact), ("pivot-layout-outline", "_xlsx.show-in-outline-form", ReportLayout::Outline), ("pivot-layout-tabular", "_xlsx.show-in-tabular-form", ReportLayout::Tabular)] {
@@ -1036,7 +2056,68 @@ impl SlideEditor {
         body = body
             .child(Button::new("pivot-grand-rows").small().label(format!("{} {}", check(pivot.row_grand_totals), text("_xlsx.show-grand-total-row"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, |p| p.row_grand_totals = !p.row_grand_totals, cx))))
             .child(Button::new("pivot-grand-cols").small().label(format!("{} {}", check(pivot.col_grand_totals), text("_xlsx.show-grand-total-column"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, |p| p.col_grand_totals = !p.col_grand_totals, cx))))
-            .child(Button::new("pivot-fill-down").small().label(format!("{} {}", check(pivot.fill_down_labels), text("_xlsx.repeat-all-item-labels"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, |p| p.fill_down_labels = !p.fill_down_labels, cx))));
+            .child(Button::new("pivot-fill-down").small().label(format!("{} {}", check(pivot.fill_down_labels), text("_xlsx.repeat-all-item-labels"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, |p| {
+                p.fill_down_labels = !p.fill_down_labels;
+                for f in &mut p.fields {
+                    f.fill_down_labels = None;
+                }
+            }, cx))))
+            .child(Button::new("pivot-blank-rows").small().label(format!("{} {}", check(blank_rows), text("xlsx.pivot-blank-rows"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
+                for f in &mut p.fields {
+                    if f.axis == Some(PivotAxis::Row) {
+                        f.insert_blank_row = !blank_rows;
+                    }
+                }
+            }, cx))));
+        let (row_headers, col_headers, banded_rows, banded_cols, cur_style) = match pivot.style.as_ref() {
+            Some(st) => (st.row_headers, st.col_headers, st.row_stripes, st.col_stripes, st.name.as_str()),
+            None => (true, true, false, false, ""),
+        };
+        let mut style_opts = h_flex().gap_1().flex_wrap();
+        style_opts = style_opts
+            .child(Button::new("pivot-row-headers").small().label(format!("{} {}", check(row_headers), text("xlsx.pivot-row-headers"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
+                let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: "PivotStyleLight16".into(), row_headers: true, col_headers: true, ..Default::default() });
+                st.row_headers = !row_headers;
+            }, cx))))
+            .child(Button::new("pivot-col-headers").small().label(format!("{} {}", check(col_headers), text("xlsx.pivot-col-headers"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
+                let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: "PivotStyleLight16".into(), row_headers: true, col_headers: true, ..Default::default() });
+                st.col_headers = !col_headers;
+            }, cx))))
+            .child(Button::new("pivot-banded-rows").small().label(format!("{} {}", check(banded_rows), text("_xlsx.banded-rows"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
+                let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: "PivotStyleLight16".into(), row_headers: true, col_headers: true, ..Default::default() });
+                st.row_stripes = !banded_rows;
+            }, cx))))
+            .child(Button::new("pivot-banded-columns").small().label(format!("{} {}", check(banded_cols), text("_xlsx.banded-columns"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
+                let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: "PivotStyleLight16".into(), row_headers: true, col_headers: true, ..Default::default() });
+                st.col_stripes = !banded_cols;
+            }, cx))));
+        body = body
+            .child(div().pt(px(2.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child(text("_xlsx.table-style-options")))
+            .child(style_opts);
+        let mut style_buttons = h_flex().gap_1().flex_wrap();
+        for &(id, style_name, group_label) in &PIVOT_STYLES {
+            let btn_id = SharedString::from(id.replace("xlsx.pivot-style.", "pivot-style-"));
+            let label = if style_name.is_empty() {
+                text(group_label)
+            } else {
+                let num = style_name.trim_start_matches(|c: char| !c.is_ascii_digit());
+                SharedString::from(format!("{} {num}", text(group_label)))
+            };
+            let active = cur_style == style_name;
+            style_buttons = style_buttons.child(Button::new(btn_id).small().label(format!("{} {}", mark(active), label)).on_click(cx.listener(move |this, _, _, cx| {
+                this.change_pivot(target, move |p| {
+                    if style_name.is_empty() {
+                        p.style = None;
+                    } else {
+                        let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: style_name.to_string(), row_headers: true, col_headers: true, ..Default::default() });
+                        st.name = style_name.to_string();
+                    }
+                }, cx);
+            })));
+        }
+        body = body
+            .child(div().pt(px(2.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child(text("xlsx.pivot-styles")))
+            .child(style_buttons);
         let inputs = self.sheet_state().and_then(|s| s.panels.pivot.as_ref()).map(|p| (p.missing.clone(), p.error.clone()));
         if let Some((Some(missing), Some(error))) = inputs {
             body = body
@@ -1053,6 +2134,22 @@ impl SlideEditor {
                     }, cx)
                 })));
         }
+        let show_drill = pivot.show_drill;
+        let mut actions = h_flex().gap_1().flex_wrap().pt(px(4.));
+        actions = actions
+            .child(Button::new("pivot-panel-drill-buttons").small().label(format!("{} {}", check(show_drill), text("xlsx.pivot-drill-buttons"))).on_click(cx.listener(move |this, _, _, cx| {
+                this.change_pivot(target, move |p| p.show_drill = !show_drill, cx);
+            })))
+            .child(Button::new("pivot-panel-change-source").small().label(text("xlsx.pivot-change-data-source")).on_click(cx.listener(|this, _, window, cx| this.open_pivot_change_source(window, cx))))
+            .child(Button::new("pivot-panel-move").small().label(text("xlsx.pivot-move")).on_click(cx.listener(|this, _, window, cx| this.open_pivot_move(window, cx))))
+            .child(Button::new("pivot-panel-clear-filters").small().label(text("xlsx.pivot-clear-filters")).on_click(cx.listener(|this, _, _, cx| this.clear_pivot_filters(cx))))
+            .child(Button::new("pivot-panel-clear-all").small().label(text("xlsx.pivot-clear-all")).on_click(cx.listener(|this, _, _, cx| this.clear_pivot_all(cx))))
+            .child(Button::new("pivot-panel-insert-chart").small().label(text("xlsx.pivot-chart-insert")).on_click(cx.listener(move |this, _, _, cx| {
+                this.insert_pivot_chart(target, cx);
+            })))
+            .child(Button::new("pivot-panel-insert-slicer").small().label(text("xlsx.slicer-insert")).on_click(cx.listener(|this, _, window, cx| this.open_slicer_insert_panel(window, cx))))
+            .child(Button::new("pivot-panel-insert-timeline").small().label(text("xlsx.timeline-insert")).on_click(cx.listener(|this, _, window, cx| this.open_timeline_insert_panel(window, cx))));
+        body = body.child(actions);
         body.into_any_element()
     }
 }

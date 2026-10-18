@@ -208,6 +208,12 @@ pub struct RunStyle {
     pub shadow: Option<crate::drawing::Shadow>,
     /// Proofing language code (`a:rPr/@lang`, e.g. "ja-JP", "en-US").
     pub lang: Option<String>,
+    /// The run is a math formula (`a14:m`), drawn typeset; its text is the
+    /// formula in one line.
+    pub math: Option<Box<crate::math::Math>>,
+    /// The formula is in the line with the text round it (`a14:m` holding `m:oMath`), not a display formula of its own
+    /// (`m:oMathPara`).
+    pub math_inline: bool,
 }
 
 /// The kind of an underline (OOXML's `ST_TextUnderlineType`, but `none`).
@@ -258,6 +264,29 @@ impl Underline {
             "wavyDbl" => Self::WavyDouble,
             _ => return None,
         })
+    }
+
+    /// The kind's OOXML `u` value (what `parse` reads).
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::Single => "sng",
+            Self::Words => "words",
+            Self::Double => "dbl",
+            Self::Heavy => "heavy",
+            Self::Dotted => "dotted",
+            Self::DottedHeavy => "dottedHeavy",
+            Self::Dash => "dash",
+            Self::DashHeavy => "dashHeavy",
+            Self::DashLong => "dashLong",
+            Self::DashLongHeavy => "dashLongHeavy",
+            Self::DotDash => "dotDash",
+            Self::DotDashHeavy => "dotDashHeavy",
+            Self::DotDotDash => "dotDotDash",
+            Self::DotDotDashHeavy => "dotDotDashHeavy",
+            Self::Wavy => "wavy",
+            Self::WavyHeavy => "wavyHeavy",
+            Self::WavyDouble => "wavyDbl",
+        }
     }
 }
 
@@ -462,6 +491,8 @@ pub struct CharacterFormat {
     pub bold: Option<bool>,
     pub italic: Option<bool>,
     pub underline: Option<bool>,
+    /// How the underline is drawn (`a:rPr/@u`); set with `underline: Some(true)`.
+    pub underline_kind: Option<Underline>,
     pub color: Option<Rgb>,
     /// `Some(None)` returns to the theme's font.
     pub font: Option<Option<String>>,
@@ -497,6 +528,9 @@ impl CharacterFormat {
         }
         if let Some(v) = self.underline {
             run.underline = v;
+        }
+        if let Some(v) = self.underline_kind {
+            run.underline_kind = v;
         }
         if let Some(v) = self.color {
             run.color = Some(v);
@@ -662,6 +696,8 @@ pub struct ParagraphFormat {
     pub space_before: Option<u32>,
     pub space_after: Option<u32>,
     pub list: Option<ListKind>,
+    /// The outline level, 0 to 8 (アウトライン表示の昇格・降格).
+    pub level: Option<u8>,
     /// Added to the left margin (インデントを増やす・減らす), in EMU; the
     /// margin does not go below 0.
     pub indent_by: Option<Emu>,
@@ -671,6 +707,8 @@ pub struct ParagraphFormat {
     pub indent: Option<Emu>,
     /// Tab stops defined on this paragraph.
     pub tabs: Option<Vec<TextTabStop>>,
+    /// Numbered list starting number (1..=32767).
+    pub start_at: Option<u32>,
 }
 
 /// A kind of vertical writing (`a:bodyPr/@vert`).
@@ -783,6 +821,10 @@ pub struct TextBody {
     pub column_spacing: Emu,
     /// Preset text warp shape (`a:bodyPr/a:prstTxWarp/@prst`), e.g. "textArchUp", "textWave1".
     pub warp: Option<String>,
+    /// The warp's own adjust values (`a:prstTxWarp/a:avLst/a:gd`: name and the number of `val N`).
+    pub warp_adjust: Vec<(String, i64)>,
+    /// The text is cut at the shape's edge (a Word text box: what does not fit is not seen).
+    pub clip: bool,
 }
 
 impl Default for TextBody {
@@ -803,6 +845,8 @@ impl Default for TextBody {
             columns: 1,
             column_spacing: 0,
             warp: None,
+            warp_adjust: Vec::new(),
+            clip: false,
         }
     }
 }
@@ -884,6 +928,20 @@ impl TextBody {
             offset += line.chars().count();
         }
         self.unify_lines();
+        self.refresh_math();
+    }
+
+    /// A formula run whose text was edited is read again from its text (typed in linear form).
+    fn refresh_math(&mut self) {
+        for run in self.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()) {
+            // (An emptied run keeps its formula, so that what is typed into it is a formula again.)
+            if let Some(math) = &run.style.math
+                && !run.text.is_empty()
+                && run.text != math.linear()
+            {
+                run.style.math = Some(Box::new(crate::math::parse_linear(&run.text)));
+            }
+        }
     }
 
     /// Replace a match, giving inserted characters the match's first run format.
@@ -1087,7 +1145,8 @@ impl TextBody {
         while last + 1 < self.paragraphs.len() && self.paragraphs[last + 1].line_break {
             last += 1;
         }
-        let mut number = 0;
+        let explicit_start = format.start_at.map(|s| s.clamp(1, 32767));
+        let mut number = explicit_start.unwrap_or(1).saturating_sub(1);
         let mut level: Option<u8> = None;
         for paragraph in &mut self.paragraphs[first..=last] {
             if let Some(value) = format.font_align { paragraph.font_align = value; }
@@ -1096,6 +1155,9 @@ impl TextBody {
             }
             if let Some(v) = format.line_spacing {
                 paragraph.line_spacing = v;
+            }
+            if let Some(l) = format.level {
+                paragraph.level = l.min(8);
             }
             if let Some(d) = format.indent_by {
                 paragraph.margin_left = (paragraph.margin_left + d).max(0);
@@ -1126,11 +1188,12 @@ impl TextBody {
                 Some(kind) => {
                     // An empty paragraph shows the number the next one gets
                     // and does not count (as PowerPoint numbers).
-                    // A paragraph at another level starts again from 1 (as the
+                    // A paragraph at another level starts again from start_for_level (as the
                     // reader numbers).
                     let has_text = paragraph.runs.iter().any(|r| !r.text.is_empty());
+                    let start_for_level = explicit_start.unwrap_or(1);
                     if level != Some(paragraph.level) {
-                        number = 0;
+                        number = start_for_level.saturating_sub(1);
                     }
                     let shown = number + 1;
                     if has_text {
@@ -1147,7 +1210,10 @@ impl TextBody {
                         (None, ListKind::Symbol(c)) => c.to_string(),
                         _ => "•".to_string(),
                     };
-                    let auto = scheme.map(|s| AutoNumber { scheme: s.name().to_string(), start_at: 1 });
+                    let auto = scheme.map(|s| AutoNumber {
+                        scheme: s.name().to_string(),
+                        start_at: if shown == start_for_level { start_for_level } else { 1 },
+                    });
                     paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, auto });
                     // A hanging indent the width of the mark, as PowerPoint sets.
                     if paragraph.indent >= 0 {
@@ -1156,7 +1222,38 @@ impl TextBody {
                         paragraph.indent = -hang;
                     }
                 }
-                None => {}
+                None => {
+                    if let Some(start_for_level) = explicit_start {
+                        let kind = ListKind::of(paragraph.bullet.as_ref());
+                        if matches!(kind, ListKind::Numbered | ListKind::Scheme(_)) {
+                            let has_text = paragraph.runs.iter().any(|r| !r.text.is_empty());
+                            if level != Some(paragraph.level) {
+                                number = start_for_level.saturating_sub(1);
+                            }
+                            let shown = number + 1;
+                            if has_text {
+                                number += 1;
+                                level = Some(paragraph.level);
+                            }
+                            let scheme = match kind {
+                                ListKind::Numbered => Some(NumberScheme::ArabicPeriod),
+                                ListKind::Scheme(s) => Some(s),
+                                _ => None,
+                            };
+                            if let Some(s) = scheme {
+                                let text = s.label(shown);
+                                let auto = Some(AutoNumber {
+                                    scheme: s.name().to_string(),
+                                    start_at: if shown == start_for_level { start_for_level } else { 1 },
+                                });
+                                let (picture, size, color) = paragraph.bullet.as_ref()
+                                    .map(|b| (b.picture.clone(), b.size, b.color))
+                                    .unwrap_or((None, 100_000, None));
+                                paragraph.bullet = Some(Bullet { text, picture, size, color, auto });
+                            }
+                        }
+                    }
+                }
             }
         }
         // The margin a bullet set goes to the lines after it too.
@@ -1366,4 +1463,33 @@ mod tests {
         assert_eq!(run.bold, None);
         assert_eq!(run.font_size, Some(4000));
     }
+
+    #[test]
+    fn numbered_list_format_with_custom_start_at() {
+        let mut body = TextBody::default();
+        body.set_text("First\nSecond\nThird");
+        // Apply numbered list starting at 5.
+        body.format_paragraphs(0, body.text().chars().count(), &ParagraphFormat {
+            list: Some(ListKind::Numbered),
+            start_at: Some(5),
+            ..Default::default()
+        });
+        assert_eq!(body.paragraphs[0].bullet.as_ref().unwrap().text, "5.");
+        assert_eq!(body.paragraphs[0].bullet.as_ref().unwrap().auto.as_ref().unwrap().start_at, 5);
+        assert_eq!(body.paragraphs[1].bullet.as_ref().unwrap().text, "6.");
+        assert_eq!(body.paragraphs[1].bullet.as_ref().unwrap().auto.as_ref().unwrap().start_at, 1);
+        assert_eq!(body.paragraphs[2].bullet.as_ref().unwrap().text, "7.");
+        assert_eq!(body.paragraphs[2].bullet.as_ref().unwrap().auto.as_ref().unwrap().start_at, 1);
+
+        // Update start_at only to 10 without re-specifying list kind.
+        body.format_paragraphs(0, body.text().chars().count(), &ParagraphFormat {
+            start_at: Some(10),
+            ..Default::default()
+        });
+        assert_eq!(body.paragraphs[0].bullet.as_ref().unwrap().text, "10.");
+        assert_eq!(body.paragraphs[0].bullet.as_ref().unwrap().auto.as_ref().unwrap().start_at, 10);
+        assert_eq!(body.paragraphs[1].bullet.as_ref().unwrap().text, "11.");
+        assert_eq!(body.paragraphs[2].bullet.as_ref().unwrap().text, "12.");
+    }
 }
+

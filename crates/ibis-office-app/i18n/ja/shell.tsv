@@ -44,6 +44,8 @@ file.export.pdf	PDF（.pdf）
 file.export.png	PNG 画像（.png）
 file.export.gif	アニメーション GIF（.gif）
 file.export.svg	SVG 画像（.svg）
+file.export.odp	OpenDocument プレゼンテーション（.odp）
+file.export.thmx	Office テーマ（.thmx）
 file.print	印刷…
 file.info	ファイルの情報
 file.language	言語
@@ -94,6 +96,7 @@ insert.comment	コメント
 format.options	書式設定オプション
 format.clear	書式をクリア
 tools.spelling	スペル
+file.start-window	スタートウィンドウ
 file.new	新規作成
 file.recent	最近使ったファイル
 file.export	書き出し
@@ -102,6 +105,7 @@ insert.image	画像
 insert.shape	図形
 insert.table	表
 insert.chart	グラフ
+insert.smartart	SmartArt
 format.text	テキスト
 format.align	配置とインデント
 format.spacing	行間隔と段落の間隔
@@ -129,10 +133,13 @@ file.pdf-done	PDF に書き出しました: {path}
 file.png-exit	PNG を作れませんでした（終了コード {status}）
 file.png-failed	PNG に書き出せませんでした: {error}
 file.png-done	PNG に書き出しました: {path}
+file.odp-failed	OpenDocument プレゼンテーションに書き出せませんでした: {error}
+file.odp-done	OpenDocument プレゼンテーションに書き出しました: {path}
 file.gif-failed	GIF に書き出せませんでした: {error}
 file.gif-done	GIF に書き出しました: {path}
 file.ppsx-done	スライドショーを書き出しました: {path}
 file.potx-done	テンプレートを書き出しました: {path}
+file.thmx-done	テーマを書き出しました: {path}
 file.xltx-done	Excel テンプレートを書き出しました: {path}
 file.new-from-template-done	テンプレートから新規作成しました
 file.print-failed	印刷できませんでした: {error}
@@ -153,6 +160,10 @@ start.select	選択
 start.open	開く…
 start.recent	最近開いたファイル
 start.recent-none	最近開いたファイルはありません
+start.request	協力のお願い
+start.request-body	ibisOffice は無料のオフィス スイートです。Word・Excel・PowerPoint のファイルを、描画のレイアウトの精度とファイルの構造の互換性の両方で、完全に正確に扱えることを目標にしています。
+start.request-report	不具合やご要望がありましたら、{link} で報告していただけると幸いです。
+start.request-link	GitHub Issues
 _shell.top	上
 _shell.right	右
 _shell.bottom	下
@@ -558,6 +569,9 @@ _shell.file-info	ファイルの情報
 _shell.language	言語
 _shell.page-setup-2	ページ設定…
 _shell.close	閉じる
+_shell.minimize	最小化
+_shell.maximize	最大化
+_shell.restore	元に戻す
 _shell.undo	元に戻す
 _shell.redo	やり直し
 _shell.copy	コピー
@@ -710,3 +724,82 @@ _shell.close-slide-master-view-and-notes-formatting-bef	スライド マスタ�
 _shell.could-not-create-the-gif	GIF を作れませんでした
 _shell.exporting-png	PNG に書き出しています…
 _shell.exporting-gif	GIF に書き出しています…
+shell.autorecover.settings-title	自動回復の設定
+shell.autorecover.enable	自動回復用データを定期的に保存する
+shell.autorecover.minutes	保存の間隔（分、1〜120）
+shell.autorecover.keep	保存しないで閉じたとき、最後の自動回復を残す
+shell.autorecover.location	自動回復の保存先
+shell.autorecover.reset-location	既定の場所に戻す
+shell.autorecover.disable-file	このファイルでは自動回復しない
+shell.autorecover.save-now	今すぐ保存
+shell.autorecover.save	設定を保存
+shell.autorecover.saved	設定を保存しました
+shell.autorecover.error-interval	間隔は 1〜120 分で指定してください
+shell.autorecover.error-path	保存先を作れません
+shell.autorecover.now-done	自動回復用データを保存しました
+shell.autorecover.now-failed	保存できませんでした
+shell.autorecover.wasm	ブラウザ版では使えません
+shell.autorecover.banner	自動回復から開いたファイルです。名前を付けて保存してください
+shell.autorecover.save-as	名前を付けて保存
+shell.autorecover.discard	破棄
+shell.autorecover.recover-title	未保存のファイルの回復
+shell.autorecover.refresh	再読み込み
+shell.autorecover.empty	回復できるファイルはありません
+shell.autorecover.open	開く
+shell.autorecover.deleted	削除しました
+shell.autorecover.open-failed	開けませんでした
+shell.autorecover.opened	自動回復のファイルを開きました。名前を付けて保存してください
+shell.autorecover.recovered-name	[回復済み] {file_name}
+file.without-macros-done	マクロなしで書き出しました: {path}
+settings.save	保存
+settings.trust	セキュリティ センター
+settings.qat	クイック アクセス ツール バー
+settings.save.autorecover	次の間隔で自動回復用データを保存する
+settings.save.interval	保存の間隔
+settings.save.minutes	分
+settings.save.keep-unsaved	保存しないで閉じたとき、最後に自動回復したバージョンを残す
+settings.save.backup	ブックを上書き保存するとき、常にバックアップ コピーを作成する
+settings.save.note	自動回復の場所や、バックアップの形式・場所は、ファイルのメニューの「自動回復の設定」「保存の設定」で変えます。
+settings.save.web	Web 版では、ブラウザーが保存を管理します。
+settings.trust.links-warning	他のブックへのリンクがあるブックを開いたとき、警告のバーを表示する
+settings.trust.links-note	リンクの値は最後に保存されたままです。バーの「値を更新」か、データ > ブックのリンクで更新します。
+settings.trust.macros	マクロ
+settings.trust.macros-note	VBA マクロは実行しません。マクロを含むファイル（.xlsm など）は、マクロをそのまま残して保存します。
+settings.qat.note	ツール バーの上のタイトル行（元に戻す・やり直しの隣）に置くコマンドを選びます。開いている文書のメニューにあるコマンドだけが表示されます。
+settings.qat.order	選択したコマンドの並び順
+settings.qat.candidates	コマンドの追加
+settings.qat.reset	既定値にリセット
+autocorrect.spell-ignore-upper	大文字だけの単語を無視する
+autocorrect.spell-ignore-numbers	数字を含む単語を無視する
+autocorrect.spell-ignore-internet	インターネットとファイルのアドレスを無視する
+autocorrect.spell-language	校正の言語
+autocorrect.lang.auto	自動
+autocorrect.lang.ja-JP	日本語
+autocorrect.lang.en-US	English (US)
+autocorrect.lang.en-GB	English (UK)
+autocorrect.lang.fr-FR	Français
+autocorrect.lang.de-DE	Deutsch
+autocorrect.lang.es-ES	Español
+autocorrect.lang.it-IT	Italiano
+autocorrect.lang.ko-KR	한국어
+autocorrect.lang.zh-CN	中文（简体）
+autocorrect.smart-quotes	" と ' を “ ” ‘ ’ に変える
+autocorrect.auto-lists	* や 1. で始まる段落を箇条書き・段落番号にする
+autocorrect.auto-borders	--- や === だけの段落を Enter で罫線にする
+_shell.hide-notes-pane	ノートを非表示
+_shell.show-notes-pane	ノートを表示
+shell.linux-desktop.ask	ibisOffice をアプリの一覧に登録しますか？
+shell.linux-desktop.ask.detail	アプリの一覧から起動できるようになり、Word・Excel・PowerPoint の文書の「別のアプリで開く」にも出ます。登録は自分のホーム フォルダーにだけ書きます。
+shell.linux-desktop.yes	登録する
+shell.linux-desktop.no	登録しない
+_shell.comma-style	桁区切りスタイル
+_shell.font-recent	履歴
+_shell.font-system	システム フォント
+grammar.repeated-word	重複語
+grammar.repeated-punctuation	句読点の重複
+grammar.missing-space	空白の欠落
+grammar.multiple-spaces	連続する空白
+grammar.capitalization	文頭の大文字化
+editor.csv.loading-first	CSV を読み込み中... (100,000 行読み込み済み)
+editor.csv.loaded	CSV 読み込み完了 ({rows} 行)
+editor.csv.loading	CSV を読み込み中... ({rows} 行読み込み済み)

@@ -55,6 +55,8 @@ pub struct Slicer {
     pub row_height: i64,
     /// Whether the heading shows (`showCaption`).
     pub show_caption: bool,
+    /// Whether the items are sorted in descending order (`sortOrder="descending"`).
+    pub descending: bool,
     pub source: SlicerSource,
     pub items: Vec<SlicerItem>,
 }
@@ -131,18 +133,23 @@ pub fn select_after_click(now: &[bool], clicked: usize, toggle: bool, range: boo
     if out.iter().any(|&s| s) { out } else { all }
 }
 
-/// The items of `source` as the filter has them now.
+/// The items of `source` as the filter has them now (ascending).
 pub fn slicer_items(presentation: &Presentation, source: &SlicerSource) -> Vec<SlicerItem> {
+    slicer_items_ordered(presentation, source, false)
+}
+
+/// The items of `source` as the filter has them now, ordered ascending or descending.
+pub fn slicer_items_ordered(presentation: &Presentation, source: &SlicerSource, descending: bool) -> Vec<SlicerItem> {
     let d1904 = presentation.workbook.as_ref().is_some_and(|w| w.date1904);
     match source {
         SlicerSource::Table { table, field } => {
             let Some((sheet, i)) = find_table(presentation, table) else { return Vec::new() };
             let Some(column) = table_column(&sheet.tables[i], field) else { return Vec::new() };
-            table_items(sheet, i, column, d1904)
+            table_items(sheet, i, column, d1904, descending)
         }
         SlicerSource::Pivot { field, pivots } => {
             let Some((sheet, i)) = pivots.iter().find_map(|n| find_pivot(presentation, n)) else { return Vec::new() };
-            pivot_items(&sheet.pivots[i], field)
+            pivot_items(&sheet.pivots[i], field, descending)
         }
     }
 }
@@ -152,7 +159,7 @@ pub fn table_column(table: &crate::sheet::SheetTable, field: &str) -> Option<u32
     table.columns.iter().position(|c| c == field).map(|i| table.range.first_column + i as u32)
 }
 
-fn table_items(sheet: &Sheet, index: usize, column: u32, date1904: bool) -> Vec<SlicerItem> {
+fn table_items(sheet: &Sheet, index: usize, column: u32, date1904: bool, descending: bool) -> Vec<SlicerItem> {
     let t = &sheet.tables[index];
     let range = crate::CellRange { last_row: t.range.last_row.saturating_sub(t.totals_rows), ..t.range };
     let filter = t.filter.clone().unwrap_or(AutoFilter { range, columns: Vec::new() });
@@ -185,12 +192,17 @@ fn table_items(sheet: &Sheet, index: usize, column: u32, date1904: bool) -> Vec<
         }
     }
     keyed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
+    if descending {
+        let non_blank = keyed.iter().position(|k| k.0 == 3).unwrap_or(keyed.len());
+        keyed[..non_blank].reverse();
+    }
     keyed.into_iter().map(|k| SlicerItem { label: k.3, selected: k.5, has_data: k.4 }).collect()
 }
 
-fn pivot_items(p: &crate::pivot::PivotTable, field: &str) -> Vec<SlicerItem> {
+fn pivot_items(p: &crate::pivot::PivotTable, field: &str, descending: bool) -> Vec<SlicerItem> {
     let Some(f) = p.fields.iter().find(|f| f.name == field) else { return Vec::new() };
-    f.items
+    let mut items: Vec<SlicerItem> = f
+        .items
         .iter()
         .filter(|it| it.kind.is_none())
         .filter_map(|it| {
@@ -198,7 +210,11 @@ fn pivot_items(p: &crate::pivot::PivotTable, field: &str) -> Vec<SlicerItem> {
             let label = crate::sheet_command::display_text(v, &Default::default(), false);
             Some(SlicerItem { label, selected: !it.hidden, has_data: true })
         })
-        .collect()
+        .collect();
+    if descending {
+        items.reverse();
+    }
+    items
 }
 
 /// Where a slicer's parts are, in EMU from its top-left corner.
@@ -258,7 +274,7 @@ pub fn refresh_slicers(presentation: &mut Presentation) {
     for (si, slide) in presentation.slides.iter().enumerate() {
         for (hi, shape) in slide.shapes.iter().enumerate() {
             if let ShapeKind::Slicer(s) = &shape.kind {
-                let items = slicer_items(presentation, &s.source);
+                let items = slicer_items_ordered(presentation, &s.source, s.descending);
                 if items != s.items {
                     updates.push((si, hi, items));
                 }
@@ -285,6 +301,7 @@ mod tests {
             columns,
             row_height: 0,
             show_caption: true,
+            descending: false,
             source: SlicerSource::Table { table: "T".into(), field: "地域".into() },
             items: (0..n).map(|i| SlicerItem { label: format!("項目{i}"), selected: true, has_data: true }).collect(),
         }

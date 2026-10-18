@@ -73,6 +73,7 @@ use std::sync::Arc;
 use ibis_doc_model::Presentation;
 pub use ibis_ooxml::SaveOptions;
 use ibis_ooxml::Package;
+use ibis_ooxml::zip::{EntryMeta, Writer};
 
 use crate::{Error, Kind};
 
@@ -118,21 +119,145 @@ pub struct Opened {
     pub source: Source,
 }
 
-/// Read a `.pptx`, `.xlsx` or `.docx` for editing and saving.
-pub fn open(data: impl Into<Arc<[u8]>>) -> Result<Opened, Error> {
+/// A chunk of streaming CSV cells and row heights sent to the UI during progressive loading.
+#[derive(Clone, Debug)]
+pub struct CsvProgressiveChunk {
+    pub cells: Vec<ibis_doc_model::SheetCell>,
+    pub heights: Vec<ibis_doc_model::Emu>,
+    pub current_rows: usize,
+    pub is_last: bool,
+}
+
+/// Read a `.pptx`, `.xlsx`, `.docx`, or `.csv` for editing and saving.
+/// For large CSV files exceeding `first_chunk_rows`, the presentation returned holds the first
+/// `first_chunk_rows` rows (so the UI can render immediately), and a channel receiver yields
+/// subsequent chunks in the background.
+pub fn open_progressive(
+    data: impl Into<Arc<[u8]>>,
+    first_chunk_rows: usize,
+) -> Result<(Opened, Option<std::sync::mpsc::Receiver<CsvProgressiveChunk>>), Error> {
     let mut data: Arc<[u8]> = data.into();
+    crate::progress::reset();
     // An old workbook (.xls): read into the .xlsx the rest reads.
+    if crate::ppt::is_ppt(&data) {
+        data = crate::ppt_write::to_pptx(&data)?.into();
+    }
     if crate::xls::is_xls(&data) {
         data = crate::xls::to_xlsx(&data)?.into();
     }
-    // CSV: a workbook of one sheet made from it.
-    if crate::csv::is_csv(&data) {
-        let text = crate::csv::decode(&data)?;
-        data = crate::csv::workbook_from(&text, "Sheet1")?.into();
+    // An OpenDocument spreadsheet (.ods) likewise.
+    if crate::ods::is_ods(&data) {
+        data = crate::ods::to_xlsx(&data)?.into();
     }
+    // A binary workbook (.xlsb) likewise.
+    if crate::xlsb::is_xlsb(&data) {
+        data = crate::xlsb::to_xlsx(&data)?.into();
+    }
+    // An OpenDocument presentation (.odp) likewise.
+    if crate::odp::is_odp(&data) {
+        data = crate::odp::to_pptx(&data)?.into();
+    }
+
+    let mut csv_records = None;
+    #[allow(unused_mut)]
+    let mut csv_rx = None;
+
+    if crate::csv::is_csv(&data) {
+        let text: std::sync::Arc<str> = std::sync::Arc::from(crate::csv::decode(&data)?);
+        crate::progress::fraction(0.02);
+        let delimiter = crate::csv::detect_delimiter(&text);
+        let mut iter = crate::csv::CsvRecordIter::new(&text, delimiter);
+
+        let mut first = Vec::new();
+        while first.len() < first_chunk_rows {
+            if let Some(record) = iter.next() {
+                first.push(record);
+            } else {
+                break;
+            }
+        }
+        crate::progress::fraction(0.15);
+
+        let remaining_offset = iter.position();
+        if remaining_offset < text.len() {
+            #[cfg(not(target_family = "wasm"))]
+            {
+                let (tx, rx) = std::sync::mpsc::channel();
+                csv_rx = Some(rx);
+
+                let text_clone = text.clone();
+                std::thread::spawn(move || {
+                    let mut iter = crate::csv::CsvRecordIter::new(&text_clone[remaining_offset..], delimiter);
+                    const BATCH_SIZE: usize = 100_000;
+                    let mut batch = Vec::with_capacity(BATCH_SIZE);
+                    let mut processed = first_chunk_rows;
+                    let base_style = ibis_doc_model::CellStyle::default();
+                    let mut sheet_styles = Vec::new();
+                    let mut all_cells = Vec::new();
+                    let mut all_heights = Vec::new();
+
+                    while let Some(rec) = iter.next() {
+                        batch.push(rec);
+                        if batch.len() >= BATCH_SIZE {
+                            let (cells, heights) = crate::xlsx::process_csv_chunk(
+                                processed,
+                                &batch,
+                                &base_style,
+                                &mut sheet_styles,
+                            );
+                            processed += batch.len();
+                            batch.clear();
+                            all_cells.extend(cells);
+                            all_heights.extend(heights);
+
+                            // Send lightweight progress update to UI without moving heavy cells
+                            if tx.send(CsvProgressiveChunk {
+                                cells: Vec::new(),
+                                heights: Vec::new(),
+                                current_rows: processed,
+                                is_last: false,
+                            }).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    if !batch.is_empty() {
+                        let (cells, heights) = crate::xlsx::process_csv_chunk(
+                            processed,
+                            &batch,
+                            &base_style,
+                            &mut sheet_styles,
+                        );
+                        processed += batch.len();
+                        all_cells.extend(cells);
+                        all_heights.extend(heights);
+                    }
+                    let _ = tx.send(CsvProgressiveChunk {
+                        cells: all_cells,
+                        heights: all_heights,
+                        current_rows: processed,
+                        is_last: true,
+                    });
+                });
+            }
+        }
+
+        csv_records = Some(first);
+        data = crate::csv::workbook_from("", "Sheet1")?.into();
+    }
+
     let package = Package::open(data.clone())?;
+    let mut csv_baseline = None;
     let (kind, presentation, map) = if crate::reader::is_workbook(&data)? {
-        let (presentation, map) = crate::reader::read_xlsx_with_sources(&data)?;
+        let (presentation, map) = match &csv_records {
+            // The file as it was read is the empty sheet: the cells are changes to save.
+            Some(records) => {
+                let (empty, map) = crate::reader::read_xlsx_with_sources(&data)?;
+                csv_baseline = Some(empty);
+                (crate::reader::read_xlsx_with_records(&data, Some(records))?.0, map)
+            }
+            None => crate::reader::read_xlsx_with_sources(&data)?,
+        };
         (Kind::Workbook, presentation, SourceMap::Workbook(map))
     } else if crate::docx::is_document(&crate::package::Package::new(&data)?)? {
         let (presentation, map) = crate::docx::read_with_sources(&data)?;
@@ -141,8 +266,16 @@ pub fn open(data: impl Into<Arc<[u8]>>) -> Result<Opened, Error> {
         let (presentation, map) = crate::reader::read_with_sources(&data)?;
         (Kind::Presentation, presentation, SourceMap::Presentation(map))
     };
-    let source = Source { kind, package, baseline: presentation.clone(), map, new_slides: Default::default(), new_charts: Default::default(), chart_data: Default::default() };
-    Ok(Opened { presentation, source })
+    let source = Source { kind, package, baseline: csv_baseline.unwrap_or_else(|| presentation.clone()), map, new_slides: Default::default(), new_charts: Default::default(), chart_data: Default::default() };
+    crate::progress::fraction(1.0);
+    #[cfg(not(target_family = "wasm"))]
+    std::thread::spawn(move || drop(csv_records));
+    Ok((Opened { presentation, source }, csv_rx))
+}
+
+/// Read a `.pptx`, `.xlsx` or `.docx` for editing and saving.
+pub fn open(data: impl Into<Arc<[u8]>>) -> Result<Opened, Error> {
+    open_progressive(data, usize::MAX).map(|(opened, _)| opened)
 }
 
 impl Source {
@@ -164,13 +297,15 @@ impl Source {
     /// With no changes, it is the original file byte for byte (unless
     /// `options.regenerate_xml`).
     pub fn save(&self, current: &Presentation, options: SaveOptions) -> Result<Vec<u8>, Error> {
-        // テーマの色・フォント changed: the themes written first, and the
+        // テーマの色・フォント・効果 changed: the themes written first, and the
         // file read back as the baseline (what the theme gives the shapes
         // the model has not changed).
         if let SourceMap::Presentation(_) = &self.map
-            && (current.theme_colors != self.baseline.theme_colors || current.theme_fonts != self.baseline.theme_fonts)
+            && (current.theme_colors != self.baseline.theme_colors
+                || current.theme_fonts != self.baseline.theme_fonts
+                || current.theme_effects != self.baseline.theme_effects)
         {
-            let themed = self.themed(&current.theme_colors, current.theme_fonts.as_ref())?;
+            let themed = self.themed(&current.theme_colors, current.theme_fonts.as_ref(), current.theme_effects.as_deref())?;
             return themed.save_as_is(current, options);
         }
         self.save_as_is(current, options)
@@ -254,19 +389,167 @@ impl Source {
         s.save(current, options)
     }
 
-    /// The file as read, with the theme `colors` and `fonts` written in.
-    fn themed_bytes(&self, colors: &[(String, ibis_doc_model::Rgb)], fonts: Option<&ibis_doc_model::ThemeFonts>) -> Result<Vec<u8>, Error> {
+    /// Save the active theme as an Office Theme file (`.thmx`).
+    pub fn save_theme(&self, current: &Presentation, theme_name: Option<&str>) -> Result<Vec<u8>, Error> {
+        let theme_part = match &self.map {
+            SourceMap::Presentation(map) => {
+                let parts = pptx_theme::theme_parts(&self.package, &map.presentation)?;
+                parts.into_iter().next()
+                    .or_else(|| self.package.names().find(|n| n.ends_with("theme1.xml")).map(|s| s.to_string()))
+            }
+            SourceMap::Workbook(_) | SourceMap::Document(_) => {
+                self.package.names().find(|n| n.ends_with("theme1.xml")).map(|s| s.to_string())
+            }
+        };
+
+        let theme_xml = if let Some(part) = theme_part {
+            let mut doc = self.package.xml(&part)?.clone();
+            pptx_theme::write_theme_elements(&mut doc, &current.theme_colors, current.theme_fonts.as_ref());
+            pptx_theme::write_object_defaults(&mut doc, &current.object_defaults)?;
+            if let Some(effects) = current.theme_effects.as_deref() {
+                pptx_theme::write_theme_effects(&mut doc, effects)?;
+            }
+            if let Some(name) = theme_name {
+                if let Some(root) = doc.root_element() {
+                    doc.set_attr(root, "name", name);
+                }
+            }
+            doc.to_bytes()
+        } else {
+            let name = theme_name.unwrap_or("Office Theme");
+            let mut colors_xml = String::new();
+            for (k, rgb) in &current.theme_colors {
+                colors_xml.push_str(&format!("<a:{k}><a:srgbClr val=\"{:06X}\"/></a:{k}>", rgb.0 & 0xffffff));
+            }
+            let fmt_scheme = current.theme_effects.as_deref()
+                .and_then(crate::theme_effects::find_effect_preset)
+                .map(crate::theme_effects::generate_fmt_scheme_xml)
+                .unwrap_or_else(|| {
+                    format!(
+                        r#"<a:fmtScheme name="{name}">
+      <a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="50000"/><a:satMod val="300000"/></a:schemeClr></a:gs><a:gs pos="35000"><a:schemeClr val="phClr"><a:tint val="37000"/><a:satMod val="220000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:tint val="15000"/><a:satMod val="131000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="16200000" scaled="1"/></a:gradFill><a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:shade val="100000"/><a:satMod val="130000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:tint val="50000"/><a:satMod val="350000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="16200000" scaled="0"/></a:gradFill></a:fillStyleLst>
+      <a:lnStyleLst><a:ln w="9525" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="25400" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="38100" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln></a:lnStyleLst>
+      <a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>
+      <a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"><a:tint val="95000"/><a:satMod val="170000"/></a:schemeClr></a:solidFill><a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="93000"/><a:satMod val="150000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:shade val="98000"/><a:satMod val="130000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill></a:bgFillStyleLst>
+    </a:fmtScheme>"#
+                    )
+                });
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="{name}">
+  <a:themeElements>
+    <a:clrScheme name="{name}">
+      {colors_xml}
+    </a:clrScheme>
+    <a:fontScheme name="{name}">
+      <a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
+      <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+    </a:fontScheme>
+    {fmt_scheme}
+  </a:themeElements>
+  <a:objectDefaults/>
+  <a:extraClrSchemeLst/>
+</a:theme>"#
+            ).into_bytes()
+        };
+
+        let mut writer = Writer::new();
+        let meta = EntryMeta::new();
+
+        let content_types = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/theme/theme/themeManager.xml" ContentType="application/vnd.openxmlformats-officedocument.themeManager+xml"/>
+  <Override PartName="/theme/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
+</Types>"#;
+        writer.add("[Content_Types].xml", meta, content_types.as_bytes())?;
+
+        let root_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="theme/theme/themeManager.xml"/>
+</Relationships>"#;
+        writer.add("_rels/.rels", meta, root_rels.as_bytes())?;
+
+        let theme_mgr_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme1.xml"/>
+</Relationships>"#;
+        writer.add("theme/theme/_rels/themeManager.xml.rels", meta, theme_mgr_rels.as_bytes())?;
+
+        let theme_mgr = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<thm:themeManager xmlns:thm="http://schemas.openxmlformats.org/drawingml/2006/thememanager"/>"#;
+        writer.add("theme/theme/themeManager.xml", meta, theme_mgr.as_bytes())?;
+
+        writer.add("theme/theme/theme1.xml", meta, &theme_xml)?;
+
+        let bytes = writer.finish()?;
+        Ok(bytes)
+    }
+
+    /// Save without the macros (`.xlsx` from an `.xlsm`, `.xltx` from an
+    /// `.xltm`, and so on): the main part's content type the one without
+    /// macros, and the macros' parts (`vbaProject.bin`, its signature and
+    /// `vbaData.xml`) and the relationships to them left out. A file
+    /// without macros is saved as it is.
+    pub fn save_without_macros(&self, current: &Presentation, options: SaveOptions) -> Result<Vec<u8>, Error> {
+        let main_part = match &self.map {
+            SourceMap::Presentation(map) => &map.presentation,
+            SourceMap::Workbook(map) => &map.workbook,
+            SourceMap::Document(map) => &map.body_part,
+        };
+        let mut s = self.clone();
+        let current_type = s.package.content_type(main_part)?.unwrap_or_default();
+        if let Some(plain) = current_type.contains("macroEnabled").then(|| {
+            current_type
+                .replace("application/vnd.ms-excel.sheet.macroEnabled.main+xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")
+                .replace("application/vnd.ms-excel.template.macroEnabled.main+xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml")
+                .replace("application/vnd.ms-word.document.macroEnabled.main+xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml")
+                .replace("application/vnd.ms-word.template.macroEnabled.main+xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml")
+                .replace("application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml", "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml")
+                .replace("application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml", "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml")
+                .replace("application/vnd.ms-powerpoint.template.macroEnabled.main+xml", "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml")
+        }) {
+            s.package.set_override(main_part, &plain)?;
+        }
+        let is_macro_part = |name: &str| {
+            let l = name.to_ascii_lowercase();
+            let base = l.rsplit('/').next().unwrap_or("");
+            base == "vbaproject.bin" || base == "vbaprojectsignature.bin" || base == "vbadata.xml"
+        };
+        let names: Vec<String> = s.package.names().map(str::to_string).collect();
+        for name in &names {
+            if name.ends_with(".rels") || is_macro_part(name) {
+                continue;
+            }
+            let Ok(rels) = s.package.relationships(name) else { continue };
+            for rel in rels.iter().filter(|r| !r.external && is_macro_part(&r.target)).collect::<Vec<_>>() {
+                s.package.remove_relationship(name, &rel.id)?;
+            }
+        }
+        for name in names.iter().filter(|n| is_macro_part(n)) {
+            let _ = s.package.remove_override(name);
+            s.package.remove(name);
+        }
+        s.save(current, options)
+    }
+
+    /// The file as read, with the theme `colors`, `fonts`, and optional `effects` written in.
+    fn themed_bytes(&self, colors: &[(String, ibis_doc_model::Rgb)], fonts: Option<&ibis_doc_model::ThemeFonts>, effects: Option<&str>) -> Result<Vec<u8>, Error> {
         let SourceMap::Presentation(map) = &self.map else { return Err(unsupported("テーマ")) };
         let mut package = self.package.clone();
         pptx_theme::write(&mut package, &map.presentation, colors, fonts)?;
+        if let Some(effects) = effects {
+            pptx_theme::write_effects(&mut package, &map.presentation, Some(effects))?;
+        }
         Ok(package.save(SaveOptions::default())?)
     }
 
     /// The source for the file with the theme `colors` and `fonts`: the
     /// themes written, the baseline read back; the new slides and charts
     /// stay.
-    fn themed(&self, colors: &[(String, ibis_doc_model::Rgb)], fonts: Option<&ibis_doc_model::ThemeFonts>) -> Result<Source, Error> {
-        let data = self.themed_bytes(colors, fonts)?;
+    fn themed(&self, colors: &[(String, ibis_doc_model::Rgb)], fonts: Option<&ibis_doc_model::ThemeFonts>, effects: Option<&str>) -> Result<Source, Error> {
+        let data = self.themed_bytes(colors, fonts, effects)?;
         let opened = open(data)?;
         let mut source = opened.source;
         source.new_slides = self.new_slides.clone();
@@ -281,8 +564,8 @@ impl Source {
     /// since it was read keep what they have).
     pub fn retheme(&self, current: &Presentation, colors: Vec<(String, ibis_doc_model::Rgb)>, fonts: Option<ibis_doc_model::ThemeFonts>) -> Result<Vec<ibis_doc_model::Command>, Error> {
         use ibis_doc_model::Command;
-        let before = crate::read(&self.themed_bytes(&current.theme_colors, current.theme_fonts.as_ref())?)?;
-        let after = crate::read(&self.themed_bytes(&colors, fonts.as_ref())?)?;
+        let before = crate::read(&self.themed_bytes(&current.theme_colors, current.theme_fonts.as_ref(), current.theme_effects.as_deref())?)?;
+        let after = crate::read(&self.themed_bytes(&colors, fonts.as_ref(), current.theme_effects.as_deref())?)?;
         let mut commands = vec![Command::SetTheme { colors, fonts }];
         for slide in &current.slides {
             let (Some(was), Some(now)) = (before.slide(slide.id), after.slide(slide.id)) else { continue };
@@ -312,8 +595,8 @@ impl Source {
     /// presentation intact.
     pub fn retheme_slides(&self, current: &Presentation, slide_ids: &[ibis_doc_model::SlideId], colors: Vec<(String, ibis_doc_model::Rgb)>, fonts: Option<ibis_doc_model::ThemeFonts>) -> Result<Vec<ibis_doc_model::Command>, Error> {
         use ibis_doc_model::Command;
-        let before = crate::read(&self.themed_bytes(&current.theme_colors, current.theme_fonts.as_ref())?)?;
-        let after = crate::read(&self.themed_bytes(&colors, fonts.as_ref())?)?;
+        let before = crate::read(&self.themed_bytes(&current.theme_colors, current.theme_fonts.as_ref(), None)?)?;
+        let after = crate::read(&self.themed_bytes(&colors, fonts.as_ref(), None)?)?;
         let mut commands = Vec::new();
         for slide in &current.slides {
             if !slide_ids.contains(&slide.id) { continue; }
@@ -336,6 +619,35 @@ impl Source {
         Ok(commands)
     }
 
+    /// テーマ効果 (Theme Effects: `a:fmtScheme`): the commands that give `current` the new
+    /// theme effect preset, re-evaluating shapes styled with theme effects.
+    pub fn retheme_effects(&self, current: &Presentation, effects: &str) -> Result<Vec<ibis_doc_model::Command>, Error> {
+        use ibis_doc_model::Command;
+        let before = crate::read(&self.themed_bytes(&current.theme_colors, current.theme_fonts.as_ref(), current.theme_effects.as_deref())?)?;
+        let after = crate::read(&self.themed_bytes(&current.theme_colors, current.theme_fonts.as_ref(), Some(effects))?)?;
+        let mut commands = vec![Command::SetThemeEffects { name: Some(effects.to_string()) }];
+        for slide in &current.slides {
+            let (Some(was), Some(now)) = (before.slide(slide.id), after.slide(slide.id)) else { continue };
+            let mut new = slide.clone();
+            for shape in &mut new.shapes {
+                let (Some(old), Some(fresh)) = (was.shape(shape.id), now.shape(shape.id)) else { continue };
+                let mut same = old.clone();
+                same.frame = shape.frame;
+                if same == *shape {
+                    let frame = shape.frame;
+                    *shape = fresh.clone();
+                    shape.frame = frame;
+                }
+            }
+            if slide.background == was.background { new.background = now.background.clone(); }
+            new.backdrop = now.backdrop.iter().map(|s| { let mut s = s.clone(); s.frame = current.layout_scale.rect(s.frame); s }).collect();
+            if new != *slide { commands.push(Command::SetSlide { slide: new }); }
+        }
+        let layouts = after.layouts.iter().map(|l| l.scaled(current.layout_scale)).collect();
+        commands.push(Command::SetLayouts { layouts, scale: current.layout_scale });
+        Ok(commands)
+    }
+
 
     fn save_as_is(&self, current: &Presentation, options: SaveOptions) -> Result<Vec<u8>, Error> {
         let mut package = self.package.clone();
@@ -351,7 +663,11 @@ impl Source {
                 let new_charts = self.new_charts.lock().unwrap_or_else(|e| e.into_inner());
                 xlsx::write_changes(&mut package, map, &self.baseline, current, &chart_data, &new_charts)?
             }
-            SourceMap::Document(map) => docx::write_changes(&mut package, map, &self.baseline, current)?,
+            SourceMap::Document(map) => {
+                let chart_data = self.chart_data.lock().unwrap_or_else(|e| e.into_inner());
+                let new_charts = self.new_charts.lock().unwrap_or_else(|e| e.into_inner());
+                docx::write_changes(&mut package, map, &self.baseline, current, &new_charts, &chart_data)?
+            }
         }
         Ok(package.save(options)?)
     }
@@ -390,7 +706,10 @@ impl Source {
             rounded_corners: false,
             title_overlay: false,
             ex: None,
+            ex_format: None,
             excel_layout: false,
+            cell_refs: Vec::new(),
+            ex_source: None,
         };
         let mut changed = current.clone();
         changed.slides[index].shapes.push(ibis_doc_model::Shape { id, frame, rotation: 0, flip_h: false, flip_v: false, kind: ibis_doc_model::ShapeKind::Chart(Box::new(empty)), floating: None });
@@ -401,6 +720,66 @@ impl Source {
             let read = again.slides.get(index).and_then(|s| s.shapes.last()).cloned().ok_or_else(|| Error::new("新しいグラフを読み直せません"))?;
             match &read.kind {
                 ibis_doc_model::ShapeKind::Chart(c) => Ok(((**c).clone(), ibis_doc_model::Shape { id, ..read })),
+                _ => Err(Error::new("新しいグラフを読み直せません")),
+            }
+        })();
+        match made {
+            Ok((chart, shape)) => {
+                lock().insert(id, NewChartEntry { kind, template: Some(chart), refs: Vec::new() });
+                Ok(shape)
+            }
+            Err(e) => {
+                lock().remove(&id);
+                Err(e)
+            }
+        }
+    }
+
+    /// Whether chart `id` was inserted (挿入 > グラフ) since the file was opened: only such a chart's changes can be saved.
+    pub fn has_new_chart(&self, id: ibis_doc_model::ShapeId) -> bool {
+        self.new_charts.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&id)
+    }
+
+    /// 挿入 > グラフ in a document: a new inline chart of `kind` with its sample data in an embedded workbook
+    /// at `at` (in the body), `size` big, written and read back as the model holds it. The shape's id is `id`.
+    /// Saving writes its chart part and the changes made to it since.
+    pub fn new_doc_chart(&self, current: &Presentation, at: ibis_doc_model::FlowPos, id: ibis_doc_model::ShapeId, size: ibis_doc_model::EmuSize, kind: NewChartKind) -> Result<ibis_doc_model::Shape, Error> {
+        use ibis_doc_model::{FlowCommand, FlowRunKind, ShapeKind};
+        if !matches!(self.map, SourceMap::Document(_)) {
+            return Err(Error::new("文書ではありません"));
+        }
+        fn charts(blocks: &[ibis_doc_model::Block], out: &mut Vec<ibis_doc_model::Shape>) {
+            for b in blocks {
+                match b {
+                    ibis_doc_model::Block::Paragraph(p) => {
+                        for r in &p.runs {
+                            if let FlowRunKind::Shape(s) = &r.kind && matches!(s.kind, ShapeKind::Chart(_)) {
+                                out.push((**s).clone());
+                            }
+                        }
+                    }
+                    ibis_doc_model::Block::Table(t) => t.rows.iter().flat_map(|r| &r.cells).for_each(|c| charts(&c.blocks, out)),
+                }
+            }
+        }
+        let flow = current.flow.as_ref().ok_or_else(|| Error::new("文書ではありません"))?;
+        let shape = ibis_doc_model::Shape { id, frame: ibis_doc_model::EmuRect::new(0, 0, size.width, size.height), rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Chart(Box::new(ibis_doc_model::Chart::empty())), floating: None };
+        let mut changed = current.clone();
+        let mut doc = (**flow).clone();
+        ibis_doc_model::flow_command::apply_to(&mut doc, FlowCommand::InsertChart { at, shape: Box::new(shape) }).map_err(|_| Error::new("ここにはグラフを挿入できません"))?;
+        let mut before = Vec::new();
+        charts(&doc.body, &mut before);
+        let ordinal = before.iter().position(|s| s.id == id).ok_or_else(|| Error::new("ここにはグラフを挿入できません"))?;
+        changed.flow = Some(std::sync::Arc::new(doc));
+        let lock = || self.new_charts.lock().unwrap_or_else(|e| e.into_inner());
+        lock().insert(id, NewChartEntry { kind, template: None, refs: Vec::new() });
+        let made = (|| {
+            let again = crate::read(&self.save(&changed, SaveOptions::default())?)?;
+            let mut read = Vec::new();
+            charts(&again.flow.as_ref().ok_or_else(|| Error::new("新しいグラフを読み直せません"))?.body, &mut read);
+            let read = read.get(ordinal).cloned().ok_or_else(|| Error::new("新しいグラフを読み直せません"))?;
+            match &read.kind {
+                ShapeKind::Chart(c) => Ok(((**c).clone(), ibis_doc_model::Shape { id, frame: ibis_doc_model::EmuRect::new(0, 0, size.width, size.height), floating: None, ..read })),
                 _ => Err(Error::new("新しいグラフを読み直せません")),
             }
         })();
@@ -443,7 +822,10 @@ impl Source {
             rounded_corners: false,
             title_overlay: false,
             ex: None,
+            ex_format: None,
             excel_layout: false,
+            cell_refs: Vec::new(),
+            ex_source: None,
         };
         let mut changed = current.clone();
         changed.slides[index].shapes.push(ibis_doc_model::Shape { id, frame, rotation: 0, flip_h: false, flip_v: false, kind: ibis_doc_model::ShapeKind::Chart(Box::new(empty)), floating: None });
@@ -459,7 +841,8 @@ impl Source {
         })();
         match made {
             Ok((template, read)) => {
-                let chart = pptx_chart_data::chart_from_data(&template, current, &refs);
+                // A chartEx chart (waterfall…) was read back with its cells' values cached: it is that.
+                let chart = if kind.is_chart_ex() { template.clone() } else { pptx_chart_data::sheet_chart_from_data(&template, current, &refs) };
                 lock().insert(id, NewChartEntry { kind, template: Some(template), refs });
                 Ok(ibis_doc_model::Shape { id, kind: ibis_doc_model::ShapeKind::Chart(Box::new(chart)), ..read })
             }
@@ -650,6 +1033,10 @@ impl Source {
 
     /// The references the series of sheet chart `shape` (as `chart`) take their data from: those of the latest data edit that gave it these series, else the file's.
     pub fn sheet_chart_refs(&self, shape: ibis_doc_model::ShapeId, chart: &ibis_doc_model::Chart) -> Option<Vec<pptx_chart_data::SeriesRefs>> {
+        // The chart knows what it reads (and follows the cells as they change).
+        if !chart.cell_refs.is_empty() {
+            return Some(pptx_chart_data::refs_of(chart));
+        }
         if let Some(d) = self.chart_data.lock().unwrap_or_else(|e| e.into_inner()).get(&shape).and_then(|edits| edits.iter().rev().find(|(c, _)| c.groups == chart.groups)).map(|(_, d)| d.series.clone()) {
             return Some(d);
         }

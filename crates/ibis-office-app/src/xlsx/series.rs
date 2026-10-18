@@ -22,6 +22,7 @@ pub(crate) enum Kind {
     Linear,
     Growth,
     Date,
+    AutoFill,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +60,7 @@ fn serial(y: i64, m: u32, d: u32) -> f64 {
 /// The `n`th value after `start` (n = 1 the next), or `None` past `stop`.
 pub(crate) fn nth(start: f64, step: f64, n: u32, kind: Kind, unit: DateUnit) -> f64 {
     match kind {
-        Kind::Linear => start + step * n as f64,
+        Kind::Linear | Kind::AutoFill => start + step * n as f64,
         Kind::Growth => start * step.powi(n as i32),
         Kind::Date => match unit {
             DateUnit::Day => start + step * n as f64,
@@ -175,6 +176,77 @@ impl SlideEditor {
         }
         let Some(p) = self.sheet_state().and_then(|s| s.panels.series.as_ref()) else { return };
         let (columns, kind, unit, trend) = (p.columns, p.kind, p.unit, p.trend);
+        if kind == Kind::AutoFill {
+            let (Some(range), Some((_, sheet))) = (self.selected_range(), self.current_sheet()) else { return };
+            let lanes: Vec<u32> = if columns {
+                (range.first_column..=range.last_column).collect()
+            } else {
+                (range.first_row..=range.last_row).collect()
+            };
+            let along: Vec<u32> = if columns {
+                (range.first_row..=range.last_row).collect()
+            } else {
+                (range.first_column..=range.last_column).collect()
+            };
+            if along.len() <= 1 {
+                self.wb_mut().panels.series = None;
+                return cx.notify();
+            }
+            let mut cells = Vec::new();
+            for lane in lanes {
+                let mut pairs = Vec::new();
+                for &a in &along {
+                    let (r, c) = if columns { (a, lane) } else { (lane, a) };
+                    match sheet.cell(r, c) {
+                        Some(cell) if cell.formula.is_some() || !cell.value.is_empty() => {
+                            let style = sheet.styles[cell.style as usize].clone();
+                            let date = ibis_calc::numfmt::is_date_format(&style.number_format);
+                            pairs.push((
+                                super::fill::Source {
+                                    value: cell.value.clone(),
+                                    formula: cell.formula.clone(),
+                                    date,
+                                },
+                                style,
+                            ));
+                        }
+                        _ => break,
+                    }
+                }
+                if pairs.is_empty() {
+                    continue;
+                }
+                if pairs.len() == along.len() {
+                    pairs.truncate(1);
+                }
+                let sources: Vec<super::fill::Source> = pairs.iter().map(|p| p.0.clone()).collect();
+                let count = along.len() - pairs.len();
+                let start = along[0];
+                let n = pairs.len() as i64;
+                for (j, (filled, s)) in super::fill::fill_as(&sources, count, false, super::fill::FillMode::Series).into_iter().enumerate() {
+                    let at = (start as i64 + n + j as i64) as u32;
+                    let (r, c) = if columns { (at, lane) } else { (lane, at) };
+                    let input = match filled {
+                        super::fill::Filled::Value(v) => CellInput::Value(v),
+                        super::fill::Filled::Clear => CellInput::Clear,
+                        super::fill::Filled::Formula { source, offset } => {
+                            let (dr, dc) = if columns { (offset, 0) } else { (0, offset) };
+                            CellInput::Formula(ibis_calc::formula::shift(&source, dr, dc))
+                        }
+                    };
+                    let style = Some(pairs[s].1.clone());
+                    cells.push(ibis_doc_model::PutCell { row: r, column: c, input, style });
+                }
+            }
+            if !cells.is_empty() {
+                let slide = self.current_slide;
+                if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::PutCells { slide, cells })]) {
+                    return self.series_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
+                }
+            }
+            self.wb_mut().panels.series = None;
+            return cx.notify();
+        }
         if trend {
             let (Some(range), Some((_, sheet))) = (self.selected_range(), self.current_sheet()) else { return };
             let mut edits = Vec::new();
@@ -373,7 +445,8 @@ impl SlideEditor {
                     .flex_wrap()
                     .child(radio("series-linear", p.kind == Kind::Linear, "_xlsx.add", |p| p.kind = Kind::Linear))
                     .child(radio("series-growth", p.kind == Kind::Growth, "_xlsx.multiply", |p| p.kind = Kind::Growth))
-                    .child(radio("series-date", p.kind == Kind::Date, "_xlsx.short-date", |p| p.kind = Kind::Date)),
+                    .child(radio("series-date", p.kind == Kind::Date, "_xlsx.short-date", |p| p.kind = Kind::Date))
+                    .child(radio("series-autofill", p.kind == Kind::AutoFill, "_xlsx.auto-fill", |p| p.kind = Kind::AutoFill)),
             );
         if !p.trend && p.kind == Kind::Date {
             body = body.child(div().text_size(px(13.)).child(text("fix.series.date-unit"))).child(
@@ -386,13 +459,15 @@ impl SlideEditor {
                     .child(radio("unit-year", p.unit == DateUnit::Year, "fix.series.year", |p| p.unit = DateUnit::Year)),
             );
         }
-        body = body.child(toggle("series-trend", p.trend, "_xlsx.trend", |p| p.trend = !p.trend));
-        if !p.trend {
-            body = body
-                .child(div().text_size(px(13.)).child(text("fix.series.step-value")))
-                .child(mark("step", Input::new(&p.step).small().into_any_element()))
-                .child(div().text_size(px(13.)).child(text("fix.series.stop-value")))
-                .child(mark("stop", Input::new(&p.stop).small().into_any_element()));
+        if p.kind != Kind::AutoFill {
+            body = body.child(toggle("series-trend", p.trend, "_xlsx.trend", |p| p.trend = !p.trend));
+            if !p.trend {
+                body = body
+                    .child(div().text_size(px(13.)).child(text("fix.series.step-value")))
+                    .child(mark("step", Input::new(&p.step).small().into_any_element()))
+                    .child(div().text_size(px(13.)).child(text("fix.series.stop-value")))
+                    .child(mark("stop", Input::new(&p.stop).small().into_any_element()));
+            }
         }
         body = body
             .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))

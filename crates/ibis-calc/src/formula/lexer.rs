@@ -20,9 +20,9 @@ pub enum Token {
     /// or `FALSE`, or a part of a range such as `A` of `A:C` or `$1` of
     /// `$1:$3`: classified by the parser.
     Word(String),
-    /// `Sheet1!`, `'My sheet'!`, `Sheet1:Sheet3!`, `[1]Sheet1!`: the sheet
-    /// names (first and last) and the external workbook, unquoted.
-    Sheet { first: String, last: Option<String>, book: Option<String> },
+    /// `Sheet1!`, `'My sheet'!`, `Sheet1:Sheet3!`, `[1]Sheet1!`, `'C:\dir\[Book.xlsx]Sheet1'!`: the sheet
+    /// names (first and last), the external workbook, and directory path prefix, unquoted.
+    Sheet { first: String, last: Option<String>, book: Option<String>, path: Option<String> },
     /// A structured reference's brackets after a table name, or on their
     /// own (`[@Price]`), as written, with the brackets.
     Brackets(String),
@@ -138,14 +138,14 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
             '\'' => {
                 // A quoted sheet name, then `!` (or `:'Other'!` for 3D).
                 let (name, j) = quoted(&chars, i).ok_or(LexError { at: start, message: "シート名の ' が閉じていません" })?;
-                let (book, sheet) = split_book(&name);
+                let (book, path, sheet) = split_book_path(&name);
                 if at(j) == Some('!') {
                     let (first, last) = if let Some((f, l)) = sheet.split_once(':') {
                         (f.to_string(), Some(l.to_string()))
                     } else {
                         (sheet, None)
                     };
-                    push(&mut out, Token::Sheet { first, last, book }, j + 1);
+                    push(&mut out, Token::Sheet { first, last, book, path }, j + 1);
                     i = j + 1;
                 } else if at(j) == Some(':') {
                     // 'A':'B'! or 'A':B!
@@ -165,7 +165,8 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
                         }
                     };
                     if at(next_idx) == Some('!') {
-                        push(&mut out, Token::Sheet { first: sheet, last: Some(last), book }, next_idx + 1);
+                        let (_, _, last) = split_book_path(&last);
+                        push(&mut out, Token::Sheet { first: sheet, last: Some(last), book, path }, next_idx + 1);
                         i = next_idx + 1;
                     } else {
                         return Err(LexError { at: start, message: "シート名の後に ! がありません" });
@@ -200,7 +201,7 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
                 }
                 if k > word_start && at(k) == Some('!') {
                     let sheet: String = chars[word_start..k].iter().map(|c| c.1).collect();
-                    push(&mut out, Token::Sheet { first: sheet, last: None, book: Some(inner) }, k + 1);
+                    push(&mut out, Token::Sheet { first: sheet, last: None, book: Some(inner), path: None }, k + 1);
                     i = k + 1;
                 } else if k > word_start && at(k) == Some(':') {
                     // [1]A:B! 3D in another book.
@@ -212,8 +213,22 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
                     if m > s2 && at(m) == Some('!') {
                         let first: String = chars[word_start..k].iter().map(|c| c.1).collect();
                         let last: String = chars[s2..m].iter().map(|c| c.1).collect();
-                        push(&mut out, Token::Sheet { first, last: Some(last), book: Some(inner) }, m + 1);
+                        push(&mut out, Token::Sheet { first, last: Some(last), book: Some(inner), path: None }, m + 1);
                         i = m + 1;
+                    } else {
+                        let raw: String = chars[i..=j].iter().map(|c| c.1).collect();
+                        push(&mut out, Token::Brackets(raw), j + 1);
+                        i = j + 1;
+                    }
+                } else if k == word_start && at(k) == Some('\'') {
+                    if let Some((sheet_name, next_q)) = quoted(&chars, k) && at(next_q) == Some('!') {
+                        let (first, last) = if let Some((f, l)) = sheet_name.split_once(':') {
+                            (f.to_string(), Some(l.to_string()))
+                        } else {
+                            (sheet_name, None)
+                        };
+                        push(&mut out, Token::Sheet { first, last, book: Some(inner), path: None }, next_q + 1);
+                        i = next_q + 1;
                     } else {
                         let raw: String = chars[i..=j].iter().map(|c| c.1).collect();
                         push(&mut out, Token::Brackets(raw), j + 1);
@@ -260,7 +275,7 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
                     }
                     if at(k) == Some('!') {
                         let name: String = chars[i..k].iter().map(|c| c.1).collect();
-                        push(&mut out, Token::Sheet { first: name, last: None, book: None }, k + 1);
+                        push(&mut out, Token::Sheet { first: name, last: None, book: None, path: None }, k + 1);
                         i = k + 1;
                         continue;
                     }
@@ -270,12 +285,12 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
                 let s: String = chars[i..j].iter().map(|c| c.1).collect();
                 // A sheet named with digits only, before `!` (`2024!A1`) or `:2025!`.
                 if at(j) == Some('!') {
-                    push(&mut out, Token::Sheet { first: s, last: None, book: None }, j + 1);
+                    push(&mut out, Token::Sheet { first: s, last: None, book: None, path: None }, j + 1);
                     i = j + 1;
                     continue;
                 }
                 if at(j) == Some(':') && let Some((last, k)) = sheet_after_colon(&chars, j) {
-                    push(&mut out, Token::Sheet { first: s, last: Some(last), book: None }, k + 1);
+                    push(&mut out, Token::Sheet { first: s, last: Some(last), book: None, path: None }, k + 1);
                     i = k + 1;
                     continue;
                 }
@@ -291,10 +306,10 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
                 }
                 let word: String = chars[i..j].iter().map(|c| c.1).collect();
                 if at(j) == Some('!') {
-                    push(&mut out, Token::Sheet { first: word, last: None, book: None }, j + 1);
+                    push(&mut out, Token::Sheet { first: word, last: None, book: None, path: None }, j + 1);
                     i = j + 1;
                 } else if at(j) == Some(':') && let Some((last, k)) = sheet_after_colon(&chars, j) {
-                    push(&mut out, Token::Sheet { first: word, last: Some(last), book: None }, k + 1);
+                    push(&mut out, Token::Sheet { first: word, last: Some(last), book: None, path: None }, k + 1);
                     i = k + 1;
                 } else if at(j) == Some('[') {
                     // A table's structured reference: Table1[Column].
@@ -420,14 +435,19 @@ fn quoted(chars: &[(usize, char)], i: usize) -> Option<(String, usize)> {
     }
 }
 
-/// `[Book]Sheet` in a quoted name: the book and the sheet.
-fn split_book(name: &str) -> (Option<String>, String) {
-    if let Some(rest) = name.strip_prefix('[')
-        && let Some((book, sheet)) = rest.split_once(']')
+/// `[Book]Sheet` or `dir\[Book]Sheet` in a quoted name: the book, optional path prefix, and the sheet.
+fn split_book_path(name: &str) -> (Option<String>, Option<String>, String) {
+    if let Some(open) = name.find('[')
+        && let Some(close_rel) = name[open..].find(']')
     {
-        return (Some(book.to_string()), sheet.to_string());
+        let close = open + close_rel;
+        let path_prefix = &name[..open];
+        let book = &name[open + 1..close];
+        let sheet = &name[close + 1..];
+        let path = if path_prefix.is_empty() { None } else { Some(path_prefix.to_string()) };
+        return (Some(book.to_string()), path, sheet.to_string());
     }
-    (None, name.to_string())
+    (None, None, name.to_string())
 }
 
 /// The matching `]` of the `[` at `i` (brackets nest; `'` escapes one).
@@ -498,16 +518,17 @@ mod tests {
 
     #[test]
     fn sheets_and_errors() {
-        assert_eq!(kinds("'My Sheet'!$A$1")[0], Token::Sheet { first: "My Sheet".into(), last: None, book: None });
-        assert_eq!(kinds("Sheet1:Sheet3!A1")[0], Token::Sheet { first: "Sheet1".into(), last: Some("Sheet3".into()), book: None });
-        assert_eq!(kinds("'Sheet1:Sheet3'!A1")[0], Token::Sheet { first: "Sheet1".into(), last: Some("Sheet3".into()), book: None });
-        assert_eq!(kinds("'Sheet 1:Sheet 3'!A1")[0], Token::Sheet { first: "Sheet 1".into(), last: Some("Sheet 3".into()), book: None });
-        assert_eq!(kinds("'Sheet1':'Sheet3'!A1")[0], Token::Sheet { first: "Sheet1".into(), last: Some("Sheet3".into()), book: None });
-        assert_eq!(kinds("[1]Data!A1")[0], Token::Sheet { first: "Data".into(), last: None, book: Some("1".into()) });
+        assert_eq!(kinds("'My Sheet'!$A$1")[0], Token::Sheet { first: "My Sheet".into(), last: None, book: None, path: None });
+        assert_eq!(kinds("Sheet1:Sheet3!A1")[0], Token::Sheet { first: "Sheet1".into(), last: Some("Sheet3".into()), book: None, path: None });
+        assert_eq!(kinds("'Sheet1:Sheet3'!A1")[0], Token::Sheet { first: "Sheet1".into(), last: Some("Sheet3".into()), book: None, path: None });
+        assert_eq!(kinds("'Sheet 1:Sheet 3'!A1")[0], Token::Sheet { first: "Sheet 1".into(), last: Some("Sheet 3".into()), book: None, path: None });
+        assert_eq!(kinds("'Sheet1':'Sheet3'!A1")[0], Token::Sheet { first: "Sheet1".into(), last: Some("Sheet3".into()), book: None, path: None });
+        assert_eq!(kinds("[1]Data!A1")[0], Token::Sheet { first: "Data".into(), last: None, book: Some("1".into()), path: None });
+        assert_eq!(kinds(r"'C:\dir\[Book.xlsx]Sheet1'!A1")[0], Token::Sheet { first: "Sheet1".into(), last: None, book: Some("Book.xlsx".into()), path: Some(r"C:\dir\".into()) });
         assert_eq!(kinds("#N/A+#div/0!"), vec![Token::Error(CellError::NA), Token::Op(Op::Add), Token::Error(CellError::Div0)]);
         assert_eq!(kinds("A1#")[1], Token::Spill);
-        assert_eq!(kinds("2024!A1")[0], Token::Sheet { first: "2024".into(), last: None, book: None });
-        assert_eq!(kinds("売上!A1")[0], Token::Sheet { first: "売上".into(), last: None, book: None });
+        assert_eq!(kinds("2024!A1")[0], Token::Sheet { first: "2024".into(), last: None, book: None, path: None });
+        assert_eq!(kinds("売上!A1")[0], Token::Sheet { first: "売上".into(), last: None, book: None, path: None });
     }
 
     #[test]

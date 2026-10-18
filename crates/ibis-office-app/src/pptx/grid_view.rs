@@ -135,14 +135,26 @@ impl SlideEditor {
                     }
                 }
 
+                let sec_id = sec.id.clone();
+                let click_sec_id = sec.id.clone();
                 let sec_header = h_flex()
+                    .id(("pptx-grid-section-header", sec_sections.len()))
                     .w_full()
                     .items_center()
                     .gap_2()
                     .py_2()
                     .px_1()
+                    .cursor_pointer()
                     .border_b_1()
                     .border_color(theme_border)
+                    .on_click(cx.listener(move |this, _, w, cx| this.select_section(&click_sec_id, w, cx)))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, w, cx| {
+                            cx.stop_propagation();
+                            this.open_section_context_menu(&sec_id, event.position, w, cx);
+                        }),
+                    )
                     .child(Icon::new(Material("view_quilt")).size(px(16.)).text_color(theme_primary))
                     .child(
                         div()
@@ -232,6 +244,14 @@ impl SlideEditor {
                     .flex_1()
                     .overflow_y_scroll()
                     .p_6()
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            let s_id = this.current_slide;
+                            this.open_slide_context_menu(s_id, event.position, window, cx);
+                        }),
+                    )
                     .child(grid_body),
             )
     }

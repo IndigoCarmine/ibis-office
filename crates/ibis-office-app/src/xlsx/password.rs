@@ -207,7 +207,7 @@ pub(crate) fn opens_range(range: &ibis_doc_model::ProtectedRange, password: &str
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{SPIN_COUNT, SheetProtection, base64, legacy_hash, opens, opens_workbook, password_hash, sha512, unbase64};
 
     fn hex(b: &[u8]) -> String {
         b.iter().map(|x| format!("{x:02x}")).collect()

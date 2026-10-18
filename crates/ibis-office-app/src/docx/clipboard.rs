@@ -170,7 +170,7 @@ impl SlideEditor {
             let Block::Paragraph(p) = block else { return false };
             if p.section.is_some() || !p.bookmarks.is_empty() || p.field_start.is_some() || p.field_end
                 || p.runs.iter().any(|r| r.revision.is_some() || matches!(r.link, Some(Link::Anchor(_)))
-                    || !matches!(r.kind, FlowRunKind::Text(_) | FlowRunKind::Picture { .. } | FlowRunKind::Shape(_) | FlowRunKind::Tab | FlowRunKind::LineBreak | FlowRunKind::CheckBox { .. } | FlowRunKind::DropDownList { .. } | FlowRunKind::DatePicker { .. } | FlowRunKind::RichText { .. } | FlowRunKind::PlainText { .. })) { return false; }
+                    || !matches!(r.kind, FlowRunKind::Text(_) | FlowRunKind::Picture { .. } | FlowRunKind::PictureControl { .. } | FlowRunKind::Shape(_) | FlowRunKind::Tab | FlowRunKind::LineBreak | FlowRunKind::CheckBox { .. } | FlowRunKind::DropDownList { .. } | FlowRunKind::DatePicker { .. } | FlowRunKind::RichText { .. } | FlowRunKind::PlainText { .. } | FlowRunKind::BuildingBlockGallery { .. } | FlowRunKind::RepeatingSection { .. } | FlowRunKind::Group { .. } | FlowRunKind::FormField(_))) { return false; }
             paragraphs.push(p.clone());
         }
         if end.offset != paragraphs.last().unwrap().len() { return false; }
@@ -224,7 +224,7 @@ impl SlideEditor {
             commands.push(FlowCommand::SetStyle { id: styles[id].clone(), style: Some(value) });
         }
         if f.paragraphs.iter().any(|p| p.list.is_some_and(|list| !nums.contains_key(&list.num_id))
-            || p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Picture { media, .. }
+            || p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Picture { media, .. } | FlowRunKind::PictureControl { media, .. }
                 if !f.source.media.iter().any(|m| m.id == media)))) { return false; }
         let mut next = doc.new_id();
         let mut media_map = BTreeMap::new();
@@ -242,7 +242,7 @@ impl SlideEditor {
             for r in &mut p.runs {
                 r.format = resolved_format(r);
                 r.char_style = r.char_style.as_ref().and_then(|id| styles.get(id).cloned());
-                if let FlowRunKind::Picture { media, .. } = &mut r.kind {
+                if let FlowRunKind::Picture { media, .. } | FlowRunKind::PictureControl { media, .. } = &mut r.kind {
                     if let Some(&id) = media_map.get(media) { *media = id; continue; }
                     let Some(m) = f.source.media.iter().find(|m| m.id == *media) else { return false };
                     let id = self.document.ids().add_media(m.format, m.data.clone());
@@ -279,8 +279,9 @@ pub(super) fn resolved_format(r: &FlowRun) -> RunFormat {
     RunFormat { font: s.font.clone(), east_asian_font: s.east_asian_font.clone(), cs_font: s.cs_font.clone(), size: Some(s.size), cs_size: s.cs_size,
         bold: Some(s.bold), italic: Some(s.italic), underline: Some(s.underline), underline_style: Some(s.underline_style),
         underline_color: Some(s.underline_color), strike: Some(s.strike), double_strike: Some(s.double_strike), caps: Some(s.caps), small_caps: Some(s.small_caps),
-        color: Some(s.color), theme_color: r.format.theme_color.clone(), highlight: Some(s.highlight), border: Some(s.border.clone()),
+        color: Some(s.color), theme_color: r.format.theme_color.clone(), highlight: Some(s.highlight), shd_pattern: None, effects: None, border: Some(s.border.clone()),
         position: Some(s.position), spacing: Some(s.spacing), scale: Some(s.scale), hidden: r.format.hidden, kern: Some(s.kern.unwrap_or(0)), emphasis: Some(s.emphasis), combine: s.combine.map(Some), tate_chu_yoko: Some(s.tate_chu_yoko),
-        outline: Some(s.outline), shadow: Some(s.shadow), emboss: Some(s.emboss), imprint: Some(s.imprint),
-        lang: r.format.lang.clone(), lang_east_asia: r.format.lang_east_asia.clone() }
+        outline: Some(s.outline), shadow: Some(s.shadow), emboss: Some(s.emboss), imprint: Some(s.imprint), no_proof: r.format.no_proof,
+        lang: r.format.lang.clone(), lang_east_asia: r.format.lang_east_asia.clone(), lang_bidi: r.format.lang_bidi.clone(),
+        ligatures: Some(s.ligatures), num_form: Some(s.num_form), num_spacing: Some(s.num_spacing), contextual_alternates: Some(s.contextual_alternates) }
 }

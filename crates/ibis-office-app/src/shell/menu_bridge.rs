@@ -35,6 +35,13 @@ fn disable_all(entries: &mut Vec<MenuEntry>) {
 /// submenu of its menu, or an item.
 fn entries_of(button: &ToolButton, flatten: bool) -> Vec<MenuEntry> {
     let label = i18n::text(&button.tooltip);
+    // A split button with the plain action of its own (the toggle of bullets): that action, not its menu.
+    if !flatten && button.left_action().is_some() && button.handler.is_some() {
+        let mut item = MenuItem::new(button.id, label).checked(button.on).disabled(button.disabled);
+        item.icon = button.icon;
+        item.handler = button.handler.clone();
+        return vec![item.into()];
+    }
     let menu = button.menu.clone().filter(|m| !m.is_empty());
     if let Some(mut menu) = menu {
         if flatten {

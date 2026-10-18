@@ -15,6 +15,7 @@ use std::rc::Rc;
 use gpui_kit::*;
 use ibis_doc_model::{FontAlign, TextAlign};
 
+use crate::render::math_view::{self, MathBox};
 use crate::render::font_metrics::{POWERPOINT_SINGLE, natural_below, powerpoint_below_baseline};
 
 /// A run of the paragraph, ready to draw.
@@ -51,6 +52,9 @@ pub(crate) struct Piece {
     /// The run's size the strike is placed for, in pixels (the same for a
     /// small capital as for the capitals around it).
     pub(crate) strike_size: f32,
+    /// A formula drawn typeset in place of `text` (which stays its one-line
+    /// form, so that positions in it still count).
+    pub(crate) math: Option<ibis_doc_model::math::Math>,
 }
 
 /// How much smaller PowerPoint draws a small capital than a capital.
@@ -339,6 +343,203 @@ pub(crate) struct TextBlock {
     /// with `top`: lines laid out from left to right (`mongolianVert`) are
     /// mirrored in it.
     pub(crate) area: Rc<std::cell::Cell<(f32, f32)>>,
+    /// Text bent to a preset warp (`a:prstTxWarp`): the glyphs and lines collected as the paragraphs paint,
+    /// painted bent when the last is done (`paint_warp`). `None`: the text is painted as it is.
+    pub(crate) warp: Rc<RefCell<Option<Warp>>>,
+}
+
+/// What a text bent to a warp collects while it is painted, in window pixels.
+#[derive(Debug)]
+pub(crate) struct Warp {
+    pub(crate) geometry: ibis_doc_model::FormulaGeometry,
+    /// Each glyph's contours with the colour of its text.
+    pub(crate) glyphs: Vec<(Vec<Vec<(f32, f32)>>, Hsla, usize)>,
+    /// Each line's left and right ends, top and bottom, and its baseline.
+    pub(crate) lines: Vec<(f32, f32, f32, f32, f32)>,
+}
+
+impl Warp {
+    pub(crate) fn new(geometry: ibis_doc_model::FormulaGeometry) -> Self {
+        Self { geometry, glyphs: Vec::new(), lines: Vec::new() }
+    }
+}
+
+/// A point `u` (0 to 1) of the way along the polyline `curve`, by its length.
+fn along(curve: &[(f32, f32)], lengths: &[f32], u: f32) -> (f32, f32) {
+    let total = *lengths.last().unwrap_or(&0.0);
+    if curve.is_empty() {
+        return (0.0, 0.0);
+    }
+    if total <= 0.0 {
+        return curve[0];
+    }
+    let target = u.clamp(0.0, 1.0) * total;
+    let k = lengths.partition_point(|&l| l < target).clamp(1, curve.len() - 1);
+    let (a, b) = (curve[k - 1], curve[k]);
+    let span = lengths[k] - lengths[k - 1];
+    let f = if span > 0.0 { (target - lengths[k - 1]) / span } else { 0.0 };
+    (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f)
+}
+
+/// The cumulative lengths of the polyline `curve`.
+fn cumulative(curve: &[(f32, f32)]) -> Vec<f32> {
+    let mut out = Vec::with_capacity(curve.len());
+    let mut total = 0.0;
+    for (i, p) in curve.iter().enumerate() {
+        if i > 0 {
+            total += (p.0 - curve[i - 1].0).hypot(p.1 - curve[i - 1].1);
+        }
+        out.push(total);
+    }
+    out
+}
+
+/// A text along one guide curve (an arch): its baseline runs along the curve, scaled so that the text
+/// is as long as the curve, each glyph standing at right angles to it.
+fn paint_warp_on_path(window: &mut Window, warp: &Warp, (ax, ay, _aw, _ah): (f32, f32, f32, f32), curve: &[(f32, f32)], on_curve: &dyn Fn(usize) -> bool) {
+    let lengths = cumulative(curve);
+    let total = *lengths.last().unwrap_or(&0.0);
+    let (x0, x1) = warp.glyphs.iter().filter(|g| on_curve(g.2)).flat_map(|(g, _, _)| g.iter().flatten()).fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.0), b.max(p.0)));
+    if total <= 1.0 || x1 <= x0 {
+        return;
+    }
+    // The first line's baseline is the curve.
+    let baseline = warp.lines.iter().enumerate().find(|(i, _)| on_curve(*i)).map_or(0.0, |(_, l)| l.4);
+    let k = 1.0f32;
+    let map = |(x, y): (f32, f32)| -> (f32, f32) {
+        // The text keeps its size, its middle at the curve's middle.
+        let s = (total / 2.0 + (x - (x0 + x1) / 2.0) * k).clamp(0.0, total);
+        let at = along(curve, &lengths, s / total);
+        let before = along(curve, &lengths, ((s - 0.5) / total).max(0.0));
+        let after = along(curve, &lengths, ((s + 0.5) / total).min(1.0));
+        let (tx, ty) = (after.0 - before.0, after.1 - before.1);
+        let norm = tx.hypot(ty).max(1e-6);
+        // Up from the baseline is at right angles to the way along the curve, to the left of it.
+        let (ux, uy) = (ty / norm, -tx / norm);
+        let up = (baseline - y) * k;
+        (at.0 + ux * up, at.1 + uy * up)
+    };
+    // The bent text is as wide as the area (or as high), kept in its proportions: against the top for
+    // a curve in the upper half, the bottom for one in the lower half (measured against PowerPoint).
+    let mut shaped: Vec<(Vec<(f32, f32)>, usize)> = Vec::new();
+    let mut colours: Vec<Hsla> = Vec::new();
+    for (polygons, color, _) in warp.glyphs.iter().filter(|g| on_curve(g.2)) {
+        let slot = match colours.iter().position(|c| c == color) {
+            Some(i) => i,
+            None => {
+                colours.push(*color);
+                colours.len() - 1
+            }
+        };
+        for polygon in polygons {
+            let mut points: Vec<(f32, f32)> = Vec::with_capacity(polygon.len() * 2);
+            for (i, &a) in polygon.iter().enumerate() {
+                let b = polygon[(i + 1) % polygon.len()];
+                let n = ((b.0 - a.0).hypot(b.1 - a.1) / 2.0).ceil().max(1.0) as usize;
+                for j in 0..n {
+                    let f = j as f32 / n as f32;
+                    points.push(map((a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f)));
+                }
+            }
+            shaped.push((points, slot));
+        }
+    }
+    // (Where the curve is, in the area: the text is not moved to fit.)
+    let (fit, ox, oy) = (1.0f32, ax, ay);
+    let mut grouped: Vec<(Hsla, Vec<(Vec<Point<Pixels>>, bool)>)> = colours.into_iter().map(|c| (c, Vec::new())).collect();
+    for (points, slot) in shaped {
+        grouped[slot].1.push((points.into_iter().map(|(x, y)| point(px(ox + x * fit), px(oy + y * fit))).collect(), true));
+    }
+    for (color, subpaths) in grouped {
+        if let Some(path) = crate::render::shape_view::compound_path(&subpaths, None) {
+            window.paint_path(path, color);
+        }
+    }
+}
+
+/// Paint the glyphs collected in `warp`, bent: the box the text fills (the lines' union) is stretched over
+/// the region between the warp's two guide curves, `area` (left, top, width, height in window pixels)
+/// being the box the guides are drawn in. Nothing is painted if the warp has no two guide curves.
+pub(crate) fn paint_warp(window: &mut Window, warp: &Warp, (ax, ay, aw, ah): (f32, f32, f32, f32)) {
+    if warp.glyphs.is_empty() || warp.lines.is_empty() {
+        return;
+    }
+    let outlines = warp.geometry.outline(aw as f64, ah as f64);
+    let curves: Vec<Vec<(f32, f32)>> = outlines.iter().filter_map(|o| o.subpaths.first()).map(|s| s.points.iter().map(|&(x, y)| (x as f32, y as f32)).collect()).collect();
+    if curves.len() == 1 && curves[0].len() >= 2 {
+        paint_warp_on_path(window, warp, (ax, ay, aw, ah), &curves[0], &|_| true);
+        return;
+    }
+    // A button: an arch, a straight line and an arch, a line of text on each in turn.
+    if curves.len() == 3 && curves.iter().all(|c| c.len() >= 2) {
+        for (n, curve) in curves.iter().enumerate() {
+            paint_warp_on_path(window, warp, (ax, ay, aw, ah), curve, &|line| line.min(2) == n);
+        }
+        return;
+    }
+    if curves.len() < 2 || curves.len() % 2 != 0 || curves.iter().any(|c| c.len() < 2) {
+        return;
+    }
+    let lengths: Vec<Vec<f32>> = curves.iter().map(|c| cumulative(c)).collect();
+    // The curves' own box is stretched to the area (the waves' swing is not left empty above and below).
+    let (cx0, cx1) = curves.iter().flatten().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
+    let (cy0, cy1) = curves.iter().flatten().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.1), hi.max(p.1)));
+    let _ = (cx0, cx1, cy0, cy1, aw, ah);
+    let (fx, fy) = (1.0f32, 1.0f32);
+    let (cx0, cy0) = (0.0f32, 0.0f32);
+    // Each pair of curves takes the lines in turn (the first pair the first line, the second pair the
+    // second line, ...; the last pair the rest).
+    let pairs = curves.len() / 2;
+    let line_count = warp.lines.len();
+    let pair_of = |line: usize| -> usize { if pairs == 1 { 0 } else { line.min(pairs - 1) } };
+    let _ = line_count;
+    // By colour: one path each.
+    let mut colours: Vec<(Hsla, Vec<(Vec<Point<Pixels>>, bool)>)> = Vec::new();
+    for pair in 0..pairs {
+        let members: Vec<&(Vec<Vec<(f32, f32)>>, Hsla, usize)> = warp.glyphs.iter().filter(|g| pair_of(g.2) == pair).collect();
+        // What is stretched over the region is the ink (the glyphs' own box), not the lines' boxes.
+        let (_, _, y0, y1) = members.iter().flat_map(|(g, _, _)| g.iter().flatten()).fold((f32::MAX, f32::MIN, f32::MAX, f32::MIN), |(a, b, c, d), p| (a.min(p.0), b.max(p.0), c.min(p.1), d.max(p.1)));
+        // (Across, all the lines share the whole text's width.)
+        let (x0, x1, _, _) = warp.glyphs.iter().flat_map(|(g, _, _)| g.iter().flatten()).fold((f32::MAX, f32::MIN, f32::MAX, f32::MIN), |(a, b, c, d), p| (a.min(p.0), b.max(p.0), c.min(p.1), d.max(p.1)));
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        let (bw, bh) = (x1 - x0, y1 - y0);
+        let (top, bottom, lt, lb) = (&curves[pair * 2], &curves[pair * 2 + 1], &lengths[pair * 2], &lengths[pair * 2 + 1]);
+        let map = |(x, y): (f32, f32)| -> Point<Pixels> {
+            let (u, v) = ((x - x0) / bw, (y - y0) / bh);
+            let (ta, tb) = (along(top, lt, u), along(bottom, lb, u));
+            let (mx, my) = (ta.0 + (tb.0 - ta.0) * v, ta.1 + (tb.1 - ta.1) * v);
+            point(px(ax + (mx - cx0) * fx), px(ay + (my - cy0) * fy))
+        };
+        for (polygons, color, _) in members {
+            let slot = match colours.iter().position(|(c, _)| c == color) {
+                Some(i) => i,
+                None => {
+                    colours.push((*color, Vec::new()));
+                    colours.len() - 1
+                }
+            };
+            for polygon in polygons {
+                // Long edges cut short, for the bend.
+                let mut points: Vec<Point<Pixels>> = Vec::with_capacity(polygon.len() * 2);
+                for (i, &a) in polygon.iter().enumerate() {
+                    let b = polygon[(i + 1) % polygon.len()];
+                    let n = ((b.0 - a.0).hypot(b.1 - a.1) / 2.0).ceil().max(1.0) as usize;
+                    for k in 0..n {
+                        let f = k as f32 / n as f32;
+                        points.push(map((a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f)));
+                    }
+                }
+                colours[slot].1.push((points, true));
+            }
+        }
+    }
+    for (color, subpaths) in colours {
+        if let Some(path) = crate::render::shape_view::compound_path(&subpaths, None) {
+            window.paint_path(path, color);
+        }
+    }
 }
 
 impl TextBlock {
@@ -600,6 +801,8 @@ struct Char {
     end: usize,
     c: char,
     advance: f32,
+    /// A typeset formula's ascent and descent, in place of the piece's.
+    lift: Option<(f32, f32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -622,6 +825,8 @@ struct Layout {
     width: Option<f32>,
     chars: Vec<Char>,
     lines: Vec<Line>,
+    /// The typeset formula of each piece that has one.
+    maths: Vec<Option<MathBox>>,
 }
 
 pub(crate) fn rich_paragraph(paragraph: RichParagraph) -> RichParagraphElement {
@@ -792,6 +997,11 @@ impl Element for RichParagraphElement {
             }
             let reference = reference(paragraph, &layout.chars[line.start..line.end]);
             let line_turn = turn.map(|t| t.with_visual_pivot(baseline, reference.0));
+            // Text bent to a warp: the line's box is kept, the glyphs are collected as they come.
+            let warp = paragraph.text_top.as_ref().map(|t| t.block.warp.clone()).filter(|w| w.borrow().is_some());
+            if let Some(w) = &warp && let Some(w) = w.borrow_mut().as_mut() {
+                w.lines.push((x, x + line.width, line_top, line_top + line.height, baseline));
+            }
             if let (0, Some(turn), Some(b)) = (n, turn, &paragraph.bullet) {
                 paint_turned_bullet(b, f32::from(bounds.origin.x) + b.x, baseline + b.drop, turn, window);
             }
@@ -839,6 +1049,16 @@ impl Element for RichParagraphElement {
                 }
                 let piece = &paragraph.pieces[piece_index];
                 let text = &piece.text[layout.chars[i].start..layout.chars[j - 1].end];
+                if let Some(boxed) = &layout.maths[piece_index] {
+                    // A formula, from its first character's place.
+                    if layout.chars[i].start == 0 {
+                        let y = baseline - piece.raise;
+                        math_view::paint(boxed, point(px(x), px(y)), piece.color, &piece.font, window, cx);
+                    }
+                    x += layout.chars[i..j].iter().map(|c| c.advance + extra).sum::<f32>();
+                    i = j;
+                    continue;
+                }
                 let run = TextRun {
                     len: text.len(),
                     font: piece.font.clone(),
@@ -859,6 +1079,26 @@ impl Element for RichParagraphElement {
                 let struck: f32 = layout.chars[i..end].iter().map(|c| c.advance + extra).sum::<f32>() - if end == shown && end > i { extra } else { 0.0 };
                 let origin = ul_origin(piece, x);
                 ul_state.set(piece.underline.then_some((origin, x + advance, piece.underline_kind, piece.strike_size)));
+                if let Some(w) = &warp {
+                    let mut taken: Vec<(Vec<Vec<(f32, f32)>>, Hsla)> = Vec::new();
+                    let mut readable = true;
+                    'glyphs: for run in &shaped.runs {
+                        let Some((data, index)) = window.text_system().font_data(run.font_id) else { readable = false; break };
+                        for glyph in &run.glyphs {
+                            let before = text[..glyph.index.min(text.len())].chars().count() as f32;
+                            let (gx, gy) = (x + f32::from(glyph.position.x) + piece.spacing * before, y + f32::from(glyph.position.y));
+                            let Some(polygons) = crate::render::glyph_outline::glyph_polygons(&data, index, glyph.id.0, piece.size) else { readable = false; break 'glyphs };
+                            taken.push((polygons.into_iter().map(|p| p.into_iter().map(|(a, b)| (gx + a, gy + b)).collect()).collect(), piece.color));
+                        }
+                    }
+                    if readable && let Some(w) = w.borrow_mut().as_mut() {
+                        let line_index = w.lines.len().saturating_sub(1);
+                        w.glyphs.extend(taken.into_iter().map(|(g, c)| (g, c, line_index)));
+                        x += advance;
+                        i = j;
+                        continue;
+                    }
+                }
                 if let (Some(fill), Some(area)) = (&piece.fill, fill_box(i))
                     && paint_filled(&shaped, text, piece, fill, (x, y), area, turn, paragraph.px_per_point, window)
                 {
@@ -1114,8 +1354,7 @@ fn paint_spaced(shaped: &ShapedLine, text: &str, piece: &Piece, baseline: Point<
 fn reference(paragraph: &RichParagraph, chars: &[Char]) -> (f32, f32) {
     chars
         .iter()
-        .map(|c| &paragraph.pieces[c.piece])
-        .map(|p| (p.ascent, p.descent))
+        .map(|c| c.lift.unwrap_or((paragraph.pieces[c.piece].ascent, paragraph.pieces[c.piece].descent)))
         .fold((0.0, 0.0), |m, v| if v.0 + v.1 > m.0 + m.1 { v } else { m })
 }
 
@@ -1134,8 +1373,19 @@ fn align_offset(align: FontAlign, piece: &Piece, reference: (f32, f32)) -> f32 {
 
 fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -> Layout {
     let mut chars = Vec::new();
+    let mut maths: Vec<Option<MathBox>> = vec![None; paragraph.pieces.len()];
     for (index, piece) in paragraph.pieces.iter().enumerate() {
         if piece.text.is_empty() {
+            continue;
+        }
+        if let Some(math) = &piece.math {
+            // The formula's width is shared out between its characters.
+            let boxed = math_view::typeset(math, piece.size, &mut math_view::window_measure(piece.font.clone(), window));
+            let count = piece.text.chars().count().max(1) as f32;
+            for (start, c) in piece.text.char_indices() {
+                chars.push(Char { piece: index, start, end: start + c.len_utf8(), c, advance: boxed.width / count, lift: Some((boxed.ascent, boxed.descent)) });
+            }
+            maths[index] = Some(boxed);
             continue;
         }
         let run = TextRun {
@@ -1168,7 +1418,7 @@ fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -
             } else {
                 raw + piece.spacing
             };
-            chars.push(Char { piece: index, start, end, c, advance: adv });
+            chars.push(Char { piece: index, start, end, c, advance: adv, lift: None });
         }
     }
     // Text that fills its box exactly (full-width characters, a box sized
@@ -1199,10 +1449,21 @@ fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -
             };
             let natural = natural_below(single, a, d);
             let baseline = height - powerpoint_below_baseline(height, single, natural);
+            // A formula taller than the text makes its line taller.
+            let (math_ascent, math_descent) = chars[start..end].iter().filter_map(|c| c.lift).fold((0.0f32, 0.0f32), |m, v| (m.0.max(v.0), m.1.max(v.1)));
+            // A line of nothing but a formula is as high as the formula (PowerPoint's own); with other text the baseline is
+            // the text's when that is lower.
+            let only_math = chars[start..end].iter().all(|c| c.lift.is_some());
+            let (height, baseline) = if math_ascent + math_descent > 0.0 {
+                let base = if only_math { math_ascent } else { baseline.max(math_ascent) };
+                (height.max(base + math_descent), base)
+            } else {
+                (height, baseline)
+            };
             Line { start, end, width, height, baseline, natural }
         })
         .collect();
-    Layout { width, chars, lines }
+    Layout { width, chars, lines, maths }
 }
 
 /// The height of the paragraph's `lines`: the last paragraph of a text
@@ -1334,7 +1595,7 @@ mod tests {
     }
 
     fn chars(text: &str, advance: f32) -> Vec<Char> {
-        text.char_indices().map(|(i, c)| Char { piece: 0, start: i, end: i + c.len_utf8(), c, advance }).collect()
+        text.char_indices().map(|(i, c)| Char { piece: 0, start: i, end: i + c.len_utf8(), c, advance, lift: None }).collect()
     }
 
     #[test]

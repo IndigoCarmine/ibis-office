@@ -26,6 +26,7 @@ use crate::Error;
 struct Look {
     style: TextStyle,
     underline: bool,
+    underline_kind: ibis_doc_model::Underline,
     highlight: Option<Rgb>,
     outline: Option<(Rgb, i64)>,
     baseline: i32,
@@ -41,7 +42,7 @@ struct Look {
 
 fn look(body: &TextStyle, run: &RunStyle) -> Look {
     let style = TextStyle { align: TextAlign::Left, ..body.with_run(run) };
-    Look { style, underline: run.underline, highlight: run.highlight, outline: run.outline, shadow: run.shadow, baseline: run.baseline, spacing: run.spacing, field: run.field, strike: run.strike, caps: run.caps, link: run.link.clone(), link_tooltip: run.link_tooltip.clone(), lang: run.lang.clone() }
+    Look { style, underline: run.underline, underline_kind: run.underline_kind, highlight: run.highlight, outline: run.outline, shadow: run.shadow, baseline: run.baseline, spacing: run.spacing, field: run.field, strike: run.strike, caps: run.caps, link: run.link.clone(), link_tooltip: run.link_tooltip.clone(), lang: run.lang.clone() }
 }
 
 /// A paragraph's format as it shows.
@@ -61,6 +62,8 @@ struct OldParagraph {
     p: NodeId,
     runs: Vec<(Look, NodeId)>,
     run_lengths: Vec<usize>,
+    /// The formulas (`a14:m` or the wrapper around it) of the paragraph's runs.
+    maths: Vec<(ibis_doc_model::math::Math, NodeId)>,
     end: Look,
 }
 
@@ -78,13 +81,20 @@ pub(crate) fn rewrite_text(doc: &mut XmlDocument, node: NodeId, source: &ShapeSo
         let p = doc.by_path(&src.p).filter(|&n| doc.local_name(n) == "p").ok_or_else(|| Error::new("文字の段落の位置が見つかりません"))?;
         let mut runs = Vec::new();
         let mut run_lengths = Vec::new();
+        let mut maths = Vec::new();
         for (run, path) in para.runs.iter().zip(&src.runs) {
-            if let Some(r) = doc.by_path(path).filter(|&n| matches!(doc.local_name(n), "r" | "fld")) {
+            if let Some(math) = &run.style.math {
+                if let Some(n) = doc.by_path(path).filter(|&n| matches!(doc.local_name(n), "AlternateContent" | "m")) {
+                    maths.push(((**math).clone(), n));
+                    runs.push((look(&old.style, &run.style), n));
+                    run_lengths.push(run.text.chars().count());
+                }
+            } else if let Some(r) = doc.by_path(path).filter(|&n| matches!(doc.local_name(n), "r" | "fld")) {
                 runs.push((look(&old.style, &run.style), r));
                 run_lengths.push(run.text.chars().count());
             }
         }
-        olds.push(OldParagraph { key: para_key(&old.style, para), p, runs, run_lengths, end: look(&old.style, &para.end_style) });
+        olds.push(OldParagraph { key: para_key(&old.style, para), p, runs, run_lengths, maths, end: look(&old.style, &para.end_style) });
     }
     if olds.is_empty() {
         return Err(unsupported("この図形の段落の変更"));
@@ -161,7 +171,7 @@ pub(crate) fn rewrite_text(doc: &mut XmlDocument, node: NodeId, source: &ShapeSo
         let mut runs = Vec::new();
         let mut at = 0;
         for run in &para.runs {
-            if run.style.field.is_some() || run.text.is_empty() {
+            if run.style.field.is_some() || run.style.math.is_some() || run.text.is_empty() {
                 at += run.text.chars().count(); runs.push(run.clone()); continue;
             }
             let mut piece = run.clone(); piece.text.clear();
@@ -178,6 +188,22 @@ pub(crate) fn rewrite_text(doc: &mut XmlDocument, node: NodeId, source: &ShapeSo
             if run.text.is_empty() && run.style.field.is_none() {
                 continue;
             }
+            // A formula that is as it was is the original markup.
+            if let Some(math) = &run.style.math
+                && let Some(&(_, node)) = olds.iter().flat_map(|o| o.maths.iter()).find(|(m, _)| m == &**math)
+            {
+                let copy = doc.deep_clone(node);
+                let index = doc.children(p).len();
+                doc.insert(p, index, copy);
+                continue;
+            }
+            // A formula that was typed again is written as a formula.
+            if let Some(math) = &run.style.math {
+                let copy = x.import(doc, &crate::math_xml::write_math_content(math, &x.a, run.style.math_inline))?;
+                let index = doc.children(p).len();
+                doc.insert(p, index, copy);
+                continue;
+            }
             let want = look(&new.style, &run.style);
             // A format-only split has an unambiguous source character range.
             // Prefer that source even when another run has the same modeled look:
@@ -191,11 +217,11 @@ pub(crate) fn rewrite_text(doc: &mut XmlDocument, node: NodeId, source: &ShapeSo
                     let contains = start >= at && start < end && offset <= end;
                     at = end;
                     contains
-                }).map(|(run, _)| run)
+                }).map(|(run, _)| run).filter(|(_, r)| matches!(doc.local_name(*r), "r" | "fld"))
             }) } else { None };
             let exact = match origin {
                 Some((l, r)) => (*l == want).then_some(*r),
-                None => template.runs.iter().chain(olds.iter().flat_map(|o| o.runs.iter())).find(|(l, _)| *l == want).map(|(_, r)| *r),
+                None => template.runs.iter().chain(olds.iter().flat_map(|o| o.runs.iter())).find(|(l, r)| *l == want && matches!(doc.local_name(*r), "r" | "fld")).map(|(_, r)| *r),
             };
             let r = match exact {
                 Some(r) => doc.deep_clone(r),
@@ -377,7 +403,7 @@ fn run_props(x: &Prefixes, look: &Look, text: &str) -> String {
     };
     let mut out = format!("<{a}rPr{lang_attr} altLang=\"en-US\" sz=\"{}\" b=\"{}\" i=\"{}\"", s.font_size, s.bold as u8, s.italic as u8);
     if look.underline {
-        out.push_str(" u=\"sng\"");
+        out.push_str(&format!(" u=\"{}\"", look.underline_kind.value()));
     }
     if look.baseline != 0 {
         out.push_str(&format!(" baseline=\"{}\"", look.baseline));
@@ -492,8 +518,8 @@ fn write_run_format(doc: &mut XmlDocument, node: NodeId, x: &Prefixes, have: &Lo
     if h.italic != w.italic {
         doc.set_attr(rpr, "i", if w.italic { "1" } else { "0" });
     }
-    if have.underline != want.underline {
-        doc.set_attr(rpr, "u", if want.underline { "sng" } else { "none" });
+    if have.underline != want.underline || (want.underline && have.underline_kind != want.underline_kind) {
+        doc.set_attr(rpr, "u", if want.underline { want.underline_kind.value() } else { "none" });
     }
     if have.baseline != want.baseline {
         doc.set_attr(rpr, "baseline", &want.baseline.to_string());

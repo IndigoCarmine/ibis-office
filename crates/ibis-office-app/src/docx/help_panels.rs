@@ -10,10 +10,11 @@
 //! footer's distance from the edges, the paper's width and height, and the
 //! body's vertical alignment, in millimetres.
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use ibis_doc_model::{PageSetup, PageVAlign};
+use ibis_doc_model::PageVAlign;
 
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
@@ -35,6 +36,9 @@ pub(crate) struct HelpPanels {
     pub(crate) user_info: Option<UserInfoPanel>,
     pub(crate) kinsoku: Option<super::kinsoku_panel::KinsokuPanel>,
     pub(crate) go_to: Option<super::goto::GoToPanel>,
+    pub(crate) spelling: Option<super::spelling_panel::SpellPanel>,
+    /// データの編集 of a chart inserted in the document: the panel and where the chart is.
+    pub(crate) chart: Option<(crate::pptx::chart_panel::ChartPanel, ibis_doc_model::FlowPos)>,
 }
 
 /// 挿入 > 目次 > 目次の更新… (Word's 目次の更新 Update Table of Contents dialog):
@@ -198,6 +202,8 @@ pub(crate) struct PageSetupPanel {
     pub(crate) fields: [Entity<InputState>; 9],
     pub(crate) gutter_at_top: bool,
     pub(crate) mirror: bool,
+    pub(crate) multiple_pages: ibis_doc_model::MultiplePages,
+    pub(crate) book_fold_sheets: Entity<InputState>,
     pub(crate) v_align: PageVAlign,
     /// 文字列の方向: across, or 縦書き (`TbRl`).
     pub(crate) vertical: bool,
@@ -282,7 +288,15 @@ impl SlideEditor {
         let panel = PageSetupPanel {
             fields,
             gutter_at_top: page.gutter_at_top,
-            mirror: page.mirror_margins,
+            mirror: page.is_mirrored(),
+            multiple_pages: page.multiple_pages,
+            book_fold_sheets: {
+                let state = cx.new(|cx| InputState::new(window, cx));
+                if let Some(s) = page.book_fold_sheets {
+                    state.update(cx, |i, cx| i.set_value(s.to_string(), window, cx));
+                }
+                state
+            },
             v_align: page.v_align,
             vertical: page.direction == ibis_doc_model::CellDirection::TbRl,
             start,
@@ -337,7 +351,16 @@ impl SlideEditor {
         if width <= 0 || height <= 0 || across >= width - 36_000 * 10 || down >= height - 36_000 * 10 {
             return self.page_setup_message(text("fix.help-panels.margins-too-large-paper"), cx);
         }
-        let (gutter_at_top, mirror, v_align, vertical) = (p.gutter_at_top, p.mirror, p.v_align, p.vertical);
+        let (gutter_at_top, mirror, multiple_pages, v_align, vertical) = (p.gutter_at_top, p.mirror, p.multiple_pages, p.v_align, p.vertical);
+        let book_fold_sheets_str = p.book_fold_sheets.read(cx).value().trim().to_string();
+        let book_fold_sheets = if book_fold_sheets_str.is_empty() || book_fold_sheets_str == "0" {
+            None
+        } else {
+            match book_fold_sheets_str.parse::<u32>() {
+                Ok(n) if n >= 1 => Some(n),
+                _ => return self.page_setup_message(text("docx.help-panels.enter-whole-number-1-more"), cx),
+            }
+        };
         // The first page number: a number, or blank for going on.
         let start = p.start.read(cx).value().trim().to_string();
         let start = if start.is_empty() {
@@ -415,7 +438,9 @@ impl SlideEditor {
                 page.footer = footer;
                 page.size = ibis_doc_model::EmuSize::new(width, height);
                 page.gutter_at_top = gutter_at_top;
-                page.mirror_margins = mirror;
+                page.multiple_pages = multiple_pages;
+                page.book_fold_sheets = book_fold_sheets;
+                page.mirror_margins = mirror || multiple_pages.is_mirrored();
                 page.v_align = v_align;
                 page.doc_grid_type = grid_type;
                 page.line_pitch = line_pitch;
@@ -522,21 +547,42 @@ impl SlideEditor {
         }
         body = body
             .child(h_flex().gap_1().child(div().text_size(px(12.)).child(text("fix.help-panels.gutter-position"))).child(choice("gutter-left", !p.gutter_at_top, "_shell.left", |p| p.gutter_at_top = false)).child(choice("gutter-top", p.gutter_at_top, "_shell.top", |p| p.gutter_at_top = true)))
-            .child(mark(
-                "mirror",
-                Button::new("page-mirror")
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if p.mirror { "☑" } else { "☐" }, text("fix.help-panels.mirror-margins")))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.page_setup.as_mut()) {
-                            p.mirror = !p.mirror;
-                        }
-                        cx.notify();
+            .child(div().text_size(px(13.)).child(text("docx.page.multiple-pages")))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .flex_wrap()
+                    .child(choice("page-normal", p.multiple_pages == ibis_doc_model::MultiplePages::Normal, "docx.page.multiple-pages.normal", |p| {
+                        p.multiple_pages = ibis_doc_model::MultiplePages::Normal;
+                        p.mirror = false;
                     }))
-                    .into_any_element(),
-            ))
-            ;
+                    .child(choice("page-mirror", p.multiple_pages == ibis_doc_model::MultiplePages::MirrorMargins, "docx.page.multiple-pages.mirror-margins", |p| {
+                        p.multiple_pages = ibis_doc_model::MultiplePages::MirrorMargins;
+                        p.mirror = true;
+                    }))
+                    .child(choice("page-book-fold", p.multiple_pages == ibis_doc_model::MultiplePages::BookFold, "docx.page.multiple-pages.book-fold", |p| {
+                        p.multiple_pages = ibis_doc_model::MultiplePages::BookFold;
+                        p.mirror = true;
+                    }))
+                    .child(choice("page-reverse-book-fold", p.multiple_pages == ibis_doc_model::MultiplePages::ReverseBookFold, "docx.page.multiple-pages.reverse-book-fold", |p| {
+                        p.multiple_pages = ibis_doc_model::MultiplePages::ReverseBookFold;
+                        p.mirror = true;
+                    }))
+                    .child(choice("page-two-on-one", p.multiple_pages == ibis_doc_model::MultiplePages::TwoOnOne, "docx.page.multiple-pages.two-on-one", |p| {
+                        p.multiple_pages = ibis_doc_model::MultiplePages::TwoOnOne;
+                        p.mirror = false;
+                    })),
+            );
+        if p.multiple_pages.is_book_fold() {
+            body = body.child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(div().w(px(120.)).text_size(px(12.)).child(text("docx.page.book-fold-sheets")))
+                    .child(mark("book-fold-sheets", div().w(px(70.)).child(Input::new(&p.book_fold_sheets).small()).into_any_element()))
+                    .child(div().text_size(px(11.)).child(text("docx.help-panels.book-fold-sheets-hint"))),
+            );
+        }
         body = body
             .child(div().text_size(px(13.)).child(text("docx.help-panels.document-grid")))
             .child(
@@ -1001,7 +1047,7 @@ impl SlideEditor {
         }
         let mut commands = Vec::new();
         if doc.header.is_empty() && ibis_doc_model::flow_command::resolved_part(doc, 0, ibis_doc_model::PartKind::Header).is_empty() {
-            commands.push(ibis_doc_model::FlowCommand::AddHeader { footer: false });
+            commands.extend(self.add_header_commands(false));
         }
         commands.push(ibis_doc_model::FlowCommand::SetWatermark { watermark: Some(watermark), sections: Vec::new() });
         self.run_flow(commands, cx);
@@ -1836,6 +1882,7 @@ impl SlideEditor {
 
 /// ファイル > 情報 / プロパティ… (Word's プロパティ dialog):
 /// タイトル・作成者・件名・キーワード・コメント・管理者・会社名・カテゴリの編集とメタデータ・統計情報の閲覧。
+#[derive(Clone)]
 pub(crate) struct DocPropertiesPanel {
     pub(crate) title: Entity<InputState>,
     pub(crate) creator: Entity<InputState>,
@@ -1848,6 +1895,9 @@ pub(crate) struct DocPropertiesPanel {
     pub(crate) custom_properties: Vec<ibis_doc_model::CustomProperty>,
     pub(crate) new_custom_name: Entity<InputState>,
     pub(crate) new_custom_val: Entity<InputState>,
+    pub(crate) embed_true_type_fonts: bool,
+    pub(crate) save_subset_fonts: bool,
+    pub(crate) embed_system_fonts: bool,
     pub(crate) created: String,
     pub(crate) modified: String,
     pub(crate) last_printed: String,
@@ -1879,6 +1929,9 @@ impl SlideEditor {
         let new_custom_name = cx.new(|cx| InputState::new(window, cx));
         let new_custom_val = cx.new(|cx| InputState::new(window, cx));
         let custom_properties = props.custom.clone();
+        let embed_true_type_fonts = doc.embed_true_type_fonts;
+        let save_subset_fonts = doc.save_subset_fonts;
+        let embed_system_fonts = doc.embed_system_fonts;
 
         let panel = DocPropertiesPanel {
             title,
@@ -1892,6 +1945,9 @@ impl SlideEditor {
             custom_properties,
             new_custom_name,
             new_custom_val,
+            embed_true_type_fonts,
+            save_subset_fonts,
+            embed_system_fonts,
             created,
             modified,
             last_printed,
@@ -1927,6 +1983,39 @@ impl SlideEditor {
             s.helper.properties = None;
         }
         self.sidebar_open = false;
+        cx.notify();
+    }
+
+    /// Toggle font embedding in the Document Properties panel.
+    pub(crate) fn toggle_doc_properties_embed_fonts(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(p) = self.doc_state_mut().and_then(|s| s.helper.properties.as_mut()) {
+            p.embed_true_type_fonts = enabled;
+        }
+        self.set_embed_true_type_fonts(enabled, cx);
+        cx.notify();
+    }
+
+    /// Toggle save subset fonts in the Document Properties panel.
+    pub(crate) fn toggle_doc_properties_save_subset_fonts(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(p) = self.doc_state_mut().and_then(|s| s.helper.properties.as_mut()) {
+            if !p.embed_true_type_fonts {
+                return;
+            }
+            p.save_subset_fonts = enabled;
+        }
+        self.set_save_subset_fonts(enabled, cx);
+        cx.notify();
+    }
+
+    /// Toggle embed system fonts in the Document Properties panel.
+    pub(crate) fn toggle_doc_properties_embed_system_fonts(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(p) = self.doc_state_mut().and_then(|s| s.helper.properties.as_mut()) {
+            if !p.embed_true_type_fonts {
+                return;
+            }
+            p.embed_system_fonts = enabled;
+        }
+        self.set_embed_system_fonts(enabled, cx);
         cx.notify();
     }
 
@@ -1969,9 +2058,9 @@ impl SlideEditor {
         }
     }
 
-    /// Apply the entered document properties via `FlowCommand::SetDocProperties`.
+    /// Apply the entered document properties via `FlowCommand::SetDocProperties` and font embedding settings.
     pub(crate) fn apply_doc_properties(&mut self, cx: &mut Context<Self>) {
-        let (title, creator, subject, keywords, description, category, manager, company, custom) = {
+        let (title, creator, subject, keywords, description, category, manager, company, custom, embed_tt, save_sub, embed_sys) = {
             let Some(p) = self.doc_state().and_then(|s| s.helper.properties.as_ref()) else { return };
             (
                 p.title.read(cx).text().to_string().trim().to_string(),
@@ -1983,6 +2072,9 @@ impl SlideEditor {
                 p.manager.read(cx).text().to_string().trim().to_string(),
                 p.company.read(cx).text().to_string().trim().to_string(),
                 p.custom_properties.clone(),
+                p.embed_true_type_fonts,
+                p.save_subset_fonts,
+                p.embed_system_fonts,
             )
         };
 
@@ -1999,7 +2091,16 @@ impl SlideEditor {
         new_props.company = opt(company);
         new_props.custom = custom;
 
-        let commands = vec![ibis_doc_model::FlowCommand::SetDocProperties(new_props)];
+        let mut commands = vec![ibis_doc_model::FlowCommand::SetDocProperties(new_props)];
+        if let Some(doc) = self.flow() {
+            if doc.embed_true_type_fonts != embed_tt || doc.embed_system_fonts != embed_sys || doc.save_subset_fonts != save_sub {
+                commands.push(ibis_doc_model::FlowCommand::SetFontEmbedding {
+                    embed_true_type_fonts: embed_tt,
+                    embed_system_fonts: embed_sys,
+                    save_subset_fonts: save_sub,
+                });
+            }
+        }
         if self.run_flow(commands, cx) {
             // Also trigger fields update so document fields (AUTHOR, TITLE, etc.) reflect the change
             self.update_fields(true, cx);
@@ -2152,6 +2253,57 @@ impl SlideEditor {
             );
         custom_section = custom_section.child(add_row);
         body = body.child(custom_section);
+
+        // フォントの埋め込み (DOCX-OPTIONS-013 / DocProperties)
+        let font_embed_section = v_flex()
+            .gap_1()
+            .py(px(4.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme.foreground)
+                    .child(text("docx.properties-panel.fonts-section"))
+            )
+            .child(
+                mark(
+                    "embed_fonts",
+                    Checkbox::new("docx-doc-props-embed-fonts")
+                        .label(text("docx.options.font.embed"))
+                        .checked(p.embed_true_type_fonts)
+                        .on_click(cx.listener(|this, on: &bool, _, cx| {
+                            this.toggle_doc_properties_embed_fonts(*on, cx);
+                        }))
+                        .into_any_element(),
+                )
+            )
+            .child(
+                mark(
+                    "save_subset_fonts",
+                    Checkbox::new("docx-doc-props-save-subset")
+                        .label(text("docx.options.font.save-subset"))
+                        .checked(p.save_subset_fonts)
+                        .disabled(!p.embed_true_type_fonts)
+                        .on_click(cx.listener(|this, on: &bool, _, cx| {
+                            this.toggle_doc_properties_save_subset_fonts(*on, cx);
+                        }))
+                        .into_any_element(),
+                )
+            )
+            .child(
+                mark(
+                    "embed_system_fonts",
+                    Checkbox::new("docx-doc-props-embed-system")
+                        .label(text("docx.options.font.embed-system"))
+                        .checked(!p.embed_system_fonts)
+                        .disabled(!p.embed_true_type_fonts)
+                        .on_click(cx.listener(|this, do_not_embed: &bool, _, cx| {
+                            this.toggle_doc_properties_embed_system_fonts(!*do_not_embed, cx);
+                        }))
+                        .into_any_element(),
+                )
+            );
+        body = body.child(font_embed_section);
 
         if !p.message.is_empty() {
             body = body.child(

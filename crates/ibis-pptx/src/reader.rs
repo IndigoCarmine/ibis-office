@@ -19,7 +19,7 @@ use crate::package::{REL_CHART_USER_SHAPES,
     Relationship,
 };
 use crate::style::{BulletProps, ListStyle, ParaProps, RunProps, Spacing, auto_number, bullet_glyph};
-use crate::theme::{Colors, Theme, bg_fill_style, fill_style, line_style};
+use crate::theme::{Colors, Theme, bg_fill_style, effect_style, fill_style, line_style};
 use crate::xml::{attr, attr_bool, attr_i64, child, children, elements, path};
 
 type Rels = HashMap<String, Relationship>;
@@ -212,6 +212,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
         slide_link_tooltips: HashMap::new(),
         slide_aspect: Default::default(),
         slide_formulas: HashMap::new(),
+        slide_glues: Vec::new(),
         slide_parts: HashMap::new(),
         chart_sources: Vec::new(),
         xlsx_shape_sources: Vec::new(),
@@ -330,6 +331,15 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
     // The theme of the first slide's master.
     reader.presentation.theme_fonts = chain.first().and_then(|(_, _, _, t)| t.as_ref()).map(|t| themes[t.as_str()].fonts());
     reader.presentation.theme_colors = chain.first().and_then(|(_, _, _, t)| t.as_ref()).map(|t| themes[t.as_str()].colors()).unwrap_or_default();
+    reader.presentation.theme_effects = chain
+        .first()
+        .and_then(|(_, _, _, t)| t.as_ref())
+        .and_then(|t| themes[t.as_str()].fmt_scheme_name.as_deref())
+        .map(|name| {
+            crate::theme_effects::find_effect_preset(name)
+                .map(|p| p.id.to_string())
+                .unwrap_or_else(|| name.to_string())
+        });
     if let Some(t) = chain.first().and_then(|(_, _, _, t)| t.as_ref()) {
         if let Some(theme_doc) = docs.get(t.as_str()) {
             let theme_colors = Colors::new(&themes[t.as_str()], None, &[]);
@@ -360,6 +370,14 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
             })
             .collect();
     }
+    // フォトアルバムの設定 (p:photoAlbum)
+    if let Some(album_node) = namespace_child(root, P, "photoAlbum").or_else(|| child(root, "photoAlbum")) {
+        let bw = unqualified_attribute(album_node, "bw").is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        let show_captions = unqualified_attribute(album_node, "showCaptions").is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        let layout = unqualified_attribute(album_node, "layout").and_then(ibis_doc_model::PhotoAlbumLayout::parse).unwrap_or_default();
+        let frame = unqualified_attribute(album_node, "frame").and_then(ibis_doc_model::PhotoAlbumFrame::parse).unwrap_or_default();
+        reader.presentation.photo_album = Some(ibis_doc_model::PhotoAlbum { bw, show_captions, layout, frame });
+    }
     // ドキュメント プロパティ（docProps/core.xml, docProps/app.xml, docProps/custom.xml）および最終版フラグ.
     let mut props = crate::package::read_doc_properties(&package);
     if let Some(pos) = props.custom.iter().position(|p| p.name == "_MarkAsFinal") {
@@ -367,6 +385,13 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
         if let ibis_doc_model::CustomPropertyValue::Bool(b) = final_prop.value {
             if b {
                 reader.presentation.mark_as_final = true;
+            }
+        }
+    }
+    for prop in &props.custom {
+        if let Some(target) = prop.name.strip_prefix("_FontSub_") {
+            if let ibis_doc_model::CustomPropertyValue::Text(ref sub) = prop.value {
+                reader.presentation.font_substitutions.insert(target.to_string(), sub.clone());
             }
         }
     }
@@ -476,6 +501,7 @@ fn read_object_defaults<'d, 'i>(theme_node: Node<'d, 'i>, colors: &Colors) -> ib
                     join: ibis_doc_model::LineJoin::Miter,
                     compound: unqualified_attribute(ln, "cmpd").and_then(ibis_doc_model::LineCompound::parse).unwrap_or_default(),
                     alignment: unqualified_attribute(ln, "algn").and_then(ibis_doc_model::LineAlignment::parse).unwrap_or_default(),
+                    fill: None,
                 })
             });
 
@@ -595,6 +621,7 @@ fn read_object_defaults<'d, 'i>(theme_node: Node<'d, 'i>, colors: &Colors) -> ib
                             join: ibis_doc_model::LineJoin::Miter,
                             compound: unqualified_attribute(ln, "cmpd").and_then(ibis_doc_model::LineCompound::parse).unwrap_or_default(),
                             alignment: unqualified_attribute(ln, "algn").and_then(ibis_doc_model::LineAlignment::parse).unwrap_or_default(),
+                            fill: None,
                         });
                     }
                 }
@@ -680,6 +707,10 @@ fn read_show_properties(package: &Package, _main: &str, rels: &HashMap<String, c
 }
 
 /// `r:id` of an `p:sldId`; its namespace prefix varies between producers.
+fn descendant_named<'a, 'i>(node: Node<'a, 'i>, name: &str) -> Option<Node<'a, 'i>> {
+    node.descendants().find(|n| n.is_element() && n.tag_name().name() == name)
+}
+
 fn attr_rid<'a>(node: Node<'a, '_>) -> Option<&'a str> {
     node.attributes().find(|a| a.name() == "id" && a.namespace().is_some()).map(|a| a.value())
 }
@@ -781,6 +812,7 @@ struct Reader<'p, 'd, 'i> {
     slide_link_tooltips: HashMap<ibis_doc_model::ShapeId, String>,
     slide_aspect: std::collections::HashSet<ibis_doc_model::ShapeId>,
     slide_formulas: HashMap<ibis_doc_model::ShapeId, String>,
+    slide_glues: Vec<(ibis_doc_model::ShapeId, Option<(String, u32)>, Option<(String, u32)>)>,
     /// The slides by their parts (for hyperlinks to them).
     slide_parts: HashMap<String, ibis_doc_model::SlideId>,
     /// A sheet's charts as read: the shape, its chart part and where the
@@ -1331,6 +1363,20 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         slide.hidden = attr_bool(ctx.slide.root, "show") == Some(false);
         slide.name = path(ctx.slide.root, &["cSld"]).and_then(|c| attr(c, "name")).filter(|s| !s.is_empty()).map(str::to_string);
         slide.transition = read_transition(ctx.slide.root);
+        for (connector_id, start, end) in std::mem::take(&mut self.slide_glues) {
+            let resolve = |cxn: Option<(String, u32)>| -> Option<(u64, u32)> {
+                let (native_id, idx) = cxn?;
+                let target_id = self.native_ids.get(&native_id)?;
+                Some((target_id.0, idx))
+            };
+            let glue = ibis_doc_model::Glue {
+                start: resolve(start),
+                end: resolve(end),
+            };
+            if glue.start.is_some() || glue.end.is_some() {
+                slide.shape_glues.insert(connector_id, glue);
+            }
+        }
         self.last_native_ids = std::mem::take(&mut self.native_ids);
         // An effect on a group is one on each of its shapes.
         fn leaves(group: &ibis_doc_model::ShapeGroup, out: &mut Vec<ibis_doc_model::ShapeId>) {
@@ -1555,6 +1601,22 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         {
             self.slide_aspect.insert(shape.id);
         }
+        // コネクタの接続 (Glue): `cNvCxnSpPr` の `stCxn` / `endCxn`.
+        if let Some(parent) = c_nv_pr.and_then(|n| n.parent()) {
+            if let Some(cxn_pr) = elements(parent).find(|n| n.tag_name().name() == "cNvCxnSpPr") {
+                let parse_cxn = |tag: &str| -> Option<(String, u32)> {
+                    let el = elements(cxn_pr).find(|n| n.tag_name().name() == tag)?;
+                    let id = attr(el, "id")?.to_string();
+                    let idx = attr(el, "idx").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                    Some((id, idx))
+                };
+                let st = parse_cxn("stCxn");
+                let end = parse_cxn("endCxn");
+                if st.is_some() || end.is_some() {
+                    self.slide_glues.push((shape.id, st, end));
+                }
+            }
+        }
         if let Some(ph) = placeholder_of(node) {
             let own_frame = elements(node).find(|n| n.tag_name().name() == "spPr").and_then(|p| child(p, "xfrm")).is_some_and(|x| child(x, "off").is_some());
             self.slide_placeholders.insert(shape.id, ibis_doc_model::SlidePlaceholder { placeholder: placeholder_ref(ph), own_frame });
@@ -1728,10 +1790,19 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         } else {
             crate::geometry::geometry(geometry_node)
         };
-        let tilt = sp_pr.and_then(tilt);
+        let tilt = sp_pr.and_then(|p| tilt(p, &ctx.colors));
+        let effect_ref = style.and_then(|s| child(s, "effectRef"));
+        let effect_idx = effect_ref.and_then(|r| attr_i64(r, "idx")).unwrap_or(0).max(0) as usize;
+        let effect_ref_color = effect_ref.and_then(|r| ctx.colors.in_parent(r, None));
+        let themed_effect_style = if effect_idx > 0 { ctx.theme.and_then(|t| effect_style(t, effect_idx)) } else { None };
         let shadow = chain()
             .find_map(|p| drawing_child(p, "effectLst"))
             .and_then(|e| drawing_child(e, "outerShdw").or_else(|| drawing_child(e, "prstShdw")))
+            .or_else(|| {
+                themed_effect_style
+                    .and_then(|s| drawing_child(s, "effectLst"))
+                    .and_then(|e| drawing_child(e, "outerShdw").or_else(|| drawing_child(e, "prstShdw")))
+            })
             .and_then(|s| {
                 let is_prst = s.tag_name().name() == "prstShdw";
                 let prst_defaults = if is_prst {
@@ -1755,7 +1826,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 let ky = attr_i64(s, "ky").map(|v| v as i32).unwrap_or(prst_defaults.ky);
                 let rot_with_shape = attr(s, "rotWithShape").map(|v| v != "0").unwrap_or(true);
                 Some(ibis_doc_model::Shadow {
-                    color: ctx.colors.in_parent(s, None)?,
+                    color: ctx.colors.in_parent(s, effect_ref_color)?,
                     blur: attr_i64(s, "blurRad").unwrap_or(prst_defaults.blur),
                     distance: attr_i64(s, "dist").unwrap_or(prst_defaults.dist),
                     direction: attr_i64(s, "dir").unwrap_or(prst_defaults.dir as i64) as i32,
@@ -1770,13 +1841,23 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let glow = chain()
             .find_map(|p| drawing_child(p, "effectLst"))
             .and_then(|e| drawing_child(e, "glow"))
-            .and_then(|g| Some((ctx.colors.in_parent(g, None)?, attr_i64(g, "rad").unwrap_or(0))));
+            .or_else(|| {
+                themed_effect_style
+                    .and_then(|s| drawing_child(s, "effectLst"))
+                    .and_then(|e| drawing_child(e, "glow"))
+            })
+            .and_then(|g| Some((ctx.colors.in_parent(g, effect_ref_color)?, attr_i64(g, "rad").unwrap_or(0))));
         let inner_shadow = chain()
             .find_map(|p| drawing_child(p, "effectLst"))
             .and_then(|e| drawing_child(e, "innerShdw"))
+            .or_else(|| {
+                themed_effect_style
+                    .and_then(|s| drawing_child(s, "effectLst"))
+                    .and_then(|e| drawing_child(e, "innerShdw"))
+            })
             .and_then(|s| {
                 Some(ibis_doc_model::Shadow {
-                    color: ctx.colors.in_parent(s, None)?,
+                    color: ctx.colors.in_parent(s, effect_ref_color)?,
                     blur: attr_i64(s, "blurRad").unwrap_or(0),
                     distance: attr_i64(s, "dist").unwrap_or(0),
                     direction: attr_i64(s, "dir").unwrap_or(0) as i32,
@@ -1791,12 +1872,22 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let soft_edge = chain()
             .find_map(|p| drawing_child(p, "effectLst"))
             .and_then(|e| drawing_child(e, "softEdge"))
+            .or_else(|| {
+                themed_effect_style
+                    .and_then(|s| drawing_child(s, "effectLst"))
+                    .and_then(|e| drawing_child(e, "softEdge"))
+            })
             .and_then(|e| attr_i64(e, "rad"))
             .filter(|&r| r > 0);
         // Defaults: ECMA-376 Part 4 第 5 版 dml-main.xsd の CT_ReflectionEffect.
         let reflection = chain()
             .find_map(|p| drawing_child(p, "effectLst"))
             .and_then(|e| drawing_child(e, "reflection"))
+            .or_else(|| {
+                themed_effect_style
+                    .and_then(|s| drawing_child(s, "effectLst"))
+                    .and_then(|e| drawing_child(e, "reflection"))
+            })
             .map(|e| ibis_doc_model::Reflection {
                 blur: attr_i64(e, "blurRad").unwrap_or(0),
                 start_alpha: attr_i64(e, "stA").unwrap_or(100_000) as i32,
@@ -1816,6 +1907,11 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let bevel = chain()
             .find_map(|p| drawing_child(p, "sp3d"))
             .and_then(|s| drawing_child(s, "bevelT"))
+            .or_else(|| {
+                themed_effect_style
+                    .and_then(|s| drawing_child(s, "sp3d"))
+                    .and_then(|s| drawing_child(s, "bevelT"))
+            })
             .map(|b| {
                 let preset = attr(b, "prst").and_then(ibis_doc_model::BevelPreset::parse).unwrap_or_default();
                 let width = attr_i64(b, "w").unwrap_or(ibis_doc_model::Bevel::DEFAULT_SIZE);
@@ -1824,6 +1920,128 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             });
         Some(shape(ShapeKind::Auto(AutoShape { geometry, fill, stroke, text, tilt, shadow, glow, inner_shadow, soft_edge, reflection, bevel })))
     }
+
+fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
+    use ibis_doc_model::ArtisticEffect;
+    let img_effect = blip.descendants().find(|n| n.is_element() && n.tag_name().name() == "imgEffect")?;
+    for child in img_effect.children().filter(|n| n.is_element()) {
+        let tag = child.tag_name().name();
+        let attr_i32 = |name: &str| child.attribute(name).and_then(|v| v.parse::<i32>().ok());
+        match tag {
+            "artisticBlur" => {
+                let radius = attr_i32("radius").unwrap_or(10);
+                return Some(ArtisticEffect::Blur { radius });
+            }
+            "artisticCement" => {
+                let crack_spacing = attr_i32("crackSpacing").unwrap_or(24);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::Cement { crack_spacing, trans });
+            }
+            "artisticChalkSketch" => {
+                let pressure = attr_i32("pressure").unwrap_or(24);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::ChalkSketch { pressure, trans });
+            }
+            "artisticCrisscrossEtching" => {
+                let pressure = attr_i32("pressure").unwrap_or(24);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::CrisscrossEtching { pressure, trans });
+            }
+            "artisticCutout" => {
+                let number_of_shades = attr_i32("numberOfShades").unwrap_or(6);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::Cutout { number_of_shades, trans });
+            }
+            "artisticFilmGrain" => {
+                let grain_size = attr_i32("grainSize").unwrap_or(40);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::FilmGrain { grain_size, trans });
+            }
+            "artisticGlass" => {
+                let scaling = attr_i32("scaling").unwrap_or(25);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::Glass { scaling, trans });
+            }
+            "artisticGlowDiffused" => {
+                let intensity = attr_i32("intensity").unwrap_or(5);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::GlowDiffused { intensity, trans });
+            }
+            "artisticGlowEdges" => {
+                let smoothness = attr_i32("smoothness").unwrap_or(10);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::GlowEdges { smoothness, trans });
+            }
+            "artisticLightScreen" => {
+                let grid_size = attr_i32("gridSize").unwrap_or(4);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::LightScreen { grid_size, trans });
+            }
+            "artisticLineDrawing" => {
+                let pencil_size = attr_i32("pencilSize").unwrap_or(2);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::LineDrawing { pencil_size, trans });
+            }
+            "artisticMarker" => {
+                let size = attr_i32("size").unwrap_or(15);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::Marker { size, trans });
+            }
+            "artisticMosiaicBubbles" | "artisticMosaicBubbles" => {
+                let pressure = attr_i32("pressure").unwrap_or(15);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::MosaicBubbles { pressure, trans });
+            }
+            "artisticPaintBrush" => {
+                let brush_size = attr_i32("brushSize").unwrap_or(7);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::PaintBrush { brush_size, trans });
+            }
+            "artisticPaintStrokes" => {
+                let intensity = attr_i32("intensity").unwrap_or(5);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::PaintStrokes { intensity, trans });
+            }
+            "artisticPastelsSmooth" => {
+                let scaling = attr_i32("scaling").unwrap_or(24);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::PastelsSmooth { scaling, trans });
+            }
+            "artisticPencilGrayscale" => {
+                let pencil_size = attr_i32("pencilSize").unwrap_or(20);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::PencilGrayscale { pencil_size, trans });
+            }
+            "artisticPencilSketch" => {
+                let pressure = attr_i32("pressure").unwrap_or(24);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::PencilSketch { pressure, trans });
+            }
+            "artisticPhotocopy" => {
+                let detail = attr_i32("detail").unwrap_or(3);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::Photocopy { detail, trans });
+            }
+            "artisticPlasticWrap" => {
+                let smoothness = attr_i32("smoothness").unwrap_or(24);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::PlasticWrap { smoothness, trans });
+            }
+            "artisticTexturizer" => {
+                let scaling = attr_i32("scaling").unwrap_or(50);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::Texturizer { scaling, trans });
+            }
+            "artisticWatercolorSponge" => {
+                let brush_size = attr_i32("brushSize").unwrap_or(9);
+                let trans = attr_i32("trans").unwrap_or(0);
+                return Some(ArtisticEffect::WatercolorSponge { brush_size, trans });
+            }
+            _ => {}
+        }
+    }
+    None
+}
 
     fn picture(&mut self, ctx: &SlideCtx<'d, 'i, '_>, node: Node<'d, 'i>, rels: &Rels, level: Level, transform: Transform) -> Option<Shape> {
         let inherited = self.inherited(ctx, node, level);
@@ -1841,10 +2059,13 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 .unwrap_or_default();
             let sp_pr = child(node, "spPr");
             let stroke = sp_pr.and_then(|p| child(p, "ln")).and_then(|ln| self.stroke(ctx, Some(ln), None));
-            let corner = match crate::geometry::geometry(sp_pr.and_then(|p| child(p, "prstGeom"))) {
+            let picture_geometry = crate::geometry::geometry(sp_pr.and_then(|p| child(p, "prstGeom")));
+            let corner = match picture_geometry {
                 ibis_doc_model::Geometry::RoundRect { radius } => radius,
                 _ => 0,
             };
+            // Cut to a shape other than a rectangle (Office's "Crop to Shape").
+            let geometry = (!matches!(picture_geometry, ibis_doc_model::Geometry::Rect | ibis_doc_model::Geometry::RoundRect { .. })).then_some(picture_geometry);
             let effect_lst = sp_pr.and_then(|p| drawing_child(p, "effectLst"));
             let shadow = effect_lst.and_then(|e| drawing_child(e, "outerShdw")).and_then(|s| {
                 Some(ibis_doc_model::Shadow {
@@ -1892,6 +2113,37 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 let bright = attr_i64(l, "bright").unwrap_or(0).clamp(-100_000, 100_000) as i32;
                 let contrast = attr_i64(l, "contrast").unwrap_or(0).clamp(-100_000, 100_000) as i32;
                 (bright != 0 || contrast != 0).then_some((bright, contrast))
+            });
+            let tile = child(blip_fill, "tile").map(|t| ibis_doc_model::PictureTile {
+                tx: attr_i64(t, "tx").unwrap_or(0),
+                ty: attr_i64(t, "ty").unwrap_or(0),
+                sx: attr_i64(t, "sx").unwrap_or(100_000) as i32,
+                sy: attr_i64(t, "sy").unwrap_or(100_000) as i32,
+                flip: ibis_doc_model::TileFlip::parse(attr(t, "flip").unwrap_or("none")),
+                align: ibis_doc_model::TileAlign::parse(attr(t, "algn").unwrap_or("tl")),
+            });
+            let fill_rect = child(blip_fill, "stretch").and_then(|s| child(s, "fillRect")).map(|r| ["l", "t", "r", "b"].map(|k| attr_i64(r, k).unwrap_or(0) as i32)).filter(|r| *r != [0, 0, 0, 0]);
+            // The other colour effects: grey, black and white, one colour for all, a colour changed, the opacity.
+            let effects = child(blip_fill, "blip").map_or_else(ibis_doc_model::BlipEffects::default, |b| {
+                let mut e = ibis_doc_model::BlipEffects::default();
+                e.grayscale = drawing_child(b, "grayscl").is_some();
+                e.bilevel = drawing_child(b, "biLevel").map(|l| attr_i64(l, "thresh").unwrap_or(50_000).clamp(0, 100_000) as i32);
+                e.replace = drawing_child(b, "clrRepl").and_then(|r| elements(r).next()).and_then(|c| ctx.colors.resolve(c, None)).map(|c| c.rgb);
+                e.change = drawing_child(b, "clrChange").and_then(|c| {
+                    let to = child(c, "clrTo").and_then(|t| elements(t).next())?;
+                    let transparent = child(to, "alpha").and_then(|a| attr_i64(a, "val")).is_some_and(|v| v == 0);
+                    if transparent {
+                        return None;
+                    }
+                    let from = child(c, "clrFrom").and_then(|f| ctx.colors.in_parent(f, None))?;
+                    Some((from.rgb, ctx.colors.resolve(to, None)?.rgb))
+                });
+                e.opacity = drawing_child(b, "alphaModFix")
+                    .map(|a| attr_i64(a, "amt").unwrap_or(100_000))
+                    .or_else(|| drawing_child(b, "alphaRepl").and_then(|a| attr_i64(a, "a")))
+                    .map(|v| v.clamp(0, 100_000) as i32)
+                    .filter(|v| *v != 100_000);
+                e
             });
             // A video or audio clip: the file a `p14:media` embeds.
             let clip = child(node, "nvPicPr").and_then(|n| child(n, "nvPr")).and_then(|nv| {
@@ -1986,12 +2238,18 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 }
                 Some(ibis_doc_model::Clip { media: clip, audio: format.is_audio(), options, link })
             });
+            let artistic_effect = child(blip_fill, "blip").and_then(Self::parse_artistic_effect);
             let name = child(node, "nvPicPr").and_then(|n| child(n, "cNvPr")).and_then(|c| attr(c, "name")).unwrap_or("").to_string();
-            ShapeKind::Picture(Picture { media, crop, stroke, corner, duotone, clear, luminance, clip, shadow, reflection, soft_edge, alt_text: Default::default(), decorative: false, name })
+            ShapeKind::Picture(Picture { media, crop, stroke, corner, duotone, clear, luminance, clip, shadow, reflection, soft_edge, alt_text: Default::default(), decorative: false, name, geometry, effects, tile, fill_rect, artistic_effect })
         } else {
             ShapeKind::Placeholder(Placeholder::Picture(format))
         };
         let id = self.presentation.new_shape_id();
+        if let Some(f_node) = child(node, "f") {
+            if let Some(f_text) = f_node.text().map(str::trim).filter(|s| !s.is_empty()) {
+                self.slide_formulas.insert(id, f_text.to_string());
+            }
+        }
         Some(Shape { id, frame, rotation, flip_h, flip_v, kind, floating: None })
     }
 
@@ -2116,7 +2374,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let (x, y, w, h) = drawing.bounds;
         let frame = transform.rect(x.round() as i64, y.round() as i64, w.round() as i64, h.round() as i64);
         let media = self.presentation.add_media(MediaFormat::Svg, drawing.svg.into_bytes());
-        let kind = ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new() });
+        let kind = ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new(), geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None });
         let id = self.presentation.new_shape_id();
         Some(Shape { id, frame, rotation: 0, flip_h: false, flip_v: false, kind, floating: None })
     }
@@ -2134,59 +2392,64 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         Some((id, format))
     }
 
+fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Option<Color>) -> Option<Fill> {
+    let mut stops: Vec<GradientStop> = drawing_child(node, "gsLst")
+        .into_iter()
+        .flat_map(|l| elements(l).filter(|n| n.has_tag_name(("http://schemas.openxmlformats.org/drawingml/2006/main", "gs"))))
+        .filter_map(|gs| {
+            let color = colors.in_parent(gs, placeholder)?;
+            Some(GradientStop { position: unqualified_attribute(gs, "pos").and_then(|v|v.trim().parse::<i64>().ok()).unwrap_or(0).clamp(0, 100_000) as u32, color })
+        })
+        .collect();
+    stops.sort_by_key(|s| s.position);
+    if stops.is_empty() {
+        return None;
+    }
+    if let Some(path) = drawing_child(node, "path") {
+        let kind = unqualified_attribute(path, "path").and_then(GradientPath::parse).unwrap_or(GradientPath::Circle);
+        let rect = drawing_child(path, "fillToRect");
+        if let Some(r) = rect {
+            let has_any_attr = ["l", "t", "r", "b"].iter().any(|&k| unqualified_attribute(r, k).is_some());
+            if !has_any_attr {
+                return Some(match kind {
+                    GradientPath::Circle => Fill::Path { path: kind, focus: [0, 0, 100_000, 100_000], stops },
+                    _ => Fill::Solid(stops[0].color),
+                });
+            }
+        }
+        let focus = ["l", "t", "r", "b"].map(|k| rect.and_then(|r| unqualified_attribute(r, k)).and_then(|v|v.trim().parse::<i64>().ok()).unwrap_or(0) as i32);
+        return Some(Fill::Path { path: kind, focus, stops });
+    }
+    let lin = drawing_child(node, "lin");
+    let angle = lin.and_then(|l| unqualified_attribute(l, "ang")).and_then(|v|v.trim().parse::<i64>().ok()).unwrap_or(5_400_000) as i32;
+    let scaled = lin.and_then(|l| unqualified_attribute(l, "scaled")).map_or(false, |v| v == "1" || v == "true");
+    let flip = ibis_doc_model::TileFlip::parse(unqualified_attribute(node, "flip").unwrap_or("none"));
+    if let Some(tr) = drawing_child(node, "tileRect") {
+        let tile = ["l", "t", "r", "b"].map(|k| {
+            unqualified_attribute(tr, k)
+                .and_then(|v| v.trim().parse::<i64>().ok())
+                .unwrap_or(0) as i32
+        });
+        return Some(Fill::TileLinear { angle, scaled, stops, tile, flip });
+    }
+    let mut angle = angle;
+    match flip {
+        ibis_doc_model::TileFlip::X => angle = 10_800_000 - angle,
+        ibis_doc_model::TileFlip::Y => angle = -angle,
+        ibis_doc_model::TileFlip::Xy => angle = angle + 10_800_000,
+        _ => {}
+    }
+    angle = angle.rem_euclid(21_600_000);
+    Some(Fill::Linear { angle, scaled, stops })
+}
+
     /// A fill element (`a:solidFill`, `a:gradFill`, …). `placeholder` is the
     /// colour `phClr` stands for; `group` is the fill `a:grpFill` refers to.
     fn fill(&mut self, ctx: &SlideCtx<'d, 'i, '_>, node: Node, rels: &Rels, placeholder: Option<Color>, group: Option<&Fill>) -> Option<Fill> {
         match node.tag_name().name() {
             "noFill" => Some(Fill::None),
             "solidFill" => Some(Fill::Solid(ctx.colors.in_parent(node, placeholder)?)),
-            "gradFill" => {
-                let mut stops: Vec<GradientStop> = drawing_child(node, "gsLst")
-                    .into_iter()
-                    .flat_map(|l| elements(l).filter(|n| n.has_tag_name(("http://schemas.openxmlformats.org/drawingml/2006/main", "gs"))))
-                    .filter_map(|gs| {
-                        let color = ctx.colors.in_parent(gs, placeholder)?;
-                        Some(GradientStop { position: unqualified_attribute(gs, "pos").and_then(|v|v.trim().parse::<i64>().ok()).unwrap_or(0).clamp(0, 100_000) as u32, color })
-                    })
-                    .collect();
-                stops.sort_by_key(|s| s.position);
-                if stops.is_empty() {
-                    return None;
-                }
-                if let Some(path) = drawing_child(node, "path") {
-                    let kind = unqualified_attribute(path, "path").and_then(GradientPath::parse).unwrap_or(GradientPath::Circle);
-                    let rect = drawing_child(path, "fillToRect");
-                    if let Some(r) = rect {
-                        let has_any_attr = ["l", "t", "r", "b"].iter().any(|&k| unqualified_attribute(r, k).is_some());
-                        if !has_any_attr {
-                            return Some(Fill::None);
-                        }
-                    }
-                    let focus = ["l", "t", "r", "b"].map(|k| rect.and_then(|r| unqualified_attribute(r, k)).and_then(|v|v.trim().parse::<i64>().ok()).unwrap_or(0) as i32);
-                    return Some(Fill::Path { path: kind, focus, stops });
-                }
-                let lin = drawing_child(node, "lin");
-                let angle = lin.and_then(|l| unqualified_attribute(l, "ang")).and_then(|v|v.trim().parse::<i64>().ok()).unwrap_or(5_400_000) as i32;
-                let scaled = lin.and_then(|l| unqualified_attribute(l, "scaled")).map_or(false, |v| v == "1" || v == "true");
-                let flip = ibis_doc_model::TileFlip::parse(unqualified_attribute(node, "flip").unwrap_or("none"));
-                if let Some(tr) = drawing_child(node, "tileRect") {
-                    let tile = ["l", "t", "r", "b"].map(|k| {
-                        unqualified_attribute(tr, k)
-                            .and_then(|v| v.trim().parse::<i64>().ok())
-                            .unwrap_or(0) as i32
-                    });
-                    return Some(Fill::TileLinear { angle, scaled, stops, tile, flip });
-                }
-                let mut angle = angle;
-                match flip {
-                    ibis_doc_model::TileFlip::X => angle = 10_800_000 - angle,
-                    ibis_doc_model::TileFlip::Y => angle = -angle,
-                    ibis_doc_model::TileFlip::Xy => angle = angle + 10_800_000,
-                    _ => {}
-                }
-                angle = angle.rem_euclid(21_600_000);
-                Some(Fill::Linear { angle, scaled, stops })
-            }
+            "gradFill" => Self::parse_grad_fill(&ctx.colors, node, placeholder),
             "blipFill" => {
                 let embed = child(node, "blip").and_then(blip_target)?;
                 let (media, format) = self.media(rels, embed)?;
@@ -2280,6 +2543,13 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let compound = ln.and_then(|l| attr(l, "cmpd")).or_else(|| themed.and_then(|l| attr(l, "cmpd"))).and_then(ibis_doc_model::LineCompound::parse).unwrap_or_default();
         let default_join = ibis_doc_model::LineJoin::Miter;
         let join = ln.and_then(join_of).or_else(|| themed.and_then(join_of)).unwrap_or(default_join);
+        let line_fill = ln.and_then(fill_element).and_then(|f| {
+            if f.tag_name().name() == "gradFill" {
+                Self::parse_grad_fill(&ctx.colors, f, ref_color)
+            } else {
+                None
+            }
+        });
         Some(Stroke {
             color,
             width,
@@ -2291,6 +2561,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             join,
             compound,
             alignment: ln.and_then(|l| attr(l, "algn")).or_else(|| themed.and_then(|l| attr(l, "algn"))).and_then(ibis_doc_model::LineAlignment::parse).unwrap_or_default(),
+            fill: line_fill,
         })
     }
 
@@ -2390,6 +2661,11 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 if let Some(prst) = attr(warp, "prst") {
                     if prst != "textNoShape" {
                         out.warp = Some(prst.to_string());
+                        out.warp_adjust = drawing_child(warp, "avLst")
+                            .into_iter()
+                            .flat_map(|l| elements(l).filter(|g| g.tag_name().name() == "gd"))
+                            .filter_map(|g| Some((attr(g, "name")?.to_string(), attr(g, "fmla")?.strip_prefix("val ")?.trim().parse::<i64>().ok()?)))
+                            .collect();
                     }
                 }
             }
@@ -2474,6 +2750,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 link_tooltip: rpr.and_then(|r| child(r, "hlinkClick")).and_then(|h| attr(h, "tooltip")).filter(|s| !s.is_empty()).map(str::to_string),
                 shadow: run.shadow.flatten(),
                 lang: run.lang,
+                math: None,
+                math_inline: false,
             }
         };
 
@@ -2537,6 +2815,19 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     lines.push(Vec::new());
                     sources.push(Vec::new());
                     elements_of_runs.push(Vec::new());
+                }
+                // A formula (`a14:m`, alone or in the `Choice` of a markup-compatibility wrapper).
+                "AlternateContent" | "m" => {
+                    let formula = if n.has_tag_name("m") { Some(n) } else { child(n, "Choice").and_then(|c| elements(c).find(|e| e.has_tag_name("m"))) };
+                    if let Some(math) = formula.and_then(|f| elements(f).find(|e| e.tag_name().namespace() == Some(crate::math_xml::M))) {
+                        let text = crate::math_xml::read_math(math).linear();
+                        if !text.is_empty() {
+                            let style = RunStyle { font: Some("Cambria Math".to_string()), math: Some(Box::new(crate::math_xml::read_math(math))), math_inline: math.tag_name().name() == "oMath", ..run_style(None, &text) };
+                            lines.last_mut().expect("a line").push(Run { text, style });
+                            sources.last_mut().expect("a line").push(None);
+                            elements_of_runs.last_mut().expect("a line").push(crate::xml::element_path(n));
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -2677,10 +2968,12 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             band_col: flag("bandCol"),
         };
         let style_id = pr.and_then(|p| child(p, "tableStyleId")).and_then(|n| n.text()).map(str::trim);
-        let style = self.table_styles.and_then(|list| {
-            let id = style_id.or_else(|| attr(list, "def"))?;
-            children(list, "tblStyle").find(|s| attr(*s, "styleId") == Some(id))
-        });
+        let def_id = self.table_styles.and_then(|list| attr(list, "def")).unwrap_or("{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}");
+        let target_id = style_id.unwrap_or(def_id);
+        let style = self
+            .table_styles
+            .and_then(|list| children(list, "tblStyle").find(|s| attr(*s, "styleId").is_some_and(|id| id.eq_ignore_ascii_case(target_id))))
+            .or_else(|| crate::drawing_table_style::find_builtin_style(target_id));
 
         // Style parts in the order they apply, each with the cells it covers.
         let mut parts: Vec<StylePart> = Vec::new();
@@ -2883,20 +3176,50 @@ fn script_segments(text: &str) -> Vec<&str> {
     out
 }
 
-/// The 3D tilt of a shape seen through an orthographic camera
-/// (`a:scene3d/a:camera/a:rot` and `a:sp3d/@z`), if it has one.
-fn tilt(sp_pr: Node) -> Option<ibis_doc_model::Tilt> {
-    let camera = path(sp_pr, &["scene3d", "camera"])?;
-    if !attr(camera, "prst").is_some_and(|p| p.starts_with("orthographic")) {
+/// The 3D rotation, depth and extrusion of a shape (`a:scene3d` and `a:sp3d`).
+fn tilt(sp_pr: Node, colors: &Colors) -> Option<ibis_doc_model::Tilt> {
+    use ibis_doc_model::CameraPreset;
+    let camera = path(sp_pr, &["scene3d", "camera"]);
+    let sp3d = child(sp_pr, "sp3d");
+
+    if camera.is_none() && sp3d.is_none() {
         return None;
     }
-    let rot = child(camera, "rot")?;
-    let tilt = ibis_doc_model::Tilt {
-        lat: attr_i64(rot, "lat").unwrap_or(0) as i32,
-        lon: attr_i64(rot, "lon").unwrap_or(0) as i32,
-        depth: child(sp_pr, "sp3d").and_then(|s| attr_i64(s, "z")).unwrap_or(0),
+
+    let camera_preset = camera.and_then(|c| attr(c, "prst")).and_then(CameraPreset::from_str);
+    let (def_lat, def_lon, def_rev) = camera_preset.map(|p| p.default_angles()).unwrap_or((0, 0, 0));
+
+    let parse_angle = |v: i64| -> i32 {
+        let m = 21_600_000i64;
+        let norm = (v % m + m) % m;
+        if norm > 10_800_000 {
+            (norm - m) as i32
+        } else {
+            norm as i32
+        }
     };
-    (tilt.lat != 0 || tilt.lon != 0).then_some(tilt)
+    let rot = camera.and_then(|c| child(c, "rot"));
+    let lat = rot.and_then(|r| attr_i64(r, "lat")).map(parse_angle).unwrap_or(def_lat);
+    let lon = rot.and_then(|r| attr_i64(r, "lon")).map(parse_angle).unwrap_or(def_lon);
+    let rev = rot.and_then(|r| attr_i64(r, "rev")).map(parse_angle).unwrap_or(def_rev);
+
+    let depth = sp3d.and_then(|s| attr_i64(s, "z")).unwrap_or(0);
+    let extrusion_h = sp3d.and_then(|s| attr_i64(s, "extrusionH")).unwrap_or(0);
+    let extrusion_color = sp3d.and_then(|s| child(s, "extrusionClr")).and_then(|c| colors.in_parent(c, None));
+
+    if lat != 0 || lon != 0 || rev != 0 || depth != 0 || extrusion_h != 0 || camera_preset.is_some() || extrusion_color.is_some() {
+        Some(ibis_doc_model::Tilt {
+            lat,
+            lon,
+            rev,
+            depth,
+            extrusion_h,
+            extrusion_color,
+            camera_preset,
+        })
+    } else {
+        None
+    }
 }
 
 /// Empty columns and rows shown past a worksheet's used cells, and the
@@ -2926,6 +3249,11 @@ pub(crate) fn read_xlsx(data: &[u8]) -> Result<Presentation, Error> {
 
 /// [`read_xlsx`], and where the workbook's parts are, for saving.
 pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate::save::xlsx::SourceMap), Error> {
+    read_xlsx_with_records(data, None)
+}
+
+/// As `read_xlsx_with_sources`; `records` (a text file's) fill the cells of the one empty sheet in `data` (`csv::workbook_from("", ..)`) without being written into it and read back.
+pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]>) -> Result<(Presentation, crate::save::xlsx::SourceMap), Error> {
     use crate::xlsx;
 
     let package = Package::new(data)?;
@@ -3022,6 +3350,18 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
             crate::xlsx_external::read_link(doc.root_element(), target.as_deref())
         })
         .collect();
+    // The クエリ エディター's queries (a Custom XML Data part in our namespace).
+    let (queries, query_parameters) = main_rels
+        .values()
+        .filter(|r| !r.external && r.kind.ends_with("/customXml"))
+        .filter_map(|r| package.read(&r.target).ok())
+        .filter_map(|bytes| String::from_utf8(bytes).ok())
+        .find(|text| text.contains("https://ibis.ne.jp/ibisoffice/queries"))
+        .and_then(|text| {
+            let doc = roxmltree::Document::parse(&text).ok()?;
+            Some(ibis_doc_model::query::decode_queries(doc.root_element().text().unwrap_or("")))
+        })
+        .unwrap_or_default();
     let book_names: Vec<String> = external_books.iter().map(|b| b.name.clone()).collect();
     // Each link's part (`xl/externalLinks/externalLink1.xml`), in the same order, for saving.
     let external_parts: Vec<Option<String>> = child(root, "externalReferences")
@@ -3035,6 +3375,16 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
         .filter(|r| !r.external && r.kind.ends_with("/slicerCache"))
         .filter_map(|r| package.read_xml(&r.target).ok())
         .filter_map(|xml| parse("slicerCache", &xml).ok().and_then(|d| crate::xlsx_slicer::read_cache(d.root_element())))
+        .map(|c| (c.name.clone(), c))
+        .collect();
+    let timeline_caches: HashMap<String, crate::xlsx_timeline::TimelineCache> = main_rels
+        .values()
+        .filter(|r| !r.external && r.kind.ends_with("/timelineCache"))
+        .filter_map(|r| package.read_xml(&r.target).ok().map(|x| (r.target.clone(), x)))
+        .filter_map(|(part, xml)| parse("timelineCache", &xml).ok().and_then(|d| crate::xlsx_timeline::read_cache(d.root_element())).map(|mut c| {
+            c.part = part;
+            c
+        }))
         .map(|c| (c.name.clone(), c))
         .collect();
     let mut slicer_tables: HashMap<u32, String> = HashMap::new();
@@ -3079,11 +3429,18 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
     // follow in order.
     let xmls = par_map(&sheets, |(_, part, _)| package.read_xml(part));
     let xmls = xmls.into_iter().collect::<Result<Vec<String>, Error>>()?;
+    // For the progress bar (the shares of a large workbook's time, measured): unpacking, parsing, then the rows.
+    crate::progress::fraction(0.05);
+    crate::progress::rows_begin(xmls.iter().map(|x| x.len() as u64).sum(), 0.18, 0.96);
     let indexed: Vec<(usize, &String)> = xmls.iter().enumerate().collect();
     // The biggest sheets first: they are what the threads end on otherwise.
     let read = par_map_largest_first(&indexed, |(_, xml)| xml.len(), |(i, xml)| {
         let doc = parse(&sheets[*i].1, xml)?;
+        crate::progress::fraction(0.18);
         let mut sheet = xlsx::read_sheet(doc.root_element(), &styles, &strings, &phonetics, digit, &sheet_colors, &dynamic_metadata);
+        if let Some(records) = records {
+            xlsx::fill_csv_sheet(&mut sheet, doc.root_element(), &styles, digit, records);
+        }
         // Sparkline data on the sheet itself, named or not.
         for sp in sheet.sparklines.iter_mut().flat_map(|g| g.sparklines.iter_mut()) {
             if sp.sheet.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(&sheets[*i].0)) {
@@ -3092,7 +3449,17 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
         }
         Ok::<_, Error>((doc, sheet))
     });
-    let mut read = read.into_iter().collect::<Result<Vec<_>, Error>>()?.into_iter();
+    let read = read.into_iter().collect::<Result<Vec<_>, Error>>()?;
+    // The new chart kinds (chartEx) name their data (`_xlchart.v1.0`): the cells of every sheet to read it from, and the
+    // defined names the references are.
+    let has_chart_ex = package.read_xml("[Content_Types].xml").map(|t| t.contains("chartex")).unwrap_or(false);
+    let chart_ex_sheets: Vec<(String, ibis_doc_model::Sheet)> = if has_chart_ex { sheets.iter().zip(&read).map(|((name, ..), (_, sheet))| (name.to_lowercase(), sheet.clone())).collect() } else { Vec::new() };
+    let chart_ex_names: HashMap<String, String> = if has_chart_ex {
+        child(root, "definedNames").into_iter().flat_map(|d| children(d, "definedName")).filter_map(|d| Some((attr(d, "name")?.to_string(), d.text()?.to_string()))).collect()
+    } else {
+        HashMap::new()
+    };
+    let mut read = read.into_iter();
 
     let mut presentation = Presentation::empty(EmuSize::WIDESCREEN);
     let mut chart_sources: Vec<crate::save::xlsx::ChartSource> = Vec::new();
@@ -3115,6 +3482,13 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
             .into_iter()
             .filter_map(|p| package.read_xml(p).ok())
             .flat_map(|xml| parse("slicers", &xml).map(|d| crate::xlsx_slicer::read_slicers(d.root_element(), &slicer_caches, &slicer_tables)).unwrap_or_default())
+            .collect();
+
+        let sheet_timelines: Vec<ibis_doc_model::timeline::Timeline> = sheet_rels
+            .values()
+            .filter(|r| !r.external && r.kind.ends_with("/timeline"))
+            .filter_map(|r| package.read_xml(&r.target).ok().map(|x| (r.target.clone(), x)))
+            .flat_map(|(part, xml)| parse("timelines", &xml).map(|d| crate::xlsx_timeline::read_timelines(d.root_element(), &part, &timeline_caches)).unwrap_or_default())
             .collect();
 
         // Hyperlinks, their web addresses from the sheet's relationships.
@@ -3196,8 +3570,20 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
         let mut xml_parts: HashMap<String, String> = HashMap::new();
         let mut chart_drawings: HashMap<String, String> = HashMap::new();
         let mut chart_parts: Vec<String> = Vec::new();
+        // SmartArt graphics' drawings (`dsp:drawing`), by their data part (as on a slide).
+        let mut diagram_drawings: HashMap<String, String> = HashMap::new();
         if let Some(drawing) = &drawing {
             xml_parts.insert(drawing.clone(), package.read_xml(drawing)?);
+            let drawing_rels = package.relationships(drawing)?;
+            for rel in drawing_rels.values().filter(|r| !r.external && r.kind.ends_with("/diagramData")) {
+                let Ok(data) = package.read_xml(&rel.target) else { continue };
+                let Some(id) = data.split("dataModelExt").nth(1).and_then(|s| s.split("relId=\"").nth(1)).and_then(|s| s.split('"').next()) else { continue };
+                let Some(shapes) = drawing_rels.get(id).filter(|r| !r.external && r.kind.ends_with("/diagramDrawing")).map(|r| r.target.clone()) else { continue };
+                if let Ok(text) = package.read_xml(&shapes) {
+                    diagram_drawings.insert(rel.target.clone(), shapes.clone());
+                    xml_parts.insert(shapes, text);
+                }
+            }
             for rel in package.relationships(drawing)?.values().filter(|r| !r.external && (r.kind.ends_with("/chart") || r.kind.ends_with("/chartEx"))) {
                 chart_parts.push(rel.target.clone());
                 if let Ok(Some(shapes)) = package.related(&rel.target, REL_CHART_USER_SHAPES)
@@ -3214,9 +3600,35 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
         }
         // The sheet's charts read on several threads (a sheet of charts
         // with thousands of points each), for the drawing to take in order.
+        let chart_ex_names_shared = std::sync::Arc::new(chart_ex_names.clone());
+        let theme_shared = std::sync::Arc::new(theme.clone());
         let charts: HashMap<String, Option<ibis_doc_model::Chart>> = par_map(&chart_parts, |part| {
             let colors = Colors::new(&theme, None, &[]);
             let xml = package.read_xml(part).ok();
+            let raw_xml = xml.clone().filter(|x| has_chart_ex && x.contains("chartex"));
+            // A chartEx's data named by references: read from the cells.
+            let xml = xml.map(|x| {
+                if !has_chart_ex || !x.contains("chartex") {
+                    return x;
+                }
+                crate::chart_ex::fill_refs(&x, &chart_ex_names, &|sheet: &str, range: ibis_doc_model::CellRange| {
+                    let (_, sh) = chart_ex_sheets.iter().find(|(n, _)| *n == sheet.to_lowercase())?;
+                    let last_row = range.last_row.min(sh.cells.iter().map(|c| c.row).max().unwrap_or(0));
+                    let last_column = range.last_column.min(sh.cells.iter().map(|c| c.column).max().unwrap_or(0));
+                    let mut grid = Vec::new();
+                    for row in range.first_row..=last_row {
+                        let mut line = Vec::new();
+                        for column in range.first_column..=last_column {
+                            line.push(match sh.cell(row, column) {
+                                Some(c) => (c.text.clone(), if let ibis_doc_model::CellValue::Number(n) = c.value { Some(n) } else { None }, sh.styles.get(c.style as usize).map(|s| s.number_format.clone()).unwrap_or_else(|| "General".into())),
+                                None => (String::new(), None, "General".into()),
+                            });
+                        }
+                        grid.push(line);
+                    }
+                    Some(grid)
+                })
+            });
             let chart = xml.as_deref().and_then(|xml| parse(part, xml).ok()).and_then(|doc| {
                 let mut chart = crate::chart::read(doc.root_element(), &colors)?;
                 // A worksheet's chart is laid out as Excel's engine does
@@ -3226,6 +3638,12 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
                 // Excel's thin grey border (in a slide it has none).
                 if child(doc.root_element(), "spPr").is_none() && chart.border.is_none() {
                     chart.border = Some(ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x868686)), 9_525));
+                }
+                // A chartEx chart goes on from its part's XML: made again as its cells change.
+                if chart.ex.is_some() || raw_xml.is_some() {
+                    if let Some(raw) = raw_xml {
+                        chart.ex_source = Some(ibis_doc_model::ExSourceRef(std::sync::Arc::new(crate::chart_ex::ExSourceImpl::new(raw, chart_ex_names_shared.clone(), theme_shared.clone())), true));
+                    }
                 }
                 Some(chart)
             });
@@ -3286,7 +3704,7 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
             default_text: None,
             table_styles: None,
             user_shapes: chart_drawings.iter().map(|(chart, d)| (chart.clone(), (docs[d.as_str()].root_element(), rels[d.as_str()].clone()))).collect(),
-            diagrams: HashMap::new(),
+            diagrams: diagram_drawings.iter().map(|(data, d)| (data.clone(), (docs[d.as_str()].root_element(), rels[d.as_str()].clone()))).collect(),
             native_ids: HashMap::new(),
             last_native_ids: HashMap::new(),
             pending: Vec::new(),
@@ -3308,6 +3726,7 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
         slide_link_tooltips: HashMap::new(),
         slide_aspect: Default::default(),
         slide_formulas: HashMap::new(),
+        slide_glues: Vec::new(),
         slide_parts: HashMap::new(),
             chart_sources: Vec::new(),
             xlsx_shape_sources: Vec::new(),
@@ -3358,6 +3777,13 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
                     _ => continue,
                 };
                 extent = (extent.0.max(rect.right()), extent.1.max(rect.bottom()));
+                // A timeline likewise (`tsle:timeslicer`).
+                if let Some(timeline) = crate::xlsx_timeline::drawing_timeline_name(*anchor).and_then(|name| sheet_timelines.iter().find(|t| t.name == name)) {
+                    let id = reader.presentation.new_shape_id();
+                    slide.shapes.push(Shape { id, frame: rect, rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Timeline(std::sync::Arc::new(timeline.clone())), floating: None });
+                    slide.shape_placements.insert(id, ibis_doc_model::ObjectPlacement::MoveAndSize);
+                    continue;
+                }
                 // A slicer is drawn by the app from its definition (Excel puts the
                 // `mc:AlternateContent` with its `sle:slicer` inside the anchor).
                 if let Some(slicer) = crate::xlsx_slicer::drawing_slicer_name(*anchor).and_then(|name| sheet_slicers.iter().find(|s| s.name == name)) {
@@ -3435,6 +3861,12 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
                 reader.anchor = None;
             }
         }
+        // The shapes of SmartArt graphics (and of charts' own shapes) belong to their frame.
+        for shape in &slide.shapes {
+            if let Some(attached) = reader.sources.attached.get(&shape.id) {
+                slide.attached.insert(shape.id, attached.clone());
+            }
+        }
         // Pictures in cells: each drawn in its cell (scaled to fit, centred).
         for image in &cell_images {
             let Some(rid) = rich_rel_rids.get(image.index as usize) else { continue };
@@ -3455,6 +3887,86 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
             slide.shapes.push(Shape { id, frame, rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Picture(ibis_doc_model::Picture::new(media)), floating: None });
             slide.shape_placements.insert(id, ibis_doc_model::ObjectPlacement::MoveAndSize);
         }
+        // Form controls (フォーム コントロール): each `control` of the sheet with its `formControlPr`, placed by its anchor,
+        // with the text its drawing shape has.
+        for control in sheet_root.descendants().filter(|n| n.is_element() && n.tag_name().name() == "control" && unqualified_attribute(*n, "shapeId").is_some()) {
+            let Some(rel) = attr_rid(control).and_then(|rid| sheet_rels.get(rid)) else { continue };
+            let Some(xml) = package.read_xml(&rel.target).ok() else { continue };
+            let Some(props_doc) = parse(&rel.target, &xml).ok() else { continue };
+            let props = props_doc.root_element();
+            let get = |name: &str| unqualified_attribute(props, name);
+            let number = |name: &str, default: i64| get(name).and_then(|v| v.parse::<i64>().ok()).unwrap_or(default);
+            use ibis_doc_model::ControlKind as K;
+            let kind = match get("objectType") {
+                Some("Button") => K::Button,
+                Some("CheckBox") => K::CheckBox,
+                Some("Radio") => K::Radio,
+                Some("Scroll") => K::Scroll,
+                Some("Spin") => K::Spin,
+                Some("Drop") => K::Drop,
+                Some("List") => K::List,
+                Some("GBox") => K::GroupBox,
+                Some("Label") => K::Label,
+                _ => continue,
+            };
+            let Some(anchor) = descendant_named(control, "anchor") else { continue };
+            let (Some(from), Some(to)) = (child(anchor, "from"), child(anchor, "to")) else { continue };
+            let ((x0, y0), (x1, y1)) = (at(anchor_cell(from)), at(anchor_cell(to)));
+            extent = (extent.0.max(x1), extent.1.max(y1));
+            let shape_id = unqualified_attribute(control, "shapeId").unwrap_or("");
+            // The text and its character properties: the runs of the drawing shape of the same number.
+            let sp_node = drawing
+                .as_deref()
+                .and_then(|d| docs.get(d))
+                .and_then(|doc| doc.descendants().find(|n| n.is_element() && n.tag_name().name() == "cNvPr" && unqualified_attribute(*n, "id") == Some(shape_id)))
+                .and_then(|c| c.ancestors().find(|n| n.is_element() && n.tag_name().name() == "sp"));
+            let text = sp_node
+                .map(|sp| sp.descendants().filter(|n| n.is_element() && n.tag_name().name() == "t").filter_map(|t| t.text()).collect::<Vec<_>>().join(""))
+                .unwrap_or_default();
+            let mut c = ibis_doc_model::FormControl::new(kind, unqualified_attribute(control, "name").unwrap_or(""));
+            c.text = text;
+            c.part = rel.target.clone();
+            c.link = get("fmlaLink").map(str::to_string);
+            c.range = get("fmlaRange").map(str::to_string);
+            c.min = number("min", 0);
+            c.max = number("max", if kind == K::Scroll { 100 } else { 30000 });
+            c.step = number("inc", 1);
+            c.page = number("page", 10);
+            c.horizontal = get("horiz") == Some("1");
+            c.checked = match get("checked") {
+                Some("Checked") => 1,
+                Some("Mixed") => 2,
+                _ => 0,
+            };
+            c.first_button = get("firstButton") == Some("1");
+            c.three_d = match kind {
+                K::Button | K::Scroll | K::Spin => true,
+                K::Label => false,
+                _ => !matches!(get("noThreeD"), Some("1" | "true")),
+            };
+            if let Some(rpr) = sp_node.and_then(|sp| sp.descendants().find(|n| n.is_element() && n.tag_name().name() == "rPr")) {
+                c.font_size = unqualified_attribute(rpr, "sz").and_then(|v| v.parse::<i32>().ok());
+                c.bold = matches!(unqualified_attribute(rpr, "b"), Some("1" | "true"));
+                c.italic = matches!(unqualified_attribute(rpr, "i"), Some("1" | "true"));
+                c.font = child(rpr, "ea")
+                    .or_else(|| child(rpr, "latin"))
+                    .and_then(|n| unqualified_attribute(n, "typeface"))
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                c.text_color = child(rpr, "solidFill")
+                    .and_then(|sf| child(sf, "srgbClr"))
+                    .and_then(|clr| unqualified_attribute(clr, "val"))
+                    .and_then(|hex| u32::from_str_radix(hex.trim(), 16).ok())
+                    .map(ibis_doc_model::Rgb);
+            }
+            c.value = if matches!(kind, K::Drop | K::List) { number("sel", 0) } else { number("val", 0) };
+            if kind == K::Radio {
+                c.value = 0;
+            }
+            let id = reader.presentation.new_shape_id();
+            slide.shapes.push(Shape { id, frame: EmuRect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)), rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Control(std::sync::Arc::new(c)), floating: None });
+            slide.shape_placements.insert(id, ibis_doc_model::ObjectPlacement::MoveAndSize);
+        }
         slide.size = Some(EmuSize::new(extent.0.max(1), extent.1.max(1)));
         slide.placeholders = std::mem::take(&mut reader.slide_placeholders);
         slide.shape_names = std::mem::take(&mut reader.slide_names);
@@ -3470,6 +3982,38 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
         slide.shape_formulas = std::mem::take(&mut reader.slide_formulas);
         chart_sources.append(&mut reader.chart_sources);
         xlsx_shape_sources.append(&mut reader.xlsx_shape_sources);
+        let new_cell_images: Vec<ibis_doc_model::CellImage> = if let Some(first) = slide.shapes.first() {
+            if let ShapeKind::Sheet(sheet) = &first.kind {
+                let xs = sheet.column_offsets();
+                let ys = sheet.row_offsets();
+                slide.shapes[1..]
+                    .iter()
+                    .filter(|s| matches!(s.kind, ShapeKind::Picture(_)) && slide.shape_placements.get(&s.id) == Some(&ibis_doc_model::ObjectPlacement::MoveAndSize))
+                    .filter_map(|s| {
+                        let x_pos = s.frame.x + (s.frame.width / 4).min(95_250).max(1);
+                        let y_pos = s.frame.y + (s.frame.height / 4).min(95_250).max(1);
+                        let col = xs.windows(2).position(|w| x_pos >= w[0] && x_pos < w[1]).map(|i| i as u32)?;
+                        let row = ys.windows(2).position(|w| y_pos >= w[0] && y_pos < w[1]).map(|i| i as u32)?;
+                        if !sheet.cell_images.iter().any(|i| i.column == col && i.row == row) {
+                            Some(ibis_doc_model::CellImage { row, column: col, index: 0 })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        if !new_cell_images.is_empty() {
+            if let Some(first) = slide.shapes.first_mut() {
+                if let ShapeKind::Sheet(sheet) = &mut first.kind {
+                    std::sync::Arc::make_mut(sheet).cell_images.extend(new_cell_images);
+                }
+            }
+        }
         reader.presentation.slides.push(slide);
         presentation = reader.presentation;
         media = reader.media;
@@ -3524,6 +4068,8 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
         custom_views: xlsx::read_custom_workbook_views(root),
         window_hidden: xlsx::read_workbook_window_hidden(root),
         external_books,
+        queries,
+        query_parameters,
         ..Default::default()
     };
     for (name, state, part) in &all_sheets {
@@ -3567,8 +4113,21 @@ pub(crate) fn read_xlsx_with_sources(data: &[u8]) -> Result<(Presentation, crate
     let date1904 = workbook.date1904;
     presentation.theme_colors = workbook.theme_colors.clone();
     presentation.theme_fonts = workbook.theme_fonts.clone();
+    for slide in &mut presentation.slides {
+        if let Some(ShapeKind::Sheet(s)) = slide.shapes.iter_mut().map(|sh| &mut sh.kind).find(|k| matches!(k, ShapeKind::Sheet(_))) {
+            let sheet = std::sync::Arc::make_mut(s);
+            for sv in &mut sheet.custom_views {
+                if sv.name.is_empty() {
+                    if let Some(wb_cv) = workbook.custom_views.iter().find(|w| w.guid == sv.guid) {
+                        sv.name = wb_cv.name.clone();
+                    }
+                }
+            }
+        }
+    }
     presentation.workbook = Some(std::sync::Arc::new(workbook));
     ibis_doc_model::slicer::refresh_slicers(&mut presentation);
+    ibis_doc_model::form_control::refresh_controls(&mut presentation);
     // Formulas the file has no value for (written by a program that does not calculate).
     let _ = ibis_doc_model::calculate_missing_values(&mut presentation);
     build_pivots_on_load(&mut presentation, date1904, styles_doc.as_ref().map(|d| d.root_element()), &sheet_colors);
@@ -3608,10 +4167,16 @@ fn build_pivots_on_load(presentation: &mut Presentation, date1904: bool, styles:
             }
             let source = crate::xlsx_pivot::pivot_source(presentation, &sheet, pivot);
             let Some(data) = source else { continue };
+            let mut pivot = pivot.clone();
+            pivot.fill_shared(&data);
             let built = pivot.build(&data);
             let slide = &mut presentation.slides[si];
             if let Some(ShapeKind::Sheet(s)) = slide.shapes.iter_mut().map(|sh| &mut sh.kind).find(|k| matches!(k, ShapeKind::Sheet(_))) {
-                std::sync::Arc::make_mut(s).put_pivot(pi, &built, &base, date1904);
+                let sheet = std::sync::Arc::make_mut(s);
+                if let Some(p) = sheet.pivots.get_mut(pi) {
+                    *p = pivot;
+                }
+                sheet.put_pivot(pi, &built, &base, date1904);
             }
             styled(presentation, &built.rows, &built.columns);
         }
@@ -3928,13 +4493,13 @@ fn lower_priority() {}
 
 /// `f` of each of `items`, in order, on up to 8 threads (one on the web,
 /// which has none to spare).
-fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+pub(crate) fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
     #[cfg(target_family = "wasm")]
     return items.iter().map(f).collect();
     #[cfg(not(target_family = "wasm"))]
     {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8).min(items.len());
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).max(1)).min(16).min(items.len());
         if threads <= 1 {
             return items.iter().map(f).collect();
         }

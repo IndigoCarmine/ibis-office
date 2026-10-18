@@ -505,8 +505,19 @@ impl SlideEditor {
             }))
     }
 
-    /// Workspace background mouse down: double click toggles page white space (DOCX-VIEW-017).
+    /// Workspace background mouse down: click outside page on comment bubble focuses comment; double click toggles page white space (DOCX-VIEW-017).
     fn on_docx_workspace_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.click_count == 1 {
+            for index in 0..self.presentation().slides.len() {
+                if let Some((x, y)) = self.page_point_pane(index, event.position, false) {
+                    if let Some(comment_id) = self.comment_at_point(index, x, y) {
+                        self.open_comments(window, cx);
+                        self.focus_comment(comment_id, cx);
+                        return;
+                    }
+                }
+            }
+        }
         if event.click_count == 2 {
             self.toggle_white_space(cx);
             return;
@@ -543,6 +554,20 @@ impl SlideEditor {
         let selection = self.ordered_selection();
         let caret = self.text_selection().map(|(_, c)| c);
         let marked = self.doc_state().and_then(|s| s.marked.clone());
+        // Text being composed is drawn in the font and size it will be typed in (the installed font standing in for
+        // the typeface, as the page draws it), not the window's: its kanji took a Chinese font where that has none.
+        let marked_font = marked.as_ref().and_then(|text| {
+            let (_, style) = self.current_format()?;
+            let (main, other) = if text.chars().any(|c| !c.is_ascii()) { (&style.east_asian_font, &style.font) } else { (&style.font, &style.east_asian_font) };
+            let font = self.resources.font(&ibis_doc_model::TextStyle {
+                font: main.clone().or_else(|| other.clone()),
+                fallback_font: other.clone(),
+                bold: style.bold,
+                italic: style.italic,
+                ..Default::default()
+            });
+            Some((font, style.size as f32 / 100.0))
+        });
         let gridlines = self.gridlines_open;
         let formatting_marks = self.formatting_marks_open;
         let formatting_marks_options = self.formatting_marks_options;
@@ -590,14 +615,14 @@ impl SlideEditor {
                     .top(px(page_top))
                     .w(px(w))
                     .h(px(h))
-                    .overflow_hidden()
-                    .bg(rgb(0xffffff))
+                    .bg(rgb(if self.resources.dark_page { 0x262626 } else { 0xffffff }))
                     .when(show_white_space, |d| d.shadow_md())
                     .when(!show_white_space, |d| d.border_1().border_color(rgb(0xd0d0d0)))
                     .children(shapes)
                     .children(gridlines_element)
                     .children(formatting_marks_element)
                     .children(self.selection_rects(&lines, index, selection, k))
+                    .children(self.render_mini_toolbar(index, k, cx))
                     .children(self.text_box_overlay(index, k))
                     .children(self.doc_state().map(|s| s.extra_selections.clone()).unwrap_or_default().into_iter().flat_map(|r| self.selection_rects(&lines, index, Some(r), k)).collect::<Vec<_>>())
                     .children(caret.and_then(|c| {
@@ -622,7 +647,10 @@ impl SlideEditor {
                                 .bg(rgb(0xffffff))
                                 .border_b_1()
                                 .border_color(rgb(0x000000))
-                                .text_size(px((h * k * 0.7).max(8.0)))
+                                .map(|d| match &marked_font {
+                                    Some((font, size)) => d.font_family(font.family.clone()).font_weight(font.weight).when(font.style == FontStyle::Italic, |d| d.italic()).text_size(px((size * k).max(8.0))),
+                                    None => d.text_size(px((h * k * 0.7).max(8.0))),
+                                })
                                 .child(text.clone())
                                 .into_any_element(),
                             None => caret.into_any_element(),
@@ -634,7 +662,9 @@ impl SlideEditor {
                         if let Some(state) = this.doc_state_mut() {
                             state.dragging = false;
                         }
+                        this.end_docx_ink(cx);
                         this.end_shape_drag(cx);
+                        this.end_draw_table(cx);
                         this.finish_doc_format_brush(cx);
                     }))
                     .into_any_element();
@@ -778,6 +808,19 @@ impl SlideEditor {
         self.doc_split_active = is_top;
         self.focus_handle.focus(window, cx);
         let Some((x, y)) = self.page_point_pane(index, event.position, is_top) else { return };
+        if event.click_count == 1 {
+            if let Some(comment_id) = self.comment_at_point(index, x, y) {
+                self.open_comments(window, cx);
+                self.focus_comment(comment_id, cx);
+                return;
+            }
+        }
+        if event.click_count == 1 && self.begin_docx_ink(index, x, y, cx) {
+            return;
+        }
+        if event.click_count == 1 && self.begin_draw_table(index, x, y, cx) {
+            return;
+        }
         // A press on a floating text box selects it and moves it with the mouse.
         if event.click_count == 1 && !event.modifiers.platform && !event.modifiers.shift && self.begin_shape_drag(index, x, y, cx) {
             return;
@@ -790,6 +833,14 @@ impl SlideEditor {
         if event.click_count == 1 {
             if self.toggle_checkbox_at(pos, cx) || self.cycle_dropdown_item_at(pos, cx) || self.step_date_picker_at(pos, 1, cx) {
                 self.set_caret(pos, false, cx);
+                return;
+            }
+            if self.is_picture_control_at(pos) {
+                self.set_caret(pos, false, cx);
+                return;
+            }
+            if pos.offset > 0 && self.is_picture_control_at(ibis_doc_model::FlowPos::new(pos.para, pos.offset - 1)) {
+                self.set_caret(ibis_doc_model::FlowPos::new(pos.para, pos.offset - 1), false, cx);
                 return;
             }
         }
@@ -806,6 +857,19 @@ impl SlideEditor {
             return;
         }
         self.set_caret(pos, event.modifiers.shift, cx);
+        if event.click_count == 1 && !event.modifiers.shift {
+            if let Some(doc) = self.flow() {
+                if let Some(c_id) = ibis_doc_model::flow_command::comment_at_pos(doc, pos) {
+                    let parent_id = doc.comments.iter().find(|c| c.id == c_id).and_then(|c| c.parent).unwrap_or(c_id);
+                    if !self.sidebar_open || self.doc_state().is_some_and(|s| s.comments.is_none()) {
+                        self.open_comments(window, cx);
+                    }
+                    if let Some(c) = self.doc_state_mut().and_then(|s| s.comments.as_mut()) {
+                        c.active_comment_id = Some(parent_id);
+                    }
+                }
+            }
+        }
         if let Some(state) = self.doc_state_mut() {
             state.dragging = true;
             state.goal_x = None;
@@ -813,6 +877,26 @@ impl SlideEditor {
     }
 
     fn on_page_move(&mut self, index: usize, event: &MouseMoveEvent, is_top: bool, cx: &mut Context<Self>) {
+        if self.doc_state().and_then(|s| s.docx_ink.as_ref()).is_some_and(|i| i.active_stroke.is_some() || i.lasso_rect.is_some()) {
+            if event.pressed_button == Some(MouseButton::Left) {
+                if let Some((x, y)) = self.page_point_pane(index, event.position, is_top) {
+                    self.drag_docx_ink(index, x, y, cx);
+                }
+            } else {
+                self.end_docx_ink(cx);
+            }
+            return;
+        }
+        if self.doc_state().is_some_and(|s| s.draw_box.is_some()) {
+            if event.pressed_button == Some(MouseButton::Left) {
+                if let Some((x, y)) = self.page_point_pane(index, event.position, is_top) {
+                    self.drag_draw_table(x, y, cx);
+                }
+            } else if let Some(state) = self.doc_state_mut() {
+                state.draw_box = None;
+            }
+            return;
+        }
         if self.doc_state().is_some_and(|s| s.shape_drag.is_some()) {
             if event.pressed_button == Some(MouseButton::Left) {
                 if let Some((x, y)) = self.page_point_pane(index, event.position, is_top) {
@@ -904,7 +988,29 @@ impl SlideEditor {
         let d = mv!(d, ed::DocumentEnd, Move::DocumentEnd, false);
         let d = mv!(d, ed::SelectDocumentStart, Move::DocumentStart, true);
         let d = mv!(d, ed::SelectDocumentEnd, Move::DocumentEnd, true);
-        d.on_action(cx.listener(|this, _: &ed::ToggleOvertype, _, cx| this.toggle_overtype(cx)))
+        macro_rules! page {
+            ($d:expr, $action:ty, $sign:expr, $extend:expr) => {
+                $d.on_action(cx.listener(|this, _: &$action, window, cx| {
+                    // The lines of a screen: the window's height over a line of the zoom's size.
+                    let lines = ((f32::from(window.viewport_size().height) / (16.0 * this.zoom.unwrap_or(1.0).max(0.25))).max(5.0) as i32 - 2).max(3);
+                    this.move_caret(Move::Page($sign * lines), $extend, cx)
+                }))
+            };
+        }
+        let d = page!(d, ed::PageUp, -1, false);
+        let d = page!(d, ed::PageDown, 1, false);
+        let d = page!(d, ed::SelectPageUp, -1, true);
+        let d = page!(d, ed::SelectPageDown, 1, true);
+        d.on_action(cx.listener(|this, _: &ed::DeleteWordBackward, _, cx| this.delete_word(false, cx)))
+            .on_action(cx.listener(|this, _: &ed::DeleteWordForward, _, cx| this.delete_word(true, cx)))
+            .on_action(cx.listener(|this, _: &ed::LineSpacingSingle, _, cx| this.set_line_spacing_multiple(240, cx)))
+            .on_action(cx.listener(|this, _: &ed::LineSpacingOneAndHalf, _, cx| this.set_line_spacing_multiple(360, cx)))
+            .on_action(cx.listener(|this, _: &ed::LineSpacingDouble, _, cx| this.set_line_spacing_multiple(480, cx)))
+            .on_action(cx.listener(|this, _: &ed::ApplyHeading1, _, cx| this.apply_named_style(Some("heading 1"), cx)))
+            .on_action(cx.listener(|this, _: &ed::ApplyHeading2, _, cx| this.apply_named_style(Some("heading 2"), cx)))
+            .on_action(cx.listener(|this, _: &ed::ApplyHeading3, _, cx| this.apply_named_style(Some("heading 3"), cx)))
+            .on_action(cx.listener(|this, _: &ed::ApplyNormalStyle, _, cx| this.apply_named_style(None, cx)))
+            .on_action(cx.listener(|this, _: &ed::ToggleOvertype, _, cx| this.toggle_overtype(cx)))
             .on_action(cx.listener(|this, _: &ed::ChangeUserName, window, cx| this.open_user_info_panel(window, cx)))
             .on_action(cx.listener(|this, _: &ed::DeleteBackward, _, cx| this.delete_char(false, cx)))
             .on_action(cx.listener(|this, _: &ed::DeleteForward, _, cx| this.delete_char(true, cx)))
@@ -959,6 +1065,7 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &ed::FindNext, _, cx| this.find_next_in_direction(cx)))
             .on_action(cx.listener(|this, _: &ed::FindPrevious, _, cx| this.find_next(false, cx)))
             .on_action(cx.listener(|this, _: &ed::OpenGoTo, window, cx| this.open_go_to_panel(window, cx)))
+            .on_action(cx.listener(|this, _: &ed::OpenThesaurus, window, cx| this.open_thesaurus_panel(window, cx)))
             .on_action(cx.listener(|this, _: &ed::OpenLink, window, cx| this.open_link(window, cx)))
             .on_action(cx.listener(|this, _: &ed::CopyFormat, _, cx| this.copy_format(cx)))
             .on_action(cx.listener(|this, _: &ed::PasteFormat, _, cx| this.paste_format(cx)))
@@ -973,6 +1080,10 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &ed::InsertField, _, cx| this.insert_field(cx)))
             .on_action(cx.listener(|this, _: &ed::EditField, window, cx| this.open_field_panel(window, cx)))
             .on_action(cx.listener(|this, _: &ed::ToggleSplit, _, cx| this.toggle_document_split(cx)))
+            .on_action(cx.listener(|this, _: &ed::OutlinePromote, _, cx| { this.change_heading_level(-1, cx); }))
+            .on_action(cx.listener(|this, _: &ed::OutlineDemote, _, cx| { this.change_heading_level(1, cx); }))
+            .on_action(cx.listener(|this, _: &ed::OutlineMoveUp, _, cx| { this.move_heading(true, cx); }))
+            .on_action(cx.listener(|this, _: &ed::OutlineMoveDown, _, cx| { this.move_heading(false, cx); }))
     }
 
     /// Word's horizontal ruler over the pages: the page's width with its

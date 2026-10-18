@@ -34,6 +34,59 @@ pub(crate) struct ConsolidatePanel {
 }
 
 impl SlideEditor {
+    pub(crate) fn current_sheet_qualified_range_string(&self) -> Option<String> {
+        let r = self.selected_range()?;
+        let sname = self
+            .presentation()
+            .workbook
+            .as_ref()
+            .and_then(|w| w.sheets.iter().find(|s| s.slide == Some(self.current_slide)).map(|s| s.name.clone()))
+            .unwrap_or_else(|| "Sheet1".to_string());
+        let qname = ibis_calc::formula::quote_sheet(&sname);
+        let c1 = column_name(r.first_column);
+        let c2 = column_name(r.last_column);
+        Some(format!("{}!${}${}:${}${}", qname, c1, r.first_row + 1, c2, r.last_row + 1))
+    }
+
+    pub(crate) fn normalize_consolidate_ref(&self, raw: &str) -> String {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return String::new();
+        }
+        if let Some((slide_id, r)) = super::sheet_ui::parse_reference(trimmed).and_then(|ref_| self.resolve_reference(&ref_)) {
+            let sname = self
+                .presentation()
+                .workbook
+                .as_ref()
+                .and_then(|w| w.sheets.iter().find(|s| s.slide == Some(slide_id)).map(|s| s.name.clone()))
+                .unwrap_or_else(|| "Sheet1".to_string());
+            let qname = ibis_calc::formula::quote_sheet(&sname);
+            let c1 = column_name(r.first_column);
+            let c2 = column_name(r.last_column);
+            return format!("{}!${}${}:${}${}", qname, c1, r.first_row + 1, c2, r.last_row + 1);
+        }
+        trimmed.to_string()
+    }
+
+    pub(crate) fn add_consolidate_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ref_str) = self.current_sheet_qualified_range_string() else { return };
+        if let Some(p) = self.wb_mut().panels.consolidate.as_mut() {
+            p.reference_input.update(cx, |i, cx| i.set_value(ref_str.clone(), window, cx));
+            if !p.references.contains(&ref_str) {
+                p.references.push(ref_str);
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn clear_all_consolidate_references(&mut self, cx: &mut Context<Self>) {
+        if let Some(p) = self.wb_mut().panels.consolidate.as_mut() {
+            p.references.clear();
+            p.selected_ref = None;
+        }
+        cx.notify();
+    }
+
     pub(crate) fn open_consolidate_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let existing = self.current_sheet().and_then(|(_, s)| s.data_consolidate.clone());
@@ -42,20 +95,7 @@ impl SlideEditor {
             None => (ConsolidateFunction::Sum, false, false, false, Vec::new()),
         };
 
-        let initial_ref = if let Some(r) = self.selected_range() {
-            let sname = self
-                .presentation()
-                .workbook
-                .as_ref()
-                .and_then(|w| w.sheets.iter().find(|s| s.slide == Some(self.current_slide)).map(|s| s.name.clone()))
-                .unwrap_or_else(|| "Sheet1".to_string());
-            let qname = ibis_calc::formula::quote_sheet(&sname);
-            let c1 = column_name(r.first_column);
-            let c2 = column_name(r.last_column);
-            format!("{}!${}${}:${}${}", qname, c1, r.first_row + 1, c2, r.last_row + 1)
-        } else {
-            String::new()
-        };
+        let initial_ref = self.current_sheet_qualified_range_string().unwrap_or_default();
 
         let ref_input = cx.new(|cx| {
             let mut s = InputState::new(window, cx);
@@ -107,8 +147,8 @@ impl SlideEditor {
             return self.consolidate_message(text("_xlsx.the-sheet-has-changed-reopen-it").into(), cx);
         }
 
-        let mut refs = p.references.clone();
-        let input_val = p.reference_input.read(cx).value().trim().to_string();
+        let mut refs: Vec<String> = p.references.iter().map(|r| self.normalize_consolidate_ref(r)).collect();
+        let input_val = self.normalize_consolidate_ref(&p.reference_input.read(cx).value());
         if !input_val.is_empty() && !refs.contains(&input_val) {
             refs.push(input_val);
         }
@@ -195,22 +235,39 @@ impl SlideEditor {
         body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.references")));
         body = body.child(mark("reference-input", Input::new(&p.reference_input).small().into_any_element()));
 
-        // Add / Delete buttons
+        // Add / Add Selection / Delete / Clear All buttons
         let sel_ref = p.selected_ref;
-        let mut btn_row = h_flex().gap_2();
+        let has_refs = !p.references.is_empty();
+        let mut btn_row = h_flex().gap_2().flex_wrap();
         btn_row = btn_row.child(mark(
             "add-ref",
             Button::new("consolidate-add").primary()
                 .small()
                 .label(text("fix.common.add"))
                 .on_click(cx.listener(|this, _, _, cx| {
-                    if let Some(p) = this.wb_mut().panels.consolidate.as_mut() {
-                        let val = p.reference_input.read(cx).value().trim().to_string();
-                        if !val.is_empty() && !p.references.contains(&val) {
-                            p.references.push(val);
-                        }
+                    let raw = this
+                        .sheet_state()
+                        .and_then(|s| s.panels.consolidate.as_ref())
+                        .map(|p| p.reference_input.read(cx).value().to_string())
+                        .unwrap_or_default();
+                    let val = this.normalize_consolidate_ref(&raw);
+                    if let Some(p) = this.wb_mut().panels.consolidate.as_mut()
+                        && !val.is_empty()
+                        && !p.references.contains(&val)
+                    {
+                        p.references.push(val);
                     }
                     cx.notify();
+                }))
+                .into_any_element(),
+        ));
+        btn_row = btn_row.child(mark(
+            "add-selection",
+            Button::new("consolidate-add-selection")
+                .small()
+                .label(text("xlsx.consolidate-add-selection"))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.add_consolidate_selection(window, cx);
                 }))
                 .into_any_element(),
         ));
@@ -230,6 +287,17 @@ impl SlideEditor {
                         }
                     }
                     cx.notify();
+                }))
+                .into_any_element(),
+        ));
+        btn_row = btn_row.child(mark(
+            "clear-all-refs",
+            Button::new("consolidate-clear-all")
+                .small()
+                .disabled(!has_refs)
+                .label(text("xlsx.consolidate-clear-all"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.clear_all_consolidate_references(cx);
                 }))
                 .into_any_element(),
         ));

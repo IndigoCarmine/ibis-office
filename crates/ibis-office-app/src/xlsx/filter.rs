@@ -250,6 +250,69 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// ⌘⌥L / Ctrl+Alt+L (データ / 編集 > 並べ替えとフィルター > 再適用):
+    /// Re-evaluates existing auto-filter or table filters on current data.
+    pub(crate) fn reapply_auto_filter(&mut self, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        let slide = self.current_slide;
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let command = if let Some(f) = sheet.auto_filter.clone() {
+            Some(SheetCommand::SetAutoFilter { slide, filter: Some(f) })
+        } else if let Some((idx, t)) = sheet.tables.iter().enumerate().find(|(_, t)| t.filter.is_some()) {
+            Some(SheetCommand::SetTableFilter { slide, index: idx, filter: t.filter.clone() })
+        } else {
+            None
+        };
+        if let Some(cmd) = command {
+            if let Err(err) = self.document.execute(vec![Command::Sheet(cmd)]) {
+                log::warn!("reapply filter rejected: {err}");
+            }
+            if let Some(s) = self.sheet_state_mut() {
+                s.list_popup = None;
+                s.filter_panel = None;
+            }
+            cx.notify();
+        }
+    }
+
+    /// フィルターのクリア（データ / 編集 > 並べ替えとフィルター > クリア）:
+    /// Clears all column criteria from active auto-filters or table filters without removing the filter arrows.
+    pub(crate) fn clear_auto_filter(&mut self, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::AutoFilter, cx) {
+            return;
+        }
+        self.commit_cell_edit(cx);
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        if let Some(mut af) = sheet.auto_filter.clone() {
+            if !af.columns.is_empty() {
+                af.columns.clear();
+                commands.push(Command::Sheet(SheetCommand::SetAutoFilter { slide, filter: Some(af) }));
+            }
+        }
+        for (index, t) in sheet.tables.iter().enumerate() {
+            if let Some(mut tf) = t.filter.clone() {
+                if !tf.columns.is_empty() {
+                    tf.columns.clear();
+                    commands.push(Command::Sheet(SheetCommand::SetTableFilter { slide, index, filter: Some(tf) }));
+                }
+            }
+        }
+        if !commands.is_empty() {
+            if let Err(err) = self.document.execute(commands) {
+                log::warn!("clear filter rejected: {err}");
+            }
+            if let Some(s) = self.sheet_state_mut() {
+                s.list_popup = None;
+                s.filter_panel = None;
+            }
+            cx.notify();
+        }
+    }
+
     /// Filter column `column` by `filter` (`None`: all rows of it again).
     pub(crate) fn filter_column(&mut self, column: u32, filter: Option<ColumnFilter>, cx: &mut Context<Self>) {
         self.filter_column_in(FilterTarget::Sheet, column, filter, cx);
@@ -292,6 +355,7 @@ impl SlideEditor {
     }
 
     /// A heading's ▼: its panel.
+    #[allow(dead_code)]
     pub(crate) fn open_filter_menu(&mut self, column: u32, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.open_filter_menu_in(FilterTarget::Sheet, column, position, window, cx);
     }

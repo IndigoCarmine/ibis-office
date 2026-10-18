@@ -126,14 +126,18 @@ struct Quad {
 /// Draw `sheet` from the frame's top-left corner. `print` leaves out the
 /// grid lines, as Excel prints.
 pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resources) -> Div {
-    let (w, h) = (frame.width as f32 * scale, frame.height as f32 * scale);
+    let extra_cols_px = if !res.print { 50.0 * (sheet.default_column as f32 * scale) } else { 0.0 };
+    let extra_rows_px = if !res.print { 1000.0 * (sheet.default_row as f32 * scale) } else { 0.0 };
+    let (w, h) = ((frame.width as f32 * scale).max(extra_cols_px), (frame.height as f32 * scale).max(extra_rows_px));
     let sheet_layout = cached_layout(sheet, scale, res);
     let px_per_point = EMU_PER_POINT as f32 * scale;
     // Printed, a page shows its cells once: the text measured for the
     // layout is kept to be drawn (GPUI keeps the last frame's only).
     let keep_measured = res.print;
     let print = res.print;
-    div().absolute().left_0().top_0().w(px(w)).h(px(h)).child(
+    let pictures = web_pictures(&sheet_layout, scale);
+    let sheet = sheet.clone();
+    let root = div().absolute().left_0().top_0().w(px(w)).h(px(h)).child(
         canvas(
             |_, _, _| {},
             move |bounds, _, window, cx| {
@@ -146,6 +150,7 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                 };
                 // What lies in the bands shown, relative to the sheet.
                 let (top, bottom) = (f32::from(visible.top() - o.y), f32::from(visible.bottom() - o.y));
+                let (left, right) = (f32::from(visible.left() - o.x), f32::from(visible.right() - o.x));
                 // The parts of the layout for the rows shown.
                 let parts = sheet_layout.parts(top, bottom);
                 for &(rect, ref fill) in parts.iter().flat_map(|l| l.gradients.iter()) {
@@ -202,6 +207,67 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                         if let Some(r) = shown(quads[i as usize].rect) {
                             let r = if is_grid { on_pixels(r, r.size.width > r.size.height) } else { snap_fill(r) };
                             window.paint_quad(fill(r, quads[i as usize].color));
+                        }
+                    }
+                }
+                if !print && sheet.grid_lines {
+                    let color = hsla(opaque(ibis_doc_model::Rgb(GRID_COLOR)));
+                    let default_row_px = sheet.default_row as f32 * scale;
+                    let default_col_px = sheet.default_column as f32 * scale;
+                    let xs = sheet.column_offsets();
+                    let ys = sheet.row_offsets();
+                    let extra_cols = 50u32;
+                    let extra_rows = 1000u32;
+                    let base_max_row = (sheet.rows.len() as u32 + extra_rows).min(1_048_576);
+                    let base_max_col = ((xs.len().saturating_sub(1) as u32) + extra_cols).min(16_384);
+
+                    let y_of = |r: u32| -> f32 {
+                        let len = ys.len();
+                        if (r as usize) < len {
+                            ys[r as usize] as f32 * scale
+                        } else {
+                            let last = ys.last().copied().unwrap_or(0);
+                            (last + (r as usize - (len - 1)) as i64 * sheet.default_row) as f32 * scale
+                        }
+                    };
+                    let x_of = |c: u32| -> f32 {
+                        let len = xs.len();
+                        if (c as usize) < len {
+                            xs[c as usize] as f32 * scale
+                        } else {
+                            let last = xs.last().copied().unwrap_or(0);
+                            (last + (c as usize - (len - 1)) as i64 * sheet.default_column) as f32 * scale
+                        }
+                    };
+
+                    let base_bottom_y = y_of(base_max_row);
+                    let base_right_x = x_of(base_max_col);
+
+                    if bottom > base_bottom_y {
+                        let first_r = base_max_row + 1;
+                        let last_r = (base_max_row + ((bottom - base_bottom_y) / default_row_px.max(1.0)).ceil() as u32 + 2).min(1_048_576);
+                        let w_extent = w.max(base_right_x);
+                        for r in first_r..=last_r {
+                            let y = y_of(r);
+                            if y >= top - default_row_px && y <= bottom + default_row_px {
+                                if let Some(rect) = shown((0.0, y - 0.5, w_extent, 1.0)) {
+                                    window.paint_quad(fill(on_pixels(rect, true), color));
+                                }
+                            }
+                        }
+                        let max_col_view = ((right.max(w_extent) / default_col_px.max(1.0)).ceil() as u32 + 2).min(16_384);
+                        let seg_top = top.max(base_bottom_y);
+                        let seg_bottom = bottom.min(y_of(last_r));
+                        let seg_h = (seg_bottom - seg_top).max(0.0);
+                        if seg_h > 0.0 {
+                            for c in 1..=max_col_view {
+                                let x = x_of(c);
+                                if x >= left - default_col_px && x <= right + default_col_px {
+                                    if let Some(rect) = shown((x - 0.5, seg_top, 1.0, seg_h)) {
+                                        window.paint_quad(fill(on_pixels(rect, false), color));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -471,7 +537,97 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
         )
         .absolute()
         .size_full(),
+    );
+    if pictures.is_empty() {
+        return root;
+    }
+    // The pictures IMAGE shows, over the cells (their text is not drawn).
+    root.child(
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, cx| {
+                let o = bounds.origin;
+                let visible = window.content_mask().bounds;
+                let mut waiting = false;
+                for (rect, spec) in &pictures {
+                    let cell = Bounds::new(point(o.x + px(rect.0), o.y + px(rect.1)), size(px(rect.2), px(rect.3)));
+                    if !cell.intersects(&visible) || rect.2 < 2.0 || rect.3 < 2.0 {
+                        continue;
+                    }
+                    match crate::render::web_image::poll(&spec.source, cx) {
+                        crate::render::web_image::Poll::Pending => waiting = true,
+                        crate::render::web_image::Poll::Failed => {}
+                        crate::render::web_image::Poll::Ready(image) => {
+                            let natural = image.size(0);
+                            let (iw, ih) = (f32::from(natural.width.0 as f32), f32::from(natural.height.0 as f32));
+                            if iw <= 0.0 || ih <= 0.0 {
+                                continue;
+                            }
+                            let (cw, ch) = (rect.2 - 1.0, rect.3 - 1.0);
+                            let (w, h, dx, dy) = picture_box(spec, (iw, ih), (cw, ch), px_per_point);
+                            let area = Bounds::new(point(o.x + px(rect.0), o.y + px(rect.1)), size(px(cw), px(ch)));
+                            let at = Bounds::new(point(o.x + px(rect.0 + dx), o.y + px(rect.1 + dy)), size(px(w), px(h)));
+                            let _ = window.paint_image(area, at, Corners::default(), image, 0, false);
+                        }
+                    }
+                }
+                if waiting {
+                    window.request_animation_frame();
+                }
+            },
+        )
+        .absolute()
+        .size_full(),
     )
+}
+
+/// Where a picture of IMAGE goes in its cell of `cw` x `ch` pixels, from the cell's left and top: its width and
+/// height and the offset of its left and top. `natural` is the picture's own size in pixels (96 to the inch),
+/// `px_per_point` the screen pixels in a point.
+fn picture_box(spec: &ibis_calc::eval::ImageSpec, natural: (f32, f32), (cw, ch): (f32, f32), px_per_point: f32) -> (f32, f32, f32, f32) {
+    let (iw, ih) = natural;
+    // A pixel of the picture is 0.75 point.
+    let own = |w: f32, h: f32| (w * 0.75 * px_per_point, h * 0.75 * px_per_point);
+    match spec.sizing {
+        // Fills the cell, the proportions not kept.
+        1 => (cw, ch, 0.0, 0.0),
+        // Its own size, from the cell's corner (what is past the cell is cut).
+        2 => {
+            let (w, h) = own(iw, ih);
+            (w, h, 0.0, 0.0)
+        }
+        // The height and width given.
+        3 => {
+            let (w, h) = own(spec.width as f32, spec.height as f32);
+            (w, h, 0.0, 0.0)
+        }
+        // As large as fits the cell with its proportions, in the middle.
+        _ => {
+            let k = (cw / iw).min(ch / ih);
+            let (w, h) = (iw * k, ih * k);
+            (w, h, (cw - w) / 2.0, (ch - h) / 2.0)
+        }
+    }
+}
+
+/// The cells' places in pixels from the sheet's corner, with what each shows.
+fn web_pictures(layout: &SheetLayout, scale: f32) -> Vec<((f32, f32, f32, f32), ibis_calc::eval::ImageSpec)> {
+    if layout.images.is_empty() {
+        return Vec::new();
+    }
+    let sheet = layout.sheet();
+    let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
+    let x = |c: u32| xs[(c as usize).min(xs.len() - 1)] as f32 * scale;
+    let y = |r: u32| ys[(r as usize).min(ys.len() - 1)] as f32 * scale;
+    layout
+        .images
+        .iter()
+        .map(|((row, column), image)| {
+            let range = sheet.merge_at(*row, *column).unwrap_or(CellRange { first_row: *row, first_column: *column, last_row: *row, last_column: *column });
+            let (x0, y0) = (x(range.first_column), y(range.first_row));
+            ((x0, y0, x(range.last_column + 1) - x0, y(range.last_row + 1) - y0), image.clone())
+        })
+        .collect()
 }
 
 thread_local! {
@@ -480,17 +636,33 @@ thread_local! {
     static LAYOUTS: std::cell::RefCell<Vec<CachedLayout>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Forget the layouts kept: they hold their sheets, so that an edit would copy every cell of a big sheet before changing one (the layout of the changed sheet is made again at the next draw).
+pub(crate) fn release_layouts() {
+    LAYOUTS.with(|cache| cache.borrow_mut().clear());
+}
+
+/// The text displayed for a cell on screen: evaluates show_formulas and show_zeros.
+pub(crate) fn cell_shown_text(sheet: &Sheet, cell: &ibis_doc_model::SheetCell) -> String {
+    if sheet.show_formulas && cell.formula.is_some() {
+        format!("={}", sheet.formula_shown(cell.row, cell.column, cell.formula.as_ref().unwrap()))
+    } else if !sheet.show_zeros && matches!(cell.value, ibis_doc_model::CellValue::Number(n) if n == 0.0) {
+        String::new()
+    } else {
+        cell.text.clone()
+    }
+}
+
 /// A layout by its key (the sheet's address, the scale's bits and whether
 /// printed), with the sheet it was made for.
-type CachedLayout = ((usize, u32, bool, u64), Arc<Sheet>, Rc<SheetLayout>);
+type CachedLayout = ((usize, u32, bool, u64, u64), Arc<Sheet>, Rc<SheetLayout>);
 
 /// How many layouts to keep (a workbook's sheets at a zoom or two).
 const CACHED_LAYOUTS: usize = 8;
 
 fn cached_layout(sheet: &Arc<Sheet>, scale: f32, res: &Resources) -> Rc<SheetLayout> {
-    // The sheet is held with its layout, so its address is not reused
-    // while the entry lives.
-    let key = (Arc::as_ptr(sheet) as usize, scale.to_bits(), res.print, res.print_scale.get().to_bits());
+    // Keyed by the cell content generation so zoom changes on `Sheet`
+    // retain cached layouts across zoom levels.
+    let key = (sheet.cells.content_id(), scale.to_bits(), res.print, res.print_scale.get().to_bits(), crate::render::web_image::generation());
     LAYOUTS.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some(i) = cache.iter().position(|(k, _, _)| *k == key) {
@@ -535,6 +707,8 @@ struct LayoutContext {
     print_scale: f64,
     fonts: Vec<CellFont>,
     sheets: HashMap<String, Arc<Sheet>>,
+    /// The cells that show a picture from an address (IMAGE): their text (the file's `#VALUE!`) is not drawn.
+    images: HashMap<(u32, u32), String>,
 }
 
 impl LayoutContext {
@@ -557,6 +731,8 @@ struct SheetLayout {
     /// Merged ranges' first and last rows.
     merges: Vec<(u32, u32)>,
     parts: std::cell::RefCell<HashMap<u32, Rc<Layout>>>,
+    /// The pictures IMAGE shows in cells.
+    images: Vec<((u32, u32), ibis_calc::eval::ImageSpec)>,
 }
 
 impl SheetLayout {
@@ -567,13 +743,15 @@ impl SheetLayout {
         };
         let mut fonts: Vec<CellFont> = sheet.styles.iter().map(|s| cell_font(s, res)).collect();
         fonts.push(cell_font(&CellStyle::default(), res));
-        let context = LayoutContext { print: res.print, print_scale: res.print_scale.get(), fonts, sheets: res.sheets.clone() };
+        // What the calculation asked IMAGE for, of the cells that still hold a formula.
+        let images: Vec<((u32, u32), ibis_calc::eval::ImageSpec)> = source.web_images.iter().filter(|((r, c), _)| source.cell(*r, *c).is_some_and(|x| x.formula.is_some())).map(|(k, v)| (*k, v.clone())).collect();
+        let context = LayoutContext { print: res.print, print_scale: res.print_scale.get(), fonts, sheets: res.sheets.clone(), images: images.iter().map(|(k, i)| (*k, i.source.clone())).collect() };
         let row_tops = sheet.row_offsets().iter().map(|&y| y as f32 * scale).collect();
         let merges = sheet.merges.iter().map(|m| (m.first_row, m.last_row)).collect();
         let overlay = applied.as_ref().as_ref().map(|(_, o)| o);
         let part = if res.print { Part::All } else { Part::Base };
         let base = Rc::new(layout(sheet, scale, &context, overlay, part));
-        Self { source: source.clone(), applied: applied.clone(), scale, context, base, row_tops, merges, parts: Default::default() }
+        Self { source: source.clone(), applied: applied.clone(), scale, context, base, row_tops, merges, parts: Default::default(), images }
     }
 
     fn sheet(&self) -> &Sheet {
@@ -659,11 +837,12 @@ type Diagonal = ((f32, f32), (f32, f32), f32, Hsla);
 
 /// Empty contiguous Fill cells repeat the entry to their left. Do not cross
 /// unstyled gaps, values, formulas with an empty result, or merged cells.
-fn fill_sources(sheet: &Sheet) -> HashMap<(u32, u32), &ibis_doc_model::SheetCell> {
+/// `cells` are whole rows of the sheet (a part's), in order: the entries stay within a row.
+fn fill_sources<'a>(sheet: &Sheet, cells: &'a [ibis_doc_model::SheetCell]) -> HashMap<(u32, u32), &'a ibis_doc_model::SheetCell> {
     let mut sources = HashMap::new();
     let mut previous = None;
     let mut source = None;
-    for cell in &sheet.cells {
+    for cell in cells {
         if previous != cell.column.checked_sub(1).map(|c| (cell.row, c)) {
             source = None;
         }
@@ -702,8 +881,24 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
     PRINT_GRID.with(|g| g.set(ctx.print.then(|| (ctx.print_scale as f32, -anchors.0, -anchors.1))));
     BORDER_SHAPES.with(|s| s.borrow_mut().clear());
     let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
-    let x = |c: u32| xs[(c as usize).min(xs.len() - 1)] as f32 * scale;
-    let y = |r: u32| ys[(r as usize).min(ys.len() - 1)] as f32 * scale;
+    let x = |c: u32| {
+        let len = xs.len();
+        if (c as usize) < len {
+            xs[c as usize] as f32 * scale
+        } else {
+            let last = xs.last().copied().unwrap_or(0);
+            (last + (c as usize - (len - 1)) as i64 * sheet.default_column) as f32 * scale
+        }
+    };
+    let y = |r: u32| {
+        let len = ys.len();
+        if (r as usize) < len {
+            ys[r as usize] as f32 * scale
+        } else {
+            let last = ys.last().copied().unwrap_or(0);
+            (last + (r as usize - (len - 1)) as i64 * sheet.default_row) as f32 * scale
+        }
+    };
     let px_per_point = EMU_PER_POINT as f32 * scale;
     let default_style = CellStyle::default();
     let style_of = |i: u32| sheet.styles.get(i as usize).unwrap_or(&default_style);
@@ -723,9 +918,9 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             }
         }
     }
-    // Cells holding a value stop text running on from beside them.
+    // Cells holding a value stop text running on from beside them (only the part's own rows matter: the text runs along a row).
     let filled: std::collections::HashSet<(u32, u32)> =
-        sheet.cells.iter().filter(|c| !c.text.is_empty()).map(|c| (c.row, c.column)).chain(covered.iter().copied()).collect();
+        part_cells.iter().filter(|c| !c.text.is_empty()).map(|c| (c.row, c.column)).chain(covered.iter().copied()).collect();
 
     let mut out = Layout {
         fills: Vec::new(),
@@ -742,7 +937,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         comments: Vec::new(),
         bands: Default::default(),
     };
-    let fill_sources = fill_sources(sheet);
+    let fill_sources = fill_sources(sheet, part_cells);
     let columns = sheet.columns.len() as u32;
     for cell in part_cells {
         if covered.contains(&(cell.row, cell.column)) {
@@ -805,7 +1000,25 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             out.fills.push(Quad { rect: (fill_left, fill_top, right - fill_left, bottom - fill_top), color: hsla(opaque(color)) });
         }
         let display = fill_sources.get(&(cell.row, cell.column)).copied().unwrap_or(cell);
-        if !display.text.is_empty() && bottom > top && right > left {
+        // Printed, Excel leaves out text of more than 32 pt that is well over its row's height (its PDFs of xlsx-XFNT:
+        // a 26 pt row shows 28 pt text but nothing of 36, 48, 72, 96 and 409 pt text; xlsx-XBASE: a 15 pt row shows
+        // its 28 pt text cut at the row's edges, so it is not the ratio alone; between 28 and 36 pt is not measured).
+        let too_big = ctx.print && style.font_size > 3200 && style.font_size as f32 / 100.0 * px_per_point > (bottom - top) * 1.3;
+        // IMAGE: the picture is drawn over the cell (its text is not), or the error Excel shows when it is not there.
+        // While it is fetched Excel shows #BUSY!.
+        let image_failure = ctx.images.get(&(cell.row, cell.column)).and_then(|u| match crate::render::web_image::status(u) {
+            crate::render::web_image::Status::Failed(f) => Some(f.error()),
+            crate::render::web_image::Status::Pending => Some(ibis_calc::CellError::Busy),
+            crate::render::web_image::Status::Ready => None,
+        });
+        let hidden_by_image = ctx.images.contains_key(&(cell.row, cell.column)) && image_failure.is_none();
+        let is_formula_display = sheet.show_formulas && cell.formula.is_some();
+        let shown_text = if let Some(e) = image_failure {
+            e.as_str().to_string()
+        } else {
+            cell_shown_text(sheet, display)
+        };
+        if !shown_text.is_empty() && bottom > top && right > left && !too_big && !hidden_by_image {
             // How far the text may run on: over the empty, unmerged cells
             // beside it, up to the sheet's edge (left, right, both).
             let run_on = |dir: i32| {
@@ -824,11 +1037,13 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             };
             // The number format's colour ([Red]) over the font's.
             let mut style = style.clone();
-            if let Some(c) = ibis_calc::numfmt::format(&display.value, &style.number_format, false).color {
-                style.color = ibis_doc_model::Rgb(c.rgb());
+            if !is_formula_display {
+                if let Some(c) = ibis_calc::numfmt::format(&display.value, &style.number_format, false).color {
+                    style.color = ibis_doc_model::Rgb(c.rgb());
+                }
             }
             let general = match display.value {
-                ibis_doc_model::CellValue::Number(n) if style.number_format.eq_ignore_ascii_case("General") => Some(n),
+                ibis_doc_model::CellValue::Number(n) if !is_formula_display && style.number_format.eq_ignore_ascii_case("General") => Some(n),
                 _ => None,
             };
             let pivot_pad = pivot_pads.get(&(cell.row, cell.column)).map(|pt| {
@@ -837,15 +1052,15 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             });
             let style = &style;
             out.cells.push(CellText {
-                text: display.text.clone(),
-                kind: display.kind,
+                text: shown_text,
+                kind: if image_failure.is_some() { CellKind::Error } else if is_formula_display { CellKind::Text } else { display.kind },
                 general,
                 style: style.clone(),
                 font: ctx.font(cell.style),
                 rect: (left + pivot_pad.unwrap_or(0.0), top, right, bottom),
                 spans: [run_on(-1), run_on(0), run_on(1)],
                 row_gap: None,
-                runs: cell.runs.clone(),
+                runs: if image_failure.is_some() || is_formula_display { None } else { cell.runs.clone() },
                 phonetic: sheet.show_phonetic.then(|| cell.phonetic.clone()).flatten(),
             });
         }
@@ -1045,8 +1260,9 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             let (r, c) = bar.cell;
             let (left, right, top, bottom) = (x(c), x(c + 1), y(r), y(r + 1));
             let (w, inset) = (right - left, px_per_point.max(1.0));
-            let a = left + inset + (w - 2.0 * inset) * bar.from;
-            let z = left + inset + (w - 2.0 * inset) * bar.to;
+            let (from, to) = if bar.mirrored { (1.0 - bar.to, 1.0 - bar.from) } else { (bar.from, bar.to) };
+            let a = left + inset + (w - 2.0 * inset) * from;
+            let z = left + inset + (w - 2.0 * inset) * to;
             // A gradient bar fades from its colour to white at its end, in steps.
             let (h, steps) = ((bottom - top - 2.0 * inset).max(0.0), if bar.gradient { 32 } else { 1 });
             let width = (z - a).max(0.0);
@@ -1060,7 +1276,18 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                 let (s0, s1) = (a + width * k as f32 / steps as f32, a + width * (k + 1) as f32 / steps as f32);
                 out.fills.push(Quad { rect: (s0, top + inset, (s1 - s0).max(0.0), h), color: hsla(opaque(shade)) });
             }
+            // The border: a line of 0.75 pt round the bar.
+            if let (Some(border), true) = (bar.border, width > 0.0) {
+                let t = (0.75 * px_per_point).min(width / 2.0).min(h / 2.0);
+                let c = hsla(opaque(border));
+                let top_y = top + inset;
+                out.fills.push(Quad { rect: (a, top_y, width, t), color: c });
+                out.fills.push(Quad { rect: (a, top_y + h - t, width, t), color: c });
+                out.fills.push(Quad { rect: (a, top_y + t, t, (h - 2.0 * t).max(0.0)), color: c });
+                out.fills.push(Quad { rect: (z - t, top_y + t, t, (h - 2.0 * t).max(0.0)), color: c });
+            }
             if let Some(axis_pos) = bar.axis {
+                let axis_pos = if bar.mirrored { 1.0 - axis_pos } else { axis_pos };
                 let axis_x = left + inset + (w - 2.0 * inset) * axis_pos;
                 out.fills.push(Quad {
                     rect: (axis_x - 0.5 * px_per_point, top + inset, px_per_point.max(1.0), h),
@@ -1095,6 +1322,16 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                 19 => vec![(0.5, 0.5), (0.5, 0.05), (0.95, 0.05), (0.95, 0.5)],
                 20 => vec![(0.5, 0.05), (0.95, 0.05), (0.95, 0.95), (0.5, 0.95)],
                 21 => vec![(0.5, 0.05), (0.95, 0.05), (0.95, 0.95), (0.05, 0.95), (0.05, 0.5), (0.5, 0.5)],
+                // A five-pointed star, a triangle pointing down, a bar.
+                23 => (0..10).map(|k| { let a = -std::f32::consts::FRAC_PI_2 + k as f32 * std::f32::consts::PI / 5.0; let r = if k % 2 == 0 { 0.5 } else { 0.2 }; (0.5 + r * a.cos(), 0.55 + r * a.sin()) }).collect(),
+                24 => vec![(0.05, 0.1), (0.95, 0.1), (0.5, 0.9)],
+                // A box filled by none, a quarter, a half, three quarters and all of it (5Boxes).
+                26 => vec![(0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9), (0.1, 0.8), (0.8, 0.8), (0.8, 0.2), (0.2, 0.2), (0.2, 0.8), (0.1, 0.8)],
+                27 => vec![(0.1, 0.5), (0.5, 0.5), (0.5, 0.9), (0.1, 0.9)],
+                28 => vec![(0.1, 0.5), (0.9, 0.5), (0.9, 0.9), (0.1, 0.9)],
+                29 => vec![(0.1, 0.1), (0.5, 0.1), (0.5, 0.5), (0.9, 0.5), (0.9, 0.9), (0.1, 0.9)],
+                30 => vec![(0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)],
+                25 => vec![(0.05, 0.4), (0.95, 0.4), (0.95, 0.6), (0.05, 0.6)],
                 _ => (0..20).map(|k| { let a = k as f32 / 20.0 * std::f32::consts::TAU; (0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()) }).collect(),
             };
             let polygon = unit.into_iter().map(|(u, v)| (x0 + u * size, y0 + v * size)).collect();
@@ -1269,12 +1506,16 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         // PDF of xlsx-XPAGE-26: 1 pt black lines, a box round the cells).
         let color = hsla(opaque(ibis_doc_model::Rgb(if ctx.print { 0 } else { GRID_COLOR })));
         let first = if ctx.print { 0 } else { 1 };
-        let (w, h) = (x(columns), y(sheet.rows.len() as u32));
+        let extra_cols = if !ctx.print { 50 } else { 0 };
+        let extra_rows = if !ctx.print { 1000 } else { 0 };
+        let total_cols = (columns + extra_cols).min(16_384);
+        let total_rows = (sheet.rows.len() as u32 + extra_rows).min(1_048_576);
+        let (w, h) = (x(total_cols), y(total_rows));
         let t = 1.0;
         // Printed, a line takes the point before the cell's edge (as a
         // fill reaches over it); on screen it straddles the edge.
         let back = if ctx.print { px_per_point } else { t / 2.0 };
-        for c in first..=columns {
+        for c in first..=total_cols {
             let cutouts: Vec<(f32, f32)> = sheet
                 .merges
                 .iter()
@@ -1283,7 +1524,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                 .collect();
             push_segmented_line(false, x(c) - back, if ctx.print { px_per_point } else { t }, h, cutouts, color, &mut out.grid);
         }
-        for r in first..=sheet.rows.len() as u32 {
+        for r in first..=total_rows {
             let cutouts: Vec<(f32, f32)> = sheet
                 .merges
                 .iter()
@@ -1336,6 +1577,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
     if !ctx.print && !whole {
         let green = hsla(opaque(ibis_doc_model::Rgb(0x00B050)));
         let size = 4.5 * px_per_point;
+        super::error_check::ensure_rules();
         for (row, column, _) in ibis_doc_model::error_check::flagged_among(sheet, part_cells) {
             let range = merge_at.get(&(row, column)).copied().unwrap_or(CellRange { first_row: row, first_column: column, last_row: row, last_column: column });
             let (left, top) = (x(range.first_column), y(range.first_row));
@@ -1413,8 +1655,8 @@ fn thinnest_line() -> f32 {
     if crate::render::chart_view::VECTOR_EXPORT.with(|v| v.get()) { 0.3 } else { 0.5 }
 }
 
-/// The rectangles of a border line along an edge from `from` to `to` at
-/// `at`: solid, two thin lines (double), or dots and dashes.
+// The rectangles of a border line along an edge from `from` to `to` at
+// `at`: solid, two thin lines (double), or dots and dashes.
 thread_local! {
     /// Where the dash patterns start along a row and a column, in points
     /// from the sheet's origin, for the sheet being laid out (`layout`
@@ -1815,15 +2057,36 @@ struct CellFont {
 /// advances, Latin letters and digits smaller in a substitute as
 /// `text_items` draws them.
 pub(crate) fn text_width_pt(text: &str, style: &CellStyle, res: &Resources, ts: &TextSystem) -> f32 {
-    let cell = cell_font(style, res);
-    let size = style.font_size as f32 / 100.0;
-    let id = ts.resolve_font(&cell.font);
-    text.chars()
-        .map(|c| {
-            let k = if c.is_ascii() { cell.latin_scale } else { 1.0 };
-            ts.advance(id, px(size * k), c).map(|a| f32::from(a.width)).unwrap_or(if c.is_ascii() { size * 0.5 } else { size })
-        })
-        .sum()
+    GlyphWidths::new(style, res, ts).width(text)
+}
+
+/// The widths of the glyphs of a format's font, found once each: the width of many texts in one format (a column of a million cells) without resolving the font and asking for each glyph again every time.
+pub(crate) struct GlyphWidths<'a> {
+    ts: &'a TextSystem,
+    id: FontId,
+    size: f32,
+    latin_scale: f32,
+    advances: HashMap<char, f32>,
+}
+
+impl<'a> GlyphWidths<'a> {
+    pub(crate) fn new(style: &CellStyle, res: &Resources, ts: &'a TextSystem) -> Self {
+        let cell = cell_font(style, res);
+        Self { ts, id: ts.resolve_font(&cell.font), size: style.font_size as f32 / 100.0, latin_scale: cell.latin_scale, advances: HashMap::new() }
+    }
+
+    /// `text_width_pt`: the glyphs' advances added up.
+    pub(crate) fn width(&mut self, text: &str) -> f32 {
+        let Self { ts, id, size, latin_scale, advances } = self;
+        text.chars()
+            .map(|c| {
+                *advances.entry(c).or_insert_with(|| {
+                    let k = if c.is_ascii() { *latin_scale } else { 1.0 };
+                    ts.advance(*id, px(*size * k), c).map(|a| f32::from(a.width)).unwrap_or(if c.is_ascii() { *size * 0.5 } else { *size })
+                })
+            })
+            .sum()
+    }
 }
 
 fn cell_font(style: &CellStyle, res: &Resources) -> CellFont {
@@ -2638,8 +2901,217 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
     }
 }
 
+/// A piece of the text being typed, shaped, `x` pixels from the cell's left.
+pub(crate) struct EditPiece {
+    /// None for room of a fixed width.
+    pub(crate) shaped: Option<ShapedLine>,
+    pub(crate) x: f32,
+    pub(crate) width: f32,
+    /// Where it starts in the text (bytes) and its length.
+    pub(crate) start: usize,
+    pub(crate) len: usize,
+}
+
+/// A line of the text being typed: where its glyphs are, in pixels from the cell's top-left.
+pub(crate) struct EditLine {
+    pub(crate) pieces: Vec<EditPiece>,
+    pub(crate) baseline: f32,
+    pub(crate) ascent: f32,
+    pub(crate) descent: f32,
+    /// The bytes of the text it covers.
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    /// Where an empty line's caret goes.
+    pub(crate) x0: f32,
+}
+
+impl EditLine {
+    /// The x (from the cell's left) of the boundary before byte `b` of the text.
+    pub(crate) fn x_at(&self, b: usize) -> f32 {
+        let b = b.clamp(self.start, self.end);
+        for p in &self.pieces {
+            if b >= p.start && b <= p.start + p.len {
+                return p.x + p.shaped.as_ref().map_or(if b > p.start { p.width } else { 0.0 }, |s| f32::from(s.x_for_index(b - p.start)));
+            }
+        }
+        self.pieces.last().map_or(self.x0, |p| p.x + p.width)
+    }
+}
+
+/// The text being typed into a cell, laid out by the rules of a cell not being edited (`text_items`),
+/// so that it does not move when editing starts. The box it needs: `width` and `height` in pixels.
+pub(crate) struct EditLayout {
+    pub(crate) lines: Vec<EditLine>,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+}
+
+impl std::fmt::Debug for EditLayout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "EditLayout({} lines)", self.lines.len())
+    }
+}
+
+impl EditLayout {
+    /// The line the byte `b` of the text is in.
+    pub(crate) fn line_of(&self, b: usize) -> usize {
+        self.lines.iter().position(|l| b <= l.end).unwrap_or(self.lines.len().saturating_sub(1))
+    }
+}
+
+/// `text` typed into the cell at (`row`, `column`) whose box is `cell` (width, height) pixels, `px_per_point`
+/// pixels to a point, laid out as `text_items` lays out that cell's shown text.
+pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, res: &Resources, row: u32, column: u32, text: &str, runs: Option<Arc<Vec<ibis_doc_model::CellRun>>>, origin: (f32, f32), cell: (f32, f32), px_per_point: f32) -> EditLayout {
+    let own = sheet.cell(row, column);
+    let mut style = own.map(|c| sheet.styles[c.style as usize].clone()).unwrap_or_default();
+    let kind = own.map_or(CellKind::Text, |c| c.kind);
+    let original_wrap = style.wrap;
+    let multi = text.contains('\n');
+    style.wrap = style.wrap || multi;
+    style.rotation = 0;
+    style.shrink = false;
+    style.vert_align = VerticalPosition::Baseline;
+    style.align = match style.align {
+        CellAlign::Fill | CellAlign::Justify | CellAlign::Distributed => CellAlign::Left,
+        CellAlign::CenterAcross => CellAlign::Center,
+        a => a,
+    };
+    if matches!(style.vertical, CellVerticalAlign::Justify | CellVerticalAlign::Distributed) {
+        style.vertical = CellVerticalAlign::Top;
+    }
+    let font = cell_font(&style, res);
+    let measure = |t: &str, f: &Font, size: f32| -> f32 {
+        let run = TextRun { len: t.len(), font: f.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
+        let mut line = ts.shape_line(SharedString::from(t.to_string()), px(size), &[run], None);
+        whole_point_advances(&mut line, px_per_point);
+        f32::from(line.width)
+    };
+    // Bottom-aligned single lines share their row's baseline, the highest any of them asks for.
+    let gap_of = |s: &CellStyle, t: &str| -> Option<f32> {
+        let probe = CellText { text: t.to_string(), kind: CellKind::Text, general: None, style: s.clone(), font: font.clone(), rect: (0.0, 0.0, 0.0, 0.0), spans: [(0.0, 0.0); 3], row_gap: None, runs: None, phonetic: None };
+        bottom_gap(&probe)
+    };
+    let mut row_gap = gap_of(&style, text);
+    if row_gap.is_some() {
+        let first = sheet.cells.partition_point(|c| c.row < row);
+        for c in sheet.cells[first..].iter().take_while(|c| c.row == row) {
+            if c.column != column && !c.text.is_empty() {
+                if let Some(g) = gap_of(&sheet.styles[c.style as usize], &c.text) {
+                    row_gap = Some(row_gap.map_or(g, |m| m.max(g)));
+                }
+            }
+        }
+    }
+    let make = |right: f32, bottom: f32| CellText {
+        text: text.to_string(),
+        kind,
+        general: None,
+        style: style.clone(),
+        font: font.clone(),
+        rect: (origin.0, origin.1, origin.0 + right, origin.1 + bottom),
+        spans: [(origin.0, origin.0 + right); 3],
+        row_gap,
+        runs: runs.clone(),
+        phonetic: None,
+    };
+    let total = |t: &TextItem| -> f32 { t.pieces.iter().map(|p| p.advance.unwrap_or_else(|| measure(&p.text, if p.plain { &t.plain } else { &t.font }, p.size))).sum() };
+    // The widest line, to give a box that does not wrap the room it needs.
+    let mut right = cell.0;
+    if !original_wrap {
+        let mut probe = Vec::new();
+        text_items(&make(1.0e6, cell.1), px_per_point, &measure, &mut probe);
+        let widest = probe.iter().map(&total).fold(0.0, f32::max);
+        let indent = style.indent as f32 * 9.0 * px_per_point;
+        right = right.max(widest + (TEXT_PAD_LEFT_PT + TEXT_PAD_RIGHT_PT) * px_per_point + indent + 2.0 * px_per_point);
+    }
+    // The room the lines need: all of them laid out (text_items drops those below the box), the box then as high as they are.
+    let biggest = |t: &TextItem| t.pieces.iter().map(|p| p.size).fold(t.font_size, f32::max);
+    let mut items = Vec::new();
+    text_items(&make(right, 1.0e6), px_per_point, &measure, &mut items);
+    let mut bottom = cell.1;
+    if let (Some(first), Some(last)) = (items.first(), items.last()) {
+        let block = last.baseline - first.baseline + font.ascent * biggest(first) + font.descent * biggest(last);
+        bottom = bottom.max(block + 4.0 * px_per_point);
+    }
+    items.clear();
+    text_items(&make(right, bottom), px_per_point, &measure, &mut items);
+    let mut lines = Vec::new();
+    let mut cursor = 0usize;
+    let ascent = font.ascent;
+    for t in &items {
+        let line_text: String = t.pieces.iter().map(|p| p.text.as_str()).collect();
+        // The line's place in the text: after the previous line, over a line break.
+        let start = text[cursor..].find(&line_text).map_or(cursor, |i| cursor + i);
+        let end = start + line_text.len();
+        let shaped: Vec<(Option<ShapedLine>, f32)> = t
+            .pieces
+            .iter()
+            .map(|p| match p.advance {
+                Some(a) => (None, a),
+                None => {
+                    let f = match &p.run {
+                        Some(r) => r.font.clone(),
+                        None if p.plain => t.plain.clone(),
+                        None => t.font.clone(),
+                    };
+                    let color = p.run.as_ref().and_then(|r| r.color).unwrap_or(t.color);
+                    let run = TextRun {
+                        len: p.text.len(),
+                        font: f,
+                        color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: p.run.as_ref().map_or(t.strike, |r| r.strike).then(|| StrikethroughStyle { thickness: px((p.size / 14.0).max(0.5)), color: Some(color) }),
+                    };
+                    let mut line = ts.shape_line(SharedString::from(p.text.clone()), px(p.size), &[run], None);
+                    whole_point_advances(&mut line, px_per_point);
+                    let w = f32::from(line.width);
+                    (Some(line), w)
+                }
+            })
+            .collect();
+        let sum: f32 = shaped.iter().map(|(_, w)| *w).sum();
+        let trailing = t.pieces.last().is_some_and(|p| p.advance.is_none() && p.text.ends_with(' '));
+        let (mut x, _) = compute_text_x(t.align, t.left, t.right, sum, shaped.len(), trailing, 0, px_per_point);
+        x -= origin.0;
+        let x0 = x;
+        let mut at = start;
+        let mut pieces = Vec::new();
+        for ((line, w), p) in shaped.into_iter().zip(&t.pieces) {
+            pieces.push(EditPiece { shaped: line, x, width: w, start: at, len: p.text.len() });
+            at += p.text.len();
+            x += w;
+        }
+        let big = biggest(t);
+        let a = ascent * big;
+        lines.push(EditLine { pieces, baseline: t.baseline - origin.1, ascent: a, descent: font.descent * big, start, end, x0 });
+        cursor = if text[end..].starts_with("\r\n") { end + 2 } else if text[end..].starts_with('\n') { end + 1 } else { end };
+    }
+    if lines.is_empty() {
+        // Nothing typed: the caret waits where text would start.
+        let probe = CellText { text: "x".into(), ..make(right, bottom) };
+        let mut one = Vec::new();
+        text_items(&probe, px_per_point, &measure, &mut one);
+        if let Some(t) = one.first() {
+            let (x0, _) = compute_text_x(t.align, t.left, t.right, 0.0, 1, false, 0, px_per_point);
+            lines.push(EditLine { pieces: Vec::new(), baseline: t.baseline - origin.1, ascent: ascent * t.font_size, descent: font.descent * t.font_size, start: 0, end: 0, x0: x0 - origin.0 });
+        }
+    }
+    // Text ending in a line break: the caret waits on an empty line after it.
+    if text.ends_with('\n') {
+        if let Some(last) = lines.last() {
+            let pitch = line_pitch(style.font.as_deref(), text.chars().any(|c| !c.is_ascii())).unwrap_or(1.2) * style.font_size as f32 / 100.0 * px_per_point;
+            let (a, d, x0) = (last.ascent, last.descent, lines[0].x0);
+            let baseline = last.baseline + pitch;
+            lines.push(EditLine { pieces: Vec::new(), baseline, ascent: a, descent: d, start: text.len(), end: text.len(), x0 });
+            bottom = bottom.max(baseline + d + CELL_PADDING_PT * px_per_point);
+        }
+    }
+    EditLayout { lines, width: right, height: bottom }
+}
+
 /// The parts of `runs` between the characters `from` and `to` of their text.
-fn runs_between(runs: &[ibis_doc_model::CellRun], from: usize, to: usize) -> Vec<ibis_doc_model::CellRun> {
+pub(crate) fn runs_between(runs: &[ibis_doc_model::CellRun], from: usize, to: usize) -> Vec<ibis_doc_model::CellRun> {
     let mut out = Vec::new();
     let mut at = 0;
     for run in runs {
@@ -2711,7 +3183,7 @@ fn proportional_japanese(typeface: Option<&str>) -> bool {
 /// cell's size, for typefaces measured on Excel for Mac's PDF output (MS P
 /// Gothic 9 pt: 13 pt; Meiryo UI 8 pt: 11 pt); `None` for the font's own
 /// height.
-fn line_pitch(typeface: Option<&str>, japanese: bool) -> Option<f32> {
+pub(crate) fn line_pitch(typeface: Option<&str>, japanese: bool) -> Option<f32> {
     let name = typeface?;
     if name.starts_with("ＭＳ") || name.starts_with("MS ") { // i18n-ok（フォント名の判定（表示名ではなく、フォント名の接頭辞））
         Some(13.0 / 9.0)
@@ -2828,14 +3300,14 @@ mod tests {
             let text = if column == 0 { "AB" } else { "" };
             sheet.put_cell(0, column, Some(SheetCell { runs: None, phonetic: None, row: 0, column, value: if text.is_empty() { CellValue::Empty } else { CellValue::Text(text.into()) }, text: text.into(), kind: if text.is_empty() { CellKind::Empty } else { CellKind::Text }, formula: None, style: 1 }));
         }
-        assert_eq!(fill_sources(&sheet).len(), 6);
+        assert_eq!(fill_sources(&sheet, &sheet.cells).len(), 6);
         sheet.cells[3].style = 0;
-        let sources = fill_sources(&sheet); assert_eq!(sources.len(), 2); assert!(!sources.contains_key(&(0, 4)));
+        let sources = fill_sources(&sheet, &sheet.cells); assert_eq!(sources.len(), 2); assert!(!sources.contains_key(&(0, 4)));
         sheet.cells[3].style = 1; sheet.cells[2].formula = Some("IF(TRUE,\"\",1)".into());
-        assert_eq!(fill_sources(&sheet).len(), 1);
+        assert_eq!(fill_sources(&sheet, &sheet.cells).len(), 1);
         sheet.cells[2].formula = None;
         sheet.merges.push(CellRange { first_row: 0, last_row: 0, first_column: 1, last_column: 2 });
-        assert!(fill_sources(&sheet).is_empty());
+        assert!(fill_sources(&sheet, &sheet.cells).is_empty());
     }
 
     #[test]

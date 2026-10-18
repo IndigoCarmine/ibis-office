@@ -4,9 +4,11 @@
 //! Arbitrary transition duration and automatic advancement in seconds.
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Command, SlideId, Transition};
+use crate::pptx::SlidePopup;
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 
@@ -76,11 +78,122 @@ impl SlideEditor {
         self.focus_handle.focus(window, cx); cx.notify();
     }
 
+    pub(crate) fn set_timing_panel_duration(&mut self, seconds: f64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dur) = self.pptx().and_then(|s| s.timing_panel.as_ref()).map(|p| p.duration.clone()) else { return };
+        dur.update(cx, |s, cx| s.set_value(format!("{seconds:.3}"), window, cx));
+        cx.notify();
+    }
+
+    pub(crate) fn set_timing_panel_after(&mut self, seconds: Option<f64>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(after) = self.pptx().and_then(|s| s.timing_panel.as_ref()).map(|p| p.after.clone()) else { return };
+        if let Some(p) = self.pptx_mut().and_then(|s| s.timing_panel.as_mut()) {
+            p.automatic = seconds.is_some();
+        }
+        if let Some(sec) = seconds {
+            after.update(cx, |s, cx| s.set_value(format!("{sec:.3}"), window, cx));
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn apply_timing_panel_to_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.apply_timing_panel(window, cx);
+        self.apply_transition_to_all(cx);
+    }
+
+    pub(crate) fn timing_panel_context_menu_entries(&self) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem};
+        let Some(p) = self.pptx().and_then(|s| s.timing_panel.as_ref()) else {
+            return Vec::new();
+        };
+        let click = p.on_click;
+        let automatic = p.automatic;
+        vec![
+            MenuItem::tr("_shell.apply")
+                .icon("check")
+                .on(|this, window, cx| this.apply_timing_panel(window, cx))
+                .into(),
+            MenuItem::tr("transition.all")
+                .icon("done_all")
+                .on(|this, window, cx| this.apply_timing_panel_to_all(window, cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("transition.duration.500")
+                .on(|this, window, cx| this.set_timing_panel_duration(0.5, window, cx))
+                .into(),
+            MenuItem::tr("transition.duration.1000")
+                .on(|this, window, cx| this.set_timing_panel_duration(1.0, window, cx))
+                .into(),
+            MenuItem::tr("transition.duration.2000")
+                .on(|this, window, cx| this.set_timing_panel_duration(2.0, window, cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("transition.on-click")
+                .checked(click)
+                .on(|this, _, cx| this.toggle_timing_panel(false, cx))
+                .into(),
+            MenuItem::tr("transition.after.none")
+                .checked(!automatic)
+                .on(|this, window, cx| this.set_timing_panel_after(None, window, cx))
+                .into(),
+            MenuItem::tr("transition.after.1000")
+                .on(|this, window, cx| this.set_timing_panel_after(Some(1.0), window, cx))
+                .into(),
+            MenuItem::tr("transition.after.5000")
+                .on(|this, window, cx| this.set_timing_panel_after(Some(5.0), window, cx))
+                .into(),
+            MenuItem::tr("transition.after.10000")
+                .on(|this, window, cx| this.set_timing_panel_after(Some(10.0), window, cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("_shell.close")
+                .icon("close")
+                .on(|this, window, cx| this.close_timing_panel(window, cx))
+                .into(),
+        ]
+    }
+
+    pub(crate) fn open_timing_panel_context_menu(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_text_edit(window, cx);
+        let items = self.timing_panel_context_menu_entries();
+        if items.is_empty() {
+            return;
+        }
+        self.focus_handle.focus(window, cx);
+        let entries = std::rc::Rc::new(items);
+        let editor = cx.entity().downgrade();
+        let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
+            crate::shell::chrome::fill_menu(menu.min_w(px(220.)), &entries, &editor, window, cx)
+        });
+        let dismiss = cx.subscribe_in(&menu, window, |this, _, _: &DismissEvent, window, cx| {
+            if let Some(state) = this.pptx_mut() {
+                state.slide_popup = None;
+            }
+            cx.notify();
+            this.focus_handle.focus(window, cx);
+        });
+        menu.read(cx).focus_handle(cx).focus(window, cx);
+        if let Some(state) = self.pptx_mut() {
+            state.slide_popup = Some(SlidePopup { menu, position, _dismiss: dismiss });
+        }
+        cx.notify();
+    }
+
     pub(crate) fn timing_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.pptx()?.timing_panel.as_ref()?;
         let title=self.presentation().slide_index(p.slide).map(|i|crate::shell::i18n::format("pptx.timing-panel.transition-timing-slide-index", &[("index", &(i+1))])).unwrap_or_else(||crate::shell::i18n::text("pptx.timing-panel.timing-deleted-slide").to_string());
         let (duration, after, automatic, click, error) = (p.duration.clone(), p.after.clone(), p.automatic, p.on_click, p.error.clone());
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.))
+        let mut body = v_flex()
+            .id("pptx-timing-panel")
+            .gap_2()
+            .px(px(18.))
+            .py(px(8.))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_timing_panel_context_menu(event.position, window, cx);
+                }),
+            )
             .child(div().text_size(px(13.)).child(crate::shell::i18n::text("pptx.timing-panel.transition-duration-s"))).child(Input::new(&duration).small())
             .child(Button::new("pptx-timing-click").small().ghost().label(if click { crate::shell::i18n::text("pptx.timing-panel.mouse-click") } else { crate::shell::i18n::text("pptx.timing-panel.mouse-click-2") }).on_click(cx.listener(|e, _, _, cx| e.toggle_timing_panel(false, cx))))
             .child(Button::new("pptx-timing-auto").small().ghost().label(if automatic { crate::shell::i18n::text("pptx.timing-panel.after") } else { crate::shell::i18n::text("pptx.timing-panel.after-2") }).on_click(cx.listener(|e, _, _, cx| e.toggle_timing_panel(true, cx))))

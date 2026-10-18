@@ -99,7 +99,7 @@ fn a_picture_put_on_a_layout_comes_with_its_file() {
     let (poster, _, _) = ibis_pptx::clip_poster(false, 16.0 / 9.0);
     let media = document.ids().add_media(MediaFormat::Png, poster.clone());
     let id = document.ids().new_shape_id();
-    let picture = Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: "ロゴ".into() };
+    let picture = Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: "ロゴ".into(), geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None };
     let index = opened.presentation.slides[0].shapes.len();
     document.execute(vec![Command::InsertShape { slide, index, shape: Shape::new(id, EmuRect::new(100_000, 100_000, 800_000, 450_000), ShapeKind::Picture(picture)) }]).unwrap();
     let edited = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
@@ -229,4 +229,130 @@ fn a_slide_without_notes_gets_a_notes_page_from_the_edited_one() {
     assert_eq!(after.presentation.slides[index].notes, "話すこと\n二つ目");
     let package = ibis_ooxml::Package::open(back).unwrap();
     assert!(package.names().any(|n| n.starts_with("ppt/notesSlides/notesSlide") && String::from_utf8_lossy(&package.read(n).unwrap()).contains("i=\"1\"")), "italic in a new notes page");
+}
+
+#[test]
+fn a_placeholder_added_to_a_layout_is_one_the_layout_has() {
+    let data = file("editing/pptx-plan.pptx");
+    let pages = master_page::pages(&data).unwrap();
+    let layout = pages.iter().skip(1).find(|p| !p.master).unwrap().clone();
+    let before = ibis_pptx::open(data.clone()).unwrap();
+    let layout_index = before.presentation.layouts.iter().position(|l| l.name == layout.name).unwrap();
+    let count = before.presentation.layouts[layout_index].placeholders.len();
+    let kinds = [
+        (master_page::PlaceholderKind::Picture, "pic"),
+        (master_page::PlaceholderKind::Chart, "chart"),
+        (master_page::PlaceholderKind::Table, "tbl"),
+        (master_page::PlaceholderKind::Media, "media"),
+        (master_page::PlaceholderKind::Text, "body"),
+    ];
+    let mut bytes = data.clone();
+    for (n, (kind, ph)) in kinds.into_iter().enumerate() {
+        bytes = master_page::add_placeholder(&bytes, &layout.part, kind).unwrap();
+        let after = ibis_pptx::open(bytes.clone()).unwrap();
+        let l = after.presentation.layouts.iter().find(|l| l.name == layout.name).unwrap();
+        assert_eq!(l.placeholders.len(), count + n + 1, "{ph}");
+        assert!(l.placeholders.iter().any(|p| p.placeholder.normalized() == ph), "{ph} is a placeholder of the layout");
+    }
+    // The other layouts and the slides are as they were.
+    let after = ibis_pptx::open(bytes).unwrap();
+    assert_eq!(after.presentation.slides.len(), before.presentation.slides.len());
+    for (i, (a, b)) in before.presentation.layouts.iter().zip(&after.presentation.layouts).enumerate() {
+        if i != layout_index {
+            assert_eq!(a.placeholders.len(), b.placeholders.len());
+        }
+    }
+}
+
+#[test]
+fn the_notes_master_is_a_slide_and_comes_back_changed() {
+    let data = file("editing/pptx-plan.pptx");
+    let Some(part) = master_page::notes_master_part(&data).unwrap() else { panic!("the test file has a notes master") };
+    let temp = master_page::build_notes_master(&data).unwrap();
+    let opened = ibis_pptx::open(temp).unwrap();
+    assert_eq!(opened.presentation.slides.len(), 1);
+    let slide = opened.presentation.slides[0].clone();
+    assert!(slide.shapes.len() >= 2, "the notes master's places are shapes: {}", slide.shapes.len());
+    // Unchanged: back the same (same number of places).
+    let edited = opened.source.save(&opened.presentation, SaveOptions::default()).unwrap();
+    let back = master_page::apply(&data, &edited, &part).unwrap();
+    let again = master_page::build_notes_master(&back).unwrap();
+    assert_eq!(ibis_pptx::open(again).unwrap().presentation.slides[0].shapes.len(), slide.shapes.len());
+    // A place moved comes back moved.
+    let first = slide.shapes[0].clone();
+    let mut document = Document::new(opened.presentation.clone());
+    let moved = EmuRect::new(first.frame.x + 100_000, first.frame.y + 50_000, first.frame.width, first.frame.height);
+    document.execute(vec![Command::SetFrame { slide: slide.id, shape: first.id, frame: moved }]).unwrap();
+    let edited = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let back = master_page::apply(&data, &edited, &part).unwrap();
+    let again = ibis_pptx::open(master_page::build_notes_master(&back).unwrap()).unwrap();
+    assert_eq!(again.presentation.slides[0].shapes[0].frame, moved);
+    // The other parts are as they were: the slides.
+    assert_eq!(ibis_pptx::open(back).unwrap().presentation.slides.len(), ibis_pptx::open(data).unwrap().presentation.slides.len());
+}
+
+#[test]
+fn a_box_added_to_a_notes_page_and_the_moved_places_come_back() {
+    use ibis_doc_model::{Command, Document, Shape, ShapeId};
+    let data = file("editing/pptx-plan.pptx");
+    let original = ibis_pptx::open(data.clone()).unwrap();
+    let index = original.presentation.slides.iter().position(|s| !s.notes.is_empty()).unwrap();
+    let opened = ibis_pptx::open(ibis_pptx::notes_page::build(&data, index).unwrap()).unwrap();
+    let slide = opened.presentation.slides[0].clone();
+    let body = slide.shapes.iter().find(|s| s.text_body().is_some_and(|b| b.text().contains("発表メモ"))).unwrap().clone();
+    let image = slide.shapes.iter().find(|s| s.id != body.id).expect("the slide image").clone();
+    let id = ShapeId(slide.shapes.iter().map(|s| s.id.0).max().unwrap() + 100);
+    let (body_to, image_to) = (EmuRect::new(body.frame.x + 111_000, body.frame.y + 222_000, body.frame.width, body.frame.height), EmuRect::new(image.frame.x + 33_000, image.frame.y + 44_000, image.frame.width, image.frame.height));
+    let mut document = Document::new(opened.presentation.clone());
+    document
+        .execute(vec![
+            Command::SetFrame { slide: slide.id, shape: body.id, frame: body_to },
+            Command::SetFrame { slide: slide.id, shape: image.id, frame: image_to },
+            Command::InsertShape { slide: slide.id, index: slide.shapes.len(), shape: Shape::text_box(id, EmuRect::new(500_000, 500_000, 2_000_000, 400_000), "ノートの図形") },
+        ])
+        .unwrap();
+    let edited = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let back = ibis_pptx::notes_page::apply(&data, &edited, index).unwrap();
+    let after = ibis_pptx::open(back.clone()).unwrap();
+    assert_eq!(after.presentation.slides[index].notes, original.presentation.slides[index].notes, "the text is the same");
+    assert!(after.presentation.slides[index].notes_shapes.iter().any(|s| s.text_body().is_some_and(|b| b.text() == "ノートの図形")), "the box is a shape of the notes page");
+    // Built again: the places where they were moved.
+    let again = ibis_pptx::open(ibis_pptx::notes_page::build(&back, index).unwrap()).unwrap();
+    let shapes = &again.presentation.slides[0].shapes;
+    let body2 = shapes.iter().find(|s| s.text_body().is_some_and(|b| b.text().contains("発表メモ"))).unwrap();
+    assert_eq!(body2.frame, body_to);
+    assert!(shapes.iter().any(|s| s.frame == image_to), "the slide image moved");
+    // Again with nothing changed: the same, no relationship made at each closing.
+    let edited = again.source.save(&again.presentation, SaveOptions::default()).unwrap();
+    let back2 = ibis_pptx::notes_page::apply(&back, &edited, index).unwrap();
+    let a = ibis_ooxml::Package::open(back).unwrap();
+    let b = ibis_ooxml::Package::open(back2).unwrap();
+    assert_eq!(a.relationships("ppt/notesSlides/notesSlide1.xml").unwrap().len(), b.relationships("ppt/notesSlides/notesSlide1.xml").unwrap().len());
+}
+
+#[test]
+fn the_background_set_on_a_layout_page_is_the_layouts() {
+    use ibis_doc_model::{Color, Fill, Rgb};
+    let data = file("editing/pptx-plan.pptx");
+    let pages = master_page::pages(&data).unwrap();
+    let layout = pages.iter().skip(1).find(|p| !p.master).unwrap().clone();
+    let opened = ibis_pptx::open(master_page::build(&data, &layout.part).unwrap()).unwrap();
+    let slide = opened.presentation.slides[0].id;
+    let red = Fill::Solid(Color::opaque(Rgb(0xC00000)));
+    let mut document = Document::new(opened.presentation.clone());
+    document.execute(vec![Command::SetBackground { slide, fill: red.clone() }]).unwrap();
+    let edited = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let back = master_page::apply(&data, &edited, &layout.part).unwrap();
+    let after = ibis_pptx::open(back.clone()).unwrap();
+    let l = after.presentation.layouts.iter().find(|l| l.name == layout.name).unwrap();
+    assert_eq!(l.background, red, "the layout has the background");
+    // Built again, it is the page's; the other layouts are as they were.
+    let again = ibis_pptx::open(master_page::build(&back, &layout.part).unwrap()).unwrap();
+    assert_eq!(again.presentation.slides[0].background, red);
+    let before = ibis_pptx::open(data).unwrap();
+    for (a, b) in before.presentation.layouts.iter().zip(&after.presentation.layouts) {
+        if a.name != layout.name {
+            assert_eq!(a.background, b.background, "{}", a.name);
+        }
+    }
 }

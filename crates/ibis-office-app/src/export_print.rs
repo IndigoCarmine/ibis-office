@@ -104,6 +104,8 @@ pub fn handout_grid(per_page: u8, landscape: bool) -> (usize, usize) {
         3 => (1, 3),
         4 => (2, 2),
         6 => (2, 3),
+        8 => (2, 4),
+        16 => (4, 4),
         _ => (3, 3),
     };
     if landscape { (rows, columns) } else { (columns, rows) }
@@ -173,6 +175,32 @@ pub fn notes_pages(slides: &[RgbaImage], notes: &[NoteText], marks: &HandoutMark
             let mut more = blank();
             draw_notes(&mut flow, &mut more, (side * PX_PER_PT, top * PX_PER_PT, avail_w * PX_PER_PT, (page_h - 56.0 - top) * PX_PER_PT));
             pages.push(more);
+        }
+    }
+    pages
+        .into_iter()
+        .enumerate()
+        .map(|(n, mut page)| {
+            draw_marks(&mut page, marks, n + 1, (page_w, page_h));
+            (page, (page_w, page_h))
+        })
+        .collect()
+}
+
+/// アウトライン: the slides' titles (with their numbers) and body paragraphs as text, the levels indented, over pages of an A4
+/// portrait sheet; with the header, date, footer and page number the notes carry. Each page with its size in points.
+pub fn outline_pages(text: &NoteText, marks: &HandoutMarks) -> Vec<(RgbaImage, (f32, f32))> {
+    let (page_w, page_h) = HANDOUT_PAGE;
+    let (side, top) = (72.0, 60.0);
+    let blank = || RgbaImage::from_pixel((page_w * PX_PER_PT) as u32, (page_h * PX_PER_PT) as u32, Rgba([255, 255, 255, 255]));
+    let mut flow = start_notes(Some(text));
+    let mut pages = Vec::new();
+    loop {
+        let mut page = blank();
+        draw_notes(&mut flow, &mut page, (side * PX_PER_PT, top * PX_PER_PT, (page_w - 2.0 * side) * PX_PER_PT, (page_h - 56.0 - top) * PX_PER_PT));
+        pages.push(page);
+        if !notes_left(&flow) {
+            break;
         }
     }
     pages
@@ -292,6 +320,23 @@ mod tests {
         let mut same = solid(2, 2, [10, 20, 30]);
         recolor(&mut same, PrintColor::Color);
         assert_eq!(same.get_pixel(0, 0), &Rgba([10, 20, 30, 255]));
+    }
+
+    /// アウトライン: the titles and bodies as dark text from the top of an A4 page, on more pages when they do not fit.
+    #[cfg(all(target_os = "macos", feature = "export"))]
+    #[test]
+    fn the_outline_is_text_on_pages_of_its_own() {
+        let mut paragraphs = Vec::new();
+        for i in 1..=120 {
+            paragraphs.push(NotePara { level: 0, bullet: None, runs: vec![NoteRun { text: format!("{i}  Title {i}"), bold: true, size_pt: Some(14.0), ..Default::default() }] });
+            paragraphs.push(NotePara { level: 1, bullet: Some("•".into()), runs: vec![NoteRun { text: format!("Point of slide {i}"), size_pt: Some(12.0), ..Default::default() }] });
+        }
+        let pages = outline_pages(&NoteText { paragraphs }, &HandoutMarks::default());
+        assert!(pages.len() >= 3, "{}", pages.len());
+        for (page, size) in &pages {
+            assert_eq!(*size, HANDOUT_PAGE);
+            assert!(page.pixels().filter(|q| q[0] < 100 && q[1] < 100 && q[2] < 100).count() > 300, "text on every page");
+        }
     }
 
     /// ノート ページ: the slide on top, framed, with the notes' text below it.

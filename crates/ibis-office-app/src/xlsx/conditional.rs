@@ -30,6 +30,10 @@ pub(crate) struct DataBarMark {
     pub(crate) axis: Option<f32>,
     /// Color of the axis line.
     pub(crate) axis_color: Rgb,
+    /// The border drawn round the bar (the positive or negative one's colour), if it has one.
+    pub(crate) border: Option<Rgb>,
+    /// The bar grows from the right (`direction="rightToLeft"`): drawn mirrored in the cell.
+    pub(crate) mirrored: bool,
 }
 
 /// What the conditional formats draw over the cells, besides their formats.
@@ -70,6 +74,21 @@ impl Book for OneSheet<'_> {
         self.0.cells.iter().fold((0, 0), |(r, c), x| (r.max(x.row + 1), c.max(x.column + 1)))
     }
     fn defined_name(&self, _: &str, _: Option<usize>) -> Option<String> {
+        None
+    }
+    fn pivot_data(
+        &self,
+        _: usize,
+        row: u32,
+        column: u32,
+        data_field: &str,
+        fields: &[(&str, &str)],
+    ) -> Option<CellValue> {
+        for pivot in &self.0.pivots {
+            if pivot.contains_cell(row, column) {
+                return pivot.get_pivot_data(self.0, data_field, fields);
+            }
+        }
         None
     }
 }
@@ -184,7 +203,9 @@ pub(crate) fn icons_of(set: &str) -> Vec<(Rgb, u8)> {
         "5ArrowsGray" => vec![(gray, 3), (gray, 5), (gray, 2), (gray, 4), (gray, 1)],
         "5Rating" => vec![(gray, 13), (gray, 14), (gray, 15), (gray, 16), (gray, 17)],
         "5Quarters" => vec![(black, 18), (black, 19), (black, 20), (black, 21), (black, 22)],
-        "5Boxes" => vec![(blue, 12), (blue, 12), (blue, 12), (blue, 12), (blue, 12)],
+        "3Stars" => vec![(gray, 23), (yellow, 23), (yellow, 23)],
+        "3Triangles" => vec![(red, 24), (yellow, 25), (green, 6)],
+        "5Boxes" => vec![(gray, 26), (blue, 27), (blue, 28), (blue, 29), (blue, 30)],
         _ => {
             let n = set.chars().next().and_then(|c| c.to_digit(10)).unwrap_or(3) as usize;
             let arrows = set.contains("Arrows");
@@ -227,7 +248,7 @@ fn resolve_icon(set: &str, idx: usize, custom_icons: &[Option<ibis_doc_model::Cf
 /// The sheet with its conditional formats applied, and what they draw
 /// besides; `None` when no rule holds anywhere.
 pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
-    if sheet.conditional.is_empty() {
+    if sheet.conditional.is_empty() && sheet.conditional_x14.is_empty() {
         return None;
     }
     let book = OneSheet(sheet);
@@ -236,7 +257,7 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
     let mut stopped: HashMap<(u32, u32), u32> = HashMap::new();
     let mut overlay = Overlay::default();
     let mut hide_value: std::collections::HashSet<(u32, u32)> = Default::default();
-    let mut rules: Vec<(&ibis_doc_model::ConditionalFormat, &ibis_doc_model::CfRule)> = sheet.conditional.iter().flat_map(|cf| cf.rules.iter().map(move |r| (cf, r))).collect();
+    let mut rules: Vec<(&ibis_doc_model::ConditionalFormat, &ibis_doc_model::CfRule)> = sheet.conditional.iter().chain(&sheet.conditional_x14).flat_map(|cf| cf.rules.iter().map(move |r| (cf, r))).collect();
     rules.sort_by_key(|(_, r)| r.priority);
     for (cf, rule) in rules {
         let cells = cells_of(sheet, &cf.ranges);
@@ -394,7 +415,7 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
                 }
                 Vec::new()
             }
-            CfKind::DataBar { min, max, color, gradient, negative_color, axis_color, axis_position, min_length, max_length } => {
+            CfKind::DataBar { min, max, color, gradient, negative_color, axis_color, axis_position, min_length, max_length, border_color, negative_border_color, direction } => {
                 if let (Some(lo), Some(hi)) = (point(&book, min, &numbers, anchor), point(&book, max, &numbers, anchor)) {
                     let neg_color = negative_color.unwrap_or(Rgb(0xD00000));
                     let ax_color = axis_color.unwrap_or(Rgb(0x000000));
@@ -435,6 +456,9 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
                                 is_negative: false,
                                 axis: None,
                                 axis_color: ax_color,
+                            
+                                border: if false { negative_border_color.or(*border_color) } else { *border_color },
+                                mirrored: *direction == ibis_doc_model::DataBarDirection::RightToLeft,
                             });
                         } else if axis_pos >= 1.0 {
                             let abs_lo = lo.abs().max(1e-9);
@@ -449,6 +473,9 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
                                 is_negative: true,
                                 axis: Some(1.0),
                                 axis_color: ax_color,
+                            
+                                border: if true { negative_border_color.or(*border_color) } else { *border_color },
+                                mirrored: *direction == ibis_doc_model::DataBarDirection::RightToLeft,
                             });
                         } else {
                             if v >= 0.0 {
@@ -464,7 +491,10 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
                                     is_negative: false,
                                     axis: Some(axis_pos),
                                     axis_color: ax_color,
-                                });
+                                
+                                border: if false { negative_border_color.or(*border_color) } else { *border_color },
+                                mirrored: *direction == ibis_doc_model::DataBarDirection::RightToLeft,
+                            });
                             } else {
                                 let neg_span = axis_pos;
                                 let abs_lo = lo.abs().max(1e-9);
@@ -479,7 +509,10 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
                                     is_negative: true,
                                     axis: Some(axis_pos),
                                     axis_color: ax_color,
-                                });
+                                
+                                border: if true { negative_border_color.or(*border_color) } else { *border_color },
+                                mirrored: *direction == ibis_doc_model::DataBarDirection::RightToLeft,
+                            });
                             }
                         }
 
@@ -629,7 +662,7 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{OneSheet, apply, point};
     use ibis_doc_model::{CellRange, CellStyle, CellValue, CfKind, CfRule, CfStyle, ConditionalFormat, Rgb, Sheet};
 
     #[test]
@@ -882,7 +915,7 @@ fn applied_cache() -> std::sync::MutexGuard<'static, AppliedCache> {
 }
 
 fn keep(cache: &mut AppliedCache, sheet: &Arc<Sheet>, applied: Applied) {
-    let key = Arc::as_ptr(sheet) as usize;
+    let key = sheet.cells.content_id();
     cache.done.retain(|(k, _, _)| *k != key);
     if cache.done.len() >= APPLIED_KEPT {
         cache.done.remove(0);
@@ -893,7 +926,7 @@ fn keep(cache: &mut AppliedCache, sheet: &Arc<Sheet>, applied: Applied) {
 /// `sheet` with its conditional formats applied, as kept, or worked out
 /// now (waiting for the other thread when it is working on it).
 pub(crate) fn applied(sheet: &Arc<Sheet>) -> Applied {
-    let key = Arc::as_ptr(sheet) as usize;
+    let key = sheet.cells.content_id();
     let mut cache = applied_cache();
     loop {
         if let Some(i) = cache.done.iter().position(|(k, _, _)| *k == key) {
@@ -919,13 +952,13 @@ pub(crate) fn applied(sheet: &Arc<Sheet>) -> Applied {
 pub(crate) fn apply_ahead(sheets: Vec<Arc<Sheet>>) {
     #[cfg(not(target_family = "wasm"))]
     {
-        let sheets: Vec<Arc<Sheet>> = sheets.into_iter().filter(|s| !s.conditional.is_empty()).collect();
+        let sheets: Vec<Arc<Sheet>> = sheets.into_iter().filter(|s| !s.conditional.is_empty() || !s.conditional_x14.is_empty()).collect();
         if sheets.is_empty() {
             return;
         }
         std::thread::spawn(move || {
             for sheet in sheets {
-                let key = Arc::as_ptr(&sheet) as usize;
+                let key = sheet.cells.content_id();
                 {
                     let mut cache = applied_cache();
                     if cache.done.iter().any(|(k, _, _)| *k == key) {

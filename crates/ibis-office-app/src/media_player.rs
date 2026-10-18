@@ -16,6 +16,7 @@ pub(crate) use mac::run_loop;
 pub(crate) use other::{Frame, Player, video_aspect};
 
 #[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
 mod mac {
     use std::ffi::c_void;
     use std::path::Path;

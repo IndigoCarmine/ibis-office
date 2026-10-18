@@ -92,6 +92,57 @@ cat > "$APP/Contents/Info.plist" <<EOF
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
+			<string>CSV / TSV text table</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.comma-separated-values-text</string>
+				<string>public.tab-separated-values-text</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>csv</string>
+				<string>tsv</string>
+				<string>tab</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Old Office and OpenDocument file (PowerPoint 97-2003, Excel 97-2003, OpenDocument spreadsheet and presentation)</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.microsoft.powerpoint.ppt</string>
+				<string>com.microsoft.powerpoint.pps</string>
+				<string>com.microsoft.powerpoint.pot</string>
+				<string>com.microsoft.excel.xls</string>
+				<string>com.microsoft.excel.xlt</string>
+				<string>org.oasis-open.opendocument.spreadsheet</string>
+				<string>org.oasis-open.opendocument.spreadsheet-template</string>
+				<string>org.oasis-open.opendocument.presentation</string>
+				<string>org.oasis-open.opendocument.presentation-template</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>ppt</string>
+				<string>pps</string>
+				<string>pot</string>
+				<string>xls</string>
+				<string>xlt</string>
+				<string>ods</string>
+				<string>ots</string>
+				<string>odp</string>
+				<string>otp</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
 			<string>Office document with macros (the macros do not run)</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>

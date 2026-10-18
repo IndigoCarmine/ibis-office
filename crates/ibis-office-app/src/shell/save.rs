@@ -88,6 +88,8 @@ impl SlideEditor {
         // A workbook saved as .csv: the sheet shown, as CSV (Excel's 「CSV UTF-8」).
         let csv = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"));
         let tsv = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("tsv") || e.eq_ignore_ascii_case("tab") || e.eq_ignore_ascii_case("txt"));
+        let ods = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ods"));
+        let xls = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xls"));
         let xltx = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xltx") || e.eq_ignore_ascii_case("xltm"));
         let ppsx = self.is_presentation() && path.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_slideshow);
         let potx = self.is_presentation() && path.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_template);
@@ -99,6 +101,12 @@ impl SlideEditor {
         } else if tsv {
             let index = self.presentation().slide_index(self.current_slide).unwrap_or(0);
             ibis_pptx::csv::sheet_to_tsv(self.presentation(), index)
+        } else if ods {
+            ibis_pptx::write_ods_with_source(self.presentation(), &source).map_err(|e| e.to_string())?
+        } else if xls {
+            let (bytes, report) = ibis_pptx::write_xls_report(self.presentation()).map_err(|e| e.to_string())?;
+            self.save_note = crate::xlsx::export_xls::note(&report);
+            bytes
         } else if xltx || potx || dotx {
             source.save_template(self.presentation(), ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?
         } else if ppsx {
@@ -114,14 +122,20 @@ impl SlideEditor {
                 log::info!("Created backup copy at: {}", backup_path.display());
             }
         }
+        // 常にバックアップ コピーを作成する (a document's).
+        if self.is_document() {
+            if let Ok(Some(copy)) = crate::docx::backup::make_backup(&path) {
+                log::info!("Created backup copy at: {}", copy.display());
+            }
+        }
         // Protected with the password the file has (パスワードを使用して暗号化).
-        let bytes = if let (Some(password), false, false) = (&self.protection_password, csv, tsv) { protect(&bytes, password)? } else { bytes };
+        let bytes = if let (Some(password), false, false, false, false) = (&self.protection_password, csv, tsv, ods, xls) { protect(&bytes, password)? } else { bytes };
         write_replacing(&path, &bytes).map_err(|e| crate::shell::i18n::format("file.cannot-write", &[("path", &path.display()), ("error", &e)]))?;
         let name: SharedString = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
         window.set_window_title(&format!("{name} - ibisOffice"));
         self.file_name = Some(name);
-        self.path = Some(path);
-        if self.is_workbook() || self.is_presentation() {
+        self.set_file_path(Some(path));
+        if self.is_workbook() || self.is_presentation() || self.is_document() {
             self.cleanup_active_autorecover_file();
             self.is_recovered = false;
             self.is_repaired = false;
@@ -132,7 +146,7 @@ impl SlideEditor {
     #[cfg(not(target_family = "wasm"))]
     fn report_save(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
         self.status = Some(match result {
-            Ok(()) => crate::shell::i18n::text("_shell.saved").into(),
+            Ok(()) => self.save_note.take().unwrap_or_else(|| crate::shell::i18n::text("_shell.saved").into()),
             Err(err) => crate::shell::i18n::format("file.save-failed", &[("error", &err)]).into(),
         });
         cx.notify();

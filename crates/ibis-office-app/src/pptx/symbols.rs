@@ -41,6 +41,7 @@ impl SlideEditor {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn symbols_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let group = self.pptx()?.symbols?;
         let select = Rc::new(|this: &mut SlideEditor, i: usize, cx: &mut Context<SlideEditor>| {

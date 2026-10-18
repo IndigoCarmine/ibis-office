@@ -39,6 +39,14 @@ actions!(
     [
         GroupShapes,
         UngroupShapes,
+        /// 最前面・前面へ・背面へ・最背面へ（⌥⇧⌘↑・⌥⌘↑・⌥⌘↓・⌥⇧⌘↓）.
+        BringToFront,
+        /// 上付き・下付き（⇧⌘+・⌘=）.
+        ToggleSuperscript,
+        ToggleSubscript,
+        BringForward,
+        SendBackward,
+        SendToBack,
         DeleteForward,
         ClearFormatting,
         OpenFind,
@@ -61,6 +69,8 @@ actions!(
         PasteTextFormat,
         /// The previous cell (Shift+Tab).
         PreviousTableCell,
+        /// 高コントラスト表示の切り替え（⌥⌘H）.
+        ToggleHighContrast,
     ]
 );
 
@@ -79,7 +89,7 @@ pub(crate) enum Drag {
     /// rows (`row`: the one above it) moved: 列の幅・行の高さ.
     TableBorder { shape: ShapeId, column: Option<usize>, row: Option<usize>, start: Point<Pixels>, current: Point<Pixels> },
     /// 頂点の編集: vertex `index` of outline `part` dragged.
-    Vertex { part: usize, index: usize, start: Point<Pixels>, current: Point<Pixels> },
+    Vertex { part: usize, index: usize, handle: u8, start: Point<Pixels>, current: Point<Pixels> },
 }
 
 impl Drag {
@@ -181,7 +191,9 @@ impl SlideEditor {
             // In a table, Tab and Shift+Tab go to the next and previous cell
             // (bound here: GPUI gives Tab to the focus order otherwise).
             .on_action(cx.listener(|this, _: &NextTableCell, window, cx| {
-                if this.text_editing().is_some_and(|e| e.cell.is_some()) {
+                if this.is_outline_editing() {
+                    this.outline_indent(true, window, cx);
+                } else if this.text_editing().is_some_and(|e| e.cell.is_some()) {
                     this.next_table_cell(true, window, cx);
                 } else if this.focus_handle.is_focused(window) && this.text_editing().is_none() && this.select_next_shape(true, cx) {
                     // Tab with no text edited: the next shape (as PowerPoint).
@@ -190,7 +202,9 @@ impl SlideEditor {
                 }
             }))
             .on_action(cx.listener(|this, _: &PreviousTableCell, window, cx| {
-                if this.text_editing().is_some_and(|e| e.cell.is_some()) {
+                if this.is_outline_editing() {
+                    this.outline_indent(false, window, cx);
+                } else if this.text_editing().is_some_and(|e| e.cell.is_some()) {
                     this.next_table_cell(false, window, cx);
                 } else if this.focus_handle.is_focused(window) && this.text_editing().is_none() && this.select_next_shape(false, cx) {
                 } else {
@@ -242,6 +256,47 @@ impl SlideEditor {
                 cx.stop_propagation();
                 this.ungroup_selected(cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleSuperscript, window, cx| {
+                // While text is edited: 上付き; else ⌘+ is the zoom's.
+                if this.text_editing().is_some() {
+                    cx.stop_propagation();
+                    this.toggle_baseline(30_000, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSubscript, window, cx| {
+                if this.text_editing().is_some() {
+                    cx.stop_propagation();
+                    this.toggle_baseline(-25_000, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &BringToFront, _, cx| {
+                cx.stop_propagation();
+                if this.text_editing().is_none() {
+                    this.order_selected(editing::Order::Front, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &BringForward, _, cx| {
+                cx.stop_propagation();
+                if this.text_editing().is_none() {
+                    this.order_selected(editing::Order::Forward, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &SendBackward, _, cx| {
+                cx.stop_propagation();
+                if this.text_editing().is_none() {
+                    this.order_selected(editing::Order::Backward, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &SendToBack, _, cx| {
+                cx.stop_propagation();
+                if this.text_editing().is_none() {
+                    this.order_selected(editing::Order::Back, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &OpenFind, window, cx| {
                 cx.stop_propagation();
                 this.open_pptx_find(window, cx);
@@ -262,13 +317,19 @@ impl SlideEditor {
                 cx.stop_propagation();
                 this.toggle_pptx_snap_to_shape(cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleHighContrast, _, cx| {
+                cx.stop_propagation();
+                this.toggle_high_contrast(cx);
+            }))
             .on_action(cx.listener(|this, _: &ClearFormatting, window, cx| {
                 cx.stop_propagation();
                 this.clear_formats(window, cx);
             }))
             .on_action(cx.listener(|this, _: &DeleteForward, _, cx| {
                 cx.stop_propagation();
-                if this.text_editing().is_some() {
+                if this.is_outline_editing() {
+                    this.outline_delete(true, cx);
+                } else if this.text_editing().is_some() {
                     this.delete_text(true, cx);
                 } else {
                     this.delete_selected(cx);
@@ -276,7 +337,9 @@ impl SlideEditor {
             }))
             .on_action(cx.listener(|this, _: &crate::DeleteSelection, _, cx| {
                 cx.stop_propagation();
-                if this.text_editing().is_some() {
+                if this.is_outline_editing() {
+                    this.outline_delete(false, cx);
+                } else if this.text_editing().is_some() {
                     this.delete_text(false, cx);
                 } else {
                     this.delete_selected(cx);
@@ -284,7 +347,9 @@ impl SlideEditor {
             }))
             .on_action(cx.listener(|this, _: &crate::CancelTool, window, cx| {
                 cx.stop_propagation();
-                if this.is_drawing_path() {
+                if this.is_outline_editing() {
+                    this.end_outline_edit(cx);
+                } else if this.is_drawing_path() {
                     this.cancel_path_draw(cx);
                 } else if this.is_editing_points() {
                     this.end_edit_points(cx);
@@ -379,6 +444,10 @@ impl SlideEditor {
                         cx.stop_propagation();
                         this.open_slide_comments(window, cx);
                     }))
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.open_comment_context_menu(i, event.position, window, cx);
+                    }))
                     .into_any_element()
             })
             .collect()
@@ -452,6 +521,7 @@ impl SlideEditor {
             .w(px(size.width as f32 * scale))
             .h(px(size.height as f32 * scale))
             .shadow_md()
+            .when(self.is_high_contrast(), |d| d.border_2().border_color(rgb(0x000000)))
             .child(slide_backdrop(slide, scale, &self.resources));
         if self.is_pptx_gridlines_enabled() {
             slide_div = slide_div.child(self.render_gridlines(size, scale));
@@ -646,25 +716,25 @@ impl SlideEditor {
         if editing_points {
             outlines.clear();
             let dragged = match (self.pptx_drag(), self.slide_layout()) {
-                (Some(Drag::Vertex { part, index, start, current }), Some(layout)) if moved(*start, *current) => {
+                (Some(Drag::Vertex { part, index, handle, start, current }), Some(layout)) if moved(*start, *current) => {
                     let to = layout.to_emu(*current);
-                    Some((*part, *index, (to.x as f64, to.y as f64)))
+                    Some((*part, *index, *handle, (to.x as f64, to.y as f64)))
                 }
                 _ => None,
             };
-            for (l, polygon) in self.edit_point_polygons().iter().enumerate() {
-                let pts: Vec<Point<Pixels>> = polygon
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| {
-                        let v = match dragged {
-                            Some((part, index, to)) if part == l && index == i => to,
-                            _ => *v,
-                        };
-                        point(px(v.0 as f32 * scale), px(v.1 as f32 * scale))
-                    })
-                    .collect();
+            let nodes = self.edit_point_nodes_dragged(dragged);
+            for polygon in ibis_doc_model::shape_merge::nodes_polylines(&nodes) {
+                let pts: Vec<Point<Pixels>> = polygon.iter().map(|v| point(px(v.0 as f32 * scale), px(v.1 as f32 * scale))).collect();
                 outlines.push((pts, false));
+            }
+            // The handles of the vertex selected, with a line to each.
+            if let Some((l, i)) = self.edit_point_selected()
+                && let Some(n) = nodes.get(l).and_then(|f| f.get(i))
+            {
+                for h in [n.cin, n.cout].into_iter().flatten() {
+                    let line = [n.p, h].map(|v| point(px(v.0 as f32 * scale), px(v.1 as f32 * scale)));
+                    outlines.push((line.to_vec(), false));
+                }
             }
         }
         // カスタム軌跡: the lines between the points clicked, from the shape's middle.
@@ -809,27 +879,42 @@ impl SlideEditor {
         if editing_points {
             let selected_vertex = self.edit_point_selected();
             let dragged = match (self.pptx_drag(), self.slide_layout()) {
-                (Some(Drag::Vertex { part, index, start, current }), Some(layout)) if moved(*start, *current) => {
+                (Some(Drag::Vertex { part, index, handle, start, current }), Some(layout)) if moved(*start, *current) => {
                     let to = layout.to_emu(*current);
-                    Some((*part, *index, (to.x as f64, to.y as f64)))
+                    Some((*part, *index, *handle, (to.x as f64, to.y as f64)))
                 }
                 _ => None,
             };
-            for (l, i, v) in self.edit_point_vertices() {
-                let v = match dragged {
-                    Some((part, index, to)) if part == l && index == i => to,
-                    _ => v,
-                };
-                let chosen = selected_vertex == Some((l, i));
+            let nodes = self.edit_point_nodes_dragged(dragged);
+            for (l, figure) in nodes.iter().enumerate() {
+                for (i, n) in figure.iter().enumerate() {
+                    let v = n.p;
+                    let chosen = selected_vertex == Some((l, i));
+                    handles.push(
+                        div()
+                            .absolute()
+                            .left(px(v.0 as f32 * scale - HANDLE_SIZE / 2.0))
+                            .top(px(v.1 as f32 * scale - HANDLE_SIZE / 2.0))
+                            .size(px(HANDLE_SIZE))
+                            .border_1()
+                            .border_color(primary)
+                            .bg(if chosen { primary } else { background })
+                            .into_any_element(),
+                    );
+                }
+            }
+            // The curve's handles of the vertex selected: round.
+            for (_, h) in self.edit_point_handles(dragged) {
                 handles.push(
                     div()
                         .absolute()
-                        .left(px(v.0 as f32 * scale - HANDLE_SIZE / 2.0))
-                        .top(px(v.1 as f32 * scale - HANDLE_SIZE / 2.0))
+                        .left(px(h.0 as f32 * scale - HANDLE_SIZE / 2.0))
+                        .top(px(h.1 as f32 * scale - HANDLE_SIZE / 2.0))
                         .size(px(HANDLE_SIZE))
+                        .rounded_full()
                         .border_1()
                         .border_color(primary)
-                        .bg(if chosen { primary } else { background })
+                        .bg(background)
                         .into_any_element(),
                 );
             }
@@ -885,6 +970,8 @@ impl SlideEditor {
             (shows_caret.then_some(g.caret), g.selection)
         });
         let pending = self.pptx().is_some_and(|s| s.pending_click.is_some());
+        // The words the spell checker does not know: a red wavy line under them (while the text is edited).
+        let misspelled = self.misspelled_ranges();
         let entity = cx.entity();
         let text_marks = (marks.is_some() || fallback.is_some()).then(|| {
             canvas(
@@ -919,6 +1006,34 @@ impl SlideEditor {
                     if let Some(c) = caret {
                         paint(c, caret_color);
                     }
+                    // 赤い波線: under each word (a word on two lines has a line under each part).
+                    if let Some(marks) = marks.as_ref() {
+                        for range in &misspelled {
+                            let Some((_, quads)) = marks.with_selection(range.clone()).polygons(false) else { continue };
+                            for q in quads {
+                                // The underside of the rectangle (turned with the text when it is).
+                                let (a, b) = (q[3], q[2]);
+                                let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+                                let length = dx.hypot(dy);
+                                if length < 1.0 {
+                                    continue;
+                                }
+                                let (ux, uy) = (dx / length, dy / length);
+                                let (nx, ny) = (-uy, ux);
+                                let steps = (length / 2.5).ceil() as usize;
+                                let wave = |i: usize, lift: f32| {
+                                    let t = (i as f32 * 2.5).min(length);
+                                    let up = if i % 2 == 0 { 0.0 } else { 1.6 };
+                                    point(px(a.0 + ux * t - nx * (up + lift)), px(a.1 + uy * t - ny * (up + lift)))
+                                };
+                                let mut ribbon: Vec<Point<Pixels>> = (0..=steps).map(|i| wave(i, 1.0)).collect();
+                                ribbon.extend((0..=steps).rev().map(|i| wave(i, 0.0)));
+                                if let Some(p) = polygon(&ribbon, None, true) {
+                                    window.paint_path(p, rgb(0xd93025));
+                                }
+                            }
+                        }
+                    }
                 },
             )
             .absolute()
@@ -938,7 +1053,7 @@ impl SlideEditor {
             shade.a = 0.2;
             Some(div().absolute().left(px(x0 as f32 * scale)).top(px(y0 as f32 * scale)).w(px((x1 - x0) as f32 * scale)).h(px((y1 - y0) as f32 * scale)).bg(shade))
         });
-        div().absolute().top_0().left_0().size_full().child(paths).children(handles).children(text_marks).children(cell_range)
+        div().absolute().top_0().left_0().size_full().child(paths).children(handles).children(text_marks).children(cell_range).children(self.render_pptx_ink_preview(scale))
     }
 
     /// The border between two columns or two rows of the one selected
@@ -1012,6 +1127,12 @@ impl SlideEditor {
         if let Some(state) = self.pptx_mut() {
             state.shift = event.modifiers.shift;
         }
+        // 描画: the pen, the highlighter and the eraser take the press.
+        if self.pptx_ink_press(position, cx) {
+            self.end_text_edit(window, cx);
+            self.focus_handle.focus(window, cx);
+            return;
+        }
         // カスタム軌跡: a click is a point, two end the path.
         if self.is_drawing_path() {
             self.end_text_edit(window, cx);
@@ -1030,8 +1151,8 @@ impl SlideEditor {
         if self.is_editing_points() {
             self.end_text_edit(window, cx);
             self.focus_handle.focus(window, cx);
-            if let Some((part, index)) = self.edit_points_down(position, cx) {
-                self.set_drag(Some(Drag::Vertex { part, index, start: position, current: position }));
+            if let Some((part, index, handle)) = self.edit_points_down(position, cx) {
+                self.set_drag(Some(Drag::Vertex { part, index, handle, start: position, current: position }));
                 return cx.notify();
             }
             if self.is_editing_points() {
@@ -1187,6 +1308,9 @@ impl SlideEditor {
     }
 
     pub(crate) fn on_drag_move(&mut self, position: Point<Pixels>, shift: bool, cx: &mut Context<Self>) {
+        if self.pptx_ink_move(position, cx) {
+            return;
+        }
         let Some(state) = self.pptx_mut() else { return };
         if state.drag.is_none() {
             return;
@@ -1212,6 +1336,9 @@ impl SlideEditor {
     }
 
     pub(crate) fn on_drag_end(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pptx_ink_release(cx) {
+            return;
+        }
         let Some(drag) = self.pptx_mut().and_then(|s| s.drag.clone()) else { return };
         let Some(layout) = self.slide_layout() else { return self.set_drag(None) };
         let slide = self.current_slide;
@@ -1219,11 +1346,11 @@ impl SlideEditor {
         let (start, current) = drag.start_current();
         match &drag {
             Drag::Text { .. } => self.set_drag(None),
-            Drag::Vertex { part, index, .. } => {
+            Drag::Vertex { part, index, handle, .. } => {
                 self.set_drag(None);
                 if moved(start, current) {
                     let to = layout.to_emu(current);
-                    self.move_vertex(*part, *index, (to.x as f64, to.y as f64), cx);
+                    self.move_vertex(*part, *index, *handle, (to.x as f64, to.y as f64), cx);
                 }
             }
             Drag::TableBorder { shape, column, row, .. } => {
@@ -1235,12 +1362,24 @@ impl SlideEditor {
             }
             Drag::Move { origins, .. } => {
                 if moved(start, current) {
-                    let commands: Vec<Command> = origins
+                    let mut commands: Vec<Command> = origins
                         .iter()
                         .filter_map(|(id, _)| self.slide().shape(*id).map(|s| (s, self.preview(s).0)))
                         .filter(|(s, frame)| *frame != s.frame)
                         .map(|(s, frame)| Command::SetFrame { slide, shape: s.id, frame })
                         .collect();
+                    let current_slide = self.slide();
+                    let updated_shapes: Vec<Shape> = current_slide.shapes.iter().map(|s| {
+                        if let Some((_, frame)) = origins.iter().filter_map(|(id, _)| self.slide().shape(*id).map(|orig| (orig, self.preview(orig).0))).find(|(orig, _)| orig.id == s.id) {
+                            Shape { frame, ..s.clone() }
+                        } else {
+                            s.clone()
+                        }
+                    }).collect();
+                    let rerouted = ibis_doc_model::connector::rerouted_on_slide(&updated_shapes, &current_slide.shape_glues);
+                    for (cid, frame, flip_h, flip_v) in rerouted {
+                        commands.push(Command::SetConnectorFrame { slide, shape: cid, frame, flip_h, flip_v });
+                    }
                     self.set_drag(None);
                     self.run(commands, cx);
                 }
@@ -1252,7 +1391,20 @@ impl SlideEditor {
                     && old != new
                     && moved(start, current)
                 {
-                    self.run(vec![Command::SetFrame { slide, shape: *shape, frame: new }], cx);
+                    let mut commands = vec![Command::SetFrame { slide, shape: *shape, frame: new }];
+                    let current_slide = self.slide();
+                    let updated_shapes: Vec<Shape> = current_slide.shapes.iter().map(|s| {
+                        if s.id == *shape {
+                            Shape { frame: new, ..s.clone() }
+                        } else {
+                            s.clone()
+                        }
+                    }).collect();
+                    let rerouted = ibis_doc_model::connector::rerouted_on_slide(&updated_shapes, &current_slide.shape_glues);
+                    for (cid, frame, flip_h, flip_v) in rerouted {
+                        commands.push(Command::SetConnectorFrame { slide, shape: cid, frame, flip_h, flip_v });
+                    }
+                    self.run(commands, cx);
                 }
             }
             Drag::Rotate { shape, .. } => {
@@ -1322,8 +1474,33 @@ impl SlideEditor {
                     }
                     Tool::Line { kind, arrow } => {
                         let end = if dragged { b } else { EmuPoint::new(a.x + CLICK_LINE, a.y + if kind == editing::LineKind::Straight { 0 } else { CLICK_LINE }) };
-                        let (frame, flip_h, flip_v) = interaction::line_frame(a, end, shift && kind == editing::LineKind::Straight);
-                        self.with_defaults(editing::new_connector(id, frame, flip_h, flip_v, kind, arrow))
+                        let snap_radius = 127_000;
+                        let slide_ref = self.slide();
+                        let (start_pt, start_cxn) = if let Some((target_id, site_idx, pt)) = ibis_doc_model::connector::nearest_site_on_slide(&slide_ref.shapes, a.x, a.y, snap_radius) {
+                            (EmuPoint::new(pt.0, pt.1), Some((target_id, site_idx)))
+                        } else {
+                            (a, None)
+                        };
+                        let (end_pt, end_cxn) = if let Some((target_id, site_idx, pt)) = ibis_doc_model::connector::nearest_site_on_slide(&slide_ref.shapes, end.x, end.y, snap_radius) {
+                            (EmuPoint::new(pt.0, pt.1), Some((target_id, site_idx)))
+                        } else {
+                            (end, None)
+                        };
+                        let (frame, flip_h, flip_v) = interaction::line_frame(start_pt, end_pt, shift && kind == editing::LineKind::Straight);
+                        let shape = self.with_defaults(editing::new_connector(id, frame, flip_h, flip_v, kind, arrow));
+                        if start_cxn.is_some() || end_cxn.is_some() {
+                            let glue = ibis_doc_model::Glue { start: start_cxn, end: end_cxn };
+                            let slide = self.current_slide;
+                            self.set_drag(None);
+                            if let Some(state) = self.pptx_mut() {
+                                state.tool = Tool::Select;
+                            }
+                            self.insert_shape(shape, cx);
+                            self.run(vec![ibis_doc_model::Command::SetShapeGlue { slide, shape: id, glue: Some(glue) }], cx);
+                            cx.notify();
+                            return;
+                        }
+                        shape
                     }
                     Tool::Select => return self.set_drag(None),
                 };
@@ -1366,6 +1543,13 @@ impl SlideEditor {
             }
             return;
         }
+        // The outline view's line being edited has the keys.
+        if self.is_outline_editing() {
+            if self.outline_key(event.keystroke.key.as_str(), &event.keystroke.modifiers, window, cx) {
+                cx.stop_propagation();
+            }
+            return;
+        }
         if self.text_editing().is_none() {
             return;
         }
@@ -1382,8 +1566,41 @@ impl SlideEditor {
                     if let Some(to) = self.word_target(key == "right") {
                         self.shape_move_caret(to, k.modifiers.shift, cx);
                     }
-                } else if let Some(to) = self.caret_target(key, command, k.modifiers.shift) {
-                    self.shape_move_caret(to, k.modifiers.shift, cx);
+                } else {
+                    // ⌘← ⌘→ go to the line's start and end (⌘↑ ⌘↓ to the text's), as in any Mac text.
+                    let (key, whole) = match (key, command) {
+                        ("left", true) => ("home", false),
+                        ("right", true) => ("end", false),
+                        (key, command) => (key, command),
+                    };
+                    if let Some(to) = self.caret_target(key, whole, k.modifiers.shift) {
+                        self.shape_move_caret(to, k.modifiers.shift, cx);
+                    }
+                }
+            }
+            // The Mac's own text keys: ⌃A ⌃E line start and end, ⌃B ⌃F left and right, ⌃P ⌃N up and down,
+            // ⌃D forward delete, ⌃H backspace, ⌃K delete to the line's end.
+            "a" | "e" | "b" | "f" | "p" | "n" | "d" | "h" | "k" if crate::is_mac() && k.modifiers.control && !k.modifiers.platform && !k.modifiers.alt => {
+                cx.stop_propagation();
+                match key {
+                    "d" => self.delete_text(true, cx),
+                    "h" => self.delete_text(false, cx),
+                    "k" => self.delete_to(true, true, cx),
+                    _ => {
+                        let target = match key {
+                            "a" => "home",
+                            "e" => "end",
+                            "b" => "left",
+                            "f" => "right",
+                            "p" => "up",
+                            _ => "down",
+                        };
+                        if matches!(target, "up" | "down") {
+                            self.move_caret_vertically(target, k.modifiers.shift, cx);
+                        } else if let Some(to) = self.caret_target(target, false, k.modifiers.shift) {
+                            self.shape_move_caret(to, k.modifiers.shift, cx);
+                        }
+                    }
                 }
             }
             "backspace" | "delete" => {
@@ -1430,7 +1647,45 @@ impl SlideEditor {
                     _ => self.toggle_characters(window, cx, |_, r| r.underline, |on| CharacterFormat { underline: Some(on), ..Default::default() }),
                 }
             }
-            _ => {}
+            _ => {
+                // A key the menus name as their shortcut does what the menu item does.
+                if self.run_menu_shortcut(&event.keystroke, window, cx) {
+                    cx.stop_propagation();
+                }
+            }
+        }
+    }
+
+    /// The menu item whose shortcut is the key pressed (one with ⌘, ⌃ or ⌥, or a function key), run if it is
+    /// enabled: every shortcut the menus show works, not only the ones bound one by one. `true` if one ran.
+    pub(crate) fn run_menu_shortcut(&mut self, k: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let m = &k.modifiers;
+        let function = k.key.len() >= 2 && k.key.starts_with('f') && k.key[1..].chars().all(|c| c.is_ascii_digit());
+        if !(m.platform || m.control || m.alt || function) {
+            return false;
+        }
+        let Some(want) = shortcut_of(k) else { return false };
+        let menus = self.menus();
+        let mut found = None;
+        fn find(entries: &[crate::shell::chrome::MenuEntry], want: &(u8, String), found: &mut Option<crate::shell::chrome::Handler>) {
+            use crate::shell::chrome::MenuEntry;
+            for entry in entries {
+                match entry {
+                    MenuEntry::Item(item) if found.is_none() && item.enabled() && item.shortcut.and_then(parse_shortcut).as_ref() == Some(want) => *found = item.handler.clone(),
+                    MenuEntry::Submenu(sub) => find(&sub.items, want, found),
+                    _ => {}
+                }
+            }
+        }
+        for (_, entries) in &menus.menus {
+            find(entries, &want, &mut found);
+        }
+        match found {
+            Some(handler) => {
+                handler(self, window, cx);
+                true
+            }
+            None => false,
         }
     }
 
@@ -1493,9 +1748,47 @@ impl SlideEditor {
                     cx.stop_propagation();
                 }
             }
-            _ => {}
+            _ => {
+                if self.run_menu_shortcut(k, window, cx) {
+                    cx.stop_propagation();
+                }
+            }
         }
     }
+}
+
+/// A shortcut as the menus write it (`⌥⇧⌘↑`): its modifiers (bits: ⌘ 1, ⌃ 2, ⌥ 4, ⇧ 8) and key.
+fn parse_shortcut(label: &str) -> Option<(u8, String)> {
+    let mut bits = 0u8;
+    let mut key = String::new();
+    for c in label.chars() {
+        match c {
+            '⌘' => bits |= 1,
+            '⌃' => bits |= 2,
+            '⌥' => bits |= 4,
+            '⇧' => bits |= 8,
+            c => key.extend(c.to_uppercase()),
+        }
+    }
+    (!key.is_empty()).then_some((bits, key))
+}
+
+/// The key pressed in the same form as [`parse_shortcut`].
+fn shortcut_of(k: &Keystroke) -> Option<(u8, String)> {
+    let m = &k.modifiers;
+    let bits = u8::from(m.platform) | u8::from(m.control) << 1 | u8::from(m.alt) << 2 | u8::from(m.shift) << 3;
+    let key = match k.key.as_str() {
+        "up" => "↑".to_string(),
+        "down" => "↓".to_string(),
+        "left" => "←".to_string(),
+        "right" => "→".to_string(),
+        "enter" => "↩".to_string(),
+        "backspace" => "⌫".to_string(),
+        "delete" => "⌦".to_string(),
+        other if !other.is_empty() => other.to_uppercase(),
+        _ => return None,
+    };
+    Some((bits, key))
 }
 
 /// Whether `handle` is at an end of a line (a line has only those two).

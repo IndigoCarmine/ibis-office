@@ -13,7 +13,7 @@
 //! What cannot follow yet (tables, pivot tables, an array formula cut by
 //! the change) is an error, and nothing is written.
 
-use ibis_calc::formula::{Axis, adjust_references, to_file};
+use ibis_calc::formula::{Axis, adjust_references};
 use ibis_doc_model::sheet_ops::{StructureEdit, move_index, move_range};
 use ibis_doc_model::{CellRange, Presentation, Sheet, cell_name};
 use ibis_ooxml::{NodeId, Package, XmlDocument};
@@ -144,6 +144,14 @@ pub(crate) fn replay(package: &mut Package, map: &mut SourceMap, before: &Presen
             if index == target && doc.attr(f, "t") == Some("array") && !move_ref_attr(doc, f, "ref", axis, at, count) {
                 return Err(unsupported("配列数式を消す行・列の削除"));
             }
+            if index == target && doc.attr(f, "t") == Some("dataTable") {
+                if !move_ref_attr(doc, f, "ref", axis, at, count)
+                    || !move_ref_attr(doc, f, "r1", axis, at, count)
+                    || !move_ref_attr(doc, f, "r2", axis, at, count)
+                {
+                    doc.detach(f);
+                }
+            }
         }
         // Formulas of conditional formats and validations.
         let texts: Vec<NodeId> = doc.descendants(root).into_iter().filter(|&n| matches!(doc.local_name(n), "formula" | "formula1" | "formula2")).collect();
@@ -222,10 +230,14 @@ pub(crate) fn replay(package: &mut Package, map: &mut SourceMap, before: &Presen
             .filter_map(|r| Some((r.id.clone(), r.target_part(part)?)))
             .collect();
         let mut gone_tables: Vec<String> = Vec::new();
+        let mut new_table_headers: Vec<(u32, u32, String)> = Vec::new();
         for (rel_id, table_part) in table_rels {
             let doc = package.xml_mut(&table_part)?;
             let Some(root) = doc.root_element() else { continue };
             let Some(r) = doc.attr(root, "ref").and_then(crate::xlsx::parse_range) else { continue };
+            let has_header = doc.attr(root, "headerRowCount")
+                .map(|v| v != "0")
+                .unwrap_or_else(|| doc.attr(root, "headerRowShown") != Some("0"));
             match move_range(r, axis, at, count) {
                 Some(new_r) => {
                     doc.set_attr(root, "ref", &range_text(new_r));
@@ -242,12 +254,13 @@ pub(crate) fn replay(package: &mut Package, map: &mut SourceMap, before: &Presen
                                 let n = count as u32;
                                 if at > r.first_column && at <= r.last_column {
                                     let rel_at = (at - r.first_column) as usize;
-                                    let existing_names: Vec<String> = col_nodes.iter().filter_map(|&c| doc.attr(c, "name").map(str::to_string)).collect();
+                                    let mut existing_names: Vec<String> = col_nodes.iter().filter_map(|&c| doc.attr(c, "name").map(str::to_string)).collect();
                                     let mut max_id = col_nodes.iter().filter_map(|&c| doc.attr(c, "id")?.parse::<u32>().ok()).max().unwrap_or(0);
                                     let insert_before_node = col_nodes.get(rel_at).copied();
                                     for i in 0..n {
                                         max_id += 1;
                                         let name = unused_table_col_name(&existing_names, (i + 1) as usize);
+                                        existing_names.push(name.clone());
                                         let new_col = detached(doc, &format!("{prefix}tableColumn"));
                                         doc.set_attr(new_col, "id", &max_id.to_string());
                                         doc.set_attr(new_col, "name", &name);
@@ -257,6 +270,9 @@ pub(crate) fn replay(package: &mut Package, map: &mut SourceMap, before: &Presen
                                                 let count = doc.children(cols_node).len();
                                                 doc.insert(cols_node, count, new_col);
                                             }
+                                        }
+                                        if has_header {
+                                            new_table_headers.push((at + i, r.first_row, name));
                                         }
                                     }
                                 }
@@ -297,6 +313,10 @@ pub(crate) fn replay(package: &mut Package, map: &mut SourceMap, before: &Presen
                     let _ = package.remove_override(&table_part);
                 }
             }
+        }
+        if !new_table_headers.is_empty() {
+            let sheet_doc = package.xml_mut(part)?;
+            insert_header_cells(sheet_doc, &new_table_headers)?;
         }
         if !gone_tables.is_empty() {
             for gone_id in &gone_tables {
@@ -916,4 +936,86 @@ fn rename_sheet(package: &mut Package, map: &mut SourceMap, before: &Presentatio
             *n = new.clone();
         }
     })
+}
+
+fn insert_header_cells(doc: &mut XmlDocument, headers: &[(u32, u32, String)]) -> Result<(), Error> {
+    let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
+    let data = doc.child(root, "sheetData").ok_or_else(|| Error::new("シートに sheetData がありません"))?;
+    let prefix = doc.prefix(root).map(|p| format!("{p}:")).unwrap_or_default();
+    for &(col, row, ref name) in headers {
+        let row_1based = row + 1;
+        let rows: Vec<NodeId> = doc.children_named(data, "row").collect();
+        let mut row_node = None;
+        let mut after_row = None;
+        for r_node in rows {
+            let r_idx = doc.attr(r_node, "r").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+            if r_idx == row_1based {
+                row_node = Some(r_node);
+                break;
+            } else if r_idx > row_1based {
+                after_row = Some(r_node);
+                break;
+            }
+        }
+        let row_node = match row_node {
+            Some(r) => r,
+            None => {
+                let r = detached(doc, &format!("{prefix}row"));
+                doc.set_attr(r, "r", &row_1based.to_string());
+                match after_row {
+                    Some(after) => doc.insert_before(after, r),
+                    None => {
+                        let count = doc.children(data).len();
+                        doc.insert(data, count, r);
+                    }
+                }
+                r
+            }
+        };
+
+        let cells: Vec<NodeId> = doc.children_named(row_node, "c").collect();
+        let mut existing_cell = None;
+        let mut before_cell = None;
+        let mut style_to_copy = None;
+        for c_node in cells {
+            let c_col = doc.attr(c_node, "r").and_then(crate::xlsx::cell_ref).map(|(c, _)| c).unwrap_or(0);
+            if c_col == col {
+                existing_cell = Some(c_node);
+                break;
+            } else if c_col > col {
+                if before_cell.is_none() {
+                    before_cell = Some(c_node);
+                }
+            } else if let Some(s) = doc.attr(c_node, "s") {
+                style_to_copy = Some(s.to_string());
+            }
+        }
+        if existing_cell.is_some() {
+            continue;
+        }
+        if style_to_copy.is_none() {
+            if let Some(b) = before_cell {
+                style_to_copy = doc.attr(b, "s").map(str::to_string);
+            }
+        }
+
+        let c_name = cell_name(col, row);
+        let new_c = detached(doc, &format!("{prefix}c"));
+        doc.set_attr(new_c, "r", &c_name);
+        doc.set_attr(new_c, "t", "inlineStr");
+        if let Some(s) = style_to_copy {
+            doc.set_attr(new_c, "s", &s);
+        }
+        match before_cell {
+            Some(before) => doc.insert_before(before, new_c),
+            None => {
+                let count = doc.children(row_node).len();
+                doc.insert(row_node, count, new_c);
+            }
+        }
+        let new_is = doc.insert_element(new_c, 0, &format!("{prefix}is"));
+        let new_t = doc.insert_element(new_is, 0, &format!("{prefix}t"));
+        doc.append_text(new_t, name);
+    }
+    Ok(())
 }

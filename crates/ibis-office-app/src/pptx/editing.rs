@@ -625,11 +625,23 @@ impl SlideEditor {
     pub(crate) fn nudge_selected(&mut self, dx: i64, dy: i64, fine: bool, cx: &mut Context<Self>) {
         let step = if fine { FINE_NUDGE } else { NUDGE };
         let slide = self.current_slide;
-        let commands = self
-            .selected_shapes()
-            .into_iter()
+        let selected = self.selected_shapes();
+        let mut commands: Vec<Command> = selected
+            .iter()
             .map(|s| Command::SetFrame { slide, shape: s.id, frame: s.frame.translated(dx * step, dy * step) })
             .collect();
+        let current_slide = self.slide();
+        let updated_shapes: Vec<Shape> = current_slide.shapes.iter().map(|s| {
+            if selected.iter().any(|sel| sel.id == s.id) {
+                Shape { frame: s.frame.translated(dx * step, dy * step), ..s.clone() }
+            } else {
+                s.clone()
+            }
+        }).collect();
+        let rerouted = ibis_doc_model::connector::rerouted_on_slide(&updated_shapes, &current_slide.shape_glues);
+        for (cid, frame, flip_h, flip_v) in rerouted {
+            commands.push(Command::SetConnectorFrame { slide, shape: cid, frame, flip_h, flip_v });
+        }
         self.run(commands, cx);
     }
 
@@ -1537,6 +1549,7 @@ impl SlideEditor {
     }
 
     /// Change the text format of each selected shape's whole text.
+    #[allow(dead_code)]
     pub(crate) fn text_style_selected(&mut self, window: &mut Window, cx: &mut Context<Self>, update: impl Fn(&mut TextStyle)) {
         self.end_text_edit(window, cx);
         let slide = self.current_slide;
@@ -1746,14 +1759,64 @@ impl SlideEditor {
     }
 
     pub(crate) fn format_text_body(&mut self, update: impl Fn(&mut TextBody), cx: &mut Context<Self>) {
-        let targets = if let Some(edit) = self.text_editing() { vec![edit.shape] } else { self.selected_ids().to_vec() };
-        let commands = targets.into_iter().filter_map(|shape| {
-            let body = if self.text_editing().is_some_and(|e| e.shape == shape) { self.edited_body()? } else { self.slide().shape(shape)?.text_body()? };
-            let mut changed = body.clone();
-            update(&mut changed);
-            (changed != *body).then_some(Command::SetTextBody { slide: self.current_slide, shape, body: changed })
-        }).collect();
-        let commands = self.in_edited_cell(commands);
+        let mut commands = Vec::new();
+        let slide = self.current_slide;
+        if let Some(edit) = self.text_editing() {
+            let shape = edit.shape;
+            if let Some((r, c)) = edit.cell {
+                let (ar, ac) = edit.cell_anchor.unwrap_or((r, c));
+                let (r0, r1) = (r.min(ar), r.max(ar));
+                let (c0, c1) = (c.min(ac), c.max(ac));
+                if let Some(ShapeKind::Table(t)) = self.slide().shape(shape).map(|s| &s.kind) {
+                    for row in r0..=r1 {
+                        for column in c0..=c1 {
+                            if let Some(cell) = t.rows.get(row).and_then(|r_obj| r_obj.cells.get(column)) {
+                                let mut changed = cell.text.clone();
+                                update(&mut changed);
+                                if changed != cell.text {
+                                    commands.push(Command::InCell {
+                                        row,
+                                        column,
+                                        command: Box::new(Command::SetTextBody { slide, shape, body: changed }),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if let Some(body) = self.edited_body() {
+                let mut changed = body.clone();
+                update(&mut changed);
+                if changed != *body {
+                    commands.push(Command::SetTextBody { slide, shape, body: changed });
+                }
+            }
+        } else {
+            for shape in self.selected_ids().to_vec() {
+                let Some(s) = self.slide().shape(shape) else { continue };
+                if let ShapeKind::Table(t) = &s.kind {
+                    for (row, r_obj) in t.rows.iter().enumerate() {
+                        for (column, cell) in r_obj.cells.iter().enumerate() {
+                            let mut changed = cell.text.clone();
+                            update(&mut changed);
+                            if changed != cell.text {
+                                commands.push(Command::InCell {
+                                    row,
+                                    column,
+                                    command: Box::new(Command::SetTextBody { slide, shape, body: changed }),
+                                });
+                            }
+                        }
+                    }
+                } else if let Some(body) = s.text_body() {
+                    let mut changed = body.clone();
+                    update(&mut changed);
+                    if changed != *body {
+                        commands.push(Command::SetTextBody { slide, shape, body: changed });
+                    }
+                }
+            }
+        }
         self.run(commands, cx);
     }
 
@@ -1873,7 +1936,7 @@ impl SlideEditor {
         let look = body.style.with_run(&run);
         let format = ibis_doc_model::CharacterFormat {
             font_size: Some(look.font_size), bold: Some(look.bold), italic: Some(look.italic),
-            underline: Some(run.underline), color: Some(look.color), font: None,
+            underline: Some(run.underline), underline_kind: Some(run.underline_kind), color: Some(look.color), font: None,
             script_fonts: Some(if east_asian { (look.fallback_font, look.font) } else { (look.font, look.fallback_font) }),
             highlight: Some(run.highlight), outline: Some(run.outline), baseline: Some(run.baseline), spacing: Some(run.spacing),
             strike: Some(run.strike), caps: Some(run.caps), shadow: Some(run.shadow), link: None, link_tooltip: None,
@@ -1967,6 +2030,31 @@ impl SlideEditor {
             at += 1;
         }
         body.paragraphs.first().map_or(0, |p| p.end_style.baseline)
+    }
+
+    /// Set character spacing for targeted text (hundredths of a point; negative tightens, positive loosens).
+    pub(crate) fn set_slide_character_spacing(&mut self, spacing: i32, window: &mut Window, cx: &mut Context<Self>) {
+        let format = ibis_doc_model::CharacterFormat { spacing: Some(spacing), ..Default::default() };
+        self.format_characters(window, cx, format);
+    }
+
+    /// The character spacing of the targeted text's first run (0 for normal).
+    pub(crate) fn selected_spacing(&self) -> i32 {
+        let body = self.edited_body().or_else(|| self.selected_shapes().into_iter().find_map(|s| s.text_body()));
+        let Some(body) = body else { return 0 };
+        let start = self.text_editing().map_or(0, |e| e.range().start);
+        let mut at = 0;
+        for p in &body.paragraphs {
+            for r in &p.runs {
+                let n = r.text.chars().count();
+                if start < at + n || (start == at && n > 0) {
+                    return r.style.spacing;
+                }
+                at += n;
+            }
+            at += 1;
+        }
+        body.paragraphs.first().map_or(0, |p| p.end_style.spacing)
     }
 
     /// Toggle all-caps or small-caps for the targeted text.
@@ -2199,7 +2287,7 @@ impl SlideEditor {
         let target = replace.then(|| (self.current_slide, self.selected_ids().to_vec()));
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -2275,7 +2363,7 @@ impl SlideEditor {
         let media = self.document.ids().add_media(format, data.clone());
         self.resources.add_picture(media, format, &data);
         let id = self.document.ids().new_shape_id();
-        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name: String::new(), shadow: None, reflection: None, soft_edge: None };
+        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name: name.to_string(), shadow: None, reflection: None, soft_edge: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None };
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let slide = self.current_slide;
         let mut commands = Vec::new();
@@ -2316,7 +2404,7 @@ impl SlideEditor {
         self.resources.add_picture(media, format, &data);
         let id = self.document.ids().new_shape_id();
         let name = format!("Icon: {icon_name}");
-        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name, shadow: None, reflection: None, soft_edge: None };
+        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name, shadow: None, reflection: None, soft_edge: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None };
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let slide = self.current_slide;
         let mut commands = Vec::new();
@@ -2331,6 +2419,63 @@ impl SlideEditor {
         Some(id)
     }
 
+    /// Insert a screenshot: from clipboard image if available, or captures a window snapshot.
+    #[allow(dead_code)]
+    pub(crate) fn insert_screenshot(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
+        if let Some(id) = self.insert_screenshot_from_clipboard(cx) {
+            return Some(id);
+        }
+        self.insert_screenshot_window(cx)
+    }
+
+    /// Insert a screenshot specifically from the clipboard (image or copied image files).
+    pub(crate) fn insert_screenshot_from_clipboard(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
+        if let Some(item) = cx.read_from_clipboard() {
+            for entry in item.entries() {
+                match entry {
+                    ClipboardEntry::Image(image) => {
+                        let ext = match image.format {
+                            ImageFormat::Png => "png",
+                            ImageFormat::Jpeg => "jpg",
+                            ImageFormat::Gif => "gif",
+                            ImageFormat::Svg => "svg",
+                            ImageFormat::Bmp => "bmp",
+                            _ => "png",
+                        };
+                        let name = format!("Screenshot.{}", ext);
+                        return self.insert_picture(&name, image.bytes.clone(), cx);
+                    }
+                    ClipboardEntry::ExternalPaths(paths) => {
+                        for path in paths.paths() {
+                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg"));
+                            if let (true, Ok(data)) = (ok, std::fs::read(path)) {
+                                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Screenshot.png".into());
+                                return self.insert_picture(&name, data, cx);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    /// Insert a screenshot of an available window (window snapshot).
+    pub(crate) fn insert_screenshot_window(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
+        let (data, _, _) = ibis_pptx::screenshot_snapshot(640, 360);
+        self.insert_picture("Screenshot_Window.png", data, cx)
+    }
+
+    /// Insert a screen clipping screenshot (e.g. cropped screen area).
+    pub(crate) fn insert_screenshot_clipping(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
+        if let Some(id) = self.insert_screenshot_from_clipboard(cx) {
+            return Some(id);
+        }
+        let (data, _, _) = ibis_pptx::screenshot_snapshot(480, 270);
+        self.insert_picture("Screen_Clipping.png", data, cx)
+    }
+
     /// Choose an image file to fill the selected shapes (AutoShape or Table cells).
     pub(crate) fn pick_fill_picture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let target = (self.current_slide, self.selected_ids().to_vec());
@@ -2341,7 +2486,7 @@ impl SlideEditor {
         self.end_text_edit(window, cx);
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(crate::shell::i18n::text("pptx.common.fill").to_string().into()) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("pptx.common.fill").to_string().into()) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -2421,7 +2566,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(crate::shell::i18n::text("_shell.background").to_string().into()) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_shell.background").to_string().into()) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -3081,6 +3226,18 @@ impl SlideEditor {
         self.run(commands, cx);
     }
 
+    /// Set or clear artistic effect for selected pictures.
+    pub(crate) fn set_selected_pictures_artistic_effect(&mut self, effect: Option<ibis_doc_model::ArtisticEffect>, cx: &mut Context<Self>) {
+        let commands = self.selected_shapes().into_iter().filter_map(|shape| {
+            let ShapeKind::Picture(picture) = &shape.kind else { return None };
+            if picture.artistic_effect == effect { return None; }
+            let mut picture = picture.clone();
+            picture.artistic_effect = effect;
+            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+        }).collect();
+        self.run(commands, cx);
+    }
+
     /// 選択中の SVG 画像を図形（フリーフォーム・Office カスタム図形）に変換する
     pub(crate) fn convert_selected_svg_to_shape(&mut self, cx: &mut Context<Self>) -> bool {
         let selected_svgs: Vec<(ShapeId, EmuRect, std::sync::Arc<[u8]>)> = self.selected_shapes().into_iter().filter_map(|shape| {
@@ -3215,6 +3372,73 @@ impl SlideEditor {
         }).collect();
         self.apply_pptx_commands_checked(commands, cx);
     }
+    #[allow(dead_code)]
+    pub(crate) fn set_shape_tilt(&mut self, tilt: Option<ibis_doc_model::Tilt>, cx: &mut Context<Self>) {
+        let commands = self.selected_shapes().into_iter().filter_map(|shape| {
+            let ShapeKind::Auto(auto) = &shape.kind else { return None };
+            if auto.tilt == tilt { return None; }
+            let mut auto = auto.clone();
+            auto.tilt = tilt;
+            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+        }).collect();
+        self.apply_pptx_commands_checked(commands, cx);
+    }
+    pub(crate) fn set_shape_3d_rotation_preset(&mut self, preset: Option<ibis_doc_model::CameraPreset>, cx: &mut Context<Self>) {
+        let commands = self.selected_shapes().into_iter().filter_map(|shape| {
+            let ShapeKind::Auto(auto) = &shape.kind else { return None };
+            let new_tilt = match preset {
+                Some(p) => {
+                    let mut t = auto.tilt.unwrap_or_else(|| ibis_doc_model::Tilt::from_preset(p));
+                    let (lat, lon, rev) = p.default_angles();
+                    t.camera_preset = Some(p);
+                    t.lat = lat;
+                    t.lon = lon;
+                    t.rev = rev;
+                    Some(t)
+                }
+                None => {
+                    if let Some(mut t) = auto.tilt {
+                        if t.extrusion_h > 0 || t.depth > 0 {
+                            t.lat = 0;
+                            t.lon = 0;
+                            t.rev = 0;
+                            t.camera_preset = None;
+                            Some(t)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            };
+            if auto.tilt == new_tilt { return None; }
+            let mut auto = auto.clone();
+            auto.tilt = new_tilt;
+            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+        }).collect();
+        self.apply_pptx_commands_checked(commands, cx);
+    }
+    pub(crate) fn set_shape_3d_depth(&mut self, depth_emu: i64, color: Option<ibis_doc_model::Color>, cx: &mut Context<Self>) {
+        let commands = self.selected_shapes().into_iter().filter_map(|shape| {
+            let ShapeKind::Auto(auto) = &shape.kind else { return None };
+            let mut t = auto.tilt.unwrap_or_else(|| ibis_doc_model::Tilt::from_preset(ibis_doc_model::CameraPreset::OrthographicFront));
+            t.extrusion_h = depth_emu;
+            if color.is_some() {
+                t.extrusion_color = color;
+            }
+            let new_tilt = if t.extrusion_h == 0 && t.lat == 0 && t.lon == 0 && t.rev == 0 && t.depth == 0 {
+                None
+            } else {
+                Some(t)
+            };
+            if auto.tilt == new_tilt { return None; }
+            let mut auto = auto.clone();
+            auto.tilt = new_tilt;
+            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+        }).collect();
+        self.apply_pptx_commands_checked(commands, cx);
+    }
     pub(super) fn apply_pptx_commands_checked(&mut self,commands:Vec<Command>,cx:&mut Context<Self>) -> bool {
         if commands.is_empty() {return true;}
         if self.is_workbook() {
@@ -3239,14 +3463,14 @@ impl SlideEditor {
     pub(crate) fn reset_picture_color_effects(&mut self, cx: &mut Context<Self>) {
         let commands = self.selected_shapes().into_iter().filter_map(|shape| {
             let ShapeKind::Picture(picture) = &shape.kind else { return None };
-            if picture.duotone.is_none() && picture.clear.is_none() && picture.luminance.is_none() { return None; }
-            let mut picture = picture.clone(); picture.duotone = None; picture.clear = None; picture.luminance = None;
+            if picture.duotone.is_none() && picture.clear.is_none() && picture.luminance.is_none() && picture.artistic_effect.is_none() { return None; }
+            let mut picture = picture.clone(); picture.duotone = None; picture.clear = None; picture.luminance = None; picture.artistic_effect = None;
             Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
         }).collect();
         self.run(commands, cx);
     }
 
-    /// Reset picture formatting (stroke, corner, duotone, clear, luminance, shadow, reflection, soft_edge), keeping crop and frame.
+    /// Reset picture formatting (stroke, corner, duotone, clear, luminance, shadow, reflection, soft_edge, artistic_effect), keeping crop and frame.
     pub(crate) fn reset_picture_effects(&mut self, cx: &mut Context<Self>) {
         let commands = self.selected_shapes().into_iter().filter_map(|shape| {
             let ShapeKind::Picture(picture) = &shape.kind else { return None };
@@ -3258,6 +3482,7 @@ impl SlideEditor {
                 && picture.shadow.is_none()
                 && picture.reflection.is_none()
                 && picture.soft_edge.is_none()
+                && picture.artistic_effect.is_none()
             {
                 return None;
             }
@@ -3270,6 +3495,7 @@ impl SlideEditor {
             picture.shadow = None;
             picture.reflection = None;
             picture.soft_edge = None;
+            picture.artistic_effect = None;
             Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
         }).collect();
         self.run(commands, cx);

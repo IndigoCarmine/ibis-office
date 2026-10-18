@@ -39,6 +39,26 @@ pub fn docx_with_complex_paragraph(data: &[u8]) -> Vec<u8> {
     package.save(ibis_ooxml::SaveOptions::default()).unwrap()
 }
 
+/// A document (`data`) with a paragraph with a formula in its text (`m:oMath`: a fraction) and one with a displayed
+/// formula (`m:oMathPara`: a square root), each between texts.
+pub fn docx_with_math(data: &[u8]) -> Vec<u8> {
+    let mut package = ibis_ooxml::Package::open(data.to_vec()).unwrap();
+    let main = "word/document.xml";
+    let xml = String::from_utf8(package.read(main).unwrap()).unwrap();
+    let m = r#"xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math""#;
+    let paragraphs = format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">式 </w:t></w:r><m:oMath {m}><m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f></m:oMath><w:r><w:t xml:space="preserve"> の次</w:t></w:r></w:p>"#,
+            r#"<w:p><m:oMathPara {m}><m:oMath><m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e><m:r><m:t>x</m:t></m:r></m:e></m:rad></m:oMath></m:oMathPara></w:p>"#
+        ),
+        m = m
+    );
+    let at = xml.rfind("<w:sectPr").unwrap();
+    let xml = format!("{}{}{}", &xml[..at], paragraphs, &xml[at..]);
+    package.set_bytes(main, xml.into_bytes());
+    package.save(ibis_ooxml::SaveOptions::default()).unwrap()
+}
+
 /// The text of part `name` of a package (`word/document.xml`).
 pub fn part_text(data: &[u8], name: &str) -> Option<String> {
     let package = ibis_ooxml::Package::open(data.to_vec()).ok()?;
@@ -692,6 +712,38 @@ pub fn docx_with_outline(data: &[u8]) -> Vec<u8> {
     let outline: String = [(Some("1"), "章A"), (None, "A本文"), (Some("2"), "節A-1"), (None, "A-1本文"), (Some("1"), "章B"), (None, "B本文")].iter().map(|(s, t)| paragraph(*s, t)).collect();
     let at = xml.rfind("<w:sectPr").unwrap();
     xml.insert_str(at, &outline);
+    package.set_bytes("word/document.xml", xml.into_bytes());
+    package.save(ibis_ooxml::SaveOptions::default()).unwrap()
+}
+
+/// `data` (the editing report .docx) with the result of an `INCLUDEPICTURE` field for `file`: the first picture of its body
+/// (the run with a `w:drawing`) in the field's result.
+pub fn docx_with_include_picture(data: &[u8], file: &str) -> Vec<u8> {
+    let mut package = ibis_ooxml::Package::open(data.to_vec()).unwrap();
+    let mut xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
+    let drawing = xml.find("<w:drawing").expect("a picture");
+    let start = xml[..drawing].rfind("<w:r>").or_else(|| xml[..drawing].rfind("<w:r ")).unwrap();
+    let end = drawing + xml[drawing..].find("</w:r>").unwrap() + "</w:r>".len();
+    let run = xml[start..end].to_string();
+    let wrapped = format!(
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> INCLUDEPICTURE "{file}" \d </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{run}<w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+    );
+    xml.replace_range(start..end, &wrapped);
+    package.set_bytes("word/document.xml", xml.into_bytes());
+    package.save(ibis_ooxml::SaveOptions::default()).unwrap()
+}
+
+/// `data` (the editing report .docx) with a tracked move at the end of its body: a paragraph whose text "移動前" is a `w:moveFrom` and
+/// one whose text "移動後" is a `w:moveTo` (the same words as when Word moves a text), then a plain one.
+pub fn docx_with_tracked_move(data: &[u8]) -> Vec<u8> {
+    let mut package = ibis_ooxml::Package::open(data.to_vec()).unwrap();
+    let mut xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
+    let attrs = r#"w:author="Tester" w:date="2026-10-14T00:00:00Z""#;
+    let moved = format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">前文 </w:t></w:r><w:moveFrom w:id="9001" {attrs}><w:r><w:t>移動前</w:t></w:r></w:moveFrom></w:p><w:p><w:r><w:t xml:space="preserve">後文 </w:t></w:r><w:moveTo w:id="9002" {attrs}><w:r><w:t>移動後</w:t></w:r></w:moveTo></w:p>"#
+    );
+    let at = xml.rfind("<w:sectPr").unwrap();
+    xml.insert_str(at, &moved);
     package.set_bytes("word/document.xml", xml.into_bytes());
     package.save(ibis_ooxml::SaveOptions::default()).unwrap()
 }

@@ -16,10 +16,40 @@ use crate::Error;
 const NS_MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const NS_P14: &str = "http://schemas.microsoft.com/office/powerpoint/2010/main";
 const NS_P159: &str = "http://schemas.microsoft.com/office/powerpoint/2015/09/main";
+const REL_AUDIO: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio";
+const SOUND_PART: &str = "ppt/media/transition_sound.wav";
+
+// 最小の無音 WAV データ（RIFF PCM 16-bit 8000Hz mono、0.01秒 = 80サンプル = 160バイトのゼロ）
+// ヘッダ 44 バイト + データ 160 バイト = 204 バイト
+const SILENT_WAV: &[u8] = &[
+    b'R', b'I', b'F', b'F',
+    196, 0, 0, 0, // total_len - 8 = 204 - 8 = 196
+    b'W', b'A', b'V', b'E',
+    b'f', b'm', b't', b' ',
+    16, 0, 0, 0, // Subchunk1Size (16 for PCM)
+    1, 0,        // AudioFormat (1 = PCM)
+    1, 0,        // NumChannels (1 = mono)
+    0x40, 0x1F, 0, 0, // SampleRate = 8000
+    0x80, 0x3E, 0, 0, // ByteRate = 8000 * 2 = 16000
+    2, 0,        // BlockAlign = 2
+    16, 0,       // BitsPerSample = 16
+    b'd', b'a', b't', b'a',
+    160, 0, 0, 0, // Subchunk2Size = 160
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+];
 
 /// `p:transition` written with prefixes `p` (`p:`) and, for its duration
 /// and the newer effects, `p14` (`None`: the fallback, without them).
-fn transition_xml(t: &Transition, p: &str, p14: Option<&str>, p159: Option<&str>) -> String {
+fn transition_xml(t: &Transition, p: &str, p14: Option<&str>, p159: Option<&str>, sound_embed: Option<(&str, &str)>) -> String {
     let spd = speed(t.duration);
     let mut attrs = format!(" spd=\"{spd}\"");
     if let Some(p14) = p14 {
@@ -49,7 +79,11 @@ fn transition_xml(t: &Transition, p: &str, p14: Option<&str>, p159: Option<&str>
         Some(ibis_doc_model::TransitionSound::Stop) => format!("<{p}sndAc><{p}endSnd/></{p}sndAc>"),
         Some(ibis_doc_model::TransitionSound::Play { name, loop_sound }) => {
             let loop_attr = if *loop_sound { " loop=\"1\"" } else { "" };
-            format!("<{p}sndAc><{p}stSnd{loop_attr}><{p}snd name=\"{}\"/></{p}stSnd></{p}sndAc>", escape(name))
+            let embed_attr = match sound_embed {
+                Some((r, rid)) => format!(" {r}embed=\"{rid}\""),
+                None => String::new(),
+            };
+            format!("<{p}sndAc><{p}stSnd{loop_attr}><{p}snd{embed_attr} name=\"{}\"/></{p}stSnd></{p}sndAc>", escape(name))
         }
     };
     format!("<{p}transition{attrs}>{effect}{sound}</{p}transition>")
@@ -110,6 +144,25 @@ fn prefix(doc: &mut XmlDocument, node: NodeId, ns: &str, fallback: &str) -> Stri
 /// Write `transition` as slide part `part`'s.
 pub(crate) fn write_transition(package: &mut Package, part: &str, before: Option<&Transition>, transition: Option<&Transition>) -> Result<(), Error> {
     if transition.is_some_and(|t|t.after.is_some_and(|v|v>i32::MAX as u32)) {return Err(unsupported("自動送り時間の範囲"));}
+
+    // 音声ファイルが指定されている場合、無音 WAV を配置しリレーションシップを解決（doc 借用前に実行）
+    let sound_rid = if let Some(Some(ibis_doc_model::TransitionSound::Play { .. })) = transition.map(|t| &t.sound) {
+        if !package.contains(SOUND_PART) {
+            package.set_bytes(SOUND_PART, SILENT_WAV.to_vec());
+        }
+        if package.content_type(SOUND_PART)?.is_none() {
+            super::pptx_shapes::add_default_content_type(package, "wav", "audio/wav")?;
+        }
+        let rel_target = super::pptx::relative(part, SOUND_PART);
+        let existing = package.relationships(part)?.into_iter().find(|r| r.kind == REL_AUDIO && r.target == rel_target);
+        match existing {
+            Some(r) => Some(r.id),
+            None => Some(package.add_relationship(part, REL_AUDIO, &rel_target, false)?),
+        }
+    } else {
+        None
+    };
+
     let doc = package.xml_mut(part)?;
     let root = doc.root_element().ok_or_else(|| Error::new(format!("{part} が空です")))?;
     // The old one, plain or wrapped.
@@ -132,19 +185,35 @@ pub(crate) fn write_transition(package: &mut Package, part: &str, before: Option
         doc.detach(n);
     }
     let Some(t) = transition else { return Ok(()) };
+
+    let sound_embed = sound_rid.map(|rid| {
+        let r_prefix = {
+            let p = doc.lookup_prefix(root, super::pptx_new::NS_R);
+            match p {
+                Some(p) if !p.is_empty() => format!("{p}:"),
+                _ => {
+                    doc.set_attr(root, "xmlns:r", super::pptx_new::NS_R);
+                    "r:".to_string()
+                }
+            }
+        };
+        (r_prefix, rid)
+    });
+
     let p = prefix(doc, root, super::pptx_new::NS_P, "p");
     let plain = t.duration == 500 && (t.effect.is_empty() || Transition::BASE_EFFECTS.contains(&t.effect.as_str()));
     let morph = t.effect == "morph";
     let (mc, p14) = if plain { (String::new(), String::new()) } else { (prefix(doc, root, NS_MC, "mc"), prefix(doc, root, NS_P14, "p14")) };
     let p159 = if morph { prefix(doc, root, NS_P159, "p159") } else { String::new() };
+    let embed_ref = sound_embed.as_ref().map(|(r, rid)| (r.as_str(), rid.as_str()));
     let xml = if plain {
-        transition_xml(t, &p, None, None)
+        transition_xml(t, &p, None, None, embed_ref)
     } else {
         format!(
             "<{mc}AlternateContent><{mc}Choice Requires=\"{}\">{}</{mc}Choice><{mc}Fallback>{}</{mc}Fallback></{mc}AlternateContent>",
             if morph { p159.trim_end_matches(':') } else { p14.trim_end_matches(':') },
-            transition_xml(t, &p, Some(&p14), morph.then_some(p159.as_str())),
-            transition_xml(t, &p, None, None)
+            transition_xml(t, &p, Some(&p14), morph.then_some(p159.as_str()), embed_ref),
+            transition_xml(t, &p, None, None, embed_ref)
         )
     };
     // Parsed with the prefixes the slide binds (declared on the slide).
@@ -155,6 +224,9 @@ pub(crate) fn write_transition(package: &mut Package, part: &str, before: Option
         if morph {
             bound.push((p159.as_str(), NS_P159));
         }
+    }
+    if let Some((r, _)) = &sound_embed {
+        bound.push((r.as_str(), super::pptx_new::NS_R));
     }
     for (name, ns) in bound {
         match name.strip_suffix(':') {

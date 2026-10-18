@@ -72,6 +72,11 @@ impl<'a> Archive<'a> {
         Ok(Self { data, entries })
     }
 
+    /// The entries' names (in no particular order).
+    pub(crate) fn names(&self) -> Vec<String> {
+        self.entries.keys().cloned().collect()
+    }
+
     pub(crate) fn contains(&self, name: &str) -> bool {
         self.entries.contains_key(name)
     }

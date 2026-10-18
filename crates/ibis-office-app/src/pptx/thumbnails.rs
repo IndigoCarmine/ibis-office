@@ -5,7 +5,7 @@
 
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -13,6 +13,7 @@ use crate::pptx::SlidePopup;
 use crate::render::shape_view::{shape_element, slide_backdrop};
 use crate::shell::chrome::{MenuEntry, MenuItem, Submenu};
 use crate::shell::editor::SlideEditor;
+use crate::shell::icons::Material;
 
 /// A slide being dragged in the list, to be dropped at another place.
 #[derive(Clone)]
@@ -38,12 +39,12 @@ impl Render for DraggedSlideView {
     }
 }
 
-const THUMBNAIL_WIDTH: f32 = 168.0;
-const PANE_WIDTH: f32 = 216.0;
-const OUTLINE_PANE_WIDTH: f32 = 250.0;
+pub(crate) const PANE_WIDTH: f32 = 216.0;
+pub(crate) const OUTLINE_PANE_WIDTH: f32 = 340.0;
 const SECTION_HEADER_HEIGHT: f32 = 24.0;
 
 /// Extract title and body bullet paragraphs from a slide for Outline View.
+#[allow(dead_code)]
 fn slide_outline_text(slide: &ibis_doc_model::Slide) -> (Option<String>, Vec<(usize, String)>) {
     let mut texts_with_y: Vec<(i64, Vec<(usize, String)>)> = Vec::new();
 
@@ -94,7 +95,8 @@ impl SlideEditor {
     ) -> AnyElement {
         let theme = cx.theme();
         let size = self.presentation().size_of(slide);
-        let scale = (THUMBNAIL_WIDTH / size.width.max(1) as f32).min(THUMBNAIL_WIDTH / size.height.max(1) as f32);
+        let thumb_w = self.thumbnail_width();
+        let scale = (thumb_w / size.width.max(1) as f32).min(thumb_w / size.height.max(1) as f32);
         let (width, height) = (size.width as f32 * scale, size.height as f32 * scale);
         let item_h = height + 12.0;
         let item_top = *curr_y;
@@ -165,13 +167,25 @@ impl SlideEditor {
                 }))
             })
             .child(
-                div()
+                v_flex()
                     .w(px(18.))
-                    .text_xs()
-                    .text_right()
-                    .text_color(if chosen { theme.foreground } else { theme.muted_foreground })
-                    .when(slide.hidden, |d| d.line_through())
-                    .child(SharedString::from((index + 1).to_string())),
+                    .items_end()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_right()
+                            .text_color(if chosen { theme.foreground } else { theme.muted_foreground })
+                            .when(slide.hidden, |d| d.line_through())
+                            .child(SharedString::from((index + 1).to_string())),
+                    )
+                    .when(!slide.comments.is_empty(), |d| {
+                        d.child(
+                            Icon::new(Material("chat_bubble"))
+                                .size(px(14.))
+                                .text_color(rgb(0xf9ab00)),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -210,6 +224,7 @@ impl SlideEditor {
                 let folded = self.pptx().is_some_and(|s| s.folded_sections.contains(&section.id));
                 let toggle_id = section.id.clone();
                 let select_id = section.id.clone();
+                let menu_id = section.id.clone();
                 rows.push(
                     h_flex()
                         .id(("pptx-section-header", index))
@@ -219,6 +234,13 @@ impl SlideEditor {
                         .cursor_pointer()
                         .when(self.current_section() == Some(index), move |d| d.bg(accent))
                         .on_click(cx.listener(move |this, _, w, cx| this.select_section(&select_id, w, cx)))
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, event: &MouseDownEvent, w, cx| {
+                                cx.stop_propagation();
+                                this.open_section_context_menu(&menu_id, event.position, w, cx);
+                            }),
+                        )
                         .child(
                             div()
                                 .id(("pptx-section-fold", index))
@@ -298,76 +320,184 @@ impl SlideEditor {
         slide_index
     }
 
+    /// The outline: each slide's title (with its number) and its body's paragraphs as lines; the line being edited shows
+    /// its caret and selection (`pptx/outline_edit.rs`), a click puts the caret in a line.
     fn render_outline_items(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        use crate::pptx::outline_edit::LineKind;
         let theme = cx.theme();
-        self.presentation().slides.iter().enumerate().map(|(index, slide)| {
-            let id = slide.id;
-            let current = id == self.current_slide;
-            let (title, paragraphs) = slide_outline_text(slide);
-            let title_text = title.unwrap_or_else(|| crate::shell::i18n::text("pptx.outline.untitled").to_string());
-
-            v_flex()
-                .id(("outline-slide", id.0))
-                .w_full()
-                .px_2()
-                .py_2()
-                .gap_1()
-                .cursor_pointer()
-                .rounded_sm()
-                .border_1()
-                .border_color(if current { theme.primary } else { gpui_kit::transparent_black() })
-                .bg(if current { theme.accent } else { gpui_kit::transparent_black() })
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if let Some(s) = this.pptx_mut() { s.section_selection = None; }
-                    this.list_focus.focus(window, cx);
-                    this.select_slide(id, window, cx);
-                }))
-                .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.open_slide_context_menu(id, event.position, window, cx);
-                }))
-                .child(
+        let edit = self.outline_edit().cloned();
+        let lines = self.outline_lines();
+        let mut number = 0usize;
+        lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                let slide = self.presentation().slide(line.slide);
+                let current = line.slide == self.current_slide;
+                let title = line.kind == LineKind::Title;
+                if title {
+                    number += 1;
+                }
+                let hidden = slide.is_some_and(|s| s.hidden);
+                let editing = edit.as_ref().filter(|e| e.line == i);
+                let shown: SharedString = if title && line.text.is_empty() && editing.is_none() { crate::shell::i18n::text("pptx.outline.untitled") } else { line.text.clone().into() };
+                let color = if title { theme.foreground } else { theme.muted_foreground };
+                // What of the line is selected (the selection may run over several lines), and where its caret is.
+                let length = line.text.chars().count();
+                let span = edit.as_ref().and_then(|e| e.span());
+                let selection: Option<std::ops::Range<usize>> = span.and_then(|((l1, o1), (l2, o2))| {
+                    if i < l1 || i > l2 {
+                        return None;
+                    }
+                    Some(if l1 == l2 { o1..o2 } else if i == l1 { o1..length } else if i == l2 { 0..o2 } else { 0..length })
+                });
+                let caret_here = editing.is_some() && span.is_none();
+                let content: AnyElement = if editing.is_some() || selection.is_some() {
+                    let chars: Vec<char> = line.text.chars().collect();
+                    let r = selection.clone().unwrap_or_else(|| editing.map_or(0..0, |e| e.range()));
+                    let cut = |a: usize, b: usize| -> String { chars[a.min(chars.len())..b.min(chars.len())].iter().collect() };
+                    let mut selected = theme.primary;
+                    selected.a = 0.25;
+                    let marked = editing.and_then(|e| e.marked.clone()).unwrap_or_default();
+                    let prefix = cut(0, r.start);
+                    let sel_str = cut(r.start, r.end);
+                    let suffix = cut(r.end, chars.len());
+                    let full_text = if !marked.is_empty() {
+                        format!("{prefix}{marked}{suffix}")
+                    } else {
+                        line.text.clone()
+                    };
+                    let sel_bytes = (!r.is_empty() && marked.is_empty()).then(|| prefix.len()..(prefix.len() + sel_str.len()));
+                    let marked_bytes = (!marked.is_empty()).then(|| prefix.len()..(prefix.len() + marked.len()));
+                    let caret_byte = (caret_here && r.is_empty() && marked.is_empty()).then_some(prefix.len());
+                    let font_size = if title { 13.0 } else { 12.0 };
+                    let fg = theme.foreground;
+                    let overlay_text = full_text.clone();
                     h_flex()
-                        .items_start()
-                        .gap_1p5()
+                        .relative()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .child(div().child(SharedString::from(full_text)))
                         .child(
-                            div()
-                                .w(px(18.))
-                                .text_xs()
-                                .text_right()
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(if current { theme.primary } else { theme.muted_foreground })
-                                .when(slide.hidden, |d| d.line_through())
-                                .child(SharedString::from((index + 1).to_string())),
+                            canvas(
+                                |_, _, _| {},
+                                move |bounds, _, window, _| {
+                                    let shaped = if overlay_text.is_empty() {
+                                        None
+                                    } else {
+                                        let mut f = window.text_style().font();
+                                        if title {
+                                            f.weight = FontWeight::BOLD;
+                                        }
+                                        let run = TextRun {
+                                            len: overlay_text.len(),
+                                            font: f,
+                                            color: fg,
+                                            background_color: None,
+                                            underline: None,
+                                            strikethrough: None,
+                                        };
+                                        Some(window.text_system().shape_line(SharedString::from(overlay_text.clone()), px(font_size), &[run], None))
+                                    };
+                                    let x_at = |b: usize| -> Pixels {
+                                        shaped.as_ref().map_or(px(0.), |s| s.x_for_index(b.min(overlay_text.len())))
+                                    };
+                                    let h = px(14.).min(bounds.size.height);
+                                    let top = bounds.origin.y + (bounds.size.height - h) * 0.5;
+                                    if let Some(sr) = &sel_bytes {
+                                        let x0 = x_at(sr.start);
+                                        let x1 = x_at(sr.end);
+                                        if x1 > x0 {
+                                            window.paint_quad(fill(
+                                                Bounds::new(point(bounds.origin.x + x0, top), gpui_kit::size(x1 - x0, h)),
+                                                selected,
+                                            ));
+                                        }
+                                    }
+                                    if let Some(mr) = &marked_bytes {
+                                        let x0 = x_at(mr.start);
+                                        let x1 = x_at(mr.end);
+                                        if x1 > x0 {
+                                            window.paint_quad(fill(
+                                                Bounds::new(point(bounds.origin.x + x0, top + h - px(1.)), gpui_kit::size(x1 - x0, px(1.))),
+                                                fg,
+                                            ));
+                                        }
+                                    }
+                                    if let Some(cb) = caret_byte {
+                                        let cx = x_at(cb);
+                                        window.paint_quad(fill(
+                                            Bounds::new(point(bounds.origin.x + cx, top), gpui_kit::size(px(1.5), h)),
+                                            fg,
+                                        ));
+                                    }
+                                },
+                            )
+                            .absolute()
+                            .size_full(),
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_xs()
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(theme.foreground)
-                                .child(title_text),
-                        ),
-                )
-                .when(!paragraphs.is_empty(), |d| {
-                    d.children(paragraphs.into_iter().map(|(level, text)| {
-                        h_flex()
-                            .pl(px(20.0 + (level as f32 * 12.0)))
-                            .gap_1()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(div().w(px(6.)).text_center().child("•"))
-                            .child(div().flex_1().child(text))
-                            .into_any_element()
+                        .into_any_element()
+                } else {
+                    div().flex_1().min_w(px(0.)).overflow_hidden().whitespace_nowrap().child(shown).into_any_element()
+                };
+                let id = line.slide;
+                let text = line.text.clone();
+                let indent = if title { 0.0 } else { 20.0 + f32::from(line.level) * 14.0 };
+                h_flex()
+                    .id(("outline-line", i))
+                    .w_full()
+                    .px_2()
+                    .py(px(if title { 4. } else { 1. }))
+                    .mt(px(if title && i > 0 { 4. } else { 0. }))
+                    .gap_1p5()
+                    .items_start()
+                    .cursor_text()
+                    .text_size(px(if title { 13. } else { 12. }))
+                    .when(title, |d| d.font_weight(FontWeight::BOLD))
+                    .text_color(color)
+                    .bg(if current && title { theme.accent } else { gpui_kit::transparent_black() })
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        // The character the click is at: by the text's own widths.
+                        let size = window.text_style().font_size.to_pixels(window.rem_size());
+                        let _ = size;
+                        let caret = outline_caret_at(window, &text, if title { 13.0 } else { 12.0 }, title, f32::from(event.position.x), indent);
+                        if event.modifiers.shift && this.is_outline_editing() {
+                            this.extend_outline_selection(i, caret, window, cx);
+                        } else {
+                            this.begin_outline_edit(i, caret, window, cx);
+                        }
                     }))
-                })
-                .into_any_element()
-        }).collect()
+                    .on_mouse_move({
+                        let text = line.text.clone();
+                        cx.listener(move |this, event: &MouseMoveEvent, window, cx| {
+                            // The button held down: the selection reaches to here.
+                            if event.pressed_button == Some(MouseButton::Left) && this.is_outline_editing() {
+                                let caret = outline_caret_at(window, &text, if title { 13.0 } else { 12.0 }, title, f32::from(event.position.x), indent);
+                                this.extend_outline_selection(i, caret, window, cx);
+                            }
+                        })
+                    })
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.open_outline_context_menu(i, id, event.position, window, cx);
+                    }))
+                    .child(if title {
+                        div().w(px(18.)).flex_none().text_xs().text_right().text_color(if current { theme.primary } else { theme.muted_foreground }).when(hidden, |d| d.line_through()).child(SharedString::from(number.to_string())).into_any_element()
+                    } else {
+                        div().w(px(indent)).flex_none().text_right().child("•").into_any_element()
+                    })
+                    .child(content)
+                    .into_any_element()
+            })
+            .collect()
     }
 
     pub(crate) fn render_thumbnails(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_outline = self.is_outline_view();
-        let pane_w = if is_outline { OUTLINE_PANE_WIDTH } else { PANE_WIDTH };
+        let pane_w = self.pane_width_now();
 
         let items = if is_outline {
             self.render_outline_items(cx)
@@ -479,34 +609,122 @@ impl SlideEditor {
         let has_clip = crate::pptx::editing::slide_clipboard().is_some();
         let can_delete = self.presentation().slides.len() >= 2;
         let is_skipped = self.slide().hidden;
-        vec![
-            MenuItem::tr("pptx.new-slide").icon("add").on(|e, w, cx| e.add_slide(w, cx)).into(),
+        let mut entries = Vec::new();
+        if self.is_grid_view() {
+            entries.push(
+                MenuItem::tr("pptx.normal-view")
+                    .icon("slideshow")
+                    .shortcut("Enter")
+                    .on(|e, _, cx| e.close_grid_view(cx))
+                    .into(),
+            );
+            entries.push(MenuEntry::Separator);
+        }
+        entries.extend([
+            MenuItem::tr("pptx.new-slide").icon("add").shortcut("⌘M").on(|e, w, cx| e.add_slide(w, cx)).into(),
+            Submenu::tr("pptx.new-slide-layout", "view_quilt", crate::pptx::chrome::new_slide_menu(self)).into(),
             MenuItem::tr("pptx.duplicate-slide").icon("control_point_duplicate").shortcut("⌘D").on(|e, w, cx| e.duplicate_current_slide(w, cx)).into(),
             MenuItem::tr("pptx.delete-slide").icon("delete").disabled(!can_delete).on(|e, w, cx| e.delete_slide(w, cx)).into(),
+            MenuItem::tr("pptx.section.add").icon("create_new_folder").on(|e, w, cx| e.open_section_panel(false, w, cx)).into(),
+            Submenu::tr("pptx.sections", "view_quilt", crate::pptx::chrome::section_menu_items(self)).into(),
             MenuEntry::Separator,
+            Submenu::tr("pptx.layout", "dashboard", crate::pptx::chrome::apply_layout_items(self)).into(),
             MenuItem::tr("pptx.reset-slide").icon("restart_alt").disabled(self.slide().layout.is_none()).on(|e, w, cx| e.reset_slide(w, cx)).into(),
+            MenuItem::tr("pptx.reset-placement").disabled(self.slide().layout.is_none()).on(|e, w, cx| e.reset_placeholder_frames(w, cx)).into(),
+            Submenu::tr("pptx.transition", "animation", crate::pptx::chrome::transition_menu(self)).into(),
+            Submenu::tr("pptx.slide-size", "aspect_ratio", crate::pptx::chrome::slide_size_menu_items(self)).into(),
+            Submenu::tr("pptx.grid-and-guides", "grid_4x4", vec![
+                MenuItem::tr("pptx.gridlines").icon("grid_on").checked(self.is_pptx_gridlines_enabled()).on(|e, _, cx| e.toggle_pptx_gridlines(cx)).into(),
+                MenuItem::tr("pptx.guides").icon("straighten").checked(self.is_pptx_guides_enabled()).on(|e, _, cx| e.toggle_pptx_guides(cx)).into(),
+                MenuItem::tr("pptx.snap-to-grid").icon("grid_goldenratio").checked(self.is_pptx_snap_to_grid_enabled()).on(|e, _, cx| e.toggle_pptx_snap_to_grid(cx)).into(),
+                MenuItem::tr("pptx.snap-to-shape").icon("view_compact").checked(self.is_pptx_snap_to_shape_enabled()).on(|e, _, cx| e.toggle_pptx_snap_to_shape(cx)).into(),
+            ]).into(),
+            Submenu::tr("pptx.background", "wallpaper", crate::pptx::chrome::background_menu(self)).into(),
             Submenu::tr("pptx.theme.palette-selected", "palette", crate::pptx::chrome::theme_palette_selected_items(self)).into(),
             MenuEntry::Separator,
             MenuItem::tr("pptx.cut-slide").icon("content_cut").shortcut("⌘X").disabled(!can_delete).on(|e, w, cx| e.cut_current_slide(w, cx)).into(),
             MenuItem::tr("pptx.copy-slide").icon("content_copy").shortcut("⌘C").on(|e, w, cx| e.copy_current_slide(w, cx)).into(),
             MenuItem::tr("pptx.paste-slide").icon("content_paste").shortcut("⌘V").disabled(!has_clip).on(|e, w, cx| { e.paste_slides(w, cx); }).into(),
+            MenuItem::tr("pptx.paste-slide-keep").icon("content_paste_go").disabled(!has_clip).on(|e, w, cx| { e.paste_slides_keeping_formatting(w, cx); }).into(),
             MenuEntry::Separator,
             MenuItem::tr("pptx.skip-slide").icon("visibility_off").checked(is_skipped).on(|e, w, cx| e.toggle_skip_slide(w, cx)).into(),
             MenuItem::tr("pptx.slide.add-hidden-title").icon("title").on(|e, _, cx| {
                 let s_id = e.current_slide;
                 e.add_hidden_slide_title(s_id, None, cx);
             }).into(),
+            MenuItem::tr("insert.comment").icon("add_comment").shortcut("⌥⌘M").on(|e, w, cx| e.open_slide_comments(w, cx)).into(),
+            MenuItem::tr("pptx.notes").icon("notes").checked(self.notes_shown()).on(|e, w, cx| e.toggle_notes(w, cx)).into(),
+            MenuItem::tr("pptx.header-footer").icon("view_quilt").on(|e, w, cx| e.open_header_footer(w, cx)).into(),
             MenuEntry::Separator,
             MenuItem::tr("pptx.export-slide-png").icon("image").on(|e, w, cx| e.export_current_slide_png(w, cx)).into(),
             MenuItem::tr("pptx.export-all-slides-png").icon("image").on(|e, w, cx| e.export_all_slides_png(w, cx)).into(),
             MenuItem::tr("pptx.export-gif").icon("animation").on(|e, w, cx| e.export_gif(w, cx)).into(),
-        ]
+        ]);
+        entries
     }
 
     /// Open context menu for the given slide at pointer `position`.
     pub(crate) fn open_slide_context_menu(&mut self, slide_id: ibis_doc_model::SlideId, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        self.select_slide(slide_id, window, cx);
+        if !self.selected_slide_ids().contains(&slide_id) {
+            self.select_slide(slide_id, window, cx);
+        }
         let entries = self.slide_context_menu_entries();
+        self.open_popup_entries(entries, position, window, cx);
+    }
+
+    /// Open context menu for the given section header at pointer `position`.
+    pub(crate) fn open_section_context_menu(&mut self, section_id: &str, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_section(section_id, window, cx);
+        let entries = crate::pptx::chrome::section_menu_items(self);
+        self.open_popup_entries(entries, position, window, cx);
+    }
+
+    /// Context menu entries for an outline line in Outline View.
+    pub(crate) fn outline_context_menu_entries(&self) -> Vec<MenuEntry> {
+        let has_sel = self.outline_selected_text().is_some();
+        let is_editing = self.is_outline_editing();
+        let mut entries: Vec<MenuEntry> = vec![
+            MenuItem::tr("edit.cut").icon("content_cut").shortcut("⌘X").disabled(!has_sel).on(|e, _, cx| {
+                e.outline_copy(true, cx);
+            }).into(),
+            MenuItem::tr("edit.copy").icon("content_copy").shortcut("⌘C").disabled(!has_sel).on(|e, _, cx| {
+                e.outline_copy(false, cx);
+            }).into(),
+            MenuItem::tr("edit.paste").icon("content_paste").shortcut("⌘V").disabled(!is_editing).on(|e, _, cx| {
+                e.outline_paste(cx);
+            }).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.smartart.promote").icon("format_indent_decrease").shortcut("⇧Tab").disabled(!is_editing).on(|e, w, cx| {
+                e.outline_indent(false, w, cx);
+            }).into(),
+            MenuItem::tr("pptx.smartart.demote").icon("format_indent_increase").shortcut("Tab").disabled(!is_editing).on(|e, w, cx| {
+                e.outline_indent(true, w, cx);
+            }).into(),
+            MenuItem::tr("pptx.smartart.move-up").icon("arrow_upward").shortcut("⌥⇧↑").disabled(!is_editing).on(|e, w, cx| {
+                e.outline_move(false, w, cx);
+            }).into(),
+            MenuItem::tr("pptx.smartart.move-down").icon("arrow_downward").shortcut("⌥⇧↓").disabled(!is_editing).on(|e, w, cx| {
+                e.outline_move(true, w, cx);
+            }).into(),
+            MenuEntry::Separator,
+        ];
+        entries.extend(self.slide_context_menu_entries());
+        entries
+    }
+
+    /// Open context menu for an outline line at pointer `position`.
+    pub(crate) fn open_outline_context_menu(&mut self, line_index: usize, slide_id: ibis_doc_model::SlideId, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let already_on_line = self.outline_edit().is_some_and(|e| {
+            let (l1, l2) = (e.anchor_line.min(e.line), e.anchor_line.max(e.line));
+            (l1..=l2).contains(&line_index)
+        });
+        if !already_on_line {
+            self.begin_outline_edit(line_index, usize::MAX, window, cx);
+        }
+        if self.current_slide != slide_id && !self.selected_slide_ids().contains(&slide_id) {
+            self.select_slide(slide_id, window, cx);
+        }
+        let entries = self.outline_context_menu_entries();
         self.open_popup_entries(entries, position, window, cx);
     }
 
@@ -607,4 +825,24 @@ impl SlideEditor {
         }
         cx.notify();
     }
+}
+
+/// The character of `text` a click at window x `x` is at, the text drawn from x `left + 8 + 18 + 6` (its padding, its
+/// number or bullet and the gap) in the outline: by the widths the text system gives it.
+fn outline_caret_at(window: &mut Window, text: &str, size: f32, bold: bool, x: f32, indent: f32) -> usize {
+    use gpui_kit::TextRun;
+    let _ = indent;
+    if text.is_empty() {
+        return 0;
+    }
+    let mut f = window.text_style().font();
+    if bold {
+        f.weight = FontWeight::BOLD;
+    }
+    let run = TextRun { len: text.len(), font: f, color: gpui_kit::black(), background_color: None, underline: None, strikethrough: None };
+    let line = window.text_system().shape_line(text.to_string().into(), px(size), &[run], None);
+    // (The pane starts at x 0 of the window beside the slide list's place: its left padding 8, the mark 18, the gap 6.)
+    let local = (x - (8.0 + 18.0 + 6.0 + if bold { 0.0 } else { 0.0 })).max(0.0);
+    let index = line.closest_index_for_x(px(local));
+    text[..index.min(text.len())].chars().count()
 }

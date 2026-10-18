@@ -22,6 +22,8 @@ pub(crate) struct SlicerCache {
     pub pivots: Vec<String>,
     /// The table it filters (`x15:tableSlicerCache/@tableId`).
     pub table_id: Option<u32>,
+    /// Whether the items are sorted in descending order (`sortOrder="descending"`).
+    pub descending: bool,
 }
 
 /// A slicer cache definition's root.
@@ -34,6 +36,7 @@ pub(crate) fn read_cache(root: Node) -> Option<SlicerCache> {
         cache.pivots = children(p, "pivotTable").filter_map(|t| attr(t, "name").map(str::to_string)).collect();
     }
     cache.table_id = root.descendants().find(|n| n.tag_name().name() == "tableSlicerCache").and_then(|n| attr_i64(n, "tableId")).map(|v| v.max(0) as u32);
+    cache.descending = root.descendants().any(|n| matches!(n.tag_name().name(), "tabular" | "tableSlicerCache") && attr(n, "sortOrder") == Some("descending"));
     Some(cache)
 }
 
@@ -61,6 +64,7 @@ pub(crate) fn read_slicers(root: Node, caches: &std::collections::HashMap<String
                 columns: attr_i64(n, "columnCount").map_or(1, |v| v.clamp(1, 20) as u32),
                 row_height: attr_i64(n, "rowHeight").unwrap_or(0),
                 show_caption: attr_bool(n, "showCaption").unwrap_or(true),
+                descending: cache.descending,
                 source,
                 items: Vec::new(),
             })
@@ -79,7 +83,7 @@ mod tests {
     use std::collections::HashMap;
 
     const CACHE_PIVOT: &str = r#"<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" name="Slicer_地域" sourceName="地域"><pivotTables><pivotTable tabId="2" name="売上"/></pivotTables><data><tabular pivotCacheId="1"><items count="2"><i x="0" s="1"/><i x="1"/></items></tabular></data></slicerCacheDefinition>"#;
-    const CACHE_TABLE: &str = r#"<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" name="Slicer_品名" sourceName="品名"><extLst><ext uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}"><x15:tableSlicerCache tableId="3" column="2"/></ext></extLst></slicerCacheDefinition>"#;
+    const CACHE_TABLE: &str = r#"<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" name="Slicer_品名" sourceName="品名"><extLst><ext uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}"><x15:tableSlicerCache tableId="3" column="2" sortOrder="descending"/></ext></extLst></slicerCacheDefinition>"#;
     const SLICERS: &str = r#"<slicers xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><slicer name="地域" cache="Slicer_地域" caption="地域" columnCount="2" rowHeight="241300" style="SlicerStyleLight2"/><slicer name="品名" cache="Slicer_品名" showCaption="0"/></slicers>"#;
 
     #[test]
@@ -96,8 +100,10 @@ mod tests {
         assert_eq!(slicers.len(), 2);
         assert_eq!(slicers[0].source, SlicerSource::Pivot { field: "地域".into(), pivots: vec!["売上".into()] });
         assert_eq!((slicers[0].columns, slicers[0].row_height, slicers[0].style.as_str()), (2, 241_300, "SlicerStyleLight2"));
+        assert!(!slicers[0].descending);
         assert_eq!(slicers[1].source, SlicerSource::Table { table: "売上表".into(), field: "品名".into() });
         assert!(!slicers[1].show_caption);
+        assert!(slicers[1].descending);
         assert_eq!(slicers[1].caption, "品名");
     }
 }

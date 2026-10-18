@@ -16,6 +16,26 @@ use roxmltree::Node;
 use crate::xml::{attr, attr_bool, attr_i64, child, children, elements};
 
 const PRESETS_XML: &str = include_str!("../data/presetShapeDefinitions.xml");
+const WARPS_XML: &str = include_str!("../data/presetTextWarpDefinitions.xml");
+
+/// The preset text warps (`a:prstTxWarp`, ST_TextShapeType) by name, parsed on first use: each is the
+/// paths text is bent to, defined like a preset shape.
+fn warps() -> &'static HashMap<String, Arc<GeometryDef>> {
+    static WARPS: OnceLock<HashMap<String, Arc<GeometryDef>>> = OnceLock::new();
+    WARPS.get_or_init(|| {
+        let text = WARPS_XML.trim_start_matches('\u{feff}');
+        let Ok(doc) = roxmltree::Document::parse(text) else { return HashMap::new() };
+        elements(doc.root_element()).map(|n| (n.tag_name().name().to_string(), Arc::new(definition(n)))).collect()
+    })
+}
+
+/// The guide paths of text warp `name` (`"textWave1"`), with `adjust` (name and value) over its defaults;
+/// `None` if there is no such warp.
+pub fn text_warp(name: &str, adjust: &[(String, i64)]) -> Option<FormulaGeometry> {
+    let def = warps().get(name)?.clone();
+    let adjust = adjust.iter().map(|(n, v)| Guide { name: n.clone(), formula: format!("val {v}") }).collect();
+    Some(FormulaGeometry { preset: Some(name.to_string()), adjust, def })
+}
 
 /// Preset definitions by name, parsed on first use.
 fn presets() -> &'static HashMap<String, Arc<GeometryDef>> {
@@ -164,6 +184,26 @@ pub(crate) fn geometry(node: Option<Node>) -> Geometry {
 mod tests {
     use super::*;
 
+    /// The 41 text warps parse, each with its guide paths; a wave's two curves run across the box.
+    #[test]
+    fn all_text_warps_parse() {
+        assert!(warps().len() >= 40, "{} warps", warps().len());
+        for (name, def) in warps() {
+            assert!(!def.paths.is_empty(), "{name} has no path");
+        }
+        // The warp's own adjust value changes its curves.
+        let plain = text_warp("textWave1", &[]).unwrap().outline(1000.0, 500.0);
+        let strong = text_warp("textWave1", &[("adj1".to_string(), 40_000)]).unwrap().outline(1000.0, 500.0);
+        assert_ne!(plain, strong);
+        let wave = text_warp("textWave1", &[]).unwrap();
+        let outlines = wave.outline(1000.0, 500.0);
+        assert_eq!(outlines.len(), 2);
+        for o in &outlines {
+            let xs: Vec<f64> = o.subpaths.iter().flat_map(|s| s.points.iter().map(|p| p.0)).collect();
+            assert!(xs.iter().cloned().fold(f64::MAX, f64::min) < 1.0 && xs.iter().cloned().fold(f64::MIN, f64::max) > 999.0);
+        }
+    }
+
     #[test]
     fn all_presets_parse() {
         let presets = presets();
@@ -191,3 +231,4 @@ mod tests {
         assert!(points.len() >= 9);
     }
 }
+

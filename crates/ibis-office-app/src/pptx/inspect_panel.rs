@@ -251,6 +251,116 @@ impl SlideEditor {
         }
     }
 
+    /// Context menu entries for an inspection category card (`0..5`: Properties, Comments, Notes, HiddenSlides, OffSlideShapes).
+    pub(crate) fn inspect_category_context_menu_entries(&self, category_idx: usize) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem};
+        let Some(panel) = self.pptx().and_then(|s| s.inspect_panel.as_ref()) else {
+            return Vec::new();
+        };
+        let insp = &panel.inspection;
+        let mut entries: Vec<MenuEntry> = match category_idx {
+            0 => {
+                let can_remove = insp.has_properties && !panel.properties_removed;
+                vec![
+                    MenuItem::tr("pptx.inspect.remove-all")
+                        .icon("delete")
+                        .disabled(!can_remove)
+                        .on(|e, _, cx| e.inspect_remove_all_properties(cx))
+                        .into(),
+                    MenuItem::tr("file.info")
+                        .icon("info")
+                        .on(|e, w, cx| e.open_presentation_properties_panel(w, cx))
+                        .into(),
+                ]
+            }
+            1 => {
+                let can_remove = insp.comment_count > 0 && !panel.comments_removed;
+                vec![
+                    MenuItem::tr("pptx.inspect.remove-all")
+                        .icon("delete")
+                        .disabled(!can_remove)
+                        .on(|e, _, cx| e.inspect_remove_all_comments(cx))
+                        .into(),
+                    MenuItem::tr("insert.comment")
+                        .icon("comment")
+                        .on(|e, w, cx| e.open_slide_comments(w, cx))
+                        .into(),
+                ]
+            }
+            2 => {
+                let can_remove = insp.notes_count > 0 && !panel.notes_removed;
+                vec![
+                    MenuItem::tr("pptx.inspect.remove-all")
+                        .icon("delete")
+                        .disabled(!can_remove)
+                        .on(|e, _, cx| e.inspect_remove_all_notes(cx))
+                        .into(),
+                    MenuItem::tr("pptx.notes-page-view")
+                        .icon("description")
+                        .checked(self.is_notes_page_view())
+                        .on(|e, w, cx| e.toggle_notes_page_view(w, cx))
+                        .into(),
+                ]
+            }
+            3 => {
+                let can_remove = insp.hidden_slide_count > 0 && !panel.hidden_slides_removed;
+                vec![
+                    MenuItem::tr("pptx.inspect.remove-all")
+                        .icon("delete")
+                        .disabled(!can_remove)
+                        .on(|e, _, cx| e.inspect_remove_all_hidden_slides(cx))
+                        .into(),
+                    MenuItem::tr("pptx.grid-view")
+                        .icon("grid_view")
+                        .checked(self.is_grid_view())
+                        .on(|e, w, cx| e.toggle_grid_view(w, cx))
+                        .into(),
+                ]
+            }
+            4 => {
+                let can_remove = insp.off_slide_shape_count > 0 && !panel.off_slide_removed;
+                vec![
+                    MenuItem::tr("pptx.inspect.remove-all")
+                        .icon("delete")
+                        .disabled(!can_remove)
+                        .on(|e, _, cx| e.inspect_remove_all_off_slide_shapes(cx))
+                        .into(),
+                    MenuItem::tr("pptx.selection-pane")
+                        .icon("layers")
+                        .on(|e, _, cx| e.toggle_selection_pane(cx))
+                        .into(),
+                ]
+            }
+            _ => return Vec::new(),
+        };
+        entries.extend([
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.inspect-panel.reinspect")
+                .icon("refresh")
+                .on(|e, _, cx| e.recheck_presentation_inspection(cx))
+                .into(),
+            MenuItem::tr("_shell.close")
+                .icon("close")
+                .on(|e, _, cx| e.close_presentation_inspect_panel(cx))
+                .into(),
+        ]);
+        entries
+    }
+
+    /// Open context menu for an inspection category card at pointer `position`.
+    pub(crate) fn open_inspect_category_context_menu(
+        &mut self,
+        category_idx: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entries = self.inspect_category_context_menu_entries(category_idx);
+        if !entries.is_empty() {
+            self.open_popup_entries(entries, position, window, cx);
+        }
+    }
+
     /// サイドバーのドキュメント検査パネル UI 要素
     pub(crate) fn presentation_inspect_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let panel = self.pptx()?.inspect_panel.as_ref()?;
@@ -291,12 +401,20 @@ impl SlideEditor {
             });
 
             v_flex()
+                .id(("inspect-card", 0usize))
                 .p_2()
                 .gap_1()
                 .rounded_md()
                 .border_1()
                 .border_color(if found && !props_removed { cx.theme().danger.opacity(0.3) } else { cx.theme().border })
                 .bg(if found && !props_removed { cx.theme().danger.opacity(0.05) } else { cx.theme().background })
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, w, cx| {
+                        cx.stop_propagation();
+                        this.open_inspect_category_context_menu(0, event.position, w, cx);
+                    }),
+                )
                 .child(
                     h_flex()
                         .justify_between()
@@ -337,12 +455,20 @@ impl SlideEditor {
             });
 
             v_flex()
+                .id(("inspect-card", 1usize))
                 .p_2()
                 .gap_1()
                 .rounded_md()
                 .border_1()
                 .border_color(if found && !comments_removed { cx.theme().danger.opacity(0.3) } else { cx.theme().border })
                 .bg(if found && !comments_removed { cx.theme().danger.opacity(0.05) } else { cx.theme().background })
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, w, cx| {
+                        cx.stop_propagation();
+                        this.open_inspect_category_context_menu(1, event.position, w, cx);
+                    }),
+                )
                 .child(
                     h_flex()
                         .justify_between()
@@ -383,12 +509,20 @@ impl SlideEditor {
             });
 
             v_flex()
+                .id(("inspect-card", 2usize))
                 .p_2()
                 .gap_1()
                 .rounded_md()
                 .border_1()
                 .border_color(if found && !notes_removed { cx.theme().danger.opacity(0.3) } else { cx.theme().border })
                 .bg(if found && !notes_removed { cx.theme().danger.opacity(0.05) } else { cx.theme().background })
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, w, cx| {
+                        cx.stop_propagation();
+                        this.open_inspect_category_context_menu(2, event.position, w, cx);
+                    }),
+                )
                 .child(
                     h_flex()
                         .justify_between()
@@ -429,12 +563,20 @@ impl SlideEditor {
             });
 
             v_flex()
+                .id(("inspect-card", 3usize))
                 .p_2()
                 .gap_1()
                 .rounded_md()
                 .border_1()
                 .border_color(if found && !hidden_removed { cx.theme().danger.opacity(0.3) } else { cx.theme().border })
                 .bg(if found && !hidden_removed { cx.theme().danger.opacity(0.05) } else { cx.theme().background })
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, w, cx| {
+                        cx.stop_propagation();
+                        this.open_inspect_category_context_menu(3, event.position, w, cx);
+                    }),
+                )
                 .child(
                     h_flex()
                         .justify_between()
@@ -475,12 +617,20 @@ impl SlideEditor {
             });
 
             v_flex()
+                .id(("inspect-card", 4usize))
                 .p_2()
                 .gap_1()
                 .rounded_md()
                 .border_1()
                 .border_color(if found && !off_slide_removed { cx.theme().danger.opacity(0.3) } else { cx.theme().border })
                 .bg(if found && !off_slide_removed { cx.theme().danger.opacity(0.05) } else { cx.theme().background })
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, w, cx| {
+                        cx.stop_propagation();
+                        this.open_inspect_category_context_menu(4, event.position, w, cx);
+                    }),
+                )
                 .child(
                     h_flex()
                         .justify_between()

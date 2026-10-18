@@ -18,7 +18,7 @@ pub(crate) struct ParagraphPanel {
     pub(crate) mode: Mode,
     font_align: Option<FontAlign>,
     targets: Vec<Target>,
-    error: Option<SharedString>,
+    pub(crate) error: Option<SharedString>,
 }
 fn amount(value: &str, scale: f64, max: f64, positive: bool) -> Option<u32> {
     let value: f64 = value.trim().parse().ok()?;
@@ -47,13 +47,15 @@ impl SlideEditor {
         let Some(p) = paragraph else { return };
         self.end_text_edit(window, cx);
         let (mode, value) = match p.line_spacing { None => (Mode::Default, 1.), Some(LineSpacing::Percent(v)) => (Mode::Multiple, v as f64 / 100_000.), Some(LineSpacing::Points(v)) => (Mode::Points, v as f64 / 100.) };
+        let start_at_val = p.bullet.as_ref().and_then(|b| b.auto.as_ref()).map_or(1, |a| a.start_at);
         let fields: Vec<_> = [
-            value,
-            p.space_before as f64 / 100.,
-            p.space_after as f64 / 100.,
-            p.margin_left as f64 / 12_700.,
-            p.indent as f64 / 12_700.,
-        ].into_iter().map(|v| cx.new(|cx| InputState::new(window, cx).default_value(format!("{v:.2}")))).collect();
+            value.to_string(),
+            format!("{:.2}", p.space_before as f64 / 100.),
+            format!("{:.2}", p.space_after as f64 / 100.),
+            format!("{:.2}", p.margin_left as f64 / 12_700.),
+            format!("{:.2}", p.indent as f64 / 12_700.),
+            start_at_val.to_string(),
+        ].into_iter().map(|v| cx.new(|cx| InputState::new(window, cx).default_value(v))).collect();
         let first = fields[0].clone();
         if let Some(s) = self.pptx_mut() {
             s.section_panel=None;s.gradient_panel = None; s.shadow_panel = None; s.glow_panel = None; s.find = None; s.size_panel = None; s.frame_panel = None; s.comments = None; s.chart_panel = None; s.header_footer = None; s.insets_panel = None; s.crop_panel = None; s.timing_panel = None;
@@ -80,6 +82,26 @@ impl SlideEditor {
         let after = amount(p.fields[2].read(cx).value().as_ref(), 100., 400_000., false);
         let margin_left = amount(p.fields[3].read(cx).value().as_ref(), 12_700., 51_206_400., false).map(|v| v as i64);
         let indent = signed_amount(p.fields[4].read(cx).value().as_ref(), 12_700., 51_206_400.);
+        let start_at = match p.fields.get(5) {
+            Some(f) => {
+                let val = f.read(cx).value();
+                let trimmed = val.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    match trimmed.parse::<u32>() {
+                        Ok(n) if (1..=32767).contains(&n) => Some(n),
+                        _ => {
+                            if let Some(p) = self.pptx_mut().and_then(|s| s.paragraph_panel.as_mut()) {
+                                p.error = Some(crate::shell::i18n::text("pptx.paragraph-panel.invalid-start-at").into());
+                            }
+                            return cx.notify();
+                        }
+                    }
+                }
+            }
+            None => None,
+        };
         let (Some(line), Some(before), Some(after), Some(margin_left), Some(indent)) = (line, before, after, margin_left, indent) else {
             if let Some(p) = self.pptx_mut().and_then(|s| s.paragraph_panel.as_mut()) { p.error = Some(crate::shell::i18n::text("_pptx.enter-valid-values-in-points-for-line-spacing-pa").into()); }
             return cx.notify();
@@ -108,6 +130,7 @@ impl SlideEditor {
             space_after: Some(after),
             margin_left: Some(margin_left),
             indent: Some(indent),
+            start_at,
             ..Default::default()
         };
         let commands = p.targets.clone().into_iter().filter_map(|(slide, shape, cell, start, end, _)| {
@@ -145,6 +168,7 @@ impl SlideEditor {
             crate::shell::i18n::text("pptx.paragraph-panel.after-pt"),
             crate::shell::i18n::text("_pptx.left-indent-pt"),
             crate::shell::i18n::text("_pptx.first-line-indent-pt"),
+            crate::shell::i18n::text("pptx.paragraph-panel.start-at"),
         ].into_iter().zip(fields) { body = body.child(div().text_size(px(13.)).child(label)).child(Input::new(&field).small()); }
         if let Some(error) = error { body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error)); }
         body = body.child(h_flex().gap_1()

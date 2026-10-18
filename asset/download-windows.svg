@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="54" viewBox="0 0 220 54">
+  <defs>
+    <linearGradient id="win-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0078d4"/>
+      <stop offset="100%" stop-color="#005a9e"/>
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-10%" width="110%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  <rect width="220" height="54" rx="8" fill="url(#win-grad)" filter="url(#shadow)"/>
+  <!-- Windows 11 logo -->
+  <g transform="translate(18, 14)">
+    <rect x="0" y="0" width="11" height="11" fill="#ffffff"/>
+    <rect x="13" y="0" width="11" height="11" fill="#ffffff"/>
+    <rect x="0" y="13" width="11" height="11" fill="#ffffff"/>
+    <rect x="13" y="13" width="11" height="11" fill="#ffffff"/>
+  </g>
+  <!-- Text -->
+  <text x="52" y="24" fill="#ffffff" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600">Download for Windows</text>
+  <text x="52" y="40" fill="rgba(255,255,255,0.85)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">v0.8.1 (64-bit .zip)</text>
+</svg>

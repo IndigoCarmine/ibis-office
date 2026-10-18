@@ -55,6 +55,7 @@ impl LanguageSetting {
 /// shell's and each format's, the fix担当's), each owner adding to its own
 /// so that additions do not meet. Every file of the folders is listed here
 /// (a test checks it), and a key is in one file only (checked too).
+#[cfg(test)]
 const FILES: [&str; 5] = ["shell", "docx", "xlsx", "pptx", "fix"];
 const JA: [&str; 5] = [
     include_str!("../../i18n/ja/shell.tsv"),
@@ -208,7 +209,11 @@ const FONT_IDS: [(&str, &str); 6] = [
 pub(crate) fn font_label(name: &str) -> SharedString {
     match FONT_IDS.iter().find(|(n, _)| *n == name) {
         Some((_, id)) => text(id),
-        None => SharedString::from(name.to_string()),
+        // A font of the system's list under a name in the system's language (macOS): its English name in the English UI.
+        None => match crate::shell::font_list::english_name(name) {
+            Some(english) if language() == Language::English => SharedString::from(english.to_string()),
+            _ => SharedString::from(name.to_string()),
+        },
     }
 }
 

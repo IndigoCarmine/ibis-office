@@ -27,10 +27,41 @@ impl SlideEditor {
     pub(crate) fn open_text_insets_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_marked(cx);
         let (targets, initial) = if let Some(edit) = self.text_editing() {
-            (self.edited_body().map(|b|vec![(self.current_slide, edit.shape, edit.cell,b.clone())]).unwrap_or_default(), self.edited_body().map(|b| b.insets))
+            if let Some((r, c)) = edit.cell {
+                let (ar, ac) = edit.cell_anchor.unwrap_or((r, c));
+                let (r0, r1) = (r.min(ar), r.max(ar));
+                let (c0, c1) = (c.min(ac), c.max(ac));
+                let mut cell_targets = Vec::new();
+                if let Some(ShapeKind::Table(t)) = self.slide().shape(edit.shape).map(|s| &s.kind) {
+                    for row in r0..=r1 {
+                        for col in c0..=c1 {
+                            if let Some(cell) = t.rows.get(row).and_then(|r_obj| r_obj.cells.get(col)) {
+                                cell_targets.push((self.current_slide, edit.shape, Some((row, col)), cell.text.clone()));
+                            }
+                        }
+                    }
+                }
+                let init = self.edited_body().map(|b| b.insets).or_else(|| cell_targets.first().map(|t| t.3.insets));
+                (cell_targets, init)
+            } else {
+                (self.edited_body().map(|b| vec![(self.current_slide, edit.shape, None, b.clone())]).unwrap_or_default(), self.edited_body().map(|b| b.insets))
+            }
         } else {
             let shapes = self.selected_shapes();
-            (shapes.iter().filter_map(|s|s.text_body().map(|b|(self.current_slide,s.id,None,b.clone()))).collect(), shapes.iter().find_map(|s| s.text_body().map(|b| b.insets)))
+            let mut all_targets = Vec::new();
+            for s in &shapes {
+                if let ShapeKind::Table(t) = &s.kind {
+                    for (row, r_obj) in t.rows.iter().enumerate() {
+                        for (col, cell) in r_obj.cells.iter().enumerate() {
+                            all_targets.push((self.current_slide, s.id, Some((row, col)), cell.text.clone()));
+                        }
+                    }
+                } else if let Some(b) = s.text_body() {
+                    all_targets.push((self.current_slide, s.id, None, b.clone()));
+                }
+            }
+            let init = all_targets.first().map(|t| t.3.insets);
+            (all_targets, init)
         };
         let Some(initial) = initial else { return };
         self.end_text_edit(window, cx);

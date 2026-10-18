@@ -379,66 +379,105 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// 現在選択中のセルをウォッチ式に追加する。
+    /// 現在選択中のセル（または複数セル選択範囲）をウォッチ式に追加する。
     pub(crate) fn add_watch_cell(&mut self) {
-        let Some((col, row)) = self.current_cell() else { return };
+        let Some((cur_col, cur_row)) = self.current_cell() else { return };
         let current_slide = self.current_slide;
 
+        let target_cells: Vec<(u32, u32)> = match (self.selected_range(), self.current_sheet()) {
+            (Some(range), Some((_, sheet))) if range.first_row != range.last_row || range.first_column != range.last_column => {
+                let total = ((range.last_column - range.first_column + 1) as u64) * ((range.last_row - range.first_row + 1) as u64);
+                if total <= 64 {
+                    let mut non_empty = Vec::new();
+                    let mut all_cells = Vec::new();
+                    for r in range.first_row..=range.last_row {
+                        for c in range.first_column..=range.last_column {
+                            all_cells.push((c, r));
+                            if sheet.cell(r, c).is_some_and(|cell| !cell.value.is_empty() || cell.formula.is_some()) {
+                                non_empty.push((c, r));
+                            }
+                        }
+                    }
+                    if non_empty.is_empty() { all_cells } else { non_empty }
+                } else {
+                    vec![(cur_col, cur_row)]
+                }
+            }
+            _ => vec![(cur_col, cur_row)],
+        };
+
         // 1. presentation から必要な情報を抽出
-        let (sheet_name, cell_ref, name, value_text, formula_text) = {
+        let entries_data: Vec<(u32, u32, String, String, Option<String>, String, Option<String>)> = {
             let book_view = BookView::new(self.presentation());
             let sheet_idx = book_view.index_of_slide(current_slide).unwrap_or(0);
             let sheet_name = book_view.sheet_name(sheet_idx).to_string();
 
-            let cell_name_str = ibis_doc_model::cell_name(col, row);
-            let col_letters = cell_name_str.trim_end_matches(|c: char| c.is_ascii_digit());
-            let cell_ref = format!("${}${}", col_letters, row + 1);
+            target_cells
+                .into_iter()
+                .map(|(col, row)| {
+                    let cell_name_str = ibis_doc_model::cell_name(col, row);
+                    let col_letters = cell_name_str.trim_end_matches(|c: char| c.is_ascii_digit());
+                    let cell_ref = format!("${}${}", col_letters, row + 1);
 
-            let name = self.presentation().workbook.as_ref().and_then(|wb| {
-                wb.names.iter().find(|n| {
-                    if n.hidden || n.name.starts_with("_xlnm.") { return false; }
-                    if n.sheet.is_some() && n.sheet != Some(sheet_idx) { return false; }
-                    let formula = n.formula.trim().trim_start_matches('=');
-                    formula.contains(&format!("${}${}", col_letters, row + 1)) || formula.contains(&cell_name_str)
-                }).map(|n| n.name.clone())
-            });
+                    let name = self.presentation().workbook.as_ref().and_then(|wb| {
+                        wb.names
+                            .iter()
+                            .find(|n| {
+                                if n.hidden || n.name.starts_with("_xlnm.") {
+                                    return false;
+                                }
+                                if n.sheet.is_some() && n.sheet != Some(sheet_idx) {
+                                    return false;
+                                }
+                                let formula = n.formula.trim().trim_start_matches('=');
+                                formula.contains(&format!("${}${}", col_letters, row + 1)) || formula.contains(&cell_name_str)
+                            })
+                            .map(|n| n.name.clone())
+                    });
 
-            let cell_val = book_view.value(sheet_idx, row, col);
-            let value_text = match cell_val {
-                ibis_doc_model::CellValue::Empty => String::new(),
-                ibis_doc_model::CellValue::Number(n) => ibis_calc::eval::number_to_text(n),
-                ibis_doc_model::CellValue::Text(t) => t,
-                ibis_doc_model::CellValue::Bool(b) => if b { "TRUE".into() } else { "FALSE".into() },
-                ibis_doc_model::CellValue::Error(e) => e.to_string(),
-            };
-            let formula_text = book_view.formula(sheet_idx, row, col).map(|f| format!("={f}"));
-            (sheet_name, cell_ref, name, value_text, formula_text)
+                    let cell_val = book_view.value(sheet_idx, row, col);
+                    let value_text = match cell_val {
+                        ibis_doc_model::CellValue::Empty => String::new(),
+                        ibis_doc_model::CellValue::Number(n) => ibis_calc::eval::number_to_text(n),
+                        ibis_doc_model::CellValue::Text(t) => t,
+                        ibis_doc_model::CellValue::Bool(b) => {
+                            if b {
+                                "TRUE".into()
+                            } else {
+                                "FALSE".into()
+                            }
+                        }
+                        ibis_doc_model::CellValue::Error(e) => e.to_string(),
+                    };
+                    let formula_text = book_view.formula(sheet_idx, row, col).map(|f| format!("={f}"));
+                    (col, row, sheet_name.clone(), cell_ref, name, value_text, formula_text)
+                })
+                .collect()
         };
 
         // 2. wb_mut にエントリを追加
         let s = self.wb_mut();
-        if s.panels.watches.iter().any(|w| w.slide_id == current_slide && w.col == col && w.row == row) {
-            return;
+        for (col, row, sheet_name, cell_ref, name, value_text, formula_text) in entries_data {
+            if s.panels.watches.iter().any(|w| w.slide_id == current_slide && w.col == col && w.row == row) {
+                continue;
+            }
+            let max_existing = s.panels.watches.iter().map(|w| w.id).max().unwrap_or(0);
+            let next_id = s.panels.watch_window.as_ref().map_or(max_existing + 1, |p| p.next_id.max(max_existing + 1));
+            if let Some(p) = s.panels.watch_window.as_mut() {
+                p.next_id = next_id + 1;
+            }
+            s.panels.watches.push(WatchEntry {
+                id: next_id,
+                slide_id: current_slide,
+                sheet_name,
+                col,
+                row,
+                cell_ref,
+                name,
+                value_text,
+                formula_text,
+            });
         }
-
-        let next_id = s.panels.watch_window.as_ref().map_or(1, |p| p.next_id);
-        if let Some(p) = s.panels.watch_window.as_mut() {
-            p.next_id += 1;
-        }
-
-        let entry = WatchEntry {
-            id: next_id,
-            slide_id: current_slide,
-            sheet_name,
-            col,
-            row,
-            cell_ref,
-            name,
-            value_text,
-            formula_text,
-        };
-
-        s.panels.watches.push(entry);
     }
 
     /// ウォッチ項目を削除する。

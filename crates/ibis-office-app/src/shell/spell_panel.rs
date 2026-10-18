@@ -43,7 +43,7 @@ pub(crate) fn sidebar(view: SpellView, actions: SpellActions, cx: &mut Context<S
     let heading = |label: &str| div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(t(label));
     let id = |name: &str| ElementId::Name(format!("{}-{name}", view.prefix).into());
     let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
-    if !crate::spelling::available() {
+    if !crate::spelling::available() && view.total == 0 {
         body = body.child(div().text_size(px(12.)).child(t("pptx.spelling-panel.spell-checking-not-available")));
     } else if let (Some(word), true) = (view.word, view.total > 0) {
         body = body

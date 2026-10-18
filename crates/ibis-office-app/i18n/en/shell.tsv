@@ -44,6 +44,8 @@ file.export.pdf	PDF (.pdf)
 file.export.png	PNG Image (.png)
 file.export.gif	Animated GIF (.gif)
 file.export.svg	SVG Image (.svg)
+file.export.odp	OpenDocument Presentation (.odp)
+file.export.thmx	Office Theme (.thmx)
 file.print	Print…
 file.info	File Info
 file.language	Language
@@ -94,6 +96,7 @@ insert.comment	Comment
 format.options	Format Options
 format.clear	Clear Formatting
 tools.spelling	Spelling
+file.start-window	Start Window
 file.new	New
 file.recent	Open Recent
 file.export	Export
@@ -102,6 +105,7 @@ insert.image	Picture
 insert.shape	Shape
 insert.table	Table
 insert.chart	Chart
+insert.smartart	SmartArt
 format.text	Text
 format.align	Align & Indent
 format.spacing	Line & Paragraph Spacing
@@ -524,6 +528,9 @@ _shell.file-info	File Info
 _shell.language	Language
 _shell.page-setup-2	Page Setup…
 _shell.close	Close
+_shell.minimize	Minimize
+_shell.maximize	Maximize
+_shell.restore	Restore
 _shell.undo	Undo
 _shell.redo	Redo
 _shell.copy	Copy
@@ -646,10 +653,13 @@ file.pdf-done	Exported to PDF: {path}
 file.png-exit	Couldn't make the PNG (exit code {status})
 file.png-failed	Couldn't export to PNG: {error}
 file.png-done	Exported to PNG: {path}
+file.odp-failed	Couldn't export to OpenDocument Presentation: {error}
+file.odp-done	Exported to OpenDocument Presentation: {path}
 file.gif-failed	Couldn't export to GIF: {error}
 file.gif-done	Exported to GIF: {path}
 file.ppsx-done	Exported to slide show: {path}
 file.potx-done	Exported to template: {path}
+file.thmx-done	Exported theme: {path}
 file.xltx-done	Exported to Excel template: {path}
 file.new-from-template-done	Created new document from template
 file.print-failed	Couldn't print: {error}
@@ -688,6 +698,10 @@ start.select	Select
 start.open	Open…
 start.recent	Recent Files
 start.recent-none	No Recent Files
+start.request	We Need Your Help
+start.request-body	ibisOffice is a free office suite. Its goal is complete accuracy with Word, Excel and PowerPoint files, both in the layout of what it draws and in the compatibility of the file structure.
+start.request-report	If you find a bug or have a request, we would be grateful if you could report it on {link}.
+start.request-link	GitHub Issues
 _shell.stem-slide-slide-index-png	{stem}-Slide{slide_index}.png
 _app.cannot-write-the-pdf-error	Cannot write the PDF: {error}
 _render.period-point-moving-average	{period}-Point Moving Average
@@ -712,3 +726,82 @@ _shell.close-slide-master-view-and-notes-formatting-bef	Close Slide Master View 
 _shell.could-not-create-the-gif	Could not create the GIF.
 _shell.exporting-png	Exporting PNG…
 _shell.exporting-gif	Exporting GIF…
+shell.autorecover.settings-title	AutoRecover Settings
+shell.autorecover.enable	Save AutoRecover information regularly
+shell.autorecover.minutes	Save every (minutes, 1-120)
+shell.autorecover.keep	Keep the last AutoRecovered version when closing without saving
+shell.autorecover.location	AutoRecover file location
+shell.autorecover.reset-location	Reset to Default Location
+shell.autorecover.disable-file	Turn off AutoRecover for this file
+shell.autorecover.save-now	Save Now
+shell.autorecover.save	Save Settings
+shell.autorecover.saved	Settings saved
+shell.autorecover.error-interval	Enter an interval of 1 to 120 minutes
+shell.autorecover.error-path	The folder cannot be created
+shell.autorecover.now-done	AutoRecover information saved
+shell.autorecover.now-failed	Could not save
+shell.autorecover.wasm	Not available in the browser edition
+shell.autorecover.banner	This file was opened from AutoRecover. Save it under a name
+shell.autorecover.save-as	Save As
+shell.autorecover.discard	Discard
+shell.autorecover.recover-title	Recover Unsaved Files
+shell.autorecover.refresh	Refresh
+shell.autorecover.empty	There are no files to recover
+shell.autorecover.open	Open
+shell.autorecover.deleted	Deleted
+shell.autorecover.open-failed	Could not open
+shell.autorecover.opened	Opened the AutoRecover file. Save it under a name
+shell.autorecover.recovered-name	[Recovered] {file_name}
+file.without-macros-done	Exported without macros: {path}
+settings.save	Save
+settings.trust	Trust Center
+settings.qat	Quick Access Toolbar
+settings.save.autorecover	Save AutoRecover information every
+settings.save.interval	Interval
+settings.save.minutes	minutes
+settings.save.keep-unsaved	Keep the last autosaved version if I close without saving
+settings.save.backup	Always create a backup copy when saving over a workbook
+settings.save.note	The AutoRecover location and the backup format and location are in the File menu: AutoRecover Settings and Save Settings.
+settings.save.web	In the browser, the browser keeps what you save.
+settings.trust.links-warning	Show a warning bar when I open a workbook that links to other workbooks
+settings.trust.links-note	The values of the links stay as last saved. Update them with the bar or with Data > Workbook Links.
+settings.trust.macros	Macros
+settings.trust.macros-note	VBA macros are not run. A file with macros (.xlsm and the like) is saved with its macros as they are.
+settings.qat.note	Choose the commands to put in the title row above the toolbar, beside undo and redo. Only the commands the open document's menus have are shown.
+settings.qat.order	Selected Commands (Order)
+settings.qat.candidates	Add Commands
+settings.qat.reset	Reset to Defaults
+autocorrect.spell-ignore-upper	Skip words in UPPERCASE
+autocorrect.spell-ignore-numbers	Skip words with numbers
+autocorrect.spell-ignore-internet	Skip Internet and file addresses
+autocorrect.spell-language	Proofing language
+autocorrect.lang.auto	Auto
+autocorrect.lang.ja-JP	Japanese
+autocorrect.lang.en-US	English (US)
+autocorrect.lang.en-GB	English (UK)
+autocorrect.lang.fr-FR	Français
+autocorrect.lang.de-DE	Deutsch
+autocorrect.lang.es-ES	Español
+autocorrect.lang.it-IT	Italiano
+autocorrect.lang.ko-KR	한국어
+autocorrect.lang.zh-CN	Chinese (Simplified)
+autocorrect.smart-quotes	Replace straight quotes with smart quotes
+autocorrect.auto-lists	Make paragraphs that start with * or 1. into lists
+autocorrect.auto-borders	Turn a paragraph of --- or === into a border line with Enter
+_shell.hide-notes-pane	Hide Notes
+_shell.show-notes-pane	Show Notes
+shell.linux-desktop.ask	Add ibisOffice to your list of apps?
+shell.linux-desktop.ask.detail	You can then start it from the list of apps, and it appears under "Open With Other Application" for Word, Excel and PowerPoint documents. Only your home folder is changed.
+shell.linux-desktop.yes	Add
+shell.linux-desktop.no	Don't Add
+_shell.comma-style	Comma Style
+_shell.font-recent	Recent Fonts
+_shell.font-system	System Fonts
+grammar.repeated-word	Repeated word
+grammar.repeated-punctuation	Repeated punctuation
+grammar.missing-space	Missing space
+grammar.multiple-spaces	Multiple spaces
+grammar.capitalization	Capitalization
+editor.csv.loading-first	Loading CSV... (100,000 rows loaded)
+editor.csv.loaded	CSV loaded ({rows} rows)
+editor.csv.loading	Loading CSV... ({rows} rows loaded)

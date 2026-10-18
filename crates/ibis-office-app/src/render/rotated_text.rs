@@ -19,6 +19,8 @@ pub(crate) enum Attach {
     /// The end of the line, half a line below it (slanted labels below a
     /// horizontal axis, which end at their tick).
     TopEnd,
+    /// Centered at `at` (such as vertical axis titles).
+    Center,
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +83,7 @@ fn paint_line(line: &RotatedLine, origin: Point<Pixels>, window: &mut Window) {
             let (ux, uy) = (cos, sin);
             (ax - ux * w / 2.0 - uy * h / 2.0, ay - uy * w / 2.0 + ux * h / 2.0)
         }
+        Attach::Center => (ax, ay),
     };
     let center = point(origin.x + px(cx), origin.y + px(cy));
 

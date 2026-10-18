@@ -125,4 +125,109 @@ impl SlideEditor {
     pub(crate) fn set_bullet_suffix(&mut self, suffix: ListSuffix, cx: &mut Context<Self>) {
         self.set_list_suffix(suffix, cx);
     }
+
+    /// The list styles defined in the document: (style_id, name, num_id).
+    pub(crate) fn list_styles(&self) -> Vec<(String, String, u32)> {
+        let Some(doc) = self.flow() else { return Vec::new() };
+        let mut out = Vec::new();
+        // 1. From styles.styles with kind == Numbering and num_id
+        for (id, style) in &doc.styles.styles {
+            if style.kind == ibis_doc_model::StyleKind::Numbering {
+                if let Some(num_id) = style.num_id {
+                    out.push((id.clone(), style.name.clone(), num_id));
+                } else {
+                    // Try to find num_id from numbering abstracts matching num_style_link
+                    if let Some((&num_id, _)) = doc.styles.numbering.nums.iter().find(|(_, n)| {
+                        doc.styles.numbering.abstracts.get(&n.abstract_id).and_then(|a| a.num_style_link.as_deref()) == Some(id.as_str())
+                    }) {
+                        out.push((id.clone(), style.name.clone(), num_id));
+                    }
+                }
+            }
+        }
+        // 2. From numbering abstracts with num_style_link that might not be in styles.styles yet
+        for (num_id, n) in &doc.styles.numbering.nums {
+            if let Some(abs) = doc.styles.numbering.abstracts.get(&n.abstract_id) {
+                if let Some(link) = &abs.num_style_link {
+                    if !out.iter().any(|(id, _, _)| id == link) {
+                        out.push((link.clone(), link.clone(), *num_id));
+                    }
+                }
+            }
+        }
+        out.sort_by(|a, b| a.1.cmp(&b.1));
+        out
+    }
+
+    /// Define a new list style (`DOCX-LIST-011`) with the given name and optional levels,
+    /// adding it to both styles.xml and numbering.xml, and applying it to the selection.
+    pub(crate) fn define_list_style(&mut self, name: &str, levels: Option<Vec<ibis_doc_model::ListLevel>>, cx: &mut Context<Self>) -> u32 {
+        let Some(doc) = self.flow().cloned() else { return 0 };
+        let mut style_id = name.trim().replace(' ', "");
+        if style_id.is_empty() {
+            style_id = "ListStyle".to_string();
+        }
+        let base_id = style_id.clone();
+        let mut counter = 1;
+        while doc.styles.styles.contains_key(&style_id) {
+            style_id = format!("{base_id}{counter}");
+            counter += 1;
+        }
+
+        let (numbering, num_id) = doc.styles.numbering.with_new_list_style(&style_id, levels);
+        let list_style = ibis_doc_model::FlowStyle {
+            kind: ibis_doc_model::StyleKind::Numbering,
+            name: name.trim().to_string(),
+            num_id: Some(num_id),
+            quick: true,
+            ..ibis_doc_model::FlowStyle::default()
+        };
+
+        let mut commands = vec![
+            FlowCommand::SetNumbering { numbering },
+            FlowCommand::SetStyle { id: style_id, style: Some(list_style) },
+        ];
+
+        if let Some((first, last)) = self.selected_paragraphs() {
+            commands.push(FlowCommand::SetParagraphFormat {
+                first,
+                last,
+                change: ParaChange::List(Some(num_id)),
+            });
+        }
+
+        self.run_flow(commands, cx);
+        num_id
+    }
+
+    /// Apply an existing list style (by `num_id`) to the selected paragraphs or current caret paragraph.
+    pub(crate) fn apply_list_style(&mut self, num_id: u32, cx: &mut Context<Self>) {
+        let Some((first, last)) = self.selected_paragraphs() else { return };
+        self.run_flow(vec![FlowCommand::SetParagraphFormat {
+            first,
+            last,
+            change: ParaChange::List(Some(num_id)),
+        }], cx);
+    }
+
+    /// The name of the list style at the caret, if the paragraph is in a list style.
+    pub(crate) fn caret_list_style(&self) -> Option<String> {
+        let l = self.caret_list_ref()?;
+        let doc = self.flow()?;
+        let abs_id = doc.styles.numbering.nums.get(&l.num_id)?.abstract_id;
+        let abs = doc.styles.numbering.abstracts.get(&abs_id)?;
+        if let Some(link) = &abs.num_style_link {
+            if let Some(style) = doc.styles.styles.get(link) {
+                return Some(style.name.clone());
+            }
+            return Some(link.clone());
+        }
+        // Check if any style matches num_id
+        for style in doc.styles.styles.values() {
+            if style.kind == ibis_doc_model::StyleKind::Numbering && style.num_id == Some(l.num_id) {
+                return Some(style.name.clone());
+            }
+        }
+        None
+    }
 }

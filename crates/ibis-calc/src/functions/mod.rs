@@ -14,6 +14,7 @@ mod database;
 pub(crate) mod date;
 mod dist;
 mod engineering;
+mod ets;
 mod financial;
 mod groupby;
 mod info;
@@ -26,7 +27,7 @@ pub(crate) mod xml;
 
 use std::rc::Rc;
 
-use crate::eval::{Array, Ctx, Res, Value, num, to_number, to_text};
+use crate::eval::{Array, Ctx, Res, Value, num, to_bool, to_number, to_text};
 use crate::formula::Expr;
 use crate::value::CellError;
 
@@ -34,7 +35,7 @@ pub type Func = fn(&mut Ctx, &[Expr]) -> Value;
 
 /// The function named `name` (upper case, no prefix), if the engine has it.
 pub fn lookup(name: &str) -> Option<Func> {
-    math::get(name).or_else(|| logical::get(name)).or_else(|| info::get(name)).or_else(|| text::get(name)).or_else(|| stat::get(name)).or_else(|| lookup::get(name)).or_else(|| date::get(name)).or_else(|| financial::get(name)).or_else(|| groupby::get(name)).or_else(|| engineering::get(name)).or_else(|| database::get(name))
+    math::get(name).or_else(|| logical::get(name)).or_else(|| info::get(name)).or_else(|| text::get(name)).or_else(|| stat::get(name)).or_else(|| lookup::get(name)).or_else(|| date::get(name)).or_else(|| financial::get(name)).or_else(|| groupby::get(name)).or_else(|| ets::get(name)).or_else(|| engineering::get(name)).or_else(|| database::get(name))
 }
 
 /// Functions of the Analysis ToolPak, which give `#VALUE!` for a logical
@@ -92,6 +93,44 @@ pub(crate) fn numeric(ctx: &mut Ctx, args: &[Expr], f: impl Fn(&[f64]) -> Value)
 pub(crate) fn numeric_defaults(ctx: &mut Ctx, args: &[Expr], defaults: &[f64], f: impl Fn(&[f64]) -> Value) -> Value {
     let given = args.len();
     numeric(ctx, args, |ns| {
+        let mut all: Vec<f64> = ns.to_vec();
+        for d in defaults.iter().skip(given) {
+            all.push(*d);
+        }
+        f(&all)
+    })
+}
+
+pub(crate) fn numeric_with_bool(ctx: &mut Ctx, args: &[Expr], bool_arg_idx: usize, f: impl Fn(&[f64]) -> Value) -> Value {
+    let date1904 = ctx.date1904();
+    ctx.map_args(args, |_, vals| {
+        let mut ns = Vec::with_capacity(vals.len());
+        for (i, v) in vals.iter().enumerate() {
+            if i == bool_arg_idx {
+                match to_bool(v) {
+                    Ok(b) => ns.push(if b { 1.0 } else { 0.0 }),
+                    Err(e) => return Value::Error(e),
+                }
+            } else {
+                match to_number(v, date1904) {
+                    Ok(n) => ns.push(n),
+                    Err(e) => return Value::Error(e),
+                }
+            }
+        }
+        f(&ns)
+    })
+}
+
+pub(crate) fn numeric_defaults_with_bool(
+    ctx: &mut Ctx,
+    args: &[Expr],
+    defaults: &[f64],
+    bool_arg_idx: usize,
+    f: impl Fn(&[f64]) -> Value,
+) -> Value {
+    let given = args.len();
+    numeric_with_bool(ctx, args, bool_arg_idx, |ns| {
         let mut all: Vec<f64> = ns.to_vec();
         for d in defaults.iter().skip(given) {
             all.push(*d);

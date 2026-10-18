@@ -203,6 +203,25 @@ impl SlideEditor {
         }
     }
 
+    /// プレースホルダーの挿入: a placeholder of `kind` put on the page shown (the layout or the master), in the middle.
+    pub(crate) fn insert_master_placeholder(&mut self, kind: master_page::PlaceholderKind, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut view) = self.master_view.take() else { return };
+        self.end_text_edit(window, cx);
+        let part = view.pages[view.current].part.clone();
+        let result = self.merge_master_page(&view).and_then(|bytes| master_page::add_placeholder(&bytes, &part, kind).map_err(|e| e.to_string()));
+        match result {
+            Ok(bytes) => {
+                view.base = bytes;
+                let current = view.current;
+                self.show_master_page(view, current, window, cx);
+            }
+            Err(err) => {
+                self.master_view = Some(view);
+                self.set_status(err, cx);
+            }
+        }
+    }
+
     /// The page shown, as edited, put into the file the view holds.
     fn merge_master_page(&mut self, view: &MasterView) -> Result<Vec<u8>, String> {
         let source = self.source.clone().ok_or_else(|| crate::shell::i18n::text("_pptx.can-t-save").to_string())?;
@@ -256,6 +275,69 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// Context menu entries for page `index` in Slide Master View (PPTX-MASTER-001..005).
+    pub(crate) fn master_page_context_menu_entries(&self, index: usize) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem, Submenu};
+        let Some(view) = self.master_view.as_ref() else { return Vec::new() };
+        let Some(page) = view.pages.get(index) else { return Vec::new() };
+        let t = crate::shell::i18n::text;
+        let name = if page.name.is_empty() { t("pptx.chrome.no-name").to_string() } else { page.name.clone() };
+        let page_title: SharedString = if page.master {
+            crate::shell::i18n::format("pptx.master-view.slide-master-name", &[("name", &name)]).into()
+        } else {
+            name.into()
+        };
+
+        let placeholder_items: Vec<MenuEntry> = [
+            (master_page::PlaceholderKind::Title, "pptx.master-view.placeholder.title", "title"),
+            (master_page::PlaceholderKind::Text, "pptx.master-view.placeholder.text", "notes"),
+            (master_page::PlaceholderKind::Content, "pptx.master-view.placeholder.content", "dashboard"),
+            (master_page::PlaceholderKind::Picture, "pptx.master-view.placeholder.picture", "image"),
+            (master_page::PlaceholderKind::Chart, "pptx.master-view.placeholder.chart", "insert_chart"),
+            (master_page::PlaceholderKind::Table, "pptx.master-view.placeholder.table", "table"),
+            (master_page::PlaceholderKind::Media, "pptx.master-view.placeholder.media", "movie"),
+        ]
+        .into_iter()
+        .map(|(kind, label, icon)| {
+            MenuItem::tr(label)
+                .icon(icon)
+                .on(move |e, w, cx| {
+                    e.switch_master_page(index, w, cx);
+                    e.insert_master_placeholder(kind, w, cx);
+                })
+                .into()
+        })
+        .collect();
+
+        vec![
+            MenuItem::new("pptx.master-view.select-page", page_title)
+                .icon("view_quilt")
+                .checked(view.current == index)
+                .on(move |e, w, cx| e.switch_master_page(index, w, cx))
+                .into(),
+            MenuEntry::Separator,
+            Submenu::tr("pptx.master-view.placeholder.insert", "add_box", placeholder_items).into(),
+            Submenu::tr("pptx.background", "wallpaper", crate::pptx::chrome::background_menu(self)).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.master-view.close-master-view")
+                .icon("close")
+                .on(|e, w, cx| e.close_master_view(w, cx))
+                .into(),
+        ]
+    }
+
+    /// Open context menu for page `index` in Slide Master View at pointer `position`.
+    pub(crate) fn open_master_page_context_menu(&mut self, index: usize, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.master_view.as_ref().is_none_or(|v| index >= v.pages.len()) {
+            return;
+        }
+        self.switch_master_page(index, window, cx);
+        let entries = self.master_page_context_menu_entries(index);
+        if !entries.is_empty() {
+            self.open_popup_entries(entries, position, window, cx);
+        }
+    }
+
     pub(crate) fn master_view_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let view = self.master_view.as_ref()?;
         let t = crate::shell::i18n::text;
@@ -263,8 +345,30 @@ impl SlideEditor {
         for (i, page) in view.pages.iter().enumerate() {
             let name = if page.name.is_empty() { t("pptx.chrome.no-name").to_string() } else { page.name.clone() };
             let label: SharedString = if page.master { format!("{} {}", if i == view.current { "●" } else { "○" }, crate::shell::i18n::format("pptx.master-view.slide-master-name", &[("name", &name)])).into() } else { format!("    {} {}", if i == view.current { "●" } else { "○" }, name).into() };
-            body = body.child(Button::new(ElementId::Name(format!("pptx-master-page-{i}").into())).small().ghost().label(label).on_click(cx.listener(move |e, _, w, cx| e.switch_master_page(i, w, cx))));
+            let row = div()
+                .id(ElementId::Name(format!("pptx-master-page-row-{i}").into()))
+                .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, w, cx| {
+                    cx.stop_propagation();
+                    e.open_master_page_context_menu(i, event.position, w, cx);
+                }))
+                .child(Button::new(ElementId::Name(format!("pptx-master-page-{i}").into())).small().ghost().label(label).on_click(cx.listener(move |e, _, w, cx| e.switch_master_page(i, w, cx))));
+            body = body.child(row);
         }
+        // プレースホルダーの挿入: onto the page shown.
+        body = body.child(div().mt_2().text_size(px(13.)).font_weight(FontWeight::BOLD).child(t("pptx.master-view.placeholder.insert")));
+        let mut kinds = h_flex().gap_1().flex_wrap();
+        for (kind, label) in [
+            (master_page::PlaceholderKind::Title, "pptx.master-view.placeholder.title"),
+            (master_page::PlaceholderKind::Text, "pptx.master-view.placeholder.text"),
+            (master_page::PlaceholderKind::Content, "pptx.master-view.placeholder.content"),
+            (master_page::PlaceholderKind::Picture, "pptx.master-view.placeholder.picture"),
+            (master_page::PlaceholderKind::Chart, "pptx.master-view.placeholder.chart"),
+            (master_page::PlaceholderKind::Table, "pptx.master-view.placeholder.table"),
+            (master_page::PlaceholderKind::Media, "pptx.master-view.placeholder.media"),
+        ] {
+            kinds = kinds.child(Button::new(ElementId::Name(format!("pptx-master-placeholder-{label}").into())).small().ghost().label(t(label)).on_click(cx.listener(move |e, _, w, cx| e.insert_master_placeholder(kind, w, cx))));
+        }
+        body = body.child(kinds);
         // 文字の書式: the text styles of the master (the title's, the body's) by level.
         let style = &view.style;
         let (kind, level, bold) = (style.kind, style.level, style.bold);

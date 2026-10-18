@@ -29,6 +29,26 @@ pub(crate) fn check(text: &str, language: Option<&str>) -> Vec<Misspelling> {
     }
 }
 
+/// The words of `text` not known, as `check` finds them but in the language the settings choose (when `language` is
+/// not given) and without the kinds of words they leave out (UPPERCASE, with numbers, addresses).
+pub(crate) fn check_by_settings(text: &str, language: Option<&str>) -> Vec<Misspelling> {
+    let settings = crate::shell::autocorrect::settings();
+    // The system names a language with an underscore (`en_US`).
+    let chosen = (!settings.spell_language.is_empty()).then(|| settings.spell_language.replace('-', "_"));
+    let mut found = check(text, language.or(chosen.as_deref()));
+    found.retain(|m| keeps(&settings, &m.word));
+    found
+}
+
+/// Whether the settings let the unknown `word` be marked.
+fn keeps(settings: &crate::shell::autocorrect::AutoCorrect, word: &str) -> bool {
+    let letters = word.chars().filter(|c| c.is_alphabetic());
+    let upper = letters.clone().count() > 1 && letters.clone().all(char::is_uppercase);
+    let numbers = word.chars().any(|c| c.is_ascii_digit());
+    let address = word.contains("://") || word.starts_with("www.") || word.contains('@') || word.contains('/') || word.contains('\\');
+    !(settings.spell_ignore_upper && upper || settings.spell_ignore_numbers && numbers || settings.spell_ignore_internet && address)
+}
+
 /// What the checker suggests for the word at characters `start..end` of `text`.
 pub(crate) fn suggestions(text: &str, start: usize, end: usize, language: Option<&str>) -> Vec<String> {
     #[cfg(target_os = "macos")]
@@ -83,6 +103,7 @@ pub(crate) fn char_offset(text: &str, units: usize) -> usize {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
 mod mac {
     use std::ffi::c_void;
 
@@ -211,6 +232,20 @@ mod tests {
         assert_eq!(char_offset(text, 4), 3);
         assert_eq!(char_offset(text, 100), 4);
         assert_eq!(utf16_offset(text, usize::MAX), 5);
+    }
+
+    #[test]
+    fn the_settings_leave_out_kinds_of_words() {
+        let mut settings = crate::shell::autocorrect::AutoCorrect::default();
+        for (word, kept) in [("recieve", true), ("NASA", false), ("abc123", false), ("www.example.jp", false), ("me@example.jp", false), ("A", true)] {
+            assert_eq!(super::keeps(&settings, word), kept, "{word}");
+        }
+        settings.spell_ignore_upper = false;
+        settings.spell_ignore_numbers = false;
+        settings.spell_ignore_internet = false;
+        for word in ["NASA", "abc123", "www.example.jp"] {
+            assert!(super::keeps(&settings, word), "{word}");
+        }
     }
 
     #[cfg(target_os = "macos")]

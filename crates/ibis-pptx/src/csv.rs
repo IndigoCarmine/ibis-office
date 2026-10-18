@@ -127,17 +127,55 @@ pub fn decode_as(data: &[u8], encoding: TextEncoding) -> Result<String, Error> {
 /// What a text file is read with (テキスト/CSV から): the encoding, the
 /// delimiter (`None`: found from the text), and the row to start from
 /// (1 for the first), the rows before it left out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportOptions {
     pub encoding: TextEncoding,
     pub delimiter: Option<char>,
     pub start_row: usize,
+    /// Fixed-width columns: each line is cut before the characters at these positions (from 0, rising); an empty
+    /// list has them found from the text ([`detect_fixed_breaks`]). `None` reads delimited fields.
+    pub fixed: Option<Vec<usize>>,
 }
 
 impl Default for ImportOptions {
     fn default() -> Self {
-        Self { encoding: TextEncoding::Auto, delimiter: None, start_row: 1 }
+        Self { encoding: TextEncoding::Auto, delimiter: None, start_row: 1, fixed: None }
     }
+}
+
+/// Where the columns of a text in fixed-width columns begin: a position where, in every one of the first lines, the
+/// character before is blank (or past the line's end) and one of the lines has a character, after something.
+pub fn detect_fixed_breaks(text: &str, start_row: usize) -> Vec<usize> {
+    let lines: Vec<Vec<char>> = text.lines().skip(start_row.max(1) - 1).take(200).filter(|l| !l.trim().is_empty()).map(|l| l.chars().collect()).collect();
+    let width = lines.iter().map(Vec::len).max().unwrap_or(0);
+    let blank = |c: usize| lines.iter().all(|l| l.get(c).is_none_or(|ch| ch.is_whitespace()));
+    let mut out = Vec::new();
+    let mut seen_text = false;
+    for c in 0..width {
+        if !blank(c) {
+            if seen_text && c > 0 && blank(c - 1) {
+                out.push(c);
+            }
+            seen_text = true;
+        }
+    }
+    out
+}
+
+/// The line `line` cut before the characters at `breaks`, each part without its blanks at the ends (parts past the end
+/// of the line are left out, as Excel does).
+pub fn split_fixed(line: &str, breaks: &[usize]) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let (mut out, mut start) = (Vec::new(), 0);
+    for &b in breaks {
+        if b <= start || b >= chars.len() {
+            continue;
+        }
+        out.push(chars[start..b].iter().collect::<String>().trim().to_string());
+        start = b;
+    }
+    out.push(chars[start..].iter().collect::<String>().trim().to_string());
+    out
 }
 
 /// A text file read: its records (from the start row), and the delimiter used.
@@ -150,6 +188,12 @@ pub struct Imported {
 /// The records of a text file as `options` say.
 pub fn import(data: &[u8], options: &ImportOptions) -> Result<Imported, Error> {
     let text = decode_as(data, options.encoding)?;
+    if let Some(breaks) = &options.fixed {
+        let skip = options.start_row.max(1) - 1;
+        let breaks = if breaks.is_empty() { detect_fixed_breaks(&text, options.start_row) } else { breaks.clone() };
+        let rows = text.lines().skip(skip).map(|l| split_fixed(l, &breaks)).collect();
+        return Ok(Imported { rows, delimiter: ' ' });
+    }
     let delimiter = options.delimiter.unwrap_or_else(|| detect_delimiter(&text));
     let rows = parse_with_delimiter(&text, delimiter).into_iter().skip(options.start_row.max(1) - 1).collect();
     Ok(Imported { rows, delimiter })
@@ -199,42 +243,95 @@ pub fn detect_delimiter(text: &str) -> char {
     }
 }
 
+/// Iterator yielding records of fields separated by `delimiter`.
+pub struct CsvRecordIter<'a> {
+    text: &'a str,
+    pos: usize,
+    delimiter: char,
+    field: String,
+    record: Vec<String>,
+    quoted: bool,
+    finished: bool,
+}
+
+impl<'a> CsvRecordIter<'a> {
+    pub fn new(text: &'a str, delimiter: char) -> Self {
+        Self {
+            text,
+            pos: 0,
+            delimiter,
+            field: String::new(),
+            record: Vec::new(),
+            quoted: false,
+            finished: false,
+        }
+    }
+
+    /// The current byte offset into the underlying text.
+    pub fn position(&self) -> usize {
+        self.pos
+    }
+}
+
+impl<'a> Iterator for CsvRecordIter<'a> {
+    type Item = Vec<String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
+        let text = self.text;
+        let delimiter = self.delimiter;
+        while self.pos < text.len() {
+            let s = &text[self.pos..];
+            let mut chars = s.chars();
+            let c = chars.next().unwrap();
+            let len = c.len_utf8();
+            self.pos += len;
+
+            if self.quoted {
+                if c == '"' {
+                    if chars.next() == Some('"') {
+                        self.field.push('"');
+                        self.pos += 1;
+                    } else {
+                        self.quoted = false;
+                    }
+                } else {
+                    self.field.push(c);
+                }
+                continue;
+            }
+
+            match c {
+                '"' if self.field.is_empty() => self.quoted = true,
+                c if c == delimiter => self.record.push(std::mem::take(&mut self.field)),
+                '\r' if chars.next() == Some('\n') => {
+                    self.pos += 1;
+                    self.record.push(std::mem::take(&mut self.field));
+                    return Some(std::mem::take(&mut self.record));
+                }
+                '\n' | '\r' => {
+                    self.record.push(std::mem::take(&mut self.field));
+                    return Some(std::mem::take(&mut self.record));
+                }
+                _ => self.field.push(c),
+            }
+        }
+        self.finished = true;
+        if !self.field.is_empty() || !self.record.is_empty() {
+            self.record.push(std::mem::take(&mut self.field));
+            Some(std::mem::take(&mut self.record))
+        } else {
+            None
+        }
+    }
+}
+
 /// Records of fields separated by `delimiter`: quotes around a field, `""` for a
 /// quote inside one, CRLF or LF between records.
 pub fn parse_with_delimiter(text: &str, delimiter: char) -> Vec<Vec<String>> {
-    let mut records = Vec::new();
-    let mut record = Vec::new();
-    let mut field = String::new();
-    let mut quoted = false;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if quoted {
-            match c {
-                '"' if chars.peek() == Some(&'"') => {
-                    field.push('"');
-                    chars.next();
-                }
-                '"' => quoted = false,
-                _ => field.push(c),
-            }
-            continue;
-        }
-        match c {
-            '"' if field.is_empty() => quoted = true,
-            c if c == delimiter => record.push(std::mem::take(&mut field)),
-            '\r' if chars.peek() == Some(&'\n') => {}
-            '\n' | '\r' => {
-                record.push(std::mem::take(&mut field));
-                records.push(std::mem::take(&mut record));
-            }
-            _ => field.push(c),
-        }
-    }
-    if !field.is_empty() || !record.is_empty() {
-        record.push(field);
-        records.push(record);
-    }
-    records
+    CsvRecordIter::new(text, delimiter).collect()
 }
 
 /// Records of fields: automatically detects delimiter (comma, tab, semicolon).
@@ -417,6 +514,74 @@ mod tests {
 
     use super::*;
 
+    /// The sheet of an opened workbook (the first slide's).
+    fn sheet_of(presentation: &Presentation) -> ibis_doc_model::Sheet {
+        presentation.slides[0].shapes.iter().find_map(|s| if let ibis_doc_model::ShapeKind::Sheet(sheet) = &s.kind { Some((**sheet).clone()) } else { None }).expect("a sheet")
+    }
+
+    /// A text file is opened by making the cells from its records; that must give what writing the workbook and reading it gives.
+    #[test]
+    fn opening_a_text_file_gives_what_reading_its_workbook_gives() {
+        let mut text = String::from("Date,Name,Qty,Rate,Flag,Note,Formula
+");
+        for i in 0..25_000 {
+            text.push_str(&format!("2000/1/{},item {i},{},{}.5%,{},\"line one
+line two {i}\",=B{}
+", i % 28 + 1, i * 7, i % 100, if i % 2 == 0 { "TRUE" } else { "x" }, i + 1));
+        }
+        text.push_str(",,,,,
+ 12,\"a \"\"quoted\"\" cell\",#N/A,1e3,0.1234567890123456789,,
+");
+        let (old, _) = {
+            let o = crate::open(workbook_from(&text, "Sheet1").unwrap()).unwrap();
+            (sheet_of(&o.presentation), ())
+        };
+        let new = crate::open(text.clone().into_bytes()).unwrap();
+        let (mut old, new_sheet) = (old, sheet_of(&new.presentation));
+        // The formats the old way wrote into its workbook (numbered from 1) are not in the empty workbook the new way saves into: its styles say none.
+        for style in &mut old.styles {
+            style.xf = style.xf.filter(|&xf| xf == 0);
+        }
+        assert_eq!(old.cells.len(), new_sheet.cells.len());
+        for (a, b) in old.cells.iter().zip(&new_sheet.cells) {
+            assert_eq!(a, b);
+        }
+        assert_eq!(old.styles, new_sheet.styles);
+        assert_eq!(old.rows, new_sheet.rows);
+        assert_eq!(old.columns, new_sheet.columns);
+        assert!(old == new_sheet, "the rest of the sheet differs");
+    }
+
+    /// A cell of about 100 lines (a quoted cell of a text file) makes its row as high as Excel's automatic height goes (409.5 pt), not the 2,000 pt its lines add up to; the rows around it are as high as one line.
+    #[test]
+    fn a_cell_of_many_lines_makes_a_row_no_higher_than_excels_most() {
+        let lines: Vec<String> = (0..100).map(|i| format!("line {i}")).collect();
+        let text = format!("a,b\r\nx,y\r\nz,\"{}\"\r\nw,v\r\n", lines.join("\n"));
+        let opened = crate::open(text.into_bytes()).unwrap();
+        let sheet = sheet_of(&opened.presentation);
+        let most = (409.5 * 12700.0) as i64;
+        assert_eq!(sheet.rows[2] as i64, most);
+        assert!((sheet.rows[1] as i64) < most / 10 && (sheet.rows[3] as i64) < most / 10);
+    }
+
+    /// Saving the opened text file as a workbook keeps its cells (the opened workbook holds none of them, they are changes).
+    #[test]
+    fn a_text_file_saved_as_a_workbook_keeps_its_cells() {
+        let text = "a,b,c
+1,2.5,x
+2000/1/5,10%,\"p
+q\"
+";
+        let opened = crate::open(text.as_bytes().to_vec()).unwrap();
+        let saved = opened.source.save(&opened.presentation, crate::save::SaveOptions::default()).unwrap();
+        let again = crate::open(saved).unwrap();
+        let (a, b) = (sheet_of(&opened.presentation), sheet_of(&again.presentation));
+        assert_eq!(a.cells.len(), b.cells.len());
+        for (x, y) in a.cells.iter().zip(&b.cells) {
+            assert_eq!((x.row, x.column, &x.value, &x.text), (y.row, y.column, &y.value, &y.text));
+        }
+    }
+
     #[test]
     fn records() {
         assert_eq!(parse("a,b\r\n\"c,d\",\"e\"\"f\"\n"), vec![vec!["a", "b"], vec!["c,d", "e\"f"]]);
@@ -496,5 +661,16 @@ mod tests {
         let decoded_sjis = decode(&sjis_bytes).unwrap();
         assert!(decoded_sjis.contains("品名,単価\r\n"));
         assert!(decoded_sjis.contains("バナナ,120\r\n"));
+    }
+
+    #[test]
+    fn fixed_width_columns_are_found_and_cut() {
+        let text = "Code  Name       Qty\nA001  Apple        3\nB020  Mandarin    12\n";
+        assert_eq!(detect_fixed_breaks(text, 1), [6, 17]);
+        assert_eq!(split_fixed("A001  Apple        3", &[6, 17]), ["A001", "Apple", "3"]);
+        // Past the end of a short line: left out.
+        assert_eq!(split_fixed("A001", &[6, 17]), ["A001"]);
+        let imported = import(text.as_bytes(), &ImportOptions { fixed: Some(Vec::new()), start_row: 2, ..Default::default() }).unwrap();
+        assert_eq!(imported.rows, [vec!["A001", "Apple", "3"], vec!["B020", "Mandarin", "12"]]);
     }
 }

@@ -350,7 +350,7 @@ impl SlideEditor {
                                     .on_click(cx.listener(|_this, _, window, cx| {
                                         let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
                                             files: true,
-                                            directories: false,
+                                            directories: false, extensions: Vec::new(),
                                             multiple: false,
                                             prompt: Some(text("xlsx.repair.prompt-file").into()),
                                         });

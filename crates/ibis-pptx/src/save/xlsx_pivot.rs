@@ -52,6 +52,115 @@ fn number(n: f64) -> String {
     ibis_calc::number_to_xml(n)
 }
 
+fn serial_to_iso_date(serial: f64) -> String {
+    let day = serial.trunc() as i64;
+    let (y, m, d) = ibis_calc::eval::convert::date_from_serial(day, false);
+    let frac = (serial.fract().abs() * 86400.0).round() as u32;
+    let sec = frac % 60;
+    let min = (frac / 60) % 60;
+    let hour = (frac / 3600) % 24;
+    format!("{y:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}")
+}
+
+fn manual_group_items(f: &ibis_doc_model::PivotField, groups: &std::collections::HashMap<String, String>) -> (Vec<String>, Vec<usize>) {
+    let mut group_items: Vec<String> = Vec::new();
+    let mut item_to_group_idx: Vec<usize> = Vec::new();
+
+    for item_val in &f.shared {
+        let name = match item_val {
+            CellValue::Text(t) => t.clone(),
+            CellValue::Number(n) => number(*n),
+            CellValue::Bool(b) => if *b { "TRUE".into() } else { "FALSE".into() },
+            CellValue::Error(e) => e.as_str().to_string(),
+            CellValue::Empty => String::new(),
+        };
+        let target_name = groups.get(&name).cloned().unwrap_or(name);
+        let idx = if let Some(pos) = group_items.iter().position(|g| g == &target_name) {
+            pos
+        } else {
+            group_items.push(target_name);
+            group_items.len() - 1
+        };
+        item_to_group_idx.push(idx);
+    }
+    (group_items, item_to_group_idx)
+}
+
+fn range_group_items(f: &ibis_doc_model::PivotField, g: &ibis_doc_model::PivotFieldGrouping) -> Vec<String> {
+    match g {
+        ibis_doc_model::PivotFieldGrouping::Manual { groups } => manual_group_items(f, groups).0,
+        ibis_doc_model::PivotFieldGrouping::Number { start, end, interval, .. } => {
+            let mut items = Vec::new();
+            items.push(format!("<{}", number(*start)));
+            let step = if *interval > 0.0 { *interval } else { 1.0 };
+            if *end <= *start {
+                items.push(format!("{}-{}", number(*start), number(*end)));
+            } else {
+                let mut lo = *start;
+                while lo <= *end && items.len() < 1000 {
+                    let hi = lo + step;
+                    let hi_incl = if step.fract() == 0.0 && lo.fract() == 0.0 {
+                        (hi - 1.0).min(*end)
+                    } else {
+                        hi.min(*end)
+                    };
+                    if hi_incl <= lo {
+                        items.push(number(lo));
+                    } else {
+                        items.push(format!("{}-{}", number(lo), number(hi_incl)));
+                    }
+                    lo = hi;
+                }
+            }
+            items.push(format!(">{}", number(*end)));
+            items
+        }
+        ibis_doc_model::PivotFieldGrouping::Date { by, start, end, .. } => {
+            let numbers: Vec<f64> = f.shared.iter().filter_map(|v| if let CellValue::Number(n) = v { Some(*n) } else { None }).collect();
+            let (min_s, max_s) = if numbers.is_empty() {
+                (46023.0, 46387.0)
+            } else {
+                numbers.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &n| (a.min(n), b.max(n)))
+            };
+            let s_val = start.unwrap_or(min_s);
+            let e_val = end.unwrap_or(max_s);
+            let (sy, sm, sd) = ibis_calc::eval::convert::date_from_serial(s_val.trunc() as i64, false);
+            let (ey, em, ed) = ibis_calc::eval::convert::date_from_serial(e_val.trunc() as i64, false);
+            let mut items = Vec::new();
+            items.push(format!("<{sy:04}/{sm:02}/{sd:02}"));
+            match by {
+                ibis_doc_model::DateGroupBy::Months => {
+                    for m in 1..=12 {
+                        items.push(format!("{m}月"));
+                    }
+                }
+                ibis_doc_model::DateGroupBy::Quarters => {
+                    for q in 1..=4 {
+                        items.push(format!("第{q}四半期"));
+                    }
+                }
+                ibis_doc_model::DateGroupBy::Years => {
+                    let y0 = sy.min(ey);
+                    let y1 = sy.max(ey).min(y0 + 100);
+                    for y in y0..=y1 {
+                        items.push(format!("{y}年"));
+                    }
+                }
+                ibis_doc_model::DateGroupBy::Days => {
+                    let month_days = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+                    for (m_idx, &days) in month_days.iter().enumerate() {
+                        for d in 1..=days {
+                            items.push(format!("{}月{}日", m_idx + 1, d));
+                        }
+                    }
+                }
+            }
+            items.push(format!(">{ey:04}/{em:02}/{ed:02}"));
+            items
+        }
+    }
+}
+
 /// The cache's definition: its source and each field's items (the ones
 /// the table's items point at), no records, built again on opening.
 fn cache_xml(p: &PivotTable, records_rid: &str) -> String {
@@ -68,14 +177,20 @@ fn cache_xml(p: &PivotTable, records_rid: &str) -> String {
         }
     }
     out += &format!(r#"/></cacheSource><cacheFields count="{}">"#, p.fields.len());
-    for f in &p.fields {
+    for (i, f) in p.fields.iter().enumerate() {
+        let calc_items: Vec<&ibis_doc_model::pivot::PivotCalculatedItem> = p.calculated_items.iter().filter(|ci| ci.field as usize == i).collect();
         let formula_attr = f.formula.as_ref().map(|fml| format!(r#" formula="{}""#, esc(fml.trim_start_matches('=').trim()))).unwrap_or_default();
         out += &format!(r#"<cacheField name="{}"{formula_attr} numFmtId="0">"#, esc(&f.name));
+        let is_date = matches!(f.grouping, Some(ibis_doc_model::PivotFieldGrouping::Date { .. }));
         let numbers: Vec<f64> = f.shared.iter().filter_map(|v| if let CellValue::Number(n) = v { Some(*n) } else { None }).collect();
-        let texts = f.shared.iter().any(|v| matches!(v, CellValue::Text(_) | CellValue::Bool(_) | CellValue::Error(_)));
+        let texts = !calc_items.is_empty() || f.shared.iter().any(|v| matches!(v, CellValue::Text(_) | CellValue::Bool(_) | CellValue::Error(_)));
         let blank = f.shared.iter().any(|v| matches!(v, CellValue::Empty));
         let mut attrs = String::new();
-        if !numbers.is_empty() {
+        if is_date && !numbers.is_empty() {
+            attrs += r#" containsSemiMixedTypes="0" containsNonDate="0" containsDate="1" containsString="0""#;
+            let (lo, hi) = numbers.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &n| (a.min(n), b.max(n)));
+            attrs += &format!(r#" minDate="{}" maxDate="{}""#, serial_to_iso_date(lo), serial_to_iso_date(hi));
+        } else if !numbers.is_empty() {
             if !texts {
                 attrs += r#" containsSemiMixedTypes="0" containsString="0""#;
             } else {
@@ -92,19 +207,23 @@ fn cache_xml(p: &PivotTable, records_rid: &str) -> String {
         if blank {
             attrs += r#" containsBlank="1""#;
         }
-        out += &format!(r#"<sharedItems{attrs} count="{}">"#, f.shared.len());
+        out += &format!(r#"<sharedItems{attrs} count="{}">"#, f.shared.len() + calc_items.len());
         for v in &f.shared {
             out += &match v {
                 CellValue::Text(t) => format!(r#"<s v="{}"/>"#, esc(t)),
+                CellValue::Number(n) if is_date => format!(r#"<d v="{}"/>"#, serial_to_iso_date(*n)),
                 CellValue::Number(n) => format!(r#"<n v="{}"/>"#, number(*n)),
                 CellValue::Bool(b) => format!(r#"<b v="{}"/>"#, u8::from(*b)),
                 CellValue::Error(e) => format!(r#"<e v="{}"/>"#, esc(e.as_str())),
                 CellValue::Empty => "<m/>".to_string(),
             };
         }
+        for ci in &calc_items {
+            out += &format!(r#"<s v="{}" f="1"/>"#, esc(&ci.name));
+        }
         out += "</sharedItems>";
         if let Some(g) = &f.grouping {
-            out += "<fieldGroup>";
+            out += &format!(r#"<fieldGroup base="{i}">"#);
             match g {
                 ibis_doc_model::PivotFieldGrouping::Number { start, end, interval, auto_start, auto_end } => {
                     let mut rp = format!(r#"<rangePr groupBy="range" startNum="{}" endNum="{}" groupInterval="{}""#, number(*start), number(*end), number(*interval));
@@ -116,15 +235,22 @@ fn cache_xml(p: &PivotTable, records_rid: &str) -> String {
                     }
                     rp += "/>";
                     out += &rp;
+                    let group_items = range_group_items(f, g);
+                    out += &format!(r#"<groupItems count="{}">"#, group_items.len());
+                    for grp in &group_items {
+                        out += &format!(r#"<s v="{}"/>"#, esc(grp));
+                    }
+                    out += "</groupItems>";
                 }
                 ibis_doc_model::PivotFieldGrouping::Date { by, start, end, auto_start, auto_end } => {
-                    let mut rp = format!(r#"<rangePr groupBy="{}""#, by.as_str());
-                    if let Some(s) = start {
-                        rp += &format!(r#" startNum="{}""#, number(*s));
-                    }
-                    if let Some(e) = end {
-                        rp += &format!(r#" endNum="{}""#, number(*e));
-                    }
+                    let (min_s, max_s) = if numbers.is_empty() {
+                        (46023.0, 46387.0)
+                    } else {
+                        numbers.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &n| (a.min(n), b.max(n)))
+                    };
+                    let s_val = start.unwrap_or(min_s);
+                    let e_val = end.unwrap_or(max_s);
+                    let mut rp = format!(r#"<rangePr groupBy="{}" startDate="{}" endDate="{}""#, by.as_str(), serial_to_iso_date(s_val), serial_to_iso_date(e_val));
                     if !auto_start {
                         rp += r#" autoStart="0""#;
                     }
@@ -133,22 +259,25 @@ fn cache_xml(p: &PivotTable, records_rid: &str) -> String {
                     }
                     rp += "/>";
                     out += &rp;
-                }
-                ibis_doc_model::PivotFieldGrouping::Manual { groups } => {
-                    out += "<discretePr/>";
-                    let mut unique_groups: Vec<&String> = groups.values().collect();
-                    unique_groups.sort();
-                    unique_groups.dedup();
-                    out += &format!(r#"<groupItems count="{}">"#, unique_groups.len());
-                    for grp in &unique_groups {
+                    let group_items = range_group_items(f, g);
+                    out += &format!(r#"<groupItems count="{}">"#, group_items.len());
+                    for grp in &group_items {
                         out += &format!(r#"<s v="{}"/>"#, esc(grp));
                     }
                     out += "</groupItems>";
-                    out += &format!(r#"<discreteItems count="{}">"#, groups.len());
-                    for (item, grp) in groups {
-                        out += &format!(r#"<item name="{}" group="{}"/>"#, esc(item), esc(grp));
+                }
+                ibis_doc_model::PivotFieldGrouping::Manual { groups } => {
+                    let (group_items, item_to_group_idx) = manual_group_items(f, groups);
+                    out += &format!(r#"<discretePr count="{}">"#, item_to_group_idx.len());
+                    for idx in item_to_group_idx {
+                        out += &format!(r#"<x v="{idx}"/>"#);
                     }
-                    out += "</discreteItems>";
+                    out += "</discretePr>";
+                    out += &format!(r#"<groupItems count="{}">"#, group_items.len());
+                    for grp in &group_items {
+                        out += &format!(r#"<s v="{}"/>"#, esc(grp));
+                    }
+                    out += "</groupItems>";
                 }
             }
             out += "</fieldGroup>";
@@ -158,9 +287,18 @@ fn cache_xml(p: &PivotTable, records_rid: &str) -> String {
     out += "</cacheFields>";
     if !p.calculated_items.is_empty() {
         out += &format!(r#"<calculatedItems count="{}">"#, p.calculated_items.len());
+        let mut field_calc_offset: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
         for ci in &p.calculated_items {
+            let base_len = p.fields.get(ci.field as usize).map_or(0, |f| f.shared.len());
+            let offset = field_calc_offset.entry(ci.field).or_insert(0);
+            let item_x = base_len + *offset;
+            *offset += 1;
             let clean = ci.formula.trim().trim_start_matches('=').trim();
-            out += &format!(r#"<calculatedItem field="{}" name="{}" formula="{}"/>"#, ci.field, esc(&ci.name), esc(clean));
+            out += &format!(
+                r#"<calculatedItem field="{f}" formula="{fml}"><pivotArea field="{f}" dataOnly="0" outline="0"><references count="1"><reference field="{f}" count="1"><x v="{item_x}"/></reference></references></pivotArea></calculatedItem>"#,
+                f = ci.field,
+                fml = esc(clean),
+            );
         }
         out += "</calculatedItems>";
     }
@@ -193,6 +331,9 @@ fn table_xml(p: &PivotTable, cache_id: u32) -> String {
     }
     if p.outline {
         out += r#" outline="1" outlineData="1""#;
+    }
+    if !p.show_drill {
+        out += r#" showDrill="0""#;
     }
     for (name, v) in [("rowHeaderCaption", &p.row_header_caption), ("colHeaderCaption", &p.col_header_caption), ("grandTotalCaption", &p.grand_total_caption)] {
         if let Some(v) = v {
@@ -239,6 +380,9 @@ fn table_xml(p: &PivotTable, cache_id: u32) -> String {
         if !f.subtotal_top {
             out += r#" subtotalTop="0""#;
         }
+        if f.insert_blank_row {
+            out += r#" insertBlankRow="1""#;
+        }
         match f.sort {
             PivotSort::Ascending => {
                 out += r#" sortType="ascending""#;
@@ -257,25 +401,58 @@ fn table_xml(p: &PivotTable, cache_id: u32) -> String {
         if !f.default_subtotal {
             out += r#" defaultSubtotal="0""#;
         }
-        let fill_down = p.fill_down_labels && axis == Some("axisRow");
-        if axis.is_some() && !f.items.is_empty() {
-            let items: Vec<_> = f.items.iter().filter(|it| f.default_subtotal || it.kind.is_none()).collect();
-            out += &format!(r#"><items count="{}">"#, items.len());
-            for it in items {
-                match (&it.kind, it.x) {
-                    (Some(k), _) => out += &format!(r#"<item t="{}"/>"#, esc(k)),
-                    (None, Some(x)) => out += &format!(r#"<item x="{x}"{}/>"#, if it.hidden { r#" h="1""# } else { "" }),
-                    (None, None) => {}
+        let fill_down_ext = match f.fill_down_labels {
+            Some(true) => Some(FILL_DOWN_FIELD),
+            Some(false) => Some(FILL_DOWN_FIELD_OFF),
+            None if axis == Some("axisRow") && p.fill_down_labels => Some(FILL_DOWN_FIELD),
+            None => None,
+        };
+        let calc_count = p.calculated_items.iter().filter(|ci| ci.field as usize == i).count();
+        if axis.is_some() && (!f.items.is_empty() || calc_count > 0) {
+            if let Some(g) = &f.grouping {
+                let group_items = range_group_items(f, g);
+                let default_subtotal = f.default_subtotal;
+                let count = group_items.len() + if default_subtotal { 1 } else { 0 };
+                out += &format!(r#"><items count="{count}">"#);
+                for idx in 0..group_items.len() {
+                    out += &format!(r#"<item x="{idx}"/>"#);
                 }
+                if default_subtotal {
+                    out += r#"<item t="default"/>"#;
+                }
+                out += "</items>";
+            } else {
+                let data_items: Vec<_> = f.items.iter().filter(|it| it.kind.is_none()).collect();
+                let subtotal_items: Vec<_> = if f.default_subtotal {
+                    f.items.iter().filter(|it| it.kind.is_some()).collect()
+                } else {
+                    Vec::new()
+                };
+                let count = data_items.len() + calc_count + subtotal_items.len();
+                out += &format!(r#"><items count="{count}">"#);
+                for it in data_items {
+                    if let Some(x) = it.x {
+                        out += &format!(r#"<item x="{x}"{}/>"#, if it.hidden { r#" h="1""# } else { "" });
+                    }
+                }
+                for k in 0..calc_count {
+                    let x = f.shared.len() + k;
+                    out += &format!(r#"<item x="{x}"/>"#);
+                }
+                for it in subtotal_items {
+                    if let Some(k) = &it.kind {
+                        out += &format!(r#"<item t="{}"/>"#, esc(k));
+                    }
+                }
+                out += "</items>";
             }
-            out += "</items>";
-            if fill_down {
-                out += FILL_DOWN_FIELD;
+            if let Some(ext) = fill_down_ext {
+                out += ext;
             }
             out += "</pivotField>";
-        } else if fill_down {
+        } else if let Some(ext) = fill_down_ext {
             out += ">";
-            out += FILL_DOWN_FIELD;
+            out += ext;
             out += "</pivotField>";
         } else {
             out += "/>";
@@ -360,6 +537,7 @@ fn table_xml(p: &PivotTable, cache_id: u32) -> String {
 
 /// A row field's own 項目ラベルを繰り返す.
 const FILL_DOWN_FIELD: &str = r#"<extLst><ext uri="{2946ED86-A175-432a-8AC1-64E0C546D7DE}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:pivotField fillDownLabels="1"/></ext></extLst>"#;
+const FILL_DOWN_FIELD_OFF: &str = r#"<extLst><ext uri="{2946ED86-A175-432a-8AC1-64E0C546D7DE}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:pivotField fillDownLabels="0"/></ext></extLst>"#;
 
 /// The path from `from`'s folder to `to` (both part names).
 fn relative(from: &str, to: &str) -> String {
@@ -463,36 +641,49 @@ pub(crate) fn write_pivots(package: &mut Package, sheet_part: &str, workbook: &s
                 };
                 package.set_bytes(table, table_xml(n, cache_id).into_bytes());
                 let key = |p: &PivotTable| (p.source.clone(), p.fields.iter().map(|f| (f.name.clone(), f.formula.clone(), f.shared.clone(), f.grouping.clone())).collect::<Vec<_>>(), p.calculated_items.clone());
-                if key(o) == key(n) {
-                    let doc = package.xml_mut(cache)?;
-                    if let Some(root) = doc.root_element() {
-                        doc.set_attr(root, "refreshOnLoad", "1");
-                    }
-                    continue;
-                }
-                // Items only added to the fields' shared items: the old ones keep their numbers, so the records stay.
+                // Items only added to the fields' shared items, or a field placed in the table whose cache had no shared items yet.
                 let appended = o.source == n.source
                     && o.calculated_items == n.calculated_items
                     && o.fields.len() == n.fields.len()
                     && o.fields.iter().zip(&n.fields).all(|(a, b)| a.name == b.name && a.formula == b.formula && a.grouping == b.grouping && b.shared.starts_with(&a.shared));
-                if appended {
+                if key(o) == key(n) || appended {
+                    let mut emptied_records = false;
                     let doc = package.xml_mut(cache)?;
                     if let Some(root) = doc.root_element() {
                         doc.set_attr(root, "refreshOnLoad", "1");
                         if let Some(fields) = doc.child(root, "cacheFields") {
                             let nodes: Vec<_> = doc.children_named(fields, "cacheField").collect();
-                            for (node, (a, b)) in nodes.into_iter().zip(o.fields.iter().zip(&n.fields)) {
-                                if a.shared.len() == b.shared.len() {
+                            for (i, (node, f)) in nodes.into_iter().zip(&n.fields).enumerate() {
+                                let Some(shared) = doc.child(node, "sharedItems") else { continue };
+                                let doc_count = doc.children(shared).iter().filter(|&&c| doc.is_element(c)).count();
+                                let axis = n.place_of(i).map(|(a, _)| a);
+                                let placed_on_axis = matches!(axis, Some(PivotAxis::Row | PivotAxis::Column | PivotAxis::Page));
+                                let needed = doc_count < f.shared.len() && (doc_count > 0 || placed_on_axis);
+                                if !needed {
                                     continue;
                                 }
-                                let Some(shared) = doc.child(node, "sharedItems") else { continue };
-                                let prefix = doc.prefix(shared).map(|p| format!("{p}:")).unwrap_or_default();
-                                for name in doc.attributes(shared).iter().map(|a| a.name.clone()).filter(|a| a.starts_with("contains") || a == "minValue" || a == "maxValue").collect::<Vec<_>>() {
-                                    doc.remove_attr(shared, &name);
+                                if doc_count == 0 {
+                                    emptied_records = true;
                                 }
-                                for v in &b.shared[a.shared.len()..] {
+                                let is_date = doc.attr(shared, "containsDate") == Some("1") || doc.attr(shared, "minDate").is_some() || matches!(f.grouping, Some(ibis_doc_model::PivotFieldGrouping::Date { .. }));
+                                let prefix = doc.prefix(shared).map(|p| format!("{p}:")).unwrap_or_default();
+                                if is_date {
+                                    for name in doc.attributes(shared).iter().map(|a| a.name.clone()).filter(|a| a == "minValue" || a == "maxValue" || a.starts_with("containsNumber") || a.starts_with("containsInteger")).collect::<Vec<_>>() {
+                                        doc.remove_attr(shared, &name);
+                                    }
+                                    doc.set_attr(shared, "containsDate", "1");
+                                    doc.set_attr(shared, "containsNonDate", "0");
+                                    doc.set_attr(shared, "containsString", "0");
+                                    doc.set_attr(shared, "containsSemiMixedTypes", "0");
+                                } else {
+                                    for name in doc.attributes(shared).iter().map(|a| a.name.clone()).filter(|a| a.starts_with("contains") || a == "minValue" || a == "maxValue").collect::<Vec<_>>() {
+                                        doc.remove_attr(shared, &name);
+                                    }
+                                }
+                                for v in &f.shared[doc_count..] {
                                     let (tag, value) = match v {
                                         CellValue::Text(t) => ("s", Some(t.clone())),
+                                        CellValue::Number(x) if is_date => ("d", Some(serial_to_iso_date(*x))),
                                         CellValue::Number(x) => ("n", Some(number(*x))),
                                         CellValue::Bool(x) => ("b", Some(u8::from(*x).to_string())),
                                         CellValue::Error(e) => ("e", Some(e.as_str().to_string())),
@@ -504,7 +695,18 @@ pub(crate) fn write_pivots(package: &mut Package, sheet_part: &str, workbook: &s
                                         doc.set_attr(item, "v", &value);
                                     }
                                 }
-                                doc.set_attr(shared, "count", &b.shared.len().to_string());
+                                doc.set_attr(shared, "count", &f.shared.len().to_string());
+                            }
+                        }
+                        if emptied_records {
+                            doc.set_attr(root, "recordCount", "0");
+                        }
+                    }
+                    if emptied_records {
+                        let records = package.relationships(cache)?.into_iter().find(|r| r.kind == REL_RECORDS && !r.external);
+                        if let Some(r) = &records {
+                            if let Some(part) = r.target_part(cache) {
+                                package.set_bytes(&part, RECORDS_XML.as_bytes().to_vec());
                             }
                         }
                     }
@@ -527,9 +729,7 @@ pub(crate) fn write_pivots(package: &mut Package, sheet_part: &str, workbook: &s
                 };
                 let old = package.xml(cache)?;
                 let mut fresh = ibis_ooxml::XmlDocument::parse(cache_xml(n, &rid).as_bytes()).map_err(|e| Error::new(format!("ピボットのキャッシュを作れません: {e}")))?;
-                if let (Some(old_root), Some(root)) = (old.root_element(), fresh.root_element())
-                    && let Some(ext) = old.child(old_root, "extLst")
-                {
+                if let (Some(old_root), Some(root)) = (old.root_element(), fresh.root_element()) {
                     for a in old.attributes(old_root).iter().filter(|a| a.name.starts_with("xmlns:")) {
                         if fresh.attr(root, &a.name).is_none() {
                             fresh.set_attr(root, &a.name, &a.value);
@@ -539,11 +739,11 @@ pub(crate) fn write_pivots(package: &mut Package, sheet_part: &str, workbook: &s
                     if let (Some(old_fields), Some(new_fields)) = (old.child(old_root, "cacheFields"), fresh.child(root, "cacheFields")) {
                         let old_nodes: Vec<_> = old.children_named(old_fields, "cacheField").collect();
                         let new_nodes: Vec<_> = fresh.children_named(new_fields, "cacheField").collect();
-                        for nf in new_nodes {
+                        for (i, nf) in new_nodes.into_iter().enumerate() {
                             let name = fresh.attr(nf, "name").map(str::to_string);
                             let Some(of) = old_nodes.iter().copied().find(|&f| old.attr(f, "name") == name.as_deref()) else { continue };
                             let (Some(os), Some(ns)) = (old.child(of, "sharedItems"), fresh.child(nf, "sharedItems")) else { continue };
-                            if fresh.children(ns).iter().any(|&c| fresh.is_element(c)) || old.children(os).iter().any(|&c| old.is_element(c)) {
+                            if old.children(os).iter().any(|&c| old.is_element(c)) || n.place_of(i).is_some() {
                                 continue;
                             }
                             let at = fresh.children(nf).iter().position(|&c| c == ns).unwrap_or(0);
@@ -552,9 +752,11 @@ pub(crate) fn write_pivots(package: &mut Package, sheet_part: &str, workbook: &s
                             fresh.insert(nf, at, copy);
                         }
                     }
-                    let copy = fresh.import(&old, ext);
-                    let at = fresh.children(root).len();
-                    fresh.insert(root, at, copy);
+                    if let Some(ext) = old.child(old_root, "extLst") {
+                        let copy = fresh.import(&old, ext);
+                        let at = fresh.children(root).len();
+                        fresh.insert(root, at, copy);
+                    }
                 }
                 package.set_xml(cache, fresh);
             }

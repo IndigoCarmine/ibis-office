@@ -7,7 +7,8 @@
 //! step while the field keeps the focus).
 
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _};
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon};
+use crate::shell::icons::Material;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use ibis_doc_model::{Command, SlideId};
@@ -26,12 +27,108 @@ pub(crate) struct NotesField {
 }
 
 /// The pane's height, pixels.
-const PANE_HEIGHT: f32 = 110.0;
+pub(crate) const PANE_HEIGHT: f32 = 110.0;
+/// The least and most the dividers let the panes be (#39).
+const PANE_MIN_HEIGHT: f32 = 44.0;
+const LIST_MIN_WIDTH: f32 = 120.0;
+const LIST_MAX_WIDTH: f32 = 480.0;
+/// The slide stays at least this tall while the notes pane is dragged taller.
+const SLIDE_MIN_HEIGHT: f32 = 120.0;
+
+/// A divider being dragged: where the pointer was and how large the pane was then.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum PaneDrag {
+    List { x0: f32, w0: f32 },
+    Notes { y0: f32, h0: f32, max: f32 },
+}
 
 impl SlideEditor {
     /// Whether the notes pane shows (it does unless hidden from the menu).
     pub(crate) fn notes_shown(&self) -> bool {
         self.pptx().is_some_and(|s| !s.notes_hidden)
+    }
+
+    /// The slide list's width now: dragged, or the view's own.
+    pub(crate) fn pane_width_now(&self) -> f32 {
+        let own = if self.is_outline_view() { super::thumbnails::OUTLINE_PANE_WIDTH } else { super::thumbnails::PANE_WIDTH };
+        self.pptx().and_then(|s| s.pane_width).unwrap_or(own)
+    }
+
+    /// A thumbnail's width: it fills the list less its margins.
+    pub(crate) fn thumbnail_width(&self) -> f32 {
+        (self.pane_width_now() - 48.0).clamp(72.0, 420.0)
+    }
+
+    /// The divider between the slide list and the slide (#39).
+    pub(crate) fn render_pane_divider(&self, cx: &mut Context<Self>) -> AnyElement {
+        let w0 = self.pane_width_now();
+        div()
+            .id("pane-divider")
+            .w(px(4.))
+            .h_full()
+            .flex_shrink_0()
+            .cursor_col_resize()
+            .hover(|s| s.bg(cx.theme().border))
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                let x0 = f32::from(event.position.x);
+                if let Some(state) = this.pptx_mut() {
+                    state.pane_drag = Some(PaneDrag::List { x0, w0 });
+                }
+            }))
+            .into_any_element()
+    }
+
+    /// The divider between the slide and the notes pane (#39); none while the pane is hidden.
+    pub(crate) fn render_notes_divider(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.notes_shown() || !self.pages_are_slides() || !self.has_document {
+            return None;
+        }
+        let h0 = self.pptx().map_or(PANE_HEIGHT, |s| s.notes_height);
+        let total = self.workspace_bounds.map_or(f32::MAX, |b| f32::from(b.size.height)) + h0;
+        let max = (total - SLIDE_MIN_HEIGHT).max(PANE_MIN_HEIGHT);
+        Some(
+            div()
+                .id("notes-divider")
+                .h(px(4.))
+                .w_full()
+                .flex_shrink_0()
+                .cursor_row_resize()
+                .hover(|s| s.bg(cx.theme().border))
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    let y0 = f32::from(event.position.y);
+                    if let Some(state) = this.pptx_mut() {
+                        state.pane_drag = Some(PaneDrag::Notes { y0, h0, max });
+                    }
+                }))
+                .into_any_element(),
+        )
+    }
+
+    /// The pointer moves while a divider is held.
+    pub(crate) fn drag_pane(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some(drag) = self.pptx().and_then(|s| s.pane_drag) else { return };
+        // The button was let go outside: the drag is over.
+        if event.pressed_button != Some(MouseButton::Left) {
+            self.end_pane_drag(cx);
+            return;
+        }
+        if let Some(state) = self.pptx_mut() {
+            match drag {
+                PaneDrag::List { x0, w0 } => state.pane_width = Some((w0 + f32::from(event.position.x) - x0).clamp(LIST_MIN_WIDTH, LIST_MAX_WIDTH)),
+                PaneDrag::Notes { y0, h0, max } => state.notes_height = (h0 - (f32::from(event.position.y) - y0)).clamp(PANE_MIN_HEIGHT, max),
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn end_pane_drag(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = self.pptx_mut() {
+            if state.pane_drag.take().is_some() {
+                cx.notify();
+            }
+        }
     }
 
     pub(crate) fn toggle_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -40,6 +137,130 @@ impl SlideEditor {
             state.notes_hidden = !state.notes_hidden;
         }
         cx.notify();
+    }
+
+    /// Copy (or cut if `cut` is true) the current slide's speaker notes to the system clipboard.
+    pub(crate) fn copy_notes_text(&mut self, cut: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_notes(window, cx);
+        let slide = self.current_slide;
+        let Some(notes) = self.presentation().slide(slide).map(|s| s.notes.clone()) else { return };
+        if !notes.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(notes));
+        }
+        if cut && !self.slide().notes.is_empty() {
+            self.end_notes_typing();
+            self.run(vec![Command::SetNotes { slide, notes: String::new() }], cx);
+            if let Some(field) = self.pptx().and_then(|s| s.notes_field.as_ref()).filter(|f| f.slide == slide).map(|f| f.state.clone()) {
+                field.update(cx, |s, cx| s.set_value(String::new(), window, cx));
+            }
+        }
+    }
+
+    /// Paste text from the system clipboard into the current slide's speaker notes.
+    pub(crate) fn paste_notes_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_notes(window, cx);
+        let Some(pasted) = cx.read_from_clipboard().and_then(|item| item.text()) else { return };
+        let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
+        if pasted.is_empty() {
+            return;
+        }
+        let slide = self.current_slide;
+        let old = self.presentation().slide(slide).map(|s| s.notes.clone()).unwrap_or_default();
+        let next = format!("{old}{pasted}");
+        self.end_notes_typing();
+        self.run(vec![Command::SetNotes { slide, notes: next.clone() }], cx);
+        if let Some(field) = self.pptx().and_then(|s| s.notes_field.as_ref()).filter(|f| f.slide == slide).map(|f| f.state.clone()) {
+            field.update(cx, |s, cx| s.set_value(next, window, cx));
+        }
+    }
+
+    /// Clear all speaker notes on the current slide.
+    pub(crate) fn clear_notes_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_notes(window, cx);
+        let slide = self.current_slide;
+        if self.presentation().slide(slide).is_some_and(|s| !s.notes.is_empty()) {
+            self.end_notes_typing();
+            self.run(vec![Command::SetNotes { slide, notes: String::new() }], cx);
+            if let Some(field) = self.pptx().and_then(|s| s.notes_field.as_ref()).filter(|f| f.slide == slide).map(|f| f.state.clone()) {
+                field.update(cx, |s, cx| s.set_value(String::new(), window, cx));
+            }
+        }
+    }
+
+    /// Context menu entries for the speaker notes pane and Notes Page View (PPTX-NOTES-001..006, PPTX-NOTES-014).
+    pub(crate) fn notes_context_menu_entries(&self, cx: &App) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem};
+        let has_notes = !self.slide().notes.is_empty()
+            || self.pptx().and_then(|s| s.notes_field.as_ref()).is_some_and(|f| !f.state.read(cx).value().is_empty());
+        let has_clip = cx.read_from_clipboard().and_then(|item| item.text()).is_some_and(|t| !t.is_empty());
+
+        vec![
+            MenuItem::tr("edit.cut").icon("content_cut").shortcut("⌘X").disabled(!has_notes).on(|e, w, cx| e.copy_notes_text(true, w, cx)).into(),
+            MenuItem::tr("edit.copy").icon("content_copy").shortcut("⌘C").disabled(!has_notes).on(|e, w, cx| e.copy_notes_text(false, w, cx)).into(),
+            MenuItem::tr("edit.paste").icon("content_paste").shortcut("⌘V").disabled(!has_clip).on(|e, w, cx| e.paste_notes_text(w, cx)).into(),
+            MenuItem::tr("edit.delete").icon("delete").disabled(!has_notes).on(|e, w, cx| e.clear_notes_text(w, cx)).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.notes-format")
+                .icon("format_bold")
+                .checked(self.is_notes_format())
+                .on(|e, w, cx| {
+                    if e.is_notes_format() {
+                        e.close_notes_format(w, cx);
+                    } else {
+                        e.open_notes_format(w, cx);
+                    }
+                })
+                .into(),
+            MenuItem::tr("pptx.notes-master")
+                .icon("sticky_note_2")
+                .checked(self.is_notes_master())
+                .on(|e, w, cx| {
+                    if e.is_notes_master() {
+                        e.close_notes_format(w, cx);
+                    } else {
+                        e.open_notes_master(w, cx);
+                    }
+                })
+                .into(),
+            MenuItem::tr("pptx.handout-master")
+                .icon("view_agenda")
+                .checked(self.is_handout_master())
+                .on(|e, w, cx| {
+                    if e.is_handout_master() {
+                        e.close_notes_format(w, cx);
+                    } else {
+                        e.open_handout_master(w, cx);
+                    }
+                })
+                .into(),
+            MenuItem::tr("pptx.notes-header-footer")
+                .icon("view_quilt")
+                .on(|e, w, cx| e.open_notes_marks(w, cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.notes-page-view")
+                .icon("sticky_note_2")
+                .shortcut("⌃⌥3")
+                .checked(self.is_notes_page_view())
+                .on(|e, w, cx| e.toggle_notes_page_view(w, cx))
+                .into(),
+            MenuItem::tr("pptx.normal-view")
+                .icon("view_compact")
+                .checked(self.is_normal_view())
+                .on(|e, w, cx| e.switch_to_normal_view(w, cx))
+                .into(),
+            MenuItem::tr("pptx.notes")
+                .icon("notes")
+                .checked(self.notes_shown())
+                .on(|e, w, cx| e.toggle_notes(w, cx))
+                .into(),
+        ]
+    }
+
+    /// Open context menu on the speaker notes pane or Notes Page View at `position`.
+    pub(crate) fn open_notes_context_menu(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let entries = self.notes_context_menu_entries(cx);
+        self.open_popup_entries(entries, position, window, cx);
     }
 
     /// Put what the field holds in the document, if it changed.
@@ -117,7 +338,8 @@ impl SlideEditor {
         Some(
             div()
                 .id("speaker-notes")
-                .h(px(PANE_HEIGHT))
+                .h(px(self.pptx().map_or(PANE_HEIGHT, |s| s.notes_height)))
+                .relative()
                 .flex_shrink_0()
                 .border_t_1()
                 .border_color(theme.border)
@@ -125,7 +347,32 @@ impl SlideEditor {
                 .px_3()
                 .py_2()
                 .text_sm()
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.open_notes_context_menu(event.position, window, cx);
+                    }),
+                )
                 .child(Textarea::new(&state).appearance(false).size_full())
+                // The close button at the top right (#38): the toolbar's button follows.
+                .child(
+                    div()
+                        .id("notes-pane-close")
+                        .absolute()
+                        .top(px(2.))
+                        .right(px(6.))
+                        .size(px(22.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme.muted))
+                        .child(Icon::new(Material("close")).size(px(16.)).text_color(theme.muted_foreground))
+                        .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text("_shell.hide-notes-pane")).build(window, cx))
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_notes(window, cx))),
+                )
                 .into_any_element(),
         )
     }
@@ -330,6 +577,13 @@ impl SlideEditor {
                     this.switch_to_normal_view(window, cx);
                 }
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_notes_context_menu(event.position, window, cx);
+                }),
+            )
             .size_full()
             .bg(theme.muted)
             .child(header)
