@@ -31,21 +31,21 @@ ibisOffice は、Word・Excel・PowerPoint の文書を、表示し、編集し�
       <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.3/ibisOffice-0.8.3-Windows.zip">
         <img src="asset/download-windows.svg" alt="Download for Windows" height="54">
       </a><br>
-      <code>ibisOffice-0.8.3-Windows.zip</code><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.3/ibisOffice-0.8.3-Windows.zip"><code>ibisOffice-0.8.3-Windows.zip</code></a><br>
       <small>Windows 10 / 11（64 ビット）</small>
     </td>
     <td align="center">
       <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.3/ibisOffice-0.8.3-macOS.zip">
         <img src="asset/download-mac.svg" alt="Download for Mac" height="54">
       </a><br>
-      <code>ibisOffice-0.8.3-macOS.zip</code><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.3/ibisOffice-0.8.3-macOS.zip"><code>ibisOffice-0.8.3-macOS.zip</code></a><br>
       <small>macOS 11 以降（Apple Silicon）</small>
     </td>
     <td align="center">
       <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.3/ibisOffice-0.8.3-Linux.AppImage">
         <img src="asset/download-linux.svg" alt="Download for Linux" height="54">
       </a><br>
-      <code>ibisOffice-0.8.3-Linux.AppImage</code><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.3/ibisOffice-0.8.3-Linux.AppImage"><code>ibisOffice-0.8.3-Linux.AppImage</code></a><br>
       <small>Linux x86_64</small>
     </td>
   </tr>
