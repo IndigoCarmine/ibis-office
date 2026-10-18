@@ -15,7 +15,7 @@ ibis inc.: <https://ssl.ibis.ne.jp/support/Entry?svid=30>
 
 ## Contributions
 
-Until our Contributor License Agreement (CLA) is ready, we do not accept external contributions (such as pull requests).
+Contributions are welcome in Issues (we do not accept pull requests at the moment). To let us use code you wrote, also under the commercial license, reply to our [Contributor License Agreement (CLA)](CLA.md) with one line; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Language
 
@@ -38,7 +38,7 @@ This document is provided in English and Japanese. If the two versions differ, t
 
 ## 貢献について
 
-貢献者ライセンス同意書（CLA）の準備ができるまで、外部からの貢献（プルリクエストなど）は受け付けていません。
+貢献は Issues で歓迎します（今はプル リクエストを受け付けていません）。書いていただいたコードを商用ライセンスでも使えるよう、[貢献者ライセンス契約（CLA）](CLA-ja.md) に 1 行で同意していただく形です。くわしくは [CONTRIBUTING.md](CONTRIBUTING.md) を見てください。
 
 ## 言語
 

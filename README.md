@@ -130,8 +130,6 @@ We recorded the app window (up to 60 frames per second) and measured, from the v
 
 With the app already running, the time from telling it to open a 1,000,000-row CSV file until the first screen is displayed and interactive for viewing, scrolling, and zooming.
 
-Unlike other office suites (Microsoft Excel, LibreOffice, ONLYOFFICE) which block the screen with progress bars or white frames until all rows are parsed, ibisOffice progressively renders the first 100,000 rows in read-only mode in just **0.78 s** (First View). This lets users immediately view, scroll, and verify data without waiting (while background placement of all 1,048,576 rows finishes in 4.44 s).
-
 <p align="center">
   <img src="asset/benchmark-csv-en.svg" alt="1,000,000-Row CSV First View Speed Benchmark: ibisOffice vs Microsoft Excel, LibreOffice, ONLYOFFICE" width="100%">
 </p>
@@ -140,7 +138,6 @@ Unlike other office suites (Microsoft Excel, LibreOffice, ONLYOFFICE) which bloc
 |---|---:|---:|---:|---:|
 | Large CSV (.csv)<br>1,048,576 rows, 20 columns, 116 MB<br>*(Time to First View)* | **0.78 s** | 11.30 s (14.5×) | 19.04 s (24.4×) | 137.3 s* (176.0×) |
 
-\* ibisOffice renders the first 100,000 rows in 0.78 s for instant viewing and scrolling (all 1,048,576 rows fully placed in 4.44 s). Other office suites do not display the document until all rows are loaded.
 \* ONLYOFFICE failed to open the 1,000,000-row file (timed out after 5 minutes); estimated at 3.3× its 300,000-row load time (41.60 s).
 
 ### Converting to PDF
