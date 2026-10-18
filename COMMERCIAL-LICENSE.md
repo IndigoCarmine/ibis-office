@@ -2,7 +2,7 @@
 
 [English](#commercial-license) | [日本語](#商用ライセンス日本語)
 
-Except for the third-party components listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), all copyrights in ibisOffice are held by ibis inc. For this reason, ibisOffice is available under your choice of two licenses (dual licensing).
+Except for the third-party components listed in [THIRD-PARTY-NOTICES.md](docs/THIRD-PARTY-NOTICES.md), all copyrights in ibisOffice are held by ibis inc. For this reason, ibisOffice is available under your choice of two licenses (dual licensing).
 
 1. **GNU Affero General Public License v3.0 (AGPL-3.0-only)** — [LICENSE](LICENSE)
    Free to use, modify and redistribute. However, if you distribute a modified version, or provide it to users over a network (for example, as a web service), you must make its complete source code available to those users under AGPL-3.0.
@@ -15,7 +15,7 @@ ibis inc.: <https://ssl.ibis.ne.jp/support/Entry?svid=30>
 
 ## Contributions
 
-Contributions are welcome in Issues (we do not accept pull requests at the moment). To let us use code you wrote, also under the commercial license, reply to our [Contributor License Agreement (CLA)](CLA.md) with one line; see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome in Issues (we do not accept pull requests at the moment). To let us use code you wrote, also under the commercial license, reply to our [Contributor License Agreement (CLA)](docs/CLA.md) with one line; see [CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ## Language
 
@@ -25,7 +25,7 @@ This document is provided in English and Japanese. If the two versions differ, t
 
 # 商用ライセンス（日本語）
 
-第三者の部品（[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) に記載）を除き、ibisOffice の著作権はすべて株式会社アイビスが持っています。そのため、ibisOffice は次の 2 つのライセンスから選んで利用できます（デュアルライセンス）。
+第三者の部品（[THIRD-PARTY-NOTICES.md](docs/THIRD-PARTY-NOTICES.md) に記載）を除き、ibisOffice の著作権はすべて株式会社アイビスが持っています。そのため、ibisOffice は次の 2 つのライセンスから選んで利用できます（デュアルライセンス）。
 
 1. **GNU Affero General Public License v3.0（AGPL-3.0-only）** — [LICENSE](LICENSE)
    無償で利用・改変・再配布できます。ただし、改変したものを配布する場合や、ネットワーク越しに利用者へ提供する場合（Web サービスとして公開するなど）は、そのソースコード全体を AGPL-3.0 で利用者に公開する必要があります。
@@ -38,7 +38,7 @@ This document is provided in English and Japanese. If the two versions differ, t
 
 ## 貢献について
 
-貢献は Issues で歓迎します（今はプル リクエストを受け付けていません）。書いていただいたコードを商用ライセンスでも使えるよう、[貢献者ライセンス契約（CLA）](CLA-ja.md) に 1 行で同意していただく形です。くわしくは [CONTRIBUTING.md](CONTRIBUTING.md) を見てください。
+貢献は Issues で歓迎します（今はプル リクエストを受け付けていません）。書いていただいたコードを商用ライセンスでも使えるよう、[貢献者ライセンス契約（CLA）](docs/CLA-ja.md) に 1 行で同意していただく形です。くわしくは [CONTRIBUTING.md](docs/CONTRIBUTING.md) を見てください。
 
 ## 言語
 

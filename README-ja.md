@@ -60,7 +60,7 @@ ibisOffice は、Word・Excel・PowerPoint の文書を、表示し、編集し�
 
   [![ibisOffice の紹介動画](asset/video-ja.jpg)](https://www.youtube.com/watch?v=0yjHdK_Cb_8)
 
-- **コマンドライン操作**：ターミナルからの起動、ヘッドレスでの PDF/PNG 一括変換、印刷設定、起動ベンチマーク測定については [コマンドラインオプション](doc/cli-options-ja.md) をご覧ください。
+- **コマンドライン操作**：ターミナルからの起動、ヘッドレスでの PDF/PNG 一括変換、印刷設定、起動ベンチマーク測定については [コマンドラインオプション](docs/cli-options-ja.md) をご覧ください。
 
 ## ゴール
 
@@ -195,7 +195,7 @@ ibisOffice は、Word (.docx)・Excel (.xlsx)・PowerPoint (.pptx) の 3 大形�
 全フォーマットにわたる詳細な実装済み機能の一覧（1,800 項目以上）は、以下をご覧ください：
 
 <p align="center">
-  👉 <b><a href="doc/implemented-feature-ja.md">実装済み機能一覧</a></b>
+  👉 <b><a href="docs/implemented-feature-ja.md">実装済み機能一覧</a></b>
 </p>
 
 ## ライセンス
@@ -207,17 +207,17 @@ ibisOffice は、**AGPL-3.0-only と商用ライセンスのデュアルライ�
 
 ibisOffice の著作権は、すべて株式会社アイビスが持っています。そのため、両方のライセンスで提供できます。
 
-使っている部品と、それぞれのライセンスが求める表示は [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) にあります（ビルドごとに [www/license.md](www/license.md)・[crates/ibis-office-app/macos/license.md](crates/ibis-office-app/macos/license.md)・[crates/ibis-office-app/linux/license.md](crates/ibis-office-app/linux/license.md)）。GPUI（Apache-2.0）は、改変したフォークを [gpui-pre](https://github.com/ibisjp/gpui-pre)・[gpui-pre-macos](https://github.com/ibisjp/gpui-pre-macos)・[gpui-pre-windows](https://github.com/ibisjp/gpui-pre-windows)・[gpui-pre-linux](https://github.com/ibisjp/gpui-pre-linux)・[gpui-pre-wgpu](https://github.com/ibisjp/gpui-pre-wgpu)・[gpui-pre-web](https://github.com/ibisjp/gpui-pre-web) で公開しています。
+使っている部品と、それぞれのライセンスが求める表示は [THIRD-PARTY-NOTICES.md](docs/THIRD-PARTY-NOTICES.md) にあります（ビルドごとに [www/license.md](www/license.md)・[crates/ibis-office-app/macos/license.md](crates/ibis-office-app/macos/license.md)・[crates/ibis-office-app/linux/license.md](crates/ibis-office-app/linux/license.md)）。GPUI（Apache-2.0）は、改変したフォークを [gpui-pre](https://github.com/ibisjp/gpui-pre)・[gpui-pre-macos](https://github.com/ibisjp/gpui-pre-macos)・[gpui-pre-windows](https://github.com/ibisjp/gpui-pre-windows)・[gpui-pre-linux](https://github.com/ibisjp/gpui-pre-linux)・[gpui-pre-wgpu](https://github.com/ibisjp/gpui-pre-wgpu)・[gpui-pre-web](https://github.com/ibisjp/gpui-pre-web) で公開しています。
 
 ## 貢献について
 
-不具合の報告・要望・修正の案は、Issues で歓迎します（今はプル リクエストを受け付けていません）。コードを含む issue は、[CLA](CLA-ja.md) への 1 行の返信で取り込めるようになります。くわしくは [CONTRIBUTING.md](CONTRIBUTING.md) を見てください。セキュリティの問題は、Issues に書かず [SECURITY.md](SECURITY.md) の窓口から知らせてください。
+不具合の報告・要望・修正の案は、Issues で歓迎します（今はプル リクエストを受け付けていません）。コードを含む issue は、[CLA](docs/CLA-ja.md) への 1 行の返信で取り込めるようになります。くわしくは [CONTRIBUTING.md](docs/CONTRIBUTING.md) を見てください。セキュリティの問題は、Issues に書かず [SECURITY.md](docs/SECURITY.md) の窓口から知らせてください。
 
 ## 商標について
 
 Microsoft、Microsoft Office、Microsoft 365、Word、Excel、PowerPoint は、米国 Microsoft Corporation の米国およびその他の国における登録商標または商標です。LibreOffice は The Document Foundation の、ONLYOFFICE は Ascensio System SIA の登録商標または商標です。その他、記載されている会社名・製品名は、各社の登録商標または商標です。ibisOffice は、これらの会社とは関係がなく、承認や後援を受けたものではありません。
 
-「ibisOffice」の名前とロゴは株式会社アイビスの商標です。使い方は [TRADEMARK.md](TRADEMARK.md) をご覧ください。ibisOffice をもとにしたものには「Powered by ibisOffice」の表示が必要です。
+「ibisOffice」の名前とロゴは株式会社アイビスの商標です。使い方は [TRADEMARK.md](docs/TRADEMARK.md) をご覧ください。ibisOffice をもとにしたものには「Powered by ibisOffice」の表示が必要です。
 
 ---
 

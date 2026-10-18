@@ -60,7 +60,7 @@ Our aim is simple: a document made in Microsoft Office should look the same when
 
   [![ibisOffice introduction video](asset/video-en.jpg)](https://www.youtube.com/watch?v=nk2BRzMC2vw)
 
-- **Command-line interface**: for batch headless conversion to PDF/PNG, print settings, and performance benchmarking, see [Command-Line Options](doc/cli-options.md).
+- **Command-line interface**: for batch headless conversion to PDF/PNG, print settings, and performance benchmarking, see [Command-Line Options](docs/cli-options.md).
 
 ## Goals
 
@@ -195,7 +195,7 @@ ibisOffice implements a comprehensive set of features for Word (.docx), Excel (.
 For the full list of implemented features across all three formats (over 1,800 items), please see:
 
 <p align="center">
-  👉 <b><a href="doc/implemented-feature.md">Implemented Features</a></b>
+  👉 <b><a href="docs/implemented-feature.md">Implemented Features</a></b>
 </p>
 
 ## License
@@ -207,17 +207,17 @@ ibisOffice is **dual-licensed under AGPL-3.0-only and a commercial license**.
 
 All copyrights in ibisOffice are held by ibis inc., which is what allows it to be offered under both licenses.
 
-The components we use and the notices their licenses require are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (for each build: [www/license.md](www/license.md), [crates/ibis-office-app/macos/license.md](crates/ibis-office-app/macos/license.md), [crates/ibis-office-app/linux/license.md](crates/ibis-office-app/linux/license.md)). Our modified forks of GPUI (Apache-2.0) are published as [gpui-pre](https://github.com/ibisjp/gpui-pre), [gpui-pre-macos](https://github.com/ibisjp/gpui-pre-macos), [gpui-pre-windows](https://github.com/ibisjp/gpui-pre-windows), [gpui-pre-linux](https://github.com/ibisjp/gpui-pre-linux), [gpui-pre-wgpu](https://github.com/ibisjp/gpui-pre-wgpu) and [gpui-pre-web](https://github.com/ibisjp/gpui-pre-web).
+The components we use and the notices their licenses require are listed in [THIRD-PARTY-NOTICES.md](docs/THIRD-PARTY-NOTICES.md) (for each build: [www/license.md](www/license.md), [crates/ibis-office-app/macos/license.md](crates/ibis-office-app/macos/license.md), [crates/ibis-office-app/linux/license.md](crates/ibis-office-app/linux/license.md)). Our modified forks of GPUI (Apache-2.0) are published as [gpui-pre](https://github.com/ibisjp/gpui-pre), [gpui-pre-macos](https://github.com/ibisjp/gpui-pre-macos), [gpui-pre-windows](https://github.com/ibisjp/gpui-pre-windows), [gpui-pre-linux](https://github.com/ibisjp/gpui-pre-linux), [gpui-pre-wgpu](https://github.com/ibisjp/gpui-pre-wgpu) and [gpui-pre-web](https://github.com/ibisjp/gpui-pre-web).
 
 ## Contributing
 
-Bug reports, requests and proposed fixes are welcome in Issues (we do not accept pull requests at the moment). For an issue with code, a one-line reply to our [CLA](CLA.md) lets us use it; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security issues through the channels in [SECURITY.md](SECURITY.md), not in Issues.
+Bug reports, requests and proposed fixes are welcome in Issues (we do not accept pull requests at the moment). For an issue with code, a one-line reply to our [CLA](docs/CLA.md) lets us use it; see [CONTRIBUTING.md](docs/CONTRIBUTING.md). Please report security issues through the channels in [SECURITY.md](docs/SECURITY.md), not in Issues.
 
 ## Trademarks
 
 Microsoft, Microsoft Office, Microsoft 365, Word, Excel and PowerPoint are registered trademarks or trademarks of Microsoft Corporation in the United States and other countries. LibreOffice is a registered trademark or trademark of The Document Foundation, and ONLYOFFICE of Ascensio System SIA. All other company and product names are registered trademarks or trademarks of their respective owners. ibisOffice is not affiliated with, endorsed by or sponsored by any of these companies.
 
-The ibisOffice name and logo are trademarks of ibis inc. See [TRADEMARK.md](TRADEMARK.md) for how to use them. Anything based on ibisOffice must display "Powered by ibisOffice".
+The ibisOffice name and logo are trademarks of ibis inc. See [TRADEMARK.md](docs/TRADEMARK.md) for how to use them. Anything based on ibisOffice must display "Powered by ibisOffice".
 
 ---
 
