@@ -81,7 +81,7 @@ pub use slide_comment::{Author, CommentReply, SlideComment};
 pub use animation::{Animation, AnimationAfterEffect, AnimationClass, AnimationLook, AnimationRepeat, AnimationSide, AnimationStart, AnimationTrigger, ChartAnimationElement, ChartBuildStep, DiagramAnimationElement, DiagramBuildStep, TextUnit, UnitGap};
 pub use model::{
     Glue,
-    AltText, ArtisticEffect, AutoShape, BlipEffects, Clip, PictureTile, ClipOptions, Crop, CustomShow, EmbeddedFont, FloatingAnchor, Layout, LayoutId, LayoutPlaceholder, LayoutScale, Master, MasterId, NotesDate, NotesMarks, MediaBookmark, MediaCaptionTrack, MediaStart, MediaVolume, PlaceholderRef, SlidePlaceholder, Media, MediaFormat, MediaId, Picture, PictureWrapType, Placeholder, Presentation, Shape,
+    AltText, ArtisticEffect, AutoShape, BlipEffects, Clip, PictureTile, ClipOptions, Crop, CustomShow, EmbeddedFont, FloatingAnchor, OverShape, Layout, LayoutId, LayoutPlaceholder, LayoutScale, Master, MasterId, NotesDate, NotesMarks, MediaBookmark, MediaCaptionTrack, MediaStart, MediaVolume, PlaceholderRef, SlidePlaceholder, Media, MediaFormat, MediaId, Picture, PictureWrapType, Placeholder, Presentation, Shape,
     WrapPoint, WrapPolygon,
     Section, ShapeGroup, GroupMember, ShapeId, ShapeKind, ShowProperties, ShowSlideRange, ShowType, Slide, SlideId, Tilt, CameraPreset, Transition, TransitionSound,
     ModifyVerifier, ObjectDefaults, ObjectPlacement, OleId, OleObject, ShapeDefault,

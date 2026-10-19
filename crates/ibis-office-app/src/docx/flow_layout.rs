@@ -273,6 +273,10 @@ struct WrapObstacleInPara {
 /// index, its obstacle, the shape as placed and its id.
 type RaisedShape = (usize, WrapObstacle, Item, u64);
 
+/// How many times a document with shapes placed above their paragraphs is
+/// laid out again at most (see `paginate_whole`).
+const MAX_RAISED_PASSES: usize = 4;
+
 /// The paragraph's shape the text wraps round (square, tight, through),
 /// but one of deleted text when the view leaves that out (`hide_deleted`).
 fn square_shape(p: &FlowParagraph, hide_deleted: bool) -> Option<&ibis_doc_model::Shape> {
@@ -332,6 +336,9 @@ pub(crate) struct Layouter<'r> {
     raised: std::cell::RefCell<Vec<RaisedShape>>,
     /// Those of a first laying out, placed at their pages' starts.
     seeds: Vec<RaisedShape>,
+    /// Where the paragraphs of those landed (the shape's id, the page's
+    /// index): the laying out is done again while one is not on its page.
+    seed_landed: std::cell::RefCell<Vec<(u64, usize)>>,
     /// The table and cell coordinate (table_id, row_index, grid_col_index) being laid out, for formula evaluation.
     current_cell: std::cell::Cell<Option<(u32, usize, usize)>>,
     /// The paragraph whose fields are being made into text (a `STYLEREF` in the body looks back from it).
@@ -1873,7 +1880,11 @@ impl<'r> Layouter<'r> {
                                 last_break = Some(i);
                             }
                         }
-                        if x + w > slot_w + give + 0.01 && i > start {
+                        let squeezed_out = || {
+                            let word_start = last_break.filter(|b| *b > start).unwrap_or(start);
+                            !keeps_word(&units, i, word_start, x, slot_w, give, |j| may_break(unit_char(&units[j - 1]), unit_char(&units[j]), p.kinsoku, p.word_wrap, self.doc))
+                        };
+                        if i > start && (x + w > slot_w + give + 0.01 || (give > 0.0 && x + w > slot_w + 0.01 && c != Some(' ') && squeezed_out())) {
                             if c == Some(' ') {
                                 x += w;
                                 i += 1;
@@ -1898,7 +1909,7 @@ impl<'r> Layouter<'r> {
                             break;
                         }
                         if p.align == FlowAlign::Justify {
-                            give += squeezable(&units[i]) * SPACE_GIVE;
+                            give += squeezable(&units[i]) * space_give(self.doc);
                         }
                         x += w;
                         i += 1;
@@ -2391,7 +2402,11 @@ impl<'r> Layouter<'r> {
                     last_break = Some(i);
                 }
             }
-            if x + w > room + give + 0.01 && i > start {
+            let squeezed_out = || {
+                let word_start = last_break.filter(|b| *b > start).unwrap_or(start);
+                !keeps_word(&units, i, word_start, x, room, give, |j| may_break(unit_char(&units[j - 1]), unit_char(&units[j]), p.kinsoku, p.word_wrap, self.doc))
+            };
+            if i > start && (x + w > room + give + 0.01 || (give > 0.0 && x + w > room + 0.01 && c != Some(' ') && squeezed_out())) {
                 // Spaces at the end of a line hang past the edge.
                 if c == Some(' ') {
                     x += w;
@@ -2420,7 +2435,7 @@ impl<'r> Layouter<'r> {
                 continue;
             }
             if p.align == FlowAlign::Justify {
-                give += squeezable(&units[i]) * SPACE_GIVE;
+                give += squeezable(&units[i]) * space_give(self.doc);
             }
             x += w;
             i += 1;
@@ -2867,18 +2882,94 @@ fn unit_width(u: &Unit) -> f32 {
 
 impl Layouter<'_> {
     /// The line an empty paragraph (or its mark) takes, its ascent and its
-    /// leading: the taller of its mark's East Asian and Latin typefaces (Word's
-    /// PDF of a paper: an empty footer line of Times New Roman with ＭＳ 明朝
-    /// for East Asian text is Times' height, not Mincho's).
+    /// leading: its mark's Latin typeface's (Word's PDFs: Arial's with 游明朝
+    /// or ＭＳ 明朝 for East Asian text, with `w:hint="eastAsia"` or
+    /// `w:lang/@w:val="ja-JP"` too, no line grid).
     fn mark_metrics(&self, p: &FlowParagraph, size: f32) -> (f32, f32, f32) {
-        let metrics = |c: char| {
-            let name = p.mark.font_for(c);
-            let font = self.font(&p.mark, name);
-            let (ascent, line) = self.line_metrics(name, &font, size);
-            (line, ascent, Self::leading(name) * size)
-        };
-        let (east_asian, latin) = (metrics('あ'), metrics('a'));
-        if latin.0 + latin.2 > east_asian.0 + east_asian.2 + 0.01 { latin } else { east_asian }
+        let name = p.mark.font_for('a');
+        let font = self.font(&p.mark, name);
+        let (ascent, line) = self.line_metrics(name, &font, size);
+        (line, ascent, Self::leading(name) * size)
+    }
+
+    /// The pictures of text boxes (`OverShape`) where their boxes landed
+    /// (another column or page than their paragraph's line, below a figure
+    /// across the column…), down by the box's text above them as it is laid
+    /// out in its typefaces.
+    fn place_over_shapes(&self, pages: &mut [Page]) {
+        let mut moves: Vec<(usize, usize, usize, f32, f32)> = Vec::new();
+        for (pi, page) in pages.iter().enumerate() {
+            for (ii, item) in page.items.iter().enumerate() {
+                let Item::Shape { shape, .. } = item else { continue };
+                let Some(over) = shape.floating.as_ref().and_then(|f| f.over) else { continue };
+                let found = pages.iter().enumerate().find_map(|(bp, page)| {
+                    page.items.iter().find_map(|it| match it {
+                        Item::Shape { shape: b, x, y, w, .. } if b.id.0 == over.shape => Some((bp, *x, *y, *w, b)),
+                        _ => None,
+                    })
+                });
+                let Some((bp, bx, by, bw, b)) = found else { continue };
+                let dy = self.text_box_line_top(b, bw, over.paragraph).map_or(pt(over.dy), |top| top + pt(over.down));
+                moves.push((pi, ii, bp, bx + pt(over.dx), by + dy));
+            }
+        }
+        // From the last, so that the indices left stay right.
+        for (pi, ii, to, x, y) in moves.into_iter().rev() {
+            if let Item::Shape { x: ix, y: iy, .. } = &mut pages[pi].items[ii] {
+                (*ix, *iy) = (x, y);
+            }
+            if to != pi {
+                let item = pages[pi].items.remove(ii);
+                if ii < pages[pi].body_items_count {
+                    pages[pi].body_items_count -= 1;
+                }
+                let at = pages[to].body_items_count;
+                pages[to].items.insert(at, item);
+                pages[to].body_items_count += 1;
+            }
+        }
+    }
+
+    /// How far down a text box (`width` points wide) paragraph `k` of its
+    /// text starts, its line kept for pictures (a fixed line): the
+    /// paragraphs above measured in their typefaces, each line as tall as
+    /// its tallest, the text wrapped at the box's width.
+    fn text_box_line_top(&self, shape: &ibis_doc_model::Shape, width: f32, k: usize) -> Option<f32> {
+        let ibis_doc_model::ShapeKind::Auto(auto) = &shape.kind else { return None };
+        let body = auto.text.as_ref()?;
+        let target = body.paragraphs.get(k)?;
+        if !matches!(target.line_spacing, Some(ibis_doc_model::LineSpacing::Points(_))) {
+            return None;
+        }
+        let room = width - pt(body.insets.left) - pt(body.insets.right);
+        let style = |r: &ibis_doc_model::RunStyle| FlowRunStyle { font: r.font.clone(), bold: r.bold.unwrap_or(false), italic: r.italic.unwrap_or(false), size: r.font_size.unwrap_or(1050), ..Default::default() };
+        let mut y = pt(body.insets.top);
+        for p in &body.paragraphs[..k] {
+            let mut text_w = 0.0f32;
+            let mut line = 0.0f32;
+            let mut measure = |s: &FlowRunStyle, text: &str| {
+                let size = s.size as f32 / 100.0;
+                let name = s.font.as_deref();
+                let font = self.font(s, name);
+                text_w += self.res.text_width(text, &font, size);
+                line = line.max(self.line_metrics(name, &font, size).1 + Self::leading(name) * size);
+            };
+            for r in &p.runs {
+                measure(&style(&r.style), &r.text);
+            }
+            if p.runs.iter().all(|r| r.text.is_empty()) {
+                measure(&style(&p.end_style), "");
+            }
+            let room = (room - pt(p.margin_left) - pt(p.indent.max(0))).max(1.0);
+            let lines = (text_w / room - 0.001).ceil().max(1.0);
+            let line = match p.line_spacing {
+                Some(ibis_doc_model::LineSpacing::Points(h)) => h as f32 / 100.0,
+                Some(ibis_doc_model::LineSpacing::Percent(n)) => line * n as f32 / 100_000.0,
+                None => line,
+            };
+            y += p.space_before as f32 / 100.0 + lines * line + p.space_after as f32 / 100.0;
+        }
+        Some(y + target.space_before as f32 / 100.0)
     }
 
     /// A floating shape of a paragraph placed as its anchor says, from the
@@ -2972,9 +3063,35 @@ fn unit_char(u: &Unit) -> Option<char> {
 const MIN_WRAP_ROOM: f32 = 15.0;
 
 /// How much of its width a space of a justified line may give to fit one
-/// more word: Word's PDF of a paper has lines whose spaces are all down to
-/// 72 % of the font's (1.70 pt for Arial's 2.36 pt at 8.5 pt), none below.
-const SPACE_GIVE: f32 = 0.28;
+/// more word, in Word 2013 and later (`compatibilityMode` 15; earlier modes
+/// only widen spaces): a quarter (Word's PDFs: Times New Roman and Arial at
+/// 8.5 and 10 pt keep a line's last word with 24.0 to 24.7 % of the spaces'
+/// width to give, not with 24.7 to 25.3 %; the same lines in mode 14 never).
+const SPACE_GIVE: f32 = 0.25;
+
+/// What a space of a justified line of `doc` may give, of its width (see
+/// `SPACE_GIVE`).
+fn space_give(doc: &FlowDocument) -> f32 {
+    if doc.compatibility_mode.is_some_and(|m| m >= 15) { SPACE_GIVE } else { 0.0 }
+}
+
+/// Whether a justified line keeps the word unit `i` is in (from
+/// `word_start`; `x` where unit `i` starts) although it goes on past the
+/// line's `room`, its spaces narrowed (by `give` at most): Word keeps it
+/// when no more than a third of it, with the space before it, is past the
+/// room (its PDFs: Times New Roman words of 2, 4 and 8 letters kept with
+/// 33.3 % of them past the room, not with 35 %).
+/// `breaks(j)`: a line may break before unit `j`.
+fn keeps_word(units: &[Unit], i: usize, word_start: usize, x: f32, room: f32, give: f32, breaks: impl Fn(usize) -> bool) -> bool {
+    let mut end = i + 1;
+    while end < units.len() && !breaks(end) && unit_char(&units[end]).is_some_and(|c| c != ' ') {
+        end += 1;
+    }
+    let over = x + units[i..end].iter().map(unit_width).sum::<f32>() - room;
+    let space = word_start.checked_sub(1).filter(|&b| unit_char(&units[b]) == Some(' ')).map_or(0.0, |b| unit_width(&units[b]));
+    let word: f32 = units[word_start..end].iter().map(unit_width).sum();
+    over <= give + 0.01 && over <= (word + space) / 3.0 + 0.01
+}
 
 /// The width of a unit a justified line may narrow (by `SPACE_GIVE` of it): a
 /// space's, or the quarter em after a Japanese character next to a Latin
@@ -4937,11 +5054,9 @@ impl<'r> Layouter<'r> {
             }
             let headers: Vec<Piece> = pieces.iter().take_while(|p| p.header).cloned().collect();
             // An empty paragraph that only ends a section, the next going on
-            // on the page in other columns: Word gives it no height (its PDF of
-            // a two-column paper: the columns start right under the space after
-            // the paragraph before).
-            let no_height = matches!(block, Block::Paragraph(p) if p.runs.is_empty() && p.section.is_some() && p.section_break == SectionBreak::Continuous)
-                && columns_of(s).len() != columns_of((s + 1).min(setups.len() - 1)).len();
+            // on the page: Word gives it no room, its spacing neither (its PDFs:
+            // with the same columns or others, 1 → 2, 2 → 1, 2 → 2).
+            let no_height = matches!(block, Block::Paragraph(p) if p.runs.is_empty() && p.section.is_some() && p.section_break == SectionBreak::Continuous);
             // A paragraph whose mark is deleted, where the view leaves deleted
             // text out, is one with the next: nothing of it when its text is all
             // deleted too, else no space between the two (their lines are not
@@ -5069,6 +5184,18 @@ impl<'r> Layouter<'r> {
                         for h in &headers {
                             pages.last_mut().expect("a page").items.extend(h.items.iter().cloned().map(|it| place_item(it, y, s, number, frame.left)));
                             y += h.height;
+                        }
+                    }
+                }
+                if popped == 1
+                    && let Block::Paragraph(p) = block
+                {
+                    let at = pages.len() - 1;
+                    for r in &p.runs {
+                        if let FlowRunKind::Shape(shape) = &r.kind
+                            && self.seeds.iter().any(|s| s.3 == shape.id.0)
+                        {
+                            self.seed_landed.borrow_mut().push((shape.id.0, at));
                         }
                     }
                 }
@@ -5536,6 +5663,7 @@ impl<'r> Layouter<'r> {
                 }
             }
         }
+        self.place_over_shapes(&mut pages);
         for pg in &mut pages {
             let mut expanded = Vec::with_capacity(pg.items.len());
             for it in pg.items.drain(..) {
@@ -5946,19 +6074,30 @@ fn paginate_whole(doc: &FlowDocument, res: &Resources) -> Pagination {
             column_dx: std::cell::Cell::new(0.0),
             raised: Default::default(),
             seeds,
+            seed_landed: Default::default(),
             current_cell: std::cell::Cell::new(None),
             field_paragraph: std::cell::Cell::new(None),
             comment_runs: map_comment_runs(doc),
         };
         let mut pagination = layouter.lay_out();
         layouter.grid_text_boxes(&mut pagination);
-        (pagination, layouter.raised.take())
+        (pagination, layouter.raised.take(), layouter.seed_landed.take())
     };
-    let (first, raised) = lay_out(None, None, Vec::new());
+    let (mut first, mut raised, mut landed) = lay_out(None, None, Vec::new());
     // Shapes placed above their paragraphs, over text laid out before them:
     // again, with them there from their pages' starts (Word lays such a page
-    // out again round them).
-    let (first, seeds) = if raised.is_empty() { (first, raised) } else { (lay_out(None, None, raised.clone()).0, raised) };
+    // out again round them), till each one's paragraph lands on its page and
+    // no other is raised (one more laying out is the usual).
+    let mut seeds: Vec<RaisedShape> = Vec::new();
+    for _ in 0..MAX_RAISED_PASSES {
+        let kept: Vec<RaisedShape> = seeds.iter().filter(|s| landed.contains(&(s.3, s.0))).cloned().collect();
+        if kept.len() == seeds.len() && raised.is_empty() {
+            break;
+        }
+        seeds = kept;
+        seeds.append(&mut raised);
+        (first, raised, landed) = lay_out(None, None, seeds.clone());
+    }
     let lay_out = |known_pages, known_notes| lay_out(known_pages, known_notes, seeds.clone()).0;
     let need_page_counts = doc.body.iter().any(has_page_counts);
     let need_each_page_notes = has_each_page_notes(doc);
@@ -6094,6 +6233,7 @@ fn add_watermark(doc: &FlowDocument, pagination: &mut Pagination) {
                 relative_height: ibis_doc_model::FloatingAnchor::DEFAULT_RELATIVE_HEIGHT,
                 wrap_polygon: None,
                 glue: Default::default(),
+                over: None,
             });
             // The piece's centre along the turned text.
             let along = (i as f32 + 0.5) * slot - sw / 2.0;
@@ -6537,7 +6677,7 @@ fn turn_page_items(items: Vec<Item>, direction: ibis_doc_model::CellDirection, w
 
 #[cfg(test)]
 mod word_lines_tests {
-    use super::{FlowAlign, FlowDocument, Unit, justify_extra, may_break, squeezable};
+    use super::{FlowAlign, FlowDocument, SPACE_GIVE, Unit, justify_extra, keeps_word, may_break, space_give, squeezable};
     use gpui_kit::font;
 
     /// A character `width` wide, `auto_space` of it the space after it.
@@ -6591,6 +6731,31 @@ mod word_lines_tests {
         assert_eq!(at(&gaps), vec![2, 5]);
         // Text not justified is never narrowed.
         assert_eq!(justify_extra(&units, units.len(), FlowAlign::Left, false, 34.0, 35.0).0, 0.0);
+    }
+
+    #[test]
+    fn spaces_narrow_only_in_word_2013_and_later() {
+        let mut doc = FlowDocument::default();
+        for (mode, give) in [(None, 0.0), (Some(12), 0.0), (Some(14), 0.0), (Some(15), SPACE_GIVE)] {
+            doc.compatibility_mode = mode;
+            assert_eq!(space_give(&doc), give, "{mode:?}");
+        }
+        assert_eq!(SPACE_GIVE, 0.25);
+    }
+
+    #[test]
+    fn a_word_past_the_room_stays_if_a_third_of_it_at_most_is_out() {
+        // "aa bb cc": "cc" (10 wide, from 25, the space before it 2.5) past
+        // a room of 35 - over.
+        let units = latin("aa bb cc");
+        let breaks = |j: usize| matches!(units[j - 1], Unit::Char { c: ' ', .. });
+        let keeps = |over: f32, give: f32| keeps_word(&units, 6, 6, 25.0, 35.0 - over, give, breaks);
+        // A third of 12.5: 4.17.
+        assert!(keeps(4.0, 5.0));
+        assert!(!keeps(4.5, 5.0), "more than a third out");
+        assert!(!keeps(4.0, 3.0), "more than the spaces give");
+        // From its second letter on, the same word.
+        assert_eq!(keeps_word(&units, 7, 6, 30.0, 31.0, 5.0, breaks), keeps(4.0, 5.0));
     }
 
     #[test]

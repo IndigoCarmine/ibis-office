@@ -1238,6 +1238,9 @@ pub struct FlowRunStyle {
     /// Shared punctuation and symbols take the East Asian typeface
     /// (`w:rFonts/@w:hint="eastAsia"`).
     pub east_asian_hint: bool,
+    /// The East Asian text is Chinese (`w:lang/@w:eastAsia` zh-…): with the
+    /// hint, accented Latin letters take the East Asian typeface too.
+    pub east_asian_chinese: bool,
     /// Typeface for Complex Script text (Arabic, Hebrew, Thai, Indic, etc.).
     pub cs_font: Option<String>,
     /// Hundredths of a point.
@@ -1304,6 +1307,7 @@ impl Default for FlowRunStyle {
             font: None,
             east_asian_font: None,
             east_asian_hint: false,
+            east_asian_chinese: false,
             cs_font: None,
             size: 1050,
             cs_size: None,
@@ -1378,14 +1382,21 @@ impl FlowRunStyle {
                 return Some(f);
             }
         }
-        // CJK text takes the East Asian font; punctuation and symbols shared
-        // with Latin text (U+00A0 to U+2E7F: "•", "–", "“", "―", "→") only with
-        // `w:hint="eastAsia"`, as Word: without it they are Latin.
-        // (not "…" U+2026: Word draws it in the Latin font, as three dots on the baseline: DIDX).
+        // As Word picks the typeface (measured on its PDFs, as docx4j's
+        // RunFontSelector has it): CJK text takes the East Asian one; the
+        // symbols shared with Latin text only with `w:hint="eastAsia"`
+        // (whatever `w:lang` says), else the Latin one.
+        let hint = self.east_asian_hint;
         let east_asian = match c as u32 {
-            0xff61..=0xff9f | 0x2026 => false,
+            0xff61..=0xff9f => false,
             0x2e80.. => true,
-            0x00a0..=0x2e7f => self.east_asian_hint,
+            0x2000..=0x2e7f | 0x02b0..=0x04ff => hint,
+            // ¡ § ° ± × ÷…; à é ì ò ù ü only for Chinese.
+            0x00a0..=0x00ff => {
+                hint && (matches!(c as u32, 0xa1 | 0xa4 | 0xa7 | 0xa8 | 0xaa | 0xad | 0xaf | 0xb0..=0xb4 | 0xb6..=0xba | 0xbc..=0xbf | 0xd7 | 0xf7)
+                    || self.east_asian_chinese && matches!(c as u32, 0xe0 | 0xe1 | 0xe8..=0xea | 0xec | 0xed | 0xf2 | 0xf3 | 0xf9 | 0xfa | 0xfc))
+            }
+            0x0100..=0x02af => hint && self.east_asian_chinese,
             _ => false,
         };
         if east_asian {
@@ -3178,6 +3189,7 @@ impl RunFormat {
             font: self.font.clone(),
             east_asian_font: self.east_asian_font.clone(),
             east_asian_hint: self.east_asian_hint.unwrap_or(false),
+            east_asian_chinese: self.lang_east_asia.as_deref().is_some_and(|l| l.to_ascii_lowercase().starts_with("zh")),
             cs_font: self.cs_font.clone(),
             size: self.size.unwrap_or(d.size),
             cs_size: self.cs_size,

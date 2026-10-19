@@ -79,6 +79,9 @@ fn a_picture_in_a_text_box_is_over_the_box_and_its_caption_kept() {
     assert_eq!((anchor.offset_x, anchor.offset_y), (91_440 + (4_000_000 - 2 * 91_440 - 2_000_000) / 2, 45_720));
     assert_eq!(anchor.wrap, "none");
     assert!(anchor.relative_height > shapes[0].floating.as_ref().unwrap().relative_height, "over the box");
+    // Placed with the box wherever it lands, in the box's first paragraph.
+    let over = anchor.over.expect("over the box");
+    assert_eq!((over.shape, over.dx, over.dy, over.paragraph, over.down), (shapes[0].id.0, anchor.offset_x, 45_720, 0, 0));
 }
 
 #[test]
@@ -119,6 +122,23 @@ fn shared_punctuation_takes_the_east_asian_typeface_only_with_the_hint() {
 }
 
 #[test]
+fn latin_1_symbols_take_the_east_asian_typeface_with_the_hint_accented_letters_only_in_chinese() {
+    let run = |hint: &str, lang: &str| format!(r#"<w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="MS Mincho" {hint}/>{lang}</w:rPr><w:t>§°±×÷éā…</w:t></w:r>"#);
+    let hint = r#"w:hint="eastAsia""#;
+    let zh = r#"<w:lang w:eastAsia="zh-CN"/>"#;
+    let ja = r#"<w:lang w:val="ja-JP" w:eastAsia="ja-JP"/>"#;
+    let flow = document(|_| format!("<w:p>{}{}{}{}</w:p>", run("", ja), run(hint, ja), run(hint, zh), run("", zh)), None);
+    let p = paragraphs(&flow).find(|p| p.text().contains('§')).unwrap();
+    let fonts = |k: usize| "§°±×÷éā…".chars().map(|c| p.runs[k].style.font_for(c).unwrap_or("")).collect::<Vec<_>>();
+    let (m, a) = ("MS Mincho", "Arial");
+    // As Word's PDFs (the language of the text, ja-JP, changes nothing).
+    assert_eq!(fonts(0), [a, a, a, a, a, a, a, a], "no hint");
+    assert_eq!(fonts(1), [m, m, m, m, m, a, a, m], "the hint");
+    assert_eq!(fonts(2), [m, m, m, m, m, m, m, m], "the hint, Chinese");
+    assert_eq!(fonts(3), [a, a, a, a, a, a, a, a], "Chinese, no hint");
+}
+
+#[test]
 fn a_vml_picture_watermark_is_a_turned_washed_out_picture() {
     let flow = document(
         |rid| {
@@ -136,10 +156,11 @@ fn a_vml_picture_watermark_is_a_turned_washed_out_picture() {
     assert_eq!((anchor.align_h.as_deref(), anchor.align_v.as_deref()), (Some("center"), Some("center")));
     assert_eq!((anchor.relative_h.as_str(), anchor.relative_v.as_str()), ("margin", "margin"));
     assert!(anchor.behind_doc, "a negative z-index is behind the text");
-    // gain 0.3, blacklevel 0.35: each channel 1 - 0.195 (1 - v).
+    // gain 0.3, blacklevel 0.35: each channel 0.5 + 0.3 (v - 0.5) + 0.35 × 1.3
+    // (Word's PDFs).
     let (bright, contrast) = picture.luminance.expect("washed out");
-    assert!((-81_000..=-80_000).contains(&contrast), "{contrast}");
-    assert!((40_000..=40_500).contains(&bright), "{bright}");
+    assert!((-70_010..=-69_990).contains(&contrast), "{contrast}");
+    assert!((45_490..=45_510).contains(&bright), "{bright}");
 }
 
 #[test]

@@ -1855,17 +1855,17 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 }
             })
         };
-        // Word draws it lighter towards white, white staying white: each channel
-        // `1 - s (1 - v)` with `s = gain (1 - blacklevel)` (its PDF of a washed-out
-        // watermark: 0.15 to 0.83). As a contrast about the middle (`1 + c = s`)
-        // and a brightness added after it.
+        // Word's washout of each channel `v` (0 to 1): `0.5 + gain (v - 0.5)
+        // + blacklevel (1 + gain)` (its PDFs of a grey scale with gain 0.2 to 1
+        // and blacklevel 0 to 0.4, all within 3/255): a contrast about the
+        // middle and a brightness added after it.
         let luminance = match (fraction("gain"), fraction("blacklevel")) {
             (None, None) => None,
             (gain, black) => {
-                let s = (gain.unwrap_or(1.0) * (1.0 - black.unwrap_or(0.0))).clamp(0.0, 1.0);
-                let contrast = ((s - 1.0) * 100_000.0).round() as i32;
-                let bright = ((0.5 - 0.5 * s) * 100_000.0).round() as i32;
-                Some((bright, contrast))
+                let (gain, black) = (gain.unwrap_or(1.0).max(0.0), black.unwrap_or(0.0));
+                let contrast = if gain <= 1.0 { gain - 1.0 } else { 1.0 - 1.0 / gain };
+                let bright = black * (1.0 + gain);
+                Some(((bright * 100_000.0).round() as i32, (contrast * 100_000.0).round() as i32))
             }
         };
         let rotation = style.get("rotation").and_then(|r| r.trim().parse::<f64>().ok()).map_or(0, |d| (d.rem_euclid(360.0) * 60_000.0) as i32);
@@ -1981,8 +1981,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 .find(|n| matches!(n.tag_name().name(), "inline" | "anchor"))
                 .and_then(|holder| holder.descendants().find(|n| n.is_element() && n.tag_name().name() == "wsp"))
         {
-            let (frame, z) = (shape.frame, floating.relative_height);
-            let pictures = self.text_box_pictures(wsp, frame, &floating, z, rels);
+            let (frame, z, id) = (shape.frame, floating.relative_height, shape.id.0);
+            let pictures = self.text_box_pictures(wsp, frame, &floating, z, id, rels);
             out.extend(pictures);
         }
         out
@@ -1991,10 +1991,11 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
     /// The pictures inline in a floating text box's paragraphs, each as a
     /// floating picture over the box where its paragraph puts it (its text
     /// keeps a line of the picture's height there: see `shape_text`). The
-    /// paragraphs above one are measured roughly (a line of 1.2 × the size,
-    /// half an em a character); a figure is usually the box's first.
+    /// paragraphs above one are measured roughly here (a line of 1.2 × the
+    /// size, half an em a character): the layout measures them again in
+    /// their typefaces and places the pictures with the box (`OverShape`).
     /// Pictures of deleted text are left out, as Word's final view does.
-    fn text_box_pictures(&mut self, wsp: Node, frame: EmuRect, floating: &ibis_doc_model::FloatingAnchor, z: u32, rels: &Rels) -> Vec<FlowRunKind> {
+    fn text_box_pictures(&mut self, wsp: Node, frame: EmuRect, floating: &ibis_doc_model::FloatingAnchor, z: u32, over: u64, rels: &Rels) -> Vec<FlowRunKind> {
         let Some(content) = wsp.descendants().find(|n| n.is_element() && n.tag_name().name() == "txbxContent") else { return Vec::new() };
         let body_pr = child(wsp, "bodyPr");
         let inset = |name: &str, default: i64| body_pr.and_then(|b| crate::xml::attr_i64(b, name)).unwrap_or(default);
@@ -2002,7 +2003,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let inner_w = (frame.width - left_in - right_in).max(0);
         let mut out = Vec::new();
         let mut y = top_in;
-        for p in elements(content).filter(|n| n.tag_name().name() == "p") {
+        for (index, p) in elements(content).filter(|n| n.tag_name().name() == "p").enumerate() {
             let ppr = child(p, "pPr");
             let (mut para, base_run) = self.styles.paragraph_base(ppr.and_then(|pr| wval(pr, "pStyle")), None);
             if let Some(pr) = ppr {
@@ -2046,6 +2047,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     anchor.offset_y += y + line - size.height;
                     anchor.wrap = "none".to_string();
                     anchor.relative_height = z.saturating_add(1);
+                    anchor.over = Some(ibis_doc_model::OverShape { shape: over, dx: x, dy: y + line - size.height, paragraph: index, down: line - size.height });
                     let picture = ibis_doc_model::Picture {
                         media,
                         crop: look.crop,
@@ -2292,6 +2294,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         relative_height,
         wrap_polygon,
         glue: Default::default(),
+        over: None,
     })
 }
 
