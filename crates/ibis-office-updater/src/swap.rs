@@ -2,9 +2,9 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Replacing an installed folder with a new one, and putting it back, for
-//! macOS (the `.app`) and Windows (the folder holding `ibisOffice.exe` and
+//! macOS (the `.app`) and Windows (the folder holding `AcaudaOffice.exe` and
 //! what goes with it). Done here in Rust, not by a script, so that a change
-//! of the steps is a new ibisOfficeUpdater (the one in the new version is
+//! of the steps is a new AcaudaOfficeUpdater (the one in the new version is
 //! the one that runs). The order is what keeps the
 //! installed copy whole at every moment:
 //!

@@ -741,7 +741,7 @@ impl SlideEditor {
             self.outline_open = true;
         }
         self.doc_focus_mode = false;
-        window.set_window_title(&format!("{name} - ibisOffice"));
+        window.set_window_title(&format!("{name} - Acauda Office"));
         self.file_name = Some(name);
         self.has_document = true;
         self.loading = false;
@@ -1654,7 +1654,7 @@ impl SlideEditor {
                 editor.current_slide = current;
                 editor.zoom = current_zoom;
                 let title = format!("{name}:{new_num}");
-                window.set_window_title(&format!("{title} - ibisOffice"));
+                window.set_window_title(&format!("{title} - Acauda Office"));
             });
         } else if self.is_document() {
             let doc_id = if self.document_id == 0 {
@@ -1687,7 +1687,7 @@ impl SlideEditor {
                 editor.zoom = current_zoom;
                 editor.relayout_if_changed();
                 let title = format!("{name}:{new_num}");
-                window.set_window_title(&format!("{title} - ibisOffice"));
+                window.set_window_title(&format!("{title} - Acauda Office"));
             });
         } else if let Some(path) = self.file_path() {
             let slide = self.presentation().slide_index(self.current_slide).map(|i| i + 1);
@@ -1855,7 +1855,7 @@ impl SlideEditor {
                 editor_entity.update(app, |editor, cx| {
                     editor.window_number = num;
                     let title = editor.display_title_formatted();
-                    window.set_window_title(&format!("{title} - ibisOffice"));
+                    window.set_window_title(&format!("{title} - Acauda Office"));
                     cx.notify();
                     window.refresh();
                 });
@@ -1875,7 +1875,7 @@ impl SlideEditor {
                 editor_entity.update(app, |editor, cx| {
                     editor.window_number = num;
                     let title = editor.display_title_formatted();
-                    window.set_window_title(&format!("{title} - ibisOffice"));
+                    window.set_window_title(&format!("{title} - Acauda Office"));
                     cx.notify();
                     window.refresh();
                 });

@@ -55,7 +55,7 @@ pub(crate) fn default_chart_templates_dir() -> PathBuf {
     let base = env("APPDATA");
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
-    base.unwrap_or_else(|| PathBuf::from(".")).join("ibisOffice").join("ChartTemplates")
+    base.unwrap_or_else(|| PathBuf::from(".")).join("AcaudaOffice").join("ChartTemplates")
 }
 
 /// Lists all saved `.crtx` chart templates from the templates directory.

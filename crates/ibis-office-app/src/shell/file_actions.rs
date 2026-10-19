@@ -791,16 +791,16 @@ impl SlideEditor {
 pub(crate) fn export_program() -> Result<std::path::PathBuf, String> {
     let current = std::env::current_exe().map_err(|e| e.to_string())?;
     let file_name = current.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if file_name.starts_with("ibisOffice") && !file_name.contains("test") {
+    if file_name.starts_with("AcaudaOffice") && !file_name.contains("test") {
         return Ok(current);
     }
     if let Some(dir) = current.parent() {
-        let c1 = dir.join("ibisOffice");
+        let c1 = dir.join("AcaudaOffice");
         if c1.exists() {
             return Ok(c1);
         }
         if let Some(parent) = dir.parent() {
-            let c2 = parent.join("ibisOffice");
+            let c2 = parent.join("AcaudaOffice");
             if c2.exists() {
                 return Ok(c2);
             }

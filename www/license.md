@@ -1,6 +1,6 @@
 # サードパーティのライセンス（Web 版）
 
-ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品と、そのライセンスが求める表示です。このファイルは `scripts/gen-web-licenses.py` で生成しています。
+Acauda Office の Web 版（`www/`）に含まれる、Acauda Office（ibisOffice）以外の部品と、そのライセンスが求める表示です。このファイルは `scripts/gen-web-licenses.py` で生成しています。
 
 ## 同梱しているデータ・フォント・アイコン
 

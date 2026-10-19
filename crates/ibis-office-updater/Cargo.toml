@@ -1,17 +1,17 @@
 [package]
 name = "ibis-office-updater"
-description = "ibisOfficeUpdater: replaces a running ibisOffice with the version downloaded, and the code the app shares with it (log, paths, versions)."
+description = "AcaudaOfficeUpdater: replaces a running Acauda Office with the version downloaded, and the code the app shares with it (log, paths, versions)."
 license = "AGPL-3.0-only"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-# Only std: this runs while ibisOffice is not running, and ships in its bundle.
+# Only std: this runs while Acauda Office is not running, and ships in its bundle.
 
 [lib]
 name = "ibis_office_updater"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ibisOfficeUpdater"
-path = "src/bin/ibisOfficeUpdater.rs"
+name = "AcaudaOfficeUpdater"
+path = "src/bin/AcaudaOfficeUpdater.rs"

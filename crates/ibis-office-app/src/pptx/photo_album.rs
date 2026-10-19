@@ -102,7 +102,7 @@ impl SlideEditor {
         title_auto.text = Some(TextBody::plain(&crate::shell::i18n::text("pptx.photo-album.title"), title_style));
         title_slide.shapes.push(Shape::new(title_shape_id, title_frame, ShapeKind::Auto(title_auto)));
 
-        let subtitle_text = self.presentation().properties.creator.clone().unwrap_or_else(|| "ibisOffice".to_string());
+        let subtitle_text = self.presentation().properties.creator.clone().unwrap_or_else(|| "Acauda Office".to_string());
         let subtitle_style = TextStyle {
             color: Rgb(0x5f6368),
             font_size: 2000,

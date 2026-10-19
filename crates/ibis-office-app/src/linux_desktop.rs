@@ -8,7 +8,7 @@
 //!   (`StartupWMClass`), and the app's icon.
 //! - Run from its AppImage (`APPIMAGE` and `APPDIR` set by its runtime,
 //!   `crates/ibis-appimage`), the first start asks 「アプリの一覧に登録しますか？」;
-//!   「はい」 writes the AppImage's `.desktop` entry (`linux/ibisoffice.desktop`,
+//!   「はい」 writes the AppImage's `.desktop` entry (`linux/acaudaoffice.desktop`,
 //!   with the AppImage as the command) to `~/.local/share/applications/`
 //!   and its icons to `~/.local/share/icons/hicolor/`, which puts ibisOffice
 //!   in the desktop's list of apps and in the 「別のアプリで開く」 list of the
@@ -133,7 +133,7 @@ mod prompt {
 }
 
 /// The app's id on the Linux desktop (`StartupWMClass` in its `.desktop` entry).
-const APP_ID: &str = "ibisoffice";
+const APP_ID: &str = "acaudaoffice";
 
 /// Give a window's options the app's id and icon (Linux).
 pub(crate) fn identify(options: &mut WindowOptions) {
@@ -155,7 +155,7 @@ pub(crate) fn identify(options: &mut WindowOptions) {
 fn window_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
     static ICON: std::sync::OnceLock<Option<std::sync::Arc<image::RgbaImage>>> = std::sync::OnceLock::new();
     ICON.get_or_init(|| {
-        let png = include_bytes!("../windows/png/ico/ibisOffice_icon_win_48px_transparent.png");
+        let png = include_bytes!("../windows/png/ico/AcaudaOffice_icon_win_48px_transparent.png");
         image::load_from_memory_with_format(png, image::ImageFormat::Png)
             .map_err(|e| log::warn!("the window icon: {e}"))
             .ok()
@@ -213,14 +213,14 @@ pub(crate) fn start(cx: &mut App) {
 pub(crate) fn start(_: &mut App) {}
 
 /// Remove the other versions the AppImage's runtime unpacked beside
-/// `appdir` (`~/.cache/ibisOffice/app/<id>/`, left by updates), and the
+/// `appdir` (`~/.cache/AcaudaOffice/app/<id>/`, left by updates), and the
 /// leftovers of unpacking stopped half way, except those a running program
 /// is from (an older copy still open).
 #[cfg(target_os = "linux")]
 fn remove_old_unpacked(appdir: &std::path::Path) {
     let Some(root) = appdir.parent() else { return };
     // Only in the runtime's own folder.
-    if root.file_name().is_none_or(|n| n != "app") || root.parent().and_then(|p| p.file_name()).is_none_or(|n| n != "ibisOffice") {
+    if root.file_name().is_none_or(|n| n != "app") || root.parent().and_then(|p| p.file_name()).is_none_or(|n| n != "AcaudaOffice") {
         return;
     }
     let Ok(entries) = std::fs::read_dir(root) else { return };
@@ -251,7 +251,7 @@ fn register_logged(appimage: &std::path::Path, appdir: &std::path::Path) -> bool
     match register(appimage, appdir, &data_home()) {
         Ok(()) => true,
         Err(err) => {
-            log::warn!("registering ibisOffice on the desktop: {err}");
+            log::warn!("registering Acauda Office on the desktop: {err}");
             false
         }
     }
@@ -264,7 +264,7 @@ fn data_home() -> std::path::PathBuf {
     env("XDG_DATA_HOME").or_else(|| env("HOME").map(|h| h.join(".local/share"))).unwrap_or_default()
 }
 
-/// The sizes of the icons in the AppImage (`usr/share/icons/hicolor/<n>x<n>/apps/ibisoffice.png`).
+/// The sizes of the icons in the AppImage (`usr/share/icons/hicolor/<n>x<n>/apps/acaudaoffice.png`).
 #[cfg(target_os = "linux")]
 const ICON_SIZES: &[u32] = &[16, 24, 32, 48, 256];
 
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn the_command_is_the_appimage_quoted() {
-        assert_eq!(exec_argument("/home/a/ibisOffice.AppImage"), "\"/home/a/ibisOffice.AppImage\"");
+        assert_eq!(exec_argument("/home/a/AcaudaOffice.AppImage"), "\"/home/a/AcaudaOffice.AppImage\"");
         assert_eq!(exec_argument("/home/a b/x$y%z\"q"), "\"/home/a b/x\\\\$y%%z\\\\\"q\"");
     }
 
@@ -343,19 +343,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let appdir = root.join("AppDir");
         std::fs::create_dir_all(&appdir).unwrap();
-        std::fs::write(appdir.join("ibisoffice.desktop"), include_str!("../linux/ibisoffice.desktop")).unwrap();
+        std::fs::write(appdir.join("acaudaoffice.desktop"), include_str!("../linux/acaudaoffice.desktop")).unwrap();
         for size in ICON_SIZES {
             let dir = appdir.join(format!("usr/share/icons/hicolor/{size}x{size}/apps"));
             std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join("ibisoffice.png"), b"png").unwrap();
+            std::fs::write(dir.join("acaudaoffice.png"), b"png").unwrap();
         }
         let data = root.join("share");
-        register(std::path::Path::new("/opt/apps/ibisOffice.AppImage"), &appdir, &data).unwrap();
-        let entry = std::fs::read_to_string(data.join("applications/ibisoffice.desktop")).unwrap();
-        assert!(entry.contains("\nExec=\"/opt/apps/ibisOffice.AppImage\" %F\n"));
-        assert!(entry.contains("\nStartupWMClass=ibisoffice\n"));
+        register(std::path::Path::new("/opt/apps/AcaudaOffice.AppImage"), &appdir, &data).unwrap();
+        let entry = std::fs::read_to_string(data.join("applications/acaudaoffice.desktop")).unwrap();
+        assert!(entry.contains("\nExec=\"/opt/apps/AcaudaOffice.AppImage\" %F\n"));
+        assert!(entry.contains("\nStartupWMClass=acaudaoffice\n"));
         assert!(entry.contains("application/vnd.openxmlformats-officedocument.wordprocessingml.document;"));
-        assert!(data.join("icons/hicolor/256x256/apps/ibisoffice.png").exists());
+        assert!(data.join("icons/hicolor/256x256/apps/acaudaoffice.png").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -1,3 +1,7 @@
+> **About Acauda Office / Acauda Office について**
+> This page is ibis inc.'s commercial license for ibisOffice, kept here because [NOTICE](NOTICE) refers to it. It covers ibisOffice from ibis inc. only. Acauda Office, this fork, is offered under AGPL-3.0-only alone; for a commercial license of ibisOffice, contact ibis inc.
+> このページは、[NOTICE](NOTICE) が参照しているため残している、アイビスによる ibisOffice の商用ライセンスの案内です。対象はアイビスが配る ibisOffice だけです。このフォークの Acauda Office は、AGPL-3.0-only だけで提供します。ibisOffice の商用ライセンスは、アイビスにお問い合わせください。
+
 # Commercial License
 
 [English](#commercial-license) | [日本語](#商用ライセンス日本語)
@@ -15,7 +19,7 @@ ibis inc.: <https://ssl.ibis.ne.jp/support/Entry?svid=30>
 
 ## Contributions
 
-Contributions are welcome in Issues (we do not accept pull requests at the moment). To let us use code you wrote, also under the commercial license, reply to our [Contributor License Agreement (CLA)](docs/CLA.md) with one line; see [CONTRIBUTING.md](docs/CONTRIBUTING.md).
+Contributions to ibisOffice go to ibis inc.: see https://github.com/ibisjp/ibis-office.
 
 ## Language
 
@@ -38,7 +42,7 @@ This document is provided in English and Japanese. If the two versions differ, t
 
 ## 貢献について
 
-貢献は Issues で歓迎します（今はプル リクエストを受け付けていません）。書いていただいたコードを商用ライセンスでも使えるよう、[貢献者ライセンス契約（CLA）](docs/CLA-ja.md) に 1 行で同意していただく形です。くわしくは [CONTRIBUTING.md](docs/CONTRIBUTING.md) を見てください。
+ibisOffice への貢献は、アイビスの https://github.com/ibisjp/ibis-office をご覧ください。
 
 ## 言語
 

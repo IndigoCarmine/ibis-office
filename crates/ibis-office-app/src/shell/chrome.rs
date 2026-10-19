@@ -709,7 +709,7 @@ pub(crate) fn fill_menu(mut menu: PopupMenu, entries: &[MenuEntry], editor: &Wea
     menu
 }
 
-/// The ibisOffice logo (the mark and the name, logo/ibisOffice_logo.svg) as
+/// The Acauda Office logo (the mark and the name, logo/AcaudaOffice_logo.svg) as
 /// the start view's title row shows it: its height in pixels, and its width
 /// over its height. The SVG's own size is this size (99.25×22): GPUI draws
 /// an SVG picture at twice its own size and scales that to the element, and
@@ -719,7 +719,7 @@ const LOGO_ASPECT: f32 = 600.0 / 133.0;
 
 fn app_logo() -> std::sync::Arc<Image> {
     static LOGO: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
-    LOGO.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, include_bytes!("../../logo/ibisOffice_logo.svg").to_vec()))).clone()
+    LOGO.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, include_bytes!("../../logo/AcaudaOffice_logo.svg").to_vec()))).clone()
 }
 
 fn icon(name: &'static str, size: f32, color: Hsla) -> Icon {
@@ -794,7 +794,7 @@ pub(crate) fn apply_title_drag(div: Div, window: &Window) -> Div {
 #[cfg(target_os = "windows")]
 fn system_menu_icon() -> AnyElement {
     static ICON: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
-    let image = ICON.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../windows/png/ico/ibisOffice_icon_win_48px_transparent.png").to_vec()))).clone();
+    let image = ICON.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../windows/png/ico/AcaudaOffice_icon_win_48px_transparent.png").to_vec()))).clone();
     div()
         .id("system-menu")
         .w(px(28.))

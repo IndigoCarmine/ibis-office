@@ -1,4 +1,4 @@
-# ibisOffice UI text (English): pptx 担当。キー<TAB>文字（shell/i18n.rs）。
+# Acauda Office UI text (English): pptx 担当。キー<TAB>文字（shell/i18n.rs）。
 pptx.text.wrap	Wrap Text in Shape
 pptx.text.autofit-none	Do Not Autofit
 pptx.text.autofit-shrink	Shrink Text on Overflow

@@ -11,7 +11,7 @@
 use std::os::windows::process::CommandExt;
 use std::process::Command;
 
-const KEY: &str = r"HKCU\Software\Classes\Applications\ibisOffice.exe";
+const KEY: &str = r"HKCU\Software\Classes\Applications\AcaudaOffice.exe";
 const EXTENSIONS: &[&str] = &[".csv", ".tsv"];
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -31,10 +31,10 @@ pub fn register() {
             return;
         }
         reg(&["add", &command_key, "/ve", "/d", &command, "/f"]);
-        reg(&["add", KEY, "/v", "FriendlyAppName", "/d", "ibisOffice", "/f"]);
+        reg(&["add", KEY, "/v", "FriendlyAppName", "/d", "Acauda Office", "/f"]);
         for extension in EXTENSIONS {
             reg(&["add", &format!(r"{KEY}\SupportedTypes"), "/v", extension, "/d", "", "/f"]);
-            reg(&["add", &format!(r"HKCU\Software\Classes\{extension}\OpenWithList\ibisOffice.exe"), "/f"]);
+            reg(&["add", &format!(r"HKCU\Software\Classes\{extension}\OpenWithList\AcaudaOffice.exe"), "/f"]);
         }
     });
 }

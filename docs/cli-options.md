@@ -1,8 +1,8 @@
 <p align="right"><b>English</b> | <a href="cli-options-ja.md">日本語</a></p>
 
-# ibisOffice Command-Line Options
+# Acauda Office Command-Line Options
 
-ibisOffice is not only a graphical desktop office suite, but also features a powerful command-line interface (CLI) suitable for terminals, automated shell scripts, batch processing, and CI/CD pipelines.
+Acauda Office is not only a graphical desktop office suite, but also features a powerful command-line interface (CLI) suitable for terminals, automated shell scripts, batch processing, and CI/CD pipelines.
 
 You can perform **headless exports** to convert Word, Excel, and PowerPoint documents into PDF or PNG images at high speed without opening a window, customize print/export settings, and benchmark launch and rendering performance.
 
@@ -26,16 +26,16 @@ You can perform **headless exports** to convert Word, Excel, and PowerPoint docu
 
 ```bash
 # Standard GUI launch (with a file or the start window)
-ibisOffice [OPTIONS] [FILE]
+AcaudaOffice [OPTIONS] [FILE]
 
 # Headless export (render and save files without opening a window)
-ibisOffice --export <format> [EXPORT_OPTIONS] <FILE>
+AcaudaOffice --export <format> [EXPORT_OPTIONS] <FILE>
 
 # Headless UI snapshot (capture editor UI states to PNG)
-ibisOffice --export ui [--out-dir <dir>] [--steps <steps>] [<FILE>]
+AcaudaOffice --export ui [--out-dir <dir>] [--steps <steps>] [<FILE>]
 
 # Performance and startup benchmark
-ibisOffice [--timing] [--quit-after-first-frame] [<FILE>]
+AcaudaOffice [--timing] [--quit-after-first-frame] [<FILE>]
 ```
 
 ### Supported File Formats
@@ -43,7 +43,7 @@ ibisOffice [--timing] [--quit-after-first-frame] [<FILE>]
 - **Excel Workbooks**: `.xlsx`
 - **PowerPoint Presentations**: `.pptx`
 
-*Note: If `FILE` is omitted, ibisOffice opens the Start Window with templates and blank document creation options.*
+*Note: If `FILE` is omitted, Acauda Office opens the Start Window with templates and blank document creation options.*
 
 ---
 
@@ -57,7 +57,7 @@ ibisOffice [--timing] [--quit-after-first-frame] [<FILE>]
 **Example:**
 ```bash
 # Open presentation directly jumping to slide 5
-ibisOffice --slide 5 presentation.pptx
+AcaudaOffice --slide 5 presentation.pptx
 ```
 
 ---
@@ -77,10 +77,10 @@ Runs completely in the background without opening any GUI window. Documents are 
 **Examples:**
 ```bash
 # Convert entire presentation to PDF
-ibisOffice --export pdf presentation.pptx
+AcaudaOffice --export pdf presentation.pptx
 
 # Export pages 1 to 3 as 2560px wide PNG images into dist/
-ibisOffice --export png --out-dir dist/ --width 2560 --slides 1-3 document.docx
+AcaudaOffice --export png --out-dir dist/ --width 2560 --slides 1-3 document.docx
 ```
 
 ---
@@ -100,7 +100,7 @@ Provides fine-grained output control fully compatible with Microsoft Office prin
 **Example:**
 ```bash
 # Generate clean PDF with backgrounds but without revision markup
-ibisOffice --export pdf --print-backgrounds --no-print-markup report.docx
+AcaudaOffice --export pdf --print-backgrounds --no-print-markup report.docx
 ```
 
 ### PowerPoint (.pptx) Options
@@ -130,19 +130,19 @@ ibisOffice --export pdf --print-backgrounds --no-print-markup report.docx
 **Examples:**
 ```bash
 # 3-slides-per-page landscape handout PDF with frames, header, date, and page numbers
-ibisOffice --export pdf --handout 3 --handout-landscape --print-frame \
+AcaudaOffice --export pdf --handout 3 --handout-landscape --print-frame \
   --handout-header "Quarterly Strategy Review" --handout-date "2026-10-16" --handout-number \
   presentation.pptx
 
 # Export speaker notes pages to PDF
-ibisOffice --export pdf --notes-pages presentation.pptx
+AcaudaOffice --export pdf --notes-pages presentation.pptx
 ```
 
 ---
 
 ## UI Snapshot (--export ui)
 
-Takes headless snapshots of the ibisOffice editor window itself. Useful for UI regression testing, design verification, and documentation generation.
+Takes headless snapshots of the Acauda Office editor window itself. Useful for UI regression testing, design verification, and documentation generation.
 
 | Option | Argument | Description |
 |---|---|---|
@@ -151,10 +151,10 @@ Takes headless snapshots of the ibisOffice editor window itself. Useful for UI r
 **Example:**
 ```bash
 # Capture the editor start window into output/
-ibisOffice --export ui --out-dir output/
+AcaudaOffice --export ui --out-dir output/
 
 # Capture editor state when document is loaded
-ibisOffice --export ui --out-dir output/ presentation.pptx
+AcaudaOffice --export ui --out-dir output/ presentation.pptx
 ```
 
 ---
@@ -165,7 +165,7 @@ Enables precise instrumentation for measuring launch latency, document parsing, 
 
 | Option | Description |
 |---|---|
-| `--timing` | Prints elapsed time in milliseconds for each startup stage to standard error (stderr) in `ibisOffice timing: <stage> <ms>` format. |
+| `--timing` | Prints elapsed time in milliseconds for each startup stage to standard error (stderr) in `AcaudaOffice timing: <stage> <ms>` format. |
 | `--quit-after-first-frame` | Automatically exits the application after the window and document have completed initial rendering (post second-frame stabilization). Ideal for repeated startup benchmarks. |
 
 ### Measured Stages
@@ -185,20 +185,20 @@ Enables precise instrumentation for measuring launch latency, document parsing, 
 **Example:**
 ```bash
 # Benchmark document launch time and exit immediately after rendering
-ibisOffice --timing --quit-after-first-frame presentation.pptx
+AcaudaOffice --timing --quit-after-first-frame presentation.pptx
 ```
 
 Sample output:
 ```text
-ibisOffice timing: main 0.12
-ibisOffice timing: app 12.45
-ibisOffice timing: window 28.30
-ibisOffice timing: read 31.10
-ibisOffice timing: parsed 38.50
-ibisOffice timing: loaded 45.20
-ibisOffice timing: first-frame 48.90
-ibisOffice timing: document-frame 52.10
-ibisOffice timing: document-second-frame 68.40
+AcaudaOffice timing: main 0.12
+AcaudaOffice timing: app 12.45
+AcaudaOffice timing: window 28.30
+AcaudaOffice timing: read 31.10
+AcaudaOffice timing: parsed 38.50
+AcaudaOffice timing: loaded 45.20
+AcaudaOffice timing: first-frame 48.90
+AcaudaOffice timing: document-frame 52.10
+AcaudaOffice timing: document-second-frame 68.40
 ```
 
 ---
@@ -208,19 +208,19 @@ ibisOffice timing: document-second-frame 68.40
 ### 1. Batch Convert Documents to PDF (CI/CD / Shell)
 ```bash
 for file in docs/*.docx slides/*.pptx; do
-  ibisOffice --export pdf --out-dir dist/ "$file"
+  AcaudaOffice --export pdf --out-dir dist/ "$file"
 done
 ```
 
 ### 2. Generate High-Resolution Web Thumbnail
 ```bash
 # Export slide 1 as 1920px PNG into thumbnails/
-ibisOffice --export png --slides 1 --width 1920 --out-dir thumbnails/ presentation.pptx
+AcaudaOffice --export png --slides 1 --width 1920 --out-dir thumbnails/ presentation.pptx
 ```
 
 ### 3. Generate 2-in-1 Grayscale Meeting Handouts
 ```bash
-ibisOffice --export pdf --handout 2 --print-color bw --print-frame \
+AcaudaOffice --export pdf --handout 2 --print-color bw --print-frame \
   --handout-header "Board of Directors Meeting" \
   --handout-footer "CONFIDENTIAL" \
   --handout-number --out-dir handouts/ agenda.pptx

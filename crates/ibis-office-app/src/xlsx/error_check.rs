@@ -148,7 +148,7 @@ fn rules_path() -> Option<std::path::PathBuf> {
     let base = env("APPDATA");
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
-    Some(base?.join("ibisOffice").join("error-check.tsv"))
+    Some(base?.join("AcaudaOffice").join("error-check.tsv"))
 }
 
 const KEYS: [&str; 10] = ["background", "number_as_text", "eval_error", "inconsistent_formula", "two_digit_year", "unlocked_formula", "empty_cell_reference", "formula_range", "calculated_column", "list_data_validation"];

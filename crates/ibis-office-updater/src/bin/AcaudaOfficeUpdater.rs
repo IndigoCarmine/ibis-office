@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! ibisOfficeUpdater: started by ibisOffice (which then quits) after it has
+//! AcaudaOfficeUpdater: started by Acauda Office (which then quits) after it has
 //! downloaded, unpacked and checked a newer version.
 //!
 //! ```text
-//! ibisOfficeUpdater --pid <ibisOffice's pid> --old <installed> --new <unpacked>
+//! AcaudaOfficeUpdater --pid <Acauda Office's pid> --old <installed> --new <unpacked>
 //!                   --version <new version> --log <updater.log> [--workdir <folder to remove>]
 //! ```
 //!
 //! `installed` and `unpacked` are the `.app` folders on macOS and the folders
-//! holding `ibisOffice.exe` on Windows. The steps, each logged as it starts
+//! holding `AcaudaOffice.exe` on Windows. The steps, each logged as it starts
 //! and as it succeeds or fails:
 //!
-//! 1. `wait-exit`: wait for ibisOffice to quit (30 s; then end it).
+//! 1. `wait-exit`: wait for Acauda Office to quit (30 s; then end it).
 //! 2. `install`: replace the installed copy (`swap`: the new one copied
 //!    next to it and checked, the old one moved aside, the copy moved into
 //!    place). The old copy is kept aside.
-//! 3. `launch` and `check-running`: start the new ibisOffice; it must still
+//! 3. `launch` and `check-running`: start the new Acauda Office; it must still
 //!    be running after a few seconds.
 //! 4. `cleanup`: remove the old copy and the unpacked folder.
 //!
@@ -64,7 +64,7 @@ fn main() {
     let args = match parse() {
         Ok(args) => args,
         Err(err) => {
-            eprintln!("ibisOfficeUpdater: {err}");
+            eprintln!("AcaudaOfficeUpdater: {err}");
             std::process::exit(2);
         }
     };
@@ -73,14 +73,14 @@ fn main() {
 }
 
 fn run(args: &Args, log: &Log) -> i32 {
-    log.start("update", &format!("ibisOfficeUpdater {}, {} -> {}", env!("CARGO_PKG_VERSION"), args.new.display(), args.old.display()));
+    log.start("update", &format!("AcaudaOfficeUpdater {}, {} -> {}", env!("CARGO_PKG_VERSION"), args.new.display(), args.old.display()));
 
     log.start("wait-exit", &format!("pid {}", args.pid));
     match process::wait_for_exit(args.pid, args.wait) {
-        Exit::Quit => log.ok("wait-exit", "ibisOffice quit"),
-        Exit::Ended => log.ok("wait-exit", "ibisOffice did not quit in time and was ended"),
+        Exit::Quit => log.ok("wait-exit", "Acauda Office quit"),
+        Exit::Ended => log.ok("wait-exit", "Acauda Office did not quit in time and was ended"),
         Exit::Running => {
-            log.fail("wait-exit", "ibisOffice is still running; nothing was changed");
+            log.fail("wait-exit", "Acauda Office is still running; nothing was changed");
             return 1;
         }
     }
@@ -97,7 +97,7 @@ fn run(args: &Args, log: &Log) -> i32 {
     match platform::launch(&args.old) {
         Ok(mut started) => {
             log.ok("launch", "started");
-            log.start("check-running", "ibisOffice must keep running for a few seconds");
+            log.start("check-running", "Acauda Office must keep running for a few seconds");
             if let Err(err) = platform::check_running(&args.old, &mut started) {
                 log.fail("check-running", &err);
                 rollback_and_relaunch(args, log);
@@ -131,7 +131,7 @@ fn run(args: &Args, log: &Log) -> i32 {
     0
 }
 
-/// Remove a folder; ibisOfficeUpdater itself may be running from inside it (Windows cannot delete a running program: the app removes what is left when it next starts).
+/// Remove a folder; AcaudaOfficeUpdater itself may be running from inside it (Windows cannot delete a running program: the app removes what is left when it next starts).
 fn remove_dir(dir: &Path) -> std::io::Result<()> {
     match std::fs::remove_dir_all(dir) {
         Err(err) if dir.exists() => {
@@ -209,16 +209,16 @@ mod platform {
 
     /// Seen running within 20 seconds, and still running 3 seconds after.
     pub fn check_running(app: &Path, _: &mut Started) -> Result<(), String> {
-        let exe = app.join("Contents/MacOS/ibisOffice");
+        let exe = app.join("Contents/MacOS/AcaudaOffice");
         let start = std::time::Instant::now();
         while !process::is_running(&exe) {
             if start.elapsed() > Duration::from_secs(20) {
-                return Err("ibisOffice did not start within 20 seconds".into());
+                return Err("Acauda Office did not start within 20 seconds".into());
             }
             std::thread::sleep(Duration::from_millis(200));
         }
         std::thread::sleep(Duration::from_secs(3));
-        if process::is_running(&exe) { Ok(()) } else { Err("ibisOffice quit within 3 seconds of starting".into()) }
+        if process::is_running(&exe) { Ok(()) } else { Err("Acauda Office quit within 3 seconds of starting".into()) }
     }
 }
 
@@ -244,7 +244,7 @@ mod platform {
 
     pub fn launch(dir: &Path) -> Result<Started, String> {
         const DETACHED_PROCESS: u32 = 0x0000_0008;
-        let exe = dir.join("ibisOffice.exe");
+        let exe = dir.join("AcaudaOffice.exe");
         Command::new(&exe).current_dir(dir).creation_flags(DETACHED_PROCESS).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| format!("{}: {e}", exe.display()))
     }
 
@@ -253,8 +253,8 @@ mod platform {
         std::thread::sleep(Duration::from_secs(3));
         match child.try_wait() {
             Ok(None) => Ok(()),
-            Ok(Some(status)) => Err(format!("ibisOffice quit within 3 seconds of starting ({status})")),
-            Err(err) => Err(format!("cannot tell whether ibisOffice runs: {err}")),
+            Ok(Some(status)) => Err(format!("Acauda Office quit within 3 seconds of starting ({status})")),
+            Err(err) => Err(format!("cannot tell whether Acauda Office runs: {err}")),
         }
     }
 }
@@ -266,7 +266,7 @@ mod platform {
     pub struct Started;
 
     fn unsupported<T>() -> Result<T, String> {
-        Err("ibisOfficeUpdater runs on macOS and Windows only".into())
+        Err("AcaudaOfficeUpdater runs on macOS and Windows only".into())
     }
 
     pub fn install(_: &Path, _: &Path) -> Result<(), String> {

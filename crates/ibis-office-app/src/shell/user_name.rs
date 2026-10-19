@@ -32,7 +32,7 @@ pub(crate) fn default_user_name() -> &'static str {
         {
             return name.trim().to_string();
         }
-        ["USER", "USERNAME"].iter().find_map(|v| std::env::var(v).ok().filter(|u| !u.is_empty())).unwrap_or_else(|| "ibisOffice".into())
+        ["USER", "USERNAME"].iter().find_map(|v| std::env::var(v).ok().filter(|u| !u.is_empty())).unwrap_or_else(|| "Acauda Office".into())
     })
 }
 

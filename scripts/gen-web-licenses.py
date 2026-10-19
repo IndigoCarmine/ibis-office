@@ -5,8 +5,8 @@
 """Write the lists of third-party components shipped and the notices their
 licences require: www/license.md for the browser version,
 crates/ibis-office-app/macos/license.md and windows/license.md for the
-desktop app (copied into ibisOffice.app by scripts/bundle-macos.sh, and into
-the ibisOffice folder by scripts/bundle-windows.ps1), and
+desktop app (copied into AcaudaOffice.app by scripts/bundle-macos.sh, and into
+the AcaudaOffice folder by scripts/bundle-windows.ps1), and
 crates/ibis-office-app/linux/license.md for the Linux AppImage (copied into
 it by scripts/bundle-linux.sh).
 
@@ -222,10 +222,10 @@ def write(build):
     bundled.append(("Material Symbols（Google）", "タイトル行・メニュー・ツールバー・サイドバーのアイコン（実行ファイルに埋め込み）", "Apache-2.0"))
     material_readme = open(os.path.join(ROOT, "crates", "ibis-office-app", "icons", "material", "README.md"), encoding="utf-8").read()
     material_source = next((l[2:] for l in material_readme.splitlines() if l.startswith("- 出典")), "")
-    where = {"web": " Web 版（`www/`）", "macos": " macOS 版（`ibisOffice.app`）", "windows": " Windows 版（`ibisOffice` フォルダー）", "linux": " Linux 版（AppImage）"}[build]
+    where = {"web": " Web 版（`www/`）", "macos": " macOS 版（`AcaudaOffice.app`）", "windows": " Windows 版（`AcaudaOffice` フォルダー）", "linux": " Linux 版（AppImage）"}[build]
     md = [f"# サードパーティのライセンス（{label}）",
           "",
-          f"ibisOffice の{where}に含まれる、ibisOffice 以外の部品と、そのライセンスが求める表示です。"
+          f"Acauda Office の{where}に含まれる、Acauda Office（ibisOffice）以外の部品と、そのライセンスが求める表示です。"
           "このファイルは `scripts/gen-web-licenses.py` で生成しています。",
           "",
           "## 同梱しているデータ・フォント・アイコン",

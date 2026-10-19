@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="body" cx="0.42" cy="0.36" r="0.72">
+      <stop offset="0.55" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E4E7EC"/>
+    </radialGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E0476F"/>
+      <stop offset="1" stop-color="#A3123A"/>
+    </linearGradient>
+  </defs><defs><filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.28"/></filter></defs><g filter="url(#shadow)"><rect x="66" y="60" width="892" height="892" rx="200" fill="url(#plate)"/></g>
+<rect x="66" y="60" width="892" height="892" rx="200" fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="4"/><g transform="translate(79.76 57.90) scale(0.7931)">
+  <g id="bird">
+    <!-- tail: long, black with white edges -->
+    <path d="M640 540 C770 630 890 760 975 885 C984 902 966 914 951 902 C835 810 720 735 590 700 Z" fill="#FFFFFF" stroke="#C9CDD4" stroke-width="6" stroke-linejoin="round"/>
+    <path d="M648 566 C770 650 880 765 952 875 C835 792 722 722 604 688 Z" fill="#26221F"/>
+    <!-- feet -->
+    <path d="M385 760 L372 805 M372 805 L350 815 M372 805 L388 818 M485 760 L494 805 M494 805 L474 818 M494 805 L516 812" fill="none" stroke="#3A3330" stroke-width="12" stroke-linecap="round"/>
+    <!-- body: a round ball of white feathers -->
+    <ellipse cx="435" cy="500" rx="315" ry="275" fill="url(#body)" stroke="#C9CDD4" stroke-width="6"/>
+    <!-- shoulder and folded wing -->
+    <path d="M555 395 C640 392 705 435 735 500 C670 497 600 460 555 395 Z" fill="#E3A59B"/>
+    <path d="M615 470 C700 490 750 560 735 625 C718 690 650 725 585 728 C640 660 655 560 615 470 Z" fill="#26221F"/>
+    <path d="M598 705 C650 708 700 685 728 640" fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round"/>
+    <!-- face -->
+    <circle cx="350" cy="465" r="27" fill="#1A1716"/>
+    <circle cx="495" cy="465" r="27" fill="#1A1716"/>
+    <circle cx="359" cy="456" r="8" fill="#FFFFFF"/>
+    <circle cx="504" cy="456" r="8" fill="#FFFFFF"/>
+    <path d="M407 512 L438 512 L422.5 536 Z" fill="#1A1716" stroke="#1A1716" stroke-width="6" stroke-linejoin="round"/>
+  </g></g>
+</svg>

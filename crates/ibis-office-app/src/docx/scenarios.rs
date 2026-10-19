@@ -11836,7 +11836,7 @@ fn field_doc_variable_and_user_fields() {
     let p_addr_fields: Vec<&str> = p_addr.runs.iter().filter_map(|r| if let FlowRunKind::Field { shown, .. } = &r.kind { Some(shown.as_str()) } else { None }).collect();
 
     assert_eq!(p_var_fields, vec!["v3.5.0", "Engineering Dev Team"], "DOCVARIABLE fields resolved");
-    assert_eq!(p_user_fields, vec!["ibisOffice", "I"], "USERNAME and USERINITIALS fields resolved with default creator");
+    assert_eq!(p_user_fields, vec!["Acauda Office", "AO"], "USERNAME and USERINITIALS fields resolved with default creator");
     assert_eq!(p_addr_fields, vec![""], "USERADDRESS field resolved");
 
     // 作成者を変更して再計算

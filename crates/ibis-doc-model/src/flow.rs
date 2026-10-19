@@ -4369,12 +4369,12 @@ impl FlowDocument {
     }
 
     pub fn user_name_text(&self, instruction: &str) -> String {
-        let name = self.properties.creator.as_deref().unwrap_or("ibisOffice");
+        let name = self.properties.creator.as_deref().unwrap_or("Acauda Office");
         crate::field_format::format_user_name(name, instruction)
     }
 
     pub fn user_initials_text(&self, instruction: &str) -> String {
-        let name = self.properties.creator.as_deref().unwrap_or("ibisOffice");
+        let name = self.properties.creator.as_deref().unwrap_or("Acauda Office");
         let inits = crate::field_format::initials_from_name(name);
         crate::field_format::format_user_initials(&inits, instruction)
     }

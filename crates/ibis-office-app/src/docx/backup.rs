@@ -24,7 +24,7 @@ fn store_path() -> Option<PathBuf> {
     let base = env("APPDATA");
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
-    Some(base?.join("ibisOffice").join("docx-backup.tsv"))
+    Some(base?.join("AcaudaOffice").join("docx-backup.tsv"))
 }
 
 /// Whether a backup copy is made when a document is saved over a file.

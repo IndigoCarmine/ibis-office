@@ -10,7 +10,7 @@
 //! linked in its current runtime), and FUSE, which Ubuntu 22.04 and later do
 //! not install. ibisOffice's runtime (`bin/runtime.rs`) does without both:
 //! it unpacks the image once per version into
-//! `$XDG_CACHE_HOME/ibisOffice/app/<image id>/` (`~/.cache` without it) and
+//! `$XDG_CACHE_HOME/AcaudaOffice/app/<image id>/` (`~/.cache` without it) and
 //! starts the app from there every time. `bin/pack.rs` makes the AppImage
 //! from an AppDir (scripts/bundle-linux.sh).
 
@@ -51,12 +51,12 @@ pub fn image_id(superblock: &[u8]) -> Option<String> {
     Some(format!("{mod_time:08x}-{bytes_used:x}"))
 }
 
-/// The folder the versions are unpacked into: `$XDG_CACHE_HOME/ibisOffice/app`
-/// (`~/.cache/ibisOffice/app`).
+/// The folder the versions are unpacked into: `$XDG_CACHE_HOME/AcaudaOffice/app`
+/// (`~/.cache/AcaudaOffice/app`).
 pub fn cache_root() -> Option<PathBuf> {
     let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
     let cache = env("XDG_CACHE_HOME").or_else(|| Some(env("HOME")?.join(".cache")))?;
-    Some(cache.join("ibisOffice").join("app"))
+    Some(cache.join("AcaudaOffice").join("app"))
 }
 
 #[cfg(test)]
