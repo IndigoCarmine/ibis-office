@@ -20,6 +20,8 @@ pub(crate) struct XlsxThemePanel {
     error: Option<SharedString>,
 }
 
+
+
 fn parse_hex(text: &str) -> Option<Rgb> {
     let t = text.trim().trim_start_matches('#');
     (t.len() == 6).then(|| u32::from_str_radix(t, 16).ok()).flatten().map(Rgb)
@@ -66,6 +68,8 @@ impl SlideEditor {
         }
         cx.notify();
     }
+
+
 
     /// Open the workbook theme colors and fonts editing sidebar panel.
     pub(crate) fn open_xlsx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -175,5 +179,155 @@ impl SlideEditor {
                 .child(Button::new("xlsx-theme-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_xlsx_theme_panel(w, cx)))),
         );
         Some(SidebarPanel { title: t("xlsx.theme-colors"), body: body.into_any_element() })
+    }
+
+    /// Check if the workbook matches a predefined theme fonts preset.
+    pub(crate) fn is_xlsx_theme_fonts_active(&self, preset_id: &str) -> bool {
+        let preset_id = if preset_id == "aptos" { "office" } else { preset_id };
+        let Some(preset) = THEME_FONTS_PRESETS.iter().find(|p| p.id == preset_id) else { return false };
+        let current_fonts = self.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.as_ref()).or_else(|| self.presentation().theme_fonts.as_ref());
+        match current_fonts {
+            Some(f) => {
+                f.major.latin.as_deref() == Some(preset.major_latin) && f.minor.latin.as_deref() == Some(preset.minor_latin)
+            }
+            None => preset_id == "calibri" || preset_id == "office",
+        }
+    }
+
+    /// Apply a predefined theme fonts preset to the workbook.
+    pub(crate) fn apply_xlsx_theme_fonts(&mut self, preset_id: &str, cx: &mut Context<Self>) {
+        let preset_id = if preset_id == "aptos" { "office" } else { preset_id };
+        let Some(preset) = THEME_FONTS_PRESETS.iter().find(|p| p.id == preset_id) else { return };
+        let colors = self.presentation().workbook.as_ref().map(|w| w.theme_colors.clone()).unwrap_or_else(|| self.presentation().theme_colors.clone());
+        let fonts = ThemeFonts {
+            major: FontSet {
+                latin: Some(preset.major_latin.to_string()),
+                east_asian: Some(preset.major_ea.to_string()),
+                complex: None,
+            },
+            minor: FontSet {
+                latin: Some(preset.minor_latin.to_string()),
+                east_asian: Some(preset.minor_ea.to_string()),
+                complex: None,
+            },
+        };
+        self.commit_cell_edit(cx);
+        self.run_sheet(vec![Command::SetTheme { colors, fonts: Some(fonts) }], cx);
+        if let Some(state) = self.sheet_state_mut() {
+            *state.panels.cell_styles.borrow_mut() = None;
+        }
+        self.status = Some(crate::shell::i18n::text("xlsx.theme-fonts-applied").into());
+        cx.notify();
+    }
+
+    /// Check if the workbook matches a predefined theme effect preset.
+    pub(crate) fn is_xlsx_theme_effects_active(&self, preset_id: &str) -> bool {
+        let preset_id = match preset_id {
+            "subtle" => "apex",
+            "moderate" => "aspect",
+            "intense" => "metro",
+            other => other,
+        };
+        let current = self.presentation().theme_effects.as_deref().unwrap_or("office");
+        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return false };
+        current.eq_ignore_ascii_case(preset.id) || current.eq_ignore_ascii_case(preset.name)
+    }
+
+    /// Apply a predefined theme effect preset to the workbook.
+    pub(crate) fn apply_xlsx_theme_effects(&mut self, preset_id: &str, cx: &mut Context<Self>) {
+        let preset_id = match preset_id {
+            "subtle" => "apex",
+            "moderate" => "aspect",
+            "intense" => "metro",
+            other => other,
+        };
+        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return };
+        self.commit_cell_edit(cx);
+        self.run_sheet(vec![Command::SetThemeEffects { name: Some(preset.id.to_string()) }], cx);
+        self.status = Some(crate::shell::i18n::format("xlsx.theme-effect-applied", &[("name", &crate::shell::i18n::text(preset.label_key))]).into());
+        cx.notify();
+    }
+}
+
+pub(crate) struct ThemeFontsPreset {
+    pub(crate) id: &'static str,
+    pub(crate) action_id: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) major_latin: &'static str,
+    pub(crate) major_ea: &'static str,
+    pub(crate) minor_latin: &'static str,
+    pub(crate) minor_ea: &'static str,
+}
+
+pub(crate) const THEME_FONTS_PRESETS: [ThemeFontsPreset; 6] = [
+    ThemeFontsPreset {
+        id: "office",
+        action_id: "xlsx.theme-fonts.office",
+        label: "Office (Aptos)",
+        major_latin: "Aptos Display",
+        major_ea: "Yu Gothic",
+        minor_latin: "Aptos",
+        minor_ea: "Yu Gothic",
+    },
+    ThemeFontsPreset {
+        id: "calibri",
+        action_id: "xlsx.theme-fonts.calibri",
+        label: "Office 2007-2022 (Calibri)",
+        major_latin: "Calibri Light",
+        major_ea: "Yu Gothic Light",
+        minor_latin: "Calibri",
+        minor_ea: "Yu Gothic",
+    },
+    ThemeFontsPreset {
+        id: "arial",
+        action_id: "xlsx.theme-fonts.arial",
+        label: "Arial",
+        major_latin: "Arial",
+        major_ea: "MS Gothic",
+        minor_latin: "Arial",
+        minor_ea: "MS PGothic",
+    },
+    ThemeFontsPreset {
+        id: "times",
+        action_id: "xlsx.theme-fonts.times",
+        label: "Times New Roman",
+        major_latin: "Times New Roman",
+        major_ea: "MS Mincho",
+        minor_latin: "Times New Roman",
+        minor_ea: "MS PMincho",
+    },
+    ThemeFontsPreset {
+        id: "century-gothic",
+        action_id: "xlsx.theme-fonts.century-gothic",
+        label: "Century Gothic",
+        major_latin: "Century Gothic",
+        major_ea: "Yu Gothic",
+        minor_latin: "Century Gothic",
+        minor_ea: "Yu Gothic",
+    },
+    ThemeFontsPreset {
+        id: "meiryo",
+        action_id: "xlsx.theme-fonts.meiryo",
+        label: "Meiryo",
+        major_latin: "Meiryo UI",
+        major_ea: "Meiryo UI",
+        minor_latin: "Meiryo",
+        minor_ea: "Meiryo",
+    },
+];
+
+pub(crate) fn theme_effect_action_id(id: &str) -> &'static str {
+    match id {
+        "office" => "xlsx.theme-effects.office",
+        "office_2007_2010" => "xlsx.theme-effects.office-2007-2010",
+        "metro" => "xlsx.theme-effects.metro",
+        "aspect" => "xlsx.theme-effects.aspect",
+        "apex" => "xlsx.theme-effects.apex",
+        "flow" => "xlsx.theme-effects.flow",
+        "foundry" => "xlsx.theme-effects.foundry",
+        "median" => "xlsx.theme-effects.median",
+        "solstice" => "xlsx.theme-effects.solstice",
+        "trek" => "xlsx.theme-effects.trek",
+        _ => "xlsx.theme-effects.office",
     }
 }

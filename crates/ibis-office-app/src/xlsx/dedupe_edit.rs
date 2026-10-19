@@ -87,7 +87,30 @@ impl SlideEditor {
     /// to fit a range changed since (all of a new one's).
     fn dedupe_range(&self, cx: &App) -> Option<CellRange> {
         let p = self.sheet_state()?.panels.dedupe.as_ref()?;
-        parse_range(&p.range.read(cx).value())
+        let val = p.range.read(cx).value().to_string();
+        if let Some((slide_id, r)) = super::sheet_ui::parse_reference(val.trim()).and_then(|ref_| self.resolve_reference(&ref_))
+            && slide_id == self.current_slide
+        {
+            return Some(r);
+        }
+        parse_range(&val)
+    }
+
+    pub(crate) fn refresh_dedupe_range_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((r, _, header)) = self.sort_selection() else { return };
+        let range_str = format!(
+            "{}:{}",
+            ibis_doc_model::cell_name(r.first_column, r.first_row),
+            ibis_doc_model::cell_name(r.last_column, r.last_row)
+        );
+        let cur_slide = self.current_slide;
+        if let Some(p) = self.wb_mut().panels.dedupe.as_mut() {
+            p.range.update(cx, |i, cx| i.set_value(range_str, window, cx));
+            p.columns = (r.first_column..=r.last_column).collect();
+            p.header = header;
+            p.slide = cur_slide;
+        }
+        cx.notify();
     }
 
     pub(crate) fn apply_dedupe_panel(&mut self, cx: &mut Context<Self>) {
@@ -150,7 +173,23 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(crate::shell::i18n::text("_shell.range"))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .child(crate::shell::i18n::text("_shell.range"))
+                    .child(mark(
+                        "use-selection",
+                        Button::new("dedupe-use-selection")
+                            .xsmall()
+                            .ghost()
+                            .label(crate::shell::i18n::text("xlsx.subtotal-use-selection"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.refresh_dedupe_range_from_selection(window, cx);
+                            }))
+                            .into_any_element(),
+                    )),
+            )
             .child(mark("range", Input::new(&p.range).small().into_any_element()))
             .child(mark(
                 "header",

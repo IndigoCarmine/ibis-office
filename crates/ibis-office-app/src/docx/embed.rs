@@ -24,6 +24,20 @@ impl SlideEditor {
         None
     }
 
+    /// The size of the inline picture at `at`.
+    pub(crate) fn inline_size_at(&self, at: FlowPos) -> Option<EmuSize> {
+        let mut offset = 0;
+        for run in &self.paragraph_of(at.para)?.runs {
+            if offset == at.offset
+                && let FlowRunKind::Picture { size, .. } = &run.kind
+            {
+                return Some(*size);
+            }
+            offset += run.len();
+        }
+        None
+    }
+
     /// The inline picture at `at`, as a picture (its media and the object it shows).
     pub(crate) fn inline_picture_at(&self, at: FlowPos) -> Option<Picture> {
         let (media, look) = self.inline_at(at)?;

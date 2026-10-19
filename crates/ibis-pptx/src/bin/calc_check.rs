@@ -73,6 +73,7 @@ fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut tsv: Option<std::fs::File> = None;
     let mut show_n = 0usize;
+    let mut show_all = false;
     let mut files = Vec::new();
     let mut functions = Vec::new();
     let mut contained_functions = Vec::new();
@@ -81,6 +82,7 @@ fn main() {
         match a.as_str() {
             "--tsv" => tsv = Some(std::fs::File::create(args.remove(0)).expect("tsv")),
             "--show" => show_n = args.remove(0).parse().unwrap_or(20),
+            "--all" => show_all = true,
             "--function" => functions.push(args.remove(0).to_uppercase()),
             "--contains-function" => contained_functions.push(args.remove(0).to_uppercase()),
             _ => files.push(a),
@@ -93,11 +95,51 @@ fn main() {
     let mut by_file: Vec<(String, Tally)> = Vec::new();
     let mut shown = 0;
     for path in &files {
+        let p = std::path::Path::new(path);
+        let book_name = if p.file_name().is_some_and(|n| n == "office.xlsx") {
+            p.parent().and_then(|parent| parent.file_name()).map(|suite| format!("cov-{}.xlsx", suite.to_string_lossy()))
+        } else {
+            p.file_name().map(|n| n.to_string_lossy().to_string())
+        };
+        ibis_calc::eval::convert::set_workbook_file(book_name);
         let data = std::fs::read(path).expect("read");
         let presentation = ibis_pptx::read_xlsx(&data).expect("xlsx");
         let book = BookView::new(&presentation);
         let mut tally = Tally::default();
-        for (sheet, row, column) in book.formula_cells() {
+        let formula_cells = book.formula_cells();
+        let recalculated = book.recalculate(&formula_cells);
+        let mut recalc_results: std::collections::HashMap<(usize, u32, u32), (CellValue, bool)> = std::collections::HashMap::new();
+        for r in recalculated {
+            use ibis_calc::eval::Book;
+            if let Some((rows, columns, _)) = &r.spill {
+                let mut blocked = false;
+                for dr in 0..*rows as u32 {
+                    for dc in 0..*columns as u32 {
+                        if (dr, dc) == (0, 0) {
+                            continue;
+                        }
+                        let tr = r.cell.1 + dr;
+                        let tc = r.cell.2 + dc;
+                        let in_old = book.spill_area(r.cell.0, r.cell.1, r.cell.2).is_some_and(|(r0, c0, r1, c1)| tr >= r0 && tr <= r1 && tc >= c0 && tc <= c1);
+                        if !in_old && (!book.value(r.cell.0, tr, tc).is_empty() || book.formula(r.cell.0, tr, tc).is_some()) {
+                            blocked = true;
+                            break;
+                        }
+                    }
+                    if blocked {
+                        break;
+                    }
+                }
+                if blocked {
+                    recalc_results.insert(r.cell, (CellValue::Error(ibis_calc::value::CellError::Spill), r.unsupported));
+                } else {
+                    recalc_results.insert(r.cell, (r.value, r.unsupported));
+                }
+            } else {
+                recalc_results.insert(r.cell, (r.value, r.unsupported));
+            }
+        }
+        for (sheet, row, column) in formula_cells {
             use ibis_calc::eval::Book;
             let formula = book.formula(sheet, row, column).unwrap().to_string();
             if !functions.is_empty() && !functions.contains(&outer_function(&formula)) {
@@ -114,7 +156,9 @@ fn main() {
                 eprintln!("{}!{} ={formula}", book.sheet_name(sheet), cell_name(column, row));
             }
             let excel = book.value(sheet, row, column);
-            let (ibis, unsupported) = ibis_calc::recalc::evaluate(&book, (sheet, row, column), &formula);
+            let (ibis, unsupported) = recalc_results.remove(&(sheet, row, column)).unwrap_or_else(|| {
+                ibis_calc::recalc::evaluate(&book, (sheet, row, column), &formula)
+            });
             let status = if unsupported {
                 "unimplemented"
             } else if same(&excel, &ibis) {
@@ -132,7 +176,7 @@ fn main() {
                 }
             }
             let cell = format!("{}!{}", book.sheet_name(sheet), cell_name(column, row));
-            if status != "match" && shown < show_n {
+            if (show_all || status != "match") && shown < show_n {
                 shown += 1;
                 println!("{status}\t{cell}\t={formula}\texcel={}\tibis={}", show(&excel), show(&ibis));
             }

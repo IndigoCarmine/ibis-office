@@ -57,7 +57,11 @@ impl SlideEditor {
             SlicerSource::Pivot { field, pivots } => {
                 for name in pivots {
                     let Some(target) = locate_pivot(self.presentation(), name) else { continue };
-                    let (field, selected) = (field.clone(), selected.to_vec());
+                    let mut selected = selected.to_vec();
+                    if slicer.descending {
+                        selected.reverse();
+                    }
+                    let field = field.clone();
                     self.change_pivot(target, move |p| {
                         let Some(f) = p.fields.iter_mut().find(|f| f.name == field) else { return };
                         for (it, keep) in f.items.iter_mut().filter(|it| it.kind.is_none()).zip(selected) {

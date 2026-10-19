@@ -128,6 +128,39 @@ mod tests {
         assert_eq!(content_of(&after.to_bytes()).unwrap().stream("CONTENTS"), Some(&b"two"[..]));
     }
 
+    /// An object whose application wrote its own `\x01CompObj` (here ANSI
+    /// names with a clipboard format, the Unicode part left empty): edited,
+    /// the class unchanged, it stays as the application wrote it.
+    #[test]
+    fn the_applications_comp_obj_stays_when_edited() {
+        let ansi = |out: &mut Vec<u8>, s: &str| {
+            out.extend_from_slice(&(s.len() as u32 + 1).to_le_bytes());
+            out.extend_from_slice(s.as_bytes());
+            out.push(0);
+        };
+        let mut comp_obj = [0xFFFE_0001u32, 0x0000_0A03, 0xFFFF_FFFF].iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+        comp_obj.extend_from_slice(&[7; 16]);
+        ansi(&mut comp_obj, "Example Drawing");
+        ansi(&mut comp_obj, "Example Native Format");
+        ansi(&mut comp_obj, "Example.Drawing.1");
+        comp_obj.extend_from_slice(&0x71B2_39F4u32.to_le_bytes());
+        comp_obj.extend_from_slice(&[0; 12]);
+        let mut storage = OleStorage::parse(&object_of(&content(&[("CONTENTS", b"one")]), None).unwrap()).unwrap();
+        storage.items.iter_mut().find(|i| i.path == "\u{1}CompObj").unwrap().data = Some(comp_obj.clone());
+        let original = storage.to_bytes();
+
+        let edited = content(&[("CONTENTS", b"two")]);
+        let after = OleStorage::parse(&object_of(&edited, Some(&original)).unwrap()).unwrap();
+        let comp_obj_after = after.items.iter().find(|i| i.path == "\u{1}CompObj").and_then(|i| i.data.clone());
+        assert_eq!(comp_obj_after, Some(comp_obj), "byte for byte");
+        assert_eq!(content_of(&after.to_bytes()).unwrap().stream("CONTENTS"), Some(&b"two"[..]));
+        // Another class: ibisOffice's own.
+        let mut other = edited.clone();
+        other.prog_id = "Other.Drawing.2".into();
+        let after = OleStorage::parse(&object_of(&other, Some(&original)).unwrap()).unwrap();
+        assert_eq!(after.prog_id.as_deref(), Some("Other.Drawing.2"));
+    }
+
     #[test]
     fn bad_streams_are_refused() {
         assert!(object_of(&content(&[("\u{1}CompObj", b"x")]), None).is_err());

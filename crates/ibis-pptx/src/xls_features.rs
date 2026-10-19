@@ -421,6 +421,7 @@ pub(crate) struct Link {
     pub target: Option<String>,
     pub location: Option<String>,
     pub display: Option<String>,
+    #[allow(dead_code)]
     pub screen_tip: Option<String>,
 }
 
@@ -628,4 +629,118 @@ pub(crate) fn notes_vml(notes: &[Note], texts: &std::collections::HashMap<u16, S
         );
     }
     format!("<xml xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:x=\"urn:schemas-microsoft-com:office:excel\"><o:shapelayout v:ext=\"edit\"><o:idmap v:ext=\"edit\" data=\"{sheet_number}\"/></o:shapelayout><v:shapetype id=\"_x0000_t202\" coordsize=\"21600,21600\" o:spt=\"202\" path=\"m,l,21600r21600,l21600,xe\"><v:stroke joinstyle=\"miter\"/><v:path gradientshapeok=\"t\" o:connecttype=\"rect\"/></v:shapetype>{shapes}</xml>")
+}
+
+// ---- AutoFilter
+
+/// A condition of an `AUTOFILTER` record (`DOper`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Condition {
+    Number(f64),
+    Text(String),
+    Boolean(bool),
+    Blanks,
+    NonBlanks,
+}
+
+/// One column's filter (`AUTOFILTER`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ColumnFilter {
+    /// The column, counted from the first of the filter's range.
+    pub column: u16,
+    /// Both conditions must hold (else either).
+    pub and: bool,
+    /// The conditions with their comparison (`grbitSign`: 1 <, 2 =, 3 <=, 4 >, 5 <>, 6 >=).
+    pub conditions: Vec<(u8, Condition)>,
+    /// A top (bottom) ten: the count, from the top, as a percent.
+    pub top10: Option<(u16, bool, bool)>,
+}
+
+/// An `AUTOFILTER` record: a column's conditions. `None` for one with none (the column shows all).
+pub(crate) fn read_autofilter(d: &[u8]) -> Option<ColumnFilter> {
+    let column = u16_at(d, 0)?;
+    let flags = u16_at(d, 2)?;
+    let and = flags & 1 == 0;
+    let (simple1, simple2, top10, top, percent) = (flags & 2 != 0, flags & 4 != 0, flags & 8 != 0, flags & 0x10 != 0, flags & 0x20 != 0);
+    let _ = (simple1, simple2);
+    if top10 {
+        return Some(ColumnFilter { column, and, conditions: Vec::new(), top10: Some((flags >> 6, top, percent)) });
+    }
+    // The strings of the conditions follow both: each a flag byte and its characters.
+    let mut text_at = 4 + 20;
+    let mut conditions = Vec::new();
+    for k in 0..2 {
+        let at = 4 + k * 10;
+        let (vt, sign) = (*d.get(at)?, *d.get(at + 1)?);
+        let condition = match vt {
+            0 => continue,
+            2 => Condition::Number(crate::xls::rk_value(u32_at(d, at + 2)?)),
+            4 => Condition::Number(f64::from_le_bytes(d.get(at + 2..at + 10)?.try_into().ok()?)),
+            6 => {
+                let n = *d.get(at + 6)? as usize;
+                let wide = *d.get(text_at)? & 1 != 0;
+                let size = if wide { n * 2 } else { n };
+                let body = d.get(text_at + 1..text_at + 1 + size)?;
+                text_at += 1 + size;
+                Condition::Text(if wide { String::from_utf16_lossy(&(0..n).filter_map(|j| u16_at(body, j * 2)).collect::<Vec<_>>()) } else { body.iter().map(|&b| b as char).collect() })
+            }
+            8 if *d.get(at + 3)? == 0 => Condition::Boolean(*d.get(at + 2)? != 0),
+            0x0C => Condition::Blanks,
+            0x0E => Condition::NonBlanks,
+            _ => return None,
+        };
+        conditions.push((sign, condition));
+    }
+    (!conditions.is_empty()).then_some(ColumnFilter { column, and, conditions, top10: None })
+}
+
+fn filter_value(c: &Condition) -> String {
+    match c {
+        Condition::Number(n) => ibis_calc::number_to_xml(*n),
+        Condition::Text(t) => escape(t),
+        Condition::Boolean(b) => if *b { "1".into() } else { "0".into() },
+        Condition::Blanks | Condition::NonBlanks => String::new(),
+    }
+}
+
+/// The `autoFilter` element over `range` (`A1:C8`) with the columns' conditions.
+pub(crate) fn autofilter_xml(range: &str, filters: &[ColumnFilter]) -> String {
+    let mut columns = String::new();
+    for f in filters {
+        let inner = if let Some((count, top, percent)) = f.top10 {
+            format!("<top10{}{} val=\"{count}\"/>", if top { "" } else { " top=\"0\"" }, if percent { " percent=\"1\"" } else { "" })
+        } else if f.conditions.len() == 1 && f.conditions[0].0 == 2 && !matches!(f.conditions[0].1, Condition::Blanks | Condition::NonBlanks) {
+            format!("<filters><filter val=\"{}\"/></filters>", filter_value(&f.conditions[0].1))
+        } else if f.conditions.len() == 2 && !f.and && f.conditions.iter().all(|c| c.0 == 2 && !matches!(c.1, Condition::Blanks | Condition::NonBlanks)) {
+            format!("<filters>{}</filters>", f.conditions.iter().map(|c| format!("<filter val=\"{}\"/>", filter_value(&c.1))).collect::<String>())
+        } else if f.conditions.len() == 1 && f.conditions[0].1 == Condition::Blanks {
+            "<filters blank=\"1\"/>".to_string()
+        } else {
+            let custom: String = f
+                .conditions
+                .iter()
+                .map(|(sign, c)| {
+                    let (operator, value) = match c {
+                        Condition::NonBlanks => (" operator=\"notEqual\"", " val=\" \"".to_string()),
+                        Condition::Blanks => ("", " val=\"\"".to_string()),
+                        _ => (
+                            match sign {
+                                1 => " operator=\"lessThan\"",
+                                3 => " operator=\"lessThanOrEqual\"",
+                                4 => " operator=\"greaterThan\"",
+                                5 => " operator=\"notEqual\"",
+                                6 => " operator=\"greaterThanOrEqual\"",
+                                _ => "",
+                            },
+                            format!(" val=\"{}\"", filter_value(c)),
+                        ),
+                    };
+                    format!("<customFilter{operator}{value}/>")
+                })
+                .collect();
+            format!("<customFilters{}>{custom}</customFilters>", if f.and && f.conditions.len() > 1 { " and=\"1\"" } else { "" })
+        };
+        columns.push_str(&format!("<filterColumn colId=\"{}\">{inner}</filterColumn>", f.column));
+    }
+    format!("<autoFilter ref=\"{range}\">{columns}</autoFilter>")
 }

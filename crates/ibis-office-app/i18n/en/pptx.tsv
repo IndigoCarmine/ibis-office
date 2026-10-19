@@ -97,9 +97,17 @@ pptx.distribute.h	Distribute Horizontally
 pptx.distribute.v	Distribute Vertically
 text.superscript	Superscript
 text.subscript	Subscript
+text.spacing-very-tight	Character Spacing: Very Tight
 text.spacing-tight	Character Spacing: Tight
 text.spacing-normal	Character Spacing: Normal
 text.spacing-loose	Character Spacing: Loose
+text.spacing-very-loose	Character Spacing: Very Loose
+pptx.text.character-spacing	Character Spacing
+pptx.spacing.very-tight	Very Tight (-3pt)
+pptx.spacing.tight	Tight (-1.5pt)
+pptx.spacing.normal	Normal (0pt)
+pptx.spacing.loose	Loose (+3pt)
+pptx.spacing.very-loose	Very Loose (+6pt)
 text.caps	All Caps
 text.small-caps	Small Caps
 pptx.text.case	Change Case
@@ -126,6 +134,10 @@ pptx.picture.color.sepia	Sepia
 pptx.picture.color.blue	Blue (Monotone)
 pptx.picture.color.green	Green (Monotone)
 pptx.picture.color.red	Red (Monotone)
+pptx.picture.color.transparent-white	Set Transparent Color (White)
+pptx.picture.color.transparent-black	Set Transparent Color (Black)
+pptx.picture.color.transparent-clear	Reset Transparent Color
+pptx.picture.remove-background	Remove Background (Transparent Color)
 pptx.picture.reset-colors	Reset Picture Color Effects
 pptx.picture.correction	Picture Corrections (Brightness & Contrast)
 pptx.picture.lum.normal	Normal (Brightness 0%, Contrast 0%)
@@ -139,6 +151,38 @@ pptx.picture.lum.contrast-m20	Contrast: -20%
 pptx.picture.lum.contrast-m40	Contrast: -40%
 pptx.picture.lum.bright-contrast-high	Brightness: +20%, Contrast: +20%
 pptx.picture.lum.bright-contrast-low	Brightness: -20%, Contrast: -20%
+pptx.picture.transparency	Transparency
+pptx.picture.alpha.none	No Transparency (0%)
+pptx.picture.alpha.15	Transparency: 15%
+pptx.picture.alpha.30	Transparency: 30%
+pptx.picture.alpha.50	Transparency: 50%
+pptx.picture.alpha.65	Transparency: 65%
+pptx.picture.alpha.80	Transparency: 80%
+pptx.picture.alpha.95	Transparency: 95%
+pptx.picture.artistic-effect	Artistic Effects
+pptx.picture.artistic.none	None
+pptx.picture.artistic.marker	Marker
+pptx.picture.artistic.chalk-sketch	Chalk Sketch
+pptx.picture.artistic.crisscross-etching	Crisscross Etching
+pptx.picture.artistic.pencil-grayscale	Pencil Grayscale
+pptx.picture.artistic.pencil-sketch	Pencil Sketch
+pptx.picture.artistic.line-drawing	Line Drawing
+pptx.picture.artistic.watercolor-sponge	Watercolor Sponge
+pptx.picture.artistic.paint-brush	Paint Brush
+pptx.picture.artistic.paint-strokes	Paint Strokes
+pptx.picture.artistic.blur	Blur
+pptx.picture.artistic.glow-diffused	Glow Diffused
+pptx.picture.artistic.glow-edges	Glow Edges
+pptx.picture.artistic.glass	Glass
+pptx.picture.artistic.pastels-smooth	Pastels Smooth
+pptx.picture.artistic.plastic-wrap	Plastic Wrap
+pptx.picture.artistic.mosaic-bubbles	Mosaic Bubbles
+pptx.picture.artistic.texturizer	Texturizer
+pptx.picture.artistic.film-grain	Film Grain
+pptx.picture.artistic.cutout	Cutout
+pptx.picture.artistic.photocopy	Photocopy
+pptx.picture.artistic.cement	Cement
+pptx.picture.artistic.light-screen	Light Screen
 pptx.reset-slide	Reset Slide
 pptx.reset-placement	Reset Placeholder Position
 pptx.section.add	Add Section…
@@ -177,6 +221,8 @@ pptx.glow	Glow
 pptx.reflection	Reflection
 pptx.soft-edge	Soft Edges
 pptx.bevel	Bevel
+pptx.3d-rotation	3-D Rotation
+pptx.3d-depth	3-D Depth
 pptx.sections	Sections
 pptx.slide-size	Slide Size (Keep Shape Size)
 pptx.new-slide-layout	New Slide with Layout
@@ -271,6 +317,8 @@ pptx.find.whole-words	✓ Whole words
 pptx.frame-panel.height-width-must-0-1584	Height and width must be 0-1584 cm, position -1584 to 1584 cm, and rotation an angle in degrees.
 pptx.frame-panel.height-cm	Height (cm)
 pptx.frame-panel.width-cm	Width (cm)
+pptx.frame-panel.scale-height-percent	Scale Height (%)
+pptx.frame-panel.scale-width-percent	Scale Width (%)
 pptx.frame-panel.rotation-degrees	Rotation (°)
 pptx.frame-panel.horizontal-position-cm-top-left	Horizontal Position (cm, from top left)
 pptx.frame-panel.vertical-position-cm-top-left	Vertical Position (cm, from top left)
@@ -357,6 +405,8 @@ pptx.paragraph-panel.alignment-mixed-font-sizes-keep	Alignment of mixed font siz
 pptx.paragraph-panel.line-spacing-value	Line Spacing Value
 pptx.paragraph-panel.before-pt	Before (pt)
 pptx.paragraph-panel.after-pt	After (pt)
+pptx.paragraph-panel.start-at	Start At Number
+pptx.paragraph-panel.invalid-start-at	Start at number must be an integer between 1 and 32767
 pptx.misc.line-paragraph-spacing	Line and Paragraph Spacing
 pptx.section-panel.new-section	New Section
 pptx.section-panel.slide-structure-has-changed	The slide structure has changed. Confirm your input and reopen the panel.
@@ -406,16 +456,28 @@ pptx.chart.data-quick	Edit Data (Quick)…
 pptx.insert-chart.column	Clustered Column
 pptx.insert-chart.stacked-column	Stacked Column
 pptx.insert-chart.percent-stacked-column	100% Stacked Column
+pptx.insert-chart.3d-clustered-column	3-D Clustered Column
+pptx.insert-chart.3d-stacked-column	3-D Stacked Column
+pptx.insert-chart.3d-percent-stacked-column	100% 3-D Stacked Column
+pptx.insert-chart.3d-column	3-D Column
 pptx.insert-chart.bar	Clustered Bar
 pptx.insert-chart.stacked-bar	Stacked Bar
 pptx.insert-chart.percent-stacked-bar	100% Stacked Bar
+pptx.insert-chart.3d-clustered-bar	3-D Clustered Bar
+pptx.insert-chart.3d-stacked-bar	3-D Stacked Bar
+pptx.insert-chart.3d-percent-stacked-bar	100% 3-D Stacked Bar
 pptx.insert-chart.line	Line
 pptx.insert-chart.stacked-line	Stacked Line
 pptx.insert-chart.percent-stacked-line	100% Stacked Line
+pptx.insert-chart.3d-line	3-D Line
 pptx.insert-chart.area	Area
 pptx.insert-chart.stacked-area	Stacked Area
 pptx.insert-chart.percent-stacked-area	100% Stacked Area
+pptx.insert-chart.3d-area	3-D Area
+pptx.insert-chart.3d-stacked-area	3-D Stacked Area
+pptx.insert-chart.3d-percent-stacked-area	100% 3-D Stacked Area
 pptx.insert-chart.pie	Pie
+pptx.insert-chart.3d-pie	3-D Pie
 pptx.insert-chart.doughnut	Doughnut
 pptx.insert-chart.scatter	Scatter
 pptx.insert-chart.scatter-smooth	Scatter with Smooth Lines
@@ -696,6 +758,25 @@ pptx.bevel.convex	Convex
 pptx.bevel.cool-slant	Cool Slant
 pptx.bevel.hard-edge	Hard Edge
 pptx.bevel.art-deco	Art Deco
+pptx.3d-rotation.none	No Rotation
+pptx.3d-rotation.isometric-right-up	Isometric: Right Up
+pptx.3d-rotation.isometric-left-up	Isometric: Left Up
+pptx.3d-rotation.isometric-top-up	Isometric: Top Up
+pptx.3d-rotation.off-axis-1-top	Off Axis 1: Top
+pptx.3d-rotation.off-axis-1-left	Off Axis 1: Left
+pptx.3d-rotation.off-axis-1-right	Off Axis 1: Right
+pptx.3d-rotation.perspective-front	Perspective: Front
+pptx.3d-rotation.perspective-above	Perspective: Above
+pptx.3d-rotation.perspective-below	Perspective: Below
+pptx.3d-rotation.perspective-left	Perspective: Left
+pptx.3d-rotation.perspective-right	Perspective: Right
+pptx.3d-rotation.oblique-top-left	Oblique: Top Left
+pptx.3d-rotation.oblique-top-right	Oblique: Top Right
+pptx.3d-depth.none	No Depth
+pptx.3d-depth.10pt	10 pt
+pptx.3d-depth.20pt	20 pt
+pptx.3d-depth.36pt	36 pt
+pptx.3d-depth.72pt	72 pt
 table.new.2x2	2 Rows × 2 Columns
 table.new.3x3	3 Rows × 3 Columns
 table.new.3x4	3 Rows × 4 Columns
@@ -822,6 +903,15 @@ pptx.anim.in.fly-bottom	Fly In (From Bottom)
 pptx.anim.in.fly-left	Fly In (From Left)
 pptx.anim.in.fly-right	Fly In (From Right)
 pptx.anim.in.fly-top	Fly In (From Top)
+pptx.anim.in.float	Float In
+pptx.anim.in.float-down	Float In (Down)
+pptx.anim.in.wipe	Wipe
+pptx.anim.in.wipe-bottom	Wipe (From Bottom)
+pptx.anim.in.wipe-left	Wipe (From Left)
+pptx.anim.in.wipe-right	Wipe (From Right)
+pptx.anim.in.wipe-top	Wipe (From Top)
+pptx.anim.in.zoom	Zoom
+pptx.anim.in.replay	Replay
 pptx.anim.em.spin	Spin
 pptx.anim.em.grow	Grow/Shrink
 pptx.anim.out.disappear	Disappear
@@ -830,6 +920,15 @@ pptx.anim.out.fly-bottom	Fly Out (To Bottom)
 pptx.anim.out.fly-left	Fly Out (To Left)
 pptx.anim.out.fly-right	Fly Out (To Right)
 pptx.anim.out.fly-top	Fly Out (To Top)
+pptx.anim.out.float	Float Out
+pptx.anim.out.float-up	Float Out (Up)
+pptx.anim.out.wipe	Wipe
+pptx.anim.out.wipe-bottom	Wipe (To Bottom)
+pptx.anim.out.wipe-left	Wipe (To Left)
+pptx.anim.out.wipe-right	Wipe (To Right)
+pptx.anim.out.wipe-top	Wipe (To Top)
+pptx.anim.out.zoom	Zoom
+pptx.anim.out.rewind	Rewind
 pptx.anim.start	Start
 pptx.anim.start.click	On Click
 pptx.anim.start.with	With Previous
@@ -936,6 +1035,18 @@ pptx.theme.palette.slate	Slate
 pptx.theme.palette.median	Median
 pptx.theme.palette.orient	Orient
 pptx.theme.palette.blue	Blue II
+pptx.theme.save-theme	Save Current Theme...
+pptx.theme.effects	Theme Effects
+pptx.theme.effects.office	Office (Standard)
+pptx.theme.effects.office-2007-2010	Office 2007 - 2010
+pptx.theme.effects.metro	Metro
+pptx.theme.effects.aspect	Aspect
+pptx.theme.effects.apex	Apex
+pptx.theme.effects.slate	Slate
+pptx.theme.effects.median	Median
+pptx.theme.effects.glossy	Glossy
+pptx.theme.effects.bubbles	Bubbles
+pptx.theme.effects.shadow	Shadow
 pptx.theme-panel.file-has-no-theme-colors	This file has no theme colors
 pptx.theme-panel.enter-colors-rrggbb	Enter colors as #RRGGBB
 pptx.theme-panel.text-background-dark-1	Text/Background - Dark 1
@@ -995,6 +1106,14 @@ number.type.alphaUcPeriod	A. B. C.
 number.type.alphaLcParenR	a) b) c)
 number.type.romanLcPeriod	i. ii. iii.
 number.type.romanUcPeriod	I. II. III.
+pptx.numbering.start-at	Start At
+pptx.numbering.start-at-1	Start at 1
+pptx.numbering.start-at-2	Start at 2
+pptx.numbering.start-at-3	Start at 3
+pptx.numbering.start-at-4	Start at 4
+pptx.numbering.start-at-5	Start at 5
+pptx.numbering.start-at-10	Start at 10
+pptx.numbering.options	Bullets and Numbering Options...
 pptx.index-fields.bullets	Bullets
 pptx.chrome.bullet-symbol	Bullet Symbol
 pptx.chrome.numbering	Numbering
@@ -1022,6 +1141,7 @@ pptx.export-all-slides-png	Export All Slides as Images…
 pptx.export-gif	Export as Animated GIF…
 pptx.export-ppsx	PowerPoint Slide Show (.ppsx)
 pptx.export-potx	PowerPoint Template (.potx)
+pptx.export-thmx	Office Theme (.thmx)
 pptx.new-from-template	New from Template...
 pptx.outline-view	Outline View
 pptx.notes-page-view	Notes Page
@@ -1106,6 +1226,12 @@ pptx.anim.opt.fly-bottom	From Bottom
 pptx.anim.opt.fly-left	From Left
 pptx.anim.opt.fly-right	From Right
 pptx.anim.opt.fly-top	From Top
+pptx.anim.opt.float-up	Float Up
+pptx.anim.opt.float-down	Float Down
+pptx.anim.opt.wipe-bottom	From Bottom
+pptx.anim.opt.wipe-left	From Left
+pptx.anim.opt.wipe-right	From Right
+pptx.anim.opt.wipe-top	From Top
 pptx.anim.opt.spin-360-cw	360° Clockwise
 pptx.anim.opt.spin-360-ccw	360° Counterclockwise
 pptx.anim.opt.spin-180	Half Spin (180°)
@@ -1160,6 +1286,8 @@ pptx.properties-panel.created	Created
 pptx.properties-panel.modified	Modified
 pptx.properties-panel.author	Author
 pptx.properties-panel.subject	Subject
+pptx.properties-panel.fonts-section	Fonts
+pptx.properties-panel.embed-fonts	Embed fonts in the file
 pptx.inspect-document	Inspect Presentation…
 pptx.inspect-panel.inspect-presentation	Inspect Presentation
 pptx.inspect-panel.inspect-presentation-personal	Inspect the presentation for personal information and hidden content, and remove it.
@@ -1241,6 +1369,7 @@ pptx.chrome.transition-sound	Transition Sound
 pptx.editing.sound	Sound
 pptx.chrome.picture-color	Picture Color
 pptx.chrome.brightness-contrast	Brightness and Contrast
+pptx.chrome.artistic-effects	Artistic Effects
 pptx.custom-format.borders	Borders
 pptx.chrome.table-styles	Table Styles
 pptx.chrome.table-style-options	Table Style Options
@@ -1326,6 +1455,10 @@ pptx.text.warp.fade-right	Fade Right
 pptx.text.warp.fade-left	Fade Left
 pptx.text.warp.fade-up	Fade Up
 pptx.text.warp.fade-down	Fade Down
+pptx.insert.screenshot	Screenshot
+pptx.insert.screenshot.available-windows	Available Windows
+pptx.insert.screenshot.clipping	Screen Clipping…
+pptx.insert.screenshot.clipboard	Screenshot from Clipboard
 pptx.insert.icon	Icons…
 pptx.icon-category.arrows	Arrows & Navigation
 pptx.icon-category.business	Business & Office
@@ -1499,6 +1632,26 @@ pptx.audio-link	Audio (Link to File)…
 pptx.clips.linked-file-was-not-found	The linked file was not found: {path}
 pptx.clips.linking-file-not-available-here	Linking to a file is not available here
 pptx.spelling.check	Spelling…
+pptx.autocorrect-options	AutoCorrect Options…
+pptx.math	Equation…
+pptx.math.title	Equation
+pptx.math.hint	Type the equation in linear form (UnicodeMath) or LaTeX (e.g. a/b, \frac{a}{b}, x^2, \sqrt{x+1}, \sum_{i=1}^n x)
+pptx.math.insert	Insert
+pptx.ink.pen	Pen
+pptx.ink.pencil	Pencil
+pptx.ink.highlighter	Highlighter
+pptx.ink.eraser	Eraser
+pptx.ink.ruler	Ruler
+pptx.ink.ruler-angle	Angle
+pptx.ink.ruler-length	Length
+pptx.ink.ruler-level	Level
+pptx.ink.replay	Replay
+pptx.ink.replayed	Ink replay animation set
+pptx.ink.to-shape	Ink to Shape
+pptx.ink.to-text	Ink to Text
+pptx.ink.to-math	Ink to Math
+pptx.ink.message.converted-text	Converted ink to text
+pptx.ink.message.converted-math	Converted ink to math
 pptx.spelling-panel.spelling	Spelling
 pptx.spelling-panel.suggestions	Suggestions
 pptx.spelling-panel.no-suggestions	No suggestions
@@ -1715,3 +1868,322 @@ _pptx.can-t-save	Can't save.
 _pptx.enter-valid-values-in-points-for-line-spacing-pa	Enter valid values in points for line spacing, paragraph spacing, or indentation.
 _pptx.replace-fonts	Replace Fonts
 _pptx.no-custom-shows-have-been-defined	(No custom shows have been defined.)
+pptx.master-view.placeholder.insert	Insert Placeholder
+pptx.master-view.placeholder.title	Title
+pptx.master-view.placeholder.text	Text
+pptx.master-view.placeholder.content	Content
+pptx.master-view.placeholder.picture	Picture
+pptx.master-view.placeholder.chart	Chart
+pptx.master-view.placeholder.table	Table
+pptx.master-view.placeholder.media	Media
+pptx.notes-master	Notes Master
+pptx.notes-format.notes-master-undo-history	Notes Master: the undo history is cleared when you close it
+pptx.notes-format.notes-master-closed-undo-history	Notes Master closed (the undo history was cleared)
+pptx.notes-format.notes-master-help	Move and resize the slide image, notes, header, date, footer and page number boxes, and change their text format. The notes’ text styles by level are not changed
+pptx.notes-format.close-notes-master	Close Notes Master
+pptx.notes-format.notes-master	Notes Master
+pptx.slideshow.notes-smaller	Smaller Text
+pptx.slideshow.notes-larger	Larger Text
+pptx.slideshow.teleprompter	Teleprompter
+pptx.slideshow.teleprompter-speed	{n} pt/s
+pptx.edit-points.smooth	Smooth Point
+pptx.edit-points.straight	Straight Point
+pptx.edit-points.corner	Corner Point
+pptx.insert-chart.box-whisker	Box and Whisker
+pptx.insert-chart.treemap	Treemap
+pptx.insert-chart.sunburst	Sunburst
+pptx.print-panel.outline	Outline (the slides' titles and text)
+pptx.anim.build.word	By Word
+pptx.anim.build.letter	By Letter
+pptx.chart.ex.own-color	Chart's Own Color
+pptx.chart.ex.increase	Increase
+pptx.chart.ex.decrease	Decrease
+pptx.chart.ex.total	Total
+pptx.math.insert-inline	Insert Inline (at the end of the selected shape's text)
+pptx.math.format-unicodemath	UnicodeMath
+pptx.math.format-latex	LaTeX
+pptx.math.copy-latex	Copy LaTeX
+pptx.math.copy-selection-latex	Copy Equation as LaTeX
+pptx.math.latex-copied	LaTeX copied to clipboard
+pptx.color-mode	Color/Grayscale
+pptx.view.color	Color
+pptx.view.grayscale	Grayscale
+pptx.view.high-contrast	Black and White
+pptx.accessibility-panel.high-contrast	High Contrast View
+pptx.accessibility-panel.color-view	Color View
+pptx.ink.effects	Effects
+pptx.ink.custom-color	Custom Color
+pptx.ink.effect.rainbow	Rainbow
+pptx.ink.effect.galaxy	Galaxy
+pptx.ink.effect.lava	Lava
+pptx.ink.effect.ocean	Ocean
+pptx.ink.effect.rose-gold	Rose Gold
+pptx.ink.effect.gold	Gold
+pptx.ink.effect.silver	Silver
+pptx.ink.effect.bronze	Bronze
+pptx.replace-fonts.substitute	Set as Substitute
+pptx.replace-fonts.substitute-success	Set substitute font for "{target}" to "{substitute}"
+pptx.replace-fonts.substitute-removed	Removed substitute font for "{target}"
+pptx.replace-fonts.substitutions-title	Active Font Substitutions:
+pptx.replace-fonts.missing-fonts-title	Missing Fonts (Substitution or Embedding Recommended):
+pptx.replace-fonts.embedded-fonts-title	Fonts Embedded in File:
+pptx.replace-fonts.embed-button	Embed Font
+pptx.replace-fonts.embed-success	Embedded font "{name}" into presentation
+pptx.replace-fonts.remove-embed	Remove Embedding
+pptx.replace-fonts.remove-embed-success	Removed embedded font "{name}"
+pptx.photo-album	Photo Album...
+pptx.photo-album.title	Photo Album
+pptx.photo-album.pictures-in-album	Pictures in album:
+pptx.photo-album.move-up	Move Up
+pptx.photo-album.move-down	Move Down
+pptx.photo-album.remove	Remove
+pptx.photo-album.picture-options	Picture options
+pptx.photo-album.bw-on	☑ All pictures black and white
+pptx.photo-album.bw-off	☐ All pictures black and white
+pptx.photo-album.captions-on	☑ Captions below all pictures
+pptx.photo-album.captions-off	☐ Captions below all pictures
+pptx.photo-album.album-layout	Album layout
+pptx.photo-album.layout.fit-to-slide	Fit to slide
+pptx.photo-album.layout.1pic	1 picture
+pptx.photo-album.layout.2pic	2 pictures
+pptx.photo-album.layout.4pic	4 pictures
+pptx.photo-album.layout.1pic-title	1 picture with title
+pptx.photo-album.layout.2pic-title	2 pictures with title
+pptx.photo-album.layout.4pic-title	4 pictures with title
+pptx.photo-album.frame-shape	Frame shape
+pptx.photo-album.frame.rect	Rectangle
+pptx.photo-album.frame.round-rect	Rounded Rectangle
+pptx.photo-album.frame.simple-white	Simple Frame, White
+pptx.photo-album.frame.simple-black	Simple Frame, Black
+pptx.photo-album.frame.compound-black	Compound Frame, Black
+pptx.photo-album.frame.center-shadow	Center Shadow
+pptx.photo-album.frame.soft-edge	Soft Edge
+pptx.photo-album.create	Create
+pptx.photo-album.create-success	Photo album created successfully
+pptx.anim.chart-build	Chart Animation
+pptx.anim.chart.whole	As One Object
+pptx.anim.chart.series	By Series
+pptx.anim.chart.category	By Category
+pptx.anim.chart.series-el	By Element in Series
+pptx.anim.chart.category-el	By Element in Category
+pptx.anim.chart.anim-bg	Start by Drawing Chart Background
+pptx.anim.dgm-build	SmartArt Animation
+pptx.anim.dgm.whole	As One Object
+pptx.anim.dgm.all	All at Once
+pptx.anim.dgm.one-by-one	One by One
+pptx.anim.dgm.level-at-once	Level at Once
+pptx.anim.dgm.level-one-by-one	Level One by One
+pptx.insert.smartart.list	Basic Block List
+pptx.insert.smartart.vlist	Vertical Bullet List
+pptx.insert.smartart.process	Basic Process
+pptx.insert.smartart.chevron	Continuous Chevron Arrow
+pptx.insert.smartart.cycle	Basic Cycle
+pptx.insert.smartart.hierarchy	Organization Chart
+pptx.insert.smartart.relationship	Basic Relationship
+pptx.insert.smartart.matrix	Basic Matrix
+pptx.insert.smartart.pyramid	Basic Pyramid
+pptx.insert.smartart.picture	Picture Accent List
+pptx.smartart.convert-text	Convert to SmartArt
+pptx.smartart.add-shape	Add Item to SmartArt
+pptx.smartart.remove-shape	Remove Item from SmartArt
+pptx.smartart.add-assistant	Add Assistant
+pptx.smartart.move-up	Move Up
+pptx.smartart.move-down	Move Down
+pptx.smartart.promote	Promote
+pptx.smartart.demote	Demote
+pptx.smartart.text-pane	Text Pane
+pptx.smartart.change-layout	Change Layout
+pptx.smartart.layout.list	Basic Block List
+pptx.smartart.layout.vlist	Vertical Bullet List
+pptx.smartart.layout.process	Basic Process
+pptx.smartart.layout.chevron	Continuous Chevron Arrow
+pptx.smartart.layout.cycle	Basic Cycle
+pptx.smartart.layout.hierarchy	Organization Chart
+pptx.smartart.layout.relationship	Basic Relationship
+pptx.smartart.layout.matrix	Basic Matrix
+pptx.smartart.layout.pyramid	Basic Pyramid
+pptx.smartart.layout.picture	Picture Accent List
+pptx.smartart.color	Change Colors
+pptx.smartart.color.colorful	Colorful
+pptx.smartart.color.accent1	Accent 1 (Blue)
+pptx.smartart.color.accent2	Accent 2 (Orange)
+pptx.smartart.color.accent3	Accent 3 (Green)
+pptx.smartart.color.outline	Outline
+pptx.review.compare	Compare Presentations…
+pptx.review.accept	Accept Change
+pptx.review.accept-all	Accept All Changes
+pptx.review.reject	Reject Change
+pptx.review.reject-all	Reject All Changes
+pptx.review.end-review	End Review
+pptx.compare.title	Compare Presentations
+pptx.compare.no-changes	No differences found. Presentations are identical.
+pptx.compare.accept	Accept
+pptx.compare.reject	Reject
+pptx.compare.cannot-read	Could not read comparison presentation file.
+pptx.thesaurus	Thesaurus
+pptx.thesaurus.select-word	Select a shape or text containing a word
+pptx.thesaurus.lookup	Searching synonyms for "{word}"
+pptx.audio.record	Record
+pptx.audio.stop	Stop
+pptx.audio.record-title	Record Audio
+pptx.audio.recorded-sound-default	Recorded Sound
+pptx.audio.sound-name	Name:
+pptx.audio.total-sound-length	Total sound length:
+pptx.audio.status-ready	Ready
+pptx.audio.status-recording	Recording...
+pptx.audio.status-recorded	Recorded
+pptx.audio.insert-to-slide	Insert to Slide
+pptx.audio.recorded-inserted	Inserted audio "{name}"
+pptx.audio-record	Record Audio…
+pptx.media.section-title	Compress Media & Compatibility
+pptx.media.media-count	{count} media files
+pptx.media.compress	Compress Media
+pptx.media.compress-1080p	Full HD (1080p)
+pptx.media.compress-720p	HD (720p)
+pptx.media.compress-480p	Standard (480p)
+pptx.media.optimize-compatibility	Optimize Compatibility
+pptx.media.no-media-found	No media found in this presentation
+pptx.media.already-compressed	Media is already compressed
+pptx.media.compressed-report	Compressed media: saved {saved} KB
+pptx.media.optimized-compatible	All media optimized for compatibility
+pptx.3d-model	3D Model…
+pptx.3d-model.not-available-here	Inserting 3D models is not available in this environment.
+pptx.insert-object	Insert Object…
+pptx.insert-object.not-available-here	Inserting objects is not available in this environment.
+pptx.table.distribute	Distribute
+table.remove-table	Delete Table
+pptx.text.edit	Edit Text
+pptx.grid-and-guides	Grid and Guides
+pptx.format-shape	Format Shape…
+pptx.format-picture	Format Picture…
+pptx.text-direction	Text Direction
+pptx.text.autofit	Autofit Text
+pptx.3d-model.panel	3D Model Settings…
+pptx.3d-model.title	3D Model Settings
+pptx.3d-model.views	Predefined Model Views
+pptx.3d-model.view.default	Default (Front)
+pptx.3d-model.view.above	Above
+pptx.3d-model.view.below	Below
+pptx.3d-model.view.left	Left
+pptx.3d-model.view.right	Right
+pptx.3d-model.view.iso-top-left	Isometric (Top Left)
+pptx.3d-model.view.iso-top-right	Isometric (Top Right)
+pptx.3d-model.view.iso-bottom-left	Isometric (Bottom Left)
+pptx.3d-model.view.iso-bottom-right	Isometric (Bottom Right)
+pptx.3d-model.view.front-ortho	Orthographic (Front)
+pptx.3d-model.rotation	3-Axis Rotation (X / Y / Z)
+pptx.3d-model.rot-x	X Rotation (°)
+pptx.3d-model.rot-y	Y Rotation (°)
+pptx.3d-model.rot-z	Z Rotation (°)
+pptx.3d-model.pan-zoom	Pan & Zoom
+pptx.3d-model.pan-left	← Pan Left
+pptx.3d-model.pan-right	Pan Right →
+pptx.3d-model.pan-up	↑ Pan Up
+pptx.3d-model.pan-down	↓ Pan Down
+pptx.3d-model.zoom-in	Zoom In (+25%)
+pptx.3d-model.zoom-out	Zoom Out (-25%)
+pptx.3d-model.pos-size	Model Position & Size
+pptx.3d-model.width-plus	Width +10%
+pptx.3d-model.width-minus	Width -10%
+pptx.3d-model.height-plus	Height +10%
+pptx.3d-model.height-minus	Height -10%
+pptx.3d-model.reset	Reset 3D Model
+pptx.3d-model.reset-size	Reset Model & Size
+pptx.3d-model.scenes	Scene Selection & Playback
+pptx.3d-model.scene.1	Scene 1 (Default)
+pptx.3d-model.scene.2	Scene 2 (Explode)
+pptx.3d-model.scene.3	Scene 3 (Spin)
+pptx.3d-model.scene.4	Scene 4 (Pulse)
+pptx.3d-model.play	Play
+pptx.3d-model.pause	Pause
+pptx.3d-model.animations	3D Animation Effects
+pptx.3d-model.anim.arrive	Arrive
+pptx.3d-model.anim.turntable	Turntable
+pptx.3d-model.anim.swing	Swing
+pptx.3d-model.anim.jump-turn	Jump & Turn
+pptx.3d-model.anim.leave	Leave
+pptx.3d-model.web-note	Desktop supports local 3D model insertion and full editing. Web supports viewing, 3-axis rotation, view switching, and resizing existing models.
+pptx.record-preview	Recording Preview…
+pptx.record-preview.title	Recording Preview
+pptx.record-preview.play	Preview Play
+pptx.record-preview.pause	Pause
+pptx.record-preview.prev-slide	Previous Slide
+pptx.record-preview.next-slide	Next Slide
+pptx.record-preview.clear-timing	Clear Current Slide Timing
+pptx.record-preview.set-5s	Set Slide Timing to 5s
+pptx.record-preview.start-show	Start Show from Current Slide
+pptx.screen-reader	Screen Reader Navigation…
+pptx.screen-reader.title	Screen Reader Navigation
+pptx.screen-reader.current	Current Announcement
+pptx.screen-reader.prev	Previous
+pptx.screen-reader.next	Next
+pptx.screen-reader.read-aloud	Read Aloud Current Item
+pptx.screen-reader.stop-aloud	Stop Reading
+pptx.screen-reader.filter.all	All
+pptx.screen-reader.filter.title	Titles
+pptx.screen-reader.filter.text	Body & Text
+pptx.screen-reader.filter.table	Tables
+pptx.screen-reader.filter.chart	Charts
+pptx.screen-reader.filter.media	Pictures & Media
+pptx.screen-reader.filter.notes	Notes & Comments
+pptx.customize-ribbon	Customize Ribbon & Quick Access…
+pptx.customize-ribbon.title	Customize Ribbon & Quick Access
+pptx.customize-ribbon.groups	Toolbar Group Visibility
+pptx.customize-ribbon.group.slides	Slides
+pptx.customize-ribbon.group.font	Font
+pptx.customize-ribbon.group.paragraph	Paragraph
+pptx.customize-ribbon.group.insert	Insert
+pptx.customize-ribbon.group.drawing	Drawing & Shapes
+pptx.customize-ribbon.group.arrange	Arrange & View
+pptx.customize-ribbon.reset-groups	Reset Group Visibility
+pptx.customize-ribbon.qat	Quick Access Toolbar (QAT)
+pptx.customize-ribbon.qat-reset	Reset QAT to Default
+pptx.trust-center	Trust Center…
+pptx.trust-center.title	Trust Center & Security Settings
+pptx.trust-center.links-warning	Show warning when opening presentations with external links
+pptx.trust-center.media-warning	Confirm before playing external media or linked clips
+pptx.trust-center.protected-view	Open files from untrusted locations in Protected View (read-only)
+pptx.trust-center.macro-note	Macro-enabled files (.pptm / .ppsm / .potm) are safely preserved on round-trip without executing VBA code.
+pptx.common.close	Close
+pptx.comments.post-tip-mac	Post (⌘Enter)
+pptx.comments.post-tip-other	Post (Ctrl+Enter)
+pptx.compare.kind.text-box	Text Box
+pptx.compare.kind.picture	Picture
+pptx.compare.kind.chart	Chart
+pptx.compare.kind.line	Line
+pptx.compare.kind.shape	Shape
+pptx.compare.kind.table	Table
+pptx.compare.kind.object	Object
+pptx.compare.title-count	{title} ({n} changes)
+pptx.compare.slide-added	➕ [Slide added] Slide {n}: {title}
+pptx.compare.slide-deleted	➖ [Slide deleted] Slide {n}: {title}
+pptx.compare.slide-modified	📝 Slide {n}: {title}
+pptx.compare.shape-added	  - Shape added: {kind}
+pptx.compare.shape-deleted	  - Shape deleted: {name}
+pptx.compare.text-changed	  - Text changed ({name}): "{old}" → "{new}"
+pptx.compare.frame-changed	  - Position and size changed: {name}
+pptx.compare.notes-changed	  - Notes changed: "{old}" → "{new}"
+pptx.smartart.item.item-n	Item {n}
+pptx.smartart.item.step-n	Step {n}
+pptx.smartart.item.plan	Plan
+pptx.smartart.item.do	Do
+pptx.smartart.item.evaluate	Evaluate
+pptx.smartart.item.improve	Improve
+pptx.smartart.item.leader	Leader
+pptx.smartart.item.member-a	Member A
+pptx.smartart.item.member-b	Member B
+pptx.smartart.item.element-a	Element A
+pptx.smartart.item.element-b	Element B
+pptx.smartart.item.quadrant-n	Quadrant {n}
+pptx.smartart.item.quadrant	Quadrant
+pptx.smartart.item.top	Top
+pptx.smartart.item.middle	Middle
+pptx.smartart.item.base	Base
+pptx.smartart.item.item-a	Item A
+pptx.smartart.item.assistant	Assistant
+pptx.smartart.color.blue-short	Blue
+pptx.smartart.color.orange-short	Orange
+pptx.smartart.color.green-short	Green
+pptx.smartart.color.outline-short	Outline
+pptx.smartart.select-prompt	Select a SmartArt graphic.
+pptx.smartart.item.item-b	Item B

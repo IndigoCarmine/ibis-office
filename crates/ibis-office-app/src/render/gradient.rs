@@ -270,10 +270,34 @@ pub(crate) fn paint_gradient_mode(
                 let s = (i + 1) as f32 / bands as f32;
                 let color = color_at_mode(stops, (i as f32 + 0.5) / bands as f32, powerpoint);
                 let pieces: Vec<Vec<Pt>> = match path {
-                    GradientPath::Shape => subpaths
-                        .iter()
-                        .map(|sub| sub.iter().map(|&(x, y)| (centre.0 + (x - centre.0) * s, centre.1 + (y - centre.1) * s)).collect())
-                        .collect(),
+                    GradientPath::Shape => {
+                        let scaled = |sub: &Vec<Pt>| -> Vec<Pt> { sub.iter().map(|&(x, y)| (centre.0 + (x - centre.0) * s, centre.1 + (y - centre.1) * s)).collect() };
+                        // A hole (a part inside a bigger one, as a donut's) stays where it is, cut to the
+                        // band's outline: scaled with the rest it would be filled with the bands.
+                        let area = |p: &Vec<Pt>| -> f32 { p.iter().enumerate().map(|(i, a)| { let b = p[(i + 1) % p.len()]; a.0 * b.1 - b.0 * a.1 }).sum::<f32>().abs() / 2.0 };
+                        let inside = |p: &Vec<Pt>, point: Pt| -> bool {
+                            let mut inside = false;
+                            for (i, a) in p.iter().enumerate() {
+                                let b = p[(i + 1) % p.len()];
+                                if (a.1 > point.1) != (b.1 > point.1) && point.0 < (b.0 - a.0) * (point.1 - a.1) / (b.1 - a.1) + a.0 {
+                                    inside = !inside;
+                                }
+                            }
+                            inside
+                        };
+                        subpaths
+                            .iter()
+                            .enumerate()
+                            .map(|(j, sub)| {
+                                let first = sub.first().copied().unwrap_or((0.0, 0.0));
+                                let holder = subpaths.iter().enumerate().find(|(i, other)| *i != j && other.len() >= 3 && area(other) > area(sub) && inside(other, first));
+                                match holder {
+                                    Some((_, outer)) if sub.len() >= 3 => clip_convex(sub, &scaled(outer)),
+                                    _ => scaled(sub),
+                                }
+                            })
+                            .collect()
+                    }
                     GradientPath::Rect => {
                         let rect = [
                             (lerp(inner.0, 0.0, s), lerp(inner.1, 0.0, s)),

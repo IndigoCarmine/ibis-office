@@ -148,6 +148,11 @@ fn conditional_source_ids(p: &Presentation) -> Vec<Option<Vec<Option<usize>>>> {
 }
 
 pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &Presentation, current: &Presentation, chart_data: &super::pptx_chart_data::ChartDataEdits, new_charts: &HashMap<ibis_doc_model::ShapeId, super::NewChartEntry>) -> Result<(), Error> {
+    let has_svg = current.media.iter().any(|m| m.format == ibis_doc_model::MediaFormat::Svg)
+        || package.names().any(|n| n.ends_with(".svg"));
+    if has_svg && package.content_type("dummy.svg")?.is_none() {
+        super::pptx_shapes::add_default_content_type(package, "svg", "image/svg+xml")?;
+    }
     if super::pptx::same_content(baseline, current) && baseline.workbook == current.workbook && conditional_source_ids(baseline)==conditional_source_ids(current) {
         return Ok(());
     }
@@ -168,7 +173,7 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
                 let edit = match edit {
                     ibis_doc_model::sheet_ops::StructureEdit::AddSheet { sheet, name, slide, shape, content } if !content.cells.is_empty() || !content.merges.is_empty() => {
                         let blank = Sheet {
-                            cells: Vec::new(),
+                            cells: Default::default(),
                             styles: Vec::new(),
                             merges: Vec::new(),
                             columns: vec![content.default_column; content.columns.len()],
@@ -181,6 +186,7 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
                             outline_rows: Default::default(),
                             outline_columns: Default::default(),
                             frozen: None,
+                            split: None,
                             ..(**content).clone()
                         };
                         ibis_doc_model::sheet_ops::StructureEdit::AddSheet { sheet: *sheet, name: name.clone(), slide: *slide, shape: *shape, content: std::sync::Arc::new(blank) }
@@ -204,7 +210,7 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
     // Defined names changed: written into the workbook part.
     let names = |p: &Presentation| p.workbook.as_ref().map(|w| w.names.clone()).unwrap_or_default();
     if names(baseline) != names(current) {
-        write_names(package, &map.workbook, &names(baseline), &names(current), &external_book_names(baseline))?;
+        write_names(package, &map.workbook, &names(baseline), &names(current), &external_book_names(current))?;
     }
     let custom_styles = |p: &Presentation| p.workbook.as_ref().map(|w| w.custom_cell_styles.clone()).unwrap_or_default();
     if custom_styles(baseline) != custom_styles(current) {
@@ -247,7 +253,11 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
     if window_hidden(baseline) != window_hidden(current) {
         write_workbook_window_hidden(package, &map.workbook, window_hidden(current))?;
     }
-    let without_names = |p: &Presentation| p.workbook.as_deref().map(|w| ibis_doc_model::Workbook { names: Vec::new(), compatibility_version: None, custom_cell_styles: Vec::new(), calc_mode: ibis_doc_model::CalcMode::Auto, calc_on_save: true, full_precision: true, iterate: false, max_iterations: 100, max_change: ibis_doc_model::SheetFloat(0.001), protection: None, properties: Default::default(), theme_colors: Vec::new(), theme_fonts: None, custom_views: Vec::new(), window_hidden: false, external_books: Vec::new(), ..w.clone() });
+    let queries = |p: &Presentation| p.workbook.as_deref().map(|w| (w.queries.clone(), w.query_parameters.clone())).unwrap_or_default();
+    if queries(baseline) != queries(current) {
+        write_queries(package, &map.workbook, &queries(current))?;
+    }
+    let without_names = |p: &Presentation| p.workbook.as_deref().map(|w| ibis_doc_model::Workbook { names: Vec::new(), compatibility_version: None, custom_cell_styles: Vec::new(), calc_mode: ibis_doc_model::CalcMode::Auto, calc_on_save: true, full_precision: true, iterate: false, max_iterations: 100, max_change: ibis_doc_model::SheetFloat(0.001), protection: None, properties: Default::default(), theme_colors: Vec::new(), theme_fonts: None, custom_views: Vec::new(), window_hidden: false, external_books: Vec::new(), queries: Vec::new(), query_parameters: Vec::new(), ..w.clone() });
     if without_names(baseline) != without_names(current) {
         return Err(unsupported("ブック（シート名・名前の定義など）の変更"));
     }
@@ -261,7 +271,7 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
     let multi_names: HashSet<String> = workbook.names.iter().filter(|n| n.formula.contains(':') || n.formula.contains(',')).map(|n| n.name.to_lowercase()).collect();
     let mut moved_chart_ids = move_chart_drawings(package, map, baseline, current, chart_data)?;
     moved_chart_ids.extend(shape_edits::write_shape_edits(package, map, baseline, current, &moved_chart_ids.clone(), new_charts, chart_data)?);
-    let mut writer = Writer { package, map, baseline, styles: None, strings: None, calc: CalcChanges::default(), multi_names };
+    let mut writer = Writer { package, map, baseline, styles: None, strings: None, calc: CalcChanges::default(), multi_names, books: external_book_names(current) };
     for (old_slide, new_slide) in baseline.slides.iter().zip(&current.slides) {
         if old_slide == new_slide && sheet_of(old_slide).zip(sheet_of(new_slide)).is_none_or(|(a,b)| sizes::conditional_sources_eq(&a.conditional,&b.conditional)) {
             continue;
@@ -274,8 +284,8 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
             return Err(unsupported("このシートの変更"));
         };
         let (old_shapes, new_shapes) = (others(old_slide), others(new_slide));
-        // Slicers deleted: their parts go (below); the rest is compared.
-        let removed: Vec<ibis_doc_model::Shape> = old_shapes.iter().filter(|s| matches!(s.kind, ShapeKind::Slicer(_)) && !new_shapes.iter().any(|n| n.id == s.id)).cloned().collect();
+        // Slicers, timelines, and form controls deleted: their parts go (below); the rest is compared.
+        let removed: Vec<ibis_doc_model::Shape> = old_shapes.iter().filter(|s| matches!(s.kind, ShapeKind::Slicer(_) | ShapeKind::Timeline(_) | ShapeKind::Control(_)) && !new_shapes.iter().any(|n| n.id == s.id)).cloned().collect();
         let old_shapes: Vec<ibis_doc_model::Shape> = old_shapes.into_iter().filter(|s| !removed.iter().any(|r| r.id == s.id)).collect();
         // Embedded objects edited (their content and picture): written apart.
         let old_shapes = write_object_edits(writer.package, &writer.map.objects, current, new, old_shapes, &new_shapes)?;
@@ -286,20 +296,38 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
         let index = workbook.sheets.iter().position(|s| s.slide == Some(new_slide.id)).ok_or_else(|| unsupported("このシートの変更"))?;
         let part = map.sheet_parts.get(index).cloned().flatten().ok_or_else(|| unsupported("このシートの変更"))?;
         let sheet_id = map.sheet_ids.get(index).copied().unwrap_or(index as u32 + 1);
+        let sheet_name = &workbook.sheets[index].name;
         slicers::write_slicer_frames(writer.package, &part, new, &old_shapes, &new_shapes)?;
+        slicers::write_timeline_frames(writer.package, &part, new, &old_shapes, &new_shapes)?;
+        write_control_changes(writer.package, &part, new, &old_shapes, &new_shapes)?;
         if !removed.is_empty() {
             let slicer_of = |s: &ibis_doc_model::Shape| match &s.kind { ShapeKind::Slicer(x) => Some((**x).clone()), _ => None };
             let gone: Vec<_> = removed.iter().filter_map(slicer_of).collect();
             let left: Vec<_> = current.slides.iter().flat_map(|s| s.shapes.iter()).filter_map(slicer_of).collect();
             slicers::write_slicer_removals(writer.package, &part, &map.workbook, &gone, &left)?;
+            let timeline_of = |s: &ibis_doc_model::Shape| match &s.kind { ShapeKind::Timeline(x) => Some((**x).clone()), _ => None };
+            let gone_tl: Vec<_> = removed.iter().filter_map(timeline_of).collect();
+            let left_tl: Vec<_> = current.slides.iter().flat_map(|s| s.shapes.iter()).filter_map(timeline_of).collect();
+            slicers::write_timeline_removals(writer.package, &part, &map.workbook, &gone_tl, &left_tl)?;
+            let control_of = |s: &ibis_doc_model::Shape| match &s.kind { ShapeKind::Control(x) => Some((**x).clone()), _ => None };
+            let gone_ctrl: Vec<_> = removed.iter().filter_map(control_of).collect();
+            write_control_removals(writer.package, &part, &gone_ctrl)?;
         }
-        writer.write_sheet(&part, sheet_id, old, new)?;
+        writer.write_sheet(&part, sheet_id, sheet_name, old, new)?;
     }
     writer.finish()?;
     slicers::write_slicer_selection(package, &map.workbook, baseline, current)?;
+    slicers::write_slicer_settings(package, map, baseline, current)?;
+    slicers::write_timeline_settings_and_state(package, map, baseline, current)?;
     externals::write_external_links(package, &map.workbook, &map.external_parts, baseline, current)?;
     if compatibility_changed || stale_formulas(baseline, current) {
         full_calculation_on_load(package, &map.workbook)?;
+    }
+    if (current.media.iter().any(|m| m.format == ibis_doc_model::MediaFormat::Svg)
+        || package.names().any(|n| n.ends_with(".svg")))
+        && package.content_type("dummy.svg")?.is_none()
+    {
+        super::pptx_shapes::add_default_content_type(package, "svg", "image/svg+xml")?;
     }
     Ok(())
 }
@@ -410,7 +438,7 @@ fn write_names(package: &mut Package, workbook: &str, old: &[ibis_doc_model::Def
         let qualified = ibis_calc::formula::rewrite_references(&n.formula, |area| {
             if area.sheet.is_none() {
                 let mut a = area.clone();
-                a.sheet = Some(ibis_calc::formula::SheetRef { first: sheet_name.clone(), last: None, book: None });
+                a.sheet = Some(ibis_calc::formula::SheetRef { first: sheet_name.clone(), last: None, book: None, path: None });
                 a.start.row_fixed = true;
                 a.start.column_fixed = true;
                 a.end.row_fixed = true;
@@ -438,6 +466,9 @@ fn write_names(package: &mut Package, workbook: &str, old: &[ibis_doc_model::Def
         doc.set_attr(e, "name", &n.name);
         if let Some(i) = n.sheet {
             doc.set_attr(e, "localSheetId", &i.to_string());
+        }
+        if n.hidden {
+            doc.set_attr(e, "hidden", "1");
         }
         doc.set_text(e, &format_formula(n));
         let count = doc.children(list).len();
@@ -645,10 +676,26 @@ fn write_custom_workbook_views(package: &mut Package, workbook: &str, views: &[i
             doc.insert(root, n, list);
         }
     }
+    let (xw, yw, ww, wh, tr) = if let Some(wv) = doc.child(root, "bookViews").and_then(|bv| doc.child(bv, "workbookView")) {
+        (
+            doc.attr(wv, "xWindow").unwrap_or("5040").to_string(),
+            doc.attr(wv, "yWindow").unwrap_or("1800").to_string(),
+            doc.attr(wv, "windowWidth").unwrap_or("28300").to_string(),
+            doc.attr(wv, "windowHeight").unwrap_or("17360").to_string(),
+            doc.attr(wv, "tabRatio").unwrap_or("600").to_string(),
+        )
+    } else {
+        ("5040".to_string(), "1800".to_string(), "28300".to_string(), "17360".to_string(), "600".to_string())
+    };
     for v in views {
         let node = doc.append_element(list, &format!("{prefix}customWorkbookView"));
         doc.set_attr(node, "name", &v.name);
         doc.set_attr(node, "guid", &v.guid);
+        doc.set_attr(node, "xWindow", &xw);
+        doc.set_attr(node, "yWindow", &yw);
+        doc.set_attr(node, "windowWidth", &ww);
+        doc.set_attr(node, "windowHeight", &wh);
+        doc.set_attr(node, "tabRatio", &tr);
         if !v.include_print_settings {
             doc.set_attr(node, "includePrintSettings", "0");
         } else {
@@ -659,12 +706,72 @@ fn write_custom_workbook_views(package: &mut Package, workbook: &str, views: &[i
         } else {
             doc.set_attr(node, "includeHiddenRowCol", "1");
         }
-        doc.set_attr(node, "activeSheetId", &(v.active_sheet_index + 1).to_string());
+        doc.set_attr(node, "activeSheetId", &v.active_sheet_index.to_string());
     }
     Ok(())
 }
 
 /// ウィンドウの非表示・再表示: `<bookViews><workbookView visibility="hidden"/>`.
+/// A relationship's target as a part name, from the folder of its source (`xl/` and `../customXml/item1.xml`).
+fn resolve_target(dir: &str, target: &str) -> String {
+    if let Some(abs) = target.strip_prefix('/') {
+        return abs.to_string();
+    }
+    let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
+    for seg in target.split('/') {
+        match seg {
+            ".." => {
+                parts.pop();
+            }
+            "." | "" => {}
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
+}
+
+const QUERIES_NS: &str = "https://ibis.ne.jp/ibisoffice/queries";
+const REL_CUSTOM_XML: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+const REL_CUSTOM_XML_PROPS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps";
+
+/// The part (`customXml/itemN.xml`) of the クエリ エディター's queries, if the workbook has one: a Custom XML
+/// Data part (ECMA-376 Part 1 §15.2.5) whose root is `queries` in our namespace.
+fn queries_part(package: &Package, workbook: &str) -> Option<String> {
+    let dir = workbook.rsplit_once('/').map_or(String::new(), |(d, _)| format!("{d}/"));
+    package.relationships(workbook).ok()?.into_iter().filter(|r| !r.external && r.kind == REL_CUSTOM_XML).find_map(|r| {
+        let part = resolve_target(&dir, &r.target);
+        let text = String::from_utf8(package.read(&part).ok()?).ok()?;
+        text.contains(QUERIES_NS).then_some(part)
+    })
+}
+
+/// The queries of the クエリ エディター in a Custom XML Data part (`customXml/itemN.xml` with its
+/// `itemPropsN.xml`), which Excel keeps as it keeps any other custom XML; made when there is none.
+fn write_queries(package: &mut Package, workbook: &str, (queries, parameters): &(Vec<ibis_doc_model::query::Query>, Vec<ibis_doc_model::query::Parameter>)) -> Result<(), Error> {
+    let text = ibis_doc_model::query::encode_queries(queries, parameters);
+    let escaped = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let xml = format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<queries xmlns=\"{QUERIES_NS}\" version=\"1\">{escaped}</queries>");
+    if let Some(part) = queries_part(package, workbook) {
+        package.set_bytes(&part, xml.into_bytes());
+        return Ok(());
+    }
+    if queries.is_empty() && parameters.is_empty() {
+        return Ok(());
+    }
+    let n = (1..).find(|n| !package.contains(&format!("customXml/item{n}.xml"))).unwrap_or(1);
+    let (part, props) = (format!("customXml/item{n}.xml"), format!("customXml/itemProps{n}.xml"));
+    package.set_bytes(&part, xml.into_bytes());
+    let id = format!("{{{:08X}-{:04X}-4{:03X}-8{:03X}-{:012X}}}", 0x1B15_0000u32 + n as u32, 0x0A5E, 0x123, 0xABC, 0x1B15_0000_0000u64 + n as u64);
+    let item_props = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<ds:datastoreItem ds:itemID=\"{id}\" xmlns:ds=\"http://schemas.openxmlformats.org/officeDocument/2006/customXml\"><ds:schemaRefs><ds:schemaRef ds:uri=\"{QUERIES_NS}\"/></ds:schemaRefs></ds:datastoreItem>"
+    );
+    package.set_bytes(&props, item_props.into_bytes());
+    package.set_override(&props, "application/vnd.openxmlformats-officedocument.customXmlProperties+xml")?;
+    package.add_relationship(&part, REL_CUSTOM_XML_PROPS, &format!("itemProps{n}.xml"), false)?;
+    package.add_relationship(workbook, REL_CUSTOM_XML, &format!("../customXml/item{n}.xml"), false)?;
+    Ok(())
+}
+
 fn write_workbook_window_hidden(package: &mut Package, workbook: &str, hidden: bool) -> Result<(), Error> {
     let doc = package.xml_mut(workbook)?;
     let root = doc.root_element().ok_or_else(|| Error::new("ブックの XML が空です"))?;
@@ -707,6 +814,8 @@ struct Writer<'a> {
     /// The defined names that stand for more than one cell (lower case),
     /// for telling a dynamic array formula from a plain one.
     multi_names: HashSet<String>,
+    /// The external workbooks' names as the saved file numbers them (the links it had, then the new ones).
+    books: Vec<String>,
 }
 
 /// Formula cells to add to and remove from the calculation chain, by sheetId.
@@ -754,10 +863,10 @@ fn changed_cells<'s>(old: &'s Sheet, new: &'s Sheet) -> Vec<Change<'s>> {
 }
 
 impl Writer<'_> {
-    fn write_sheet(&mut self, part: &str, sheet_id: u32, old: &Sheet, new: &Sheet) -> Result<(), Error> {
+    fn write_sheet(&mut self, part: &str, sheet_id: u32, sheet_name: &str, old: &Sheet, new: &Sheet) -> Result<(), Error> {
         // Cells, formats, sizes (hidden rows and columns too) and merged ranges can be saved so far.
         let bare = |s: &Sheet| Sheet {
-            cells: Vec::new(),
+            cells: Default::default(),
             styles: Vec::new(),
             columns: Vec::new(),
             rows: Vec::new(),
@@ -766,6 +875,7 @@ impl Writer<'_> {
             hidden_columns: Default::default(),
             spills: Default::default(),
             frozen: None,
+            split: None,
             protection: None,
             protected_ranges: Vec::new(),
             validations: Vec::new(),
@@ -780,6 +890,7 @@ impl Writer<'_> {
             zoom: None,
             page_break_preview: false,
             page_layout: false,
+            show_ruler: true,
             tab_color: None,
             auto_filter: None,
             filtered_rows: Default::default(),
@@ -796,6 +907,10 @@ impl Writer<'_> {
             phonetic_pr: None,
             ignored_errors: Vec::new(),
             cell_images: Vec::new(),
+            web_images: Default::default(),
+            show_formulas: false,
+            show_zeros: true,
+            hide_ink: false,
             ..s.clone()
         };
         if bare(old) != bare(new) {
@@ -831,8 +946,8 @@ impl Writer<'_> {
         if old.threads != new.threads {
             write_threaded_comments(self.package, &self.map.workbook, part, &new.threads)?;
         }
-        if old.tables != new.tables {
-            write_tables(self.package, part, &old.tables, &new.tables)?;
+        if old.tables != new.tables || !table_calculated_formulas_eq(old, new) {
+            write_tables(self.package, self.map.styles.as_deref(), part, old, new)?;
         }
         if old.pivots != new.pivots {
             let workbook = self.map.workbook.clone();
@@ -869,7 +984,7 @@ impl Writer<'_> {
         }
         if old.sparklines != new.sparklines {
             let doc = self.package.xml_mut(part)?;
-            sizes::write_sparklines(doc, &new.sparklines)?;
+            sizes::write_sparklines(doc, sheet_name, &new.sparklines)?;
         }
         if old.tab_color != new.tab_color {
             let doc = self.package.xml_mut(part)?;
@@ -883,6 +998,18 @@ impl Writer<'_> {
             let doc = self.package.xml_mut(part)?;
             sizes::write_headings(doc, new.headings)?;
         }
+        if old.show_ruler != new.show_ruler {
+            let doc = self.package.xml_mut(part)?;
+            sizes::write_show_ruler(doc, new.show_ruler)?;
+        }
+        if old.show_formulas != new.show_formulas {
+            let doc = self.package.xml_mut(part)?;
+            sizes::write_show_formulas(doc, new.show_formulas)?;
+        }
+        if old.show_zeros != new.show_zeros {
+            let doc = self.package.xml_mut(part)?;
+            sizes::write_show_zeros(doc, new.show_zeros)?;
+        }
         if old.zoom != new.zoom {
             let doc = self.package.xml_mut(part)?;
             sizes::write_zoom(doc, new.zoom, if new.page_break_preview { Some("zoomScaleSheetLayoutView") } else if new.page_layout { Some("zoomScalePageLayoutView") } else { None })?;
@@ -892,9 +1019,9 @@ impl Writer<'_> {
             let mode = if new.page_break_preview { Some("pageBreakPreview") } else if new.page_layout { Some("pageLayout") } else { None };
             sizes::write_page_break_preview(doc, mode)?;
         }
-        if old.frozen != new.frozen {
+        if old.frozen != new.frozen || old.split != new.split {
             let doc = self.package.xml_mut(part)?;
-            sizes::write_frozen(doc, new.frozen)?;
+            sizes::write_panes(doc, new.frozen, new.split)?;
         }
         if old.custom_views != new.custom_views {
             let doc = self.package.xml_mut(part)?;
@@ -903,6 +1030,13 @@ impl Writer<'_> {
         if old.show_phonetic != new.show_phonetic || old.phonetic_pr != new.phonetic_pr {
             let doc = self.package.xml_mut(part)?;
             sizes::write_phonetic(doc, new.show_phonetic, new.phonetic_pr.as_ref())?;
+        } else {
+            let doc = self.package.xml_mut(part)?;
+            if let Some(root) = doc.root_element() && let Some(p) = doc.child(root, "phoneticPr") {
+                if doc.attr(p, "fontId").is_none() {
+                    doc.set_attr(p, "fontId", "0");
+                }
+            }
         }
         if old.columns != new.columns || old.rows != new.rows || old.merges != new.merges {
             let digit = self.map.digit;
@@ -926,7 +1060,7 @@ impl Writer<'_> {
         changes.sort_by_key(|c| (c.0, c.1));
         // Dynamic arrays whose area changed (their cells may not have).
         let respilled: Vec<(u32, u32)> = new.spills.iter().filter(|(a, r)| old.spills.get(a) != Some(r)).map(|(a, _)| *a).filter(|a| !changes.iter().any(|c| (c.0, c.1) == *a)).collect();
-        if changes.is_empty() && respilled.is_empty() {
+        if changes.is_empty() && respilled.is_empty() && old.data_tables == new.data_tables {
             return Ok(());
         }
         // Single-cell dynamic results must keep their calculation mode: a
@@ -994,7 +1128,7 @@ impl Writer<'_> {
         for &(row, column, before, after) in &changes {
             let formula_changed = before.and_then(|c| c.formula.as_ref()) != after.and_then(|c| c.formula.as_ref());
             if formula_changed {
-                sheet.unshare_around(row, column, old, &external_book_names(self.baseline))?;
+                sheet.unshare_around(row, column, old, &self.books)?;
             }
             match after {
                 None => {
@@ -1021,7 +1155,7 @@ impl Writer<'_> {
                             // the cell's recognized composite metadata reference.
                             let f = sheet.formula(c).unwrap_or_else(|| sheet.insert_child(c, "f", 0));
                             for attr in ["t", "ref", "si"] { sheet.doc.remove_attr(f, attr); }
-                            sheet.doc.set_text(f, &file_formula_in(&external_book_names(self.baseline), formula, table_at(new, row, column))?);
+                            sheet.doc.set_text(f, &file_formula_in(&self.books, formula, table_at(new, row, column))?);
                             if !new.spills.contains_key(&(row, column)) { sheet.doc.remove_attr(c, "cm"); }
                             if let Some(index) = activated_metadata.get(&(row,column)) { sheet.doc.set_attr(c,"cm",index); }
                             write_dynamic(&mut sheet, c, f, new, row, column, cm.as_deref(), &self.multi_names);
@@ -1505,12 +1639,14 @@ impl<'d> SheetXml<'d> {
             }
         }
         let has_formula = cell.formula.is_some();
+        let is_ecma376_error = |e: ibis_doc_model::CellError| matches!(e, ibis_doc_model::CellError::Null | ibis_doc_model::CellError::Div0 | ibis_doc_model::CellError::Value | ibis_doc_model::CellError::Ref | ibis_doc_model::CellError::Name | ibis_doc_model::CellError::Num | ibis_doc_model::CellError::NA);
         let (t, v): (Option<&str>, Option<String>) = match &cell.value {
             CellValue::Empty => (None, None),
             CellValue::Number(n) => (None, Some(number_to_xml(*n))),
             CellValue::Text(s) if has_formula => (Some("str"), Some(crate::xlsx::encode_xstring(s))),
             CellValue::Text(_) => (Some("s"), string.map(|i| i.to_string())),
             CellValue::Bool(b) => (Some("b"), Some(if *b { "1" } else { "0" }.to_string())),
+            CellValue::Error(e) if !is_ecma376_error(*e) => (Some("str"), Some(e.as_str().to_string())),
             CellValue::Error(e) => (Some("e"), Some(e.as_str().to_string())),
         };
         match t {
@@ -1995,6 +2131,17 @@ fn write_sheet_shape_labels(
     let has_warp_change = old_slide.shapes.iter().zip(&new_slide.shapes).any(|(o, n)| {
         o.text_body().and_then(|b| b.warp.as_deref()) != n.text_body().and_then(|b| b.warp.as_deref())
     });
+    let has_picture_effects_change = new_slide.shapes.iter().any(|shape| {
+        match (
+            old_slide.shapes.iter().find(|s| s.id == shape.id).map(|s| &s.kind),
+            &shape.kind,
+        ) {
+            (Some(ShapeKind::Picture(op)), ShapeKind::Picture(np)) => {
+                op.clear != np.clear || op.duotone != np.duotone || op.luminance != np.luminance
+            }
+            _ => false,
+        }
+    });
 
     if old_slide.shape_alt_texts == new_slide.shape_alt_texts
         && old_slide.shape_names == new_slide.shape_names
@@ -2003,6 +2150,7 @@ fn write_sheet_shape_labels(
         && !has_shape_geometry_change
         && !has_formula_change
         && !has_warp_change
+        && !has_picture_effects_change
     {
         return Ok(());
     }
@@ -2016,6 +2164,7 @@ fn write_sheet_shape_labels(
         geometry_preset: Option<String>,
         formula: Option<Option<String>>,
         warp: Option<Option<String>>,
+        picture_effects: Option<(Option<Rgb>, Option<(Rgb, Rgb)>, Option<(i32, i32)>)>,
     }
 
     let mut changes_by_drawing: HashMap<String, Vec<ShapeMetaChange>> = HashMap::new();
@@ -2063,7 +2212,27 @@ fn write_sheet_shape_labels(
             _ => None,
         };
 
-        if name_change.is_none() && alt_change.is_none() && placement_change.is_none() && print_change.is_none() && geometry_preset_change.is_none() && formula_change.is_none() && warp_change.is_none() {
+        let picture_effects_change = match (
+            old_slide.shapes.iter().find(|s| s.id == shape.id).map(|s| &s.kind),
+            &shape.kind,
+        ) {
+            (Some(ShapeKind::Picture(op)), ShapeKind::Picture(np))
+                if op.clear != np.clear || op.duotone != np.duotone || op.luminance != np.luminance =>
+            {
+                Some((np.clear, np.duotone, np.luminance))
+            }
+            _ => None,
+        };
+
+        if name_change.is_none()
+            && alt_change.is_none()
+            && placement_change.is_none()
+            && print_change.is_none()
+            && geometry_preset_change.is_none()
+            && formula_change.is_none()
+            && warp_change.is_none()
+            && picture_effects_change.is_none()
+        {
             continue;
         }
 
@@ -2087,6 +2256,7 @@ fn write_sheet_shape_labels(
                 geometry_preset: geometry_preset_change,
                 formula: formula_change,
                 warp: warp_change,
+                picture_effects: picture_effects_change,
             });
         }
     }
@@ -2156,11 +2326,11 @@ fn write_sheet_shape_labels(
                     }
                 }
             }
-            if item.geometry_preset.is_some() || item.formula.is_some() || item.warp.is_some() {
+            if item.geometry_preset.is_some() || item.formula.is_some() || item.warp.is_some() || item.picture_effects.is_some() {
                 let mut curr = doc.parent(node);
                 let mut sp_node = None;
                 while let Some(p) = curr {
-                    if doc.local_name(p) == "sp" {
+                    if matches!(doc.local_name(p), "sp" | "pic") {
                         sp_node = Some(p);
                         break;
                     }
@@ -2234,6 +2404,68 @@ fn write_sheet_shape_labels(
                                 for w in warps {
                                     doc.detach(w);
                                 }
+                            }
+                        }
+                    }
+                    if let Some((clear, duotone, luminance)) = item.picture_effects {
+                        let a_pfx = match doc.lookup_prefix(root, DRAWING_NS) {
+                            Some(p) if !p.is_empty() => format!("{p}:"),
+                            _ => "a:".into(),
+                        };
+                        let blip_node = doc.descendants(sp).into_iter().find(|&d| doc.local_name(d) == "blip");
+                        if let Some(blip) = blip_node {
+                            let ext_lst = doc.children(blip).into_iter().copied().find(|&c| doc.local_name(c) == "extLst");
+                            if let Some(ext) = ext_lst {
+                                doc.detach(ext);
+                            }
+
+                            let to_remove: Vec<NodeId> = doc
+                                .children(blip)
+                                .into_iter()
+                                .copied()
+                                .filter(|&c| matches!(doc.local_name(c), "clrChange" | "duotone" | "lum"))
+                                .collect();
+                            for child in to_remove {
+                                doc.detach(child);
+                            }
+
+                            if let Some((dark, light)) = duotone {
+                                let d_node = doc.append_element(blip, &format!("{a_pfx}duotone"));
+                                let c1 = doc.append_element(d_node, &format!("{a_pfx}srgbClr"));
+                                doc.set_attr(c1, "val", &format!("{:06X}", dark.0 & 0xff_ffff));
+                                let c2 = doc.append_element(d_node, &format!("{a_pfx}srgbClr"));
+                                doc.set_attr(c2, "val", &format!("{:06X}", light.0 & 0xff_ffff));
+                            }
+
+                            if let Some(color) = clear {
+                                let clr_hex = format!("{:06X}", color.0 & 0xff_ffff);
+                                let change_node = doc.append_element(blip, &format!("{a_pfx}clrChange"));
+                                let from_node = doc.append_element(change_node, &format!("{a_pfx}clrFrom"));
+                                let from_srgb = doc.append_element(from_node, &format!("{a_pfx}srgbClr"));
+                                doc.set_attr(from_srgb, "val", &clr_hex);
+
+                                let to_node = doc.append_element(change_node, &format!("{a_pfx}clrTo"));
+                                let to_srgb = doc.append_element(to_node, &format!("{a_pfx}srgbClr"));
+                                doc.set_attr(to_srgb, "val", &clr_hex);
+                                let alpha = doc.append_element(to_srgb, &format!("{a_pfx}alpha"));
+                                doc.set_attr(alpha, "val", "0");
+                            }
+
+                            if let Some((bright, contrast)) = luminance {
+                                if bright != 0 || contrast != 0 {
+                                    let lum_node = doc.append_element(blip, &format!("{a_pfx}lum"));
+                                    if bright != 0 {
+                                        doc.set_attr(lum_node, "bright", &bright.to_string());
+                                    }
+                                    if contrast != 0 {
+                                        doc.set_attr(lum_node, "contrast", &contrast.to_string());
+                                    }
+                                }
+                            }
+
+                            if let Some(ext) = ext_lst {
+                                let len = doc.children(blip).len();
+                                doc.insert(blip, len, ext);
                             }
                         }
                     }
@@ -2416,15 +2648,35 @@ fn move_chart_drawings(
         if let (ShapeKind::Chart(ca), ShapeKind::Chart(cb)) = (&old_shape.kind, &new_shape.kind) {
             if ca != cb {
                 let edit = chart_data.get(&shape_id).and_then(|edits| edits.iter().rev().find(|(c, _)| c.groups == cb.groups)).map(|(_, d)| d);
+                // A chartEx chart: made from its cells; the settings in its XML are written when they changed.
+                if ca.ex.is_some() && cb.ex.is_some() {
+                    write_chart_ex(package, &map.charts[source_idx].chart, ca, cb)?;
+                } else if cb.is_pivot_chart() && ca.groups != cb.groups {
+                    super::pptx_chart_data::write_pivot_chart_series(package, &map.charts[source_idx].chart, cb)?;
+                    let base = pivot_chart_base(ca, cb);
+                    if base != **cb {
+                        write_chart_settings(package, &map.charts[source_idx].chart, &base, cb)?;
+                    }
+                } else {
                 match edit {
-                    Some(data) if ca.groups != cb.groups => {
+                    Some(data) if ca.groups != cb.groups || ca.cell_refs != cb.cell_refs => {
                         super::pptx_chart_data::write_sheet_chart_series(package, &map.charts[source_idx].chart, cb, &data.series)?;
-                        let base = ibis_doc_model::Chart { groups: cb.groups.clone(), ..(**ca).clone() };
+                        let base = ibis_doc_model::Chart { groups: cb.groups.clone(), cell_refs: cb.cell_refs.clone(), ..(**ca).clone() };
+                        if base != **cb {
+                            write_chart_settings(package, &map.charts[source_idx].chart, &base, cb)?;
+                        }
+                    }
+                    // The cells it reads changed (or it reads others): its series' caches written from them.
+                    _ if super::pptx_chart_data::data_differs(ca, cb) || ca.cell_refs != cb.cell_refs => {
+                        let refs = chart_refs_of(package, &map.charts[source_idx].chart, cb)?;
+                        super::pptx_chart_data::write_sheet_chart_series(package, &map.charts[source_idx].chart, cb, &refs)?;
+                        let base = ibis_doc_model::Chart { groups: cb.groups.clone(), cell_refs: cb.cell_refs.clone(), ..(**ca).clone() };
                         if base != **cb {
                             write_chart_settings(package, &map.charts[source_idx].chart, &base, cb)?;
                         }
                     }
                     _ => write_chart_settings(package, &map.charts[source_idx].chart, ca, cb)?,
+                }
                 }
             }
         }
@@ -2507,6 +2759,48 @@ fn write_object_edits(package: &mut Package, sources: &[XlsxObjectSource], curre
     Ok(old)
 }
 
+/// Baseline chart model after `write_pivot_chart_series` has updated the `<c:ser>` elements' names, categories, and values.
+fn pivot_chart_base(ca: &ibis_doc_model::Chart, cb: &ibis_doc_model::Chart) -> ibis_doc_model::Chart {
+    let groups: Vec<_> = ca
+        .groups
+        .iter()
+        .zip(&cb.groups)
+        .map(|(ca_g, cb_g)| ibis_doc_model::ChartGroup {
+            kind: ca_g.kind,
+            three_d: ca_g.three_d,
+            grouping: ca_g.grouping,
+            of_pie: ca_g.of_pie.clone(),
+            axes: cb_g.axes.clone(),
+            series: cb_g
+                .series
+                .iter()
+                .enumerate()
+                .map(|(si, s)| {
+                    let old_s = ca_g.series.get(si);
+                    ibis_doc_model::Series {
+                        fill: if matches!(s.fill, ibis_doc_model::Fill::None) {
+                            old_s.map(|o| o.fill.clone()).unwrap_or(ibis_doc_model::Fill::None)
+                        } else {
+                            ibis_doc_model::Fill::None
+                        },
+                        stroke: old_s.and_then(|o| o.stroke.clone()),
+                        labels: old_s.and_then(|o| o.labels.clone()),
+                        marker: old_s.and_then(|o| o.marker.clone()),
+                        trendline: old_s.and_then(|o| o.trendline.clone()),
+                        error_bars: old_s.and_then(|o| o.error_bars.clone()),
+                        ..s.clone()
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+    ibis_doc_model::Chart {
+        groups: if groups.len() == cb.groups.len() { groups } else { cb.groups.clone() },
+        cell_refs: cb.cell_refs.clone(),
+        ..ca.clone()
+    }
+}
+
 /// A sheet's charts changed in the app: one moved or resized gets its
 /// anchor in the drawing set anew; one whose title, legend or axes'
 /// scale and gridlines changed gets them in its chart part. Any other
@@ -2537,9 +2831,35 @@ fn write_charts(package: &mut Package, sources: &[ChartSource], sheet: &Sheet, o
                 continue;
             }
         }
-        // A slicer's selection (its buttons) changed: its cache is written apart.
+        if let (ShapeKind::Picture(pa), ShapeKind::Picture(pb)) = (&a.kind, &b.kind) {
+            let mut expected_a = pa.clone();
+            expected_a.clear = pb.clear;
+            expected_a.duotone = pb.duotone;
+            expected_a.luminance = pb.luminance;
+            if &expected_a == pb && (a.rotation, a.flip_h, a.flip_v, &a.floating, a.frame) == (b.rotation, b.flip_h, b.flip_v, &b.floating, b.frame) {
+                continue;
+            }
+        }
+        // A form control's frame, state, properties, or text formatting changed: written apart in `write_control_changes`.
+        if let (ShapeKind::Control(ca), ShapeKind::Control(cb)) = (&a.kind, &b.kind) {
+            if (a.id, a.rotation, a.flip_h, a.flip_v, &a.floating) == (b.id, b.rotation, b.flip_h, b.flip_v, &b.floating) && ca.kind == cb.kind {
+                continue;
+            }
+        }
+        // A timeline's frame, selection, settings, or name changed: written apart in `slicers`.
+        if let (ShapeKind::Timeline(ta), ShapeKind::Timeline(tb)) = (&a.kind, &b.kind) {
+            if (a.id, a.rotation, a.flip_h, a.flip_v, &a.floating) == (b.id, b.rotation, b.flip_h, b.flip_v, &b.floating) && ta.cache == tb.cache && ta.source == tb.source {
+                continue;
+            }
+        }
+        // A slicer's selection, settings, or name changed: written apart in `slicers`.
         if let (ShapeKind::Slicer(sa), ShapeKind::Slicer(sb)) = (&a.kind, &b.kind) {
-            if (a.id, a.rotation, a.flip_h, a.flip_v, &a.floating) == (b.id, b.rotation, b.flip_h, b.flip_v, &b.floating) && (sa.name.as_str(), &sa.cache, &sa.source) == (sb.name.as_str(), &sb.cache, &sb.source) {
+            let same_source_field = match (&sa.source, &sb.source) {
+                (ibis_doc_model::slicer::SlicerSource::Table { table: ta, field: fa }, ibis_doc_model::slicer::SlicerSource::Table { table: tb, field: fb }) => ta == tb && fa == fb,
+                (ibis_doc_model::slicer::SlicerSource::Pivot { field: fa, .. }, ibis_doc_model::slicer::SlicerSource::Pivot { field: fb, .. }) => fa == fb,
+                _ => false,
+            };
+            if (a.id, a.rotation, a.flip_h, a.flip_v, &a.floating) == (b.id, b.rotation, b.flip_h, b.flip_v, &b.floating) && sa.cache == sb.cache && same_source_field {
                 continue;
             }
         }
@@ -2558,16 +2878,520 @@ fn write_charts(package: &mut Package, sources: &[ChartSource], sheet: &Sheet, o
         if ca != cb {
             // A chart whose data range was changed (データ範囲・行列の切り替え): its series written from the references recorded with the edit, then the rest.
             let edit = chart_data.get(&b.id).and_then(|edits| edits.iter().rev().find(|(c, _)| c.groups == cb.groups)).map(|(_, d)| d);
+            if ca.ex.is_some() && cb.ex.is_some() {
+                write_chart_ex(package, &source.chart, ca, cb)?;
+            } else if cb.is_pivot_chart() && ca.groups != cb.groups {
+                super::pptx_chart_data::write_pivot_chart_series(package, &source.chart, cb)?;
+                let base = pivot_chart_base(ca, cb);
+                if base != **cb {
+                    write_chart_settings(package, &source.chart, &base, cb)?;
+                }
+            } else {
             match edit {
-                Some(data) if ca.groups != cb.groups => {
+                Some(data) if ca.groups != cb.groups || ca.cell_refs != cb.cell_refs => {
                     super::pptx_chart_data::write_sheet_chart_series(package, &source.chart, cb, &data.series)?;
-                    let base = ibis_doc_model::Chart { groups: cb.groups.clone(), ..(**ca).clone() };
+                    let base = ibis_doc_model::Chart { groups: cb.groups.clone(), cell_refs: cb.cell_refs.clone(), ..(**ca).clone() };
+                    if base != **cb {
+                        write_chart_settings(package, &source.chart, &base, cb)?;
+                    }
+                }
+                // The cells it reads changed (or it reads others): its series' caches written from them.
+                _ if super::pptx_chart_data::data_differs(ca, cb) || ca.cell_refs != cb.cell_refs => {
+                    let refs = chart_refs_of(package, &source.chart, cb)?;
+                    super::pptx_chart_data::write_sheet_chart_series(package, &source.chart, cb, &refs)?;
+                    let base = ibis_doc_model::Chart { groups: cb.groups.clone(), cell_refs: cb.cell_refs.clone(), ..(**ca).clone() };
                     if base != **cb {
                         write_chart_settings(package, &source.chart, &base, cb)?;
                     }
                 }
                 _ => write_chart_settings(package, &source.chart, ca, cb)?,
             }
+            }
+        }
+    }
+    Ok(())
+}
+
+const REL_CTRL_PROP: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp";
+const CT_CTRL_PROP: &str = "application/vnd.ms-excel.controlproperties+xml";
+
+fn control_object_type(kind: ibis_doc_model::ControlKind) -> &'static str {
+    use ibis_doc_model::ControlKind as K;
+    match kind {
+        K::Button => "Button",
+        K::CheckBox => "CheckBox",
+        K::Radio => "Radio",
+        K::Scroll => "Scroll",
+        K::Spin => "Spin",
+        K::Drop => "Drop",
+        K::List => "List",
+        K::GroupBox => "GBox",
+        K::Label => "Label",
+    }
+}
+
+/// Write a form control's properties and state into its `ctrlProp` part.
+fn write_control_props(package: &mut Package, part: &str, c: &ibis_doc_model::FormControl) -> Result<(), Error> {
+    use ibis_doc_model::ControlKind as K;
+    let doc = package.xml_mut(part)?;
+    let root = doc.root_element().ok_or_else(|| Error::new("コントロールの XML が空です"))?;
+    doc.set_attr(root, "objectType", control_object_type(c.kind));
+    if matches!(c.kind, K::Button | K::CheckBox | K::Radio | K::Label) {
+        doc.set_attr(root, "lockText", "1");
+    }
+    match c.link.as_deref().filter(|s| !s.is_empty()) {
+        Some(link) => doc.set_attr(root, "fmlaLink", link),
+        None => doc.remove_attr(root, "fmlaLink"),
+    }
+    match c.range.as_deref().filter(|s| !s.is_empty()) {
+        Some(range) => doc.set_attr(root, "fmlaRange", range),
+        None => doc.remove_attr(root, "fmlaRange"),
+    }
+    match c.kind {
+        K::CheckBox | K::Radio => match c.checked {
+            0 => doc.remove_attr(root, "checked"),
+            2 => doc.set_attr(root, "checked", "Mixed"),
+            _ => doc.set_attr(root, "checked", "Checked"),
+        },
+        K::Scroll | K::Spin => {
+            doc.set_attr(root, "dx", "15");
+            if c.min != 0 {
+                doc.set_attr(root, "min", &c.min.to_string());
+            } else {
+                doc.remove_attr(root, "min");
+            }
+            doc.set_attr(root, "max", &c.max.to_string());
+            if c.step != 1 {
+                doc.set_attr(root, "inc", &c.step.to_string());
+            } else {
+                doc.remove_attr(root, "inc");
+            }
+            doc.set_attr(root, "page", &c.page.to_string());
+            doc.set_attr(root, "val", &c.value.to_string());
+            if c.kind == K::Scroll {
+                if c.horizontal {
+                    doc.set_attr(root, "horiz", "1");
+                } else {
+                    doc.remove_attr(root, "horiz");
+                }
+            }
+        }
+        K::Drop | K::List => {
+            doc.set_attr(root, "dx", "15");
+            if c.kind == K::Drop {
+                doc.set_attr(root, "dropStyle", "comboedit");
+            }
+            doc.set_attr(root, "sel", &c.value.to_string());
+            doc.set_attr(root, "val", &c.value.to_string());
+        }
+        _ => {}
+    }
+    if c.kind == K::Radio {
+        if c.first_button {
+            doc.set_attr(root, "firstButton", "1");
+        } else {
+            doc.remove_attr(root, "firstButton");
+        }
+    }
+    if matches!(c.kind, K::CheckBox | K::Radio | K::Drop | K::List | K::GroupBox) {
+        if c.three_d {
+            doc.remove_attr(root, "noThreeD");
+        } else {
+            doc.set_attr(root, "noThreeD", "1");
+        }
+    }
+    Ok(())
+}
+
+fn set_control_tx_body(doc: &mut XmlDocument, sp: NodeId, c: &ibis_doc_model::FormControl) {
+    use ibis_doc_model::ControlKind as K;
+    if let Some(old_tx) = doc.child(sp, "txBody") {
+        doc.detach(old_tx);
+    }
+    if c.text.is_empty() && !matches!(c.kind, K::Button | K::CheckBox | K::Radio | K::GroupBox | K::Label) {
+        return;
+    }
+    let sp_prefix = doc.prefix(sp).map_or(String::new(), |p| format!("{p}:"));
+    let tx_body = doc.append_element(sp, &format!("{sp_prefix}txBody"));
+    let body_pr = doc.append_element(tx_body, "a:bodyPr");
+    doc.set_attr(body_pr, "vertOverflow", "clip");
+    doc.set_attr(body_pr, "wrap", if c.kind == K::GroupBox { "none" } else { "square" });
+    doc.set_attr(body_pr, "lIns", "27432");
+    doc.set_attr(body_pr, "tIns", "22860");
+    doc.set_attr(body_pr, "rIns", if c.kind == K::Button { "27432" } else { "0" });
+    doc.set_attr(body_pr, "bIns", if matches!(c.kind, K::GroupBox | K::Label) { "0" } else { "22860" });
+    doc.set_attr(body_pr, "anchor", if matches!(c.kind, K::GroupBox | K::Label) { "t" } else { "ctr" });
+    doc.set_attr(body_pr, "upright", "1");
+    doc.append_element(tx_body, "a:lstStyle");
+    let p = doc.append_element(tx_body, "a:p");
+    let p_pr = doc.append_element(p, "a:pPr");
+    doc.set_attr(p_pr, "algn", if c.kind == K::Button { "ctr" } else { "l" });
+    doc.set_attr(p_pr, "rtl", "0");
+    let def_rpr = doc.append_element(p_pr, "a:defRPr");
+    doc.set_attr(def_rpr, "sz", "1000");
+    let r = doc.append_element(p, "a:r");
+    let r_pr = doc.append_element(r, "a:rPr");
+    doc.set_attr(r_pr, "lang", "ja-JP");
+    doc.set_attr(r_pr, "altLang", "en-US");
+    doc.set_attr(r_pr, "sz", &c.font_size.unwrap_or(1100).to_string());
+    doc.set_attr(r_pr, "b", if c.bold { "1" } else { "0" });
+    doc.set_attr(r_pr, "i", if c.italic { "1" } else { "0" });
+    doc.set_attr(r_pr, "u", "none");
+    doc.set_attr(r_pr, "strike", "noStrike");
+    doc.set_attr(r_pr, "baseline", "0");
+    let sf = doc.append_element(r_pr, "a:solidFill");
+    let srgb = doc.append_element(sf, "a:srgbClr");
+    doc.set_attr(srgb, "val", &format!("{:06X}", c.text_color.map_or(0x000000, |col| col.0)));
+    if let Some(font) = c.font.as_deref().filter(|s| !s.is_empty()) {
+        let latin = doc.append_element(r_pr, "a:latin");
+        doc.set_attr(latin, "typeface", font);
+        let ea = doc.append_element(r_pr, "a:ea");
+        doc.set_attr(ea, "typeface", font);
+    }
+    let t = doc.append_element(r, "a:t");
+    doc.set_text(t, &c.text);
+}
+
+fn update_two_cell_corners(doc: &mut XmlDocument, anchor: NodeId, sheet: &Sheet, frame: ibis_doc_model::EmuRect) {
+    let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
+    let cell = |offsets: &[i64], v: i64| -> (usize, i64) {
+        let i = offsets.partition_point(|&o| o <= v).saturating_sub(1).min(offsets.len().saturating_sub(2));
+        (i, v - offsets.get(i).copied().unwrap_or(0))
+    };
+    for (corner_name, x, y) in [("from", frame.x, frame.y), ("to", frame.x + frame.width, frame.y + frame.height)] {
+        let Some(corner) = doc.child(anchor, corner_name) else { continue };
+        let ((c, co), (r, ro)) = (cell(&xs, x), cell(&ys, y));
+        for (tag, val) in [("col", c as i64), ("colOff", co), ("row", r as i64), ("rowOff", ro)] {
+            if let Some(el) = doc.child(corner, tag) {
+                doc.set_text(el, &val.to_string());
+            } else {
+                let el = doc.append_element(corner, &format!("xdr:{tag}"));
+                doc.set_text(el, &val.to_string());
+            }
+        }
+    }
+}
+
+/// Write changes to existing form controls on `sheet_part` (state, properties, frame, and text formatting).
+fn write_control_changes(
+    package: &mut Package,
+    sheet_part: &str,
+    sheet: &Sheet,
+    old: &[ibis_doc_model::Shape],
+    new: &[ibis_doc_model::Shape],
+) -> Result<(), Error> {
+    let rels = package.relationships(sheet_part)?;
+    let drawing_part = rels
+        .iter()
+        .find(|r| r.kind == REL_DRAWING && !r.external)
+        .and_then(|r| r.target_part(sheet_part));
+    for (a, b) in old.iter().zip(new) {
+        let (ShapeKind::Control(ca), ShapeKind::Control(cb)) = (&a.kind, &b.kind) else { continue };
+        if a.frame == b.frame && ca == cb {
+            continue;
+        }
+        if !cb.part.is_empty() && ca != cb {
+            write_control_props(package, &cb.part, cb)?;
+        }
+        let rid = rels
+            .iter()
+            .find(|r| !r.external && r.target_part(sheet_part).as_deref() == Some(cb.part.as_str()))
+            .map(|r| r.id.clone());
+        let mut shape_id_found: Option<String> = None;
+        {
+            let sheet_doc = package.xml_mut(sheet_part)?;
+            if let Some(root) = sheet_doc.root_element() {
+                let ctrl_node = sheet_doc.descendants(root).into_iter().find(|&n| {
+                    sheet_doc.local_name(n) == "control"
+                        && ((rid.is_some() && sheet_doc.attr_local(n, "id") == rid.as_deref())
+                            || sheet_doc.attr(n, "name") == Some(ca.name.as_str()))
+                });
+                if let Some(ctrl_node) = ctrl_node {
+                    shape_id_found = sheet_doc.attr(ctrl_node, "shapeId").map(str::to_string);
+                    if ca.name != cb.name {
+                        sheet_doc.set_attr(ctrl_node, "name", &cb.name);
+                    }
+                    if a.frame != b.frame {
+                        if let Some(anchor) = sheet_doc.descendants(ctrl_node).into_iter().find(|&n| sheet_doc.local_name(n) == "anchor") {
+                            update_two_cell_corners(sheet_doc, anchor, sheet, b.frame);
+                        }
+                    }
+                }
+            }
+        }
+        let text_diff = (&ca.name, &ca.text, &ca.font, ca.font_size, ca.bold, ca.italic, ca.text_color)
+            != (&cb.name, &cb.text, &cb.font, cb.font_size, cb.bold, cb.italic, cb.text_color);
+        if (a.frame != b.frame || text_diff)
+            && let (Some(drawing), Some(shape_id)) = (drawing_part.as_deref(), shape_id_found.as_deref())
+            && package.contains(drawing)
+        {
+            let draw_doc = package.xml_mut(drawing)?;
+            if let Some(root) = draw_doc.root_element() {
+                let cnv = draw_doc.descendants(root).into_iter().find(|&n| {
+                    draw_doc.local_name(n) == "cNvPr" && draw_doc.attr(n, "id") == Some(shape_id)
+                });
+                if let Some(cnv) = cnv {
+                    if ca.name != cb.name {
+                        draw_doc.set_attr(cnv, "name", &cb.name);
+                    }
+                    let mut p = draw_doc.parent(cnv);
+                    let mut sp_node = None;
+                    let mut anchor_node = None;
+                    while let Some(curr) = p {
+                        match draw_doc.local_name(curr) {
+                            "sp" if sp_node.is_none() => sp_node = Some(curr),
+                            "twoCellAnchor" | "oneCellAnchor" | "absoluteAnchor" => {
+                                anchor_node = Some(curr);
+                                break;
+                            }
+                            _ => {}
+                        }
+                        p = draw_doc.parent(curr);
+                    }
+                    if a.frame != b.frame
+                        && let Some(anchor) = anchor_node
+                    {
+                        update_two_cell_corners(draw_doc, anchor, sheet, b.frame);
+                    }
+                    if text_diff
+                        && let Some(sp) = sp_node
+                    {
+                        set_control_tx_body(draw_doc, sp, cb);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Add a newly inserted form control to `sheet_part`, its drawing, and a new `xl/ctrlProps/ctrlPropN.xml` part.
+pub(super) fn add_control(
+    package: &mut Package,
+    sheet_part: &str,
+    sheet: &Sheet,
+    shape: &ibis_doc_model::Shape,
+    c: &ibis_doc_model::FormControl,
+) -> Result<(), Error> {
+    let drawing = match package.relationships(sheet_part)?.into_iter().find(|r| r.kind == REL_DRAWING && !r.external) {
+        Some(rel) => rel.target_part(sheet_part).ok_or_else(|| unsupported("シートの描画パート"))?,
+        None => create_drawing(package, sheet_part)?,
+    };
+    let mut max_id = 1024u32;
+    if let Ok(sheet_doc) = package.xml(sheet_part)
+        && let Some(root) = sheet_doc.root_element()
+    {
+        for n in sheet_doc.descendants(root) {
+            if sheet_doc.local_name(n) == "control"
+                && let Some(id) = sheet_doc.attr(n, "shapeId").and_then(|v| v.parse::<u32>().ok())
+            {
+                max_id = max_id.max(id);
+            }
+        }
+    }
+    if let Ok(draw_doc) = package.xml(&drawing)
+        && let Some(root) = draw_doc.root_element()
+    {
+        for n in draw_doc.descendants(root) {
+            if draw_doc.local_name(n) == "cNvPr"
+                && let Some(id) = draw_doc.attr(n, "id").and_then(|v| v.parse::<u32>().ok())
+            {
+                max_id = max_id.max(id);
+            }
+        }
+    }
+    let shape_id = (max_id + 1).to_string();
+
+    // 1. Append hidden shape with txBody to the sheet's drawing.
+    {
+        let draw_doc = package.xml_mut(&drawing)?;
+        let root = draw_doc.root_element().ok_or_else(|| Error::new("描画の XML が空です"))?;
+        if draw_doc.lookup_prefix(root, "http://schemas.openxmlformats.org/drawingml/2006/main").is_none() {
+            draw_doc.set_attr(root, "xmlns:a", "http://schemas.openxmlformats.org/drawingml/2006/main");
+        }
+        let anchor = draw_doc.append_element(root, "xdr:twoCellAnchor");
+        draw_doc.set_attr(anchor, "editAs", "oneCell");
+        draw_doc.append_element(anchor, "xdr:from");
+        draw_doc.append_element(anchor, "xdr:to");
+        update_two_cell_corners(draw_doc, anchor, sheet, shape.frame);
+        let sp = draw_doc.append_element(anchor, "xdr:sp");
+        draw_doc.set_attr(sp, "macro", "");
+        draw_doc.set_attr(sp, "textlink", "");
+        let nv_sp_pr = draw_doc.append_element(sp, "xdr:nvSpPr");
+        let c_nv_pr = draw_doc.append_element(nv_sp_pr, "xdr:cNvPr");
+        draw_doc.set_attr(c_nv_pr, "id", &shape_id);
+        draw_doc.set_attr(c_nv_pr, "name", &c.name);
+        draw_doc.set_attr(c_nv_pr, "hidden", "1");
+        draw_doc.append_element(nv_sp_pr, "xdr:cNvSpPr");
+        let sp_pr = draw_doc.append_element(sp, "xdr:spPr");
+        draw_doc.set_attr(sp_pr, "bwMode", "auto");
+        let xfrm = draw_doc.append_element(sp_pr, "a:xfrm");
+        let off = draw_doc.append_element(xfrm, "a:off");
+        draw_doc.set_attr(off, "x", "0");
+        draw_doc.set_attr(off, "y", "0");
+        let ext = draw_doc.append_element(xfrm, "a:ext");
+        draw_doc.set_attr(ext, "cx", "0");
+        draw_doc.set_attr(ext, "cy", "0");
+        let prst = draw_doc.append_element(sp_pr, "a:prstGeom");
+        draw_doc.set_attr(prst, "prst", "rect");
+        draw_doc.append_element(prst, "a:avLst");
+        draw_doc.append_element(sp_pr, "a:noFill");
+        set_control_tx_body(draw_doc, sp, c);
+        draw_doc.append_element(anchor, "xdr:clientData");
+    }
+
+    // 2. Create `xl/ctrlProps/ctrlPropN.xml` and relationship on `sheet_part`.
+    let ctrl_part = if !c.part.is_empty() && !package.contains(&c.part) {
+        c.part.clone()
+    } else {
+        (1..)
+            .map(|n| format!("xl/ctrlProps/ctrlProp{n}.xml"))
+            .find(|p| !package.contains(p))
+            .unwrap_or_else(|| "xl/ctrlProps/ctrlProp1.xml".to_string())
+    };
+    let mut ctrl_doc = XmlDocument::new_with_declaration();
+    let ctrl_root = ctrl_doc.append_element(XmlDocument::ROOT, "formControlPr");
+    ctrl_doc.set_attr(ctrl_root, "xmlns", "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main");
+    package.set_xml(&ctrl_part, ctrl_doc);
+    write_control_props(package, &ctrl_part, c)?;
+    package.set_override(&ctrl_part, CT_CTRL_PROP)?;
+    let rel_target = super::pptx::relative(sheet_part, &ctrl_part);
+    let rid = package.add_relationship(sheet_part, REL_CTRL_PROP, &rel_target, false)?;
+
+    // 3. Append `<control>` to `<controls>` in `sheet_part`.
+    let sheet_doc = package.xml_mut(sheet_part)?;
+    let root = sheet_doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
+    if sheet_doc.lookup_prefix(root, REL_NS).is_none() {
+        sheet_doc.set_attr(root, "xmlns:r", REL_NS);
+    }
+    if sheet_doc.lookup_prefix(root, "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing").is_none() {
+        sheet_doc.set_attr(root, "xmlns:xdr", "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing");
+    }
+    let prefix = prefix_of(sheet_doc, root);
+    let controls_el = match sheet_doc.descendants(root).into_iter().find(|&n| sheet_doc.local_name(n) == "controls") {
+        Some(el) => el,
+        None => {
+            let el = detached(sheet_doc, &format!("{prefix}controls"));
+            let before = ["webPublishItems", "tableParts", "extLst"];
+            let anchor = sheet_doc.elements(root).find(|&c| before.contains(&sheet_doc.local_name(c)));
+            match anchor {
+                Some(a) => sheet_doc.insert_before(a, el),
+                None => {
+                    let count = sheet_doc.children(root).len();
+                    sheet_doc.insert(root, count, el);
+                }
+            }
+            el
+        }
+    };
+    let ctrl = sheet_doc.append_element(controls_el, &format!("{prefix}control"));
+    sheet_doc.set_attr(ctrl, "shapeId", &shape_id);
+    sheet_doc.set_attr(ctrl, "r:id", &rid);
+    sheet_doc.set_attr(ctrl, "name", &c.name);
+    let ctrl_pr = sheet_doc.append_element(ctrl, &format!("{prefix}controlPr"));
+    sheet_doc.set_attr(ctrl_pr, "defaultSize", "0");
+    sheet_doc.set_attr(ctrl_pr, "autoFill", "0");
+    sheet_doc.set_attr(ctrl_pr, "autoPict", "0");
+    let anchor = sheet_doc.append_element(ctrl_pr, &format!("{prefix}anchor"));
+    sheet_doc.set_attr(anchor, "moveWithCells", "1");
+    sheet_doc.set_attr(anchor, "sizeWithCells", "1");
+    sheet_doc.append_element(anchor, &format!("{prefix}from"));
+    sheet_doc.append_element(anchor, &format!("{prefix}to"));
+    update_two_cell_corners(sheet_doc, anchor, sheet, shape.frame);
+    Ok(())
+}
+
+/// Remove deleted form controls from `sheet_part`, its drawing, relationships, and `ctrlProps`.
+fn write_control_removals(
+    package: &mut Package,
+    sheet_part: &str,
+    gone: &[ibis_doc_model::FormControl],
+) -> Result<(), Error> {
+    if gone.is_empty() {
+        return Ok(());
+    }
+    let rels = package.relationships(sheet_part)?;
+    let drawing_part = rels
+        .iter()
+        .find(|r| r.kind == REL_DRAWING && !r.external)
+        .and_then(|r| r.target_part(sheet_part));
+    for c in gone {
+        let rid = rels
+            .iter()
+            .find(|r| !r.external && !c.part.is_empty() && r.target_part(sheet_part).as_deref() == Some(c.part.as_str()))
+            .map(|r| r.id.clone());
+        let mut shape_id_found: Option<String> = None;
+        {
+            let sheet_doc = package.xml_mut(sheet_part)?;
+            if let Some(root) = sheet_doc.root_element() {
+                let ctrl_node = sheet_doc.descendants(root).into_iter().find(|&n| {
+                    sheet_doc.local_name(n) == "control"
+                        && ((rid.is_some() && sheet_doc.attr_local(n, "id") == rid.as_deref())
+                            || sheet_doc.attr(n, "name") == Some(c.name.as_str()))
+                });
+                if let Some(ctrl_node) = ctrl_node {
+                    shape_id_found = sheet_doc.attr(ctrl_node, "shapeId").map(str::to_string);
+                    let parent = sheet_doc.parent(ctrl_node);
+                    sheet_doc.detach(ctrl_node);
+                    if let Some(choice) = parent
+                        && sheet_doc.local_name(choice) == "Choice"
+                        && sheet_doc.elements(choice).next().is_none()
+                        && let Some(ac) = sheet_doc.parent(choice)
+                        && sheet_doc.local_name(ac) == "AlternateContent"
+                    {
+                        sheet_doc.detach(ac);
+                    }
+                }
+                if let Some(controls_el) = sheet_doc.descendants(root).into_iter().find(|&n| sheet_doc.local_name(n) == "controls") {
+                    let has_remaining = sheet_doc.descendants(controls_el).into_iter().any(|n| sheet_doc.local_name(n) == "control");
+                    if !has_remaining {
+                        let parent = sheet_doc.parent(controls_el);
+                        sheet_doc.detach(controls_el);
+                        if let Some(choice) = parent
+                            && sheet_doc.local_name(choice) == "Choice"
+                            && sheet_doc.elements(choice).next().is_none()
+                            && let Some(ac) = sheet_doc.parent(choice)
+                            && sheet_doc.local_name(ac) == "AlternateContent"
+                        {
+                            sheet_doc.detach(ac);
+                        }
+                    }
+                }
+            }
+        }
+        if let (Some(drawing), Some(shape_id)) = (drawing_part.as_deref(), shape_id_found.as_deref())
+            && package.contains(drawing)
+        {
+            let draw_doc = package.xml_mut(drawing)?;
+            if let Some(root) = draw_doc.root_element() {
+                let cnv = draw_doc.descendants(root).into_iter().find(|&n| {
+                    draw_doc.local_name(n) == "cNvPr" && draw_doc.attr(n, "id") == Some(shape_id)
+                });
+                let mut at = cnv;
+                while let Some(curr) = at {
+                    if matches!(draw_doc.local_name(curr), "twoCellAnchor" | "oneCellAnchor" | "absoluteAnchor") {
+                        let parent = draw_doc.parent(curr);
+                        draw_doc.detach(curr);
+                        if let Some(choice) = parent
+                            && draw_doc.local_name(choice) == "Choice"
+                            && draw_doc.elements(choice).next().is_none()
+                            && let Some(ac) = draw_doc.parent(choice)
+                            && draw_doc.local_name(ac) == "AlternateContent"
+                        {
+                            draw_doc.detach(ac);
+                        }
+                        break;
+                    }
+                    at = draw_doc.parent(curr);
+                }
+            }
+        }
+        if let Some(rid) = rid {
+            package.remove_relationship(sheet_part, &rid)?;
+        }
+        if !c.part.is_empty() && package.contains(&c.part) {
+            package.remove_override(&c.part)?;
+            package.remove(&c.part);
         }
     }
     Ok(())
@@ -2712,14 +3536,49 @@ fn built_in_unit_name(unit: f64) -> Option<&'static str> {
 /// `xlsx/chart_edit.rs`) written into its part: the title, the legend, and
 /// the axes' minimum, maximum, major unit and major gridlines. Any other
 /// change is refused.
+/// A chartEx chart changed: its part's XML written again when its source has other settings; what it shows follows its
+/// cells and is not in the file. Title, legend, and ex_format changes are written via `pptx_chart_ex::write_chart_format`.
+fn write_chart_ex(package: &mut Package, part: &str, old: &ibis_doc_model::Chart, new: &ibis_doc_model::Chart) -> Result<(), Error> {
+    if old.ex_source != new.ex_source
+        || old.ex_source.as_ref().map(|s| s.0.xml()) != new.ex_source.as_ref().map(|s| s.0.xml())
+    {
+        if let Some(source) = &new.ex_source {
+            let doc = ibis_ooxml::XmlDocument::parse(source.0.xml().as_bytes()).map_err(|_| unsupported("グラフの設定"))?;
+            *package.xml_mut(part)? = doc;
+        }
+    }
+    let base = ibis_doc_model::Chart {
+        groups: new.groups.clone(),
+        axes: new.axes.clone(),
+        ex: new.ex.clone(),
+        ex_source: new.ex_source.clone(),
+        cell_refs: new.cell_refs.clone(),
+        ..old.clone()
+    };
+    super::pptx_chart_ex::write_chart_format(package, part, &base, new, false)
+}
+
+/// The references the series of `chart` read: its own, or (when it no longer follows the cells) those of its part.
+fn chart_refs_of(package: &Package, part: &str, chart: &ibis_doc_model::Chart) -> Result<Vec<super::pptx_chart_data::SeriesRefs>, Error> {
+    if !chart.cell_refs.is_empty() {
+        return Ok(super::pptx_chart_data::refs_of(chart));
+    }
+    Ok(super::pptx_chart_data::chart_refs(&package.xml(part)?))
+}
+
 pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis_doc_model::Chart, new: &ibis_doc_model::Chart) -> Result<(), Error> {
     let mut expected = old.clone();
     expected.title = new.title.clone();
     expected.pivot_source = new.pivot_source.clone();
-    // A legend's place (and its manual layout taken off) is written; its
-    // overlay, text and hidden entries are not.
     expected.legend = match (&old.legend, &new.legend) {
-        (Some(o), Some(n)) => Some(ibis_doc_model::Legend { source_position: n.source_position, side: n.side, layout: n.layout.filter(|_| n.layout == o.layout), ..o.clone() }),
+        (Some(o), Some(n)) => Some(ibis_doc_model::Legend {
+            source_position: n.source_position,
+            side: n.side,
+            layout: n.layout.filter(|_| n.layout == o.layout),
+            overlay: o.overlay,
+            text: n.text.clone(),
+            hidden: n.hidden.clone(),
+        }),
         (None, Some(n)) if n.overlay == Some(false) && n.layout.is_none() => Some(n.clone()),
         // A new legend otherwise, or none: what is written.
         (None, Some(_)) | (_, None) => None,
@@ -2747,10 +3606,11 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
         return Err(unsupported("グラフの系列グループの変更"));
     }
     for (eg, ng) in expected.groups.iter_mut().zip(&new.groups) {
-        if old.groups.len() == 1 && (eg.kind != ng.kind || eg.grouping != ng.grouping) {
+        if old.groups.len() == 1 && (eg.kind != ng.kind || eg.grouping != ng.grouping || eg.three_d != ng.three_d) {
             eg.kind = ng.kind;
             eg.grouping = ng.grouping;
         }
+        eg.three_d = ng.three_d;
         if let (ibis_doc_model::ChartType::Bar { horizontal: h1, .. }, ibis_doc_model::ChartType::Bar { horizontal: h2, gap_width: g2, overlap: o2 }) = (&eg.kind, &ng.kind) {
             if h1 == h2 {
                 eg.kind = ibis_doc_model::ChartType::Bar { horizontal: *h1, gap_width: *g2, overlap: *o2 };
@@ -2788,6 +3648,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
             es.error_bars = ns.error_bars.clone();
         }
     }
+    expected.cell_refs = new.cell_refs.clone();
     expected.disp_blanks_as = new.disp_blanks_as;
     expected.plot_vis_only = new.plot_vis_only;
     expected.data_table = new.data_table;
@@ -2876,6 +3737,41 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                     let n = doc.children(ps).len();
                     doc.insert(ps, n, fmt);
                 }
+            }
+            None => {
+                if let Some(node) = existing {
+                    doc.detach(node);
+                }
+            }
+        }
+    }
+    let old_v3d = old.groups.iter().find_map(|g| g.three_d);
+    let new_v3d = new.groups.iter().find_map(|g| g.three_d);
+    if old_v3d != new_v3d {
+        let existing = doc.child(chart, "view3D");
+        match new_v3d {
+            Some(v3d) => {
+                let v = match existing {
+                    Some(node) => node,
+                    None => {
+                        let node = new_el(doc, "view3D");
+                        place(doc, chart, node, &["floor", "sideWall", "backWall", "plotArea", "legend", "plotVisOnly", "dispBlanksAs", "showDLblsOverMax", "extLst"]);
+                        node
+                    }
+                };
+                let set_or_insert = |doc: &mut XmlDocument, parent: NodeId, name: &str, val: &str, order: &[&str]| {
+                    if let Some(child) = doc.child(parent, name) {
+                        doc.set_attr(child, "val", val);
+                    } else {
+                        let child = valued(doc, name, val);
+                        place(doc, parent, child, order);
+                    }
+                };
+                const VIEW3D_ORDER: &[&str] = &["rotX", "hPercent", "rotY", "depthPercent", "rAngAx", "perspective", "extLst"];
+                set_or_insert(doc, v, "rotX", &v3d.rot_x.to_string(), VIEW3D_ORDER);
+                set_or_insert(doc, v, "rotY", &v3d.rot_y.to_string(), VIEW3D_ORDER);
+                set_or_insert(doc, v, "rAngAx", if v3d.right_angle_axes { "1" } else { "0" }, VIEW3D_ORDER);
+                set_or_insert(doc, v, "depthPercent", &v3d.depth_percent.to_string(), VIEW3D_ORDER);
             }
             None => {
                 if let Some(node) = existing {
@@ -3166,7 +4062,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
     }).collect();
     for (gi, mut g_el) in group_elements.into_iter().enumerate() {
         if let (Some(old_g), Some(new_g)) = (old.groups.get(gi), new.groups.get(gi)) {
-            if old.groups.len() == 1 && (old_g.kind != new_g.kind || old_g.grouping != new_g.grouping) && super::pptx_chart_type::is_conversion(old_g.kind, new_g.kind) {
+            if old.groups.len() == 1 && (old_g.kind != new_g.kind || old_g.grouping != new_g.grouping || old_g.three_d.is_some() != new_g.three_d.is_some()) && super::pptx_chart_type::is_conversion(old_g.kind, new_g.kind) {
                 super::pptx_chart_type::convert_group(doc, plot, g_el, old_g, new_g)?;
                 if let Some(new_el) = doc.elements(plot).find(|&x| {
                     let name = doc.local_name(x);
@@ -3384,7 +4280,41 @@ pub(crate) fn number_text(v: f64) -> String {
 /// part (`xl/tables/tableN.xml`, with `tableParts` in the sheet), one whose
 /// range or columns changed rewritten there. Taking a table off
 /// (範囲に変換) is not saved yet.
-fn write_tables(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetTable], new: &[ibis_doc_model::SheetTable]) -> Result<(), Error> {
+/// The calculated column formula for column `col_index` of `table` in `sheet`,
+/// when all data rows of that column have formulas that are vertical shifts of
+/// the first data row's formula (as Excel's `calculatedColumnFormula`).
+fn calculated_column_formula(sheet: &Sheet, table: &ibis_doc_model::SheetTable, col_index: usize) -> Option<String> {
+    let col = table.range.first_column + col_index as u32;
+    let first_row = table.range.first_row + table.header_rows;
+    let last_row = table.range.last_row.checked_sub(table.totals_rows)?;
+    if first_row > last_row {
+        return None;
+    }
+    let first = sheet.cell(first_row, col)?.formula.as_deref()?.trim_start_matches('=');
+    if first.is_empty() {
+        return None;
+    }
+    for row in (first_row + 1)..=last_row {
+        let f = sheet.cell(row, col)?.formula.as_deref()?.trim_start_matches('=');
+        if ibis_calc::formula::shift(first, (row - first_row) as i64, 0) != f {
+            return None;
+        }
+    }
+    Some(first.to_string())
+}
+
+fn table_calculated_formulas(sheet: &Sheet, table: &ibis_doc_model::SheetTable) -> Vec<Option<String>> {
+    (0..table.columns.len()).map(|i| calculated_column_formula(sheet, table, i)).collect()
+}
+
+fn table_calculated_formulas_eq(old: &Sheet, new: &Sheet) -> bool {
+    old.tables.len() == new.tables.len()
+        && old.tables.iter().zip(&new.tables).all(|(o, n)| table_calculated_formulas(old, o) == table_calculated_formulas(new, n))
+}
+
+fn write_tables(package: &mut Package, styles_part: Option<&str>, part: &str, old_sheet: &Sheet, new_sheet: &Sheet) -> Result<(), Error> {
+    let old = &old_sheet.tables;
+    let new = &new_sheet.tables;
     const REL_TABLE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table";
     const CT_TABLE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
     // Tables taken off (範囲に変換): their parts, relationships and
@@ -3438,15 +4368,20 @@ fn write_tables(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetT
         // A renamed table: the one in its place before, under its old name.
         let renamed_from = old.get(ti).filter(|o| !o.name.eq_ignore_ascii_case(&t.name) && o.range.first_row == t.range.first_row && o.range.first_column == t.range.first_column && !new.iter().any(|n| n.name.eq_ignore_ascii_case(&o.name)));
         let before = old.iter().find(|o| o.name.eq_ignore_ascii_case(&t.name)).or(renamed_from);
-        if before == Some(t) {
+        let calc_before = before.map(|b| table_calculated_formulas(old_sheet, b)).unwrap_or_default();
+        let calc_after = table_calculated_formulas(new_sheet, t);
+        if before == Some(t) && calc_before == calc_after {
             continue;
-        }
-        // A table's colour filter (its dxf) is not saved yet.
-        if t.filter.as_ref().is_some_and(|f| f.columns.iter().any(|(_, x)| matches!(x, ibis_doc_model::ColumnFilter::Color { .. }))) {
-            return Err(unsupported("テーブルの色フィルター"));
         }
         let part_name = before.map_or(t.name.as_str(), |b| b.name.as_str());
         if let Some((_, target)) = parts.iter().find(|(n, _)| n.eq_ignore_ascii_case(part_name)) {
+            let filter_colors = match t.filter.as_ref().filter(|f| f.columns.iter().any(|(_, x)| matches!(x, ibis_doc_model::ColumnFilter::Color { .. }))) {
+                Some(f) => {
+                    let styles = styles_part.ok_or_else(|| unsupported("書式のないブックの色フィルター"))?;
+                    write_filter_dxfs(package, styles, target, before.and_then(|b| b.filter.as_ref()), f)?
+                }
+                None => HashMap::new(),
+            };
             // A table there: grown, with columns added, renamed, its rows
             // and style changed.
             let doc = package.xml_mut(target)?;
@@ -3502,10 +4437,10 @@ fn write_tables(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetT
             }
             // The filter: its ▼ and what it keeps.
             match (&t.filter, doc.child(root, "autoFilter")) {
-                (Some(f), Some(e)) => sizes::fill_auto_filter(doc, e, f, &HashMap::new(), &prefix),
+                (Some(f), Some(e)) => sizes::fill_auto_filter(doc, e, f, &filter_colors, &prefix),
                 (Some(f), None) => {
                     let e = detached(doc, &format!("{prefix}autoFilter"));
-                    sizes::fill_auto_filter(doc, e, f, &HashMap::new(), &prefix);
+                    sizes::fill_auto_filter(doc, e, f, &filter_colors, &prefix);
                     let at = doc.elements(root).find(|&c| matches!(doc.local_name(c), "sortState" | "tableColumns"));
                     match at {
                         Some(a) => doc.insert_before(a, e),
@@ -3517,8 +4452,9 @@ fn write_tables(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetT
             }
             if let Some(list) = doc.child(root, "tableColumns") {
                 let existing: Vec<NodeId> = doc.children_named(list, "tableColumn").collect();
+                let existing_len = existing.len();
                 let mut next = existing.iter().filter_map(|&c| doc.attr(c, "id")?.parse::<u32>().ok()).max().unwrap_or(0) + 1;
-                for name in t.columns.iter().skip(existing.len()) {
+                for name in t.columns.iter().skip(existing_len) {
                     let c = detached(doc, &format!("{prefix}tableColumn"));
                     doc.set_attr(c, "id", &next.to_string());
                     doc.set_attr(c, "name", name);
@@ -3528,9 +4464,10 @@ fn write_tables(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetT
                 }
                 let count = doc.children_named(list, "tableColumn").count();
                 doc.set_attr(list, "count", &count.to_string());
+                let cols: Vec<NodeId> = doc.children_named(list, "tableColumn").collect();
                 // The 集計行's function or label of each column.
                 if before.is_some_and(|b| b.totals != t.totals) {
-                    for (i, c) in doc.children_named(list, "tableColumn").collect::<Vec<_>>().into_iter().enumerate() {
+                    for (i, &c) in cols.iter().enumerate() {
                         let total = t.totals.get(i).cloned().unwrap_or_default();
                         match &total.function {
                             Some(f) => doc.set_attr(c, "totalsRowFunction", f),
@@ -3539,6 +4476,37 @@ fn write_tables(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetT
                         match &total.label {
                             Some(l) => doc.set_attr(c, "totalsRowLabel", l),
                             None => doc.remove_attr(c, "totalsRowLabel"),
+                        }
+                    }
+                }
+                // Calculated column formulas (`<calculatedColumnFormula>`).
+                for (i, &c) in cols.iter().enumerate() {
+                    if i < existing_len && calc_before.get(i) == calc_after.get(i) {
+                        continue;
+                    }
+                    match calc_after.get(i).and_then(Option::as_deref) {
+                        Some(formula) => {
+                            let f_node = match doc.child(c, "calculatedColumnFormula") {
+                                Some(n) => n,
+                                None => {
+                                    let n = detached(doc, &format!("{prefix}calculatedColumnFormula"));
+                                    let at = doc.elements(c).find(|&ch| matches!(doc.local_name(ch), "totalsRowFormula" | "xmlColumnPr" | "extLst"));
+                                    match at {
+                                        Some(a) => doc.insert_before(a, n),
+                                        None => {
+                                            let len = doc.children(c).len();
+                                            doc.insert(c, len, n);
+                                        }
+                                    }
+                                    n
+                                }
+                            };
+                            doc.set_text(f_node, formula);
+                        }
+                        None => {
+                            if let Some(n) = doc.child(c, "calculatedColumnFormula") {
+                                doc.detach(n);
+                            }
                         }
                     }
                 }
@@ -3564,6 +4532,13 @@ fn write_tables(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetT
             }
             k += 1;
         };
+        let filter_colors = match t.filter.as_ref().filter(|f| f.columns.iter().any(|(_, x)| matches!(x, ibis_doc_model::ColumnFilter::Color { .. }))) {
+            Some(f) => {
+                let styles = styles_part.ok_or_else(|| unsupported("書式のないブックの色フィルター"))?;
+                write_filter_dxfs(package, styles, &target, None, f)?
+            }
+            None => HashMap::new(),
+        };
         let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
         let filter_area = CellRange { last_row: t.range.last_row - t.totals_rows, ..t.range };
         let mut xml = format!(
@@ -3587,7 +4562,16 @@ fn write_tables(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetT
             if let Some(f) = &total.function {
                 extra += &format!(r#" totalsRowFunction="{}""#, esc(f));
             }
-            xml.push_str(&format!(r#"<tableColumn id="{}" name="{}"{extra}/>"#, i + 1, esc(c)));
+            if let Some(formula) = calc_after.get(i).and_then(Option::as_deref) {
+                xml.push_str(&format!(
+                    r#"<tableColumn id="{}" name="{}"{extra}><calculatedColumnFormula>{}</calculatedColumnFormula></tableColumn>"#,
+                    i + 1,
+                    esc(c),
+                    esc(formula)
+                ));
+            } else {
+                xml.push_str(&format!(r#"<tableColumn id="{}" name="{}"{extra}/>"#, i + 1, esc(c)));
+            }
         }
         xml.push_str("</tableColumns>");
         if let Some(st) = &t.style {
@@ -3606,7 +4590,7 @@ fn write_tables(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetT
         if let (Some(f), Some(root)) = (&t.filter, doc.root_element())
             && let Some(e) = doc.child(root, "autoFilter")
         {
-            sizes::fill_auto_filter(&mut doc, e, f, &HashMap::new(), "");
+            sizes::fill_auto_filter(&mut doc, e, f, &filter_colors, "");
         }
         package.set_xml(&target, doc);
         package.set_override(&target, CT_TABLE)?;

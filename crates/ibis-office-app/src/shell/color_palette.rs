@@ -15,7 +15,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::Rgb;
 
-use crate::shell::chrome::{Handler, MenuItem};
+use crate::shell::chrome::MenuItem;
 use crate::shell::editor::SlideEditor;
 
 /// What picking a colour does (the colour, or `None` for "none").
@@ -77,7 +77,7 @@ impl SlideEditor {
     }
 }
 
-fn row(swatches: Vec<Swatch>, editor: &WeakEntity<SlideEditor>, id: &'static str, button: Option<&'static str>) -> impl IntoElement {
+fn row(swatches: Vec<Swatch>, editor: &WeakEntity<SlideEditor>, id: &'static str, _button: Option<&'static str>) -> impl IntoElement {
     h_flex().gap(px(GAP)).children(swatches.into_iter().enumerate().map(|(i, s)| {
         let (editor, handler, rgb, label) = (editor.clone(), s.item.handler.clone(), s.rgb, s.item.label.clone());
         div()

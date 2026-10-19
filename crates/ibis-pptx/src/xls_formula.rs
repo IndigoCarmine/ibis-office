@@ -21,7 +21,7 @@ pub(crate) struct Context {
 
 /// The name and the number of arguments of function `id` (`None` for the
 /// ones taking a variable number: their count is in the token).
-fn function(id: u16) -> Option<(&'static str, Option<usize>)> {
+pub(crate) fn function(id: u16) -> Option<(&'static str, Option<usize>)> {
     let var = None;
     Some(match id {
         0 => ("COUNT", var), 1 => ("IF", var), 2 => ("ISNA", Some(1)), 3 => ("ISERROR", Some(1)), 4 => ("SUM", var), 5 => ("AVERAGE", var),

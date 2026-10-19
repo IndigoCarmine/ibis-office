@@ -124,6 +124,63 @@ impl SlideEditor {
         }
     }
 
+    /// 図形の「装飾としてマーク（読み上げスキップ）」フラグをトグル切り替えする
+    pub(crate) fn toggle_shape_decorative(&mut self, shape: ShapeId, cx: &mut Context<Self>) {
+        let slide = self.current_slide;
+        let is_decorative = self.slide().decorative_shapes.contains(&shape);
+        self.set_selection(vec![shape]);
+        self.run(vec![Command::SetShapeDecorative { slide, shape, decorative: !is_decorative }], cx);
+    }
+
+    /// Context menu entries for a shape row in the Reading Order Pane.
+    pub(crate) fn reading_order_context_menu_entries(&self, id: ShapeId) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem};
+        let slide = self.slide();
+        let idx = slide.shape_index(id).unwrap_or(0);
+        let count = slide.shapes.len();
+        let is_decorative = slide.decorative_shapes.contains(&id);
+        vec![
+            MenuItem::tr("pptx.reading-order-pane.move-up-read-earlier")
+                .icon("arrow_upward")
+                .disabled(idx == 0)
+                .on(move |e, _, cx| e.move_reading_order(id, true, cx))
+                .into(),
+            MenuItem::tr("pptx.reading-order-pane.move-down-read-later")
+                .icon("arrow_downward")
+                .disabled(idx + 1 >= count)
+                .on(move |e, _, cx| e.move_reading_order(id, false, cx))
+                .into(),
+            MenuItem::tr("pptx.reading-order-pane.auto-order-top-bottom")
+                .icon("format_list_numbered")
+                .disabled(count <= 1)
+                .on(|e, _, cx| e.auto_reading_order(cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.alt-text.decorative")
+                .icon("visibility_off")
+                .checked(is_decorative)
+                .on(move |e, _, cx| e.toggle_shape_decorative(id, cx))
+                .into(),
+            MenuItem::tr("pptx.alt-text")
+                .icon("accessibility")
+                .on(move |e, w, cx| {
+                    e.set_selection(vec![id]);
+                    e.open_alt_text_panel(w, cx);
+                })
+                .into(),
+        ]
+    }
+
+    /// Open context menu for shape `id` in the Reading Order Pane at pointer `position`.
+    pub(crate) fn open_reading_order_context_menu(&mut self, id: ShapeId, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.selected_ids().contains(&id) {
+            self.set_selection(vec![id]);
+            cx.notify();
+        }
+        let entries = self.reading_order_context_menu_entries(id);
+        self.open_popup_entries(entries, position, window, cx);
+    }
+
     /// 読み上げ順序サイドバーパネルの描画
     pub(crate) fn reading_order_pane(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         self.pptx()?.reading_order_pane?;
@@ -181,6 +238,10 @@ impl SlideEditor {
                         e.set_selection(vec![id]);
                         cx.notify();
                     }))
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        e.open_reading_order_context_menu(id, event.position, window, cx);
+                    }))
                     // 順番番号バッジ
                     .child(
                         div()
@@ -223,7 +284,15 @@ impl SlideEditor {
                                 )
                             }),
                     )
-                    // ↑ / ↓ ボタン
+                    // 装飾マーク切り替え・↑ / ↓ ボタン
+                    .child(
+                        Button::new(("ro-decorative", n))
+                            .small()
+                            .ghost()
+                            .icon(Icon::new(Material(if is_decorative { "visibility_off" } else { "visibility" })))
+                            .tooltip(t("pptx.alt-text.decorative"))
+                            .on_click(cx.listener(move |e, _, _, cx| e.toggle_shape_decorative(id, cx))),
+                    )
                     .child(
                         Button::new(("ro-up", n))
                             .small()

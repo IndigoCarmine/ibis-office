@@ -57,8 +57,32 @@ pub enum AnimationLook {
     /// A path ending this far from the shape, in 1/100 000 of the slide's
     /// width and height.
     Motion(i32, i32),
+    /// ズーム: scales from/to center with fade.
+    Zoom,
+    /// フロート: smooth rising or sinking slide with fade.
+    Float(AnimationSide),
+    /// ワイプ: wipe from a side of the slide.
+    Wipe(AnimationSide),
+    /// インクの再生 (Replay): animates an ink shape.
+    Replay,
     /// Anything else: shown as the class says, without movement.
     Other,
+}
+
+/// What a text effect goes by when it takes the text a word or a letter at a time (`p:iterate`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextUnit {
+    /// 単語 (`type="wd"`).
+    Word,
+    /// 文字 (`type="lt"`).
+    Letter,
+}
+
+/// How long after one word or letter the next begins: a share of the effect's time (`tmPct`, in 1/1000 %) or a time (`tmAbs`, ms).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnitGap {
+    Percent(u32),
+    Millis(u32),
 }
 
 /// How many times an animation effect repeats (繰返し, `repeatCount`).
@@ -151,12 +175,119 @@ pub struct Animation {
     /// The paragraphs of the shape's text it moves (`p:txEl/p:pRg`: first
     /// and last, from 0); `None` moves the whole shape.
     pub paragraph: Option<(u32, u32)>,
+    /// The characters of the shape's text it moves (`p:txEl/p:charRg`: first and last, counted over the whole text, a paragraph
+    /// break as one; by word or by letter an effect for each); `None` when it moves the whole shape or paragraphs.
+    pub chars: Option<(u32, u32)>,
+    /// The text taken a word or a letter at a time (`p:iterate`), and the gap between them.
+    pub text_unit: Option<(TextUnit, UnitGap)>,
     /// カスタム軌跡: the points a motion path goes through after its start
     /// (0, 0), as offsets from the shape in 1/100 000 of the slide's width
     /// and height, joined by straight lines. Empty for a path that is the
     /// one line to [`AnimationLook::Motion`]'s end; otherwise the last
     /// point is that end.
     pub path: Vec<(i32, i32)>,
+    /// A chart element this effect targets (`p:cEl/p:cChartEl`: series and category indices);
+    /// `None` when it moves the whole shape or text.
+    pub chart_element: Option<ChartAnimationElement>,
+    /// The chart build step and anim_bg setting (`p:bldChart`).
+    pub chart_build: Option<(ChartBuildStep, bool)>,
+    /// A diagram element this effect targets (`p:graphicEl/a:dgm` or `p:subSp`);
+    /// `None` when it moves the whole shape, text, or chart.
+    pub dgm_element: Option<DiagramAnimationElement>,
+    /// The diagram build step (`p:bldDgm`).
+    pub dgm_build: Option<DiagramBuildStep>,
+}
+
+/// How a chart's elements are built in animation (`ST_ChartBuildStep` in ECMA-376 Part 1 19.5.15).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ChartBuildStep {
+    #[default]
+    AllAtOnce,
+    Series,
+    Category,
+    SeriesEl,
+    CategoryEl,
+}
+
+impl ChartBuildStep {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AllAtOnce => "allAtOnce",
+            Self::Series => "series",
+            Self::Category => "category",
+            Self::SeriesEl => "seriesEl",
+            Self::CategoryEl => "categoryEl",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "allAtOnce" => Some(Self::AllAtOnce),
+            "series" => Some(Self::Series),
+            "category" => Some(Self::Category),
+            "seriesEl" => Some(Self::SeriesEl),
+            "categoryEl" => Some(Self::CategoryEl),
+            _ => None,
+        }
+    }
+}
+
+/// A chart animation target element (`p:cChartEl`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct ChartAnimationElement {
+    /// Target series index, or -1 for background / all series.
+    pub series_idx: i32,
+    /// Target category index, or -1 for background / all categories.
+    pub category_idx: i32,
+}
+
+/// How a diagram's (SmartArt's) elements are built in animation (`ST_DiagramBuildStep` in ECMA-376 Part 1 19.5.17).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DiagramBuildStep {
+    #[default]
+    Whole,
+    DepthByNode,
+    DepthByBranch,
+    BreadthByNode,
+    BreadthByLvl,
+    AllAtOnce,
+    Cust,
+}
+
+impl DiagramBuildStep {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Whole => "whole",
+            Self::DepthByNode => "depthByNode",
+            Self::DepthByBranch => "depthByBranch",
+            Self::BreadthByNode => "breadthByNode",
+            Self::BreadthByLvl => "breadthByLvl",
+            Self::AllAtOnce => "allAtOnce",
+            Self::Cust => "cust",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "whole" => Some(Self::Whole),
+            "depthByNode" => Some(Self::DepthByNode),
+            "depthByBranch" => Some(Self::DepthByBranch),
+            "breadthByNode" => Some(Self::BreadthByNode),
+            "breadthByLvl" => Some(Self::BreadthByLvl),
+            "allAtOnce" => Some(Self::AllAtOnce),
+            "cust" => Some(Self::Cust),
+            _ => None,
+        }
+    }
+}
+
+/// A diagram animation target element (`p:graphicEl/a:dgm` or `p:subSp`).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct DiagramAnimationElement {
+    /// Target diagram element id (modelId or sub-shape id).
+    pub id: String,
+    /// Build step type (e.g. "sp" for shape, "bg" for background).
+    pub bld_step: String,
 }
 
 impl Animation {

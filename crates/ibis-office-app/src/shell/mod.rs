@@ -10,17 +10,24 @@
 //! (workspace.rs), saving (save.rs), and the hand-over to each format's
 //! editor (format.rs).
 
+pub(crate) mod autocorrect;
+pub(crate) mod autorecover;
 pub(crate) mod editor;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod embed;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod ole_clipboard;
 pub(crate) mod file_actions;
 pub(crate) mod chrome;
 pub(crate) mod color_palette;
 pub(crate) mod chrome_defaults;
 pub(crate) mod format;
+pub(crate) mod font_list;
+pub(crate) mod font_preview;
 pub(crate) mod i18n;
 pub(crate) mod settings;
 pub(crate) mod settings_window;
+pub(crate) mod qat;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod update;
 pub(crate) mod about_window;
@@ -36,16 +43,16 @@ pub(crate) mod spell_panel;
 pub(crate) mod symbols;
 pub(crate) mod user_name;
 pub(crate) mod save;
-#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub(crate) mod scenario;
-#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub(crate) mod scenario_examples;
-#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub(crate) mod scenario_i18n;
-#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub(crate) mod scenario_menus;
 pub(crate) mod menu_bridge;
-#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub(crate) mod scenario_fix;
 pub(crate) mod start_view;
 pub(crate) mod workspace;

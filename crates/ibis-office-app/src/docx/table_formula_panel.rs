@@ -6,7 +6,6 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use ibis_doc_model::flow_command;
 use crate::shell::{chrome::SidebarPanel, editor::SlideEditor};
 
 pub(crate) const FORMULA_FORMATS: [(&str, &str); 6] = [

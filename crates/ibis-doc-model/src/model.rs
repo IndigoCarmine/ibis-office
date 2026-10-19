@@ -264,6 +264,10 @@ pub struct OleObject {
     pub data: Arc<[u8]>,
     /// Shown as an icon instead of its content (`showAsIcon`, `DrawAspect="Icon"`).
     pub as_icon: bool,
+    /// The size its application draws it at, in EMU (PowerPoint's `imgW` and
+    /// `imgH`): against the frame, the scale it is shown at, which Office
+    /// keeps when the application changes the object.
+    pub natural: Option<(i64, i64)>,
 }
 
 /// A font file embedded in the presentation, as stored (for PowerPoint, an
@@ -323,14 +327,183 @@ impl AutoShape {
     }
 }
 
-/// A 3D view of a flat shape through an orthographic camera: turned about
-/// the horizontal axis by `lat` and the vertical one by `lon` (60 000ths of
-/// a degree), and lifted `depth` EMU off the slide (`a:sp3d/@z`).
+/// Camera preset for 3-D rotation corresponding to PowerPoint's built-in 3D rotation presets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CameraPreset {
+    IsometricTopUp,
+    IsometricTopDown,
+    IsometricBottomUp,
+    IsometricBottomDown,
+    IsometricLeftUp,
+    IsometricLeftDown,
+    IsometricRightUp,
+    IsometricRightDown,
+    IsometricOffAxis1Top,
+    IsometricOffAxis1Bottom,
+    IsometricOffAxis1Left,
+    IsometricOffAxis1Right,
+    IsometricOffAxis2Top,
+    IsometricOffAxis2Bottom,
+    IsometricOffAxis2Left,
+    IsometricOffAxis2Right,
+    ObliqueTopLeft,
+    ObliqueTopRight,
+    ObliqueBottomLeft,
+    ObliqueBottomRight,
+    PerspectiveFront,
+    PerspectiveLeft,
+    PerspectiveRight,
+    PerspectiveAbove,
+    PerspectiveBelow,
+    PerspectiveRelaxed,
+    OrthographicFront,
+}
+
+impl CameraPreset {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::IsometricTopUp => "isometricTopUp",
+            Self::IsometricTopDown => "isometricTopDown",
+            Self::IsometricBottomUp => "isometricBottomUp",
+            Self::IsometricBottomDown => "isometricBottomDown",
+            Self::IsometricLeftUp => "isometricLeftUp",
+            Self::IsometricLeftDown => "isometricLeftDown",
+            Self::IsometricRightUp => "isometricRightUp",
+            Self::IsometricRightDown => "isometricRightDown",
+            Self::IsometricOffAxis1Top => "isometricOffAxis1Top",
+            Self::IsometricOffAxis1Bottom => "isometricOffAxis1Bottom",
+            Self::IsometricOffAxis1Left => "isometricOffAxis1Left",
+            Self::IsometricOffAxis1Right => "isometricOffAxis1Right",
+            Self::IsometricOffAxis2Top => "isometricOffAxis2Top",
+            Self::IsometricOffAxis2Bottom => "isometricOffAxis2Bottom",
+            Self::IsometricOffAxis2Left => "isometricOffAxis2Left",
+            Self::IsometricOffAxis2Right => "isometricOffAxis2Right",
+            Self::ObliqueTopLeft => "obliqueTopLeft",
+            Self::ObliqueTopRight => "obliqueTopRight",
+            Self::ObliqueBottomLeft => "obliqueBottomLeft",
+            Self::ObliqueBottomRight => "obliqueBottomRight",
+            Self::PerspectiveFront => "perspectiveFront",
+            Self::PerspectiveLeft => "perspectiveLeft",
+            Self::PerspectiveRight => "perspectiveRight",
+            Self::PerspectiveAbove => "perspectiveAbove",
+            Self::PerspectiveBelow => "perspectiveBelow",
+            Self::PerspectiveRelaxed => "perspectiveRelaxed",
+            Self::OrthographicFront => "orthographicFront",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "isometricTopUp" => Some(Self::IsometricTopUp),
+            "isometricTopDown" => Some(Self::IsometricTopDown),
+            "isometricBottomUp" => Some(Self::IsometricBottomUp),
+            "isometricBottomDown" => Some(Self::IsometricBottomDown),
+            "isometricLeftUp" => Some(Self::IsometricLeftUp),
+            "isometricLeftDown" => Some(Self::IsometricLeftDown),
+            "isometricRightUp" => Some(Self::IsometricRightUp),
+            "isometricRightDown" => Some(Self::IsometricRightDown),
+            "isometricOffAxis1Top" => Some(Self::IsometricOffAxis1Top),
+            "isometricOffAxis1Bottom" => Some(Self::IsometricOffAxis1Bottom),
+            "isometricOffAxis1Left" => Some(Self::IsometricOffAxis1Left),
+            "isometricOffAxis1Right" => Some(Self::IsometricOffAxis1Right),
+            "isometricOffAxis2Top" => Some(Self::IsometricOffAxis2Top),
+            "isometricOffAxis2Bottom" => Some(Self::IsometricOffAxis2Bottom),
+            "isometricOffAxis2Left" => Some(Self::IsometricOffAxis2Left),
+            "isometricOffAxis2Right" => Some(Self::IsometricOffAxis2Right),
+            "obliqueTopLeft" => Some(Self::ObliqueTopLeft),
+            "obliqueTopRight" => Some(Self::ObliqueTopRight),
+            "obliqueBottomLeft" => Some(Self::ObliqueBottomLeft),
+            "obliqueBottomRight" => Some(Self::ObliqueBottomRight),
+            "perspectiveFront" => Some(Self::PerspectiveFront),
+            "perspectiveLeft" => Some(Self::PerspectiveLeft),
+            "perspectiveRight" => Some(Self::PerspectiveRight),
+            "perspectiveAbove" => Some(Self::PerspectiveAbove),
+            "perspectiveBelow" => Some(Self::PerspectiveBelow),
+            "perspectiveRelaxed" => Some(Self::PerspectiveRelaxed),
+            "orthographicFront" => Some(Self::OrthographicFront),
+            _ => None,
+        }
+    }
+
+    /// Default rotation angles (lat, lon, rev) in 60,000ths of a degree.
+    pub fn default_angles(self) -> (i32, i32, i32) {
+        match self {
+            Self::IsometricTopUp => (2115600, 2700000, 0),
+            Self::IsometricTopDown => (-2115600, 2700000, 0),
+            Self::IsometricBottomUp => (2115600, -2700000, 0),
+            Self::IsometricBottomDown => (-2115600, -2700000, 0),
+            Self::IsometricLeftUp => (2115600, 2700000, -2115600),
+            Self::IsometricLeftDown => (-2115600, 2700000, 2115600),
+            Self::IsometricRightUp => (2115600, -2700000, 2115600),
+            Self::IsometricRightDown => (-2115600, -2700000, -2115600),
+            Self::IsometricOffAxis1Top => (1800000, 1200000, 0),
+            Self::IsometricOffAxis1Bottom => (-1800000, 1200000, 0),
+            Self::IsometricOffAxis1Left => (1800000, 1200000, -1800000),
+            Self::IsometricOffAxis1Right => (1800000, -1200000, 1800000),
+            Self::IsometricOffAxis2Top => (1200000, 1800000, 0),
+            Self::IsometricOffAxis2Bottom => (-1200000, 1800000, 0),
+            Self::IsometricOffAxis2Left => (1200000, 1800000, -1200000),
+            Self::IsometricOffAxis2Right => (1200000, -1800000, 1200000),
+            Self::ObliqueTopLeft => (0, 0, 0),
+            Self::ObliqueTopRight => (0, 0, 0),
+            Self::ObliqueBottomLeft => (0, 0, 0),
+            Self::ObliqueBottomRight => (0, 0, 0),
+            Self::PerspectiveFront => (0, 0, 0),
+            Self::PerspectiveLeft => (0, 2400000, 0),
+            Self::PerspectiveRight => (0, -2400000, 0),
+            Self::PerspectiveAbove => (2400000, 0, 0),
+            Self::PerspectiveBelow => (-2400000, 0, 0),
+            Self::PerspectiveRelaxed => (1800000, 1800000, 0),
+            Self::OrthographicFront => (0, 0, 0),
+        }
+    }
+}
+
+/// A 3D view of a shape with rotation (`scene3d`), lift off the slide (`sp3d/@z`),
+/// and extrusion depth (`sp3d/@extrusionH`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tilt {
+    /// X rotation (pitch) in 60,000ths of a degree (-180°..180°).
     pub lat: i32,
+    /// Y rotation (yaw) in 60,000ths of a degree (-180°..180°).
     pub lon: i32,
+    /// Z rotation (roll) in 60,000ths of a degree (0°..360°).
+    pub rev: i32,
+    /// Lift/distance along Z axis off the slide in EMU (`a:sp3d/@z`).
     pub depth: i64,
+    /// Extrusion depth (3D depth / 奥行きの深さ) in EMU (`a:sp3d/@extrusionH`).
+    pub extrusion_h: i64,
+    /// Extrusion color (奥行きの色, `a:sp3d/a:extrusionClr`), if custom.
+    pub extrusion_color: Option<crate::Color>,
+    /// Camera preset (e.g. `isometricTopUp`, `perspectiveFront`, `orthographicFront`).
+    pub camera_preset: Option<CameraPreset>,
+}
+
+impl Tilt {
+    pub const fn new(lat: i32, lon: i32, depth: i64) -> Self {
+        Self {
+            lat,
+            lon,
+            rev: 0,
+            depth,
+            extrusion_h: 0,
+            extrusion_color: None,
+            camera_preset: None,
+        }
+    }
+
+    pub fn from_preset(preset: CameraPreset) -> Self {
+        let (lat, lon, rev) = preset.default_angles();
+        Self {
+            lat,
+            lon,
+            rev,
+            depth: 0,
+            extrusion_h: 0,
+            extrusion_color: None,
+            camera_preset: Some(preset),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -366,6 +539,129 @@ pub struct Picture {
     pub name: String,
     /// The embedded object this picture is the preview of.
     pub ole: Option<OleId>,
+    /// The outline the picture is cut to (`p:spPr/a:prstGeom` other than a rectangle or a rounded one);
+    /// `None`: the frame.
+    pub geometry: Option<Geometry>,
+    /// The other colour effects of the picture (`a:blip`'s children).
+    pub effects: BlipEffects,
+    /// The picture tiled over its frame instead of stretched (`a:blipFill/a:tile`).
+    pub tile: Option<PictureTile>,
+    /// Where the stretched picture goes in its frame (`a:stretch/a:fillRect`): the insets from the frame's
+    /// left, top, right and bottom, 100 000ths of its size (negative: beyond it); `None`: the frame.
+    pub fill_rect: Option<[i32; 4]>,
+    /// Artistic effect on the picture (`a:blip/a:extLst/.../a14:imgEffect`).
+    pub artistic_effect: Option<ArtisticEffect>,
+}
+
+/// Artistic effect applied to a picture (Office Drawing2010 `a14:imgEffect`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ArtisticEffect {
+    Blur { radius: i32 },
+    Cement { crack_spacing: i32, trans: i32 },
+    ChalkSketch { pressure: i32, trans: i32 },
+    CrisscrossEtching { pressure: i32, trans: i32 },
+    Cutout { number_of_shades: i32, trans: i32 },
+    FilmGrain { grain_size: i32, trans: i32 },
+    Glass { scaling: i32, trans: i32 },
+    GlowDiffused { intensity: i32, trans: i32 },
+    GlowEdges { smoothness: i32, trans: i32 },
+    LightScreen { grid_size: i32, trans: i32 },
+    LineDrawing { pencil_size: i32, trans: i32 },
+    Marker { size: i32, trans: i32 },
+    MosaicBubbles { pressure: i32, trans: i32 },
+    PaintBrush { brush_size: i32, trans: i32 },
+    PaintStrokes { intensity: i32, trans: i32 },
+    PastelsSmooth { scaling: i32, trans: i32 },
+    PencilGrayscale { pencil_size: i32, trans: i32 },
+    PencilSketch { pressure: i32, trans: i32 },
+    Photocopy { detail: i32, trans: i32 },
+    PlasticWrap { smoothness: i32, trans: i32 },
+    Texturizer { scaling: i32, trans: i32 },
+    WatercolorSponge { brush_size: i32, trans: i32 },
+}
+
+impl ArtisticEffect {
+    pub fn blur_default() -> Self { Self::Blur { radius: 10 } }
+    pub fn cement_default() -> Self { Self::Cement { crack_spacing: 24, trans: 0 } }
+    pub fn chalk_sketch_default() -> Self { Self::ChalkSketch { pressure: 24, trans: 0 } }
+    pub fn crisscross_etching_default() -> Self { Self::CrisscrossEtching { pressure: 24, trans: 0 } }
+    pub fn cutout_default() -> Self { Self::Cutout { number_of_shades: 6, trans: 0 } }
+    pub fn film_grain_default() -> Self { Self::FilmGrain { grain_size: 40, trans: 0 } }
+    pub fn glass_default() -> Self { Self::Glass { scaling: 25, trans: 0 } }
+    pub fn glow_diffused_default() -> Self { Self::GlowDiffused { intensity: 5, trans: 0 } }
+    pub fn glow_edges_default() -> Self { Self::GlowEdges { smoothness: 10, trans: 0 } }
+    pub fn light_screen_default() -> Self { Self::LightScreen { grid_size: 4, trans: 0 } }
+    pub fn line_drawing_default() -> Self { Self::LineDrawing { pencil_size: 2, trans: 0 } }
+    pub fn marker_default() -> Self { Self::Marker { size: 15, trans: 0 } }
+    pub fn mosaic_bubbles_default() -> Self { Self::MosaicBubbles { pressure: 15, trans: 0 } }
+    pub fn paint_brush_default() -> Self { Self::PaintBrush { brush_size: 7, trans: 0 } }
+    pub fn paint_strokes_default() -> Self { Self::PaintStrokes { intensity: 5, trans: 0 } }
+    pub fn pastels_smooth_default() -> Self { Self::PastelsSmooth { scaling: 24, trans: 0 } }
+    pub fn pencil_grayscale_default() -> Self { Self::PencilGrayscale { pencil_size: 20, trans: 0 } }
+    pub fn pencil_sketch_default() -> Self { Self::PencilSketch { pressure: 24, trans: 0 } }
+    pub fn photocopy_default() -> Self { Self::Photocopy { detail: 3, trans: 0 } }
+    pub fn plastic_wrap_default() -> Self { Self::PlasticWrap { smoothness: 24, trans: 0 } }
+    pub fn texturizer_default() -> Self { Self::Texturizer { scaling: 50, trans: 0 } }
+    pub fn watercolor_sponge_default() -> Self { Self::WatercolorSponge { brush_size: 9, trans: 0 } }
+
+    pub fn blur() -> Self { Self::blur_default() }
+    pub fn cement() -> Self { Self::cement_default() }
+    pub fn chalk_sketch() -> Self { Self::chalk_sketch_default() }
+    pub fn crisscross_etching() -> Self { Self::crisscross_etching_default() }
+    pub fn cutout() -> Self { Self::cutout_default() }
+    pub fn film_grain() -> Self { Self::film_grain_default() }
+    pub fn glass() -> Self { Self::glass_default() }
+    pub fn glow_diffused() -> Self { Self::glow_diffused_default() }
+    pub fn glow_edges() -> Self { Self::glow_edges_default() }
+    pub fn light_screen() -> Self { Self::light_screen_default() }
+    pub fn line_drawing() -> Self { Self::line_drawing_default() }
+    pub fn marker() -> Self { Self::marker_default() }
+    pub fn mosaic_bubbles() -> Self { Self::mosaic_bubbles_default() }
+    pub fn paint_brush() -> Self { Self::paint_brush_default() }
+    pub fn paint_strokes() -> Self { Self::paint_strokes_default() }
+    pub fn pastels_smooth() -> Self { Self::pastels_smooth_default() }
+    pub fn pencil_grayscale() -> Self { Self::pencil_grayscale_default() }
+    pub fn pencil_sketch() -> Self { Self::pencil_sketch_default() }
+    pub fn photocopy() -> Self { Self::photocopy_default() }
+    pub fn plastic_wrap() -> Self { Self::plastic_wrap_default() }
+    pub fn texturizer() -> Self { Self::texturizer_default() }
+    pub fn watercolor_sponge() -> Self { Self::watercolor_sponge_default() }
+}
+
+/// How a picture is tiled (`a:tile`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PictureTile {
+    pub tx: i64,
+    pub ty: i64,
+    pub sx: i32,
+    pub sy: i32,
+    pub flip: crate::TileFlip,
+    pub align: crate::TileAlign,
+}
+
+/// The colour effects of a picture beyond duotone, a transparent colour and luminance (`a:blip`'s
+/// `a:grayscl`, `a:biLevel`, `a:clrRepl`, `a:clrChange` to a colour, `a:alphaModFix`, `a:alphaRepl`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct BlipEffects {
+    /// Shown in greys (`a:grayscl`).
+    pub grayscale: bool,
+    /// Black and white at a threshold (`a:biLevel/@thresh`, 100 000ths).
+    pub bilevel: Option<i32>,
+    /// Every colour replaced by this one, the opacity kept (`a:clrRepl`).
+    pub replace: Option<crate::Rgb>,
+    /// One colour changed into another (`a:clrChange`).
+    pub change: Option<(crate::Rgb, crate::Rgb)>,
+    /// The opacity (`a:alphaModFix/@amt`, `a:alphaRepl/@a`), 100 000ths.
+    pub opacity: Option<i32>,
+    /// Saturation modulation (`a:satMod/@amt`, 100 000ths, 100 000 is 100%).
+    pub saturation: Option<i32>,
+}
+
+impl BlipEffects {
+    /// Whether none applies.
+    pub fn is_none(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 impl Picture {
@@ -386,6 +682,11 @@ impl Picture {
             decorative: false,
             name: String::new(),
             ole: None,
+            geometry: None,
+            effects: BlipEffects::default(),
+            tile: None,
+            fill_rect: None,
+            artistic_effect: None,
         }
     }
 }
@@ -620,7 +921,19 @@ pub enum ShapeKind {
     Page { document: std::sync::Arc<crate::flow::FlowDocument>, index: usize },
     /// A slicer (スライサー) over a table or pivot table.
     Slicer(std::sync::Arc<crate::slicer::Slicer>),
+    /// A form control (フォーム コントロール) on a sheet.
+    Control(std::sync::Arc<crate::form_control::FormControl>),
+    /// A timeline (タイムライン) over pivot tables' date field.
+    Timeline(std::sync::Arc<crate::timeline::Timeline>),
     Placeholder(Placeholder),
+}
+
+/// What a connector is attached to (`a:stCxn` / `a:endCxn`): at each end the id of a shape and the number of its connection
+/// site (DOCX-IMAGE-014). The ends follow the shapes when they move.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Glue {
+    pub start: Option<(u64, u32)>,
+    pub end: Option<(u64, u32)>,
 }
 
 /// WordprocessingML floating object anchor (`wp:anchor`).
@@ -643,6 +956,228 @@ pub struct FloatingAnchor {
     pub allow_overlap: bool,
     pub layout_in_cell: bool,
     pub relative_height: u32,
+    /// Wrap polygon vertices for tight or through text wrapping (`wp:wrapPolygon`).
+    pub wrap_polygon: Option<WrapPolygon>,
+    /// For a connector: the shapes its ends are attached to.
+    pub glue: Glue,
+}
+
+/// A 2D point (in EMUs or local coordinates) used in a text wrapping polygon (`wp:wrapPolygon`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct WrapPoint {
+    pub x: i64,
+    pub y: i64,
+}
+
+impl WrapPoint {
+    pub const fn new(x: i64, y: i64) -> Self {
+        Self { x, y }
+    }
+}
+
+/// A text wrapping polygon outline (`wp:wrapPolygon`) for tight or through floating objects.
+///
+/// Follows ECMA-376 Part 1 §20.4.2.6 (wrapPolygon).
+/// Contains a starting coordinate (`<wp:start>`) and zero or more line segments (`<wp:lineTo>`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrapPolygon {
+    /// True if the wrap points were edited by the user (`edited="1"`).
+    pub edited: bool,
+    /// Starting point of the polygon (`<wp:start>`).
+    pub start: WrapPoint,
+    /// Line-to coordinates forming the closed polygon outline (`<wp:lineTo>`).
+    pub line_to: Vec<WrapPoint>,
+}
+
+impl WrapPolygon {
+    /// Creates a new wrap polygon.
+    pub fn new(start: WrapPoint, line_to: Vec<WrapPoint>, edited: bool) -> Self {
+        Self { edited, start, line_to }
+    }
+
+    /// Constructs a standard default 4-point rectangle wrap polygon covering the object bounds.
+    pub fn default_rect(width: Emu, height: Emu) -> Self {
+        let w = width as i64;
+        let h = height as i64;
+        Self {
+            edited: false,
+            start: WrapPoint::new(0, 0),
+            line_to: vec![
+                WrapPoint::new(0, h),
+                WrapPoint::new(w, h),
+                WrapPoint::new(w, 0),
+                WrapPoint::new(0, 0),
+            ],
+        }
+    }
+
+    /// Returns all points in order (`start` followed by all `line_to` points).
+    pub fn all_points(&self) -> Vec<WrapPoint> {
+        let mut pts = Vec::with_capacity(1 + self.line_to.len());
+        pts.push(self.start);
+        pts.extend_from_slice(&self.line_to);
+        pts
+    }
+
+    /// Reconstructs a `WrapPolygon` from a slice of points.
+    pub fn from_points(points: &[WrapPoint], edited: bool) -> Option<Self> {
+        if points.is_empty() {
+            return None;
+        }
+        let start = points[0];
+        let line_to = points[1..].to_vec();
+        Some(Self { edited, start, line_to })
+    }
+
+    /// Sets the coordinate of the point at `index` (0 is start, 1.. are line_to).
+    pub fn set_point(&mut self, index: usize, point: WrapPoint) -> bool {
+        if index == 0 {
+            self.start = point;
+            self.edited = true;
+            true
+        } else if index <= self.line_to.len() {
+            self.line_to[index - 1] = point;
+            self.edited = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Inserts a new point at `index`.
+    pub fn insert_point(&mut self, index: usize, point: WrapPoint) {
+        if index == 0 {
+            let old_start = self.start;
+            self.start = point;
+            self.line_to.insert(0, old_start);
+        } else {
+            let target = (index - 1).min(self.line_to.len());
+            self.line_to.insert(target, point);
+        }
+        self.edited = true;
+    }
+
+    /// Removes the point at `index` (ensuring at least 3 points remain).
+    pub fn remove_point(&mut self, index: usize) -> bool {
+        let total = 1 + self.line_to.len();
+        if total <= 3 {
+            return false;
+        }
+        if index == 0 {
+            self.start = self.line_to.remove(0);
+            self.edited = true;
+            true
+        } else if index <= self.line_to.len() {
+            self.line_to.remove(index - 1);
+            self.edited = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Standard ECMA-376 §20.4.2.6 21600x21600 coordinate space default rectangle.
+    pub fn default_rect_21600() -> Self {
+        Self::default_rect(21_600, 21_600)
+    }
+
+    /// Diamond wrap polygon in 21600x21600 coordinate space (`edited = true`).
+    pub fn diamond_21600() -> Self {
+        Self {
+            edited: true,
+            start: WrapPoint::new(10_800, 0),
+            line_to: vec![
+                WrapPoint::new(0, 10_800),
+                WrapPoint::new(10_800, 21_600),
+                WrapPoint::new(21_600, 10_800),
+                WrapPoint::new(10_800, 0),
+            ],
+        }
+    }
+
+    /// Octagon wrap polygon in 21600x21600 coordinate space (`edited = true`).
+    pub fn octagon_21600() -> Self {
+        Self {
+            edited: true,
+            start: WrapPoint::new(6_300, 0),
+            line_to: vec![
+                WrapPoint::new(0, 6_300),
+                WrapPoint::new(0, 15_300),
+                WrapPoint::new(6_300, 21_600),
+                WrapPoint::new(15_300, 21_600),
+                WrapPoint::new(21_600, 15_300),
+                WrapPoint::new(21_600, 6_300),
+                WrapPoint::new(15_300, 0),
+                WrapPoint::new(6_300, 0),
+            ],
+        }
+    }
+
+    /// Inset rectangle wrap polygon in 21600x21600 coordinate space (`edited = true`).
+    pub fn inset_rect_21600(inset: i64) -> Self {
+        let lo = inset.clamp(-10_800, 9_000);
+        let hi = (21_600 - lo).max(lo + 100);
+        Self {
+            edited: true,
+            start: WrapPoint::new(lo, lo),
+            line_to: vec![
+                WrapPoint::new(lo, hi),
+                WrapPoint::new(hi, hi),
+                WrapPoint::new(hi, lo),
+                WrapPoint::new(lo, lo),
+            ],
+        }
+    }
+
+    /// Computes the horizontal `[min_x, max_x]` span of this wrap polygon intersecting the vertical
+    /// band `[y0, y1]`, given the object's top-left `(sx, sy)` and size `(sw, sh)`.
+    pub fn x_span_for_y_band(&self, sx: f32, sy: f32, sw: f32, sh: f32, y0: f32, y1: f32) -> Option<(f32, f32)> {
+        let pts = self.all_points();
+        if pts.len() < 2 || sw <= 0.0 || sh <= 0.0 {
+            return None;
+        }
+        let coords: Vec<(f32, f32)> = pts
+            .iter()
+            .map(|p| {
+                (
+                    sx + (p.x as f32 / 21_600.0) * sw,
+                    sy + (p.y as f32 / 21_600.0) * sh,
+                )
+            })
+            .collect();
+        let mut min_x = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut record = |x: f32| {
+            if x.is_finite() {
+                min_x = min_x.min(x);
+                max_x = max_x.max(x);
+            }
+        };
+        let n = coords.len();
+        for idx in 0..n {
+            let (x1, py1) = coords[idx];
+            let (x2, py2) = coords[(idx + 1) % n];
+            if py1 >= y0 && py1 <= y1 {
+                record(x1);
+            }
+            if py2 >= y0 && py2 <= y1 {
+                record(x2);
+            }
+            if (py1 < y0 && py2 > y0) || (py2 < y0 && py1 > y0) {
+                let t = (y0 - py1) / (py2 - py1);
+                record(x1 + t * (x2 - x1));
+            }
+            if (py1 < y1 && py2 > y1) || (py2 < y1 && py1 > y1) {
+                let t = (y1 - py1) / (py2 - py1);
+                record(x1 + t * (x2 - x1));
+            }
+        }
+        if min_x <= max_x {
+            Some((min_x, max_x))
+        } else {
+            None
+        }
+    }
 }
 
 impl FloatingAnchor {
@@ -675,6 +1210,8 @@ impl Default for FloatingAnchor {
             allow_overlap: true,
             layout_in_cell: true,
             relative_height: Self::DEFAULT_RELATIVE_HEIGHT,
+            wrap_polygon: None,
+            glue: Glue::default(),
         }
     }
 }
@@ -778,6 +1315,49 @@ pub struct ShapeGroup {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GroupMember {Shape(ShapeId),Group(Box<ShapeGroup>)}
 
+impl ShapeGroup {
+    pub fn from_shape_ids(native_id: impl Into<String>, name: impl Into<String>, ids: &[ShapeId]) -> Self {
+        Self {
+            has_unmodelled_children: false,
+            native_id: native_id.into(),
+            name: name.into(),
+            children: ids.iter().copied().map(GroupMember::Shape).collect(),
+        }
+    }
+
+    pub fn contains_shape(&self, id: ShapeId) -> bool {
+        self.children.iter().any(|m| match m {
+            GroupMember::Shape(sid) => *sid == id,
+            GroupMember::Group(g) => g.contains_shape(id),
+        })
+    }
+
+    pub fn leaf_shape_ids(&self) -> Vec<ShapeId> {
+        let mut out = Vec::new();
+        self.collect_leaves(&mut out);
+        out
+    }
+
+    fn collect_leaves(&self, out: &mut Vec<ShapeId>) {
+        for m in &self.children {
+            match m {
+                GroupMember::Shape(sid) => out.push(*sid),
+                GroupMember::Group(g) => g.collect_leaves(out),
+            }
+        }
+    }
+
+    pub fn remove_shape(&mut self, id: ShapeId) {
+        self.children.retain_mut(|m| match m {
+            GroupMember::Shape(sid) => *sid != id,
+            GroupMember::Group(g) => {
+                g.remove_shape(id);
+                g.leaf_shape_ids().len() >= 2 || g.has_unmodelled_children
+            }
+        });
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Slide {
     pub id: SlideId,
@@ -851,6 +1431,8 @@ pub struct Slide {
     /// Transition duration for zoom shapes, in milliseconds (ズームの継続時間: `p16:zoom/@dur`).
     /// Default is 1000ms.
     pub shape_zoom_durations: std::collections::HashMap<ShapeId, u32>,
+    /// Glue of connectors on the slide (`a:stCxn` / `a:endCxn`).
+    pub shape_glues: std::collections::HashMap<ShapeId, Glue>,
 }
 
 /// オブジェクト（図形・画像・グラフ等）のセルに対する配置方式 (`editAs`).
@@ -916,7 +1498,7 @@ impl Transition {
 
 impl Slide {
     pub fn new(id: SlideId) -> Self {
-        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, shape_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default() }
+        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, shape_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default(), shape_glues: Default::default() }
     }
 
     /// A new empty slide following `layout`, as PowerPoint's "New Slide"
@@ -1008,6 +1590,8 @@ pub struct Presentation {
     /// The embedded OLE objects, shared by the pictures showing them.
     pub oles: Vec<OleObject>,
     pub fonts: Vec<EmbeddedFont>,
+    /// フォントの代替（フォント代替マップ: 要求フォント名 -> 代替フォント名）。
+    pub font_substitutions: std::collections::BTreeMap<String, String>,
     /// A flowing document (Word), laid out into the slides as pages by the
     /// viewer.
     pub flow: Option<std::sync::Arc<crate::flow::FlowDocument>>,
@@ -1029,6 +1613,8 @@ pub struct Presentation {
     /// The theme's colour scheme (`dk1`, `lt1`, `dk2`, `lt2`, `accent1`…
     /// `accent6`, `hlink`, `folHlink`; presentations).
     pub theme_colors: Vec<(String, crate::drawing::Rgb)>,
+    /// The theme's format / effect scheme name (`a:fmtScheme/@name`, e.g. "Office", "Aspect", "Metro", etc.).
+    pub theme_effects: Option<String>,
     /// The number of the first slide, for slide number fields
     /// (`p:presentation/@firstSlideNum`).
     pub first_slide_number: usize,
@@ -1052,6 +1638,8 @@ pub struct Presentation {
     pub properties: crate::flow::DocProperties,
     /// 既定の図形・線の書式（PowerPoint の「既定の図形に設定」「既定の線に設定」: `ppt/theme/theme1.xml` の `<a:objectDefaults>`）。
     pub object_defaults: ObjectDefaults,
+    /// フォトアルバムの設定 (`p:photoAlbum`)。
+    pub photo_album: Option<PhotoAlbum>,
     next_id: u64,
 }
 
@@ -1083,6 +1671,111 @@ pub struct CustomShow {
     pub name: String,
     /// The slides included in this custom show, in presentation order.
     pub slides: Vec<SlideId>,
+}
+
+/// フォトアルバムのレイアウト種別 (`ST_PhotoAlbumLayout`)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PhotoAlbumLayout {
+    #[default]
+    FitToSlide,
+    OnePic,
+    TwoPic,
+    FourPic,
+    OnePicTitle,
+    TwoPicTitle,
+    FourPicTitle,
+}
+
+impl PhotoAlbumLayout {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::FitToSlide => "fitToSlide",
+            Self::OnePic => "1pic",
+            Self::TwoPic => "2pic",
+            Self::FourPic => "4pic",
+            Self::OnePicTitle => "1picTitle",
+            Self::TwoPicTitle => "2picTitle",
+            Self::FourPicTitle => "4picTitle",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "fitToSlide" => Some(Self::FitToSlide),
+            "1pic" => Some(Self::OnePic),
+            "2pic" => Some(Self::TwoPic),
+            "4pic" => Some(Self::FourPic),
+            "1picTitle" => Some(Self::OnePicTitle),
+            "2picTitle" => Some(Self::TwoPicTitle),
+            "4picTitle" => Some(Self::FourPicTitle),
+            _ => None,
+        }
+    }
+
+    pub fn pictures_per_slide(&self) -> usize {
+        match self {
+            Self::FitToSlide | Self::OnePic | Self::OnePicTitle => 1,
+            Self::TwoPic | Self::TwoPicTitle => 2,
+            Self::FourPic | Self::FourPicTitle => 4,
+        }
+    }
+
+    pub fn has_title(&self) -> bool {
+        matches!(self, Self::OnePicTitle | Self::TwoPicTitle | Self::FourPicTitle)
+    }
+}
+
+/// フォトアルバムの枠の形状 (`ST_PhotoAlbumFrameShape`)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PhotoAlbumFrame {
+    #[default]
+    FrameStyle1, // 長方形 (Rectangle)
+    FrameStyle2, // 角丸長方形 (Rounded Rectangle)
+    FrameStyle3, // 単純な枠、白 (Simple Frame, White)
+    FrameStyle4, // 単純な枠、黒 (Simple Frame, Black)
+    FrameStyle5, // 二重枠、黒 (Compound Frame, Black)
+    FrameStyle6, // 中心の影、四角形 (Center Shadow Rectangle)
+    FrameStyle7, // ソフト エッジ四角形 (Soft Edge Rectangle)
+}
+
+impl PhotoAlbumFrame {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::FrameStyle1 => "frameStyle1",
+            Self::FrameStyle2 => "frameStyle2",
+            Self::FrameStyle3 => "frameStyle3",
+            Self::FrameStyle4 => "frameStyle4",
+            Self::FrameStyle5 => "frameStyle5",
+            Self::FrameStyle6 => "frameStyle6",
+            Self::FrameStyle7 => "frameStyle7",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "frameStyle1" => Some(Self::FrameStyle1),
+            "frameStyle2" => Some(Self::FrameStyle2),
+            "frameStyle3" => Some(Self::FrameStyle3),
+            "frameStyle4" => Some(Self::FrameStyle4),
+            "frameStyle5" => Some(Self::FrameStyle5),
+            "frameStyle6" => Some(Self::FrameStyle6),
+            "frameStyle7" => Some(Self::FrameStyle7),
+            _ => None,
+        }
+    }
+}
+
+/// フォトアルバムの設定 (`p:photoAlbum`)。
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct PhotoAlbum {
+    /// すべての写真を白黒で表示 (`bw="1"`)。
+    pub bw: bool,
+    /// すべての写真の下にキャプションを表示 (`showCaptions="1"`)。
+    pub show_captions: bool,
+    /// 写真のレイアウト (`layout`)。
+    pub layout: PhotoAlbumLayout,
+    /// 枠の形状 (`frame`)。
+    pub frame: PhotoAlbumFrame,
 }
 
 /// The presentation show type (スライド ショーの種類).
@@ -1327,7 +2020,7 @@ impl Presentation {
     /// A presentation with no slides yet, for a reader to fill. It must end up
     /// with at least one slide.
     pub fn empty(slide_size: EmuSize) -> Self {
-        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), oles: Vec::new(), fonts: Vec::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), next_id: 1 }
+        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), oles: Vec::new(), fonts: Vec::new(), font_substitutions: std::collections::BTreeMap::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), theme_effects: None, first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), photo_album: None, next_id: 1 }
     }
 
     /// Look up a custom show by its numeric identifier.
@@ -1531,8 +2224,15 @@ impl Presentation {
     /// Store an embedded object and return its id.
     pub fn add_ole(&mut self, prog_id: impl Into<String>, data: impl Into<Arc<[u8]>>, as_icon: bool) -> OleId {
         let id = OleId(self.next_id());
-        self.oles.push(OleObject { id, prog_id: prog_id.into(), data: data.into(), as_icon });
+        self.oles.push(OleObject { id, prog_id: prog_id.into(), data: data.into(), as_icon, natural: None });
         id
+    }
+
+    /// The size the application of object `id` draws it at (see [`OleObject::natural`]).
+    pub fn set_ole_natural(&mut self, id: OleId, natural: Option<(i64, i64)>) {
+        if let Some(object) = self.oles.iter_mut().find(|o| o.id == id) {
+            object.natural = natural.filter(|&(w, h)| w > 0 && h > 0);
+        }
     }
 
     pub fn ole(&self, id: OleId) -> Option<&OleObject> {

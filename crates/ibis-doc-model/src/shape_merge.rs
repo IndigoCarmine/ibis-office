@@ -578,3 +578,351 @@ mod tests {
         assert!(merge(&[&a], MergeOp::Union, || ShapeId(1)).is_none());
     }
 }
+
+// ----- 頂点の編集: vertices with Bézier handles -------------------------------------------------------------------
+
+/// The closed figures of an outline as vertices with their handles (`Node`), in slide EMU.
+pub type Nodes = Vec<Vec<crate::shape_geometry::Node>>;
+
+type Pt = (f64, f64);
+
+fn lerp(a: Pt, b: Pt, t: f64) -> Pt {
+    (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
+}
+
+/// The point of the segment from `a` to `b` at `t` (0 to 1): on its curve, or its line.
+pub fn segment_point(a: &crate::shape_geometry::Node, b: &crate::shape_geometry::Node, t: f64) -> Pt {
+    let (c1, c2) = (a.cout.unwrap_or(a.p), b.cin.unwrap_or(b.p));
+    let (p01, p12, p23) = (lerp(a.p, c1, t), lerp(c1, c2, t), lerp(c2, b.p, t));
+    lerp(lerp(p01, p12, t), lerp(p12, p23, t), t)
+}
+
+/// A shape's outline as vertices with handles in slide coordinates (curves kept); `None` where [`shape_polygons`]
+/// is, and for an outline with arcs (a preset such as a rounded rectangle: its lines are had from `shape_polygons`).
+pub fn shape_nodes(shape: &Shape) -> Option<Nodes> {
+    use crate::shape_geometry::Node;
+    let ShapeKind::Auto(auto) = &shape.kind else { return None };
+    let (w, h) = (shape.frame.width as f64, shape.frame.height as f64);
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    let mut local: Nodes = match &auto.geometry {
+        Geometry::Rect => vec![vec![Node::corner((0.0, 0.0)), Node::corner((w, 0.0)), Node::corner((w, h)), Node::corner((0.0, h))]],
+        Geometry::Ellipse => {
+            // Four vertices, the handles a circle's quarter needs.
+            let (k, cx, cy) = (0.552_284_749_8, w / 2.0, h / 2.0);
+            let (kx, ky) = (cx * k, cy * k);
+            vec![vec![
+                Node { p: (w, cy), cin: Some((w, cy - ky)), cout: Some((w, cy + ky)) },
+                Node { p: (cx, h), cin: Some((cx + kx, h)), cout: Some((cx - kx, h)) },
+                Node { p: (0.0, cy), cin: Some((0.0, cy + ky)), cout: Some((0.0, cy - ky)) },
+                Node { p: (cx, 0.0), cin: Some((cx - kx, 0.0)), cout: Some((cx + kx, 0.0)) },
+            ]]
+        }
+        Geometry::RoundRect { .. } => return None,
+        Geometry::Formula(f) => f.nodes(w, h)?,
+    };
+    let angle = (shape.rotation as f64 / 60_000.0).to_radians();
+    let (sin, cos) = angle.sin_cos();
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    let map = |p: Pt| -> Pt {
+        let (mut x, mut y) = p;
+        if shape.flip_h {
+            x = w - x;
+        }
+        if shape.flip_v {
+            y = h - y;
+        }
+        let (dx, dy) = (x - cx, y - cy);
+        (shape.frame.x as f64 + cx + dx * cos - dy * sin, shape.frame.y as f64 + cy + dx * sin + dy * cos)
+    };
+    for figure in &mut local {
+        for n in figure.iter_mut() {
+            *n = Node { p: map(n.p), cin: n.cin.map(map), cout: n.cout.map(map) };
+        }
+        // Flips turn a figure round (the handles with it).
+        if shape.flip_h != shape.flip_v {
+            figure.reverse();
+            for n in figure.iter_mut() {
+                std::mem::swap(&mut n.cin, &mut n.cout);
+            }
+        }
+    }
+    Some(local)
+}
+
+/// The outlines as lines (the curves cut into short ones), for drawing and for a nearness test.
+pub fn nodes_polylines(nodes: &Nodes) -> Polygons {
+    nodes
+        .iter()
+        .map(|figure| {
+            let n = figure.len();
+            let mut points = Vec::new();
+            for i in 0..n {
+                let (a, b) = (&figure[i], &figure[(i + 1) % n]);
+                let steps = if a.cout.is_none() && b.cin.is_none() { 1 } else { 24 };
+                for s in 0..steps {
+                    points.push(segment_point(a, b, s as f64 / steps as f64));
+                }
+            }
+            points
+        })
+        .collect()
+}
+
+/// `like` with `nodes` (slide coordinates) as its outline: a custom geometry of lines and cubic curves, its frame
+/// the box round the outline.
+pub fn reshaped_nodes(like: &Shape, nodes: &Nodes) -> Option<Shape> {
+    let ShapeKind::Auto(auto) = &like.kind else { return None };
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for p in nodes_polylines(nodes).iter().flatten() {
+        min_x = min_x.min(p.0);
+        min_y = min_y.min(p.1);
+        max_x = max_x.max(p.0);
+        max_y = max_y.max(p.1);
+    }
+    if nodes.is_empty() || max_x - min_x < 1.0 || max_y - min_y < 1.0 {
+        return None;
+    }
+    let (ox, oy) = (min_x.round() as i64, min_y.round() as i64);
+    let frame = EmuRect::new(ox, oy, (max_x.round() as i64 - ox).max(1), (max_y.round() as i64 - oy).max(1));
+    let text = |p: Pt| (((p.0.round() as i64 - ox).to_string()), ((p.1.round() as i64 - oy).to_string()));
+    let mut ops = Vec::new();
+    for figure in nodes {
+        let n = figure.len();
+        let (x, y) = text(figure[0].p);
+        ops.push(PathOp::MoveTo(x, y));
+        for i in 0..n {
+            let (a, b) = (&figure[i], &figure[(i + 1) % n]);
+            let closing = i + 1 == n;
+            if a.cout.is_none() && b.cin.is_none() {
+                if !closing {
+                    let (x, y) = text(b.p);
+                    ops.push(PathOp::LineTo(x, y));
+                }
+            } else {
+                let (c1, c2) = (text(a.cout.unwrap_or(a.p)), text(b.cin.unwrap_or(b.p)));
+                let t = text(b.p);
+                ops.push(PathOp::CubicTo([c1.0, c1.1, c2.0, c2.1, t.0, t.1]));
+            }
+        }
+        ops.push(PathOp::Close);
+    }
+    let path = GeometryPath { width: frame.width, height: frame.height, fill: PathFill::Normal, stroke: true, ops };
+    let def = GeometryDef { adjust: Vec::new(), guides: Vec::new(), paths: vec![path], text_rect: None };
+    let geometry = Geometry::Formula(FormulaGeometry { preset: None, adjust: Vec::new(), def: Arc::new(def) });
+    let shape_auto = AutoShape { geometry, text: auto.text.clone(), ..auto.clone() };
+    Some(Shape::new(like.id, frame, ShapeKind::Auto(shape_auto)))
+}
+
+/// The nearest point of the segment from `a` to `b` to `p`: (distance, t, the point).
+pub fn nearest_on_segment_curve(a: &crate::shape_geometry::Node, b: &crate::shape_geometry::Node, p: Pt) -> (f64, f64, Pt) {
+    let steps = if a.cout.is_none() && b.cin.is_none() { 1 } else { 48 };
+    let mut best = (f64::MAX, 0.0, a.p);
+    for s in 0..=steps {
+        let t = s as f64 / steps as f64;
+        let q = segment_point(a, b, t);
+        let d = (p.0 - q.0).hypot(p.1 - q.1);
+        if d < best.0 {
+            best = (d, t, q);
+        }
+    }
+    // A line: the foot of the perpendicular (not just the nearest of the two ends).
+    if steps == 1 {
+        let (dx, dy) = (b.p.0 - a.p.0, b.p.1 - a.p.1);
+        let len2 = dx * dx + dy * dy;
+        let t = if len2 == 0.0 { 0.0 } else { (((p.0 - a.p.0) * dx + (p.1 - a.p.1) * dy) / len2).clamp(0.0, 1.0) };
+        let q = (a.p.0 + t * dx, a.p.1 + t * dy);
+        return ((p.0 - q.0).hypot(p.1 - q.1), t, q);
+    }
+    best
+}
+
+/// A vertex put on the segment `i` of `figure` (to the next) at `t`: on a curve, it splits the curve in two.
+pub fn split_segment(figure: &mut Vec<crate::shape_geometry::Node>, i: usize, t: f64) {
+    use crate::shape_geometry::Node;
+    let n = figure.len();
+    let (a, b) = (figure[i], figure[(i + 1) % n]);
+    if a.cout.is_none() && b.cin.is_none() {
+        figure.insert(i + 1, Node::corner(lerp(a.p, b.p, t)));
+        return;
+    }
+    let (c1, c2) = (a.cout.unwrap_or(a.p), b.cin.unwrap_or(b.p));
+    let (p01, p12, p23) = (lerp(a.p, c1, t), lerp(c1, c2, t), lerp(c2, b.p, t));
+    let (q0, q1) = (lerp(p01, p12, t), lerp(p12, p23, t));
+    let mid = lerp(q0, q1, t);
+    figure[i].cout = Some(p01);
+    let at = (i + 1) % n;
+    figure[at].cin = Some(p23);
+    figure.insert(i + 1, Node { p: mid, cin: Some(q0), cout: Some(q1) });
+}
+
+/// What a vertex is (点の種類).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeKind {
+    /// 頂点 without handles: lines at both sides.
+    Straight,
+    /// The handles are in one line (the curve goes through smoothly).
+    Smooth,
+    /// Handles of their own.
+    Corner,
+}
+
+/// The kind of vertex `i` of `figure`.
+pub fn node_kind(figure: &[crate::shape_geometry::Node], i: usize) -> NodeKind {
+    let n = &figure[i];
+    match (n.cin, n.cout) {
+        (None, None) => NodeKind::Straight,
+        (Some(a), Some(b)) => {
+            let (u, v) = ((n.p.0 - a.0, n.p.1 - a.1), (b.0 - n.p.0, b.1 - n.p.1));
+            let cross = u.0 * v.1 - u.1 * v.0;
+            let dot = u.0 * v.0 + u.1 * v.1;
+            // In one line, to a ten-thousandth of a radian (the points are whole EMU).
+            if cross.abs() <= 1e-4 * (u.0.hypot(u.1) * v.0.hypot(v.1)).max(1.0) && dot >= 0.0 { NodeKind::Smooth } else { NodeKind::Corner }
+        }
+        _ => NodeKind::Corner,
+    }
+}
+
+/// Vertex `i` of `figure` made of `kind`. A smooth or corner vertex with no handles gets them along the line
+/// between its neighbours, a third of the way to each.
+pub fn set_node_kind(figure: &mut [crate::shape_geometry::Node], i: usize, kind: NodeKind) {
+    let n = figure.len();
+    let (prev, next) = (figure[(i + n - 1) % n].p, figure[(i + 1) % n].p);
+    let node = &mut figure[i];
+    match kind {
+        NodeKind::Straight => {
+            node.cin = None;
+            node.cout = None;
+        }
+        NodeKind::Corner | NodeKind::Smooth => {
+            let (dx, dy) = (next.0 - prev.0, next.1 - prev.1);
+            let len = dx.hypot(dy);
+            let (ux, uy) = if len > 0.0 { (dx / len, dy / len) } else { (1.0, 0.0) };
+            let reach_in = (node.p.0 - prev.0).hypot(node.p.1 - prev.1) / 3.0;
+            let reach_out = (next.0 - node.p.0).hypot(next.1 - node.p.1) / 3.0;
+            if kind == NodeKind::Smooth {
+                // In one line: the outgoing handle's direction, the lengths each its own.
+                let dir = match (node.cin, node.cout) {
+                    (_, Some(o)) if (o.0 - node.p.0).hypot(o.1 - node.p.1) > 0.0 => {
+                        let l = (o.0 - node.p.0).hypot(o.1 - node.p.1);
+                        ((o.0 - node.p.0) / l, (o.1 - node.p.1) / l)
+                    }
+                    (Some(i_), _) if (node.p.0 - i_.0).hypot(node.p.1 - i_.1) > 0.0 => {
+                        let l = (node.p.0 - i_.0).hypot(node.p.1 - i_.1);
+                        ((node.p.0 - i_.0) / l, (node.p.1 - i_.1) / l)
+                    }
+                    _ => (ux, uy),
+                };
+                let lin = node.cin.map_or(reach_in, |c| (node.p.0 - c.0).hypot(node.p.1 - c.1));
+                let lout = node.cout.map_or(reach_out, |c| (c.0 - node.p.0).hypot(c.1 - node.p.1));
+                node.cin = Some((node.p.0 - dir.0 * lin, node.p.1 - dir.1 * lin));
+                node.cout = Some((node.p.0 + dir.0 * lout, node.p.1 + dir.1 * lout));
+            } else {
+                node.cin.get_or_insert((node.p.0 - ux * reach_in, node.p.1 - uy * reach_in));
+                node.cout.get_or_insert((node.p.0 + ux * reach_out, node.p.1 + uy * reach_out));
+            }
+        }
+    }
+}
+
+/// Vertex `i` moved to `to`, its handles with it.
+pub fn move_node(figure: &mut [crate::shape_geometry::Node], i: usize, to: Pt) {
+    let n = &mut figure[i];
+    let (dx, dy) = (to.0 - n.p.0, to.1 - n.p.1);
+    n.p = to;
+    n.cin = n.cin.map(|c| (c.0 + dx, c.1 + dy));
+    n.cout = n.cout.map(|c| (c.0 + dx, c.1 + dy));
+}
+
+/// Handle `outgoing` (`false`: the one coming in, `true`: the one going out) of vertex `i` moved to `to`. With
+/// `mirror` (a smooth vertex) the other handle is kept in line with it (its own length).
+pub fn move_handle(figure: &mut [crate::shape_geometry::Node], i: usize, outgoing: bool, to: Pt, mirror: bool) {
+    let n = &mut figure[i];
+    let other = if outgoing { n.cin } else { n.cout };
+    if outgoing {
+        n.cout = Some(to);
+    } else {
+        n.cin = Some(to);
+    }
+    if mirror {
+        if let Some(o) = other {
+            let len = (o.0 - n.p.0).hypot(o.1 - n.p.1);
+            let (dx, dy) = (n.p.0 - to.0, n.p.1 - to.1);
+            let d = dx.hypot(dy);
+            if d > 0.0 {
+                let opposite = (n.p.0 + dx / d * len, n.p.1 + dy / d * len);
+                if outgoing { n.cin = Some(opposite) } else { n.cout = Some(opposite) }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod node_tests {
+    use super::*;
+    use crate::drawing::Geometry;
+    use crate::model::{AutoShape, ShapeKind};
+    use crate::shape_geometry::Node;
+
+    fn ellipse() -> Shape {
+        Shape::new(ShapeId(1), EmuRect::new(1000, 2000, 4000, 2000), ShapeKind::Auto(AutoShape::new(Geometry::Ellipse, crate::drawing::Fill::None, None)))
+    }
+
+    #[test]
+    fn an_ellipse_is_four_smooth_vertices_and_comes_back_through_a_custom_geometry() {
+        let shape = ellipse();
+        let nodes = shape_nodes(&shape).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].len(), 4);
+        assert!(nodes[0].iter().enumerate().all(|(i, _)| node_kind(&nodes[0], i) == NodeKind::Smooth));
+        let custom = reshaped_nodes(&shape, &nodes).unwrap();
+        assert_eq!((custom.frame.x, custom.frame.y, custom.frame.width, custom.frame.height), (1000, 2000, 4000, 2000), "the frame is the ellipse's box");
+        let again = shape_nodes(&custom).unwrap();
+        assert_eq!(again[0].len(), 4, "a curve closing on its first vertex is one vertex");
+        for (a, b) in nodes[0].iter().zip(&again[0]) {
+            assert!((a.p.0 - b.p.0).abs() <= 1.0 && (a.p.1 - b.p.1).abs() <= 1.0, "{a:?} {b:?}");
+            let (ac, bc) = (a.cout.unwrap(), b.cout.unwrap());
+            assert!((ac.0 - bc.0).abs() <= 1.0 && (ac.1 - bc.1).abs() <= 1.0);
+        }
+    }
+
+    #[test]
+    fn a_vertex_added_on_a_curve_keeps_its_shape() {
+        let nodes = shape_nodes(&ellipse()).unwrap();
+        let mut figure = nodes[0].clone();
+        let before = segment_point(&figure[0], &figure[1], 0.5);
+        split_segment(&mut figure, 0, 0.5);
+        assert_eq!(figure.len(), 5);
+        assert!((figure[1].p.0 - before.0).abs() < 1e-6 && (figure[1].p.1 - before.1).abs() < 1e-6, "the new vertex is on the curve");
+        assert_eq!(node_kind(&figure, 1), NodeKind::Smooth);
+        // The curve through the new vertex is the one it was.
+        let (a, b) = (segment_point(&figure[0], &figure[1], 0.5), segment_point(&nodes[0][0], &nodes[0][1], 0.25));
+        assert!((a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_line_is_split_in_two_lines_and_kinds_change() {
+        let mut figure = vec![Node::corner((0.0, 0.0)), Node::corner((100.0, 0.0)), Node::corner((100.0, 100.0)), Node::corner((0.0, 100.0))];
+        split_segment(&mut figure, 0, 0.25);
+        assert_eq!(figure[1].p, (25.0, 0.0));
+        assert_eq!(node_kind(&figure, 1), NodeKind::Straight);
+        set_node_kind(&mut figure, 2, NodeKind::Smooth);
+        assert_eq!(node_kind(&figure, 2), NodeKind::Smooth);
+        assert!(figure[2].cin.is_some() && figure[2].cout.is_some());
+        // Dragging one handle of a smooth vertex turns the other.
+        move_handle(&mut figure, 2, true, (100.0, 60.0), true);
+        assert_eq!(node_kind(&figure, 2), NodeKind::Smooth);
+        set_node_kind(&mut figure, 2, NodeKind::Corner);
+        move_handle(&mut figure, 2, true, (140.0, 20.0), false);
+        assert_eq!(node_kind(&figure, 2), NodeKind::Corner, "a corner's handles are its own");
+        set_node_kind(&mut figure, 2, NodeKind::Straight);
+        assert!(figure[2].cin.is_none() && figure[2].cout.is_none());
+        // Moving a vertex takes its handles along.
+        set_node_kind(&mut figure, 4, NodeKind::Corner);
+        let (cin, cout) = (figure[4].cin.unwrap(), figure[4].cout.unwrap());
+        move_node(&mut figure, 4, (10.0, 130.0));
+        assert_eq!(figure[4].cin.unwrap(), (cin.0 + 10.0, cin.1 + 30.0));
+        assert_eq!(figure[4].cout.unwrap(), (cout.0 + 10.0, cout.1 + 30.0));
+    }
+}

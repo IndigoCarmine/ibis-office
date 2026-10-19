@@ -13,7 +13,11 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use ibis_doc_model::chart::{AxisKind, ChartText, ChartTitle, ErrorBarType, ErrorBarValueType, LabelPosition, Legend, LegendPosition, Marker, MarkerSymbol, Number, Side, TrendlineType};
+use ibis_doc_model::chart::{
+    AxisKind, ChartDataTable, ChartText, ChartTitle, DataLabels, ErrorBarType, ErrorBarValueType,
+    LabelPosition, Legend, LegendPosition, Marker, MarkerSymbol, Number, Side,
+    TrendlineType,
+};
 use ibis_doc_model::{CellRange, Chart, Color, Command, DispBlanksAs, Fill, Rgb, ShapeId, ShapeKind, Stroke};
 
 use crate::shell::chrome::SidebarPanel;
@@ -34,8 +38,18 @@ pub(crate) struct ChartPanel {
     pub(crate) overlap: Entity<InputState>,
     pub(crate) of_pie_split_pos: Entity<InputState>,
     pub(crate) of_pie_second_size: Entity<InputState>,
+    /// 3-D 回転: X 回転、Y 回転、奥行き (%)
+    pub(crate) three_d_rot_x: Entity<InputState>,
+    pub(crate) three_d_rot_y: Entity<InputState>,
+    pub(crate) three_d_depth: Entity<InputState>,
     /// データの範囲 (`月次売上!$A$3:$D$8`) the series take their data from.
     pub(crate) range: Entity<InputState>,
+    /// A histogram's bins (新しいグラフ): the width, the number, the underflow and the overflow bins.
+    pub(crate) ex_bin_width: Entity<InputState>,
+    pub(crate) ex_bin_count: Entity<InputState>,
+    pub(crate) ex_underflow: Entity<InputState>,
+    pub(crate) ex_overflow: Entity<InputState>,
+    pub(crate) ex_gap_width: Entity<InputState>,
     pub(crate) error: Option<SharedString>,
 }
 
@@ -268,6 +282,7 @@ impl SlideEditor {
                 None
             }
         }).unwrap_or_default();
+        let (three_d_rot_x, three_d_rot_y, three_d_depth) = chart.groups.iter().find_map(|g| g.three_d).map(|v| (v.rot_x.to_string(), v.rot_y.to_string(), v.depth_percent.to_string())).unwrap_or_default();
         let field = |text: String, cx: &mut Context<Self>, window: &mut Window| {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_shell.auto")));
             input.update(cx, |i, cx| i.set_value(text, window, cx));
@@ -276,8 +291,19 @@ impl SlideEditor {
         let range = self.source.as_deref().and_then(|s| s.sheet_chart_refs(id, chart)).and_then(|refs| ibis_pptx::refs_range(&refs)).map(|(sheet, range, _)| ibis_pptx::format_ref(&sheet, range)).unwrap_or_default();
         let range_input = cx.new(|cx| InputState::new(window, cx));
         range_input.update(cx, |i, cx| i.set_value(range, window, cx));
+        let ex = chart.ex_source.as_ref().map(|s| s.0.options()).unwrap_or_default();
+        let ex_width = match ex.bin_by { ibis_doc_model::BinBy::Width(w) => ibis_calc::number_to_xml(w.0), _ => String::new() };
+        let ex_count = match ex.bin_by { ibis_doc_model::BinBy::Count(c) => c.to_string(), _ => String::new() };
+        let ex_under = ex.underflow.map_or(String::new(), |n| ibis_calc::number_to_xml(n.0));
+        let ex_over = ex.overflow.map_or(String::new(), |n| ibis_calc::number_to_xml(n.0));
+        let ex_gap = ex.gap_width.map_or(String::new(), |g| g.to_string());
         let panel = ChartPanel {
             shape: id,
+            ex_bin_width: field(ex_width, cx, window),
+            ex_bin_count: field(ex_count, cx, window),
+            ex_underflow: field(ex_under, cx, window),
+            ex_overflow: field(ex_over, cx, window),
+            ex_gap_width: field(ex_gap, cx, window),
             title: field(title, cx, window),
             cat_title: field(cat_title, cx, window),
             val_title: field(val_title, cx, window),
@@ -290,6 +316,9 @@ impl SlideEditor {
             overlap: field(overlap, cx, window),
             of_pie_split_pos: field(of_pie_split_pos, cx, window),
             of_pie_second_size: field(of_pie_second_size, cx, window),
+            three_d_rot_x: field(three_d_rot_x, cx, window),
+            three_d_rot_y: field(three_d_rot_y, cx, window),
+            three_d_depth: field(three_d_depth, cx, window),
             range: range_input,
             error: None,
         };
@@ -313,6 +342,71 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// A chartEx chart's settings changed by `edit` (one step to undo): the chart made again from its cells with them.
+    pub(crate) fn set_chart_ex_options(&mut self, edit: impl FnOnce(&mut ibis_doc_model::ChartExOptions), cx: &mut Context<Self>) {
+        let Some((shape, chart)) = self.sheet_chart().map(|(id, c)| (id, c.clone())) else { return };
+        let Some(source) = chart.ex_source.clone() else { return };
+        let mut options = source.0.options();
+        edit(&mut options);
+        let Some(changed) = source.0.with_options(&options) else { return };
+        let mut next = chart;
+        next.ex_source = Some(ibis_doc_model::ExSourceRef(changed.0, source.1));
+        let next = ibis_doc_model::chart_refresh::rebuilt_ex(self.presentation(), &next);
+        let slide = self.current_slide;
+        if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(next))) }]) {
+            log::warn!("chart edit rejected: {err}");
+        }
+        cx.notify();
+    }
+
+    /// ウォーターフォール: point `index` set as a total, or no longer one.
+    pub(crate) fn toggle_chart_ex_total(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.set_chart_ex_options(
+            |o| match o.subtotals.iter().position(|i| *i == index) {
+                Some(at) => {
+                    o.subtotals.remove(at);
+                }
+                None => o.subtotals.push(index),
+            },
+            cx,
+        );
+    }
+
+    /// ヒストグラム: the bins of the fields (a width, else a number, else automatic; the under- and overflow values).
+    pub(crate) fn apply_chart_ex_bins(&mut self, cx: &mut Context<Self>) {
+        let Some(p) = self.wb().chart_edit.as_ref() else { return };
+        let read = |input: &Entity<InputState>| input.read(cx).value().trim().to_string();
+        let (width, count, under, over) = (read(&p.ex_bin_width), read(&p.ex_bin_count), read(&p.ex_underflow), read(&p.ex_overflow));
+        let number = |t: &str| t.parse::<f64>().ok().filter(|v| v.is_finite());
+        let bin_by = match (number(&width).filter(|w| *w > 0.0), count.parse::<u32>().ok().filter(|c| *c >= 1)) {
+            (Some(w), _) => ibis_doc_model::BinBy::Width(Number(w)),
+            (None, Some(c)) => ibis_doc_model::BinBy::Count(c),
+            _ => ibis_doc_model::BinBy::Auto,
+        };
+        let (underflow, overflow) = (number(&under).map(Number), number(&over).map(Number));
+        self.set_chart_ex_options(
+            move |o| {
+                o.bin_by = bin_by;
+                o.underflow = underflow;
+                o.overflow = overflow;
+            },
+            cx,
+        );
+    }
+
+    /// ChartEx: apply gap width (%) setting.
+    pub(crate) fn apply_chart_ex_gap_width(&mut self, cx: &mut Context<Self>) {
+        let Some(p) = self.wb().chart_edit.as_ref() else { return };
+        let text = p.ex_gap_width.read(cx).value().trim().to_string();
+        let gap = text.parse::<u32>().ok();
+        self.set_chart_ex_options(
+            move |o| {
+                o.gap_width = gap;
+            },
+            cx,
+        );
+    }
+
     /// データの範囲 / 行/列の切り替え: the selected chart's series over the range
     /// in the field (when `switch` is false) or over the range it has with its
     /// series turned from columns to rows or back (`switch`).
@@ -329,18 +423,54 @@ impl SlideEditor {
             return fail(self, "_xlsx.the-data-range-of-this-chart-cannot-be-changed", cx);
         };
         let text = self.wb().chart_edit.as_ref().map(|p| p.range.read(cx).value().trim().trim_start_matches('=').to_string()).unwrap_or_default();
-        let sheet_name = self.slide().name.clone().unwrap_or_default();
-        let typed = if text.contains('!') { text.clone() } else { format!("{}!{text}", ibis_pptx::quote_sheet(&sheet_name)) };
-        let Some((sheet, range)) = ibis_pptx::parse_ref(&typed) else {
-            return fail(self, "_xlsx.cannot-read-the-data-range-example-sheet1-a-3-d", cx);
+        let (sheet, range) = if switch && text.is_empty() {
+            (current.0.clone(), current.1)
+        } else {
+            let sheet_name = self.slide().name.clone().unwrap_or_default();
+            let typed = if text.contains('!') { text.clone() } else { format!("{}!{text}", ibis_pptx::quote_sheet(&sheet_name)) };
+            let Some((sheet, range)) = ibis_pptx::parse_ref(&typed) else {
+                return fail(self, "_xlsx.cannot-read-the-data-range-example-sheet1-a-3-d", cx);
+            };
+            (sheet, range)
         };
         let changed = (sheet.as_str(), range) != (current.0.as_str(), current.1);
         // A new range: series in columns when it has no more columns than rows (as Excel does); else the chart's own.
         let by_columns = if switch { !current.2 } else if changed { range.last_column - range.first_column <= range.last_row - range.first_row } else { current.2 };
-        let Some(refs) = ibis_pptx::refs_for_range(self.presentation(), &sheet, range, by_columns) else {
+        let is_scatter = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Scatter { .. }));
+        let is_bubble = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Bubble { .. }));
+        let stock_kind = if chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Stock { .. })) {
+            let total_series: usize = chart.groups.iter().map(|g| g.series.len()).sum();
+            let has_bar = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Bar { .. }));
+            if has_bar {
+                if total_series <= 4 { Some(ibis_pptx::NewChartKind::StockVHLC) } else { Some(ibis_pptx::NewChartKind::StockVOHLC) }
+            } else if total_series <= 3 {
+                Some(ibis_pptx::NewChartKind::StockHLC)
+            } else {
+                Some(ibis_pptx::NewChartKind::StockOHLC)
+            }
+        } else {
+            None
+        };
+        let get_refs = |by_cols: bool| -> Option<Vec<ibis_pptx::SeriesRefs>> {
+            if let Some(kind) = stock_kind {
+                ibis_pptx::stock_refs_for_range(self.presentation(), &sheet, range, kind, by_cols)
+            } else if is_bubble {
+                ibis_pptx::bubble_refs_for_range(self.presentation(), &sheet, range, by_cols)
+            } else if is_scatter {
+                ibis_pptx::scatter_refs_for_range(self.presentation(), &sheet, range, by_cols)
+            } else {
+                ibis_pptx::refs_for_range(self.presentation(), &sheet, range, by_cols)
+            }
+        };
+        let refs = if switch {
+            get_refs(by_columns)
+        } else {
+            get_refs(by_columns).or_else(|| if changed { get_refs(!by_columns) } else { None })
+        };
+        let Some(refs) = refs else {
             return fail(self, "_xlsx.use-a-range-of-at-least-2-rows-and-2-columns-who", cx);
         };
-        let target = ibis_pptx::chart_from_data(&chart, self.presentation(), &refs);
+        let target = ibis_pptx::sheet_chart_from_data(&chart, self.presentation(), &refs);
         if target == chart {
             return cx.notify();
         }
@@ -358,6 +488,11 @@ impl SlideEditor {
             p.error = None;
         }
         cx.notify();
+    }
+
+    /// 行/列の切り替え: 選択中グラフのデータ系列を行と列で入れ替える.
+    pub(crate) fn switch_sheet_chart_row_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_sheet_chart_data(true, window, cx);
     }
 
     /// 系列の並べ替え: 指定インデックスの系列を 1 つ上（up=true）または下（up=false）に移動する.
@@ -399,7 +534,7 @@ impl SlideEditor {
             g.series.extend(iter.by_ref().take(len));
         }
 
-        let target = ibis_pptx::chart_from_data(&chart, self.presentation(), &refs);
+        let target = ibis_pptx::sheet_chart_from_data(&chart, self.presentation(), &refs);
         source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs });
         let slide = self.current_slide;
         if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
@@ -443,7 +578,7 @@ impl SlideEditor {
             curr += g.series.len();
         }
 
-        let target = ibis_pptx::chart_from_data(&chart, self.presentation(), &refs);
+        let target = ibis_pptx::sheet_chart_from_data(&chart, self.presentation(), &refs);
         source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs.clone() });
         let slide = self.current_slide;
         if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
@@ -474,22 +609,64 @@ impl SlideEditor {
         let Some(mut refs) = source.sheet_chart_refs(shape, &chart) else {
             return fail(self, "xlsx.chart-series-add-error", cx);
         };
+        let is_bubble = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Bubble { .. }));
         let new_ref = if let Some((sheet, range, by_columns)) = ibis_pptx::refs_range(&refs) {
             let one = |r0: u32, c0: u32, r1: u32, c1: u32| ibis_pptx::format_ref(&sheet, CellRange { first_row: r0, first_column: c0, last_row: r1, last_column: c1 });
-            if by_columns {
+            let has_header = refs.first().and_then(|r| r.name.as_ref()).is_some();
+            if is_bubble {
+                if by_columns {
+                    let next_col = range.last_column + 1;
+                    let size_col = range.last_column + 2;
+                    let (data_r0, name) = if has_header {
+                        (range.first_row + 1, Some(one(range.first_row, next_col, range.first_row, next_col)))
+                    } else {
+                        (range.first_row, None)
+                    };
+                    ibis_pptx::SeriesRefs {
+                        name,
+                        categories: refs.first().and_then(|r| r.categories.clone()),
+                        values: Some(one(data_r0, next_col, range.last_row, next_col)),
+                        sizes: Some(one(data_r0, size_col, range.last_row, size_col)),
+                    }
+                } else {
+                    let next_row = range.last_row + 1;
+                    let size_row = range.last_row + 2;
+                    let (data_c0, name) = if has_header {
+                        (range.first_column + 1, Some(one(next_row, range.first_column, next_row, range.first_column)))
+                    } else {
+                        (range.first_column, None)
+                    };
+                    ibis_pptx::SeriesRefs {
+                        name,
+                        categories: refs.first().and_then(|r| r.categories.clone()),
+                        values: Some(one(next_row, data_c0, next_row, range.last_column)),
+                        sizes: Some(one(size_row, data_c0, size_row, range.last_column)),
+                    }
+                }
+            } else if by_columns {
                 let next_col = range.last_column + 1;
+                let (data_r0, name) = if has_header {
+                    (range.first_row + 1, Some(one(range.first_row, next_col, range.first_row, next_col)))
+                } else {
+                    (range.first_row, None)
+                };
                 ibis_pptx::SeriesRefs {
-                    name: Some(one(range.first_row, next_col, range.first_row, next_col)),
+                    name,
                     categories: refs.first().and_then(|r| r.categories.clone()),
-                    values: Some(one(range.first_row + 1, next_col, range.last_row, next_col)),
+                    values: Some(one(data_r0, next_col, range.last_row, next_col)),
                     ..Default::default()
                 }
             } else {
                 let next_row = range.last_row + 1;
+                let (data_c0, name) = if has_header {
+                    (range.first_column + 1, Some(one(next_row, range.first_column, next_row, range.first_column)))
+                } else {
+                    (range.first_column, None)
+                };
                 ibis_pptx::SeriesRefs {
-                    name: Some(one(next_row, range.first_column, next_row, range.first_column)),
+                    name,
                     categories: refs.first().and_then(|r| r.categories.clone()),
-                    values: Some(one(next_row, range.first_column + 1, next_row, range.last_column)),
+                    values: Some(one(next_row, data_c0, next_row, range.last_column)),
                     ..Default::default()
                 }
             }
@@ -499,7 +676,7 @@ impl SlideEditor {
             return fail(self, "xlsx.chart-series-add-error", cx);
         };
         refs.push(new_ref);
-        let target = ibis_pptx::chart_from_data(&chart, self.presentation(), &refs);
+        let target = ibis_pptx::sheet_chart_from_data(&chart, self.presentation(), &refs);
         source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs.clone() });
         let slide = self.current_slide;
         if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
@@ -527,6 +704,169 @@ impl SlideEditor {
                     style: c.title.as_ref().map_or(ChartText { size: 1400, ..ChartText::default() }, |t| t.style.clone()),
                     at: None,
                 })
+            },
+            cx,
+        );
+    }
+
+    /// クイック レイアウト: Excel のグラフのクイック レイアウト 1..=10 を適用する.
+    pub(crate) fn set_sheet_chart_quick_layout(&mut self, layout: u32, cx: &mut Context<Self>) {
+        if !(1..=10).contains(&layout) {
+            return;
+        }
+        self.change_sheet_chart(
+            |c| {
+                let default_title_text = crate::shell::i18n::text("_xlsx.chart-title").to_string();
+                let default_axis_text = crate::shell::i18n::text("_xlsx.axis-title").to_string();
+
+                // All 10 quick layouts show the Chart Title at top.
+                c.title = Some(ChartTitle {
+                    text: c.title.as_ref().map(|t| t.text.clone()).filter(|s| !s.trim().is_empty()).unwrap_or(default_title_text),
+                    style: c.title.as_ref().map_or(ChartText { size: 1400, ..ChartText::default() }, |t| t.style.clone()),
+                    at: None,
+                });
+
+                // Legend configuration:
+                // Layout 1, 3, 6, 8, 9, 10: Right
+                // Layout 2, 7: Top
+                // Layout 4, 5: None
+                let legend_pos = match layout {
+                    1 | 3 | 6 | 8 | 9 | 10 => Some(LegendPosition::Right),
+                    2 | 7 => Some(LegendPosition::Top),
+                    4 | 5 => None,
+                    _ => None,
+                };
+                c.legend = legend_pos.map(|pos| {
+                    let side = match pos {
+                        LegendPosition::Bottom => Side::Bottom,
+                        LegendPosition::Left => Side::Left,
+                        LegendPosition::Top => Side::Top,
+                        LegendPosition::Right | LegendPosition::TopRight => Side::Right,
+                    };
+                    match c.legend.take() {
+                        Some(l) => Legend { source_position: Some(pos), side, layout: None, ..l },
+                        None => Legend {
+                            source_position: Some(pos),
+                            side,
+                            overlay: Some(false),
+                            layout: None,
+                            text: ChartText { size: 900, ..ChartText::default() },
+                            hidden: Vec::new(),
+                        },
+                    }
+                });
+
+                // Category & Value Axis Titles:
+                // Layout 3, 7, 9: Both Category and Value Axis Titles
+                // Layout 5: Value Axis Title only
+                // Other layouts: None
+                let (has_cat_title, has_val_title) = match layout {
+                    3 | 7 | 9 => (true, true),
+                    5 => (false, true),
+                    _ => (false, false),
+                };
+
+                if let Some(i) = category_axis(c) {
+                    let a = &mut c.axes[i];
+                    a.title = if has_cat_title {
+                        Some(ChartTitle {
+                            text: a.title.as_ref().map(|t| t.text.clone()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| default_axis_text.clone()),
+                            style: a.title.as_ref().map_or(ChartText { size: 1000, ..a.text.clone() }, |t| t.style.clone()),
+                            at: None,
+                        })
+                    } else {
+                        None
+                    };
+                }
+
+                if let Some(i) = value_axis(c) {
+                    let a = &mut c.axes[i];
+                    a.title = if has_val_title {
+                        Some(ChartTitle {
+                            text: a.title.as_ref().map(|t| t.text.clone()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| default_axis_text.clone()),
+                            style: a.title.as_ref().map_or(ChartText { size: 1000, ..a.text.clone() }, |t| t.style.clone()),
+                            at: None,
+                        })
+                    } else {
+                        None
+                    };
+                }
+
+                // Gridlines:
+                // Layout 2: None
+                // Layout 1, 3..=10: ON
+                let gridlines_on = layout != 2;
+                if let Some(i) = value_axis(c) {
+                    let a = &mut c.axes[i];
+                    a.gridlines = if gridlines_on {
+                        a.gridlines.clone().or_else(|| Some(Stroke::solid(Color::opaque(Rgb(0xD9D9D9)), Stroke::DEFAULT_WIDTH)))
+                    } else {
+                        None
+                    };
+                }
+
+                // Data Labels:
+                // Layout 2: OutsideEnd
+                // Layout 6: Center
+                // Others: None
+                let label_pos = match layout {
+                    2 => Some(LabelPosition::OutsideEnd),
+                    6 => Some(LabelPosition::Center),
+                    _ => None,
+                };
+                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                    series.labels = match (label_pos, series.labels.take()) {
+                        (Some(pos), Some(l)) => Some(DataLabels { position: Some(pos), show_value: true, ..l }),
+                        (Some(pos), None) => Some(DataLabels { show_value: true, position: Some(pos), ..Default::default() }),
+                        (None, _) => None,
+                    };
+                }
+
+                // Data Table:
+                // Layout 4: ON, show_keys: true
+                // Layout 5: ON, show_keys: false
+                // Others: None
+                c.data_table = match layout {
+                    4 => Some(ChartDataTable {
+                        show_keys: true,
+                        ..c.data_table.unwrap_or_default()
+                    }),
+                    5 => Some(ChartDataTable {
+                        show_keys: false,
+                        ..c.data_table.unwrap_or_default()
+                    }),
+                    _ => None,
+                };
+
+                // Trendline:
+                // Layout 8: Linear (disp_eq: false)
+                // Layout 9: Linear (disp_eq: true)
+                // Others: None
+                let trendline_cfg = match layout {
+                    8 => Some((TrendlineType::Linear, false)),
+                    9 => Some((TrendlineType::Linear, true)),
+                    _ => None,
+                };
+                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                    series.trendline = trendline_cfg.map(|(kind, disp_eq)| {
+                        let mut tl = series.trendline.clone().unwrap_or_default();
+                        tl.kind = kind;
+                        tl.disp_eq = disp_eq;
+                        tl
+                    });
+                }
+
+                // Error Bars:
+                // Layout 10: ON (default)
+                // Others: None
+                let error_bars_on = layout == 10;
+                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                    series.error_bars = if error_bars_on {
+                        Some(series.error_bars.clone().unwrap_or_default())
+                    } else {
+                        None
+                    };
+                }
             },
             cx,
         );
@@ -1139,7 +1479,21 @@ impl SlideEditor {
         );
     }
 
+    /// グラフの種類の変更: the selected chart's one group made `preset` (one step to undo).
+    pub(crate) fn set_sheet_chart_type(&mut self, preset: crate::pptx::chart_panel::ChartPreset, cx: &mut Context<Self>) {
+        let Some((_, chart)) = self.sheet_chart() else { return };
+        match crate::pptx::chart_panel::chart_with_preset(chart.clone(), preset) {
+            Ok(new_chart) => {
+                self.change_sheet_chart(|c| *c = new_chart, cx);
+            }
+            Err(key) => {
+                self.set_status(crate::shell::i18n::text(key).to_string(), cx);
+            }
+        }
+    }
+
     /// 軸の交点（自動または最大値等）を設定.
+    #[allow(dead_code)]
     pub(crate) fn set_sheet_chart_axis_crosses(&mut self, is_value_axis: bool, crosses: Option<ibis_doc_model::chart::AxisCrosses>, cx: &mut Context<Self>) {
         self.change_sheet_chart(
             |c| {
@@ -1302,6 +1656,42 @@ impl SlideEditor {
         );
     }
 
+    /// 3-D 回転の設定 (X軸回転、Y軸回転、直角の軸、奥行き %)
+    pub(crate) fn set_sheet_chart_3d_rotation(&mut self, rot_x: Option<i32>, rot_y: Option<i32>, right_angle_axes: Option<bool>, depth_percent: Option<u32>, cx: &mut Context<Self>) {
+        self.change_sheet_chart(
+            |c| {
+                for g in &mut c.groups {
+                    if let Some(v) = &mut g.three_d {
+                        if let Some(rx) = rot_x { v.rot_x = rx; }
+                        if let Some(ry) = rot_y { v.rot_y = ry; }
+                        if let Some(raa) = right_angle_axes { v.right_angle_axes = raa; }
+                        if let Some(dp) = depth_percent { v.depth_percent = dp.clamp(20, 2000); }
+                    }
+                }
+            },
+            cx,
+        );
+    }
+
+    /// 3-D 回転を既定値にリセット
+    pub(crate) fn reset_sheet_chart_3d_rotation(&mut self, cx: &mut Context<Self>) {
+        self.change_sheet_chart(
+            |c| {
+                for g in &mut c.groups {
+                    if g.three_d.is_some() {
+                        let is_pie = matches!(g.kind, ibis_doc_model::ChartType::Pie { .. });
+                        g.three_d = Some(if is_pie {
+                            ibis_doc_model::View3D { rot_x: 30, rot_y: 0, right_angle_axes: false, depth_percent: 100 }
+                        } else {
+                            ibis_doc_model::View3D::default()
+                        });
+                    }
+                }
+            },
+            cx,
+        );
+    }
+
     /// 適用: the title's text and the axis's scale from the fields.
     pub(crate) fn apply_sheet_chart_panel(&mut self, cx: &mut Context<Self>) {
         let Some(p) = self.wb().chart_edit.as_ref() else { return };
@@ -1332,6 +1722,12 @@ impl SlideEditor {
         } else {
             of_pie_size_str.parse::<u16>().map_err(|_| ()).and_then(|v| if (5..=200).contains(&v) { Ok(Some(v)) } else { Err(()) })
         };
+        let rot_x_str = p.three_d_rot_x.read(cx).value().trim().to_string();
+        let rot_y_str = p.three_d_rot_y.read(cx).value().trim().to_string();
+        let depth_str = p.three_d_depth.read(cx).value().trim().to_string();
+        let parsed_rot_x: Option<i32> = rot_x_str.parse::<i32>().ok().map(|v| v.clamp(-90, 90));
+        let parsed_rot_y: Option<i32> = rot_y_str.parse::<i32>().ok().map(|v| v.clamp(0, 360));
+        let parsed_depth: Option<u32> = depth_str.parse::<u32>().ok().map(|v| v.clamp(20, 2000));
         let error = match (&parsed, parsed_gap, parsed_overlap, &parsed_of_pie_pos, parsed_of_pie_size) {
             (Err(()), _, _, _, _) => Some(crate::shell::i18n::text("_xlsx.enter-numbers-for-the-minimum-maximum-and-major")),
             (Ok(v), _, _, _, _) if v[0].zip(v[1]).is_some_and(|(a, b)| a.0 >= b.0) => Some(crate::shell::i18n::text("_xlsx.the-minimum-must-be-less-than-the-maximum")),
@@ -1415,6 +1811,13 @@ impl SlideEditor {
                         }
                     }
                 }
+                for g in &mut c.groups {
+                    if let Some(v) = &mut g.three_d {
+                        if let Some(rx) = parsed_rot_x { v.rot_x = rx; }
+                        if let Some(ry) = parsed_rot_y { v.rot_y = ry; }
+                        if let Some(dp) = parsed_depth { v.depth_percent = dp; }
+                    }
+                }
             },
             cx,
         );
@@ -1467,6 +1870,9 @@ impl SlideEditor {
             ibis_doc_model::ChartType::Stock { hi_low_lines, up_down_bars, drop_lines } => Some((hi_low_lines, up_down_bars, drop_lines)),
             _ => None,
         }).unwrap_or((false, false, false));
+        let has_3d = chart.groups.iter().any(|g| g.three_d.is_some());
+        let current_v3d = chart.groups.iter().find_map(|g| g.three_d);
+        let right_angle_axes = current_v3d.map_or(false, |v| v.right_angle_axes);
         let has_of_pie = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::OfPie { .. }));
         let current_of_pie_kind = chart.groups.iter().find_map(|g| match g.kind {
             ibis_doc_model::ChartType::OfPie { kind } => Some(kind.unwrap_or(ibis_doc_model::OfPieKind::Pie)),
@@ -1809,6 +2215,76 @@ impl SlideEditor {
             .label(crate::shell::i18n::text("xlsx.chart-series-add"))
             .on_click(cx.listener(|this, _, window, cx| this.add_sheet_chart_series(window, cx)));
         let show_hidden = !chart.plot_vis_only;
+        let labeled = |key: &str, input: &Entity<InputState>| v_flex().gap_1().child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text(key))).child(Input::new(input).small());
+        // A chartEx chart's own settings: the points that are totals (a waterfall), the bins (a histogram).
+        let ex_section = chart.ex_source.as_ref().map(|source| {
+            let xml = source.0.xml();
+            let o = source.0.options();
+            let mut section = v_flex().gap_2();
+            if xml.contains("layoutId=\"waterfall\"") {
+                section = section.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.totals")));
+                let names: Vec<String> = chart.groups.first().and_then(|g| g.series.first()).map(|s| s.categories.clone()).unwrap_or_default();
+                for (i, name) in names.iter().enumerate().take(60) {
+                    let on = o.subtotals.contains(&i);
+                    section = section.child(Checkbox::new(("chart-ex-total", i)).label(name.clone()).checked(on).on_click(cx.listener(move |this, _: &bool, _, cx| this.toggle_chart_ex_total(i, cx))));
+                }
+            }
+            if xml.contains("layoutId=\"clusteredColumn\"") && !is_pareto(&xml) {
+                section = section
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.bins")))
+                    .child(labeled("xlsx.chart-ex.bin-width", &p.ex_bin_width))
+                    .child(labeled("xlsx.chart-ex.bin-count", &p.ex_bin_count))
+                    .child(labeled("xlsx.chart-ex.underflow", &p.ex_underflow))
+                    .child(labeled("xlsx.chart-ex.overflow", &p.ex_overflow))
+                    .child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("xlsx.chart-ex.bins-hint")))
+                    .child(Checkbox::new("chart-ex-closed-right").label(crate::shell::i18n::text("xlsx.chart-ex.closed-right")).checked(o.closed_right).on_click(cx.listener(|this, on: &bool, _, cx| {
+                        let on = *on;
+                        this.set_chart_ex_options(move |o| o.closed_right = on, cx)
+                    })))
+                    .child(Button::new("chart-ex-bins-apply").primary().small().label(crate::shell::i18n::text("xlsx.chart-ex.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_bins(cx))));
+            }
+            if xml.contains("layoutId=\"boxWhisker\"") {
+                section = section
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.box-whisker")))
+                    .child(Checkbox::new("chart-ex-box-mean-marker").label(crate::shell::i18n::text("xlsx.chart-ex.box-mean-marker")).checked(o.box_mean_marker).on_click(cx.listener(|this, on: &bool, _, cx| {
+                        let on = *on;
+                        this.set_chart_ex_options(move |o| o.box_mean_marker = on, cx)
+                    })))
+                    .child(Checkbox::new("chart-ex-box-mean-line").label(crate::shell::i18n::text("xlsx.chart-ex.box-mean-line")).checked(o.box_mean_line).on_click(cx.listener(|this, on: &bool, _, cx| {
+                        let on = *on;
+                        this.set_chart_ex_options(move |o| o.box_mean_line = on, cx)
+                    })))
+                    .child(Checkbox::new("chart-ex-box-outliers").label(crate::shell::i18n::text("xlsx.chart-ex.box-outliers")).checked(o.box_outliers).on_click(cx.listener(|this, on: &bool, _, cx| {
+                        let on = *on;
+                        this.set_chart_ex_options(move |o| o.box_outliers = on, cx)
+                    })))
+                    .child(Checkbox::new("chart-ex-box-inclusive").label(crate::shell::i18n::text("xlsx.chart-ex.box-inclusive")).checked(o.box_inclusive).on_click(cx.listener(|this, on: &bool, _, cx| {
+                        let on = *on;
+                        this.set_chart_ex_options(move |o| o.box_inclusive = on, cx)
+                    })));
+            }
+            if xml.contains("layoutId=\"treemap\"") {
+                section = section
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.treemap")))
+                    .child(Checkbox::new("chart-ex-treemap-overlapping").label(crate::shell::i18n::text("xlsx.chart-ex.treemap-overlapping")).checked(o.treemap_overlapping).on_click(cx.listener(|this, on: &bool, _, cx| {
+                        let on = *on;
+                        this.set_chart_ex_options(move |o| o.treemap_overlapping = on, cx)
+                    })));
+            }
+            if is_funnel(&xml) {
+                section = section
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.funnel")))
+                    .child(labeled("xlsx.chart-ex.gap-width", &p.ex_gap_width))
+                    .child(Button::new("chart-ex-funnel-apply").primary().small().label(crate::shell::i18n::text("xlsx.chart-ex.apply-gap")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_gap_width(cx))));
+            }
+            if is_pareto(&xml) {
+                section = section
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.pareto")))
+                    .child(labeled("xlsx.chart-ex.gap-width", &p.ex_gap_width))
+                    .child(Button::new("chart-ex-pareto-apply").primary().small().label(crate::shell::i18n::text("xlsx.chart-ex.apply-gap")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_gap_width(cx))));
+            }
+            section
+        });
         let field = |label: &str, input: &Entity<InputState>| h_flex().gap_2().items_center().child(div().w(px(72.)).child(label.to_string())).child(div().flex_1().child(Input::new(input).small()));
         let body = v_flex()
             .gap_2()
@@ -1829,6 +2305,7 @@ impl SlideEditor {
                     .child(Button::new("chart-save-template").small().label(crate::shell::i18n::text("_xlsx.save-as-template")).on_click(cx.listener(|this, _, window, cx| this.open_chart_template_panel(crate::xlsx::chart_template::ChartTemplateMode::Save, window, cx))))
                     .child(Button::new("chart-apply-template").small().label(crate::shell::i18n::text("_xlsx.apply-template")).on_click(cx.listener(|this, _, window, cx| this.open_chart_template_panel(crate::xlsx::chart_template::ChartTemplateMode::Apply, window, cx)))),
             )
+            .when_some(ex_section, |b, section| b.child(section))
             .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-series")))
             .child(series_list)
             .child(add_series_btn)
@@ -1921,6 +2398,19 @@ impl SlideEditor {
                 b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("fix.chart-edit.surface-type")))
                     .child(surface_type_buttons)
             })
+            .when(has_3d, |b| {
+                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-3d-rotation")))
+                    .child(field(&crate::shell::i18n::text("xlsx.chart-3d-x-rotation"), &p.three_d_rot_x))
+                    .child(field(&crate::shell::i18n::text("xlsx.chart-3d-y-rotation"), &p.three_d_rot_y))
+                    .child(Checkbox::new("chart-3d-right-angle-axes").label(crate::shell::i18n::text("xlsx.chart-3d-right-angle-axes")).checked(right_angle_axes).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_3d_rotation(None, None, Some(*on), None, cx))))
+                    .child(field(&crate::shell::i18n::text("xlsx.chart-3d-depth"), &p.three_d_depth))
+                    .child(
+                        Button::new("chart-3d-reset-defaults")
+                            .small()
+                            .label(crate::shell::i18n::text("xlsx.chart-3d-reset-defaults"))
+                            .on_click(cx.listener(|this, _, _, cx| this.reset_sheet_chart_3d_rotation(cx)))
+                    )
+            })
             .when_some(chart.pivot_source.clone(), |b, p_name| {
                 b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.pivot-chart")))
                     .child(
@@ -1975,4 +2465,12 @@ impl SlideEditor {
             );
         Some(SidebarPanel { title: crate::shell::i18n::text("_xlsx.format-chart").into(), body: body.into_any_element() })
     }
+}
+
+fn is_funnel(raw: &str) -> bool {
+    raw.contains("layoutId=\"funnel\"")
+}
+
+fn is_pareto(raw: &str) -> bool {
+    raw.contains("layoutId=\"pareto\"") || raw.contains("layoutId=\"paretoLine\"") || raw.contains("paretoLine")
 }

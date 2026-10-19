@@ -7,10 +7,17 @@
 pub(crate) mod chart_view;
 pub(crate) mod font_metrics;
 pub(crate) mod glyph_outline;
+pub(crate) mod bevel;
+pub(crate) mod metafile_fonts;
 pub(crate) mod picture_svg;
 pub(crate) mod preload;
 pub(crate) mod gradient;
+pub(crate) mod math_font;
+pub(crate) mod math_view;
 pub(crate) mod rich_text;
 pub(crate) mod rotated_text;
 pub(crate) mod shape_view;
 pub(crate) mod table_view;
+pub(crate) mod web_image;
+
+pub(crate) use shape_view::ColorMode;

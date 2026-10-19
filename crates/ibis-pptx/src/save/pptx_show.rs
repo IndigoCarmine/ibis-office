@@ -15,7 +15,7 @@ use crate::Error;
 const REL_PRES_PROPS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps";
 const CT_PRES_PROPS: &str = "application/vnd.openxmlformats-officedocument.presentationml.presProps+xml";
 
-pub(crate) fn write(package: &mut Package, presentation: &str, show: &ShowProperties) -> Result<(), Error> {
+pub(crate) fn write(package: &mut Package, presentation: &str, show: &ShowProperties, custom_shows: &[ibis_doc_model::CustomShow]) -> Result<(), Error> {
     let pres_props_part = package.relationships(presentation)?
         .into_iter()
         .find(|r| r.kind == REL_PRES_PROPS && !r.external)
@@ -37,7 +37,7 @@ pub(crate) fn write(package: &mut Package, presentation: &str, show: &ShowProper
         doc.detach(existing);
     }
 
-    let show_xml = show_pr_xml(&x, show);
+    let show_xml = show_pr_xml(&x, show, custom_shows);
     let show_node = x.import(doc, &show_xml)?;
 
     let next = doc.elements(root).find(|&n| matches!(doc.local_name(n), "clrMru" | "extLst"));
@@ -51,7 +51,7 @@ pub(crate) fn write(package: &mut Package, presentation: &str, show: &ShowProper
     Ok(())
 }
 
-fn show_pr_xml(x: &Prefixes, show: &ShowProperties) -> String {
+fn show_pr_xml(x: &Prefixes, show: &ShowProperties, custom_shows: &[ibis_doc_model::CustomShow]) -> String {
     let mut attrs = Vec::new();
     if show.loop_continuously {
         attrs.push("loop=\"1\"".to_string());
@@ -91,8 +91,12 @@ fn show_pr_xml(x: &Prefixes, show: &ShowProperties) -> String {
         ShowSlideRange::Range { start, end } => {
             inner.push_str(&format!("<{}sldRg st=\"{}\" end=\"{}\"/>", x.p, start, end));
         }
-        ShowSlideRange::Custom(id) => {
+        ShowSlideRange::Custom(id) if custom_shows.iter().any(|c| c.id == id) => {
             inner.push_str(&format!("<{}custShow id=\"{}\"/>", x.p, id));
+        }
+        ShowSlideRange::Custom(_) => {
+            // Dangling custom show reference: fall back to all slides so PowerPoint doesn't hang.
+            inner.push_str(&format!("<{}sldAll/>", x.p));
         }
     }
 

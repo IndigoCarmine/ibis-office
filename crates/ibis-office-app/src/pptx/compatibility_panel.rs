@@ -251,6 +251,146 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// 互換性問題の要因となっている視覚効果（3D面取り・反射・ソフトエッジ・3D傾き）や文字変形（WordArt Warp）を解除して互換性を回復する
+    pub(crate) fn resolve_pptx_compatibility_issue(&mut self, issue_idx: usize, cx: &mut Context<Self>) {
+        self.jump_to_pptx_compatibility_issue(issue_idx, cx);
+        let (slide_id, Some(shape_id), issue_title) = ({
+            let Some(pptx) = self.pptx() else { return };
+            let Some(panel) = &pptx.compatibility_panel else { return };
+            let all = panel.report.all_issues();
+            let Some(issue) = all.get(issue_idx) else { return };
+            (issue.slide_id, issue.shape_id, issue.title.clone())
+        }) else {
+            return;
+        };
+
+        let Some(mut slide) = self.presentation().slide(slide_id).cloned() else {
+            return;
+        };
+        let Some(shape) = slide.shapes.iter_mut().find(|s| s.id == shape_id) else {
+            return;
+        };
+
+        let effects_title = text("pptx.compat.effects-title").to_string();
+        let warp_title = text("pptx.compat.text-warp-title").to_string();
+        let cust_geom_title = text("pptx.compat.cust-geom-title").to_string();
+
+        if issue_title == effects_title {
+            match &mut shape.kind {
+                ShapeKind::Auto(auto) => {
+                    auto.reflection = None;
+                    auto.soft_edge = None;
+                    auto.bevel = None;
+                    auto.tilt = None;
+                }
+                ShapeKind::Picture(pic) => {
+                    pic.reflection = None;
+                    pic.soft_edge = None;
+                }
+                _ => {}
+            }
+            self.run(vec![ibis_doc_model::Command::SetSlide { slide }], cx);
+        } else if issue_title == warp_title {
+            if let Some(tb) = shape.text_body_mut() {
+                tb.warp = None;
+            }
+            self.run(vec![ibis_doc_model::Command::SetSlide { slide }], cx);
+        } else if issue_title == cust_geom_title {
+            if let ShapeKind::Auto(auto) = &mut shape.kind {
+                auto.geometry = Geometry::Rect;
+            }
+            self.run(vec![ibis_doc_model::Command::SetSlide { slide }], cx);
+        } else {
+            self.run(
+                vec![ibis_doc_model::Command::RemoveShape {
+                    slide: slide_id,
+                    shape: shape_id,
+                }],
+                cx,
+            );
+        }
+        self.recheck_pptx_compatibility(cx);
+    }
+
+    /// 互換性問題の対象図形を削除して再検査する
+    pub(crate) fn remove_pptx_compatibility_issue_shape(&mut self, issue_idx: usize, cx: &mut Context<Self>) {
+        let (slide_id, Some(shape_id)) = ({
+            let Some(pptx) = self.pptx() else { return };
+            let Some(panel) = &pptx.compatibility_panel else { return };
+            let all = panel.report.all_issues();
+            let Some(issue) = all.get(issue_idx) else { return };
+            (issue.slide_id, issue.shape_id)
+        }) else {
+            return;
+        };
+        self.current_slide = slide_id;
+        self.run(
+            vec![ibis_doc_model::Command::RemoveShape {
+                slide: slide_id,
+                shape: shape_id,
+            }],
+            cx,
+        );
+        self.recheck_pptx_compatibility(cx);
+    }
+
+    /// Context menu entries for compatibility issue `issue_idx` (PPTX-FILE-007).
+    pub(crate) fn compatibility_issue_context_menu_entries(
+        &self,
+        issue_idx: usize,
+    ) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem};
+        let Some(panel) = self.pptx().and_then(|s| s.compatibility_panel.as_ref()) else {
+            return Vec::new();
+        };
+        let all = panel.report.all_issues();
+        let Some(issue) = all.get(issue_idx) else {
+            return Vec::new();
+        };
+        let has_shape = issue.shape_id.is_some();
+
+        vec![
+            MenuItem::tr("_shell.view")
+                .icon("visibility")
+                .on(move |e, _, cx| e.jump_to_pptx_compatibility_issue(issue_idx, cx))
+                .into(),
+            MenuItem::tr("_shell.clear-formatting")
+                .icon("format_clear")
+                .disabled(!has_shape)
+                .on(move |e, _, cx| e.resolve_pptx_compatibility_issue(issue_idx, cx))
+                .into(),
+            MenuItem::tr("edit.delete")
+                .icon("delete")
+                .disabled(!has_shape)
+                .on(move |e, _, cx| e.remove_pptx_compatibility_issue_shape(issue_idx, cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.compat.recheck")
+                .icon("refresh")
+                .on(|e, _, cx| e.recheck_pptx_compatibility(cx))
+                .into(),
+            MenuItem::tr("_shell.close")
+                .icon("close")
+                .on(|e, _, cx| e.close_pptx_compatibility_panel(cx))
+                .into(),
+        ]
+    }
+
+    /// Open context menu for compatibility issue `issue_idx` at pointer `position`.
+    pub(crate) fn open_compatibility_issue_context_menu(
+        &mut self,
+        issue_idx: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.jump_to_pptx_compatibility_issue(issue_idx, cx);
+        let entries = self.compatibility_issue_context_menu_entries(issue_idx);
+        if !entries.is_empty() {
+            self.open_popup_entries(entries, position, window, cx);
+        }
+    }
+
     /// 互換性チェックパネルの UI を生成する
     pub(crate) fn pptx_compatibility_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let pptx = self.pptx()?;
@@ -313,12 +453,24 @@ impl SlideEditor {
                 let jump_label = crate::shell::i18n::format("_pptx.slide-slide-num-shape-name", &[("slide_num", &slide_num), ("shape_name", &shape_name)]);
 
                 let card = v_flex()
+                    .id(("compat-issue-card", ix))
                     .p_2()
                     .gap_1()
                     .rounded_md()
                     .border_1()
                     .border_color(cx.theme().danger.opacity(0.3))
                     .bg(cx.theme().danger.opacity(0.04))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.jump_to_pptx_compatibility_issue(ix, cx);
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, w, cx| {
+                            cx.stop_propagation();
+                            this.open_compatibility_issue_context_menu(ix, event.position, w, cx);
+                        }),
+                    )
                     .child(
                         h_flex()
                             .justify_between()
@@ -372,12 +524,24 @@ impl SlideEditor {
                 let jump_label = crate::shell::i18n::format("_pptx.slide-slide-num-shape-name", &[("slide_num", &slide_num), ("shape_name", &shape_name)]);
 
                 let card = v_flex()
+                    .id(("compat-issue-card", global_ix))
                     .p_2()
                     .gap_1()
                     .rounded_md()
                     .border_1()
                     .border_color(cx.theme().accent.opacity(0.3))
                     .bg(cx.theme().accent.opacity(0.04))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.jump_to_pptx_compatibility_issue(global_ix, cx);
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, w, cx| {
+                            cx.stop_propagation();
+                            this.open_compatibility_issue_context_menu(global_ix, event.position, w, cx);
+                        }),
+                    )
                     .child(
                         h_flex()
                             .justify_between()
@@ -389,13 +553,26 @@ impl SlideEditor {
                                     .child(issue.title.clone()),
                             )
                             .child(
-                                Button::new(("jump-compat-minor", ix))
-                                    .xsmall()
-                                    .outline()
-                                    .label(jump_label)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.jump_to_pptx_compatibility_issue(global_ix, cx);
-                                    })),
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Button::new(("fix-compat-minor", ix))
+                                            .xsmall()
+                                            .ghost()
+                                            .label(text("_shell.clear-formatting"))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.resolve_pptx_compatibility_issue(global_ix, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new(("jump-compat-minor", ix))
+                                            .xsmall()
+                                            .outline()
+                                            .label(jump_label)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.jump_to_pptx_compatibility_issue(global_ix, cx);
+                                            })),
+                                    ),
                             ),
                     )
                     .child(

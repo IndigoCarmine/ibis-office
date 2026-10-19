@@ -46,14 +46,14 @@ pub(crate) fn chart_part_at(package: &Package, part: &str, path: &[u32]) -> Resu
 /// Chart part `part` changed from `before` to `after`: with `data` (データ
 /// の編集 in the workbook editor) its series and workbook from that first,
 /// then the rest; else the changes, and the cells changed in its workbook.
-fn write_chart_changes(package: &mut Package, part: &str, before: &ibis_doc_model::Chart, after: &ibis_doc_model::Chart, data: Option<&super::pptx_chart_data::ChartData>) -> Result<(), Error> {
-    // A chartEx chart: its data (from the workbook) is written; nothing else is yet.
+pub(crate) fn write_chart_changes(package: &mut Package, part: &str, before: &ibis_doc_model::Chart, after: &ibis_doc_model::Chart, data: Option<&super::pptx_chart_data::ChartData>) -> Result<(), Error> {
+    // A chartEx chart: its data (from the workbook), its title and its legend are written; nothing else is yet.
     if super::pptx_chart_ex::is_chart_ex(package, part) {
-        return match data {
-            Some(data) => super::pptx_chart_ex::write_chart_data(package, part, data),
-            None if before == after => Ok(()),
-            None => Err(unsupported("この種類のグラフの変更")),
-        };
+        if let Some(data) = data {
+            super::pptx_chart_ex::write_chart_data(package, part, data)?;
+        }
+        // (With the data edited, the rest of the chart differs by what the workbook gave it.)
+        return super::pptx_chart_ex::write_chart_format(package, part, before, after, data.is_some());
     }
     match data {
         Some(data) => {
@@ -98,7 +98,7 @@ pub(crate) fn write_slide(
         let object = current.ole(id).ok_or_else(|| Error::new("埋め込みオブジェクトのデータがありません"))?;
         let part = ole_part(package, current, id, media)?;
         let rel = package.add_relationship(&target.part, REL_OLE, &relative(&target.part, &part), false)?;
-        ole_rels.insert(shape.id, new::OleRel { rel, prog_id: object.prog_id.clone(), as_icon: object.as_icon });
+        ole_rels.insert(shape.id, new::OleRel { rel, prog_id: object.prog_id.clone(), as_icon: object.as_icon, natural: object.natural });
     }
     for shape in slide.shapes.iter().filter(|s| {
         !old_ids.contains(&s.id)
@@ -244,6 +244,14 @@ pub(crate) fn write_slide(
         nodes.insert(shape.id, node);
         sources.insert(shape.id, source);
     }
+    let mut all_native_ids: HashMap<u64, String> = HashMap::new();
+    for (&id, &node) in &nodes {
+        if let Some(c_nv_pr) = doc.descendants(node).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "cNvPr") {
+            if let Some(native) = doc.attr(c_nv_pr, "id") {
+                all_native_ids.insert(id.0, native.to_string());
+            }
+        }
+    }
     // Changes inside shapes first: text is found by paths too.
     let old_by_id: HashMap<ShapeId, &Shape> = target.old.iter().map(|s| (s.id, s)).collect();
     for shape in &slide.shapes {
@@ -347,21 +355,29 @@ pub(crate) fn write_slide(
     let mut created: HashMap<ShapeId, NodeId> = HashMap::new();
     for shape in slide.shapes.iter().filter(|s| !old_ids.contains(&s.id)) {
         let xml = match chart_rels.get(&shape.id) {
-            Some(rel) if new_charts.get(&shape.id).is_some_and(|e| e.kind.is_chart_ex()) => super::pptx_new_chart::frame_ex_xml(&x.p, &x.a, &x.r, next_id, &format!("グラフ {}", next_id - 1), shape.frame, rel),
-            Some(rel) => super::pptx_new_chart::frame_xml(&x.p, &x.a, &x.r, next_id, &format!("グラフ {}", next_id - 1), shape.frame, rel),
+            Some(rel) if new_charts.get(&shape.id).is_some_and(|e| e.kind.is_chart_ex()) => super::pptx_new_chart::frame_ex_xml(&x.p, &x.a, &x.r, next_id, &crate::chart_name(next_id - 1), shape.frame, rel),
+            Some(rel) => super::pptx_new_chart::frame_xml(&x.p, &x.a, &x.r, next_id, &crate::chart_name(next_id - 1), shape.frame, rel),
             // A new placeholder (header, footer, slide number…): as one.
             None => match slide.placeholders.get(&shape.id) {
                 Some(ph) if shape.text_body().is_some() => new::placeholder_shape_xml(&x, shape, ph, next_id)?,
-                _ => new::shape_xml(&x, shape, next_id, picture_rels.get(&shape.id).map(String::as_str))?,
+                _ => new::shape_xml_with_glue(&x, shape, next_id, picture_rels.get(&shape.id).map(String::as_str), slide.shape_glues.get(&shape.id), Some(&all_native_ids))?,
             },
         };
         created_ids.insert(shape.id, next_id.to_string());
+        all_native_ids.insert(shape.id.0, next_id.to_string());
         next_id += 1;
         // A chartEx frame has its fallback's id too.
         if new_charts.get(&shape.id).is_some_and(|e| e.kind.is_chart_ex()) && chart_rels.contains_key(&shape.id) {
             next_id += 1;
         }
         created.insert(shape.id, x.import(doc, &xml)?);
+    }
+    for shape in &slide.shapes {
+        if let Some(&node) = nodes.get(&shape.id) {
+            if doc.local_name(node) == "cxnSp" {
+                write_connector_glue(doc, node, slide.shape_glues.get(&shape.id), &all_native_ids)?;
+            }
+        }
     }
     let old_groups=slide.live_groups(target.old_groups);
     if old_groups!=slide.groups {
@@ -574,6 +590,44 @@ fn remove_animations(doc: &mut XmlDocument, root: NodeId, spid: &str) {
     }
 }
 
+/// Write what a connector is attached to (`a:stCxn`, `a:endCxn`).
+fn write_connector_glue(
+    doc: &mut XmlDocument,
+    node: NodeId,
+    glue: Option<&ibis_doc_model::Glue>,
+    id_map: &HashMap<u64, String>,
+) -> Result<(), Error> {
+    let nv_cxn_pr = doc.elements(node).find(|&n| doc.local_name(n) == "nvCxnSpPr");
+    let Some(nv) = nv_cxn_pr else { return Ok(()); };
+    let c_nv_cxn_pr = doc.elements(nv).find(|&n| doc.local_name(n) == "cNvCxnSpPr");
+    let c_nv_cxn = match c_nv_cxn_pr {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+    let to_remove: Vec<NodeId> = doc.elements(c_nv_cxn).filter(|&n| matches!(doc.local_name(n), "stCxn" | "endCxn")).collect();
+    for child in to_remove {
+        doc.detach(child);
+    }
+    if let Some(g) = glue {
+        let a = Prefixes::at(doc, c_nv_cxn).a;
+        if let Some((target_id, idx)) = g.start {
+            let fallback = target_id.to_string();
+            let native_id = id_map.get(&target_id).unwrap_or(&fallback);
+            let el = doc.append_element(c_nv_cxn, &format!("{a}stCxn"));
+            doc.set_attr(el, "id", native_id);
+            doc.set_attr(el, "idx", &idx.to_string());
+        }
+        if let Some((target_id, idx)) = g.end {
+            let fallback = target_id.to_string();
+            let native_id = id_map.get(&target_id).unwrap_or(&fallback);
+            let el = doc.append_element(c_nv_cxn, &format!("{a}endCxn"));
+            doc.set_attr(el, "id", native_id);
+            doc.set_attr(el, "idx", &idx.to_string());
+        }
+    }
+    Ok(())
+}
+
 /// Write the changes from `old` to `new` of one shape.
 fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &Shape, new: &Shape, picture_rel: Option<&str>, ole_rel: Option<&new::OleRel>) -> Result<(), Error> {
     // What may change: the frame, rotation and flips, text inside runs, fill and outline.
@@ -594,6 +648,7 @@ fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &
             a.reflection = b.reflection;
             a.soft_edge = b.soft_edge;
             a.bevel = b.bevel;
+            a.tilt = b.tilt;
             // 図形の変更: one preset for another.
             // 頂点の編集 and the like: a freeform for a preset, or one for another, are written whole.
             if a.geometry != b.geometry {
@@ -604,10 +659,16 @@ fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &
             a.stroke = b.stroke.clone(); a.crop = b.crop; a.media = b.media;
             // An embedded object edited: its part and preview (`p:oleObj` in a `p:graphicFrame`).
             if doc.local_name(node) == "graphicFrame" && a.ole.is_some() && b.ole.is_some() { a.ole = b.ole; }
-            // Removing known colour effects is supported; creating/replacing them is not.
-            if b.duotone.is_none() { a.duotone = None; }
-            if b.clear.is_none() { a.clear = None; }
+            a.corner = b.corner;
+            a.duotone = b.duotone;
+            a.clear = b.clear;
             a.luminance = b.luminance;
+            a.shadow = b.shadow.clone();
+            a.reflection = b.reflection.clone();
+            a.soft_edge = b.soft_edge;
+            a.clip = b.clip.clone();
+            a.artistic_effect = b.artistic_effect;
+            a.effects.opacity = b.effects.opacity;
         },
         (ShapeKind::Line(a), ShapeKind::Line(b)) => *a = b.clone(),
         // A table's cells' text (セルの文字の編集).
@@ -647,6 +708,7 @@ fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &
             if a.reflection != b.reflection { write_shape_reflection(doc, node, a, b)?; }
             if a.soft_edge != b.soft_edge { write_shape_soft_edge(doc, node, a, b)?; }
             if a.bevel != b.bevel { write_shape_bevel(doc, node, a, b)?; }
+            if a.tilt != b.tilt { write_shape_tilt(doc, node, a, b)?; }
         }
         (ShapeKind::Picture(a), ShapeKind::Picture(b)) if doc.local_name(node) == "graphicFrame" => {
             write_ole_frame(doc, node, a, b, picture_rel, ole_rel)?;
@@ -661,16 +723,14 @@ fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &
             if a.crop != b.crop { write_picture_crop(doc, node, b.crop)?; }
             if a.corner != b.corner { write_picture_corner(doc, node, b.corner)?; }
             if a.duotone != b.duotone { write_picture_duotone(doc, node, b.duotone)?; }
-            if a.clear != b.clear {
-                let blip = doc.path(node, &["blipFill", "blip"]).ok_or_else(|| unsupported("この画像の色効果解除"))?;
-                let remove: Vec<_> = doc.elements(blip).filter(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "clrChange").collect();
-                for n in remove { doc.detach(n); }
-            }
+            if a.clear != b.clear { write_picture_clear(doc, node, b.clear)?; }
             if a.luminance != b.luminance { write_picture_luminance(doc, node, b.luminance)?; }
+            if a.effects.opacity != b.effects.opacity { write_picture_alpha(doc, node, b.effects.opacity)?; }
             if a.shadow != b.shadow { write_picture_shadow(doc, node, a, b)?; }
             if a.reflection != b.reflection { write_picture_reflection(doc, node, a, b)?; }
             if a.soft_edge != b.soft_edge { write_picture_soft_edge(doc, node, a, b)?; }
             if a.clip != b.clip { write_picture_clip(doc, node, b.clip.clone())?; }
+            if a.artistic_effect != b.artistic_effect { write_picture_artistic_effect(doc, node, b.artistic_effect)?; }
         }
         (ShapeKind::Line(a), ShapeKind::Line(b)) if a != b => write_stroke(doc, node, Some(a), Some(b))?,
         (ShapeKind::Table(a), ShapeKind::Table(b)) if a != b => super::pptx_table::write_table(doc, node, a, b)?,
@@ -918,6 +978,101 @@ fn write_shape_bevel(doc: &mut XmlDocument, node: NodeId, _old: &ibis_doc_model:
     Ok(())
 }
 
+fn write_shape_tilt(doc: &mut XmlDocument, node: NodeId, _old: &ibis_doc_model::AutoShape, new_shape: &ibis_doc_model::AutoShape) -> Result<(), Error> {
+    let pr = doc.elements(node).find(|&n| doc.namespace(n) == Some(new::NS_P) && doc.local_name(n) == "spPr").ok_or_else(|| unsupported("この図形の効果"))?;
+    let x = Prefixes::at(doc, pr);
+
+    // 1. scene3d
+    let scene3d = doc.elements(pr).find(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "scene3d");
+    match &new_shape.tilt {
+        None => {
+            if let Some(scene3d_node) = scene3d {
+                doc.detach(scene3d_node);
+            }
+        }
+        Some(tilt) => {
+            let scene3d_node = match scene3d {
+                Some(n) => n,
+                None => {
+                    let index = doc.children(pr).iter().position(|&n| {
+                        doc.is_element(n) && doc.namespace(n) == Some(new::NS_A) && sp_pr_rank(doc.local_name(n)) > 5
+                    }).unwrap_or(doc.children(pr).len());
+                    doc.insert_element(pr, index, &format!("{}scene3d", x.a))
+                }
+            };
+            let camera = match doc.child(scene3d_node, "camera") {
+                Some(c) => c,
+                None => {
+                    let index = 0;
+                    doc.insert_element(scene3d_node, index, &format!("{}camera", x.a))
+                }
+            };
+            let prst = tilt.camera_preset.map(|p| p.as_str()).unwrap_or("orthographicFront");
+            doc.set_attr(camera, "prst", prst);
+            let rot = match doc.child(camera, "rot") {
+                Some(r) => r,
+                None => doc.append_element(camera, &format!("{}rot", x.a)),
+            };
+            doc.set_attr(rot, "lat", &super::pptx_new::normalize_ooxml_angle(tilt.lat).to_string());
+            doc.set_attr(rot, "lon", &super::pptx_new::normalize_ooxml_angle(tilt.lon).to_string());
+            doc.set_attr(rot, "rev", &super::pptx_new::normalize_ooxml_angle(tilt.rev).to_string());
+
+            if doc.child(scene3d_node, "lightRig").is_none() {
+                let light = doc.append_element(scene3d_node, &format!("{}lightRig", x.a));
+                doc.set_attr(light, "rig", "threePt");
+                doc.set_attr(light, "dir", "t");
+            }
+        }
+    }
+
+    // 2. sp3d
+    let sp3d = doc.elements(pr).find(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "sp3d");
+    match &new_shape.tilt {
+        None => {
+            if let Some(sp3d_node) = sp3d {
+                doc.remove_attr(sp3d_node, "z");
+                doc.remove_attr(sp3d_node, "extrusionH");
+                let clrs: Vec<_> = doc.elements(sp3d_node).filter(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "extrusionClr").collect();
+                for c in clrs { doc.detach(c); }
+                if doc.elements(sp3d_node).count() == 0 && doc.attributes(sp3d_node).is_empty() {
+                    doc.detach(sp3d_node);
+                }
+            }
+        }
+        Some(tilt) => {
+            let sp3d_node = match sp3d {
+                Some(n) => n,
+                None => {
+                    let index = doc.children(pr).iter().position(|&n| {
+                        doc.is_element(n) && doc.namespace(n) == Some(new::NS_A) && sp_pr_rank(doc.local_name(n)) > 6
+                    }).unwrap_or(doc.children(pr).len());
+                    doc.insert_element(pr, index, &format!("{}sp3d", x.a))
+                }
+            };
+            if tilt.depth != 0 {
+                doc.set_attr(sp3d_node, "z", &tilt.depth.to_string());
+            } else {
+                doc.remove_attr(sp3d_node, "z");
+            }
+            if tilt.extrusion_h != 0 {
+                doc.set_attr(sp3d_node, "extrusionH", &tilt.extrusion_h.to_string());
+            } else {
+                doc.remove_attr(sp3d_node, "extrusionH");
+            }
+            let clrs: Vec<_> = doc.elements(sp3d_node).filter(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "extrusionClr").collect();
+            for c in clrs { doc.detach(c); }
+            if let Some(color) = tilt.extrusion_color {
+                let clr_node = doc.append_element(sp3d_node, &format!("{}extrusionClr", x.a));
+                let srgb = doc.append_element(clr_node, &format!("{}srgbClr", x.a));
+                let hex = format!("{:06X}", color.rgb.0 & 0xffffff);
+                doc.set_attr(srgb, "val", &hex);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Keep image relationships, fill options and unknown attributes untouched.
 fn write_picture_crop(doc: &mut XmlDocument, node: NodeId, crop: ibis_doc_model::Crop) -> Result<(), Error> {
     let fill = doc.child(node, "blipFill").ok_or_else(|| unsupported("この画像のトリミング"))?;
@@ -987,6 +1142,23 @@ fn write_picture_duotone(doc: &mut XmlDocument, node: NodeId, duotone: Option<(i
     Ok(())
 }
 
+fn write_picture_clear(doc: &mut XmlDocument, node: NodeId, clear: Option<ibis_doc_model::Rgb>) -> Result<(), Error> {
+    let blip = doc.path(node, &["blipFill", "blip"]).ok_or_else(|| unsupported("この画像の色効果"))?;
+    let existing: Vec<_> = doc.elements(blip).filter(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "clrChange").collect();
+    for n in existing {
+        doc.detach(n);
+    }
+    if let Some(color) = clear {
+        let x = Prefixes::at(doc, blip);
+        let from_xml = new::color_xml(&x, ibis_doc_model::Color::opaque(color));
+        let to_xml = new::color_xml(&x, ibis_doc_model::Color { rgb: color, alpha: 0 });
+        let change = x.import(doc, &format!("<{}clrChange><{}clrFrom>{from_xml}</{}clrFrom><{}clrTo>{to_xml}</{}clrTo></{}clrChange>", x.a, x.a, x.a, x.a, x.a, x.a))?;
+        doc.insert(blip, 0, change);
+    }
+    Ok(())
+}
+
+
 fn write_picture_luminance(doc: &mut XmlDocument, node: NodeId, luminance: Option<(i32, i32)>) -> Result<(), Error> {
     let blip = doc.path(node, &["blipFill", "blip"]).ok_or_else(|| unsupported("この画像の明るさ・コントラスト"))?;
     let existing: Vec<_> = doc.elements(blip).filter(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "lum").collect();
@@ -1005,6 +1177,77 @@ fn write_picture_luminance(doc: &mut XmlDocument, node: NodeId, luminance: Optio
         if !attrs.is_empty() {
             let lum = x.import(doc, &format!("<{}lum{attrs}/>", x.a))?;
             doc.insert(blip, 0, lum);
+        }
+    }
+    Ok(())
+}
+
+/// 透明度: the picture's `a:alphaModFix`.
+fn write_picture_alpha(doc: &mut XmlDocument, node: NodeId, alpha: Option<i32>) -> Result<(), Error> {
+    let blip = doc.path(node, &["blipFill", "blip"]).ok_or_else(|| unsupported("この画像の透明度"))?;
+    let existing: Vec<_> = doc.elements(blip).filter(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "alphaModFix").collect();
+    for n in existing {
+        doc.detach(n);
+    }
+    if let Some(amt) = alpha {
+        let x = Prefixes::at(doc, blip);
+        let e = x.import(doc, &format!(r#"<{}alphaModFix amt="{amt}"/>"#, x.a))?;
+        doc.insert(blip, 0, e);
+    }
+    Ok(())
+}
+
+fn write_picture_artistic_effect(doc: &mut XmlDocument, node: NodeId, artistic_effect: Option<ibis_doc_model::ArtisticEffect>) -> Result<(), Error> {
+    let blip = doc.path(node, &["blipFill", "blip"]).ok_or_else(|| unsupported("この画像のアート効果"))?;
+    let x = Prefixes::at(doc, blip);
+    let ext_lst = doc.elements(blip).find(|&n| doc.local_name(n) == "extLst");
+    let mut existing_art_ext = None;
+    if let Some(list) = ext_lst {
+        for ext in doc.elements(list) {
+            if doc.local_name(ext) == "ext" {
+                if doc.attr(ext, "uri") == Some("{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}")
+                    || doc.descendants(ext).into_iter().any(|n| doc.is_element(n) && (doc.local_name(n) == "imgProps" || doc.local_name(n) == "imgEffect"))
+                {
+                    existing_art_ext = Some(ext);
+                    break;
+                }
+            }
+        }
+    }
+    match artistic_effect {
+        Some(effect) => {
+            let eff_xml = super::pptx_new::artistic_effect_xml(&effect);
+            let ext_content = format!(
+                r#"<{}ext uri="{{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}}"><a14:imgProps xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"><a14:imgLayer><a14:imgEffect>{eff_xml}</a14:imgEffect></a14:imgLayer></a14:imgProps></{}ext>"#,
+                x.a, x.a
+            );
+            let imported = x.import(doc, &ext_content)?;
+            if let Some(old_ext) = existing_art_ext {
+                doc.insert_before(old_ext, imported);
+                doc.detach(old_ext);
+            } else {
+                let list = match ext_lst {
+                    Some(l) => l,
+                    None => {
+                        let l = x.import(doc, &format!("<{}extLst/>", x.a))?;
+                        let at = doc.children(blip).len();
+                        doc.insert(blip, at, l);
+                        l
+                    }
+                };
+                let at = doc.children(list).len();
+                doc.insert(list, at, imported);
+            }
+        }
+        None => {
+            if let Some(old_ext) = existing_art_ext {
+                doc.detach(old_ext);
+                if let Some(list) = ext_lst {
+                    if doc.elements(list).next().is_none() {
+                        doc.detach(list);
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -1688,6 +1931,11 @@ fn write_ole_frame(doc: &mut XmlDocument, node: NodeId, a: &ibis_doc_model::Pict
         // The size of the old picture and the VML shape it named no longer apply.
         for name in ["spid", "imgW", "imgH"] {
             doc.remove_attr(object, name);
+        }
+        // The new one's, so Office keeps the object's scale when its application changes it.
+        if let Some((w, h)) = ole.natural {
+            doc.set_attr(object, "imgW", &w.to_string());
+            doc.set_attr(object, "imgH", &h.to_string());
         }
     }
     if a.media != b.media {

@@ -7,7 +7,7 @@
 //! ページ設定（ヘッダー・フッターのオプション）との連携。
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
@@ -50,6 +50,9 @@ pub(crate) struct HeaderFooterEditPanel {
     pub(crate) center: Entity<InputState>,
     pub(crate) right: Entity<InputState>,
     pub(crate) code: Entity<InputState>,
+    /// The page layout view's page whose header or footer is edited in place on the paper.
+    pub(crate) inline_page: Option<usize>,
+    _subscriptions: Vec<Subscription>,
 }
 
 const FIELD_BUTTONS: &[(&str, &str, &str)] = &[
@@ -64,6 +67,12 @@ const FIELD_BUTTONS: &[(&str, &str, &str)] = &[
 impl SlideEditor {
     /// カスタム ヘッダー／フッター編集画面を開く
     pub(crate) fn open_header_footer_edit(&mut self, target: HfTarget, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_header_footer_edit_at(target, None, HfActiveSection::Center, window, cx);
+    }
+
+    /// The editor opened from a press on a page's header or footer in the page layout view: the section
+    /// under the press is the one to type in, in place on the paper (`page`).
+    pub(crate) fn open_header_footer_edit_at(&mut self, target: HfTarget, page: Option<usize>, section: HfActiveSection, window: &mut Window, cx: &mut Context<Self>) {
         let print = self.current_print().unwrap_or_default();
         let hf = &print.header_footer;
         let raw_code = match target {
@@ -76,15 +85,37 @@ impl SlideEditor {
         let right = cx.new(|cx| InputState::new(window, cx).default_value(right_str));
         let code = cx.new(|cx| InputState::new(window, cx).default_value(raw_code.to_string()));
 
+        // Pressing Enter or leaving a section puts what was typed in the sheet.
+        let subscriptions = [&left, &center, &right]
+            .into_iter()
+            .map(|input| {
+                cx.subscribe_in(input, window, |this, _, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) && this.sheet_state().is_some_and(|s| s.header_footer_edit.as_ref().is_some_and(|p| p.inline_page.is_some())) {
+                        this.apply_header_footer_edit(cx);
+                        this.sync_hf_code_input(window, cx);
+                    }
+                })
+            })
+            .collect();
+        let focus = match section {
+            HfActiveSection::Left => left.clone(),
+            HfActiveSection::Center => center.clone(),
+            HfActiveSection::Right => right.clone(),
+        };
         let panel = HeaderFooterEditPanel {
             target,
             page_kind: HfPageKind::Odd,
-            active_section: HfActiveSection::Center,
+            active_section: section,
             left,
             center,
             right,
             code,
+            inline_page: page,
+            _subscriptions: subscriptions,
         };
+        if page.is_some() {
+            focus.update(cx, |input, cx| input.focus(window, cx));
+        }
         if let Some(s) = self.sheet_state_mut() {
             s.header_footer_edit = Some(panel);
             s.page_setup = true;

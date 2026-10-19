@@ -28,6 +28,11 @@ const CT_SLIDE: &str = "application/vnd.openxmlformats-officedocument.presentati
 const CT_HANDOUT_MASTER: &str = "application/vnd.openxmlformats-officedocument.presentationml.handoutMaster+xml";
 const CT_THEME: &str = "application/vnd.openxmlformats-officedocument.theme+xml";
 
+/// Whether `node` or what it holds names a relationship (a picture).
+fn has_relationship(doc: &XmlDocument, node: NodeId) -> bool {
+    std::iter::once(node).chain(doc.descendants(node)).any(|n| doc.is_element(n) && doc.attributes(n).iter().any(|a| a.name.starts_with("r:") || a.name.contains(":embed") || a.name.contains(":link")))
+}
+
 fn err(what: impl Into<String>) -> Error {
     Error::new(what)
 }
@@ -216,10 +221,21 @@ pub fn build(data: &[u8]) -> Result<Vec<u8>, Error> {
             text = mark.sample(),
         ));
     }
-    let doc = XmlDocument::parse(
+    let mut doc = XmlDocument::parse(
         format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<p:sld xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" showMasterSp=\"0\"><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val=\"FFFFFF\"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{shapes}</p:spTree></p:cSld></p:sld>").as_bytes(),
     )
     .map_err(|e| err(format!("配布資料マスターを開けません: {e}")))?;
+    // The handout master's own background (背景), when it is one without a picture: the page's.
+    if let Some(bg) = master.root_element().and_then(|r| master.child(r, "cSld")).and_then(|c| master.child(c, "bg")).filter(|&b| !has_relationship(&master, b)) {
+        let csld = doc.root_element().and_then(|r| doc.child(r, "cSld"));
+        if let Some(csld) = csld {
+            if let Some(old) = doc.child(csld, "bg") {
+                doc.detach(old);
+            }
+            let copy = doc.import(&master, bg);
+            doc.insert(csld, 0, copy);
+        }
+    }
     let temp = next_part_name(&package, "ppt/slides/slide1.xml");
     package.set_xml(&temp, doc);
     package.set_override(&temp, CT_SLIDE)?;
@@ -324,6 +340,14 @@ pub fn apply(data: &[u8], edited: &[u8]) -> Result<Vec<u8>, Error> {
     let main = main_part(&package)?;
     let part = ensure_master(&mut package, &main)?;
     let mut doc = package.xml(&part)?;
+    // The background as edited on the page (one without a picture).
+    if let (Some(ebg), Some(csld)) = (edoc.child(eroot, "cSld").and_then(|c| edoc.child(c, "bg")).filter(|&b| !has_relationship(&edoc, b)), doc.root_element().and_then(|r| doc.child(r, "cSld"))) {
+        if let Some(old) = doc.child(csld, "bg") {
+            doc.detach(old);
+        }
+        let copy = doc.import(&edoc, ebg);
+        doc.insert(csld, 0, copy);
+    }
     let places = places_of(&doc);
     for (id, _, sp) in places {
         let found = edoc.children_named(etree, "sp").find(|&e| edoc.path(e, &["nvSpPr", "cNvPr"]).and_then(|c| edoc.attr(c, "id")) == Some(id.as_str()));
@@ -395,4 +419,42 @@ pub fn apply(data: &[u8], edited: &[u8]) -> Result<Vec<u8>, Error> {
     }
     package.set_xml(&part, doc);
     Ok(package.save(SaveOptions::default())?)
+}
+
+/// The header, date, footer and page number the notes carry (挿入 > ヘッダーとフッター > ノートと配布資料) put as the text of
+/// the places of the handout master (made if the file has none and `marks` has something): the header, date and footer
+/// places hold what `marks` say (empty where it has none), the number place its field. A place taken away stays away.
+pub(crate) fn write_marks(package: &mut Package, main: &str, marks: &ibis_doc_model::NotesMarks) -> Result<(), Error> {
+    use ibis_doc_model::NotesDate;
+    if marks.is_empty() && handout_part(package, main)?.is_none() {
+        return Ok(());
+    }
+    let part = ensure_master(package, main)?;
+    let doc = package.xml_mut(&part)?;
+    for (_, mark, sp) in places_of(doc) {
+        let (text, field): (String, Option<&str>) = match mark {
+            Mark::Header => (marks.header.clone().unwrap_or_default(), None),
+            Mark::Footer => (marks.footer.clone().unwrap_or_default(), None),
+            Mark::Date => match &marks.date {
+                Some(NotesDate::Auto(t)) => (t.clone(), Some("datetime1")),
+                Some(NotesDate::Fixed(t)) => (t.clone(), None),
+                None => (String::new(), None),
+            },
+            Mark::Number => ("‹#›".to_string(), Some("slidenum")),
+        };
+        let Some(body) = doc.child(sp, "txBody") else { continue };
+        for p in doc.children_named(body, "p").collect::<Vec<_>>() {
+            doc.detach(p);
+        }
+        let x = Prefixes::at(doc, body);
+        let wrapper = format!("<{a}txBody>{}</{a}txBody>", crate::save::pptx_notes::mark_paragraph(&x.a, &text, field), a = x.a);
+        let new_body = x.import(doc, &wrapper)?;
+        for p in doc.children(new_body).to_vec() {
+            if doc.is_element(p) {
+                let end = doc.children(body).len();
+                doc.insert(body, end, p);
+            }
+        }
+    }
+    Ok(())
 }

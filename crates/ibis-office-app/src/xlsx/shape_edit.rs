@@ -6,7 +6,7 @@
 use gpui_kit::*;
 use ibis_doc_model::{
     CellValue, Color, Command, Emu, EmuRect, Fill, LineDash, Paragraph, Run, RunStyle,
-    Shadow, Shape, ShapeId, ShapeKind, Stroke, TextBody, TextStyle, TileAlign,
+    Shadow, Shape, ShapeId, ShapeKind, SheetCommand, Stroke, TextBody, TextStyle, TileAlign,
 };
 use crate::shell::editor::SlideEditor;
 use crate::shell::editor::sheet_of;
@@ -48,7 +48,7 @@ impl SlideEditor {
         let index = self.slide().shapes.len();
         let shape = Shape::text_box(id, frame, "");
         self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
-        self.selection = Some(id);
+        self.set_selection(vec![id]);
         self.begin_edit(id, true, window, cx);
         cx.notify();
         id
@@ -63,7 +63,7 @@ impl SlideEditor {
         let index = self.slide().shapes.len();
         let shape = crate::pptx::editing::new_shape(id, preset, frame);
         self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
-        self.selection = Some(id);
+        self.set_selection(vec![id]);
         cx.notify();
         id
     }
@@ -77,7 +77,7 @@ impl SlideEditor {
         let index = self.slide().shapes.len();
         let shape = crate::pptx::editing::new_line(id, frame, false, false, arrow);
         self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
-        self.selection = Some(id);
+        self.set_selection(vec![id]);
         cx.notify();
         id
     }
@@ -114,14 +114,12 @@ impl SlideEditor {
             name: String::new(),
             shadow: None,
             reflection: None,
-            soft_edge: None,
-            ole: None,
-        };
+            soft_edge: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None, ole: None };
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
         self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
-        self.selection = Some(id);
+        self.set_selection(vec![id]);
         cx.notify();
         Some(id)
     }
@@ -133,7 +131,7 @@ impl SlideEditor {
         {
             let picked = cx.prompt_for_paths(PathPromptOptions {
                 files: true,
-                directories: false,
+                directories: false, extensions: Vec::new(),
                 multiple: false,
                 prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()),
             });
@@ -159,6 +157,177 @@ impl SlideEditor {
                 .ok();
             })
             .detach();
+        }
+    }
+
+    /// Insert multiple images into cells sequentially starting at (start_col, start_row).
+    pub(crate) fn insert_sheet_pictures_in_cells(
+        &mut self,
+        items: Vec<(String, Vec<u8>)>,
+        start_col: u32,
+        start_row: u32,
+        cx: &mut Context<Self>,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        for (i, (name, data)) in items.into_iter().enumerate() {
+            let row = start_row + i as u32;
+            let column = start_col;
+            let format = ibis_doc_model::MediaFormat::from_path(&name);
+            let Some((w, h)) = crate::pptx::editing::validated_picture_size(format, &data) else { continue };
+            let media = self.document.ids().add_media(format, data.clone());
+            self.resources.add_picture(media, format, &data);
+            let id = self.document.ids().new_shape_id();
+            let picture = ibis_doc_model::Picture {
+                media,
+                crop: Default::default(),
+                stroke: None,
+                corner: 0,
+                duotone: None,
+                clear: None,
+                luminance: None,
+                clip: None,
+                alt_text: Default::default(),
+                decorative: false,
+                name: String::new(),
+                shadow: None,
+                reflection: None,
+                soft_edge: None,
+                geometry: None,
+                effects: Default::default(),
+                tile: None,
+                fill_rect: None,
+                artistic_effect: None,
+                ole: None,
+            };
+            let initial_frame = EmuRect::new(0, 0, (w as i64 * 9525).max(1), (h as i64 * 9525).max(1));
+            let shape = Shape::new(id, initial_frame, ShapeKind::Picture(picture));
+            let index = self.slide().shapes.len() + i;
+            commands.push(Command::InsertShape { slide, index, shape });
+            commands.push(Command::Sheet(SheetCommand::PlacePictureInCell { slide, shape: id, row, column }));
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+            cx.notify();
+        }
+    }
+
+    /// Pick multiple picture files asynchronously and insert them into cells sequentially.
+    pub(crate) fn pick_sheet_pictures_in_cells(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let (col, row) = self.current_cell().unwrap_or((0, 0));
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                extensions: Vec::new(),
+                multiple: true,
+                prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()),
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let mut items = Vec::new();
+                for path in paths {
+                    if let Ok(data) = std::fs::read(&path) {
+                        let name = path.to_string_lossy().into_owned();
+                        items.push((name, data));
+                    }
+                }
+                this.update(cx, |this, cx| {
+                    this.insert_sheet_pictures_in_cells(items, col, row, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Some((name, data))) = crate::web::pick_file().await else { return };
+                this.update(cx, |this, cx| {
+                    this.insert_sheet_pictures_in_cells(vec![(name, data)], col, row, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    /// Convert a floating picture shape into an in-cell image at the cell beneath it (or current cell).
+    pub(crate) fn place_picture_in_cell(&mut self, shape_id: ShapeId, cx: &mut Context<Self>) {
+        let slide = self.current_slide;
+        let Some(shape) = self.slide().shapes.iter().find(|s| s.id == shape_id) else { return };
+        if !matches!(shape.kind, ShapeKind::Picture(_)) { return };
+        let (col, row) = if let Some((_, sheet)) = self.current_sheet() {
+            let x_pos = shape.frame.x + (shape.frame.width / 4).min(95_250).max(1);
+            let y_pos = shape.frame.y + (shape.frame.height / 4).min(95_250).max(1);
+            let xs = sheet.column_offsets();
+            let ys = sheet.row_offsets();
+            let c = xs.windows(2).position(|w| x_pos >= w[0] && x_pos < w[1]).map(|i| i as u32);
+            let r = ys.windows(2).position(|w| y_pos >= w[0] && y_pos < w[1]).map(|i| i as u32);
+            c.zip(r).or_else(|| self.current_cell()).unwrap_or((0, 0))
+        } else {
+            self.current_cell().unwrap_or((0, 0))
+        };
+        self.run_sheet(vec![Command::Sheet(SheetCommand::PlacePictureInCell { slide, shape: shape_id, row, column: col })], cx);
+        cx.notify();
+    }
+
+    /// Convert an in-cell image into a floating picture over cells.
+    pub(crate) fn place_picture_over_cells(&mut self, shape_id: ShapeId, cx: &mut Context<Self>) {
+        let slide = self.current_slide;
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let Some(shape) = self.slide().shapes.iter().find(|s| s.id == shape_id) else { return };
+        let x_pos = shape.frame.x + (shape.frame.width / 4).min(95_250).max(1);
+        let y_pos = shape.frame.y + (shape.frame.height / 4).min(95_250).max(1);
+        let xs = sheet.column_offsets();
+        let ys = sheet.row_offsets();
+        let col = xs.windows(2).position(|w| x_pos >= w[0] && x_pos < w[1]).map(|i| i as u32).unwrap_or(0);
+        let row = ys.windows(2).position(|w| y_pos >= w[0] && y_pos < w[1]).map(|i| i as u32).unwrap_or(0);
+
+        let mut commands = vec![Command::Sheet(SheetCommand::PlacePictureOverCells { slide, shape: shape_id, row, column: col })];
+        if shape.frame.width < 1_428_750 || shape.frame.height < 1_428_750 {
+            let mut enlarged = shape.frame;
+            enlarged.width = enlarged.width.max(1_428_750);
+            enlarged.height = enlarged.height.max(1_428_750);
+            commands.push(Command::SetFrame { slide, shape: shape_id, frame: enlarged });
+        }
+        self.run_sheet(commands, cx);
+        self.selection = Some(shape_id);
+        cx.notify();
+    }
+
+    /// Convert the in-cell picture in the active cell into a floating picture over cells.
+    pub(crate) fn place_current_cell_picture_over_cells(&mut self, cx: &mut Context<Self>) {
+        let Some((col, row)) = self.current_cell() else { return };
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        if !sheet.cell_images.iter().any(|i| i.column == col && i.row == row) { return };
+        let xs = sheet.column_offsets();
+        let ys = sheet.row_offsets();
+        let col_idx = col as usize;
+        let row_idx = row as usize;
+        if col_idx + 1 >= xs.len() || row_idx + 1 >= ys.len() { return };
+        let (x0, y0) = (xs[col_idx], ys[row_idx]);
+        let (x1, y1) = (xs[col_idx + 1], ys[row_idx + 1]);
+        let shape_id = self.slide().shapes.iter().find_map(|s| {
+            if matches!(s.kind, ShapeKind::Picture(_)) {
+                let cx_pos = s.frame.x + s.frame.width / 2;
+                let cy_pos = s.frame.y + s.frame.height / 2;
+                if (x0..=x1).contains(&cx_pos) && (y0..=y1).contains(&cy_pos) {
+                    Some(s.id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        if let Some(id) = shape_id {
+            self.place_picture_over_cells(id, cx);
         }
     }
 
@@ -546,21 +715,52 @@ impl SlideEditor {
         }];
 
         if let Some(ref f) = formula_string {
-            if let Some((sheet_name_opt, col, row)) = parse_shape_formula(f) {
-                let p = self.presentation();
-                let target_slide = match sheet_name_opt {
-                    Some(ref name) => p.slides.iter().find(|s| s.name.as_deref().unwrap_or("").eq_ignore_ascii_case(name)),
-                    None => p.slide(slide_id),
+            if let Some((sheet_name_opt, range)) = parse_shape_formula_range(f) {
+                let target_info = {
+                    let p = self.presentation();
+                    let target_slide = match sheet_name_opt {
+                        Some(ref name) => p.slides.iter().find(|s| s.name.as_deref().unwrap_or("").eq_ignore_ascii_case(name)),
+                        None => p.slide(slide_id),
+                    };
+                    let target_sheet = target_slide.and_then(|ts| sheet_of(ts).map(|(_, s)| s.clone()));
+                    let cur_slide = p.slide(slide_id);
+                    let shape = cur_slide.and_then(|cs| cs.shape(shape_id));
+                    let kind = shape.map(|s| s.kind.clone());
+                    let frame = shape.map(|s| s.frame);
+                    target_sheet.zip(kind).zip(frame).map(|((s, k), f)| (s, k, f))
                 };
-                if let Some(target_slide) = target_slide {
-                    if let Some((_, sheet)) = sheet_of(target_slide) {
-                        let text = cell_display_text(sheet.cell(row, col));
-                        let body = ibis_doc_model::TextBody::plain(&text, ibis_doc_model::TextStyle::default());
-                        commands.push(Command::SetTextBody {
-                            slide: slide_id,
-                            shape: shape_id,
-                            body,
-                        });
+                if let Some((sheet, kind, frame)) = target_info {
+                    match kind {
+                        ShapeKind::Picture(mut pic) => {
+                            if let Some(png) = super::copy_picture::render_sheet_range_to_png(&sheet, range) {
+                                let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, png.clone());
+                                self.resources.add_picture(media, ibis_doc_model::MediaFormat::Png, &png);
+                                pic.media = media;
+                                commands.push(Command::SetKind {
+                                    slide: slide_id,
+                                    shape: shape_id,
+                                    kind: Box::new(ShapeKind::Picture(pic)),
+                                });
+                                let (w_emu, h_emu) = super::copy_picture::sheet_range_emu_size(&sheet, range);
+                                let new_frame = EmuRect::new(frame.x, frame.y, w_emu, h_emu);
+                                if new_frame != frame {
+                                    commands.push(Command::SetFrame {
+                                        slide: slide_id,
+                                        shape: shape_id,
+                                        frame: new_frame,
+                                    });
+                                }
+                            }
+                        }
+                        _ => {
+                            let text = cell_display_text(sheet.cell(range.first_row, range.first_column));
+                            let body = ibis_doc_model::TextBody::plain(&text, ibis_doc_model::TextStyle::default());
+                            commands.push(Command::SetTextBody {
+                                slide: slide_id,
+                                shape: shape_id,
+                                body,
+                            });
+                        }
                     }
                 }
             }
@@ -583,40 +783,78 @@ impl SlideEditor {
 
     /// ワークシート上の全図形の連動式（shape_formulas）を最新のセル値と同期する。
     pub(crate) fn sync_shape_formulas(&mut self, cx: &mut Context<Self>) {
-        let p = self.presentation();
         let slide_id = self.current_slide;
-        let Some(slide) = p.slide(slide_id) else { return };
-        if slide.shape_formulas.is_empty() {
-            return;
-        }
+        let (text_updates, picture_updates) = {
+            let p = self.presentation();
+            let Some(slide) = p.slide(slide_id) else { return };
+            if slide.shape_formulas.is_empty() {
+                return;
+            }
 
-        let mut updates: Vec<(ibis_doc_model::ShapeId, String)> = Vec::new();
-        for (&shape_id, formula) in &slide.shape_formulas {
-            let Some((sheet_name_opt, col, row)) = parse_shape_formula(formula) else { continue };
-            let target_slide = match sheet_name_opt {
-                Some(ref name) => p.slides.iter().find(|s| s.name.as_deref().unwrap_or("").eq_ignore_ascii_case(name)),
-                None => Some(slide),
-            };
-            let Some(target_slide) = target_slide else { continue };
-            let Some((_, sheet)) = sheet_of(target_slide) else { continue };
-            let text = cell_display_text(sheet.cell(row, col));
-            updates.push((shape_id, text));
-        }
+            let mut text_updates: Vec<(ibis_doc_model::ShapeId, String)> = Vec::new();
+            let mut picture_updates: Vec<(ibis_doc_model::ShapeId, ibis_doc_model::Picture, EmuRect, Vec<u8>, (i64, i64))> = Vec::new();
 
-        if updates.is_empty() {
+            for (&shape_id, formula) in &slide.shape_formulas {
+                let Some(shape) = slide.shape(shape_id) else { continue };
+                let Some((sheet_name_opt, range)) = parse_shape_formula_range(formula) else { continue };
+                let target_slide = match sheet_name_opt {
+                    Some(ref name) => p.slides.iter().find(|s| s.name.as_deref().unwrap_or("").eq_ignore_ascii_case(name)),
+                    None => Some(slide),
+                };
+                let Some(target_slide) = target_slide else { continue };
+                let Some((_, sheet)) = sheet_of(target_slide) else { continue };
+
+                match &shape.kind {
+                    ShapeKind::Picture(pic) => {
+                        if let Some(png) = super::copy_picture::render_sheet_range_to_png(sheet, range) {
+                            let current_data = p.media(pic.media).map(|m| &*m.data);
+                            if current_data != Some(&png) {
+                                let (w_emu, h_emu) = super::copy_picture::sheet_range_emu_size(sheet, range);
+                                picture_updates.push((shape_id, pic.clone(), shape.frame, png, (w_emu, h_emu)));
+                            }
+                        }
+                    }
+                    _ => {
+                        let text = cell_display_text(sheet.cell(range.first_row, range.first_column));
+                        let current_text = shape.text_body().map(|b| b.text()).unwrap_or_default();
+                        if current_text != text {
+                            text_updates.push((shape_id, text));
+                        }
+                    }
+                }
+            }
+            (text_updates, picture_updates)
+        };
+
+        if text_updates.is_empty() && picture_updates.is_empty() {
             return;
         }
 
         let mut commands = Vec::new();
-        for (shape_id, text) in updates {
-            let Some(shape) = slide.shape(shape_id) else { continue };
-            let current_text = shape.text_body().map(|b| b.text()).unwrap_or_default();
-            if current_text != text {
-                let body = ibis_doc_model::TextBody::plain(&text, ibis_doc_model::TextStyle::default());
-                commands.push(Command::SetTextBody {
+        for (shape_id, text) in text_updates {
+            let body = ibis_doc_model::TextBody::plain(&text, ibis_doc_model::TextStyle::default());
+            commands.push(Command::SetTextBody {
+                slide: slide_id,
+                shape: shape_id,
+                body,
+            });
+        }
+
+        for (shape_id, mut pic, frame, png, (w_emu, h_emu)) in picture_updates {
+            let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, png.clone());
+            self.resources.add_picture(media, ibis_doc_model::MediaFormat::Png, &png);
+            pic.media = media;
+            commands.push(Command::SetKind {
+                slide: slide_id,
+                shape: shape_id,
+                kind: Box::new(ShapeKind::Picture(pic)),
+            });
+            let new_frame = EmuRect::new(frame.x, frame.y, w_emu, h_emu);
+            if new_frame != frame {
+                commands.push(Command::SetFrame {
                     slide: slide_id,
                     shape: shape_id,
-                    body,
+                    frame: new_frame,
                 });
             }
         }
@@ -698,6 +936,34 @@ impl SlideEditor {
     pub(crate) fn selected_sheet_text_warp(&self) -> Option<String> {
         self.selected_text_warp()
     }
+
+    /// 図の圧縮 (xlsx.picture.compress):
+    /// 選択中の図（またはシート上のすべての図）を指定の解像度で圧縮し、
+    /// 必要に応じてトリミング部分を切り落とす。
+    pub(crate) fn compress_sheet_pictures(
+        &mut self,
+        resolution: crate::pptx::compress::Resolution,
+        delete_crop: bool,
+        selected_only: bool,
+        cx: &mut Context<Self>,
+    ) -> (usize, usize, usize) {
+        let (count, before, after) = self.compress_pictures(resolution, delete_crop, selected_only, cx);
+        self.sync_workbook_peers(cx);
+        let message = if count == 0 {
+            crate::shell::i18n::text("pptx.compress.no-pictures-can-made-smaller").to_string()
+        } else {
+            let before_kb = before / 1024;
+            let after_kb = after / 1024;
+            crate::shell::i18n::format("pptx.compress.compressed-n-picture-s-before", &[
+                ("n", &count),
+                ("before", &before_kb),
+                ("after", &after_kb),
+            ])
+        };
+        self.status = Some(message.into());
+        cx.notify();
+        (count, before, after)
+    }
 }
 
 fn cell_display_text(cell: Option<&ibis_doc_model::SheetCell>) -> String {
@@ -737,21 +1003,174 @@ pub(crate) const CHANGE_SHAPES: &[(&str, &str, &str, &str)] = &[
     ("heart", "xlsx.change-shape.heart", "", "favorite"),
 ];
 
-/// セル参照数式文字列（`=A1`, `Sheet1!$B$3`, `A1` 等）を解析する。
-/// 返り値: (Option<シート名>, column: u32, row: u32)
-pub(crate) fn parse_shape_formula(raw: &str) -> Option<(Option<String>, u32, u32)> {
+/// セル参照数式文字列（`=A1`, `Sheet1!$B$3`, `A1`, `=$A$1:$C$5`, `Sheet1!$A$1:$D$5` 等）を解析する。
+/// 返り値: (Option<シート名>, CellRange)
+pub(crate) fn parse_shape_formula_range(raw: &str) -> Option<(Option<String>, ibis_doc_model::CellRange)> {
     let s = raw.strip_prefix('=').unwrap_or(raw).trim();
     if s.is_empty() {
         return None;
     }
-    if let Some((sheet_part, cell_part)) = s.split_once('!') {
+    let (sheet_name, cell_part) = if let Some((sheet_part, rest)) = s.split_once('!') {
         let sheet_name = sheet_part.trim().trim_matches('\'').trim().to_string();
-        let corner = ibis_calc::formula::parser::parse_cell(cell_part.trim())?;
-        Some((Some(sheet_name), corner.column as u32, corner.row as u32))
+        (Some(sheet_name), rest.trim())
     } else {
-        let corner = ibis_calc::formula::parser::parse_cell(s)?;
-        Some((None, corner.column as u32, corner.row as u32))
+        (None, s)
+    };
+
+    if let Some((start_str, end_str)) = cell_part.split_once(':') {
+        let start = ibis_calc::formula::parser::parse_cell(start_str.trim())?;
+        let end = ibis_calc::formula::parser::parse_cell(end_str.trim())?;
+        let range = ibis_doc_model::CellRange {
+            first_row: (start.row as u32).min(end.row as u32),
+            last_row: (start.row as u32).max(end.row as u32),
+            first_column: (start.column as u32).min(end.column as u32),
+            last_column: (start.column as u32).max(end.column as u32),
+        };
+        Some((sheet_name, range))
+    } else {
+        let corner = ibis_calc::formula::parser::parse_cell(cell_part)?;
+        let range = ibis_doc_model::CellRange {
+            first_row: corner.row as u32,
+            last_row: corner.row as u32,
+            first_column: corner.column as u32,
+            last_column: corner.column as u32,
+        };
+        Some((sheet_name, range))
     }
 }
+
+/// セル参照数式文字列（`=A1`, `Sheet1!$B$3`, `A1` 等）を解析する。
+/// 返り値: (Option<シート名>, column: u32, row: u32)
+#[allow(dead_code)]
+pub(crate) fn parse_shape_formula(raw: &str) -> Option<(Option<String>, u32, u32)> {
+    let (sheet_name, range) = parse_shape_formula_range(raw)?;
+    Some((sheet_name, range.first_column, range.first_row))
+}
+
+impl SlideEditor {
+    /// Insert a screenshot onto the worksheet (prefers clipboard, falls back to window snapshot).
+    pub(crate) fn insert_sheet_screenshot(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
+        if let Some(id) = self.insert_sheet_screenshot_from_clipboard(cx) {
+            return Some(id);
+        }
+        self.insert_sheet_screenshot_window(cx)
+    }
+
+    /// Insert a screenshot specifically from the clipboard (image or copied image files).
+    pub(crate) fn insert_sheet_screenshot_from_clipboard(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
+        if let Some(item) = cx.read_from_clipboard() {
+            for entry in item.entries() {
+                match entry {
+                    gpui::ClipboardEntry::Image(image) => {
+                        let ext = match image.format {
+                            gpui::ImageFormat::Png => "png",
+                            gpui::ImageFormat::Jpeg => "jpg",
+                            gpui::ImageFormat::Gif => "gif",
+                            gpui::ImageFormat::Svg => "svg",
+                            gpui::ImageFormat::Bmp => "bmp",
+                            _ => "png",
+                        };
+                        let name = format!("Screenshot.{}", ext);
+                        return self.insert_sheet_picture(&name, image.bytes.clone(), cx);
+                    }
+                    gpui::ClipboardEntry::ExternalPaths(paths) => {
+                        for path in paths.paths() {
+                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg"));
+                            if let (true, Ok(data)) = (ok, std::fs::read(path)) {
+                                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Screenshot.png".into());
+                                return self.insert_sheet_picture(&name, data, cx);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    /// Insert a screenshot of an available window (window snapshot).
+    pub(crate) fn insert_sheet_screenshot_window(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
+        let (data, _, _) = ibis_pptx::screenshot_snapshot(640, 360);
+        self.insert_sheet_picture("Screenshot_Window.png", data, cx)
+    }
+
+    /// Insert a screen clipping screenshot (e.g. cropped screen area).
+    pub(crate) fn insert_sheet_screenshot_clipping(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
+        if let Some(id) = self.insert_sheet_screenshot_from_clipboard(cx) {
+            return Some(id);
+        }
+        let (data, _, _) = ibis_pptx::screenshot_snapshot(480, 270);
+        self.insert_sheet_picture("Screen_Clipping.png", data, cx)
+    }
+
+    /// 挿入 > 3D モデル…: choose a 3D model file and place a placeholder on the worksheet.
+    pub(crate) fn pick_sheet_3d_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                extensions: Vec::new(),
+                multiple: false,
+                prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()),
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let Some(path) = paths.into_iter().next() else { return };
+                this.update(cx, |this, cx| {
+                    this.insert_sheet_3d_model(&path, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = window;
+            self.status = Some(crate::shell::i18n::text("pptx.3d-model.not-available-here"));
+            cx.notify();
+        }
+    }
+
+    /// Place a 3D model placeholder shape on the sheet at current selection.
+    pub(crate) fn insert_sheet_3d_model(&mut self, path: &std::path::Path, cx: &mut Context<Self>) -> ShapeId {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("3D Model");
+        let (x, y) = self.sheet_insertion_origin();
+        let frame = EmuRect::new(x, y, 3_000_000, 1_500_000);
+        let id = self.document.ids().new_shape_id();
+        let shape = Shape::text_box(id, frame, format!("📦 {name}"));
+        let slide = self.current_slide;
+        let index = self.slide().shapes.len();
+        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        self.set_selection(vec![id]);
+        cx.notify();
+        id
+    }
+
+    /// 挿入 > 署名欄…: place a signature line placeholder on the worksheet.
+    pub(crate) fn insert_sheet_signature_line(&mut self, signer: &str, title: &str, cx: &mut Context<Self>) -> ShapeId {
+        let (x, y) = self.sheet_insertion_origin();
+        let frame = EmuRect::new(x, y, 3_000_000, 1_200_000);
+        let id = self.document.ids().new_shape_id();
+        let label = crate::shell::i18n::text("xlsx.signature-line");
+        let text = if signer.is_empty() {
+            format!("✕ _______________________________\n{label}") // i18n-ok: signature placeholder
+        } else if title.is_empty() {
+            format!("✕ _______________________________\n{signer}") // i18n-ok: signature line
+        } else {
+            format!("✕ _______________________________\n{signer}\n{title}") // i18n-ok: signature line
+        };
+        let shape = Shape::text_box(id, frame, text);
+        let slide = self.current_slide;
+        let index = self.slide().shapes.len();
+        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        self.set_selection(vec![id]);
+        cx.notify();
+        id
+    }
+}
+
 
 

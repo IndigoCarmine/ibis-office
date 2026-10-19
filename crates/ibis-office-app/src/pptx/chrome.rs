@@ -141,7 +141,7 @@ fn format_copy_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     ]
 }
 
-fn crop_items() -> Vec<MenuEntry> {
+pub(crate) fn crop_items() -> Vec<MenuEntry> {
     use ibis_doc_model::Crop;
     vec![
         MenuItem::tr("pptx.crop.left").on(|e, _, cx| e.crop_selected_pictures(Crop { left: 10_000, ..Default::default() }, cx)).into(),
@@ -181,7 +181,7 @@ fn crop_items() -> Vec<MenuEntry> {
     ]
 }
 
-fn picture_correction_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
+pub(crate) fn picture_correction_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
     let current = editor.selected_shapes().into_iter().find_map(|s| match &s.kind {
         ShapeKind::Picture(p) => Some(p.luminance),
         _ => None,
@@ -214,6 +214,31 @@ fn picture_correction_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntr
     ]
 }
 
+/// 透明度: presets for the selected pictures' whole transparency.
+fn picture_transparency_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
+    let current = editor.selected_shapes().into_iter().find_map(|s| match &s.kind {
+        ShapeKind::Picture(p) => Some(p.effects.opacity),
+        _ => None,
+    }).flatten();
+    let preset = |id: &'static str, alpha: Option<i32>| -> MenuEntry {
+        MenuItem::tr(id)
+            .disabled(!enabled)
+            .checked(current == alpha)
+            .on(move |e, _, cx| e.set_selected_pictures_alpha(alpha, cx))
+            .into()
+    };
+    let mut items = vec![preset("pptx.picture.alpha.none", None), MenuEntry::Separator];
+    items.extend([
+        ("pptx.picture.alpha.15", 85_000),
+        ("pptx.picture.alpha.30", 70_000),
+        ("pptx.picture.alpha.50", 50_000),
+        ("pptx.picture.alpha.65", 35_000),
+        ("pptx.picture.alpha.80", 20_000),
+        ("pptx.picture.alpha.95", 5_000),
+    ].map(|(id, alpha)| preset(id, Some(alpha))));
+    items
+}
+
 fn wordart_insert_items() -> Vec<MenuEntry> {
     use crate::pptx::editing::WORDART_PRESETS;
     WORDART_PRESETS.iter().enumerate().map(|(idx, preset)| {
@@ -223,7 +248,24 @@ fn wordart_insert_items() -> Vec<MenuEntry> {
     }).collect()
 }
 
-fn text_warp_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+pub(crate) fn smartart_insert_items() -> Vec<MenuEntry> {
+    vec![
+        MenuItem::tr("pptx.insert.smartart.list").icon("view_list").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::BasicBlockList, cx)).into(),
+        MenuItem::tr("pptx.insert.smartart.vlist").icon("format_list_bulleted").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::VerticalList, cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("pptx.insert.smartart.process").icon("arrow_forward").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::BasicProcess, cx)).into(),
+        MenuItem::tr("pptx.insert.smartart.chevron").icon("double_arrow").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::ContinuousChevronProcess, cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("pptx.insert.smartart.cycle").icon("autorenew").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::BasicCycle, cx)).into(),
+        MenuItem::tr("pptx.insert.smartart.hierarchy").icon("account_tree").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::OrganizationChart, cx)).into(),
+        MenuItem::tr("pptx.insert.smartart.relationship").icon("sync_alt").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::BasicRelationship, cx)).into(),
+        MenuItem::tr("pptx.insert.smartart.matrix").icon("grid_view").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::BasicMatrix, cx)).into(),
+        MenuItem::tr("pptx.insert.smartart.pyramid").icon("change_history").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::BasicPyramid, cx)).into(),
+        MenuItem::tr("pptx.insert.smartart.picture").icon("insert_photo").on(|e, _, cx| e.insert_smartart(crate::pptx::SmartArtKind::PictureList, cx)).into(),
+    ]
+}
+
+pub(crate) fn text_warp_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     use crate::pptx::editing::TEXT_WARP_PRESETS;
     let current_warp = editor.selected_text_warp();
     let has_text = editor.selected_text_style().is_some() || editor.text_editing().is_some();
@@ -237,7 +279,7 @@ fn text_warp_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     items
 }
 
-fn wordart_style_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+pub(crate) fn wordart_style_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     use crate::pptx::editing::WORDART_PRESETS;
     let has_text = editor.selected_text_style().is_some() || editor.text_editing().is_some();
     WORDART_PRESETS.iter().enumerate().map(|(idx, preset)| {
@@ -247,7 +289,7 @@ fn wordart_style_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     }).collect()
 }
 
-fn picture_color_items(enabled: bool) -> Vec<MenuEntry> {
+pub(crate) fn picture_color_items(enabled: bool) -> Vec<MenuEntry> {
     vec![
         MenuItem::tr("pptx.picture.color.none").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_duotone(None, cx)).into(),
         MenuItem::tr("pptx.picture.color.grayscale").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_duotone(Some((ibis_doc_model::Rgb(0x000000), ibis_doc_model::Rgb(0xffffff))), cx)).into(),
@@ -255,10 +297,43 @@ fn picture_color_items(enabled: bool) -> Vec<MenuEntry> {
         MenuItem::tr("pptx.picture.color.blue").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_duotone(Some((ibis_doc_model::Rgb(0x002060), ibis_doc_model::Rgb(0xd9e1f2))), cx)).into(),
         MenuItem::tr("pptx.picture.color.green").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_duotone(Some((ibis_doc_model::Rgb(0x004010), ibis_doc_model::Rgb(0xe2efda))), cx)).into(),
         MenuItem::tr("pptx.picture.color.red").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_duotone(Some((ibis_doc_model::Rgb(0x600000), ibis_doc_model::Rgb(0xfce4d6))), cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("pptx.picture.color.transparent-white").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0xffffff)), cx)).into(),
+        MenuItem::tr("pptx.picture.color.transparent-black").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0x000000)), cx)).into(),
+        MenuItem::tr("pptx.picture.color.transparent-clear").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_clear(None, cx)).into(),
     ]
 }
 
-fn clip_playback_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+pub(crate) fn picture_artistic_effect_items(enabled: bool) -> Vec<MenuEntry> {
+    use ibis_doc_model::ArtisticEffect as A;
+    vec![
+        MenuItem::tr("pptx.picture.artistic.none").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(None, cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.marker").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::marker_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.chalk-sketch").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::chalk_sketch_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.crisscross-etching").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::crisscross_etching_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.pencil-grayscale").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::pencil_grayscale_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.pencil-sketch").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::pencil_sketch_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.line-drawing").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::line_drawing_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.watercolor-sponge").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::watercolor_sponge_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.paint-brush").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::paint_brush_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.paint-strokes").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::paint_strokes_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.blur").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::blur_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.glow-diffused").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::glow_diffused_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.glow-edges").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::glow_edges_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.glass").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::glass_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.pastels-smooth").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::pastels_smooth_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.plastic-wrap").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::plastic_wrap_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.mosaic-bubbles").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::mosaic_bubbles_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.texturizer").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::texturizer_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.film-grain").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::film_grain_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.cutout").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::cutout_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.photocopy").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::photocopy_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.cement").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::cement_default()), cx)).into(),
+        MenuItem::tr("pptx.picture.artistic.light-screen").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_artistic_effect(Some(A::light_screen_default()), cx)).into(),
+    ]
+}
+
+pub(crate) fn clip_playback_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let clip_shape = editor.selected_shapes().into_iter().find(|s| SlideEditor::clip_of(s).is_some());
     let has_clip = clip_shape.is_some();
     let opt = editor.selected_clip_options().unwrap_or_default();
@@ -463,7 +538,7 @@ fn clip_playback_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     ]
 }
 
-fn video_style_items(_editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
+pub(crate) fn video_style_items(_editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
     use super::editing::VideoStylePreset;
     vec![
         MenuItem::tr("pptx.video.style.none").disabled(!enabled).on(|e, _, cx| e.set_selected_pictures_video_style(VideoStylePreset::None, cx)).into(),
@@ -480,7 +555,7 @@ fn video_style_items(_editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
     ]
 }
 
-fn video_shape_items(_editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
+pub(crate) fn video_shape_items(_editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
     vec![
         MenuItem::tr("pptx.crop.shape.rect").disabled(!enabled).on(|e, _, cx| e.crop_selected_pictures_corner(0, cx)).into(),
         MenuItem::tr("pptx.crop.shape.round-small").disabled(!enabled).on(|e, _, cx| e.crop_selected_pictures_corner(10_000, cx)).into(),
@@ -526,10 +601,34 @@ fn video_effects_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
 fn image_items() -> Vec<MenuEntry> {
     vec![
         MenuItem::tr("image.file").icon("upload").on(|this, window, cx| this.pick_picture(window, cx)).into(),
+        Submenu::tr("pptx.insert.screenshot", "fit_screen", screenshot_menu_items()).into(),
         MenuEntry::Separator,
         Submenu::tr("pptx.insert.icon", "category", icon_menu_items()).into(),
         #[cfg(not(target_family = "wasm"))]
         crate::shell::embed::insert_menu(),
+    ]
+}
+
+fn screenshot_menu_items() -> Vec<MenuEntry> {
+    vec![
+        MenuItem::tr("pptx.insert.screenshot.available-windows")
+            .icon("fit_screen")
+            .on(|this, _, cx| {
+                this.insert_screenshot_window(cx);
+            })
+            .into(),
+        MenuItem::tr("pptx.insert.screenshot.clipping")
+            .icon("crop")
+            .on(|this, _, cx| {
+                this.insert_screenshot_clipping(cx);
+            })
+            .into(),
+        MenuItem::tr("pptx.insert.screenshot.clipboard")
+            .icon("content_paste")
+            .on(|this, _, cx| {
+                this.insert_screenshot_from_clipboard(cx);
+            })
+            .into(),
     ]
 }
 
@@ -616,12 +715,50 @@ pub(crate) fn theme_palette_selected_items(_editor: &SlideEditor) -> Vec<MenuEnt
         .collect()
 }
 
-fn theme_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
+pub(crate) fn theme_effects_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    ibis_pptx::theme_effects::THEME_EFFECTS
+        .iter()
+        .map(|preset| {
+            let pid = preset.id;
+            let active = editor.is_theme_effects_active(pid);
+            MenuItem::tr(preset.label_key)
+                .checked(active)
+                .on(move |e, w, cx| e.apply_theme_effects(pid, w, cx))
+                .into()
+        })
+        .collect()
+}
+
+pub(crate) fn theme_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     vec![
         Submenu::tr("pptx.theme.palette", "palette", theme_palette_items(editor)).into(),
         Submenu::tr("pptx.theme.palette-selected", "palette", theme_palette_selected_items(editor)).into(),
+        Submenu::tr("pptx.theme.effects", "auto_awesome", theme_effects_items(editor)).into(),
         MenuEntry::Separator,
         MenuItem::tr("pptx.theme-colors").icon("tune").on(|e, w, cx| e.open_theme_panel(w, cx)).into(),
+        MenuItem::tr("pptx.theme.save-theme").icon("save").on(|e, w, cx| e.export_thmx(w, cx)).into(),
+    ]
+}
+
+pub(crate) fn section_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    vec![
+        MenuItem::tr("pptx.section.add").on(|e, w, cx| e.open_section_panel(false, w, cx)).into(),
+        MenuItem::tr("pptx.section.rename").disabled(editor.current_section().is_none()).on(|e, w, cx| e.open_section_panel(true, w, cx)).into(),
+        MenuItem::tr("pptx.section.fold").disabled(editor.current_section().is_none()).on(|e, _, cx| e.toggle_current_section_fold(cx)).into(),
+        MenuItem::tr("pptx.section.move-up").disabled(editor.current_section().is_none_or(|i| i == 0)).on(|e, w, cx| e.move_current_section(-1, w, cx)).into(),
+        MenuItem::tr("pptx.section.move-down").disabled(editor.current_section().is_none_or(|i| i + 1 >= editor.presentation().sections.len())).on(|e, w, cx| e.move_current_section(1, w, cx)).into(),
+        MenuItem::tr("pptx.section.remove").disabled(editor.current_section().is_none()).on(|e, w, cx| e.remove_current_section(w, cx)).into(),
+    ]
+}
+
+pub(crate) fn slide_size_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let size = editor.presentation().slide_size;
+    vec![
+        MenuItem::tr("pptx.slide-size.standard").checked(size == ibis_doc_model::EmuSize::new(9_144_000, 6_858_000)).on(|e, w, cx| e.set_slide_size(ibis_doc_model::EmuSize::new(9_144_000, 6_858_000), w, cx)).into(),
+        MenuItem::tr("pptx.slide-size.wide").checked(size == ibis_doc_model::EmuSize::WIDESCREEN).on(|e, w, cx| e.set_slide_size(ibis_doc_model::EmuSize::WIDESCREEN, w, cx)).into(),
+        MenuItem::tr("pptx.slide-size.landscape").checked(size.width >= size.height).on(|e, w, cx| e.open_slide_orientation(false, w, cx)).into(),
+        MenuItem::tr("pptx.slide-size.portrait").checked(size.height > size.width).on(|e, w, cx| e.open_slide_orientation(true, w, cx)).into(),
+        MenuItem::tr("pptx.slide-size.custom").on(|e, w, cx| e.open_slide_size_panel(w, cx)).into(),
     ]
 }
 
@@ -753,7 +890,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             at + 6,
             MenuItem::tr("pptx.recover-unsaved")
                 .icon("history")
-                .on(|this, window, cx| this.open_pptx_recover_unsaved_panel(window, cx))
+                .on(|this, _window, cx| this.open_recover_unsaved(cx))
                 .into(),
         );
     }
@@ -772,18 +909,70 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(MenuId::Tools).push(
         MenuItem::tr("pptx.autorecover-settings")
             .icon("settings_backup_restore")
-            .on(|this, window, cx| this.open_pptx_autorecover_settings_panel(window, cx))
+            .on(|this, window, cx| this.open_autorecover_settings(window, cx))
             .into(),
     );
     menus.items_mut(MenuId::Tools).push(
         MenuItem::tr("pptx.recover-unsaved")
             .icon("history")
-            .on(|this, window, cx| this.open_pptx_recover_unsaved_panel(window, cx))
+            .on(|this, _window, cx| this.open_recover_unsaved(cx))
             .into(),
     );
     menus.items_mut(MenuId::Tools).push(Submenu::tr("pptx.proofing-language", "language", proofing_language_menu_items(editor)).into());
-    menus.connect("pptx.autorecover-settings", |this, window, cx| this.open_pptx_autorecover_settings_panel(window, cx));
-    menus.connect("pptx.recover-unsaved", |this, window, cx| this.open_pptx_recover_unsaved_panel(window, cx));
+    // プレゼンテーションの比較と変更の統合 (PPTX-REVIEW-019)
+    let comparing = editor.is_comparing_presentations();
+    let has_diffs = editor.pptx().and_then(|p| p.compare_panel.as_ref()).is_some_and(|p| !p.diffs.is_empty());
+    menus.connect("pptx.review.compare", |this, window, cx| this.pick_compare_presentation_file(window, cx));
+    menus.connect("pptx.review.accept", |this, _, cx| this.compare_accept_current(cx));
+    menus.connect("pptx.review.accept-all", |this, _, cx| this.compare_accept_all(cx));
+    menus.connect("pptx.review.reject", |this, _, cx| this.compare_reject_current(cx));
+    menus.connect("pptx.review.reject-all", |this, _, cx| this.compare_reject_all(cx));
+    menus.connect("pptx.review.end-review", |this, _, cx| this.compare_end_review(cx));
+
+    menus.items_mut(MenuId::Tools).push(
+        MenuItem::tr("pptx.review.compare")
+            .icon("rate_review")
+            .on(|this, window, cx| this.pick_compare_presentation_file(window, cx))
+            .into(),
+    );
+    if comparing {
+        menus.items_mut(MenuId::Tools).push(
+            MenuItem::tr("pptx.review.accept")
+                .icon("check")
+                .disabled(!has_diffs)
+                .on(|this, _, cx| this.compare_accept_current(cx))
+                .into(),
+        );
+        menus.items_mut(MenuId::Tools).push(
+            MenuItem::tr("pptx.review.accept-all")
+                .icon("checklist")
+                .disabled(!has_diffs)
+                .on(|this, _, cx| this.compare_accept_all(cx))
+                .into(),
+        );
+        menus.items_mut(MenuId::Tools).push(
+            MenuItem::tr("pptx.review.reject")
+                .icon("close")
+                .disabled(!has_diffs)
+                .on(|this, _, cx| this.compare_reject_current(cx))
+                .into(),
+        );
+        menus.items_mut(MenuId::Tools).push(
+            MenuItem::tr("pptx.review.reject-all")
+                .icon("delete")
+                .disabled(!has_diffs)
+                .on(|this, _, cx| this.compare_reject_all(cx))
+                .into(),
+        );
+        menus.items_mut(MenuId::Tools).push(
+            MenuItem::tr("pptx.review.end-review")
+                .icon("close")
+                .on(|this, _, cx| this.compare_end_review(cx))
+                .into(),
+        );
+    }
+    menus.connect("pptx.autorecover-settings", |this, window, cx| this.open_autorecover_settings(window, cx));
+    menus.connect("pptx.recover-unsaved", |this, _window, cx| this.open_recover_unsaved(cx));
     menus.connect("pptx.skip-slide", |this, window, cx| this.toggle_skip_slide(window, cx));
     menus.connect("pptx.notes", |this, window, cx| this.toggle_notes(window, cx));
     // メディアの字幕・キャプション (PPTX-ACCESS-010)
@@ -791,6 +980,24 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("pptx.clip.caption.clear", |this, _, cx| this.clear_selected_clip_captions(cx));
     menus.connect("pptx.clip.insert-caption", |this, _, cx| this.add_selected_clip_caption(&crate::shell::i18n::text("_pptx.caption-track-language"), "ja-JP", &crate::shell::i18n::text("_pptx.caption-template"), cx));
     menus.connect("pptx.clip.clear-captions", |this, _, cx| this.clear_selected_clip_captions(cx));
+    // 画像の背景削除・透明色指定 (PPTX-IMAGE-008)
+    menus.connect("pptx.picture.remove-background", |this, _, cx| this.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0xffffff)), cx));
+    menus.connect("pptx.picture.color.transparent-white", |this, _, cx| this.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0xffffff)), cx));
+    menus.connect("pptx.picture.color.transparent-black", |this, _, cx| this.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0x000000)), cx));
+    menus.connect("pptx.picture.color.transparent-clear", |this, _, cx| this.set_selected_pictures_clear(None, cx));
+    // マイクから音声録音 (PPTX-AUDIO-002)
+    menus.connect("pptx.audio.record", |this, window, cx| this.open_audio_record_panel(window, cx));
+    menus.connect("pptx.audio-record", |this, window, cx| this.open_audio_record_panel(window, cx));
+    // メディア圧縮と互換性最適化 (PPTX-VIDEO-017)
+    menus.connect("pptx.media.compress-1080p", |this, _, cx| { this.compress_presentation_media(super::MediaQuality::FullHd, cx); });
+    menus.connect("pptx.media.compress-720p", |this, _, cx| { this.compress_presentation_media(super::MediaQuality::Hd, cx); });
+    menus.connect("pptx.media.compress-480p", |this, _, cx| { this.compress_presentation_media(super::MediaQuality::Standard, cx); });
+    menus.connect("pptx.media.optimize-compatibility", |this, _, cx| { this.optimize_media_compatibility(cx); });
+    // インク変換と再生 (PPTX-INK-009, PPTX-INK-010)
+    menus.connect("pptx.ink.to-shape", |this, _, cx| this.pptx_ink_to_shape(cx));
+    menus.connect("pptx.ink.to-text", |this, _, cx| this.pptx_ink_to_text(cx));
+    menus.connect("pptx.ink.to-math", |this, _, cx| this.pptx_ink_to_math(cx));
+    menus.connect("pptx.ink.replay", |this, _, cx| this.pptx_ink_replay(cx));
     let notes = editor.notes_shown();
     if let Some(item) = menus.find_mut("pptx.notes") {
         item.checked = notes;
@@ -823,14 +1030,22 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(MenuId::Arrange).push(MenuItem::tr("pptx.reading-order").icon("format_list_numbered").checked(editor.pptx().is_some_and(|s| s.reading_order_pane.is_some())).on(|e, _, cx| e.toggle_reading_order_pane(cx)).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.theme.palette", "palette", theme_palette_items(editor)).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.theme.palette-selected", "palette", theme_palette_selected_items(editor)).into());
+    menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.theme.effects", "auto_awesome", theme_effects_items(editor)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.theme-colors").icon("tune").on(|e, w, cx| e.open_theme_panel(w, cx)).into());
+    menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.theme.save-theme").icon("save").on(|e, w, cx| e.export_thmx(w, cx)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.replace-fonts").icon("font_download").on(|e, w, cx| e.open_replace_fonts_panel(w, cx)).into());
     menus.connect("insert.symbol", |this, window, cx| this.open_symbols_panel(window, cx));
     menus.items_mut(MenuId::Insert).push(Submenu::tr("pptx.lines-and-connectors", "horizontal_rule", line_items()).into());
+    menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.photo-album").icon("photo_library").on(|e, w, cx| e.open_photo_album_panel(w, cx)).into());
+    menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.3d-model").icon("view_in_ar").on(|e, w, cx| e.pick_3d_model(w, cx)).into());
+    menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.insert-object").icon("attachment").on(|e, w, cx| e.pick_insert_object(w, cx)).into());
+    menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.math").icon("functions").on(|e, w, cx| e.open_pptx_math_panel(w, cx)).into());
+    menus.items_mut(MenuId::Insert).push(MenuItem::new("pptx.ink", crate::shell::i18n::text("xlsx.ink")).icon("draw").on(|e, w, cx| e.open_pptx_ink_panel(w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.video").icon("movie").on(|e, w, cx| e.pick_clip(false, w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.audio").icon("music_note").on(|e, w, cx| e.pick_clip(true, w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.video-link").icon("movie").on(|e, w, cx| e.pick_clip_link(false, w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.audio-link").icon("music_note").on(|e, w, cx| e.pick_clip_link(true, w, cx)).into());
+    menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.audio-record").icon("mic").on(|e, w, cx| e.open_audio_record_panel(w, cx)).into());
     let has_clip = editor.selected_clip_options().is_some();
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.clip.caption.add").icon("closed_caption").disabled(!has_clip).on(|e, _, cx| e.add_selected_clip_caption(&crate::shell::i18n::text("_pptx.caption-track-language"), "ja-JP", &crate::shell::i18n::text("_pptx.caption-template"), cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.clip.caption.clear").icon("delete").disabled(!has_clip).on(|e, _, cx| e.clear_selected_clip_captions(cx)).into());
@@ -1066,40 +1281,12 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         ]).into(),
     ]).into());
     let has_table = editor.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Table(_)));
-    use super::editing::BorderPlacement as BP;
-    menus.items_mut(MenuId::Format).push(Submenu::tr("table.borders", "border_all", vec![
-        MenuItem::tr("table.borders.all").icon("border_all").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::All, cx)).into(),
-        MenuItem::tr("table.borders.none").icon("border_clear").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::None, cx)).into(),
-        MenuEntry::Separator,
-        MenuItem::tr("table.borders.outside").icon("border_outer").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::Outside, cx)).into(),
-        MenuItem::tr("table.borders.inside").icon("border_inner").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::Inside, cx)).into(),
-        MenuEntry::Separator,
-        MenuItem::tr("table.borders.top").icon("border_top").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::Top, cx)).into(),
-        MenuItem::tr("table.borders.bottom").icon("border_bottom").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::Bottom, cx)).into(),
-        MenuItem::tr("table.borders.left").icon("border_left").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::Left, cx)).into(),
-        MenuItem::tr("table.borders.right").icon("border_right").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::Right, cx)).into(),
-        MenuEntry::Separator,
-        MenuItem::tr("table.borders.diagonal-down").icon("border_style").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::DiagonalDown, cx)).into(),
-        MenuItem::tr("table.borders.diagonal-up").icon("border_style").disabled(!has_table).on(|e, _, cx| e.apply_table_borders(BP::DiagonalUp, cx)).into(),
-        MenuEntry::Separator,
-        Submenu::tr("table.borders.weight", "line_style", vec![
-            MenuItem::tr("table.borders.0-5pt").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 6_350, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 6_350)) }), cx)).into(),
-            MenuItem::tr("table.borders.1pt").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 12_700, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.1-5pt").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 19_050, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 19_050)) }), cx)).into(),
-            MenuItem::tr("table.borders.2-25pt").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 28_575, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 28_575)) }), cx)).into(),
-            MenuItem::tr("table.borders.3pt").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 38_100, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 38_100)) }), cx)).into(),
-            MenuItem::tr("table.borders.4-5pt").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 57_150, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 57_150)) }), cx)).into(),
-            MenuItem::tr("table.borders.6pt").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 76_200, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 76_200)) }), cx)).into(),
-        ]).into(),
-        Submenu::tr("table.borders.color", "border_color", vec![
-            MenuItem::tr("table.borders.black").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::BLACK, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.white").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::WHITE, ..s.unwrap_or_else(|| Stroke::solid(Color::WHITE, 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.red").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0xc00000)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0xc00000)), 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.blue").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0x4472c4)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0x4472c4)), 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.yellow").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0xffc000)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0xffc000)), 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.green").disabled(!has_table).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0x70ad47)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0x70ad47)), 12_700)) }), cx)).into(),
-        ]).into(),
-    ]).into());
+    menus.items_mut(MenuId::Format).push(Submenu::tr("table.borders", "border_all", table_borders_menu_items(has_table)).into());
+    let has_line_or_connector = editor.selected_shapes().iter().any(|s| matches!(&s.kind, ShapeKind::Line(_)) || matches!(&s.kind, ShapeKind::Auto(a) if super::editing::is_connector_geometry(&a.geometry)));
+    if has_line_or_connector {
+        menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.chrome.begin-arrow", "line_start", line_end_menu(editor, true)).into());
+        menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.chrome.end-arrow", "line_end_arrow_notch", line_end_menu(editor, false)).into());
+    }
     let no_chart = !editor.selected_shapes().first().is_some_and(|s| matches!(s.kind, ShapeKind::Chart(_)));
     // A chart of a new kind (chartEx): only its data (in its workbook) is edited yet.
     let chart_ex = editor.selected_shapes().first().is_some_and(|s| matches!(&s.kind, ShapeKind::Chart(c) if c.ex.is_some()));
@@ -1142,6 +1329,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.default-shape").disabled(!matches!(editor.selected_shapes().as_slice(), [s] if matches!(s.kind, ShapeKind::Auto(_) | ShapeKind::Line(_)))).on(|e, _, cx| e.set_object_default(cx)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.frame.settings").disabled(editor.selected_shapes().is_empty()).on(|e, w, cx| e.open_frame_panel(w, cx)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.alt-text").disabled(editor.selected_shapes().is_empty()).on(|e, w, cx| e.open_alt_text_panel(w, cx)).into());
+    menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.math.copy-selection-latex").icon("functions").disabled(editor.selected_math().is_none()).on(|e, _, cx| e.copy_selected_math_as_latex(cx)).into());
     if let Some(shape_id) = zoom_shape {
         let is_custom = editor.slide().shape(shape_id).is_some_and(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Picture(_)));
         menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.zoom.change-image").icon("image").on(|e, w, cx| e.pick_zoom_image(w, cx)).into());
@@ -1237,12 +1425,88 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             MenuItem::tr("pptx.distribute.v").icon("vertical_distribute").disabled(editor.selected_ids().len() < 3).on(|this, _, cx| this.distribute_selected(false, cx)).into(),
         ]);
     }
-    fill_submenu(menus, "tools.spelling", vec![MenuItem::tr("pptx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_spelling(w, cx)).into()]);
+    menus.items_mut(MenuId::Tools).push(MenuItem::tr("pptx.autocorrect-options").icon("spellcheck").on(|e, w, cx| e.open_pptx_autocorrect_panel(w, cx)).into());
+    fill_submenu(menus, "tools.spelling", vec![
+        MenuItem::tr("pptx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_spelling(w, cx)).into(),
+        MenuItem::tr("pptx.thesaurus").icon("menu_book").on(|e, w, cx| e.open_pptx_thesaurus(w, cx)).into(),
+    ]);
+    menus.connect("pptx.thesaurus", |this, window, cx| this.open_pptx_thesaurus(window, cx));
     if editor.can_edit_points() {
         menus.connect("pptx.edit-points", |this, _, cx| this.begin_edit_points(cx));
     }
+    // 点の種類 (while vertices are edited and one is selected).
+    if let Some(kind) = editor.edit_point_selected_kind() {
+        use ibis_doc_model::shape_merge::NodeKind;
+        for (id, k) in [("pptx.edit-points.smooth", NodeKind::Smooth), ("pptx.edit-points.straight", NodeKind::Straight), ("pptx.edit-points.corner", NodeKind::Corner)] {
+            menus.connect(id, move |this, _, cx| this.set_selected_vertex_kind(k, cx));
+            if let Some(item) = menus.find_mut(id) {
+                item.checked = kind == k;
+            }
+        }
+    }
     if editor.can_convert_diagram() {
         menus.connect("pptx.smartart-to-shapes", |this, _, cx| this.convert_diagram_to_shapes(cx));
+    }
+    if editor.can_convert_text_to_smartart() {
+        menus.connect("pptx.smartart.convert-text", |this, _, cx| this.convert_selected_text_to_smartart(crate::pptx::SmartArtKind::BasicProcess, cx));
+    }
+    if editor.can_modify_smartart_items() {
+        menus.connect("pptx.smartart.add-shape", |this, _, cx| this.smartart_add_shape(cx));
+        menus.connect("pptx.smartart.remove-shape", |this, _, cx| this.smartart_remove_shape(cx));
+        menus.connect("pptx.smartart.add-assistant", |this, _, cx| this.smartart_add_assistant(cx));
+        menus.connect("pptx.smartart.move-up", |this, _, cx| this.smartart_move_item_up(cx));
+        menus.connect("pptx.smartart.move-down", |this, _, cx| this.smartart_move_item_down(cx));
+        menus.connect("pptx.smartart.promote", |this, _, cx| this.smartart_promote(cx));
+        menus.connect("pptx.smartart.demote", |this, _, cx| this.smartart_demote(cx));
+        menus.connect("pptx.smartart.text-pane", |this, _, cx| this.toggle_smartart_text_pane(cx));
+
+        menus.connect("pptx.smartart.layout.list", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::BasicBlockList, cx));
+        menus.connect("pptx.smartart.layout.vlist", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::VerticalList, cx));
+        menus.connect("pptx.smartart.layout.process", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::BasicProcess, cx));
+        menus.connect("pptx.smartart.layout.chevron", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::ContinuousChevronProcess, cx));
+        menus.connect("pptx.smartart.layout.cycle", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::BasicCycle, cx));
+        menus.connect("pptx.smartart.layout.hierarchy", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::OrganizationChart, cx));
+        menus.connect("pptx.smartart.layout.relationship", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::BasicRelationship, cx));
+        menus.connect("pptx.smartart.layout.matrix", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::BasicMatrix, cx));
+        menus.connect("pptx.smartart.layout.pyramid", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::BasicPyramid, cx));
+        menus.connect("pptx.smartart.layout.picture", |this, _, cx| this.change_smartart_layout(crate::pptx::SmartArtKind::PictureList, cx));
+
+        menus.connect("pptx.smartart.color.colorful", |this, _, cx| this.set_smartart_color_style(crate::pptx::SmartArtColorStyle::Colorful, cx));
+        menus.connect("pptx.smartart.color.accent1", |this, _, cx| this.set_smartart_color_style(crate::pptx::SmartArtColorStyle::Accent1, cx));
+        menus.connect("pptx.smartart.color.accent2", |this, _, cx| this.set_smartart_color_style(crate::pptx::SmartArtColorStyle::Accent2, cx));
+        menus.connect("pptx.smartart.color.accent3", |this, _, cx| this.set_smartart_color_style(crate::pptx::SmartArtColorStyle::Accent3, cx));
+        menus.connect("pptx.smartart.color.outline", |this, _, cx| this.set_smartart_color_style(crate::pptx::SmartArtColorStyle::Outline, cx));
+
+        if let Some((_, kind, style, ..)) = editor.selected_smartart_data() {
+            let layout_id = match kind {
+                crate::pptx::SmartArtKind::BasicBlockList => "pptx.smartart.layout.list",
+                crate::pptx::SmartArtKind::VerticalList => "pptx.smartart.layout.vlist",
+                crate::pptx::SmartArtKind::BasicProcess => "pptx.smartart.layout.process",
+                crate::pptx::SmartArtKind::ContinuousChevronProcess => "pptx.smartart.layout.chevron",
+                crate::pptx::SmartArtKind::BasicCycle => "pptx.smartart.layout.cycle",
+                crate::pptx::SmartArtKind::OrganizationChart => "pptx.smartart.layout.hierarchy",
+                crate::pptx::SmartArtKind::BasicRelationship => "pptx.smartart.layout.relationship",
+                crate::pptx::SmartArtKind::BasicMatrix => "pptx.smartart.layout.matrix",
+                crate::pptx::SmartArtKind::BasicPyramid => "pptx.smartart.layout.pyramid",
+                crate::pptx::SmartArtKind::PictureList => "pptx.smartart.layout.picture",
+            };
+            if let Some(item) = menus.find_mut(layout_id) {
+                item.checked = true;
+            }
+            let color_id = match style {
+                crate::pptx::SmartArtColorStyle::Colorful => "pptx.smartart.color.colorful",
+                crate::pptx::SmartArtColorStyle::Accent1 => "pptx.smartart.color.accent1",
+                crate::pptx::SmartArtColorStyle::Accent2 => "pptx.smartart.color.accent2",
+                crate::pptx::SmartArtColorStyle::Accent3 => "pptx.smartart.color.accent3",
+                crate::pptx::SmartArtColorStyle::Outline => "pptx.smartart.color.outline",
+            };
+            if let Some(item) = menus.find_mut(color_id) {
+                item.checked = true;
+            }
+        }
+        if let Some(item) = menus.find_mut("pptx.smartart.text-pane") {
+            item.checked = editor.pptx().is_some_and(|s| s.smartart_text_pane);
+        }
     }
     if editor.can_group() {
         menus.connect("pptx.group", |this, _, cx| this.group_selected(cx));
@@ -1277,20 +1541,32 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             MenuItem::tr("pptx.insert-chart.column").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::ClusteredColumn, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.stacked-column").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::StackedColumn, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.percent-stacked-column").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::PercentStackedColumn, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-clustered-column").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::ClusteredColumn3D, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-stacked-column").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::StackedColumn3D, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-percent-stacked-column").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::PercentStackedColumn3D, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-column").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Column3D, w, cx)).into(),
             MenuEntry::Separator,
             MenuItem::tr("pptx.insert-chart.bar").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::ClusteredBar, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.stacked-bar").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::StackedBar, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.percent-stacked-bar").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::PercentStackedBar, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-clustered-bar").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::ClusteredBar3D, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-stacked-bar").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::StackedBar3D, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-percent-stacked-bar").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::PercentStackedBar3D, w, cx)).into(),
             MenuEntry::Separator,
             MenuItem::tr("pptx.insert-chart.line").icon("show_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Line, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.stacked-line").icon("show_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::StackedLine, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.percent-stacked-line").icon("show_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::PercentStackedLine, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-line").icon("show_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Line3D, w, cx)).into(),
             MenuEntry::Separator,
             MenuItem::tr("pptx.insert-chart.area").icon("area_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Area, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.stacked-area").icon("area_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::StackedArea, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.percent-stacked-area").icon("area_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::PercentStackedArea, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-area").icon("area_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Area3D, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-stacked-area").icon("area_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::StackedArea3D, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-percent-stacked-area").icon("area_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::PercentStackedArea3D, w, cx)).into(),
             MenuEntry::Separator,
             MenuItem::tr("pptx.insert-chart.pie").icon("pie_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Pie, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.3d-pie").icon("pie_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Pie3D, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.doughnut").icon("donut_large").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Doughnut, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.pie-of-pie").icon("pie_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::PieOfPie, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.bar-of-pie").icon("pie_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::BarOfPie, w, cx)).into(),
@@ -1321,24 +1597,31 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             MenuItem::tr("pptx.insert-chart.histogram").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Histogram, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.pareto").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Pareto, w, cx)).into(),
             MenuItem::tr("pptx.insert-chart.funnel").icon("filter_alt").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Funnel, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.box-whisker").icon("bar_chart").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::BoxWhisker, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.treemap").icon("grid_view").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Treemap, w, cx)).into(),
+            MenuItem::tr("pptx.insert-chart.sunburst").icon("donut_large").on(|e, w, cx| e.insert_slide_chart_kind(ibis_pptx::NewChartKind::Sunburst, w, cx)).into(),
         ],
     );
+    fill_submenu(menus, "insert.smartart", smartart_insert_items());
     // 表示形式 > テキスト: 上付き・下付き・大文字・文字の間隔・大文字と小文字の変更.
     let baseline = editor.selected_baseline();
     let caps = editor.selected_caps();
     let shadow_on = editor.selected_shadow().is_some();
+    let spacing = editor.selected_spacing();
     fill_submenu(menus, "format.text", vec![
         MenuItem::tr("pptx.text.shadow").checked(shadow_on).on(|e, w, cx| e.toggle_text_shadow(w, cx)).into(),
         MenuEntry::Separator,
-        MenuItem::tr("text.superscript").checked(baseline > 0).on(|e, w, cx| e.toggle_baseline(30_000, w, cx)).into(),
-        MenuItem::tr("text.subscript").checked(baseline < 0).on(|e, w, cx| e.toggle_baseline(-25_000, w, cx)).into(),
+        MenuItem::tr("text.superscript").shortcut("⇧⌘+").checked(baseline > 0).on(|e, w, cx| e.toggle_baseline(30_000, w, cx)).into(),
+        MenuItem::tr("text.subscript").shortcut("⌘=").checked(baseline < 0).on(|e, w, cx| e.toggle_baseline(-25_000, w, cx)).into(),
         MenuEntry::Separator,
         MenuItem::tr("text.caps").checked(caps == ibis_doc_model::Caps::All).on(|e, w, cx| e.toggle_text_caps(ibis_doc_model::Caps::All, w, cx)).into(),
         MenuItem::tr("text.small-caps").checked(caps == ibis_doc_model::Caps::Small).on(|e, w, cx| e.toggle_text_caps(ibis_doc_model::Caps::Small, w, cx)).into(),
         MenuEntry::Separator,
-        MenuItem::tr("text.spacing-tight").on(|e, w, cx| e.format_characters(w, cx, ibis_doc_model::CharacterFormat { spacing: Some(-150), ..Default::default() })).into(),
-        MenuItem::tr("text.spacing-normal").on(|e, w, cx| e.format_characters(w, cx, ibis_doc_model::CharacterFormat { spacing: Some(0), ..Default::default() })).into(),
-        MenuItem::tr("text.spacing-loose").on(|e, w, cx| e.format_characters(w, cx, ibis_doc_model::CharacterFormat { spacing: Some(300), ..Default::default() })).into(),
+        MenuItem::tr("text.spacing-very-tight").checked(spacing == -300).on(|e, w, cx| e.set_slide_character_spacing(-300, w, cx)).into(),
+        MenuItem::tr("text.spacing-tight").checked(spacing == -150).on(|e, w, cx| e.set_slide_character_spacing(-150, w, cx)).into(),
+        MenuItem::tr("text.spacing-normal").checked(spacing == 0).on(|e, w, cx| e.set_slide_character_spacing(0, w, cx)).into(),
+        MenuItem::tr("text.spacing-loose").checked(spacing == 300).on(|e, w, cx| e.set_slide_character_spacing(300, w, cx)).into(),
+        MenuItem::tr("text.spacing-very-loose").checked(spacing == 600).on(|e, w, cx| e.set_slide_character_spacing(600, w, cx)).into(),
         MenuEntry::Separator,
         Submenu::tr("pptx.text.case", "format_size", vec![
             MenuItem::tr("pptx.case.sentence").on(|e, w, cx| e.change_case(crate::pptx::editing::TextCase::Sentence, w, cx)).into(),
@@ -1428,6 +1711,29 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         ("pptx.bevel.hard-edge", Some(ibis_doc_model::Bevel::standard(ibis_doc_model::BevelPreset::HardEdge))),
         ("pptx.bevel.art-deco", Some(ibis_doc_model::Bevel::standard(ibis_doc_model::BevelPreset::ArtDeco))),
     ].into_iter().map(|(id, value)| MenuItem::tr(id).disabled(!editor.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Auto(_)))).on(move |e, _, cx| e.set_shape_bevel(value, cx)).into()).collect()).into());
+    menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.3d-rotation", "3d_rotation", [
+        ("pptx.3d-rotation.none", None),
+        ("pptx.3d-rotation.isometric-right-up", Some(ibis_doc_model::CameraPreset::IsometricRightUp)),
+        ("pptx.3d-rotation.isometric-left-up", Some(ibis_doc_model::CameraPreset::IsometricLeftUp)),
+        ("pptx.3d-rotation.isometric-top-up", Some(ibis_doc_model::CameraPreset::IsometricTopUp)),
+        ("pptx.3d-rotation.off-axis-1-top", Some(ibis_doc_model::CameraPreset::IsometricOffAxis1Top)),
+        ("pptx.3d-rotation.off-axis-1-left", Some(ibis_doc_model::CameraPreset::IsometricOffAxis1Left)),
+        ("pptx.3d-rotation.off-axis-1-right", Some(ibis_doc_model::CameraPreset::IsometricOffAxis1Right)),
+        ("pptx.3d-rotation.perspective-front", Some(ibis_doc_model::CameraPreset::PerspectiveFront)),
+        ("pptx.3d-rotation.perspective-above", Some(ibis_doc_model::CameraPreset::PerspectiveAbove)),
+        ("pptx.3d-rotation.perspective-below", Some(ibis_doc_model::CameraPreset::PerspectiveBelow)),
+        ("pptx.3d-rotation.perspective-left", Some(ibis_doc_model::CameraPreset::PerspectiveLeft)),
+        ("pptx.3d-rotation.perspective-right", Some(ibis_doc_model::CameraPreset::PerspectiveRight)),
+        ("pptx.3d-rotation.oblique-top-left", Some(ibis_doc_model::CameraPreset::ObliqueTopLeft)),
+        ("pptx.3d-rotation.oblique-top-right", Some(ibis_doc_model::CameraPreset::ObliqueTopRight)),
+    ].into_iter().map(|(id, value)| MenuItem::tr(id).disabled(!editor.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Auto(_)))).on(move |e, _, cx| e.set_shape_3d_rotation_preset(value, cx)).into()).collect()).into());
+    menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.3d-depth", "view_in_ar", [
+        ("pptx.3d-depth.none", 0),
+        ("pptx.3d-depth.10pt", 127_000),
+        ("pptx.3d-depth.20pt", 254_000),
+        ("pptx.3d-depth.36pt", 457_200),
+        ("pptx.3d-depth.72pt", 914_400),
+    ].into_iter().map(|(id, value)| MenuItem::tr(id).disabled(!editor.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Auto(_)))).on(move |e, _, cx| e.set_shape_3d_depth(value, None, cx)).into()).collect()).into());
     let has_pic = editor.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Picture(_)));
     let has_svg = editor.has_selected_svg_picture();
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.picture.convert-to-shape")
@@ -1435,17 +1741,29 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         .disabled(!has_svg)
         .on(|e, _, cx| { e.convert_selected_svg_to_shape(cx); }).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.picture.color", "palette", picture_color_items(has_pic)).into());
+    menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.picture.remove-background")
+        .icon("auto_fix_high")
+        .disabled(!has_pic)
+        .on(|e, _, cx| { e.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0xffffff)), cx); }).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.picture.correction", "tune", picture_correction_items(editor, has_pic)).into());
+    menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.picture.transparency", "filter_none", picture_transparency_items(editor, has_pic)).into());
+    menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.picture.artistic-effect", "auto_fix_high", picture_artistic_effect_items(has_pic)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.picture.reset-colors")
-        .disabled(!editor.selected_shapes().iter().any(|s| matches!(&s.kind, ShapeKind::Picture(p) if p.duotone.is_some() || p.clear.is_some() || p.luminance.is_some())))
+        .disabled(!editor.selected_shapes().iter().any(|s| matches!(&s.kind, ShapeKind::Picture(p) if p.duotone.is_some() || p.clear.is_some() || p.luminance.is_some() || p.artistic_effect.is_some())))
         .on(|e, _, cx| e.reset_picture_color_effects(cx)).into());
     #[cfg(all(target_os = "macos", feature = "export"))]
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.picture.compress").icon("image").on(|e, w, cx| e.open_compress_panel(w, cx)).into());
+    menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.media.compress", "video_settings", vec![
+        MenuItem::tr("pptx.media.compress-1080p").on(|e, _, cx| { e.compress_presentation_media(super::MediaQuality::FullHd, cx); }).into(),
+        MenuItem::tr("pptx.media.compress-720p").on(|e, _, cx| { e.compress_presentation_media(super::MediaQuality::Hd, cx); }).into(),
+        MenuItem::tr("pptx.media.compress-480p").on(|e, _, cx| { e.compress_presentation_media(super::MediaQuality::Standard, cx); }).into(),
+        MenuItem::tr("pptx.media.optimize-compatibility").on(|e, _, cx| { e.optimize_media_compatibility(cx); }).into(),
+    ]).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.clip.playback", "play_circle", clip_playback_items(editor)).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.video.styles", "style", video_style_items(editor, has_pic)).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.video.shape", "crop_original", video_shape_items(editor, has_pic)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.video.reset-effects")
-        .disabled(!editor.selected_shapes().iter().any(|s| matches!(&s.kind, ShapeKind::Picture(p) if p.stroke.is_some() || p.corner > 0 || p.shadow.is_some() || p.reflection.is_some() || p.soft_edge.is_some())))
+        .disabled(!editor.selected_shapes().iter().any(|s| matches!(&s.kind, ShapeKind::Picture(p) if p.stroke.is_some() || p.corner > 0 || p.shadow.is_some() || p.reflection.is_some() || p.soft_edge.is_some() || p.artistic_effect.is_some())))
         .on(|e, _, cx| e.reset_picture_effects(cx)).into());
     let has_table = editor.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Table(_)));
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.table-style", "grid_view", table_style_items(editor, has_table)).into());
@@ -1453,27 +1771,74 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.menu.animation", "animation", super::animation_ui::animation_items(editor)).into());
     menus.connect("format.clear", |this, window, cx| this.clear_formats(window, cx));
     fill_submenu(menus, "insert.image", image_items());
+    let mut screenshot_entry: MenuEntry = Submenu::tr("pptx.insert.screenshot", "fit_screen", screenshot_menu_items()).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "insert.image", screenshot_entry) {
+            Ok(()) => break,
+            Err(back) => screenshot_entry = back,
+        }
+    }
     let mut icon_entry: MenuEntry = Submenu::tr("pptx.insert.icon", "category", icon_menu_items()).into();
     for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "insert.image", icon_entry) {
+        match insert_after(entries, "pptx.insert.screenshot", icon_entry) {
             Ok(()) => break,
             Err(back) => icon_entry = back,
         }
     }
+    menus.connect("pptx.insert.screenshot.available-windows", |this, _, cx| {
+        this.insert_screenshot_window(cx);
+    });
+    menus.connect("pptx.insert.screenshot.clipping", |this, _, cx| {
+        this.insert_screenshot_clipping(cx);
+    });
+    menus.connect("pptx.insert.screenshot.clipboard", |this, _, cx| {
+        this.insert_screenshot_from_clipboard(cx);
+    });
     fill_submenu(menus, "pptx.layout", apply_layout_items(editor));
+    let has_text = editor.edited_body().is_some() || editor.selected_shapes().into_iter().any(|s| s.text_body().is_some());
+    if has_text {
+        menus.connect("edit.copy-format", |this, window, cx| this.copy_character_format(window, cx));
+        if editor.pptx().is_some_and(|s| s.character_format_copy.is_some()) {
+            menus.connect("edit.paste-format", |this, window, cx| this.paste_character_format(window, cx));
+        }
+    }
+    menus.connect("file.page-setup", |this, window, cx| this.open_slide_size_panel(window, cx));
+    menus.connect("format.options", |this, _, cx| {
+        this.sidebar_open = true;
+        cx.notify();
+    });
+    menus.connect("insert.video", |this, window, cx| this.pick_clip(false, window, cx));
+    menus.connect("insert.audio", |this, window, cx| this.pick_clip(true, window, cx));
+    menus.connect("insert.equation", |this, window, cx| this.open_pptx_math_panel(window, cx));
+    menus.connect("insert.link", |this, window, cx| this.slide_open_link_panel(window, cx));
+    menus.connect("tools.dictionary", |this, window, cx| this.open_pptx_thesaurus(window, cx));
+    menus.connect("tools.accessibility", |this, window, cx| this.open_pptx_accessibility_panel(window, cx));
+    menus.connect("pptx.motion", |this, _, cx| this.toggle_animation_pane(cx));
+    if let Some(item) = menus.find_mut("pptx.motion") {
+        item.checked = editor.pptx().is_some_and(|s| s.animation_pane);
+    }
+    menus.connect("pptx.edit-theme", |this, window, cx| {
+        if this.is_master_view() {
+            this.close_master_view(window, cx);
+        } else {
+            this.open_master_view(window, cx);
+        }
+    });
+    if let Some(item) = menus.find_mut("pptx.edit-theme") {
+        item.checked = editor.is_master_view();
+    }
     // 新しいスライド from a chosen layout, after 新しいスライド.
-    let size = editor.presentation().slide_size;
     let slide_menu = menus.items_mut(MenuId::Slide);
+    if let Some(pos) = slide_menu.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "pptx.transition")) {
+        slide_menu[pos] = Submenu::tr("pptx.transition", "animation", transition_menu(editor)).into();
+    }
+    if let Some(pos) = slide_menu.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "pptx.theme")) {
+        slide_menu[pos] = Submenu::tr("pptx.theme", "palette", theme_menu(editor)).into();
+    }
     slide_menu.push(MenuItem::tr("pptx.reset-slide").icon("restart_alt").disabled(editor.slide().layout.is_none()).on(|e, w, cx| e.reset_slide(w, cx)).into());
     slide_menu.push(MenuItem::tr("pptx.reset-placement").disabled(editor.slide().layout.is_none()).on(|e, w, cx| e.reset_placeholder_frames(w, cx)).into());
-    slide_menu.push(Submenu::tr("pptx.sections", "view_quilt",vec![MenuItem::tr("pptx.section.add").on(|e,w,cx|e.open_section_panel(false,w,cx)).into(),MenuItem::tr("pptx.section.rename").disabled(editor.current_section().is_none()).on(|e,w,cx|e.open_section_panel(true,w,cx)).into(),MenuItem::tr("pptx.section.fold").disabled(editor.current_section().is_none()).on(|e,_,cx|e.toggle_current_section_fold(cx)).into(),MenuItem::tr("pptx.section.move-up").disabled(editor.current_section().is_none_or(|i|i==0)).on(|e,w,cx|e.move_current_section(-1,w,cx)).into(),MenuItem::tr("pptx.section.move-down").disabled(editor.current_section().is_none_or(|i|i+1>=editor.presentation().sections.len())).on(|e,w,cx|e.move_current_section(1,w,cx)).into(),MenuItem::tr("pptx.section.remove").disabled(editor.current_section().is_none()).on(|e,w,cx|e.remove_current_section(w,cx)).into()]).into());
-    slide_menu.push(Submenu::tr("pptx.slide-size", "aspect_ratio", vec![
-        MenuItem::tr("pptx.slide-size.standard").checked(size == ibis_doc_model::EmuSize::new(9_144_000, 6_858_000)).on(|e, w, cx| e.set_slide_size(ibis_doc_model::EmuSize::new(9_144_000, 6_858_000), w, cx)).into(),
-        MenuItem::tr("pptx.slide-size.wide").checked(size == ibis_doc_model::EmuSize::WIDESCREEN).on(|e, w, cx| e.set_slide_size(ibis_doc_model::EmuSize::WIDESCREEN, w, cx)).into(),
-        MenuItem::tr("pptx.slide-size.landscape").checked(size.width >= size.height).on(|e, w, cx| e.open_slide_orientation(false, w, cx)).into(),
-        MenuItem::tr("pptx.slide-size.portrait").checked(size.height > size.width).on(|e, w, cx| e.open_slide_orientation(true, w, cx)).into(),
-        MenuItem::tr("pptx.slide-size.custom").on(|e, w, cx| e.open_slide_size_panel(w, cx)).into(),
-    ]).into());
+    slide_menu.push(Submenu::tr("pptx.sections", "view_quilt", section_menu_items(editor)).into());
+    slide_menu.push(Submenu::tr("pptx.slide-size", "aspect_ratio", slide_size_menu_items(editor)).into());
     slide_menu.push(MenuItem::tr("pptx.export-slide-png").icon("image").on(|e, w, cx| e.export_current_slide_png(w, cx)).into());
     slide_menu.push(MenuItem::tr("pptx.export-all-slides-png").icon("image").on(|e, w, cx| e.export_all_slides_png(w, cx)).into());
     slide_menu.push(MenuItem::tr("pptx.export-gif").icon("animation").on(|e, w, cx| e.export_gif(w, cx)).into());
@@ -1499,6 +1864,15 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         }
     }
 
+    // ファイル > 書き出し > Office テーマ（.thmx）
+    let mut thmx_entry: MenuEntry = MenuItem::tr("pptx.export-thmx").icon("palette").on(|this, window, cx| this.export_thmx(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "pptx.export-potx", thmx_entry) {
+            Ok(()) => break,
+            Err(back) => thmx_entry = back,
+        }
+    }
+
     // ファイル > 新規 > テンプレートから新規作成…
     let mut tmpl_entry: MenuEntry = MenuItem::tr("pptx.new-from-template")
         .icon("dashboard_customize")
@@ -1513,9 +1887,13 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     }
 }
 
-/// Put `new` after the item `id` (in whatever menu or submenu it is).
+/// Put `new` after the item or submenu `id` (in whatever menu or submenu it is).
 fn insert_after(entries: &mut Vec<MenuEntry>, id: &str, new: MenuEntry) -> Result<(), MenuEntry> {
-    if let Some(i) = entries.iter().position(|e| matches!(e, MenuEntry::Item(item) if item.id == id)) {
+    if let Some(i) = entries.iter().position(|e| match e {
+        MenuEntry::Item(item) => item.id == id,
+        MenuEntry::Submenu(sub) => sub.id == id,
+        _ => false,
+    }) {
         entries.insert(i + 1, new);
         return Ok(());
     }
@@ -1537,7 +1915,7 @@ pub(crate) fn toolbar_left(editor: &SlideEditor) -> Vec<ToolItem> {
 }
 
 /// レイアウトを適用: each layout, the current slide's checked.
-fn apply_layout_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+pub(crate) fn apply_layout_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let current = editor.slide().layout;
     let mut items: Vec<MenuEntry> = editor
         .presentation()
@@ -1582,7 +1960,7 @@ fn apply_layout_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 }
 
 /// A new slide from each layout.
-fn new_slide_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
+pub(crate) fn new_slide_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     layout_items(editor)
 }
 
@@ -1620,16 +1998,31 @@ fn fill_presets(background: bool) -> Vec<MenuEntry> {
     for (id, path) in [("fill.path.circle", GradientPath::Circle), ("fill.path.rect", GradientPath::Rect), ("fill.path.shape", GradientPath::Shape)] {
         presets.push((id, Fill::Path { path, focus: [50_000; 4], stops: stops.clone() }));
     }
-    let gradients = presets.into_iter().map(|(id, fill)| MenuItem::tr(id).on(move |e, _, cx| if background { e.set_background(fill.clone(), cx) } else { e.fill_selected(fill.clone(), cx) }).into()).collect();
-    let patterns = [("pct25", crate::shell::i18n::text("pptx.chrome.black-white-25-percent")), ("pct50", crate::shell::i18n::text("pptx.chrome.black-white-50-percent")), ("pct75", crate::shell::i18n::text("pptx.chrome.black-white-75-percent")), ("horz", crate::shell::i18n::text("pptx.chrome.black-white-horizontal-lines")), ("vert", crate::shell::i18n::text("pptx.chrome.black-white-vertical-lines")), ("diagCross", crate::shell::i18n::text("pptx.chrome.black-white-diagonal-grid"))].into_iter().map(|(preset, label)| {
+    let mut gradients: Vec<MenuEntry> = presets.into_iter().map(|(id, fill)| MenuItem::tr(id).on(move |e, _, cx| if background { e.set_background(fill.clone(), cx) } else { e.fill_selected(fill.clone(), cx) }).into()).collect();
+    gradients.push(MenuEntry::Separator);
+    gradients.push(MenuItem::tr(if background { "pptx.background.custom" } else { "pptx.fill.custom" }).on(move |e, w, cx| e.open_gradient_panel(background, w, cx)).into());
+    gradients.push(MenuItem::tr(if background { "pptx.background.custom-path" } else { "pptx.fill.custom-path" }).on(move |e, w, cx| e.open_path_gradient_panel(background, w, cx)).into());
+    let mut patterns: Vec<MenuEntry> = [("pct25", crate::shell::i18n::text("pptx.chrome.black-white-25-percent")), ("pct50", crate::shell::i18n::text("pptx.chrome.black-white-50-percent")), ("pct75", crate::shell::i18n::text("pptx.chrome.black-white-75-percent")), ("horz", crate::shell::i18n::text("pptx.chrome.black-white-horizontal-lines")), ("vert", crate::shell::i18n::text("pptx.chrome.black-white-vertical-lines")), ("diagCross", crate::shell::i18n::text("pptx.chrome.black-white-diagonal-grid"))].into_iter().map(|(preset, label)| {
         let fill = Fill::Pattern { preset: preset.into(), foreground: Color::BLACK, background: Color::WHITE };
         MenuItem::new(preset, label).on(move |e, _, cx| if background { e.set_background(fill.clone(), cx) } else { e.fill_selected(fill.clone(), cx) }).into()
     }).collect();
+    patterns.push(MenuEntry::Separator);
+    patterns.push(MenuItem::tr(if background { "pptx.background.custom-pattern" } else { "pptx.fill.custom-pattern" }).on(move |e, w, cx| e.open_pattern_panel(background, w, cx)).into());
     vec![Submenu::tr("pptx.fill-gradients", "format_color_fill", gradients).into(), Submenu::tr("pptx.fill-patterns", "format_color_fill", patterns).into()]
 }
 
+pub(crate) fn shape_fill_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let mut fill_items = color_menu(editor, "pptx.fill", Some(crate::shell::i18n::text("_shell.no-fill")), |this, rgb, _, cx| {
+        this.fill_selected(rgb.map_or(Fill::None, |rgb| Fill::Solid(Color::opaque(rgb))), cx)
+    });
+    fill_items.push(MenuEntry::Separator);
+    fill_items.extend(fill_presets(false));
+    fill_items.push(MenuItem::tr("pptx.fill.picture").icon("image").on(|this, w, cx| this.pick_fill_picture(w, cx)).into());
+    fill_items
+}
+
 /// 背景: a colour, or the layout's background back.
-fn background_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
+pub(crate) fn background_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     let mut items = color_menu(editor, "pptx.background", None, |this, rgb, _, cx| {
         if let Some(rgb) = rgb {
             this.set_background(Fill::Solid(Color::opaque(rgb)), cx);
@@ -1712,8 +2105,46 @@ fn table_button(editor: &SlideEditor) -> ToolItem {
         .into()
 }
 
-fn table_border_button() -> ToolItem {
+pub(crate) fn table_borders_menu_items(enabled: bool) -> Vec<MenuEntry> {
     use super::editing::BorderPlacement as BP;
+    vec![
+        MenuItem::tr("table.borders.all").icon("border_all").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::All, cx)).into(),
+        MenuItem::tr("table.borders.none").icon("border_clear").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::None, cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("table.borders.outside").icon("border_outer").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::Outside, cx)).into(),
+        MenuItem::tr("table.borders.inside").icon("border_inner").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::Inside, cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("table.borders.top").icon("border_top").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::Top, cx)).into(),
+        MenuItem::tr("table.borders.bottom").icon("border_bottom").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::Bottom, cx)).into(),
+        MenuItem::tr("table.borders.left").icon("border_left").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::Left, cx)).into(),
+        MenuItem::tr("table.borders.right").icon("border_right").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::Right, cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("table.borders.diagonal-down").icon("border_style").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::DiagonalDown, cx)).into(),
+        MenuItem::tr("table.borders.diagonal-up").icon("border_style").disabled(!enabled).on(|e, _, cx| e.apply_table_borders(BP::DiagonalUp, cx)).into(),
+        MenuEntry::Separator,
+        Submenu::tr("table.borders.weight", "line_style", vec![
+            MenuItem::tr("table.borders.0-5pt").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 6_350, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 6_350)) }), cx)).into(),
+            MenuItem::tr("table.borders.1pt").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 12_700, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 12_700)) }), cx)).into(),
+            MenuItem::tr("table.borders.1-5pt").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 19_050, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 19_050)) }), cx)).into(),
+            MenuItem::tr("table.borders.2-25pt").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 28_575, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 28_575)) }), cx)).into(),
+            MenuItem::tr("table.borders.3pt").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 38_100, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 38_100)) }), cx)).into(),
+            MenuItem::tr("table.borders.4-5pt").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 57_150, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 57_150)) }), cx)).into(),
+            MenuItem::tr("table.borders.6pt").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 76_200, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 76_200)) }), cx)).into(),
+        ]).into(),
+        Submenu::tr("table.borders.color", "border_color", vec![
+            MenuItem::tr("table.borders.black").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::BLACK, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 12_700)) }), cx)).into(),
+            MenuItem::tr("table.borders.white").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::WHITE, ..s.unwrap_or_else(|| Stroke::solid(Color::WHITE, 12_700)) }), cx)).into(),
+            MenuItem::tr("table.borders.red").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0xc00000)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0xc00000)), 12_700)) }), cx)).into(),
+            MenuItem::tr("table.borders.blue").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0x4472c4)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0x4472c4)), 12_700)) }), cx)).into(),
+            MenuItem::tr("table.borders.yellow").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0xffc000)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0xffc000)), 12_700)) }), cx)).into(),
+            MenuItem::tr("table.borders.green").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0x70ad47)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0x70ad47)), 12_700)) }), cx)).into(),
+        ]).into(),
+    ]
+}
+
+fn table_border_button(editor: &SlideEditor) -> ToolItem {
+    use super::editing::BorderPlacement as BP;
+    // A split button as PowerPoint's: the left half draws the border last chosen (all borders at first), with its icon.
     ToolButton::new("table.borders", "border_all", crate::shell::i18n::text("pptx.custom-format.borders"))
         .menu(vec![
             MenuItem::tr("table.borders.all").icon("border_all").on(|e, _, cx| e.apply_table_borders(BP::All, cx)).into(),
@@ -1730,10 +2161,11 @@ fn table_border_button() -> ToolItem {
             MenuItem::tr("table.borders.diagonal-down").icon("border_style").on(|e, _, cx| e.apply_table_borders(BP::DiagonalDown, cx)).into(),
             MenuItem::tr("table.borders.diagonal-up").icon("border_style").on(|e, _, cx| e.apply_table_borders(BP::DiagonalUp, cx)).into(),
         ])
+        .last_used(editor, "table.borders", |_| true, |i| i.id == "table.borders.all", true)
         .into()
 }
 
-fn table_style_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
+pub(crate) fn table_style_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
     let current_id = editor.table_style_id();
     super::editing::TABLE_STYLES
         .iter()
@@ -1758,7 +2190,7 @@ fn table_style_button(editor: &SlideEditor) -> ToolItem {
         .into()
 }
 
-fn table_style_option_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
+pub(crate) fn table_style_option_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
     const OPTIONS: [(&str, TableOption); 6] = [
         ("pptx.table.first-row", TableOption::FirstRow),
         ("pptx.table.last-row", TableOption::LastRow),
@@ -1949,7 +2381,7 @@ pub(crate) fn transition_sound_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     items
 }
 
-fn transition_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
+pub(crate) fn transition_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     let current = editor.slide().transition.clone();
     let mut items: Vec<MenuEntry> = vec![
         MenuItem::tr("transition.none").checked(current.as_ref().is_none_or(|t| t.effect.is_empty())).on(|this, _, cx| this.set_transition(None, cx)).into(),
@@ -1984,8 +2416,8 @@ fn transition_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     items
 }
 
-fn outline_buttons(editor: &SlideEditor, line: bool) -> Vec<ToolItem> {
-    let stroke = editor.selected_shapes().into_iter().find_map(|s| match &s.kind {
+fn selected_stroke(editor: &SlideEditor) -> Option<Stroke> {
+    editor.selected_shapes().into_iter().find_map(|s| match &s.kind {
         ShapeKind::Auto(a) => a.stroke.clone(),
         ShapeKind::Picture(p) => p.stroke.clone(),
         ShapeKind::Line(l) => Some(l.clone()),
@@ -2021,11 +2453,20 @@ fn outline_buttons(editor: &SlideEditor, line: bool) -> Vec<ToolItem> {
                 })
         }
         _ => None,
-    });
-    let color = stroke.as_ref().map_or(rgb(0x444746).into(), |s| crate::render::shape_view::hsla(s.color));
-    let (color_label, width_label, style_label) = if line { (crate::shell::i18n::text("pptx.chrome.border-color"), crate::shell::i18n::text("pptx.chrome.line-weight"), crate::shell::i18n::text("pptx.chrome.border-style-2")) } else { (crate::shell::i18n::text("_shell.border-color"), crate::shell::i18n::text("pptx.chrome.border-weight"), crate::shell::i18n::text("pptx.chrome.border-style")) };
+    })
+}
+
+pub(crate) fn shape_stroke_color_items(editor: &SlideEditor, line: bool) -> Vec<MenuEntry> {
     let base = |s: Option<Stroke>| s.unwrap_or_else(|| Stroke::solid(Color::BLACK, Stroke::DEFAULT_WIDTH));
-    let widths: Vec<MenuEntry> = WIDTHS
+    color_menu(editor, "pptx.stroke-color", (!line).then(|| crate::shell::i18n::text("pptx.chrome.no-border")), move |this, rgb, _, cx| {
+        this.stroke_selected(move |s| rgb.map(|rgb| Stroke { color: Color::opaque(rgb), ..base(s) }), cx)
+    })
+}
+
+pub(crate) fn shape_stroke_width_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let stroke = selected_stroke(editor);
+    let base = |s: Option<Stroke>| s.unwrap_or_else(|| Stroke::solid(Color::BLACK, Stroke::DEFAULT_WIDTH));
+    WIDTHS
         .iter()
         .map(|&pt| {
             let emu = (pt * 12_700.0).round() as i64;
@@ -2034,7 +2475,12 @@ fn outline_buttons(editor: &SlideEditor, line: bool) -> Vec<ToolItem> {
                 .on(move |this, _, cx| this.stroke_selected(move |s| Some(Stroke { width: emu, ..base(s) }), cx))
                 .into()
         })
-        .collect();
+        .collect()
+}
+
+pub(crate) fn shape_stroke_style_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let stroke = selected_stroke(editor);
+    let base = |s: Option<Stroke>| s.unwrap_or_else(|| Stroke::solid(Color::BLACK, Stroke::DEFAULT_WIDTH));
     let dash_label = |d: ibis_doc_model::LineDash| match d {
         ibis_doc_model::LineDash::Solid => crate::shell::i18n::text("pptx.chrome.solid"),
         ibis_doc_model::LineDash::Dot => crate::shell::i18n::text("pptx.chrome.dotted-round"),
@@ -2068,14 +2514,53 @@ fn outline_buttons(editor: &SlideEditor, line: bool) -> Vec<ToolItem> {
         ("compound.single", LineCompound::Single), ("compound.double", LineCompound::Double),
         ("compound.thick-thin", LineCompound::ThickThin), ("compound.thin-thick", LineCompound::ThinThick), ("compound.triple", LineCompound::Triple)
     ].into_iter().map(|(id, compound)| MenuItem::tr(id).checked(stroke.as_ref().is_some_and(|s| s.compound == compound)).on(move |e, _, cx| e.stroke_selected(move |s| Some(Stroke { compound, ..base(s) }), cx)).into()).collect()).into());
+    styles
+}
+
+pub(crate) fn zoom_context_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let zoom_shape = editor.selected_shapes().first().map(|s| s.id).filter(|id| {
+        matches!(editor.slide().shape_links.get(id), Some(ibis_doc_model::SlideLink::Slide(_)))
+    });
+    let Some(shape_id) = zoom_shape else {
+        return Vec::new();
+    };
+    let is_custom = editor.slide().shape(shape_id).is_some_and(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Picture(_)));
+    let is_rtz = editor.slide().shape_return_to_zoom.contains(&shape_id);
+    let is_bg = editor.shape_zoom_show_bg(shape_id);
+    const DURATIONS: [(u32, &str); 5] = [
+        (500, "pptx.zoom.duration-500"),
+        (1000, "pptx.zoom.duration-1000"),
+        (1500, "pptx.zoom.duration-1500"),
+        (2000, "pptx.zoom.duration-2000"),
+        (2500, "pptx.zoom.duration-2500"),
+    ];
+    let cur_dur = editor.shape_zoom_duration(shape_id);
+    let duration_items: Vec<MenuEntry> = DURATIONS
+        .iter()
+        .map(|&(ms, label_key)| {
+            MenuItem::tr(label_key)
+                .checked(cur_dur == ms)
+                .on(move |e, _, cx| e.set_shape_zoom_duration(shape_id, ms, cx))
+                .into()
+        })
+        .collect();
+    vec![
+        MenuItem::tr("pptx.zoom.change-image").icon("image").on(|e, w, cx| e.pick_zoom_image(w, cx)).into(),
+        MenuItem::tr("pptx.zoom.reset-image").icon("refresh").disabled(!is_custom).on(move |e, _, cx| { e.reset_zoom_image(shape_id, cx); }).into(),
+        MenuItem::tr("pptx.zoom.return-to-zoom").icon("undo").checked(is_rtz).on(move |e, _, cx| e.toggle_shape_return_to_zoom(shape_id, cx)).into(),
+        MenuItem::tr("pptx.zoom.background").icon("wallpaper").checked(is_bg).on(move |e, _, cx| e.toggle_shape_zoom_show_bg(shape_id, cx)).into(),
+        Submenu::tr("pptx.zoom.duration", "timer", duration_items).into(),
+    ]
+}
+
+fn outline_buttons(editor: &SlideEditor, line: bool) -> Vec<ToolItem> {
+    let (color_label, width_label, style_label) = if line { (crate::shell::i18n::text("pptx.chrome.border-color"), crate::shell::i18n::text("pptx.chrome.line-weight"), crate::shell::i18n::text("pptx.chrome.border-style-2")) } else { (crate::shell::i18n::text("_shell.border-color"), crate::shell::i18n::text("pptx.chrome.border-weight"), crate::shell::i18n::text("pptx.chrome.border-style")) };
     vec![
         ToolButton::new("border-color", "border_color", color_label)
-            .palette(editor, "border-color", 0x4472c4, color_menu(editor, "pptx.stroke-color", (!line).then(|| crate::shell::i18n::text("pptx.chrome.no-border")), move |this, rgb, _, cx| {
-                this.stroke_selected(move |s| rgb.map(|rgb| Stroke { color: Color::opaque(rgb), ..base(s) }), cx)
-            }))
+            .palette(editor, "border-color", 0x4472c4, shape_stroke_color_items(editor, line))
             .into(),
-        ToolButton::new("line-weight", "line_weight", width_label).menu(widths).into(),
-        ToolButton::new("line-style", "line_style", style_label).menu(styles).into(),
+        ToolButton::new("line-weight", "line_weight", width_label).menu(shape_stroke_width_items(editor)).into(),
+        ToolButton::new("line-style", "line_style", style_label).menu(shape_stroke_style_items(editor)).into(),
     ]
 }
 
@@ -2103,7 +2588,7 @@ fn with_end_size(end: ibis_doc_model::LineEnd, size: ibis_doc_model::EndSize) ->
     match end { None => None, Triangle(_) => Triangle(size), Arrow(_) => Arrow(size), Stealth(_) => Stealth(size), Diamond(_) => Diamond(size), Oval(_) => Oval(size) }
 }
 
-fn line_end_menu(editor: &SlideEditor, head: bool) -> Vec<MenuEntry> {
+pub(crate) fn line_end_menu(editor: &SlideEditor, head: bool) -> Vec<MenuEntry> {
     use ibis_doc_model::{EndSize, LineEnd};
     let current = editor.selected_shapes().into_iter().find_map(|s| match &s.kind {
         ShapeKind::Line(s) => Some(if head { s.head } else { s.tail }),
@@ -2164,25 +2649,92 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
     let underline = first_run.as_ref().is_some_and(|r| r.underline);
     let shadow = editor.selected_shadow().is_some();
     let strike = first_run.as_ref().is_some_and(|r| r.strike != ibis_doc_model::Strike::None);
+    let spacing = editor.selected_spacing();
     let list = editor.selected_list();
-    let text_color = style.as_ref().map_or(rgb(0x000000).into(), |s| crate::render::shape_view::hsla(Color::opaque(s.color)));
+    let _text_color = style.as_ref().map_or(rgb(0x000000).into(), |s| crate::render::shape_view::hsla(Color::opaque(s.color)));
     let current_font = style.as_ref().and_then(|s| s.font.as_deref());
-    let mut font_menu: Vec<MenuEntry> = super::replace_fonts::STANDARD_FONTS
-        .iter()
-        .map(|&(item_id, f)| {
-            MenuItem::new(item_id, f)
-                .checked(current_font == Some(f))
-                .on(move |this, window, cx| {
-                    this.format_characters(window, cx, ibis_doc_model::CharacterFormat {
-                        font: Some(Some(f.to_string())),
-                        ..Default::default()
-                    });
-                })
-                .into()
+    let leading = vec![
+        MenuItem::tr("pptx.replace-fonts").on(|this, window, cx| this.open_replace_fonts_panel(window, cx)).into(),
+    ];
+    let font_menu = crate::shell::font_list::build_font_menu_entries(
+        "pptx.font",
+        leading,
+        current_font,
+        |f, this, window, cx| {
+            this.format_characters(window, cx, ibis_doc_model::CharacterFormat {
+                font: Some(Some(f.to_string())),
+                ..Default::default()
+            });
+        },
+    );
+    // Bullets and numbering are split buttons as PowerPoint's: the left half toggles the list in the bullet (the numbering)
+    // last chosen, the ▼ has the choices. `bullet-types` and `number-types` are the same menus for the Format menu (not drawn).
+    let (bullet_on, number_on) = (matches!(list, Some(ListKind::Bullet | ListKind::Symbol(_))), matches!(list, Some(ListKind::Numbered | ListKind::Scheme(_))));
+    let bullets = ToolButton::new("bullets", "format_list_bulleted", crate::shell::i18n::text("_shell.bullets"))
+        .on(bullet_on)
+        .disabled(!on)
+        .click(move |this, window, cx| {
+            let kind = if bullet_on { ListKind::None } else { ListKind::Bullet };
+            this.format_paragraphs(window, cx, ParagraphFormat { list: Some(kind), ..Default::default() })
         })
-        .collect();
-    font_menu.push(MenuEntry::Separator);
-    font_menu.push(MenuItem::tr("pptx.replace-fonts").on(|this, window, cx| this.open_replace_fonts_panel(window, cx)).into());
+        .menu(
+            [("bullet.type.disc", '•'), ("bullet.type.circle", '○'), ("bullet.type.square", '■'), ("bullet.type.box", '□'), ("bullet.type.diamond", '◆'), ("bullet.type.arrow", '►'), ("bullet.type.dash", '–')]
+                .into_iter()
+                .map(|(id, c)| -> MenuEntry {
+                    let now = match list { Some(ListKind::Symbol(s)) => s == c, Some(ListKind::Bullet) => c == '•', _ => false };
+                    MenuItem::tr(id).checked(now).on(move |this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { list: Some(if c == '•' { ListKind::Bullet } else { ListKind::Symbol(c) }), ..Default::default() })).into()
+                })
+                .collect(),
+        )
+        .last_used(editor, "bullets", |_| true, |_| false, false)
+        .quick_off(bullet_on, move |this, window, cx| {
+            let kind = if bullet_on { ListKind::None } else { ListKind::Bullet };
+            this.format_paragraphs(window, cx, ParagraphFormat { list: Some(kind), ..Default::default() })
+        });
+    let bullet_types = ToolButton::text("bullet-types", crate::shell::i18n::text("pptx.index-fields.bullets"), crate::shell::i18n::text("pptx.chrome.bullet-symbol")).disabled(!on).menu(bullets.menu.clone().unwrap_or_default()).hidden();
+    let numbered = ToolButton::new("numbered", "format_list_numbered", crate::shell::i18n::text("_shell.numbering"))
+        .on(number_on)
+        .disabled(!on)
+        .click(move |this, window, cx| {
+            let kind = if number_on { ListKind::None } else { ListKind::Numbered };
+            this.format_paragraphs(window, cx, ParagraphFormat { list: Some(kind), ..Default::default() })
+        })
+        .menu(
+            [
+                (ibis_doc_model::NumberScheme::ArabicPeriod, "number.type.arabicPeriod"),
+                (ibis_doc_model::NumberScheme::ArabicParenR, "number.type.arabicParenR"),
+                (ibis_doc_model::NumberScheme::AlphaLcPeriod, "number.type.alphaLcPeriod"),
+                (ibis_doc_model::NumberScheme::AlphaUcPeriod, "number.type.alphaUcPeriod"),
+                (ibis_doc_model::NumberScheme::AlphaLcParenR, "number.type.alphaLcParenR"),
+                (ibis_doc_model::NumberScheme::RomanLcPeriod, "number.type.romanLcPeriod"),
+                (ibis_doc_model::NumberScheme::RomanUcPeriod, "number.type.romanUcPeriod"),
+            ]
+                .into_iter()
+                .map(|(s, id)| -> MenuEntry {
+                    let now = match list { Some(ListKind::Scheme(c)) => c == s, Some(ListKind::Numbered) => s == ibis_doc_model::NumberScheme::ArabicPeriod, _ => false };
+                    MenuItem::tr(id).checked(now).on(move |this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { list: Some(if s == ibis_doc_model::NumberScheme::ArabicPeriod { ListKind::Numbered } else { ListKind::Scheme(s) }), ..Default::default() })).into()
+                })
+                .chain([
+                    MenuEntry::Separator,
+                    Submenu::tr("pptx.numbering.start-at", "format_list_numbered", vec![
+                        MenuItem::tr("pptx.numbering.start-at-1").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(1), ..Default::default() })).into(),
+                        MenuItem::tr("pptx.numbering.start-at-2").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(2), ..Default::default() })).into(),
+                        MenuItem::tr("pptx.numbering.start-at-3").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(3), ..Default::default() })).into(),
+                        MenuItem::tr("pptx.numbering.start-at-4").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(4), ..Default::default() })).into(),
+                        MenuItem::tr("pptx.numbering.start-at-5").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(5), ..Default::default() })).into(),
+                        MenuItem::tr("pptx.numbering.start-at-10").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(10), ..Default::default() })).into(),
+                        MenuEntry::Separator,
+                        MenuItem::tr("pptx.numbering.options").on(|this, window, cx| this.open_paragraph_panel(window, cx)).into(),
+                    ]).into(),
+                ])
+                .collect(),
+        )
+        .last_used(editor, "numbered", |_| true, |_| false, false)
+        .quick_off(number_on, move |this, window, cx| {
+            let kind = if number_on { ListKind::None } else { ListKind::Numbered };
+            this.format_paragraphs(window, cx, ParagraphFormat { list: Some(kind), ..Default::default() })
+        });
+    let number_types = ToolButton::text("number-types", crate::shell::i18n::text("pptx.chrome.numbering"), crate::shell::i18n::text("pptx.chrome.numbering-style")).disabled(!on).menu(numbered.menu.clone().unwrap_or_default()).hidden();
     vec![
         sep(),
         ToolItem::Select { id: "font", value: font, width: 128.0, tooltip: crate::shell::i18n::text("_shell.font"), menu: font_menu, disabled: !on },
@@ -2192,6 +2744,7 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
             smaller: on.then(|| handler(|this, window, cx| this.step_font_size_of_text(false, window, cx))),
             larger: on.then(|| handler(|this, window, cx| this.step_font_size_of_text(true, window, cx))),
         },
+        ToolButton::new("clear-format", "format_clear", crate::shell::i18n::text("pptx.chrome.clear-all-formatting")).disabled(!on).click(|this, window, cx| this.clear_formats(window, cx)).into(),
         sep(),
         ToolButton::new("bold", "format_bold", crate::shell::i18n::text("_shell.bold-b")).on(style.as_ref().is_some_and(|s| s.bold)).disabled(!on).click(|this, window, cx| {
             this.toggle_characters(window, cx, |b, r| b.with_run(r).bold, |on| CharacterFormat { bold: Some(on), ..Default::default() })
@@ -2199,13 +2752,31 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("italic", "format_italic", crate::shell::i18n::text("_shell.italic-i")).on(style.as_ref().is_some_and(|s| s.italic)).disabled(!on).click(|this, window, cx| {
             this.toggle_characters(window, cx, |b, r| b.with_run(r).italic, |on| CharacterFormat { italic: Some(on), ..Default::default() })
         }).into(),
+        // A split button as PowerPoint's: the left half takes the underline off, or underlines in the kind last chosen
+        // (single at first); the ▼ has the kinds (`a:rPr/@u`).
         ToolButton::new("underline", "format_underlined", crate::shell::i18n::text("_shell.underline-u")).on(underline).disabled(!on).click(|this, window, cx| {
             this.toggle_characters(window, cx, |_, r| r.underline, |on| CharacterFormat { underline: Some(on), ..Default::default() })
-        }).into(),
+        })
+            .menu(underline_kind_items(first_run.as_ref().filter(|r| r.underline).map(|r| r.underline_kind)))
+            .last_used(editor, "underline", |_| true, |i| i.id == "pptx.underline.sng", false)
+            .quick_off(underline, |this, window, cx| {
+                this.toggle_characters(window, cx, |_, r| r.underline, |on| CharacterFormat { underline: Some(on), ..Default::default() })
+            })
+            .into(),
         ToolButton::new("text-shadow", "ev_shadow", crate::shell::i18n::text("pptx.text.shadow")).on(shadow).disabled(!on).click(|this, window, cx| {
             this.toggle_text_shadow(window, cx)
         }).into(),
         ToolButton::new("strikethrough", "format_strikethrough", crate::shell::i18n::text("pptx.chrome.strikethrough")).on(strike).disabled(!on).click(|this, window, cx| this.strike_characters(window, cx)).into(),
+        ToolButton::new("character-spacing", "space_bar", crate::shell::i18n::text("pptx.text.character-spacing"))
+            .disabled(!on)
+            .menu(vec![
+                MenuItem::tr("pptx.spacing.very-tight").checked(spacing == -300).on(|this, window, cx| this.set_slide_character_spacing(-300, window, cx)).into(),
+                MenuItem::tr("pptx.spacing.tight").checked(spacing == -150).on(|this, window, cx| this.set_slide_character_spacing(-150, window, cx)).into(),
+                MenuItem::tr("pptx.spacing.normal").checked(spacing == 0).on(|this, window, cx| this.set_slide_character_spacing(0, window, cx)).into(),
+                MenuItem::tr("pptx.spacing.loose").checked(spacing == 300).on(|this, window, cx| this.set_slide_character_spacing(300, window, cx)).into(),
+                MenuItem::tr("pptx.spacing.very-loose").checked(spacing == 600).on(|this, window, cx| this.set_slide_character_spacing(600, window, cx)).into(),
+            ])
+            .into(),
         ToolButton::new("case", "format_size", crate::shell::i18n::text("pptx.text.case"))
             .disabled(!on)
             .menu(vec![
@@ -2220,6 +2791,12 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
             .disabled(!on)
             .menu(proofing_language_menu_items(editor))
             .into(),
+        ToolButton::new("highlight", "ink_highlighter", crate::shell::i18n::text("pptx.chrome.highlight-color"))
+            .disabled(!on)
+            .palette(editor, "highlight", 0xffff00, color_menu(editor, "pptx.highlight", Some(crate::shell::i18n::text("pptx.chrome.no-color")), |this, rgb, window, cx| {
+                this.format_characters(window, cx, ibis_doc_model::CharacterFormat { highlight: Some(rgb), ..Default::default() })
+            }))
+            .into(),
         ToolButton::new("text-color", "format_color_text", crate::shell::i18n::text("_shell.font-color"))
             .disabled(!on)
             // The colour at first: red, as Office's (the colours of the buttons at first are our own picks).
@@ -2229,7 +2806,26 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
                 }
             }))
             .into(),
+        ToolButton::new("pptx-format-paint", "format_paint", crate::shell::i18n::text("_shell.copy-paste-formatting")).disabled(!on).menu(format_copy_items(editor)).into(),
         sep(),
+        bullets.into(),
+        bullet_types.into(),
+        numbered.into(),
+        number_types.into(),
+        ToolButton::new("indent-less", "format_indent_decrease", crate::shell::i18n::text("_shell.decrease-indent")).disabled(!on).click(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { indent_by: Some(-457_200), ..Default::default() })).into(),
+        ToolButton::new("indent-more", "format_indent_increase", crate::shell::i18n::text("_shell.increase-indent")).disabled(!on).click(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { indent_by: Some(457_200), ..Default::default() })).into(),
+        ToolButton::new("line-spacing", "format_line_spacing", crate::shell::i18n::text("_shell.line-paragraph-spacing"))
+            .disabled(!on)
+            .menu(
+                [("spacing.1", "1.0", 100_000), ("spacing.1.15", "1.15", 115_000), ("spacing.1.5", "1.5", 150_000), ("spacing.2", "2.0", 200_000)]
+                    .into_iter()
+                    .map(|(id, label, v)| -> MenuEntry {
+                        MenuItem::new(id, label).on(move |this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { line_spacing: Some(Some(LineSpacing::Percent(v))), ..Default::default() })).into()
+                    })
+                    .chain(std::iter::once(MenuItem::tr("pptx.paragraph.settings").on(|e, w, cx| e.open_paragraph_panel(w, cx)).into()))
+                    .collect(),
+            )
+            .into(),
         ToolButton::new("align", "format_align_left", crate::shell::i18n::text("_shell.arrange"))
             .disabled(!on)
             .menu(vec![
@@ -2287,68 +2883,14 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
                 ]
             })
             .into(),
-        ToolButton::new("line-spacing", "format_line_spacing", crate::shell::i18n::text("_shell.line-paragraph-spacing"))
-            .disabled(!on)
-            .menu(
-                [("spacing.1", "1.0", 100_000), ("spacing.1.15", "1.15", 115_000), ("spacing.1.5", "1.5", 150_000), ("spacing.2", "2.0", 200_000)]
-                    .into_iter()
-                    .map(|(id, label, v)| -> MenuEntry {
-                        MenuItem::new(id, label).on(move |this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { line_spacing: Some(Some(LineSpacing::Percent(v))), ..Default::default() })).into()
-                    })
-                    .chain(std::iter::once(MenuItem::tr("pptx.paragraph.settings").on(|e, w, cx| e.open_paragraph_panel(w, cx)).into()))
-                    .collect(),
-            )
-            .into(),
-        ToolButton::new("bullets", "format_list_bulleted", crate::shell::i18n::text("_shell.bullets")).on(list == Some(ListKind::Bullet)).disabled(!on).click(move |this, window, cx| {
-            let kind = if list == Some(ListKind::Bullet) { ListKind::None } else { ListKind::Bullet };
-            this.format_paragraphs(window, cx, ParagraphFormat { list: Some(kind), ..Default::default() })
-        }).into(),
-        ToolButton::new("numbered", "format_list_numbered", crate::shell::i18n::text("_shell.numbering")).on(list == Some(ListKind::Numbered)).disabled(!on).click(move |this, window, cx| {
-            let kind = if list == Some(ListKind::Numbered) { ListKind::None } else { ListKind::Numbered };
-            this.format_paragraphs(window, cx, ParagraphFormat { list: Some(kind), ..Default::default() })
-        }).into(),
-        ToolButton::text("bullet-types", crate::shell::i18n::text("pptx.index-fields.bullets"), crate::shell::i18n::text("pptx.chrome.bullet-symbol")).disabled(!on).menu(
-            [("bullet.type.disc", '•'), ("bullet.type.circle", '○'), ("bullet.type.square", '■'), ("bullet.type.box", '□'), ("bullet.type.diamond", '◆'), ("bullet.type.arrow", '►'), ("bullet.type.dash", '–')]
-                .into_iter()
-                .map(|(id, c)| -> MenuEntry {
-                    let now = match list { Some(ListKind::Symbol(s)) => s == c, Some(ListKind::Bullet) => c == '•', _ => false };
-                    MenuItem::tr(id).checked(now).on(move |this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { list: Some(if c == '•' { ListKind::Bullet } else { ListKind::Symbol(c) }), ..Default::default() })).into()
-                })
-                .collect(),
-        ).into(),
-        ToolButton::text("number-types", crate::shell::i18n::text("pptx.chrome.numbering"), crate::shell::i18n::text("pptx.chrome.numbering-style")).disabled(!on).menu(
-            [
-                (ibis_doc_model::NumberScheme::ArabicPeriod, "number.type.arabicPeriod"),
-                (ibis_doc_model::NumberScheme::ArabicParenR, "number.type.arabicParenR"),
-                (ibis_doc_model::NumberScheme::AlphaLcPeriod, "number.type.alphaLcPeriod"),
-                (ibis_doc_model::NumberScheme::AlphaUcPeriod, "number.type.alphaUcPeriod"),
-                (ibis_doc_model::NumberScheme::AlphaLcParenR, "number.type.alphaLcParenR"),
-                (ibis_doc_model::NumberScheme::RomanLcPeriod, "number.type.romanLcPeriod"),
-                (ibis_doc_model::NumberScheme::RomanUcPeriod, "number.type.romanUcPeriod"),
-            ]
-                .into_iter()
-                .map(|(s, id)| -> MenuEntry {
-                    let now = match list { Some(ListKind::Scheme(c)) => c == s, Some(ListKind::Numbered) => s == ibis_doc_model::NumberScheme::ArabicPeriod, _ => false };
-                    MenuItem::tr(id).checked(now).on(move |this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { list: Some(if s == ibis_doc_model::NumberScheme::ArabicPeriod { ListKind::Numbered } else { ListKind::Scheme(s) }), ..Default::default() })).into()
-                })
-                .collect(),
-        ).into(),
-        ToolButton::new("indent-less", "format_indent_decrease", crate::shell::i18n::text("_shell.decrease-indent")).disabled(!on).click(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { indent_by: Some(-457_200), ..Default::default() })).into(),
-        ToolButton::new("indent-more", "format_indent_increase", crate::shell::i18n::text("_shell.increase-indent")).disabled(!on).click(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { indent_by: Some(457_200), ..Default::default() })).into(),
-        ToolButton::new("highlight", "ink_highlighter", crate::shell::i18n::text("pptx.chrome.highlight-color"))
-            .disabled(!on)
-            .palette(editor, "highlight", 0xffff00, color_menu(editor, "pptx.highlight", Some(crate::shell::i18n::text("pptx.chrome.no-color")), |this, rgb, window, cx| {
-                this.format_characters(window, cx, ibis_doc_model::CharacterFormat { highlight: Some(rgb), ..Default::default() })
-            }))
-            .into(),
-        ToolButton::new("pptx-format-paint", "format_paint", crate::shell::i18n::text("_shell.copy-paste-formatting")).disabled(!on).menu(format_copy_items(editor)).into(),
-        ToolButton::new("clear-format", "format_clear", crate::shell::i18n::text("pptx.chrome.clear-all-formatting")).disabled(!on).click(|this, window, cx| this.clear_formats(window, cx)).into(),
     ]
 }
 
 fn arrange_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
     let order = |id: &'static str, icon: &'static str, o: Order| -> MenuEntry { MenuItem::tr(id).icon(icon).on(move |this, _, cx| this.order_selected(o, cx)).into() };
     let align = |id: &'static str, icon: &'static str, a: Align| -> MenuEntry { MenuItem::tr(id).icon(icon).on(move |this, _, cx| this.align_selected(a, cx)).into() };
+    let can_distribute = editor.selected_ids().len() >= 3;
+    let to_slide = editor.pptx().is_some_and(|s| s.align_to_slide);
     vec![
         sep(),
         ToolButton::new("order", "flip_to_front", crate::shell::i18n::text("pptx.chrome.order"))
@@ -2367,9 +2909,30 @@ fn arrange_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
                 align("arrange.left", "align_horizontal_left", Align::Left),
                 align("arrange.center", "align_horizontal_center", Align::Center),
                 align("arrange.right", "align_horizontal_right", Align::Right),
+                MenuEntry::Separator,
                 align("arrange.top", "align_vertical_top", Align::Top),
                 align("arrange.middle", "align_vertical_center", Align::Middle),
                 align("arrange.bottom", "align_vertical_bottom", Align::Bottom),
+                MenuEntry::Separator,
+                MenuItem::tr("pptx.distribute.h").icon("horizontal_distribute").disabled(!can_distribute).on(|this, _, cx| this.distribute_selected(true, cx)).into(),
+                MenuItem::tr("pptx.distribute.v").icon("vertical_distribute").disabled(!can_distribute).on(|this, _, cx| this.distribute_selected(false, cx)).into(),
+                MenuEntry::Separator,
+                MenuItem::tr("pptx.center.h").icon("align_horizontal_center").on(|this, _, cx| this.center_selected(true, cx)).into(),
+                MenuItem::tr("pptx.center.v").icon("align_vertical_center").on(|this, _, cx| this.center_selected(false, cx)).into(),
+                MenuEntry::Separator,
+                MenuItem::tr("pptx.align.to-slide").icon("crop_landscape").checked(to_slide).on(|this, _, cx| {
+                    if let Some(s) = this.pptx_mut() {
+                        s.align_to_slide = !s.align_to_slide;
+                    }
+                    cx.notify();
+                }).into(),
+                MenuEntry::Separator,
+                Submenu::tr("pptx.rotate", "rotate_right", vec![
+                    MenuItem::tr("pptx.rotate.right").icon("rotate_90_degrees_cw").on(|e, _, cx| e.rotate_selected(90, cx)).into(),
+                    MenuItem::tr("pptx.rotate.left").icon("rotate_90_degrees_ccw").on(|e, _, cx| e.rotate_selected(-90, cx)).into(),
+                    MenuItem::tr("pptx.rotate.flip-h").icon("flip").on(|e, _, cx| e.flip_selected(true, cx)).into(),
+                    MenuItem::tr("pptx.rotate.flip-v").icon("flip").on(|e, _, cx| e.flip_selected(false, cx)).into(),
+                ]).into(),
             ])
             .into(),
     ]
@@ -2384,20 +2947,14 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("insert-shape", "shapes", crate::shell::i18n::text("_shell.shape")).on(matches!(tool, Tool::Shape(_))).menu(shape_items()).into(),
         ToolButton::new("insert-line", "horizontal_rule", crate::shell::i18n::text("_shell.line-2")).on(matches!(tool, Tool::Line { .. })).menu(line_items()).into(),
     ];
-    let fill_color = editor.selected_shapes().into_iter().find_map(|s| match &s.kind {
+    let _fill_color = editor.selected_shapes().into_iter().find_map(|s| match &s.kind {
         ShapeKind::Auto(a) => match &a.fill {
             Fill::Solid(c) => Some(crate::render::shape_view::hsla(*c)),
             _ => None,
         },
         _ => None,
     });
-    let mut fill_items = color_menu(editor, "pptx.fill", Some(crate::shell::i18n::text("_shell.no-fill")), |this, rgb, _, cx| {
-        this.fill_selected(rgb.map_or(Fill::None, |rgb| Fill::Solid(Color::opaque(rgb))), cx)
-    });
-    fill_items.push(MenuEntry::Separator);
-    fill_items.extend(fill_presets(false));
-    fill_items.push(MenuItem::tr("pptx.fill.picture").icon("image").on(|this, w, cx| this.pick_fill_picture(w, cx)).into());
-    let fill = ToolButton::new("fill", "format_color_fill", crate::shell::i18n::text("pptx.common.fill")).palette(editor, "fill", 0xffc000, fill_items);
+    let fill = ToolButton::new("fill", "format_color_fill", crate::shell::i18n::text("pptx.common.fill")).palette(editor, "fill", 0xffc000, shape_fill_menu_items(editor));
     let options = ToolButton::text("format-options", crate::shell::i18n::text("_shell.format-options"), crate::shell::i18n::text("pptx.chrome.format-options-sidebar")).click(|this, _, cx| {
         this.sidebar_open = true;
         cx.notify();
@@ -2425,10 +2982,20 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                     .collect();
                 items.push(ToolButton::new("change-shape", "shapes", crate::shell::i18n::text("pptx.chrome.change-shape")).menu(change).into());
             }
+            if editor.selected_shapes().iter().any(|s| crate::xlsx::ink::stroke_points(s).is_some()) {
+                let ink_menu = vec![
+                    MenuItem::tr("pptx.ink.to-shape").icon("shapes").on(|e, _, cx| e.pptx_ink_to_shape(cx)).into(),
+                    MenuItem::tr("pptx.ink.to-text").icon("text_fields").on(|e, _, cx| e.pptx_ink_to_text(cx)).into(),
+                    MenuItem::tr("pptx.ink.to-math").icon("functions").on(|e, _, cx| e.pptx_ink_to_math(cx)).into(),
+                    MenuItem::tr("pptx.ink.replay").icon("play_arrow").on(|e, _, cx| e.pptx_ink_replay(cx)).into(),
+                ];
+                items.push(ToolButton::new("ink-convert-menu", "draw", crate::shell::i18n::text("pptx.ink.to-shape")).menu(ink_menu).into());
+            }
             items.push(fill.into());
             items.extend(outline_buttons(editor, false));
             items.extend(text_buttons(editor));
             items.extend([sep(), options.into(), motion.into(), anim_options.into(), anim_painter.into()]);
+            items.extend(arrange_buttons(editor));
         }
         SelectionKind::Picture => {
             // A video or audio clip: its 再生 and playback options.
@@ -2534,7 +3101,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                     items.push(ToolButton::new("clip-background", "music_note", crate::shell::i18n::text("pptx.clip.background")).on(opt.is_background_play()).click(|e, _, cx| e.toggle_selected_clip_background(cx)).into());
                 }
             }
-            items.extend([sep(), ToolButton::new("crop", "crop", crate::shell::i18n::text("pptx.chrome.crop-picture")).menu(crop_items()).into(), ToolButton::new("reset-image", "reset_image", crate::shell::i18n::text("pptx.chrome.reset-crop")).click(|e, _, cx| e.crop_selected_pictures(ibis_doc_model::Crop::default(), cx)).into(), ToolButton::new("replace-image", "swap_horiz", crate::shell::i18n::text("pptx.chrome.replace-picture")).click(|e, w, cx| e.pick_replacement_picture(w, cx)).into(), ToolButton::new("picture-color", "palette", crate::shell::i18n::text("pptx.chrome.picture-color")).menu(picture_color_items(true)).into(), ToolButton::new("picture-correction", "tune", crate::shell::i18n::text("pptx.chrome.brightness-contrast")).menu(picture_correction_items(editor, true)).into()]);
+            items.extend([sep(), ToolButton::new("crop", "crop", crate::shell::i18n::text("pptx.chrome.crop-picture")).menu(crop_items()).into(), ToolButton::new("reset-image", "reset_image", crate::shell::i18n::text("pptx.chrome.reset-crop")).click(|e, _, cx| e.crop_selected_pictures(ibis_doc_model::Crop::default(), cx)).into(), ToolButton::new("replace-image", "swap_horiz", crate::shell::i18n::text("pptx.chrome.replace-picture")).click(|e, w, cx| e.pick_replacement_picture(w, cx)).into(), ToolButton::new("picture-color", "palette", crate::shell::i18n::text("pptx.chrome.picture-color")).menu(picture_color_items(true)).into(), ToolButton::new("remove-background", "auto_fix_high", crate::shell::i18n::text("pptx.picture.remove-background")).click(|e, _, cx| e.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0xffffff)), cx)).into(), ToolButton::new("picture-correction", "tune", crate::shell::i18n::text("pptx.chrome.brightness-contrast")).menu(picture_correction_items(editor, true)).into(), ToolButton::new("picture-transparency", "filter_none", crate::shell::i18n::text("pptx.picture.transparency")).menu(picture_transparency_items(editor, true)).into(), ToolButton::new("picture-artistic", "auto_fix_high", crate::shell::i18n::text("pptx.chrome.artistic-effects")).menu(picture_artistic_effect_items(true)).into()]);
             if editor.has_selected_svg_picture() {
                 items.push(ToolButton::new("convert-to-shape", "category", crate::shell::i18n::text("pptx.picture.convert-to-shape")).click(|e, _, cx| { e.convert_selected_svg_to_shape(cx); }).into());
             }
@@ -2557,22 +3124,37 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             items.extend(text_buttons(editor));
             items.extend([sep(), fill.clone().into()]);
             items.extend(outline_buttons(editor, false));
-            items.extend([table_border_button(), table_button(editor), table_style_button(editor), table_style_options_button(editor), options.into()]);
+            items.extend([table_border_button(editor), table_button(editor), table_style_button(editor), table_style_options_button(editor), options.into()]);
             items.extend(arrange_buttons(editor));
         }
         SelectionKind::Table => {
             items.extend([sep(), fill.clone().into()]);
             items.extend(outline_buttons(editor, false));
-            items.extend([table_border_button(), table_button(editor), table_style_button(editor), table_style_options_button(editor), options.into()]);
+            items.extend([table_border_button(editor), table_button(editor), table_style_button(editor), table_style_options_button(editor), options.into()]);
             items.extend(arrange_buttons(editor));
         }
         SelectionKind::Chart if editor.selected_shapes().first().is_some_and(|s| matches!(&s.kind, ShapeKind::Chart(c) if c.ex.is_some())) => {
-            // A chart of a new kind (chartEx): its data is edited in its workbook; the rest is not written yet.
+            // A chart of a new kind (chartEx): its data is edited in its workbook, its title and legend are shown or
+            // hidden and put on a side; the rest is not written yet.
             items.extend([
                 sep(),
+                ToolButton::text("chart-title", crate::shell::i18n::text("_xlsx.chart-title"), crate::shell::i18n::text("_xlsx.chart-title")).menu(chart_title_items(editor)).into(),
+                ToolButton::text("chart-legend", crate::shell::i18n::text("_shell.legend"), crate::shell::i18n::text("_shell.legend")).menu(legend_items(editor)).into(),
                 ToolButton::text("chart-data", crate::shell::i18n::text("pptx.chrome.edit-data"), crate::shell::i18n::text("pptx.chrome.edit-chart-data")).click(|this, window, cx| this.open_chart_data(window, cx)).into(),
-                options.into(),
             ]);
+            // The data labels, the value axis' range and the fill of the series (written into the part: `ex_format`).
+            if let Some((kind, _)) = selected_chart_ex(editor) {
+                if kind != ExKind::Box {
+                    items.push(ToolButton::text("chart-labels", crate::shell::i18n::text("pptx.chrome.data-labels"), crate::shell::i18n::text("pptx.chrome.data-labels")).menu(chart_ex_labels_items(editor)).into());
+                }
+                if matches!(kind, ExKind::Columns { axis: true, .. } | ExKind::Box) {
+                    items.push(ToolButton::text("chart-axis", crate::shell::i18n::text("pptx.chart.axis-menu"), crate::shell::i18n::text("pptx.chart.axis-menu")).menu(chart_ex_axis_items(editor)).into());
+                }
+                if kind != ExKind::Tree {
+                    items.push(ToolButton::text("chart-fill", crate::shell::i18n::text("pptx.chart.series.fill"), crate::shell::i18n::text("pptx.chart.series.fill")).menu(chart_ex_fill_items(editor)).into());
+                }
+            }
+            items.extend([options.into(), motion.into(), anim_options.into(), anim_painter.into()]);
             items.extend(arrange_buttons(editor));
         }
         SelectionKind::Chart => {
@@ -2651,6 +3233,9 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                     .menu(chart_palette_items(editor))
                     .into(),
                 options.into(),
+                motion.into(),
+                anim_options.into(),
+                anim_painter.into(),
             ]);
             items.extend(arrange_buttons(editor));
         }
@@ -2684,18 +3269,21 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
 
 /// グラフの種類: the presets, the chart's own checked.
 fn chart_type_items(editor: &SlideEditor) -> Vec<MenuEntry> {
-    use super::chart_panel::ChartPreset;
-    let kind = editor.selected_shapes().first().and_then(|s| match &s.kind {
-        ShapeKind::Chart(c) => c.groups.first().map(|g| g.kind),
+    let chart = editor.selected_shapes().first().and_then(|s| match &s.kind {
+        ShapeKind::Chart(c) => Some((**c).clone()),
         _ => None,
     });
+    chart_type_items_for(chart.as_ref(), SlideEditor::set_chart_type)
+}
+
+/// グラフの種類 for `chart`: the presets of its family, its own checked; one calls `set`.
+pub(crate) fn chart_type_items_for(chart: Option<&ibis_doc_model::Chart>, set: fn(&mut SlideEditor, super::chart_panel::ChartPreset, &mut Context<SlideEditor>)) -> Vec<MenuEntry> {
+    use super::chart_panel::ChartPreset;
+    let kind = chart.and_then(|c| c.groups.first().map(|g| g.kind));
     let is_pie = kind.is_some_and(|k| matches!(k, ChartType::Pie { .. } | ChartType::Doughnut { .. }));
     let is_scatter = kind.is_some_and(|k| matches!(k, ChartType::Scatter { .. } | ChartType::Bubble { .. }));
-    let now = editor.selected_shapes().first().and_then(|s| match &s.kind {
-        ShapeKind::Chart(c) => match c.groups.as_slice() {
-            [g] => ChartPreset::of(g.kind, g.grouping),
-            _ => None,
-        },
+    let now = chart.and_then(|c| match c.groups.as_slice() {
+        [g] => ChartPreset::of(g.kind, g.grouping),
         _ => None,
     });
     if is_pie {
@@ -2707,7 +3295,7 @@ fn chart_type_items(editor: &SlideEditor) -> Vec<MenuEntry> {
                     ChartPreset::Doughnut => "chart.type.doughnut",
                     _ => unreachable!(),
                 };
-                MenuItem::tr(id).checked(now == Some(preset)).on(move |e, _, cx| e.set_chart_type(preset, cx)).into()
+                MenuItem::tr(id).checked(now == Some(preset)).on(move |e, _, cx| set(e, preset, cx)).into()
             })
             .collect()
     } else if is_scatter {
@@ -2720,14 +3308,14 @@ fn chart_type_items(editor: &SlideEditor) -> Vec<MenuEntry> {
                     ChartPreset::Bubble => "chart.type.bubble",
                     _ => unreachable!(),
                 };
-                MenuItem::tr(id).checked(now == Some(preset)).on(move |e, _, cx| e.set_chart_type(preset, cx)).into()
+                MenuItem::tr(id).checked(now == Some(preset)).on(move |e, _, cx| set(e, preset, cx)).into()
             })
             .collect()
     } else {
         ChartPreset::ALL
             .iter()
             .filter(|(p, _)| !matches!(p, ChartPreset::Pie | ChartPreset::Doughnut | ChartPreset::Scatter | ChartPreset::ScatterSmooth | ChartPreset::Bubble))
-            .map(|&(preset, id)| MenuItem::tr(id).checked(now == Some(preset)).on(move |e, _, cx| e.set_chart_type(preset, cx)).into())
+            .map(|&(preset, id)| MenuItem::tr(id).checked(now == Some(preset)).on(move |e, _, cx| set(e, preset, cx)).into())
             .collect()
     }
 }
@@ -2937,6 +3525,97 @@ fn chart_labels_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     items.push(Submenu::tr("chart.labels.content-menu", "checklist", content_items).into());
 
     items
+}
+
+/// What kind of chartEx chart the selected chart is, for what of its format can be changed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExKind {
+    /// A waterfall (three fills), a histogram or a Pareto (labels, axis, fill), a funnel (labels, fill).
+    Columns { waterfall: bool, axis: bool },
+    Box,
+    Tree,
+}
+
+fn selected_chart_ex(editor: &SlideEditor) -> Option<(ExKind, ibis_doc_model::ExFormat)> {
+    editor.selected_shapes().first().and_then(|s| match &s.kind {
+        ShapeKind::Chart(c) => {
+            let format = c.ex_format.clone()?;
+            let kind = match c.ex.as_ref()? {
+                ibis_doc_model::ChartEx::Box { .. } => ExKind::Box,
+                ibis_doc_model::ChartEx::Treemap { .. } | ibis_doc_model::ChartEx::Sunburst(_) => ExKind::Tree,
+                ibis_doc_model::ChartEx::Synthesized { .. } => ExKind::Columns { waterfall: format.fills.len() == 3, axis: c.axes.iter().any(|a| a.kind == ibis_doc_model::AxisKind::Value && !a.deleted) },
+            };
+            Some((kind, format))
+        }
+        _ => None,
+    })
+}
+
+/// データ ラベル (chartEx): none, or the values (and the category names), at the kind's own place or at one chosen.
+fn chart_ex_labels_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    use ibis_doc_model::{ExLabels, LabelPosition as P};
+    let Some((kind, format)) = selected_chart_ex(editor) else { return Vec::new() };
+    let labels = format.labels;
+    let own = |l: Option<ExLabels>| l.unwrap_or(ExLabels { value: true, category: false, series_name: false, position: None });
+    let mut items: Vec<MenuEntry> = vec![
+        MenuItem::tr("chart.labels.none").checked(labels.is_none()).on(|e, _, cx| e.set_chart_ex_labels(None, cx)).into(),
+        MenuItem::tr("chart.labels.value").checked(labels.is_some_and(|l| l.value && !l.category && l.position.is_none())).on(move |e, _, cx| e.set_chart_ex_labels(Some(ExLabels { value: true, category: false, series_name: false, position: None }), cx)).into(),
+    ];
+    if kind != ExKind::Box {
+        let positions: &[(&str, P)] = match kind {
+            ExKind::Tree => &[("chart.labels.center", P::Center), ("chart.labels.inside-end", P::InsideEnd)],
+            _ => &[("chart.labels.center", P::Center), ("chart.labels.inside-end", P::InsideEnd), ("chart.labels.inside-base", P::InsideBase), ("chart.labels.outside-end", P::OutsideEnd)],
+        };
+        for &(id, pos) in positions {
+            items.push(MenuItem::tr(id).checked(labels.is_some_and(|l| l.position == Some(pos))).on(move |e, _, cx| e.set_chart_ex_labels(Some(ExLabels { position: Some(pos), ..own(labels) }), cx)).into());
+        }
+    }
+    items.push(MenuEntry::Separator);
+    items.push(MenuItem::tr("chart.labels.show-value").checked(labels.is_some_and(|l| l.value)).disabled(labels.is_none()).on(move |e, _, cx| e.set_chart_ex_labels(Some(ExLabels { value: !own(labels).value, ..own(labels) }), cx)).into());
+    items.push(MenuItem::tr("chart.labels.show-category").checked(labels.is_some_and(|l| l.category)).disabled(labels.is_none()).on(move |e, _, cx| e.set_chart_ex_labels(Some(ExLabels { category: !own(labels).category, ..own(labels) }), cx)).into());
+    items
+}
+
+/// 値軸 (chartEx): the least, the greatest and the major unit.
+fn chart_ex_axis_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    use ibis_doc_model::Number;
+    let Some((_, format)) = selected_chart_ex(editor) else { return Vec::new() };
+    let (min, max, major) = (format.axis_min.map(|n| n.0), format.axis_max.map(|n| n.0), format.axis_major.map(|n| n.0));
+    let min_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("pptx.chart.axis.min-auto").checked(min.is_none()).on(|e, _, cx| e.set_chart_ex_axis(Some(None), None, None, cx)).into(),
+        MenuItem::tr("pptx.chart.axis.min-0").checked(min == Some(0.0)).on(|e, _, cx| e.set_chart_ex_axis(Some(Some(Number(0.0))), None, None, cx)).into(),
+    ];
+    let max_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("pptx.chart.axis.max-auto").checked(max.is_none()).on(|e, _, cx| e.set_chart_ex_axis(None, Some(None), None, cx)).into(),
+        MenuItem::tr("pptx.chart.axis.max-100").checked(max == Some(100.0)).on(|e, _, cx| e.set_chart_ex_axis(None, Some(Some(Number(100.0))), None, cx)).into(),
+        MenuItem::tr("pptx.chart.axis.max-1000").checked(max == Some(1000.0)).on(|e, _, cx| e.set_chart_ex_axis(None, Some(Some(Number(1000.0))), None, cx)).into(),
+    ];
+    let major_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("pptx.chart.axis.major-auto").checked(major.is_none()).on(|e, _, cx| e.set_chart_ex_axis(None, None, Some(None), cx)).into(),
+        MenuItem::tr("pptx.chart.axis.major-10").checked(major == Some(10.0)).on(|e, _, cx| e.set_chart_ex_axis(None, None, Some(Some(Number(10.0))), cx)).into(),
+        MenuItem::tr("pptx.chart.axis.major-20").checked(major == Some(20.0)).on(|e, _, cx| e.set_chart_ex_axis(None, None, Some(Some(Number(20.0))), cx)).into(),
+        MenuItem::tr("pptx.chart.axis.major-50").checked(major == Some(50.0)).on(|e, _, cx| e.set_chart_ex_axis(None, None, Some(Some(Number(50.0))), cx)).into(),
+        MenuItem::tr("pptx.chart.axis.major-100").checked(major == Some(100.0)).on(|e, _, cx| e.set_chart_ex_axis(None, None, Some(Some(Number(100.0))), cx)).into(),
+    ];
+    vec![Submenu::tr("pptx.chart.axis.min", "arrow_downward", min_items).into(), Submenu::tr("pptx.chart.axis.max", "arrow_upward", max_items).into(), Submenu::tr("pptx.chart.axis.major", "sort", major_items).into()]
+}
+
+/// 系列の塗りつぶし (chartEx): the one fill, or a waterfall's increase, decrease and total.
+fn chart_ex_fill_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let Some((kind, _)) = selected_chart_ex(editor) else { return Vec::new() };
+    if kind == ExKind::Tree {
+        return Vec::new();
+    }
+    let one = |index: usize| -> Vec<MenuEntry> { color_menu(editor, "pptx.chart.series.fill", Some(crate::shell::i18n::text("pptx.chart.ex.own-color")), move |this, rgb, _, cx| this.set_chart_ex_fill(index, rgb, cx)) };
+    if matches!(kind, ExKind::Columns { waterfall: true, .. }) {
+        vec![
+            Submenu::tr("pptx.chart.ex.increase", "trending_up", one(0)).into(),
+            Submenu::tr("pptx.chart.ex.decrease", "trending_down", one(1)).into(),
+            Submenu::tr("pptx.chart.ex.total", "functions", one(2)).into(),
+        ]
+    } else {
+        one(0)
+    }
 }
 
 fn chart_axis_items(editor: &SlideEditor) -> Vec<MenuEntry> {
@@ -3275,6 +3954,66 @@ fn chart_palette_items(_editor: &SlideEditor) -> Vec<MenuEntry> {
     }).collect()
 }
 
+/// グラフ選択時の右クリックコンテキストメニュー項目一式
+pub(crate) fn chart_context_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let chart_ex = editor.selected_shapes().first().is_some_and(|s| matches!(&s.kind, ShapeKind::Chart(c) if c.ex.is_some()));
+    let mut entries: Vec<MenuEntry> = vec![
+        MenuItem::tr("pptx.chart.data").icon("edit_note").on(|e, w, cx| e.open_chart_data(w, cx)).into(),
+        MenuItem::tr("pptx.chart.data-quick").icon("tune").disabled(chart_ex).on(|e, w, cx| e.open_chart_panel(w, cx)).into(),
+    ];
+    if chart_ex {
+        entries.push(Submenu::tr("pptx.chart.title-menu", "title", chart_title_items(editor)).into());
+        entries.push(Submenu::tr("pptx.chart.legend-menu", "legend", legend_items(editor)).into());
+        if let Some((kind, _)) = selected_chart_ex(editor) {
+            if kind != ExKind::Box {
+                entries.push(Submenu::tr("pptx.chart.labels-menu", "label", chart_ex_labels_items(editor)).into());
+            }
+            if matches!(kind, ExKind::Columns { axis: true, .. } | ExKind::Box) {
+                entries.push(Submenu::tr("pptx.chart.axis-menu", "timeline", chart_ex_axis_items(editor)).into());
+            }
+            if kind != ExKind::Tree {
+                entries.push(Submenu::tr("pptx.chart.series.fill", "format_color_fill", chart_ex_fill_items(editor)).into());
+            }
+        }
+    } else {
+        let chart_group = editor.selected_shapes().first().and_then(|s| match &s.kind {
+            ShapeKind::Chart(c) => c.groups.first().map(|g| g.kind),
+            _ => None,
+        });
+        let is_pie_family = chart_group.is_some_and(|k| matches!(k, ChartType::Pie { .. } | ChartType::Doughnut { .. }));
+        let is_doughnut = chart_group.is_some_and(|k| matches!(k, ChartType::Doughnut { .. }));
+        let is_bubble = chart_group.is_some_and(|k| matches!(k, ChartType::Bubble { .. }));
+        let is_scatter = chart_group.is_some_and(|k| matches!(k, ChartType::Scatter { .. }));
+
+        entries.push(Submenu::tr("pptx.chrome.change-chart-type", "insert_chart", chart_type_items(editor)).into());
+        entries.push(Submenu::tr("pptx.chart.title-menu", "title", chart_title_items(editor)).into());
+        entries.push(Submenu::tr("pptx.chart.legend-menu", "legend", legend_items(editor)).into());
+        entries.push(Submenu::tr("pptx.chart.labels-menu", "label", chart_labels_items(editor)).into());
+        if is_pie_family {
+            entries.push(Submenu::tr("pptx.chart.first-angle-menu", "rotate_right", chart_first_angle_items(editor)).into());
+        }
+        if is_doughnut {
+            entries.push(Submenu::tr("pptx.chart.hole-size-menu", "donut_large", chart_hole_size_items(editor)).into());
+        }
+        if is_bubble {
+            entries.push(Submenu::tr("pptx.chart.bubble-scale-menu", "aspect_ratio", chart_bubble_scale_items(editor)).into());
+        }
+        if is_scatter {
+            entries.push(Submenu::tr("pptx.chart.scatter-smooth-menu", "polyline", chart_scatter_smooth_items(editor)).into());
+        }
+        if !is_pie_family {
+            entries.push(Submenu::tr("pptx.chart.axis-menu", "timeline", chart_axis_items(editor)).into());
+            entries.push(Submenu::tr("pptx.chart.trendline-menu", "show_chart", chart_trendline_items(editor)).into());
+            entries.push(Submenu::tr("pptx.chart.error-bars-menu", "error", chart_error_bars_items(editor)).into());
+        }
+        entries.push(Submenu::tr("pptx.chart.series-format-menu", "palette", chart_series_format_items(editor)).into());
+        entries.push(Submenu::tr("pptx.chart.plot-area-menu", "crop_free", chart_plot_area_items(editor)).into());
+        entries.push(Submenu::tr("pptx.chart.style-menu", "palette", chart_style_items(editor)).into());
+        entries.push(Submenu::tr("pptx.chart.palette-menu", "color_lens", chart_palette_items(editor)).into());
+    }
+    entries
+}
+
 fn field(label: SharedString, value: String) -> Div {
     div()
         .flex()
@@ -3349,7 +4088,7 @@ pub(crate) fn sidebar(editor: &mut SlideEditor) -> Option<SidebarPanel> {
     Some(SidebarPanel { title: crate::shell::i18n::text("_shell.slide"), body: body.into_any_element() })
 }
 
-fn reflection_preset(distance: i64, end_pos: i32) -> ibis_doc_model::Reflection {
+pub(crate) fn reflection_preset(distance: i64, end_pos: i32) -> ibis_doc_model::Reflection {
     ibis_doc_model::Reflection {
         blur: 6_350,
         start_alpha: 52_000,
@@ -3366,4 +4105,143 @@ fn reflection_preset(distance: i64, end_pos: i32) -> ibis_doc_model::Reflection 
         align: ibis_doc_model::TileAlign::BottomLeft,
         rot_with_shape: false,
     }
+}
+
+/// The underline kinds PowerPoint offers (the underline button's ▼), the one in use (`now`) checked.
+pub(crate) fn underline_kind_items(now: Option<ibis_doc_model::Underline>) -> Vec<MenuEntry> {
+    use ibis_doc_model::Underline as U;
+    const KINDS: [(&str, &str, U); 17] = [
+        ("pptx.underline.sng", "docx.paragraph-decorations.single", U::Single),
+        ("pptx.underline.words", "docx.toolbar.words-only", U::Words),
+        ("pptx.underline.dbl", "_docx.double-underline", U::Double),
+        ("pptx.underline.heavy", "_docx.thick-underline", U::Heavy),
+        ("pptx.underline.dotted", "_shell.dotted", U::Dotted),
+        ("pptx.underline.dottedHeavy", "docx.toolbar.thick-dotted", U::DottedHeavy),
+        ("pptx.underline.dash", "_shell.dashed", U::Dash),
+        ("pptx.underline.dashHeavy", "docx.toolbar.thick-dashed", U::DashHeavy),
+        ("pptx.underline.dashLong", "docx.toolbar.long-dashed", U::DashLong),
+        ("pptx.underline.dashLongHeavy", "docx.toolbar.thick-long-dashed", U::DashLongHeavy),
+        ("pptx.underline.dotDash", "docx.picture.border.dash.dashdot", U::DotDash),
+        ("pptx.underline.dotDashHeavy", "docx.toolbar.thick-dash-dot", U::DotDashHeavy),
+        ("pptx.underline.dotDotDash", "_docx.dash-dot-dot", U::DotDotDash),
+        ("pptx.underline.dotDotDashHeavy", "docx.toolbar.thick-dash-dot-dot", U::DotDotDashHeavy),
+        ("pptx.underline.wavy", "_shell.wave", U::Wavy),
+        ("pptx.underline.wavyHeavy", "docx.toolbar.thick-wave", U::WavyHeavy),
+        ("pptx.underline.wavyDbl", "docx.paragraph-decorations.double-wave", U::WavyDouble),
+    ];
+    KINDS
+        .iter()
+        .map(|&(id, label, kind)| -> MenuEntry {
+            MenuItem::new(id, crate::shell::i18n::text(label))
+                .checked(now == Some(kind))
+                .on(move |this, window, cx| this.format_characters(window, cx, CharacterFormat { underline: Some(true), underline_kind: Some(kind), ..Default::default() }))
+                .into()
+        })
+        .collect()
+}
+
+pub(crate) fn text_color_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    color_menu(editor, "pptx.text-color", None, |this, rgb, window, cx| {
+        if let Some(rgb) = rgb {
+            this.format_characters(window, cx, CharacterFormat { color: Some(rgb), ..Default::default() });
+        }
+    })
+}
+
+pub(crate) fn text_highlight_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    color_menu(editor, "pptx.highlight", Some(crate::shell::i18n::text("pptx.chrome.no-color")), |this, rgb, window, cx| {
+        this.format_characters(window, cx, CharacterFormat { highlight: Some(rgb), ..Default::default() });
+    })
+}
+
+pub(crate) fn bullet_symbol_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let list = editor.selected_list();
+    [
+        ("bullet.type.disc", '•'),
+        ("bullet.type.circle", '○'),
+        ("bullet.type.square", '■'),
+        ("bullet.type.box", '□'),
+        ("bullet.type.diamond", '◆'),
+        ("bullet.type.arrow", '►'),
+        ("bullet.type.dash", '–'),
+    ]
+    .into_iter()
+    .map(|(id, c)| -> MenuEntry {
+        let now = match list {
+            Some(ListKind::Symbol(s)) => s == c,
+            Some(ListKind::Bullet) => c == '•',
+            _ => false,
+        };
+        MenuItem::tr(id)
+            .checked(now)
+            .on(move |this, window, cx| {
+                this.format_paragraphs(
+                    window,
+                    cx,
+                    ParagraphFormat {
+                        list: Some(if c == '•' { ListKind::Bullet } else { ListKind::Symbol(c) }),
+                        ..Default::default()
+                    },
+                )
+            })
+            .into()
+    })
+    .collect()
+}
+
+pub(crate) fn numbered_scheme_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let list = editor.selected_list();
+    [
+        (ibis_doc_model::NumberScheme::ArabicPeriod, "number.type.arabicPeriod"),
+        (ibis_doc_model::NumberScheme::ArabicParenR, "number.type.arabicParenR"),
+        (ibis_doc_model::NumberScheme::AlphaLcPeriod, "number.type.alphaLcPeriod"),
+        (ibis_doc_model::NumberScheme::AlphaUcPeriod, "number.type.alphaUcPeriod"),
+        (ibis_doc_model::NumberScheme::AlphaLcParenR, "number.type.alphaLcParenR"),
+        (ibis_doc_model::NumberScheme::RomanLcPeriod, "number.type.romanLcPeriod"),
+        (ibis_doc_model::NumberScheme::RomanUcPeriod, "number.type.romanUcPeriod"),
+    ]
+    .into_iter()
+    .map(|(s, id)| -> MenuEntry {
+        let now = match list {
+            Some(ListKind::Scheme(c)) => c == s,
+            Some(ListKind::Numbered) => s == ibis_doc_model::NumberScheme::ArabicPeriod,
+            _ => false,
+        };
+        MenuItem::tr(id)
+            .checked(now)
+            .on(move |this, window, cx| {
+                this.format_paragraphs(
+                    window,
+                    cx,
+                    ParagraphFormat {
+                        list: Some(if s == ibis_doc_model::NumberScheme::ArabicPeriod {
+                            ListKind::Numbered
+                        } else {
+                            ListKind::Scheme(s)
+                        }),
+                        ..Default::default()
+                    },
+                )
+            })
+            .into()
+    })
+    .chain([
+        MenuEntry::Separator,
+        Submenu::tr(
+            "pptx.numbering.start-at",
+            "format_list_numbered",
+            vec![
+                MenuItem::tr("pptx.numbering.start-at-1").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(1), ..Default::default() })).into(),
+                MenuItem::tr("pptx.numbering.start-at-2").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(2), ..Default::default() })).into(),
+                MenuItem::tr("pptx.numbering.start-at-3").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(3), ..Default::default() })).into(),
+                MenuItem::tr("pptx.numbering.start-at-4").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(4), ..Default::default() })).into(),
+                MenuItem::tr("pptx.numbering.start-at-5").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(5), ..Default::default() })).into(),
+                MenuItem::tr("pptx.numbering.start-at-10").on(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { start_at: Some(10), ..Default::default() })).into(),
+                MenuEntry::Separator,
+                MenuItem::tr("pptx.numbering.options").on(|this, window, cx| this.open_paragraph_panel(window, cx)).into(),
+            ],
+        )
+        .into(),
+    ])
+    .collect()
 }

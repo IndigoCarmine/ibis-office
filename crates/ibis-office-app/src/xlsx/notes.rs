@@ -81,6 +81,12 @@ impl SlideEditor {
         if let Err(err) = self.document.execute(commands) {
             self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
         }
+        if let Some(p) = self.wb().panels.note.as_ref() {
+            let (c, r) = p.cell;
+            if ranges.iter().any(|rng| (rng.first_row..=rng.last_row).contains(&r) && (rng.first_column..=rng.last_column).contains(&c)) {
+                self.wb_mut().panels.note = None;
+            }
+        }
         cx.notify();
     }
 
@@ -104,19 +110,31 @@ impl SlideEditor {
             .py(px(8.))
             .child(div().text_size(px(13.)).child(crate::shell::i18n::format("note.cell", &[("cell", &ibis_doc_model::cell_name(column, row))])))
             .child(mark("text", div().h(px(140.)).border_1().border_color(rgb(0xD0D0D0)).rounded_md().p_1().child(Textarea::new(&p.state).appearance(false).size_full()).into_any_element()))
-            .child(mark("save", Button::new("note-save").primary().small().label(text("_shell.save")).on_click(cx.listener(|this, _, _, cx| this.save_note(cx))).into_any_element()))
+            .child(mark(
+                "save",
+                Button::new("note-save")
+                    .primary()
+                    .small()
+                    .label(text("_shell.save"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.save_note(cx);
+                        this.focus_handle.focus(window, cx);
+                    }))
+                    .into_any_element(),
+            ))
             .child(mark(
                 "delete",
                 Button::new("note-delete")
                     .small()
                     .ghost()
                     .label(text("fix.notes.delete-note"))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         let slide = this.current_slide;
                         if let Err(err) = this.document.execute(vec![Command::Sheet(SheetCommand::SetComment { slide, row, column, comment: None })]) {
                             log::warn!("deleting the note rejected: {err}");
                         }
                         this.wb_mut().panels.note = None;
+                        this.focus_handle.focus(window, cx);
                         cx.notify();
                     }))
                     .into_any_element(),
@@ -127,8 +145,9 @@ impl SlideEditor {
                     .small()
                     .ghost()
                     .label(text("_shell.close"))
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.wb_mut().panels.note = None;
+                        this.focus_handle.focus(window, cx);
                         cx.notify();
                     }))
                     .into_any_element(),

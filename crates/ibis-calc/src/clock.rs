@@ -18,3 +18,11 @@ pub(crate) fn unix_days() -> Option<i64> {
     #[cfg(target_family = "wasm")]
     None
 }
+
+/// Nanoseconds since 1970 (UTC), from the system's clock, to seed random numbers; `None` in the browser.
+pub(crate) fn unix_nanos() -> Option<u64> {
+    #[cfg(not(target_family = "wasm"))]
+    return std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_nanos() as u64);
+    #[cfg(target_family = "wasm")]
+    None
+}

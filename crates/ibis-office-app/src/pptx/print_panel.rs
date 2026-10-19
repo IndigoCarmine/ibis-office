@@ -42,6 +42,8 @@ pub(crate) struct PrintSettings {
     pub(crate) handout: Option<u8>,
     /// Each slide above its notes, one to a page (ノート ページ).
     pub(crate) notes_pages: bool,
+    /// The slides' titles and bodies as text (アウトライン).
+    pub(crate) outline: bool,
     pub(crate) color: PrintColorKind,
     pub(crate) frame: bool,
     /// Handouts on a landscape page (配布資料の向き).
@@ -52,7 +54,7 @@ impl PrintSettings {
     /// Whether the print is not the plain vector PDF of every slide (so it is
     /// made of the slides' pictures).
     pub(crate) fn needs_pictures(&self) -> bool {
-        self.handout.is_some() || self.notes_pages || self.color != PrintColorKind::Color || self.frame
+        self.handout.is_some() || self.notes_pages || self.outline || self.color != PrintColorKind::Color || self.frame
     }
 
     /// The program's arguments for these settings, `current` the (1-based)
@@ -72,7 +74,10 @@ impl PrintSettings {
         if self.notes_pages {
             args.push("--notes-pages".to_string());
         }
-        if self.handout.is_some() || self.notes_pages {
+        if self.outline {
+            args.push("--outline-pages".to_string());
+        }
+        if self.handout.is_some() || self.notes_pages || self.outline {
             if let Some(n) = self.handout {
                 args.extend(["--handout".to_string(), n.to_string()]);
                 if self.landscape {
@@ -210,11 +215,12 @@ impl SlideEditor {
             .child(Button::new("pptx-print-custom").small().ghost().label(mark(settings.range == PrintRange::Custom, "pptx.print-panel.custom-range")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::Custom, cx))))
             .child(div().w(px(200.)).child(Input::new(&custom).small()))
             .child(heading("_shell.print-layout"))
-            .child(Button::new("pptx-print-slides").small().ghost().label(mark(settings.handout.is_none() && !settings.notes_pages, "pptx.print-panel.full-page-slides")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = false }, cx))))
-            .child(Button::new("pptx-print-notes").small().ghost().label(mark(settings.notes_pages, "pptx.print-panel.notes-pages-1-slide-its")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = true }, cx))));
+            .child(Button::new("pptx-print-slides").small().ghost().label(mark(settings.handout.is_none() && !settings.notes_pages && !settings.outline, "pptx.print-panel.full-page-slides")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = false; s.outline = false }, cx))))
+            .child(Button::new("pptx-print-notes").small().ghost().label(mark(settings.notes_pages, "pptx.print-panel.notes-pages-1-slide-its")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = true; s.outline = false }, cx))))
+            .child(Button::new("pptx-print-outline").small().ghost().label(mark(settings.outline, "pptx.print-panel.outline")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = false; s.outline = true }, cx))));
         for n in [1u8, 2, 3, 4, 6, 9] {
             let label: SharedString = format!("{} {}", if settings.handout == Some(n) { "●" } else { "○" }, crate::shell::i18n::format("pptx.print-panel.handouts-n-slides-per-page", &[("n", &n)])).into();
-            body = body.child(Button::new(ElementId::Name(format!("pptx-print-handout-{n}").into())).small().ghost().label(label).on_click(cx.listener(move |e, _, _, cx| e.edit_print_panel(|s| { s.handout = Some(n); s.notes_pages = false }, cx))));
+            body = body.child(Button::new(ElementId::Name(format!("pptx-print-handout-{n}").into())).small().ghost().label(label).on_click(cx.listener(move |e, _, _, cx| e.edit_print_panel(|s| { s.handout = Some(n); s.notes_pages = false; s.outline = false }, cx))));
         }
         body = body
             .child(Checkbox::new("pptx-print-landscape").label(crate::shell::i18n::text("pptx.print-panel.landscape-handouts")).checked(settings.landscape).on_click(cx.listener(|e, on: &bool, _, cx| {
@@ -256,7 +262,7 @@ mod tests {
     fn arguments() {
         let none = PrintSettings::default();
         assert!(none.arguments(4, &Default::default()).is_empty() && !none.needs_pictures());
-        let all = PrintSettings { range: PrintRange::Current, custom: String::new(), handout: Some(6), notes_pages: false, color: PrintColorKind::Gray, frame: true, landscape: false };
+        let all = PrintSettings { range: PrintRange::Current, custom: String::new(), handout: Some(6), notes_pages: false, outline: false, color: PrintColorKind::Gray, frame: true, landscape: false };
         assert_eq!(all.arguments(4, &Default::default()), ["--slides", "4", "--print-color", "gray", "--handout", "6", "--print-frame"]);
         assert!(all.needs_pictures());
         // Handouts on their side with what the notes pages carry.
@@ -267,6 +273,10 @@ mod tests {
         let notes = PrintSettings { notes_pages: true, ..Default::default() };
         assert_eq!(notes.arguments(1, &marks), ["--notes-pages", "--handout-header", "社外秘", "--handout-date", "2026/10/11", "--handout-footer", "ibis", "--handout-number"]);
         assert!(notes.needs_pictures());
+        // The outline (the slides' text) too.
+        let outline = PrintSettings { outline: true, ..Default::default() };
+        assert_eq!(outline.arguments(1, &marks), ["--outline-pages", "--handout-header", "社外秘", "--handout-date", "2026/10/11", "--handout-footer", "ibis", "--handout-number"]);
+        assert!(outline.needs_pictures());
         // Not for the slides themselves.
         assert!(PrintSettings::default().arguments(1, &marks).is_empty());
         let range = PrintSettings { range: PrintRange::Custom, custom: "1,3-4".into(), ..Default::default() };

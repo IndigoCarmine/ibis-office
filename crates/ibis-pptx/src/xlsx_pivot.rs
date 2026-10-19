@@ -115,6 +115,47 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
                     } else {
                         None
                     }
+                } else if let Some(dp) = child(fg, "discretePr") {
+                    let group_items: Vec<String> = child(fg, "groupItems")
+                        .into_iter()
+                        .flat_map(|gi| gi.children().filter(|n| n.is_element()))
+                        .map(|it| match shared_item(it) {
+                            CellValue::Text(t) => t,
+                            CellValue::Number(n) => n.to_string(),
+                            CellValue::Bool(b) => if b { "TRUE".into() } else { "FALSE".into() },
+                            CellValue::Error(e) => e.as_str().to_string(),
+                            CellValue::Empty => String::new(),
+                        })
+                        .collect();
+                    let orig_items: Vec<String> = cf.and_then(|cf_node| child(cf_node, "sharedItems"))
+                        .into_iter()
+                        .flat_map(|si| si.children().filter(|n| n.is_element()))
+                        .map(|it| match shared_item(it) {
+                            CellValue::Text(t) => t,
+                            CellValue::Number(n) => n.to_string(),
+                            CellValue::Bool(b) => if b { "TRUE".into() } else { "FALSE".into() },
+                            CellValue::Error(e) => e.as_str().to_string(),
+                            CellValue::Empty => String::new(),
+                        })
+                        .collect();
+                    let mappings: Vec<(String, String)> = orig_items.into_iter().zip(children(dp, "x"))
+                        .filter_map(|(orig_name, x_node)| {
+                            let v = attr(x_node, "v").and_then(|v| v.parse::<usize>().ok())?;
+                            let group_name = group_items.get(v)?.clone();
+                            Some((orig_name, group_name))
+                        })
+                        .collect();
+                    let mut group_to_orig_count = std::collections::HashMap::new();
+                    for (_, g) in &mappings {
+                        *group_to_orig_count.entry(g.clone()).or_insert(0) += 1;
+                    }
+                    let mut groups = std::collections::HashMap::new();
+                    for (orig_name, group_name) in mappings {
+                        if orig_name != group_name || group_to_orig_count.get(&group_name).copied().unwrap_or(0) > 1 {
+                            groups.insert(orig_name, group_name);
+                        }
+                    }
+                    Some(ibis_doc_model::PivotFieldGrouping::Manual { groups })
                 } else if let Some(di) = child(fg, "discreteItems") {
                     let mut groups = std::collections::HashMap::new();
                     for it in children(di, "item") {
@@ -128,15 +169,32 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
                 }
             });
             let formula = cf.and_then(|c| attr(c, "formula")).map(str::to_string);
+            let all_shared_nodes: Vec<Node> = cf
+                .and_then(|c| child(c, "sharedItems"))
+                .into_iter()
+                .flat_map(|s| s.children().filter(|n| n.is_element()))
+                .collect();
+            let shared: Vec<CellValue> = all_shared_nodes
+                .iter()
+                .copied()
+                .filter(|&n| !flag(n, "f", false))
+                .map(shared_item)
+                .collect();
             PivotField {
                 name: cf.and_then(|c| attr(c, "name")).unwrap_or("").to_string(),
                 formula,
                 axis,
-                shared: cf.and_then(|c| child(c, "sharedItems")).into_iter().flat_map(|s| s.children().filter(|n| n.is_element())).map(shared_item).collect(),
+                shared,
                 items: pf
                     .and_then(|p| child(p, "items"))
                     .into_iter()
                     .flat_map(|it| children(it, "item"))
+                    .filter(|&it| {
+                        let Some(x) = attr_i64(it, "x").map(|x| x.max(0) as usize) else {
+                            return true;
+                        };
+                        !all_shared_nodes.get(x).is_some_and(|&n| flag(n, "f", false))
+                    })
                     .map(|it| PivotItem {
                         x: attr_i64(it, "x").map(|x| x.max(0) as u32),
                         hidden: flag(it, "h", false),
@@ -154,6 +212,12 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
                 },
                 sort_data_field: pf.and_then(|p| attr(p, "dataField")).and_then(|s| s.parse().ok()),
                 grouping,
+                insert_blank_row: pf.map_or(false, |p| flag(p, "insertBlankRow", false)),
+                fill_down_labels: pf.and_then(|p| {
+                    attr_bool(p, "fillDownLabels").or_else(|| {
+                        p.descendants().find(|n| n.tag_name().name() == "pivotField" && attr_bool(*n, "fillDownLabels").is_some()).and_then(|n| attr_bool(n, "fillDownLabels"))
+                    })
+                }),
             }
         })
         .collect();
@@ -247,14 +311,33 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
         auto_fit_columns: flag(table, "applyWidthHeightFormats", true),
         preserve_formatting: flag(table, "useAutoFormatting", true),
         multiple_field_filters: flag(table, "multipleFieldFilters", false),
+        show_drill: flag(table, "showDrill", true),
         calculated_items: cache
             .and_then(|c| child(c, "calculatedItems"))
             .into_iter()
             .flat_map(|ci| children(ci, "calculatedItem"))
             .filter_map(|ci| {
+                let field = attr_i64(ci, "field")?.max(0) as u32;
+                let name = attr(ci, "name")
+                    .map(str::to_string)
+                    .or_else(|| {
+                        let item_x = child(ci, "pivotArea")
+                            .and_then(|pa| child(pa, "references"))
+                            .into_iter()
+                            .flat_map(|refs| children(refs, "reference"))
+                            .find(|r| attr_i64(*r, "field").is_none_or(|f| f.max(0) as u32 == field))
+                            .and_then(|r| child(r, "x"))
+                            .and_then(|x| attr_i64(x, "v"))?
+                            .max(0) as usize;
+                        let cf = cache_fields.get(field as usize).copied()?;
+                        let si = child(cf, "sharedItems")?;
+                        let item_node = si.children().filter(|n| n.is_element()).nth(item_x)?;
+                        attr(item_node, "v").map(str::to_string)
+                    })
+                    .unwrap_or_default();
                 Some(ibis_doc_model::pivot::PivotCalculatedItem {
-                    field: attr_i64(ci, "field")?.max(0) as u32,
-                    name: attr(ci, "name").unwrap_or("").to_string(),
+                    field,
+                    name,
                     formula: attr(ci, "formula").unwrap_or("").to_string(),
                 })
             })
@@ -355,12 +438,14 @@ pub fn rebuilt_pivot(presentation: &ibis_doc_model::Presentation, slide: ibis_do
         Some(_) => return None,
         None => {}
     }
-    let pivot = out.pivots.get(index)?.clone();
+    let mut pivot = out.pivots.get(index)?.clone();
     let data = pivot_source(presentation, &out, &pivot)?;
+    pivot.fill_shared(&data);
     let built = pivot.build(&data);
     let workbook = presentation.workbook.as_ref();
     let base = workbook.and_then(|w| w.default_style.clone()).unwrap_or_default();
     let date1904 = workbook.is_some_and(|w| w.date1904);
+    out.pivots[index] = pivot;
     out.put_pivot(index, &built, &base, date1904);
     out.pivots[index].refreshed = true;
     let theme_colors = workbook.map(|w| w.theme_colors.clone()).unwrap_or_default();

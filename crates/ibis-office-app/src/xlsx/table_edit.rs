@@ -19,10 +19,11 @@ use ibis_doc_model::{CellInput, CellRange, CellValue, Command, Sheet, SheetCell,
 
 use crate::shell::editor::SlideEditor;
 
-/// テーブルの作成, while open.
+/// テーブルの作成・サイズ変更, while open.
 pub(crate) struct TableDialog {
     pub(crate) range: Entity<InputState>,
     pub(crate) header: bool,
+    pub(crate) target_table: Option<usize>,
     pub(crate) error: Option<SharedString>,
     _subscription: Subscription,
 }
@@ -137,7 +138,28 @@ impl SlideEditor {
                 this.confirm_table_dialog(window, cx);
             }
         });
-        self.wb_mut().table_dialog = Some(TableDialog { range: input, header, error: None, _subscription: subscription });
+        self.wb_mut().table_dialog = Some(TableDialog { range: input, header, target_table: None, error: None, _subscription: subscription });
+        cx.notify();
+    }
+
+    /// テーブルのサイズ変更ダイアログを開く
+    pub(crate) fn open_resize_table_dialog(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let Some(t) = sheet.tables.get(index) else { return };
+        let range = t.range;
+        let text = format!("={}:{}", ibis_doc_model::cell_name(range.first_column, range.first_row), ibis_doc_model::cell_name(range.last_column, range.last_row));
+        let input = cx.new(|cx| InputState::new(window, cx));
+        input.update(cx, |i, cx| {
+            i.set_value(text, window, cx);
+            i.focus(window, cx);
+        });
+        let subscription = cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+            if let InputEvent::PressEnter { .. } = event {
+                this.confirm_table_dialog(window, cx);
+            }
+        });
+        self.wb_mut().table_dialog = Some(TableDialog { range: input, header: t.header_rows > 0, target_table: Some(index), error: None, _subscription: subscription });
         cx.notify();
     }
 
@@ -157,9 +179,16 @@ impl SlideEditor {
     /// The dialog's OK: the table made, or why not shown in it.
     pub(crate) fn confirm_table_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(d) = self.wb().table_dialog.as_ref() else { return };
-        let (text, header) = (d.range.read(cx).value().to_string(), d.header);
+        let (text, header, target_table) = (d.range.read(cx).value().to_string(), d.header, d.target_table);
         let result = match parse_range(&text) {
-            Some(range) => self.make_table(range, header, cx),
+            Some(range) => {
+                if let Some(index) = target_table {
+                    self.resize_table(index, range, cx);
+                    Ok(())
+                } else {
+                    self.make_table(range, header, cx)
+                }
+            }
             None => Err(crate::shell::i18n::text("_xlsx.the-reference-is-not-valid").to_string()),
         };
         match result {
@@ -382,9 +411,20 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// テーブルの作成, under the formula bar.
+    /// テーブルの作成 / サイズ変更, under the formula bar.
     pub(crate) fn render_table_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let d = self.sheet_state()?.table_dialog.as_ref()?;
+        let is_resize = d.target_table.is_some();
+        let title = if is_resize {
+            crate::shell::i18n::text("_xlsx.table-resize")
+        } else {
+            crate::shell::i18n::text("_xlsx.create-table")
+        };
+        let desc = if is_resize {
+            crate::shell::i18n::text("_xlsx.specify-the-new-data-range-for-your-table")
+        } else {
+            crate::shell::i18n::text("_xlsx.specify-the-data-range-to-convert-to-a-table")
+        };
         let theme = cx.theme().clone();
         let dialog = v_flex()
             .id("table-dialog")
@@ -400,10 +440,10 @@ impl SlideEditor {
             .rounded_md()
             .shadow_lg()
             .occlude()
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.create-table")))
-            .child(crate::shell::i18n::text("_xlsx.specify-the-data-range-to-convert-to-a-table"))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+            .child(desc)
             .child(Input::new(&d.range).small())
-            .child(Checkbox::new("table-header").label(crate::shell::i18n::text("_xlsx.my-table-has-headers")).checked(d.header).on_click(cx.listener(|this, on: &bool, _, cx| this.set_table_dialog_header(*on, cx))))
+            .when(!is_resize, |b| b.child(Checkbox::new("table-header").label(crate::shell::i18n::text("_xlsx.my-table-has-headers")).checked(d.header).on_click(cx.listener(|this, on: &bool, _, cx| this.set_table_dialog_header(*on, cx)))))
             .when_some(d.error.clone(), |b, e| b.child(div().text_xs().text_color(theme.danger).child(e)))
             .child(
                 h_flex()

@@ -103,6 +103,8 @@ pub struct Section {
     pub dbnum: Option<u8>,
     /// `[$-411]`: the Japanese locale.
     pub japanese: bool,
+    /// `[$-407]` and the like: the locale (LCID) whose month and day names a date shows, when it is not English or Japanese.
+    pub locale: Option<u16>,
     /// Whether the format code contains invalid tokens (e.g. unquoted 'n' or single 'B').
     pub invalid: bool,
 }
@@ -228,7 +230,14 @@ fn parse_section(s: &str) -> Section {
                         // The system's long date and time.
                         "f800" | "sysdate" => system = Some("yyyy\"年\"m\"月\"d\"日\" aaaa"),
                         "f400" | "systime" => system = Some("h:mm:ss"),
-                        _ => {}
+                        other => {
+                            // A tag such as `de-DE`: all of it after the first `-`; else the last part.
+                            let tag = rest.split_once('-').map_or("", |(_, t)| t);
+                            let lcid = super::locale::lcid_of(tag).or_else(|| super::locale::lcid_of(other));
+                            if lcid.is_some_and(|l| super::locale::names(l).is_some()) {
+                                section.locale = lcid;
+                            }
+                        }
                     }
                 } else if l.starts_with("dbnum") {
                     section.dbnum = l[5..].parse().ok();

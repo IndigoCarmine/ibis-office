@@ -15,6 +15,14 @@ pub(crate) struct EditPanels {
     pub(crate) external_links: Option<super::external_links::ExternalLinksPanel>,
     /// データ > テキスト/CSV から…
     pub(crate) import_text: Option<super::import_text::ImportTextPanel>,
+    /// データ > テーブルまたは範囲から: the クエリ エディター, which takes the place of the sheet.
+    pub(crate) query_editor: Option<super::query_editor::QueryEditor>,
+    /// データ > クエリと接続.
+    pub(crate) queries: Option<super::query_editor::QueriesPanel>,
+    /// 挿入… / 削除… of the cell menu.
+    pub(crate) cells_dialog: Option<super::cells_dialog::CellsDialog>,
+    /// 形式を選択して貼り付け… dialog panel.
+    pub(crate) paste_special_dialog: Option<super::paste_special_dialog::PasteSpecialDialog>,
     /// 形式を選択して貼り付け > 空白セルを無視する: copied cells with
     /// nothing in them leave the cells pasted on as they are.
     pub(crate) skip_blanks: bool,
@@ -40,10 +48,32 @@ pub(crate) struct EditPanels {
     pub(crate) table_design: Option<super::table_design::TableDesignPanel>,
     /// データ > 詳細設定…
     pub(crate) advanced_filter: Option<super::advanced_filter::AdvancedFilterPanel>,
+    /// ツール > オートコレクトのオプション…
+    pub(crate) autocorrect: Option<super::autocorrect::AutoCorrectPanel>,
+    /// ツール > エラー チェックのオプション…
+    pub(crate) error_options: Option<super::error_check::ErrorOptionsPanel>,
+    /// 書式 > スライサーの設定…
+    pub(crate) slicer_settings: Option<super::slicer_settings::SlicerSettingsPanel>,
+    /// 挿入 > スライサー…
+    pub(crate) slicer_insert: Option<super::slicer_insert::SlicerInsertPanel>,
+    /// 挿入 > タイムライン…
+    pub(crate) timeline_insert: Option<super::timeline_insert::TimelineInsertPanel>,
+    /// 開発 > コントロールの書式設定/プロパティ…
+    pub(crate) control_properties: Option<super::control_insert::ControlPropertiesPanel>,
+    /// 挿入 > 描画（インク）
+    pub(crate) ink: Option<super::ink::InkPanel>,
+    /// データ > ソルバー…
+    pub(crate) solver: Option<super::solver_panel::SolverPanel>,
+    /// データ > データ分析…
+    pub(crate) analysis: Option<super::analysis_panel::AnalysisPanel>,
+    /// データ > 予測シート… (XLSX-ANALYSIS-020).
+    pub(crate) forecast: Option<super::forecast_sheet::ForecastPanel>,
     /// データ > 統合…
     pub(crate) consolidate: Option<super::consolidate::ConsolidatePanel>,
     /// 表示形式 > セルのスタイル > 新しいセル スタイル…
     pub(crate) new_cell_style: Option<super::cell_styles::NewCellStylePanel>,
+    /// テーブル デザイン > テーブル スタイル > 新しいテーブル スタイル…
+    pub(crate) new_table_style: Option<super::table_design::NewTableStylePanel>,
     /// データ > What-If 分析 > シナリオの登録と管理…
     pub(crate) scenario_manager: Option<super::scenario_manager::ScenarioManagerPanel>,
     /// 挿入 > スパークライン…
@@ -89,6 +119,10 @@ pub(crate) struct EditPanels {
     pub(crate) selection_pane: Option<super::selection_pane::SelectionPanePanel>,
     /// 書式 > サイズと位置… (図形のサイズ・位置・回転・縦横比固定).
     pub(crate) frame: Option<super::frame_panel::SheetFramePanel>,
+    /// 開発 > XML > ソース…
+    pub(crate) xml_source: Option<super::xml_maps::XmlSourcePanel>,
+    /// 開発 > XML > XML マップのプロパティ…
+    pub(crate) xml_map_properties: Option<super::xml_maps::XmlMapPropertiesPanel>,
     /// 表示形式 > テーマの色とフォント…
     pub(crate) theme: Option<super::theme_panel::XlsxThemePanel>,
     /// 表示 > ユーザー設定のビュー…
@@ -101,16 +135,14 @@ pub(crate) struct EditPanels {
     pub(crate) chart_template: Option<super::chart_template::ChartTemplatePanel>,
     /// 表示 > ウィンドウの整列… (XLSX-SHEET-017).
     pub(crate) arrange_windows: Option<super::arrange_windows::ArrangeWindowsPanel>,
-    /// ツール > 自動回復の設定… (XLSX-FILE-014).
-    pub(crate) autorecover_settings: Option<super::autorecover::AutoRecoverSettingsPanel>,
-    /// ファイル/ツール > 未保存のブックの回復… (XLSX-FILE-016).
-    pub(crate) recover_unsaved: Option<super::autorecover::RecoverUnsavedPanel>,
     /// ツール > バックアップと保存先の設定… (XLSX-FILE-019).
     pub(crate) backup_save: Option<super::backup_save::BackupSaveSettingsPanel>,
     /// ツール/ファイル > 破損ブックの開いて修復… (XLSX-FILE-020).
     pub(crate) repair: Option<super::repair::RepairWorkbookPanel>,
     /// ふりがなの編集 (XLSX-CELL-006).
     pub(crate) phonetic: Option<super::phonetic::PhoneticPanel>,
+    /// 行の高さ・列の幅 (XLSX-FORMAT-001/002).
+    pub(crate) row_col_size: Option<super::row_col_size::RowColSizePanel>,
 }
 
 impl EditPanels {
@@ -119,6 +151,10 @@ impl EditPanels {
         self.dedupe = None;
         self.text_columns = None;
         self.import_text = None;
+        self.query_editor = None;
+        self.queries = None;
+        self.cells_dialog = None;
+        self.paste_special_dialog = None;
         self.external_links = None;
         self.goto_special = None;
         self.note = None;
@@ -132,7 +168,18 @@ impl EditPanels {
         self.table_design = None;
         self.advanced_filter = None;
         self.consolidate = None;
+        self.analysis = None;
+        self.solver = None;
+        self.ink = None;
+        self.slicer_insert = None;
+        self.timeline_insert = None;
+        self.control_properties = None;
+        self.slicer_settings = None;
+        self.error_options = None;
+        self.autocorrect = None;
+        self.forecast = None;
         self.new_cell_style = None;
+        self.new_table_style = None;
         self.scenario_manager = None;
         self.sparkline = None;
         self.subtotal = None;
@@ -155,11 +202,12 @@ impl EditPanels {
         self.move_chart = None;
         self.chart_template = None;
         self.arrange_windows = None;
-        self.autorecover_settings = None;
-        self.recover_unsaved = None;
         self.backup_save = None;
         self.repair = None;
         self.phonetic = None;
+        self.row_col_size = None;
+        self.xml_source = None;
+        self.xml_map_properties = None;
     }
 }
 
@@ -169,6 +217,8 @@ impl crate::shell::editor::SlideEditor {
         self.dedupe_panel(cx)
             .or_else(|| self.text_columns_panel(cx))
             .or_else(|| self.import_text_panel(cx))
+            .or_else(|| self.queries_panel(cx))
+            .or_else(|| self.cells_dialog_panel(cx))
             .or_else(|| self.external_links_panel(cx))
             .or_else(|| self.goto_special_panel(cx))
             .or_else(|| self.note_panel(cx))
@@ -190,7 +240,20 @@ impl crate::shell::editor::SlideEditor {
             .or_else(|| self.table_design_panel(cx))
             .or_else(|| self.advanced_filter_panel(cx))
             .or_else(|| self.consolidate_panel(cx))
+            .or_else(|| self.analysis_panel(cx))
+            .or_else(|| self.solver_panel(cx))
+            .or_else(|| self.ink_panel(cx))
+            .or_else(|| self.slicer_insert_panel(cx))
+            .or_else(|| self.timeline_insert_panel(cx))
+            .or_else(|| self.control_properties_panel(cx))
+            .or_else(|| self.slicer_settings_panel(cx))
+            .or_else(|| self.error_options_panel(cx))
+            .or_else(|| self.autocorrect_panel(cx))
+            .or_else(|| self.forecast_panel(cx))
             .or_else(|| self.new_cell_style_panel(cx))
+            .or_else(|| self.new_table_style_panel(cx))
+            .or_else(|| self.xml_source_panel(cx))
+            .or_else(|| self.xml_map_properties_panel(cx))
             .or_else(|| self.evaluate_formula_panel(cx))
             .or_else(|| self.watch_window_panel(cx))
             .or_else(|| self.sheet_doc_properties_panel(cx))
@@ -205,10 +268,12 @@ impl crate::shell::editor::SlideEditor {
             .or_else(|| self.move_chart_panel(cx))
             .or_else(|| self.chart_template_panel(cx))
             .or_else(|| self.arrange_windows_panel(cx))
-            .or_else(|| self.xlsx_autorecover_settings_panel(cx))
-            .or_else(|| self.xlsx_recover_unsaved_panel(cx))
             .or_else(|| self.xlsx_backup_save_settings_panel(cx))
+            .or_else(|| self.autorecover_settings_panel(cx))
+            .or_else(|| self.recover_unsaved_panel(cx))
             .or_else(|| self.xlsx_repair_panel(cx))
             .or_else(|| self.phonetic_panel(cx))
+            .or_else(|| self.row_col_size_panel(cx))
+            .or_else(|| self.paste_special_panel(cx))
     }
 }

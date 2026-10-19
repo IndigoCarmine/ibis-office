@@ -3,7 +3,8 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! The pictures of Word's art page borders, for drawing: ECMA-376's
 //! `OfficeOpenXML-WordprocessingMLArtBorders.zip`, shipped unmodified in
-//! `data/artborders/` (the macOS bundle's `Contents/Resources/artborders/`),
+//! `data/artborders/` (the macOS bundle's `Contents/Resources/artborders/`,
+//! the Linux AppImage's `usr/share/ibisOffice/artborders/`),
 //! read when a document first uses an art border.
 //!
 //! The web version fetches the pictures one by one instead (see `web`).
@@ -38,6 +39,8 @@ fn load() -> Option<ArtBorderPictures> {
         places.push(dir.join("../Resources/artborders").join(ZIP));
         // Windows: Resources\artborders\ beside ibisOffice.exe.
         places.push(dir.join("Resources/artborders").join(ZIP));
+        // Linux's AppImage: usr/bin/ibisOffice → usr/share/ibisOffice.
+        places.push(dir.join("../share/ibisOffice/artborders").join(ZIP));
     }
     // A build run from the source tree (target/<dir>/release/ibisOffice, or
     // the tests' target/release/deps/…), found from the executable so that

@@ -226,6 +226,56 @@ pub fn format_user_address(address: &str, instruction: &str) -> String {
     apply_instruction_text_switches(address.to_string(), instruction)
 }
 
+/// Format an `AUTOTEXT` field value (ECMA-376 Part 1 §17.16.5.6).
+/// Syntax: `AUTOTEXT AutoTextName [Switches]`
+pub fn format_autotext(instruction: &str) -> String {
+    let words = field_words(instruction);
+    let entry_name = words.get(1).map(|w| w.trim_matches('"')).unwrap_or("");
+    let text = if entry_name.is_empty() {
+        String::new()
+    } else {
+        entry_name.to_string()
+    };
+    apply_instruction_text_switches(text, instruction)
+}
+
+/// Format an `AUTOTEXTLIST` field value (ECMA-376 Part 1 §17.16.5.7).
+/// Syntax: `AUTOTEXTLIST "LiteralText" [\s "StyleName"] [\t "TipText"] [Switches]`
+pub fn format_autotextlist(instruction: &str) -> String {
+    let words = field_words(instruction);
+    let literal_text = words.get(1).map(|w| w.trim_matches('"')).unwrap_or("");
+    apply_instruction_text_switches(literal_text.to_string(), instruction)
+}
+
+/// Format a `CITATION` field value (ECMA-376 Part 1 §17.16.5.15).
+/// Syntax: `CITATION Tag [\s Style] [\l Locale] [\p Pages] [Switches]`
+pub fn format_citation(instruction: &str) -> String {
+    let words = field_words(instruction);
+    let tag = words.get(1).map(|w| w.trim_matches('"')).unwrap_or("");
+    let text = if tag.is_empty() {
+        String::new()
+    } else {
+        format!("({tag})")
+    };
+    apply_instruction_text_switches(text, instruction)
+}
+
+/// Format a `BIBLIOGRAPHY` field value (ECMA-376 Part 1 §17.16.5.8).
+/// Syntax: `BIBLIOGRAPHY [\l Locale] [Switches]`
+pub fn format_bibliography(instruction: &str) -> String {
+    let words = field_words(instruction);
+    let locale_is_en = words.iter().position(|w| w == "\\l")
+        .and_then(|idx| words.get(idx + 1))
+        .map(|loc| loc == "1033")
+        .unwrap_or(false);
+    let heading = if locale_is_en {
+        "Bibliography"
+    } else {
+        "文献目録"
+    };
+    apply_instruction_text_switches(heading.to_string(), instruction)
+}
+
 /// Compute initials from a user's full name.
 pub fn initials_from_name(name: &str) -> String {
     let words: Vec<&str> = name.split_whitespace().collect();
@@ -1187,6 +1237,33 @@ mod tests {
         assert_eq!(format_user_initials("as", "USERINITIALS \\* Upper"), "AS");
         assert_eq!(format_user_address("Tokyo, Japan", "USERADDRESS"), "Tokyo, Japan");
         assert_eq!(format_user_address("", "USERADDRESS"), "");
+    }
+
+    #[test]
+    fn test_autotext_and_citation_formatting() {
+        // AUTOTEXT
+        assert_eq!(format_autotext("AUTOTEXT"), "");
+        assert_eq!(format_autotext("AUTOTEXT CompanyName"), "CompanyName");
+        assert_eq!(format_autotext("AUTOTEXT \"Company Header\""), "Company Header");
+        assert_eq!(format_autotext("AUTOTEXT \"company header\" \\* Upper"), "COMPANY HEADER");
+        assert_eq!(format_autotext("AUTOTEXT \"company header\" \\* Caps"), "Company Header");
+
+        // AUTOTEXTLIST
+        assert_eq!(format_autotextlist("AUTOTEXTLIST \"Sample Entry\""), "Sample Entry");
+        assert_eq!(format_autotextlist("AUTOTEXTLIST \"Sample Entry\" \\s \"Normal\" \\t \"Insert text\""), "Sample Entry");
+        assert_eq!(format_autotextlist("AUTOTEXTLIST \"sample entry\" \\* Upper"), "SAMPLE ENTRY");
+
+        // CITATION
+        assert_eq!(format_citation("CITATION Knuth1984"), "(Knuth1984)");
+        assert_eq!(format_citation("CITATION \"Knuth1984\" \\l 1041"), "(Knuth1984)");
+        assert_eq!(format_citation("CITATION knuth1984 \\* Upper"), "(KNUTH1984)");
+        assert_eq!(format_citation("CITATION"), "");
+
+        // BIBLIOGRAPHY
+        assert_eq!(format_bibliography("BIBLIOGRAPHY"), "文献目録");
+        assert_eq!(format_bibliography("BIBLIOGRAPHY \\l 1041"), "文献目録");
+        assert_eq!(format_bibliography("BIBLIOGRAPHY \\l 1033"), "Bibliography");
+        assert_eq!(format_bibliography("BIBLIOGRAPHY \\l 1033 \\* Upper"), "BIBLIOGRAPHY");
     }
 
     #[test]

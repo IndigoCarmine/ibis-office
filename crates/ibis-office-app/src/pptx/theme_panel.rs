@@ -10,10 +10,12 @@
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Command, FontSet, Rgb, ThemeFonts};
 
+use crate::pptx::SlidePopup;
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 
@@ -251,6 +253,30 @@ impl SlideEditor {
         preset.colors.iter().all(|(name, rgb)| colors.iter().find(|(n, _)| n == name).is_some_and(|(_, c)| c == rgb))
     }
 
+    /// Apply a predefined theme effect preset to the presentation.
+    pub(crate) fn apply_theme_effects(&mut self, preset_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return };
+        self.end_text_edit(window, cx);
+        let commands = match &self.source {
+            Some(source) => source.retheme_effects(self.presentation(), preset.id).map_err(|e| e.to_string()),
+            None => Ok(vec![Command::SetThemeEffects { name: Some(preset.id.to_string()) }]),
+        };
+        match commands {
+            Ok(commands) => self.run(commands, cx),
+            Err(err) => log::warn!("Could not change the theme effects: {err}"),
+        }
+        if self.pptx().and_then(|s| s.theme_panel.as_ref()).is_some() {
+            self.open_theme_panel(window, cx);
+        }
+    }
+
+    /// Check if the current presentation matches a given theme effect preset.
+    pub(crate) fn is_theme_effects_active(&self, preset_id: &str) -> bool {
+        let current = self.presentation().theme_effects.as_deref().unwrap_or("office");
+        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return false };
+        current.eq_ignore_ascii_case(preset.id) || current.eq_ignore_ascii_case(preset.name)
+    }
+
     pub(crate) fn apply_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = self.pptx().and_then(|s| s.theme_panel.as_ref()) else { return };
         let mut colors = self.presentation().theme_colors.clone();
@@ -286,11 +312,116 @@ impl SlideEditor {
         self.close_theme_panel(window, cx);
     }
 
+    pub(crate) fn theme_panel_context_menu_entries(&self, preset_id: Option<&'static str>) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem, Submenu};
+        if self.pptx().and_then(|s| s.theme_panel.as_ref()).is_none() {
+            return Vec::new();
+        }
+        let mut items = Vec::new();
+        if let Some(pid) = preset_id {
+            if let Some(preset) = THEME_PALETTES.iter().find(|p| p.id == pid) {
+                items.push(
+                    MenuItem::tr(preset.label_key)
+                        .checked(self.is_theme_palette_active(pid))
+                        .on(move |e, w, cx| e.apply_theme_palette(pid, w, cx))
+                        .into(),
+                );
+                items.push(
+                    MenuItem::new(
+                        preset.selected_action_id,
+                        format!("{} ({})", crate::shell::i18n::text("pptx.theme.palette-selected"), crate::shell::i18n::text(preset.label_key)),
+                    )
+                    .on(move |e, w, cx| e.apply_theme_palette_to_current_slide(pid, w, cx))
+                    .into(),
+                );
+                items.push(MenuEntry::Separator);
+            }
+        }
+        items.push(
+            MenuItem::tr("_shell.apply")
+                .icon("check")
+                .on(|e, w, cx| e.apply_theme_panel(w, cx))
+                .into(),
+        );
+        items.push(MenuEntry::Separator);
+        let palette_items: Vec<MenuEntry> = THEME_PALETTES
+            .iter()
+            .map(|preset| {
+                let pid = preset.id;
+                MenuItem::tr(preset.label_key)
+                    .checked(self.is_theme_palette_active(pid))
+                    .on(move |e, w, cx| e.apply_theme_palette(pid, w, cx))
+                    .into()
+            })
+            .collect();
+        items.push(Submenu::tr("pptx.theme.palette", "palette", palette_items).into());
+        items.push(Submenu::tr("pptx.theme.palette-selected", "palette", super::chrome::theme_palette_selected_items(self)).into());
+        items.push(Submenu::tr("pptx.theme.effects", "auto_awesome", super::chrome::theme_effects_items(self)).into());
+        items.push(MenuEntry::Separator);
+        items.push(
+            MenuItem::tr("pptx.theme.save-theme")
+                .icon("save")
+                .on(|e, w, cx| e.export_thmx(w, cx))
+                .into(),
+        );
+        items.push(MenuEntry::Separator);
+        items.push(
+            MenuItem::tr("_shell.close")
+                .icon("close")
+                .on(|e, w, cx| e.close_theme_panel(w, cx))
+                .into(),
+        );
+        items
+    }
+
+    pub(crate) fn open_theme_panel_context_menu(
+        &mut self,
+        preset_id: Option<&'static str>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.end_text_edit(window, cx);
+        let items = self.theme_panel_context_menu_entries(preset_id);
+        if items.is_empty() {
+            return;
+        }
+        self.focus_handle.focus(window, cx);
+        let entries = std::rc::Rc::new(items);
+        let editor = cx.entity().downgrade();
+        let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
+            crate::shell::chrome::fill_menu(menu.min_w(px(220.)), &entries, &editor, window, cx)
+        });
+        let dismiss = cx.subscribe_in(&menu, window, |this, _, _: &DismissEvent, window, cx| {
+            if let Some(state) = this.pptx_mut() {
+                state.slide_popup = None;
+            }
+            cx.notify();
+            this.focus_handle.focus(window, cx);
+        });
+        menu.read(cx).focus_handle(cx).focus(window, cx);
+        if let Some(state) = self.pptx_mut() {
+            state.slide_popup = Some(SlidePopup { menu, position, _dismiss: dismiss });
+        }
+        cx.notify();
+    }
+
     pub(crate) fn theme_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let panel = self.pptx()?.theme_panel.as_ref()?;
         let t = crate::shell::i18n::text;
         let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
-        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.));
+        let mut body = v_flex()
+            .id("pptx-theme-panel")
+            .gap_1()
+            .px(px(18.))
+            .py(px(8.))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_theme_panel_context_menu(None, event.position, window, cx);
+                }),
+            );
 
         let mut palette_row = h_flex().gap_1().flex_wrap();
         for preset in &THEME_PALETTES {
@@ -298,9 +429,30 @@ impl SlideEditor {
             let active = self.is_theme_palette_active(pid);
             let btn = Button::new(format!("preset-{pid}")).small().ghost().label(t(preset.label_key));
             let btn = if active { btn.border_1() } else { btn };
-            palette_row = palette_row.child(btn.on_click(cx.listener(move |e, _, w, cx| e.apply_theme_palette(pid, w, cx))));
+            palette_row = palette_row.child(
+                div()
+                    .id(SharedString::from(format!("preset-wrap-{pid}")))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.open_theme_panel_context_menu(Some(pid), event.position, window, cx);
+                        }),
+                    )
+                    .child(btn.on_click(cx.listener(move |e, _, w, cx| e.apply_theme_palette(pid, w, cx)))),
+            );
         }
         body = body.child(label(&t("pptx.theme.palette"))).child(palette_row);
+
+        let mut effects_row = h_flex().gap_1().flex_wrap();
+        for preset in &ibis_pptx::theme_effects::THEME_EFFECTS {
+            let eid = preset.id;
+            let active = self.is_theme_effects_active(eid);
+            let btn = Button::new(format!("effect-{eid}")).small().ghost().label(t(preset.label_key));
+            let btn = if active { btn.border_1() } else { btn };
+            effects_row = effects_row.child(btn.on_click(cx.listener(move |e, _, w, cx| e.apply_theme_effects(eid, w, cx))));
+        }
+        body = body.child(label(&t("pptx.theme.effects"))).child(effects_row);
 
         for (_, name, input) in &panel.colors {
             body = body.child(label(&t(name))).child(Input::new(input).small());

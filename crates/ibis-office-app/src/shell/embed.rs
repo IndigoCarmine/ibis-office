@@ -8,11 +8,12 @@
 //! one undoable edit. The presentation's, the workbook's and the
 //! document's pictures share this.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use gpui_kit::*;
-use ibis_doc_model::{Command, EmuRect, MediaFormat, OleId, Picture, ShapeId, ShapeKind, SlideId};
+use ibis_doc_model::{Block, Command, EmuRect, FlowRunKind, MediaFormat, MediaId, OleId, Picture, ShapeId, ShapeKind, SlideId};
 use ibis_embed_protocol::{self as protocol, HandlerManifest, HandlerMessage, HostMessage, HostSender, HostSession, Mode, OleContent, Preview};
 
 use crate::shell::editor::SlideEditor;
@@ -103,6 +104,9 @@ pub(crate) struct Session {
     opening: Option<SharedString>,
     events: mpsc::Receiver<Event>,
     sender: Arc<Mutex<Option<HostSender>>>,
+    /// The size the editor draws the object at (before this edit), when
+    /// known: an edit keeps the object's scale on the page.
+    natural: Option<(i64, i64)>,
 }
 
 impl Session {
@@ -125,12 +129,28 @@ impl Drop for Session {
 pub(crate) struct Sessions {
     open: Vec<Session>,
     polling: bool,
+    /// The size each object's editor draws it at, as far as asked (see
+    /// `render_embedded_previews`).
+    natural: HashMap<OleId, (i64, i64)>,
 }
 
 impl Sessions {
     /// Every editor closed (a new document replaces the old).
     pub(crate) fn close_all(&mut self) {
         self.open.clear();
+        self.natural.clear();
+    }
+}
+
+/// `frame`'s size for an object drawn at `new` that was drawn at `old`:
+/// scaled as it was on the page (PowerPoint keeps a resized object's scale).
+fn scaled_size(frame: (i64, i64), old: Option<(i64, i64)>, new: (i64, i64)) -> (i64, i64) {
+    match old {
+        Some((ow, oh)) if ow > 0 && oh > 0 => {
+            let scale = |f: i64, n: i64, o: i64| ((f as i128 * n as i128) / o as i128) as i64;
+            (scale(frame.0, new.0, ow).max(1), scale(frame.1, new.1, oh).max(1))
+        }
+        _ => new,
     }
 }
 
@@ -175,7 +195,28 @@ fn launch(handler: &HandlerManifest, target: Target, content: OleContent, title:
         }
         let _ = tx.send(Event::Closed);
     });
-    Session { target, opening, events, sender }
+    Session { target, opening, events, sender, natural: None }
+}
+
+/// The picture `handler` draws of `content` (headless `Render`): PNG and the size it is drawn at.
+fn render(handler: &HandlerManifest, content: OleContent) -> Result<(Vec<u8>, Option<(i64, i64)>), String> {
+    match headless(handler, HostMessage::Render { content })? {
+        HandlerMessage::Rendered { preview, size_emu } => Ok((protocol::host::preview_png(&preview, size_emu).map_err(|e| e.to_string())?, size_emu)),
+        other => Err(format!("{other:?}")),
+    }
+}
+
+/// Every picture in `blocks` showing an embedded object.
+fn flow_objects(blocks: &[Block], out: &mut Vec<(MediaId, OleId)>) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(p) => out.extend(p.runs.iter().filter_map(|r| match &r.kind {
+                FlowRunKind::Picture { media, look, .. } => Some((*media, look.ole?)),
+                _ => None,
+            })),
+            Block::Table(t) => t.rows.iter().flat_map(|r| &r.cells).for_each(|c| flow_objects(&c.blocks, out)),
+        }
+    }
 }
 
 impl SlideEditor {
@@ -217,7 +258,24 @@ impl SlideEditor {
             Err(e) => return self.tell(&i18n::text("embed.unreadable"), &e.to_string(), window, cx),
         };
         let title = self.file_name.as_ref().map(|n| n.to_string()).unwrap_or_default();
-        let session = launch(handler, target, content, title);
+        let mut session = launch(handler, target, content.clone(), title);
+        session.natural = self.embed_sessions.natural.get(&ole).copied();
+        if session.natural.is_none() {
+            // The size the editor draws it at now, so the edit keeps its scale.
+            let handler = handler.clone();
+            let job = cx.background_executor().spawn(async move { render(&handler, content) });
+            cx.spawn(async move |this, cx| {
+                let Ok((_, Some(size))) = job.await else { return };
+                this.update(cx, |this, _| {
+                    this.embed_sessions.natural.insert(ole, size);
+                    if let Some(open) = this.embed_sessions.open.iter_mut().find(|s| s.target == target && s.natural.is_none()) {
+                        open.natural = Some(size);
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
         self.status = session.opening.clone();
         self.embed_sessions.open.push(session);
         cx.notify();
@@ -246,7 +304,11 @@ impl SlideEditor {
                     heard.extend(session.opening.take());
                 }
                 match event {
-                    Ok(Event::Update { content, preview, size_emu }) => updates.push((session.target, content, preview, size_emu)),
+                    Ok(Event::Update { content, preview, size_emu }) => {
+                        updates.push((session.target, content, preview, size_emu, session.natural));
+                        // The next edit is scaled from this one.
+                        session.natural = size_emu.or(session.natural);
+                    }
                     Ok(Event::Error(message)) => errors.push(message),
                     Ok(Event::Closed) | Err(mpsc::TryRecvError::Disconnected) => return false,
                     Err(mpsc::TryRecvError::Empty) => return true,
@@ -257,8 +319,8 @@ impl SlideEditor {
             self.status = None;
             cx.notify();
         }
-        for (target, content, preview, size_emu) in updates {
-            if let Err(message) = self.apply_embedded(target, &content, &preview, size_emu, cx) {
+        for (target, content, preview, size_emu, natural) in updates {
+            if let Err(message) = self.apply_embedded(target, &content, &preview, size_emu, natural, cx) {
                 errors.push(message);
             }
         }
@@ -271,7 +333,9 @@ impl SlideEditor {
     }
 
     /// The editor saved: a new object and preview for `target`, as one undoable edit.
-    fn apply_embedded(&mut self, target: Target, content: &OleContent, preview: &Preview, size_emu: Option<(i64, i64)>, cx: &mut Context<Self>) -> Result<(), String> {
+    /// `natural` is the size the editor drew it at before, which the new size
+    /// is scaled from.
+    fn apply_embedded(&mut self, target: Target, content: &OleContent, preview: &Preview, size_emu: Option<(i64, i64)>, natural: Option<(i64, i64)>, cx: &mut Context<Self>) -> Result<(), String> {
         // Gone, or no longer an object (deleted, undone past): nothing to update.
         let Some((mut picture, ole)) = self.embedded_at(target) else { return Ok(()) };
         let old = self.presentation().ole(ole).cloned().ok_or_else(|| "the object is gone".to_string())?;
@@ -280,30 +344,105 @@ impl SlideEditor {
         let media = self.document.ids().add_media(MediaFormat::Png, png.clone());
         self.resources.add_picture(media, MediaFormat::Png, &png);
         picture.media = media;
-        picture.ole = Some(self.document.ids().add_ole(content.prog_id.clone(), data, old.as_icon));
+        let ole = self.document.ids().add_ole(content.prog_id.clone(), data, old.as_icon);
+        self.document.ids().set_ole_natural(ole, size_emu);
+        picture.ole = Some(ole);
         match target {
             Target::Shape { slide, shape } => {
                 let mut commands = vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Picture(picture)) }];
-                // The size the editor asks for, from the same top left corner.
-                if let Some((w, h)) = size_emu.filter(|&(w, h)| w > 0 && h > 0)
+                // The size the editor asks for, at the object's scale, from the same top left corner.
+                if let Some(new) = size_emu.filter(|&(w, h)| w > 0 && h > 0)
                     && let Some(frame) = self.presentation().slide(slide).and_then(|s| s.shape(shape)).map(|s| s.frame)
-                    && (frame.width, frame.height) != (w, h)
                 {
-                    commands.push(Command::SetFrame { slide, shape, frame: EmuRect::new(frame.x, frame.y, w, h) });
+                    let (w, h) = scaled_size((frame.width, frame.height), natural, new);
+                    if (frame.width, frame.height) != (w, h) {
+                        commands.push(Command::SetFrame { slide, shape, frame: EmuRect::new(frame.x, frame.y, w, h) });
+                    }
                 }
                 self.run(commands, cx);
             }
             Target::Inline(at) => {
-                let size = size_emu.filter(|&(w, h)| w > 0 && h > 0).map(|(w, h)| ibis_doc_model::EmuSize::new(w, h));
+                let size = size_emu.filter(|&(w, h)| w > 0 && h > 0).map(|new| {
+                    let (w, h) = match self.inline_size_at(at) {
+                        Some(now) => scaled_size((now.width, now.height), natural, new),
+                        None => new,
+                    };
+                    ibis_doc_model::EmuSize::new(w, h)
+                });
                 self.replace_inline_object(at, media, picture.ole.expect("an object"), size, cx);
             }
         }
         Ok(())
     }
 
+    /// Pictures of embedded objects that cannot be drawn here (a vector EMF
+    /// Office keeps for them) are drawn by their editors instead (headless `Render`), the current slide's first. Only
+    /// the screen changes: the document keeps its own pictures.
+    pub(crate) fn render_embedded_previews(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let presentation = self.presentation();
+        let mut objects: Vec<(MediaId, OleId)> = Vec::new();
+        let current = self.current_slide;
+        let slides = presentation.slides.iter().filter(|s| s.id == current).chain(presentation.slides.iter().filter(|s| s.id != current));
+        for slide in slides {
+            objects.extend(slide.shapes.iter().filter_map(|s| match &s.kind {
+                ShapeKind::Picture(p) => Some((p.media, p.ole?)),
+                _ => None,
+            }));
+        }
+        if let Some(flow) = &presentation.flow {
+            flow_objects(&flow.body, &mut objects);
+        }
+        let mut seen = std::collections::HashSet::new();
+        objects.retain(|o| seen.insert(o.1));
+        let handlers = handlers();
+        let jobs: Vec<(MediaId, OleId, HandlerManifest, OleContent)> = objects
+            .into_iter()
+            .filter(|(media, _)| {
+                presentation.media(*media).is_some_and(|m| matches!(m.format, MediaFormat::Emf | MediaFormat::Wmf) && ibis_emf::extract_image(&m.data).is_none())
+            })
+            .filter_map(|(media, ole)| {
+                let object = presentation.ole(ole)?;
+                let handler = protocol::find_handler(&handlers, &object.prog_id)?.clone();
+                let content = protocol::host::content_of(&object.data).ok()?;
+                Some((media, ole, handler, content))
+            })
+            .collect();
+        if jobs.is_empty() {
+            return;
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            // One at a time: each is a process of its own.
+            let mut refused = Vec::new();
+            for (media, ole, handler, content) in jobs {
+                if refused.contains(&handler.id) {
+                    continue;
+                }
+                let id = handler.id.clone();
+                let answer = cx.background_executor().spawn(async move { render(&handler, content) }).await;
+                let done = this.update(cx, |this, cx| match answer {
+                    Ok((png, size)) => {
+                        this.resources.set_stand_in(media, &png);
+                        if let Some(size) = size {
+                            this.embed_sessions.natural.insert(ole, size);
+                        }
+                        cx.notify();
+                    }
+                    Err(e) => {
+                        log::info!("embedded object {}: no picture from {id}: {e}", ole.0);
+                        refused.push(id);
+                    }
+                });
+                if done.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// 挿入 > オブジェクト > ファイルから: a file an editor imports (by its extension).
     pub(crate) fn pick_embedded_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(i18n::text("_shell.insert").to_string().into()) });
+        let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(i18n::text("_shell.insert").to_string().into()) });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = picked.await else { return };
             let Some(path) = paths.into_iter().next() else { return };
@@ -363,11 +502,93 @@ impl SlideEditor {
     fn insert_embedded_object(&mut self, content: &OleContent, preview: &Preview, size_emu: Option<(i64, i64)>, cx: &mut Context<Self>) -> Result<Option<Target>, String> {
         let data = protocol::host::object_of(content, None).map_err(|e| e.to_string())?;
         let png = protocol::host::preview_png(preview, size_emu).map_err(|e| e.to_string())?;
+        self.insert_embedded_data(&content.prog_id, data, png, size_emu, cx)
+    }
+
+    /// Ctrl+V of an object copied in its application (an OLE "Embed
+    /// Source" on the clipboard): the object as it was copied, drawn by its
+    /// editor here. False when there is no such object, or no editor for it
+    /// (the clipboard's picture is pasted then, as before).
+    pub(crate) fn paste_embedded(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(clip) = crate::shell::ole_clipboard::read() else { return false };
+        let Ok(content) = protocol::host::content_of(&clip.embed_source) else { return false };
+        let handlers = reload_handlers();
+        let Some(handler) = protocol::find_handler(&handlers, &content.prog_id).cloned() else { return false };
+        // Rebuilt, so what the container keeps is clean (no stale cached picture).
+        let Ok(data) = protocol::host::object_of(&content, Some(&clip.embed_source)) else { return false };
+        let prog_id = content.prog_id.clone();
+        let size_hint = clip.size_emu;
+        self.status = Some(i18n::format("embed.pasting", &[("name", &handler.name.get(locale()))]).into());
+        cx.notify();
+        let job = cx.background_executor().spawn(async move { render(&handler, content) });
+        cx.spawn(async move |this, cx| {
+            let answer = job.await;
+            this.update(cx, |this, cx| {
+                this.status = None;
+                // The copied object, with the picture its editor draws.
+                let inserted = answer.and_then(|(png, size_emu)| this.insert_embedded_data(&prog_id, data, png, size_emu.or(size_hint), cx));
+                match inserted {
+                    Ok(Some(Target::Shape { slide, shape })) => this.remember_natural(slide, shape),
+                    Ok(_) => {}
+                    Err(message) => {
+                        log::warn!("paste of an embedded object: {message}");
+                        this.status = Some(i18n::format("embed.paste-failed", &[("message", &message)]).into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        true
+    }
+
+    /// An inserted object's frame is the size its editor drew it at.
+    fn remember_natural(&mut self, slide: SlideId, shape: ShapeId) {
+        let Some(found) = self.presentation().slide(slide).and_then(|s| s.shape(shape)) else { return };
+        if let ShapeKind::Picture(Picture { ole: Some(ole), .. }) = &found.kind {
+            let size = (found.frame.width, found.frame.height);
+            self.embed_sessions.natural.insert(*ole, size);
+        }
+    }
+
+    /// Ctrl+C of one embedded object: put on the clipboard as OLE
+    /// applications put one, so Office and the object's application paste
+    /// it as the object. False when it could not be (the caller copies the
+    /// picture instead).
+    pub(crate) fn copy_embedded(&self, picture: &Picture, size_emu: (i64, i64)) -> bool {
+        let Some(object) = picture.ole.and_then(|ole| self.presentation().ole(ole)) else { return false };
+        let Ok(content) = protocol::host::content_of(&object.data) else { return false };
+        let media = self.presentation().media(picture.media);
+        let emf = media.filter(|m| m.format == MediaFormat::Emf).map(|m| &m.data[..]);
+        let stand_in = self.resources.images.get(&picture.media).filter(|i| i.format == ImageFormat::Png).map(|i| i.bytes.clone());
+        let png = media.filter(|m| m.format == MediaFormat::Png).map(|m| m.data.to_vec()).or(stand_in);
+        let copy = crate::shell::ole_clipboard::ObjectCopy {
+            embed_source: &object.data,
+            clsid: content.clsid.0,
+            user_type: &content.user_type,
+            size_emu,
+            emf,
+            png: png.as_deref(),
+        };
+        match crate::shell::ole_clipboard::write(&copy) {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!("copy of an embedded object: {e}");
+                false
+            }
+        }
+    }
+
+    /// The object `data` (a compound file of ProgID `prog_id`) put where a
+    /// picture would go, shown by `png`, the size `size_emu`.
+    fn insert_embedded_data(&mut self, prog_id: &str, data: Vec<u8>, png: Vec<u8>, size_emu: Option<(i64, i64)>, cx: &mut Context<Self>) -> Result<Option<Target>, String> {
         let shape = match self.format.kind() {
             ibis_pptx::Kind::Presentation => self.insert_picture("object.png", png, cx),
             ibis_pptx::Kind::Workbook => self.insert_sheet_picture("object.png", png, cx),
             ibis_pptx::Kind::Document => {
-                let ole = self.document.ids().add_ole(content.prog_id.clone(), data, false);
+                let ole = self.document.ids().add_ole(prog_id.to_string(), data, false);
+                self.document.ids().set_ole_natural(ole, size_emu);
                 let size = size_emu.filter(|&(w, h)| w > 0 && h > 0).map(|(w, h)| ibis_doc_model::EmuSize::new(w, h));
                 return match self.insert_inline_object(png, ole, size, cx) {
                     Some(at) => Ok(Some(Target::Inline(at))),
@@ -378,7 +599,9 @@ impl SlideEditor {
         let Some(shape) = shape else { return Ok(None) };
         let slide = self.current_slide;
         let Some(ShapeKind::Picture(mut picture)) = self.presentation().slide(slide).and_then(|s| s.shape(shape)).map(|s| s.kind.clone()) else { return Ok(None) };
-        picture.ole = Some(self.document.ids().add_ole(content.prog_id.clone(), data, false));
+        let ole = self.document.ids().add_ole(prog_id.to_string(), data, false);
+        self.document.ids().set_ole_natural(ole, size_emu);
+        picture.ole = Some(ole);
         let mut commands = vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Picture(picture)) }];
         if let Some((w, h)) = size_emu.filter(|&(w, h)| w > 0 && h > 0)
             && let Some(frame) = self.presentation().slide(slide).and_then(|s| s.shape(shape)).map(|s| s.frame)

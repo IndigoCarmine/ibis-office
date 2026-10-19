@@ -51,7 +51,12 @@ fn typed(v: &CellValue) -> (&'static str, String) {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: cell_value <file.xlsx>");
+    // Excel's random numbers cannot be compared: the stand-ins, marked as not calculated.
+    ibis_calc::random::use_stand_ins(true);
+    let path = std::env::args().nth(1).expect("usage: cell_value <file.xlsx> [file name the workbook is saved under]");
+    // The name Excel saw the workbook under (the coverage tests' truth was made from a copy of another
+    // name), else its own path: for CELL("filename") and the sheet names of CELL("address").
+    ibis_calc::eval::convert::set_workbook_file(Some(std::env::args().nth(2).unwrap_or_else(|| std::fs::canonicalize(&path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.clone()))));
     let data = std::fs::read(&path).expect("readable file");
     let presentation = ibis_pptx::read_xlsx(&data).expect("a workbook");
     let book = BookView::new(&presentation);

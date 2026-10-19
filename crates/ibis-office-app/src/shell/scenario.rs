@@ -97,6 +97,10 @@ pub fn run(filter: &[String]) -> i32 {
     let mut before = test_files();
     for (name, f) in &chosen {
         CURRENT.with(|c| *c.borrow_mut() = name.to_string());
+        // What one scenario sets (typing corrections, the user's name, the backup copy) is not the next one's start.
+        crate::shell::autocorrect::reset();
+        crate::shell::user_name::reset();
+        crate::docx::backup::reset();
         let started = crate::clock::Instant::now();
         let result = std::panic::catch_unwind(f);
         let took = started.elapsed();
@@ -247,16 +251,23 @@ impl Scenario {
         let loaded = crate::read_file(&full).unwrap_or_else(|e| panic!("{path}: {e}"));
         let name: SharedString = full.file_name().unwrap().to_string_lossy().into_owned().into();
         let is_tmpl = full.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_template);
+        let is_old_presentation = full.extension().and_then(|e| e.to_str()).is_some_and(|x| ["ppt", "pps", "pot", "odp", "otp"].iter().any(|o| x.eq_ignore_ascii_case(o)));
         s.update(|e, window, cx| {
             if is_tmpl {
                 let tmpl_name = crate::shell::file_actions::new_file_name(ibis_pptx::Kind::of(&loaded.presentation));
                 e.load(loaded.presentation, tmpl_name, window, cx);
                 e.source = Some(loaded.source);
                 e.path = None;
+            } else if is_old_presentation {
+                // An old presentation is read as a new .pptx: saving asks where.
+                let stem = full.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                e.load(loaded.presentation, format!("{stem}.pptx").into(), window, cx);
+                e.source = Some(loaded.source);
+                e.path = None;
             } else {
                 e.load(loaded.presentation, name, window, cx);
                 e.source = Some(loaded.source);
-                e.path = Some(full.clone());
+                e.set_file_path(Some(full.clone()));
             }
             if full.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_slideshow) {
                 e.start_slideshow(window, cx);
@@ -296,7 +307,7 @@ impl Scenario {
         let name = CURRENT.with(|c| c.borrow().clone());
         let name = if name.is_empty() { "scenario".to_string() } else { name };
         let text_system: Arc<dyn gpui_kit::PlatformTextSystem> = Arc::new(drawn_text::Logging { inner: gpui_kit::platform::current_platform(true).text_system() });
-        let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(crate::shell::icons::Assets::new("")), gpui_kit::platform::current_headless_renderer);
+        let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(crate::shell::icons::Assets::new("")), crate::export::headless_renderer);
         cx.allow_parking();
         cx.update(crate::init);
         let slot: std::rc::Rc<std::cell::RefCell<Option<Entity<SlideEditor>>>> = Default::default();
@@ -387,6 +398,17 @@ impl Scenario {
         self.dispatch(Self::press(point(px(x), px(y)), 1));
     }
 
+    /// A pinch-to-zoom gesture on a trackpad at `(x, y)` with magnification `delta`.
+    pub(crate) fn pinch(&mut self, (x, y): (f32, f32), delta: f32) {
+        let position = point(px(x), px(y));
+        self.dispatch(vec![PlatformInput::Pinch(PinchEvent {
+            position,
+            delta,
+            modifiers: Modifiers::default(),
+            phase: TouchPhase::Moved,
+        })]);
+    }
+
     /// A click with the right button (opens a context menu).
     pub(crate) fn right_click(&mut self, (x, y): (f32, f32)) {
         let position = point(px(x), px(y));
@@ -437,13 +459,7 @@ impl Scenario {
 
     /// Press at `from`, move to `to` and release.
     pub(crate) fn drag(&mut self, (x0, y0): (f32, f32), (x1, y1): (f32, f32)) {
-        let (from, to) = (point(px(x0), px(y0)), point(px(x1), px(y1)));
-        self.dispatch(vec![
-            PlatformInput::MouseMove(MouseMoveEvent { position: from, ..Default::default() }),
-            PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: from, click_count: 1, ..Default::default() }),
-            PlatformInput::MouseMove(MouseMoveEvent { position: to, pressed_button: Some(MouseButton::Left), ..Default::default() }),
-            PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, click_count: 1, ..Default::default() }),
-        ]);
+        self.drag_with((x0, y0), (x1, y1), Modifiers::default());
     }
 
     /// Files dragged from the Finder and dropped at `at`.
@@ -547,6 +563,15 @@ impl Scenario {
         })
     }
 
+    /// Toolbar button `id` as it is now (its icon, whether it is a split button, ...).
+    #[allow(dead_code)] // For the formats' scenarios.
+    pub(crate) fn tool_button(&mut self, id: &str) -> Option<crate::shell::chrome::ToolButton> {
+        match self.tool(id)? {
+            ToolItem::Button(b) => Some(b),
+            _ => None,
+        }
+    }
+
     /// What toolbar button `id` shows, or `None` if the toolbar has none.
     pub(crate) fn toolbar_state(&mut self, id: &str) -> Option<ToolState> {
         match self.tool(id)? {
@@ -561,7 +586,7 @@ impl Scenario {
     pub(crate) fn toolbar(&mut self, id: &str) {
         let Some(ToolItem::Button(b)) = self.tool(id) else { panic!("no toolbar button {id}") };
         assert!(b.enabled(), "toolbar button {id} is disabled");
-        let handler = b.handler.or(b.quick).unwrap_or_else(|| panic!("toolbar button {id} opens a menu; use toolbar_menu"));
+        let handler = b.left_action().cloned().or(b.handler).unwrap_or_else(|| panic!("toolbar button {id} opens a menu; use toolbar_menu"));
         self.update(|e, window, cx| handler(e, window, cx));
     }
 
@@ -623,7 +648,7 @@ impl Scenario {
         self.update(|e, window, cx| {
             e.load(loaded.presentation, name, window, cx);
             e.source = Some(loaded.source);
-            e.path = Some(path);
+            e.set_file_path(Some(path));
         });
         self.settle();
     }
@@ -672,6 +697,29 @@ impl Scenario {
                 window.dispatch_event(PlatformInput::ScrollWheel(ScrollWheelEvent { position, delta: ScrollDelta::Pixels(point(px(dx), px(dy))), ..Default::default() }), app);
             })
             .ok();
+        self.cx.run_until_parked();
+    }
+
+    /// The mouse wheel with the zoom modifier (`⌃⌘` on macOS) at window
+    /// position (`x`, `y`): `lines` notches (negative zooming out).
+    #[allow(dead_code)]
+    pub(crate) fn wheel_zoom_lines(&mut self, (x, y): (f32, f32), lines: f32) {
+        let position = point(px(x), px(y));
+        let modifiers = Modifiers { platform: true, control: true, ..Default::default() };
+        self.cx
+            .update_window(self.window.into(), |_, window, app| {
+                window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, modifiers, ..Default::default() }), app);
+                window.dispatch_event(PlatformInput::ScrollWheel(ScrollWheelEvent { position, delta: ScrollDelta::Lines(point(0.0, lines)), modifiers, ..Default::default() }), app);
+            })
+            .ok();
+        self.cx.run_until_parked();
+    }
+
+    /// Advance the simulated clock by `ms` milliseconds without settling
+    /// extra frames (for 60fps 16ms event pacing).
+    #[allow(dead_code)]
+    pub(crate) fn advance_ms(&mut self, ms: u64) {
+        self.cx.advance_clock(std::time::Duration::from_millis(ms));
         self.cx.run_until_parked();
     }
 

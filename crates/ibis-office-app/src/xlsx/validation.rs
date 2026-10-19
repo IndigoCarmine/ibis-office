@@ -30,6 +30,7 @@ pub(crate) struct ValidationPanel {
     pub(crate) second: Entity<InputState>,
     pub(crate) allow_blank: bool,
     pub(crate) dropdown: bool,
+    pub(crate) apply_to_same: bool,
     pub(crate) show_prompt: bool,
     pub(crate) prompt_title: Entity<InputState>,
     pub(crate) prompt: Entity<InputState>,
@@ -75,11 +76,29 @@ fn name_of(list: &[(&'static str, &'static str)], key: &str) -> &'static str {
     list.iter().find(|(k, _)| *k == key).map_or("", |(_, n)| n)
 }
 
+fn same_validation_settings(a: &Validation, b: &Validation) -> bool {
+    a.kind == b.kind
+        && a.operator == b.operator
+        && a.formula1 == b.formula1
+        && a.formula2 == b.formula2
+        && a.allow_blank == b.allow_blank
+        && a.dropdown == b.dropdown
+        && a.prompt == b.prompt
+        && a.error == b.error
+}
+
 /// A list's drop-down (or another small menu by the cells), open.
 pub(crate) struct ListPopup {
     pub(crate) menu: Entity<PopupMenu>,
     pub(crate) position: Point<Pixels>,
     pub(crate) _dismiss: Subscription,
+}
+
+/// A pending confirmation for a data validation rule with style `warning` ("注意").
+#[derive(Clone, Debug)]
+pub(crate) struct ValidationWarning {
+    pub(crate) message: String,
+    pub(crate) edit: super::cell_edit::CellEdit,
 }
 
 /// The rule over a cell (the last one listed wins, as Excel keeps one).
@@ -108,6 +127,63 @@ pub(crate) fn list_items(sheet: &Sheet, rule: &Validation) -> Vec<String> {
         }
     }
     out
+}
+
+/// Collect unique text candidates from the same column of (`row`, `column`) in Excel's
+/// "Pick from Drop-down List" (⌥↓ / Alt+↓) style.
+pub(crate) fn column_pick_list_items(sheet: &Sheet, row: u32, column: u32) -> Vec<String> {
+    let mut texts = Vec::new();
+    // 1. Scan upward from row - 1 until an empty cell or top
+    if row > 0 {
+        let mut r = row - 1;
+        loop {
+            if let Some(c) = sheet.cell(r, column) {
+                let trimmed = c.text.trim();
+                if !trimmed.is_empty() {
+                    texts.push(trimmed.to_string());
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+            if r == 0 {
+                break;
+            }
+            r -= 1;
+        }
+    }
+    // 2. Scan downward from row + 1 until an empty cell
+    let mut r = row + 1;
+    loop {
+        if let Some(c) = sheet.cell(r, column) {
+            let trimmed = c.text.trim();
+            if !trimmed.is_empty() {
+                texts.push(trimmed.to_string());
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+        r += 1;
+    }
+    // 3. Fallback: if no continuous block items, collect from any non-empty cells in the same column
+    if texts.is_empty() {
+        for c in &sheet.cells {
+            if c.column == column && c.row != row {
+                let trimmed = c.text.trim();
+                if !trimmed.is_empty() {
+                    texts.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    // Deduplicate and sort alphabetically / case-insensitively
+    texts.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b)));
+    texts.dedup_by(|a, b| a.to_lowercase() == b.to_lowercase());
+    texts
 }
 
 /// `A1` or `A1:B3` as (first row, first column, last row, last column).
@@ -215,27 +291,225 @@ impl SlideEditor {
         rule_at(sheet, row, column).cloned()
     }
 
+    fn target_validation_ranges(&self, apply_to_same: bool) -> Vec<ibis_doc_model::CellRange> {
+        let mut ranges = self.selected_ranges();
+        if apply_to_same
+            && let Some(orig) = self.current_rule()
+            && let Some((_, sheet)) = self.current_sheet()
+        {
+            for v in &sheet.validations {
+                if same_validation_settings(v, &orig) {
+                    for &r in &v.ranges {
+                        if !ranges.contains(&r) {
+                            ranges.push(r);
+                        }
+                    }
+                }
+            }
+        }
+        ranges
+    }
+
+    /// Select cells on the current worksheet that have data validation (`same_only`: only those matching the active cell's rule).
+    pub(crate) fn select_validation_cells(&mut self, same_only: bool, cx: &mut Context<Self>) -> bool {
+        let orig = self.current_rule();
+        let Some((_, sheet)) = self.current_sheet() else { return false };
+        let mut matched: Vec<ibis_doc_model::CellRange> = Vec::new();
+        for v in &sheet.validations {
+            if v.kind == "none" && v.prompt.is_none() && v.error.is_none() {
+                continue;
+            }
+            if same_only {
+                let Some(ref o) = orig else { continue };
+                if !same_validation_settings(v, o) {
+                    continue;
+                }
+            }
+            matched.extend(v.ranges.iter().copied());
+        }
+        let Some(first) = matched.first().copied() else { return false };
+        let min_r = matched.iter().map(|r| r.first_row).min().unwrap_or(first.first_row);
+        let max_r = matched.iter().map(|r| r.last_row).max().unwrap_or(first.last_row);
+        let min_c = matched.iter().map(|r| r.first_column).min().unwrap_or(first.first_column);
+        let max_c = matched.iter().map(|r| r.last_column).max().unwrap_or(first.last_column);
+        let slide = self.current_slide;
+        if let Some(s) = self.sheet_state_mut() {
+            s.cells.insert(slide, (min_c, min_r));
+            if min_c != max_c || min_r != max_r {
+                s.cell_ends.insert(slide, (max_c, max_r));
+            } else {
+                s.cell_ends.remove(&slide);
+            }
+        }
+        self.scroll_range_into_view(false);
+        cx.notify();
+        true
+    }
+
+    /// Jump to the next cell on the current worksheet that violates its data validation rule.
+    pub(crate) fn jump_to_next_invalid_cell(&mut self, cx: &mut Context<Self>) -> Option<(u32, u32)> {
+        let mut invalid = self.invalid_cells();
+        if invalid.is_empty() {
+            return None;
+        }
+        // Sort in row-major order (row, col)
+        invalid.sort_by_key(|&(c, r)| (r, c));
+        let cur = self.current_cell().unwrap_or((0, 0));
+        let next = invalid
+            .iter()
+            .copied()
+            .find(|&(c, r)| (r, c) > (cur.1, cur.0))
+            .unwrap_or(invalid[0]);
+        if let Some(s) = self.sheet_state_mut() {
+            s.validation_circles = true;
+        }
+        self.set_cell(next.0, next.1);
+        self.scroll_range_into_view(false);
+        cx.notify();
+        Some(next)
+    }
+
+    pub(crate) fn validation_list_items_in_book(&self, rule: &Validation) -> Vec<String> {
+        let Some(f) = rule.formula1.as_deref() else { return Vec::new() };
+        let f = f.trim();
+        if let Some(inner) = f.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+            return inner.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        }
+        let clean = f.trim_start_matches('=').trim();
+        if let Ok(resolved) = self.resolve_range(clean) {
+            let mut out = Vec::new();
+            for row in resolved.range.first_row..=resolved.range.last_row {
+                for column in resolved.range.first_column..=resolved.range.last_column {
+                    if let Some(c) = resolved.sheet.cell(row, column)
+                        && !c.text.is_empty()
+                    {
+                        out.push(c.text.clone());
+                    }
+                }
+            }
+            return out;
+        }
+        if let Some((_, sheet)) = self.current_sheet() {
+            return list_items(sheet, rule);
+        }
+        Vec::new()
+    }
+
+    pub(crate) fn keeps_validation_in_book(&self, rule: &Validation, value: &CellValue, row: u32, column: u32) -> bool {
+        let Some((_, sheet)) = self.current_sheet() else { return true };
+        if value.is_empty() {
+            return rule.allow_blank || rule.kind == "none";
+        }
+        if rule.kind == "custom" {
+            return keeps_at(sheet, rule, value, row, column);
+        }
+        let bound = |f: &Option<String>| -> Option<f64> {
+            let f = f.as_deref()?.trim();
+            if let Ok(n) = f.parse::<f64>() {
+                return Some(n);
+            }
+            let clean = f.trim_start_matches('=').trim();
+            if let Ok(resolved) = self.resolve_range(clean) {
+                if let Some(CellValue::Number(n)) = resolved.sheet.cell(resolved.range.first_row, resolved.range.first_column).map(|x| &x.value) {
+                    return Some(*n);
+                }
+            }
+            let book = ibis_doc_model::sheet_calc::BookView::new(self.presentation());
+            let sheet_idx = self.presentation().slides.iter().position(|s| s.id == self.current_slide).unwrap_or(0);
+            match ibis_calc::recalc::evaluate(&book, (sheet_idx, row, column), clean).0 {
+                CellValue::Number(n) => Some(n),
+                _ => None,
+            }
+        };
+        let compare = |v: f64| -> bool {
+            let (a, b) = (bound(&rule.formula1), bound(&rule.formula2));
+            match (rule.operator.as_str(), a) {
+                ("between", Some(a)) => b.is_some_and(|b| v >= a.min(b) && v <= a.max(b)),
+                ("notBetween", Some(a)) => b.is_some_and(|b| v < a.min(b) || v > a.max(b)),
+                ("equal", Some(a)) => v == a,
+                ("notEqual", Some(a)) => v != a,
+                ("greaterThan", Some(a)) => v > a,
+                ("lessThan", Some(a)) => v < a,
+                ("greaterThanOrEqual", Some(a)) => v >= a,
+                ("lessThanOrEqual", Some(a)) => v <= a,
+                _ => true,
+            }
+        };
+        match rule.kind.as_str() {
+            "list" => {
+                let text = match value {
+                    CellValue::Number(n) => ibis_calc::eval::number_to_text(*n),
+                    CellValue::Text(t) => t.clone(),
+                    CellValue::Bool(b) => if *b { "TRUE".into() } else { "FALSE".into() },
+                    CellValue::Error(e) => e.as_str().to_string(),
+                    CellValue::Empty => String::new(),
+                };
+                self.validation_list_items_in_book(rule).iter().any(|i| i.eq_ignore_ascii_case(&text))
+            }
+            "whole" => matches!(value, CellValue::Number(n) if n.fract() == 0.0 && compare(*n)),
+            "decimal" | "date" | "time" => matches!(value, CellValue::Number(n) if compare(*n)),
+            "textLength" => {
+                let len = match value {
+                    CellValue::Text(t) => t.chars().count(),
+                    CellValue::Number(n) => ibis_calc::eval::number_to_text(*n).chars().count(),
+                    _ => 0,
+                };
+                compare(len as f64)
+            }
+            _ => keeps_at(sheet, rule, value, row, column),
+        }
+    }
+
     /// Whether `value` may go into (`row`, `column`): `Err` with the
     /// message when the rule refuses it (style `stop`); `Ok` with a warning
-    /// to show for the other styles.
-    pub(crate) fn check_entry(&self, row: u32, column: u32, value: &CellValue) -> Result<Option<String>, String> {
+    /// message and whether it is a `warning` confirmation (`true`) or `information` (`false`).
+    pub(crate) fn check_entry(&self, row: u32, column: u32, value: &CellValue) -> Result<Option<(String, bool)>, String> {
         let Some((_, sheet)) = self.current_sheet() else { return Ok(None) };
         let Some(rule) = rule_at(sheet, row, column) else { return Ok(None) };
         let Some((style, title, text)) = &rule.error else { return Ok(None) };
-        if keeps_at(sheet, rule, value, row, column) {
+        if self.keeps_validation_in_book(rule, value, row, column) {
             return Ok(None);
         }
         let message = if text.is_empty() { crate::shell::i18n::text("fix.validation.value-does-not-match-data").to_string() } else { text.clone() };
         let message = if title.is_empty() { message } else { format!("{title}：{message}") }; // i18n-ok（区切りの記号）
-        if style == "stop" { Err(message) } else { Ok(Some(message)) }
+        if style == "stop" { Err(message) } else { Ok(Some((message, style == "warning"))) }
     }
 
-    /// Open the selected cell's list.
-    pub(crate) fn open_validation_list(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(rule) = self.current_rule() else { return };
-        let Some((_, sheet)) = self.current_sheet() else { return };
-        let Some((column, row)) = self.current_cell() else { return };
-        let items = list_items(sheet, &rule);
+    /// Accept the warning-flagged entry ("はい" / Yes): keep the committed value and dismiss the confirmation card.
+    pub(crate) fn validation_warning_yes(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.sheet_state_mut() {
+            s.validation_warning = None;
+        }
+        cx.notify();
+    }
+
+    /// Reject the warning-flagged entry and resume editing ("いいえ" / No): undo the commit and reopen the inline editor with the typed text.
+    pub(crate) fn validation_warning_no(&mut self, cx: &mut Context<Self>) {
+        let Some(mut warn) = self.sheet_state_mut().and_then(|s| s.validation_warning.take()) else { return };
+        self.document.undo();
+        self.set_cell(warn.edit.column, warn.edit.row);
+        warn.edit.mode = super::cell_edit::EditMode::Edit;
+        if let Some(s) = self.sheet_state_mut() {
+            s.cell_edit = Some(warn.edit);
+        }
+        self.sync_workbook_peers(cx);
+        cx.notify();
+    }
+
+    /// Cancel the warning-flagged entry ("キャンセル" / Cancel): undo the commit and restore the previous cell value.
+    pub(crate) fn validation_warning_cancel(&mut self, cx: &mut Context<Self>) {
+        let Some(warn) = self.sheet_state_mut().and_then(|s| s.validation_warning.take()) else { return };
+        self.document.undo();
+        self.set_cell(warn.edit.column, warn.edit.row);
+        self.sync_workbook_peers(cx);
+        cx.notify();
+    }
+
+    /// Open a drop-down list pop-up with `items` at `position` for (`column`, `row`).
+    pub(crate) fn open_cell_items_popup(&mut self, items: Vec<String>, column: u32, row: u32, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        if items.is_empty() {
+            return;
+        }
         let slide = self.current_slide;
         let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
         let entries: std::rc::Rc<Vec<MenuEntry>> = std::rc::Rc::new(
@@ -244,7 +518,7 @@ impl SlideEditor {
                 .map(|item| {
                     let text = item.clone();
                     MenuItem::new("xlsx.validation-item", item)
-                        .on(move |this, _, cx| {
+                        .on(move |this, window, cx| {
                             let input = match ibis_calc::input::parse_input(&text, date1904) {
                                 ibis_calc::input::Typed::Value(v, _) => CellInput::Value(v),
                                 ibis_calc::input::Typed::Formula(_) => CellInput::Value(CellValue::Text(text.clone())),
@@ -255,6 +529,7 @@ impl SlideEditor {
                             if let Some(s) = this.sheet_state_mut() {
                                 s.list_popup = None;
                             }
+                            this.focus_handle.focus(window, cx);
                             cx.notify();
                         })
                         .into()
@@ -273,6 +548,44 @@ impl SlideEditor {
         menu.read(cx).focus_handle(cx).focus(window, cx);
         self.wb_mut().list_popup = Some(ListPopup { menu, position, _dismiss: dismiss });
         cx.notify();
+    }
+
+    /// Open the selected cell's validation list.
+    pub(crate) fn open_validation_list(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(rule) = self.current_rule() else { return };
+        let Some((column, row)) = self.current_cell() else { return };
+        let items = self.validation_list_items_in_book(&rule);
+        self.open_cell_items_popup(items, column, row, position, window, cx);
+    }
+
+    /// Check whether "Pick from Drop-down List" (⌥↓ / Alt+↓) can be offered for the active cell.
+    pub(crate) fn can_pick_from_list(&self) -> bool {
+        if self.current_rule().is_some_and(|r| r.kind == "list") {
+            return true;
+        }
+        let Some((column, row)) = self.current_cell() else { return false };
+        let Some((_, sheet)) = self.current_sheet() else { return false };
+        !column_pick_list_items(sheet, row, column).is_empty()
+    }
+
+    /// Excel's ⌥↓ (Alt+↓) / "Pick from Drop-down List": opens the validation list if
+    /// a list rule is set, otherwise opens a drop-down of unique text items from the same column.
+    pub(crate) fn pick_from_drop_down_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((column, row)) = self.current_cell() else { return };
+        let position = self.cell_center(column, row).unwrap_or_else(|| point(px(100.), px(100.)));
+
+        // Priority 1: Data validation list rule
+        if self.current_rule().is_some_and(|r| r.kind == "list") {
+            self.open_validation_list(position, window, cx);
+            return;
+        }
+
+        // Priority 2: Column pick list items
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let items = column_pick_list_items(sheet, row, column);
+        if !items.is_empty() {
+            self.open_cell_items_popup(items, column, row, position, window, cx);
+        }
     }
 
     /// Open the panel (データの入力規則), with the selected cell's rule.
@@ -297,6 +610,7 @@ impl SlideEditor {
             second: input("fix.validation.second-value-between", shown(&r.formula2), window, cx),
             allow_blank: r.allow_blank,
             dropdown: r.dropdown,
+            apply_to_same: false,
             show_prompt: r.prompt.is_some(),
             prompt_title: input("_shell.title", prompt_title, window, cx),
             prompt: input("fix.validation.input-message-optional", prompt_text, window, cx),
@@ -325,9 +639,31 @@ impl SlideEditor {
         cx.notify();
     }
 
+    pub(crate) fn set_validation_range_from_selection(&mut self, second_field: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(r) = self.selected_range() else { return };
+        let val = if r.first_row == r.last_row && r.first_column == r.last_column {
+            format!("={}", ibis_doc_model::cell_name(r.first_column, r.first_row))
+        } else {
+            format!(
+                "={}:{}",
+                ibis_doc_model::cell_name(r.first_column, r.first_row),
+                ibis_doc_model::cell_name(r.last_column, r.last_row)
+            )
+        };
+        let input = self
+            .sheet_state()
+            .and_then(|s| s.validation.as_ref())
+            .map(|p| if second_field { p.second.clone() } else { p.items.clone() });
+        if let Some(input) = input {
+            input.update(cx, |i, cx| i.set_value(val, window, cx));
+            cx.notify();
+        }
+    }
+
     /// The panel's rule over the selected ranges (OK).
     pub(crate) fn apply_validation_panel(&mut self, cx: &mut Context<Self>) {
         let Some(p) = self.sheet_state().and_then(|s| s.validation.as_ref()) else { return };
+        let apply_to_same = p.apply_to_same;
         let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
         let value = |e: &Entity<InputState>| e.read(cx).value().trim().to_string();
         let (first, second) = (value(&p.items), value(&p.second));
@@ -353,10 +689,13 @@ impl SlideEditor {
                 if first.is_empty() {
                     return self.validation_message(crate::shell::i18n::text("fix.validation.enter-source").into(), cx);
                 }
-                // A range (=A1:A5) or items.
-                let f = match first.strip_prefix('=') {
-                    Some(range) => range.to_string(),
-                    None => format!("\"{}\"", first.split(',').map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(",")),
+                // A range/Defined Name (=A1:A5, =AllowedItems, A1:A5, or AllowedItems) or comma-separated items.
+                let f = if let Some(range) = first.strip_prefix('=') {
+                    range.trim().to_string()
+                } else if !first.contains(',') && !first.starts_with('"') && self.resolve_range(&first).is_ok() {
+                    first.clone()
+                } else {
+                    format!("\"{}\"", first.split(',').map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(","))
                 };
                 (Some(f), None)
             }
@@ -385,7 +724,7 @@ impl SlideEditor {
             error: p.show_error.then(|| (p.style.to_string(), value(&p.error_title), value(&p.error_text))),
             ..Default::default()
         };
-        let (slide, ranges) = (self.current_slide, self.selected_ranges());
+        let (slide, ranges) = (self.current_slide, self.target_validation_ranges(apply_to_same));
         if ranges.is_empty() {
             return;
         }
@@ -419,9 +758,13 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// すべてクリア: the rules taken off the selected ranges.
+    /// すべてクリア: the rules taken off the selected ranges (or all matching rules when `apply_to_same` is set).
     pub(crate) fn clear_validation(&mut self, cx: &mut Context<Self>) {
-        let ranges = self.selected_ranges();
+        let apply_to_same = self
+            .sheet_state()
+            .and_then(|s| s.validation.as_ref())
+            .is_some_and(|p| p.apply_to_same);
+        let ranges = self.target_validation_ranges(apply_to_same);
         if ranges.is_empty() {
             return;
         }
@@ -441,7 +784,7 @@ impl SlideEditor {
                 for r in range.first_row..=range.last_row {
                     for c in range.first_column..=range.last_column {
                         let value = sheet.cell(r, c).map_or(&CellValue::Empty, |cell| &cell.value);
-                        if !keeps_at(sheet, rule, value, r, c) {
+                        if !self.keeps_validation_in_book(rule, value, r, c) {
                             invalid.push((c, r));
                         }
                     }
@@ -605,15 +948,52 @@ impl SlideEditor {
                 _ if matches!(p.operator, "between" | "notBetween") => "xlsx.chart-axis-min",
                 _ => "chart.labels.show-value",
             };
-            body = body.child(div().text_size(px(13.)).child(text(label))).child(mark("items", Input::new(&p.items).small().into_any_element()));
+            body = body
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_size(px(13.)).child(text(label)))
+                        .child(mark(
+                            "use-items-selection",
+                            Button::new("validation-use-items")
+                                .xsmall()
+                                .ghost()
+                                .label(text("xlsx.subtotal-use-selection"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.set_validation_range_from_selection(false, window, cx);
+                                }))
+                                .into_any_element(),
+                        )),
+                )
+                .child(mark("items", Input::new(&p.items).small().into_any_element()));
             if compared && matches!(p.operator, "between" | "notBetween") {
-                body = body.child(div().text_size(px(13.)).child(text("_xlsx.max"))).child(mark("second", Input::new(&p.second).small().into_any_element()));
+                body = body
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(div().text_size(px(13.)).child(text("_xlsx.max")))
+                            .child(mark(
+                                "use-second-selection",
+                                Button::new("validation-use-second")
+                                    .xsmall()
+                                    .ghost()
+                                    .label(text("xlsx.subtotal-use-selection"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.set_validation_range_from_selection(true, window, cx);
+                                    }))
+                                    .into_any_element(),
+                            )),
+                    )
+                    .child(mark("second", Input::new(&p.second).small().into_any_element()));
             }
             body = body.child(toggle("validation-blank", p.allow_blank, "fix.validation.ignore-blank", |p| p.allow_blank = !p.allow_blank));
             if p.kind == "list" {
                 body = body.child(toggle("validation-dropdown", p.dropdown, "fix.validation.cell-dropdown", |p| p.dropdown = !p.dropdown));
             }
         }
+        body = body.child(toggle("validation-apply-same", p.apply_to_same, "xlsx.validation.apply-same", |p| p.apply_to_same = !p.apply_to_same));
         }
         if p.tab == 1 {
         body = body
@@ -641,9 +1021,11 @@ impl SlideEditor {
                 ])
             )
             .child(
-                h_flex().gap_2().children([
+                h_flex().gap_2().flex_wrap().children([
                     mark("circle-invalid", Button::new("validation-circle").small().ghost().label(text("_xlsx.circle-invalid-data")).on_click(cx.listener(|this, _, _, cx| this.circle_invalid_data(cx))).into_any_element()),
                     mark("clear-circles", Button::new("validation-clear-circles").small().ghost().label(text("_xlsx.clear-validation-circles")).on_click(cx.listener(|this, _, _, cx| this.clear_validation_circles(cx))).into_any_element()),
+                    mark("next-invalid", Button::new("validation-next-invalid").small().ghost().label(text("xlsx.validation.next-invalid")).on_click(cx.listener(|this, _, _, cx| { this.jump_to_next_invalid_cell(cx); })).into_any_element()),
+                    mark("select-same", Button::new("validation-select-same").small().ghost().label(text("xlsx.validation.select-same")).on_click(cx.listener(|this, _, _, cx| { this.select_validation_cells(true, cx); })).into_any_element()),
                 ])
             );
         Some(SidebarPanel { title: crate::shell::i18n::text("_shell.data-validation").into(), body: body.into_any_element() })
@@ -664,5 +1046,59 @@ mod tests {
         assert!(keeps(&sheet, &whole, &CellValue::Number(5.0)));
         assert!(!keeps(&sheet, &whole, &CellValue::Number(5.5)));
         assert!(!keeps(&sheet, &whole, &CellValue::Number(11.0)));
+    }
+
+    #[test]
+    fn test_column_pick_list_items() {
+        let mut sheet = Sheet::default();
+        sheet.cells.push(ibis_doc_model::SheetCell {
+            row: 0,
+            column: 0,
+            text: "Tokyo".into(),
+            value: CellValue::Text("Tokyo".into()),
+            runs: None,
+            phonetic: None,
+            kind: ibis_doc_model::CellKind::Text,
+            formula: None,
+            style: 0,
+        });
+        sheet.cells.push(ibis_doc_model::SheetCell {
+            row: 1,
+            column: 0,
+            text: "Osaka".into(),
+            value: CellValue::Text("Osaka".into()),
+            runs: None,
+            phonetic: None,
+            kind: ibis_doc_model::CellKind::Text,
+            formula: None,
+            style: 0,
+        });
+        sheet.cells.push(ibis_doc_model::SheetCell {
+            row: 2,
+            column: 0,
+            text: "Nagoya".into(),
+            value: CellValue::Text("Nagoya".into()),
+            runs: None,
+            phonetic: None,
+            kind: ibis_doc_model::CellKind::Text,
+            formula: None,
+            style: 0,
+        });
+        sheet.cells.push(ibis_doc_model::SheetCell {
+            row: 3,
+            column: 0,
+            text: "tokyo".into(), // Duplicate in different case
+            value: CellValue::Text("tokyo".into()),
+            runs: None,
+            phonetic: None,
+            kind: ibis_doc_model::CellKind::Text,
+            formula: None,
+            style: 0,
+        });
+
+        // Cell A5 (row 4, column 0) is empty; check pick list items from A5
+        let items = super::column_pick_list_items(&sheet, 4, 0);
+        // Should be sorted alphabetically (case-insensitive) and deduplicated
+        assert_eq!(items, vec!["Nagoya", "Osaka", "Tokyo"]);
     }
 }

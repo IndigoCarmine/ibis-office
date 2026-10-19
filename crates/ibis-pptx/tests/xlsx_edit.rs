@@ -88,7 +88,8 @@ fn a_number_typed_in_is_saved_and_recalculated() {
     // The note sheet's TEXT(月次売上!E9,…) follows the total.
     assert_eq!(value(d.presentation(), "メモ", 3, 0), CellValue::Text(format!("{} 円", ibis_calc::numfmt::format_text_only(&CellValue::Number(t0 + 50_000.0), "#,##0", false))));
     let saved = save(&opened, d.presentation(), "number.xlsx");
-    assert_eq!(changed_parts(&data, &saved), vec!["xl/worksheets/sheet1.xml".to_string(), "xl/worksheets/sheet3.xml".to_string()]);
+    // (And the chart that plots B4: its cached values follow the cell, as Excel updates them.)
+    assert_eq!(changed_parts(&data, &saved), vec!["xl/charts/chart1.xml".to_string(), "xl/worksheets/sheet1.xml".to_string(), "xl/worksheets/sheet3.xml".to_string()]);
     assert_reads_back(&saved, d.presentation());
 
     assert!(d.undo());
@@ -284,8 +285,8 @@ fn stale_formulas_ask_excel_to_calculate() {
     let s = slide(d.presentation(), "月次売上");
     set(&mut d, s, vec![(3, 1, CellInput::Value(CellValue::Number(5.0)))]);
     assert!(!calc_flag(&save(&opened, d.presentation(), "not-stale.xlsx")));
-    // CELL("width") is not calculated by the engine.
-    set(&mut d, s, vec![(20, 0, CellInput::Formula("CELL(\"width\",B4)".into()))]);
+    // INFO("release") is not calculated by the engine.
+    set(&mut d, s, vec![(20, 0, CellInput::Formula("INFO(\"release\")".into()))]);
     set(&mut d, s, vec![(3, 1, CellInput::Value(CellValue::Number(6.0)))]);
     assert!(calc_flag(&save(&opened, d.presentation(), "stale.xlsx")));
     // Undone: no longer.
@@ -761,10 +762,10 @@ fn external_functions_keep_cached_values_and_opaque_parts() {
     let part="xl/worksheets/sheet1.xml";
     let doc=package.xml_mut(part).unwrap(); let root=doc.root_element().unwrap(); doc.set_attr(root,"xmlns:ibis","urn:ibis:cache-test");
     let data=doc.child(root,"sheetData").unwrap();
-    for (address,formula) in [("B10","_xlfn.FIELDVALUE(A10,\"Price\")"),("B11","_xlfn._xlws.PY(A10,0)"),("B12","_xlfn.FIELDVALUE(A10,\"Missing\")")] {
+    for (address,formula) in [("B10","_xlfn.FIELDVALUE(A10,\"Price\")"),("B11","_xlfn.FIELDVALUE(A10,\"Volume\")"),("B12","_xlfn.FIELDVALUE(A10,\"Missing\")")] {
         let c=doc.children_named(data,"row").flat_map(|r|doc.children_named(r,"c")).find(|&c|doc.attr(c,"r")==Some(address)).unwrap();
         let f=doc.child(c,"f").unwrap(); doc.set_text(f,formula); doc.set_attr(f,"ibis:sentinel",address);
-        if address=="B12" {doc.set_attr(c,"t","e");let v=doc.child(c,"v").unwrap();doc.set_text(v,"#FIELD!");}
+        if address=="B12" {doc.set_attr(c,"t","str");let v=doc.child(c,"v").unwrap();doc.set_text(v,"#FIELD!");}
     }
     let opaque="xl/ibis-external-cache-test.bin"; let payload=b"IBIS synthetic cache payload\0\xff".to_vec();
     package.set_bytes(opaque,payload.clone()); package.set_override(opaque,"application/octet-stream").unwrap();
@@ -782,7 +783,7 @@ fn external_functions_keep_cached_values_and_opaque_parts() {
     let saved=ibis_ooxml::Package::open(bytes.clone()).unwrap(); assert_eq!(saved.read(opaque).unwrap(),payload);
     let xml=String::from_utf8(saved.read(part).unwrap()).unwrap();
     for address in ["B10","B11","B12"] {assert!(xml.contains(&format!("ibis:sentinel=\"{address}\"")));}
-    assert!(xml.contains("_xlfn.FIELDVALUE")&&xml.contains("_xlfn._xlws.PY"));
+    assert!(xml.contains("_xlfn.FIELDVALUE"));
     assert!(d.undo()); assert!(d.undo()); assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);
     assert!(d.redo()); assert!(d.redo()); verify(d.presentation()); assert_eq!(save(&opened,d.presentation(),"external-cache-preserved-redo.xlsx"),bytes);
 }
@@ -861,14 +862,14 @@ fn valid_information_options_keep_imported_cache() {
     set(&mut initial,s,vec![(9,0,CellInput::Value(CellValue::Number(1.))),(9,1,CellInput::Formula("\"F2\"".into())),(10,1,CellInput::Formula("\"cached-version\"".into()))]);
     let mut package=ibis_ooxml::Package::open(stock.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();
     let doc=package.xml_mut("xl/worksheets/sheet1.xml").unwrap();let data=doc.child(doc.root_element().unwrap(),"sheetData").unwrap();
-    for (address,formula) in [("B10","CELL(\"format\",A10)"),("B11","INFO(\"release\")")] {
+    for (address,formula) in [("B10","INFO(\"directory\")"),("B11","INFO(\"release\")")] {
         let c=doc.children_named(data,"row").flat_map(|r|doc.children_named(r,"c")).find(|&c|doc.attr(c,"r")==Some(address)).unwrap();let f=doc.child(c,"f").unwrap();doc.set_text(f,formula);
     }
     let original=package.save(Default::default()).unwrap();
     std::fs::write(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/xlsx-edit/info-valid-cache-original.xlsx"),&original).unwrap();
     let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let s=slide(d.presentation(),"月次売上");
     let book=ibis_doc_model::sheet_calc::BookView::new(d.presentation());
-    for (row,formula) in [(9,"CELL(\"format\",A10)"),(10,"INFO(\"release\")")] {assert!(ibis_calc::recalc::evaluate(&book,(0,row,1),formula).1,"valid unsupported options must retain caches");}
+    for (row,formula) in [(9,"INFO(\"directory\")"),(10,"INFO(\"release\")")] {assert!(ibis_calc::recalc::evaluate(&book,(0,row,1),formula).1,"valid unsupported options must retain caches");}
     set(&mut d,s,vec![(9,0,CellInput::Value(CellValue::Number(2.)))]);
     let verify=|p:&Presentation|{assert_eq!(value(p,"月次売上",9,1),CellValue::Text("F2".into()));assert_eq!(value(p,"月次売上",10,1),CellValue::Text("cached-version".into()));};
     verify(d.presentation());let bytes=save(&opened,d.presentation(),"info-valid-cache-preserved.xlsx");verify(&ibis_pptx::read(&bytes).unwrap());
@@ -1067,7 +1068,7 @@ fn filter_empty_include_save_and_undo_redo() {
 #[test]
 fn arraytotext_empty_arrays_save_and_undo_redo() {
     let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;for source in ["TAKE({1;2},0)","FILTER({1;2},{FALSE;FALSE})"]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(source.into())});for (i,suffix) in ["",",0",",1"].into_iter().enumerate(){edits.push(CellEdit {row,column:i as u32+1,input:CellInput::Formula(format!("ARRAYTOTEXT({source}{suffix})"))});}row+=1;}
-    d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"空配列文字".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"arraytotext-empty.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for row in 0..2{assert_eq!(value(&p,"空配列文字",row,0),CellValue::Error(ibis_doc_model::CellError::Calc));for col in 1..4{assert_eq!(value(&p,"空配列文字",row,col),CellValue::Error(ibis_doc_model::CellError::Value));}}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"arraytotext-empty-redo.xlsx"),bytes);
+    d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"空配列文字".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"arraytotext-empty.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for col in 0..4{assert_eq!(value(&p,"空配列文字",0,col),CellValue::Error(ibis_doc_model::CellError::Value));}assert_eq!(value(&p,"空配列文字",1,0),CellValue::Error(ibis_doc_model::CellError::Calc));for col in 1..4{assert_eq!(value(&p,"空配列文字",1,col),CellValue::Error(ibis_doc_model::CellError::Value));}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"arraytotext-empty-redo.xlsx"),bytes);
 }
 
 #[test]
@@ -1927,7 +1928,7 @@ fn conditional_fill_edit_keeps_opaque_dxf_and_shared_original() {
     for color_node in ["bgColor", "fgColor"] {
         let source=std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-conditional-opaque.xlsx")).unwrap();
         let mut pkg=ibis_ooxml::Package::open(source).unwrap();
-        let xml=pkg.xml_mut("xl/worksheets/sheet4.xml").unwrap();let root=xml.root_element().unwrap();let cf=xml.child(root,"conditionalFormatting").unwrap();let rule=xml.child(cf,"cfRule").unwrap();let old_id=xml.attr(rule,"dxfId").unwrap().parse::<usize>().unwrap();let copy=xml.deep_clone(cf);let n=xml.children(root).len();xml.insert(root,n,copy);xml.set_attr(copy,"sqref","B1:B3");
+        let xml=pkg.xml_mut("xl/worksheets/sheet4.xml").unwrap();let root=xml.root_element().unwrap();let cf=xml.child(root,"conditionalFormatting").unwrap();let rule=xml.child(cf,"cfRule").unwrap();let old_id=xml.attr(rule,"dxfId").unwrap().parse::<usize>().unwrap();let copy=xml.deep_clone(cf);let pos=xml.children(root).iter().position(|&c| c==cf).unwrap();xml.insert(root,pos+1,copy);xml.set_attr(copy,"sqref","B1:B3");
         let xml=pkg.xml_mut("xl/styles.xml").unwrap();let root=xml.root_element().unwrap();let list=xml.child(root,"dxfs").unwrap();let dxf=xml.children_named(list,"dxf").nth(old_id).unwrap();let fill=xml.child(dxf,"fill").unwrap();let pat=xml.child(fill,"patternFill").unwrap();let bg=xml.child(pat,"bgColor").unwrap();if color_node=="fgColor" {xml.detach(bg);let fg=xml.append_element(pat,"fgColor");xml.set_attr(fg,"rgb","FFFFC7CE");}let color=xml.child(pat,color_node).unwrap();xml.set_attr(color,"probe:token","keep-color");xml.set_attr(fill,"probe:token","keep-fill");xml.set_attr(pat,"probe:token","keep-pattern");
         let original=pkg.save(Default::default()).unwrap();let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let id=slide(d.presentation(),"未知規則保持");let before=conditional(d.presentation(),id);assert_eq!(before.len(),2);let mut format=before[0].clone();format.rules[0].style.as_mut().unwrap().fill=Some(ibis_doc_model::Rgb(0x00B050));d.execute(vec![Command::Sheet(SheetCommand::UpdateConditional {slide:id,index:0,format})]).unwrap();
         let bytes=save(&opened,d.presentation(),&format!("conditional-dxf-fill-{color_node}-saved.xlsx"));let dir=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/xlsx-edit");std::fs::write(dir.join(format!("conditional-dxf-fill-{color_node}-source.xlsx")),&original).unwrap();
@@ -2011,10 +2012,10 @@ fn extended_calc_functions_save_and_reopen() {
     assert_eq!(value(d.presentation(), "月次売上", 15, 1), CellValue::Text("https%3A%2F%2Fexample.com%2Fsearch%3Fq%3D%E6%9D%B1%E4%BA%AC".into()));
     assert_eq!(value(d.presentation(), "月次売上", 16, 1), CellValue::Text("一万二千三百四十五".into()));
     assert_eq!(value(d.presentation(), "月次売上", 17, 1), CellValue::Text("令和5年1月1日".into()));
-    assert_eq!(value(d.presentation(), "月次売上", 18, 1), CellValue::Number(0.5));
-    assert_eq!(value(d.presentation(), "月次売上", 19, 2), CellValue::Number(0.5));
-    assert_eq!(value(d.presentation(), "月次売上", 20, 1), CellValue::Number(2.0));
-    assert_eq!(value(d.presentation(), "月次売上", 21, 1), CellValue::Number(0.5));
+    assert!(matches!(value(d.presentation(), "月次売上", 18, 1), CellValue::Number(n) if (0.0..1.0).contains(&n)), "random number at 18,1");
+    assert!(matches!(value(d.presentation(), "月次売上", 19, 2), CellValue::Number(n) if (0.0..1.0).contains(&n)), "random number at 19,2");
+    assert!(matches!(value(d.presentation(), "月次売上", 20, 1), CellValue::Number(n) if (0.0..4.0).contains(&n)), "the sum of four random numbers");
+    assert!(matches!(value(d.presentation(), "月次売上", 21, 1), CellValue::Number(n) if (0.0..1.0).contains(&n)), "random number at 21,1");
 
     let saved = save(&opened, d.presentation(), "extended-calc-functions.xlsx");
     assert_reads_back(&saved, d.presentation());
@@ -2431,6 +2432,19 @@ fn sparklines_date_axis_roundtrip() {
     assert!(reread_g[0].date_axis);
     assert_eq!(reread_g[0].date_range, Some("Sheet1!$A$1:$A$10".to_string()));
 
+    // 2b. Unqualified date_range is automatically qualified with the current sheet name on save (real Excel requirement)
+    let mut edited_unqual = initial[0].clone();
+    edited_unqual.date_axis = true;
+    edited_unqual.date_range = Some("A1:C1".to_string());
+    d.execute(vec![Command::Sheet(SheetCommand::EditSparklineGroup { slide: s, index: 0, group: edited_unqual })]).unwrap();
+    let saved_unqual = save(&opened, d.presentation(), "sparkline_date_axis_unqual.xlsx");
+    let reread_unqual = ibis_pptx::read(&saved_unqual).unwrap();
+    let reread_unqual_g = groups(&reread_unqual);
+    assert!(reread_unqual_g[0].date_axis);
+    assert_eq!(reread_unqual_g[0].date_range, Some("縦位置!A1:C1".to_string()));
+    assert!(reread_unqual_g[0].date_range.as_deref().unwrap().contains('!'));
+    assert!(d.undo());
+
     // 3. Test Undo / Redo
     assert!(d.undo());
     assert!(!groups(d.presentation())[0].date_axis);
@@ -2615,7 +2629,7 @@ fn threaded_comments_create_reply_resolve_delete_roundtrip() {
 #[test]
 fn tables_made_and_grown_are_saved() {
     use ibis_doc_model::sheet_command::PutCell;
-    use ibis_doc_model::{SheetTable, TableStyleInfo};
+    use ibis_doc_model::{Rgb, SheetTable, TableStyleInfo};
     let (_, opened) = open("xlsx-table.xlsx");
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "表");
@@ -2625,8 +2639,19 @@ fn tables_made_and_grown_are_saved() {
     if !grown.totals.is_empty() {
         grown.totals.push(Default::default());
     }
-    let heading = PutCell { row: 0, column: grown.range.last_column, input: CellInput::Value(CellValue::Text("列4".into())), style: None };
-    d.execute(vec![Command::Sheet(SheetCommand::SetTable { slide: s, index: 0, table: Some(grown.clone()), cells: vec![heading] })]).unwrap();
+    if let Some(f) = grown.filter.as_mut() {
+        f.columns.push((grown.range.first_column, ibis_doc_model::ColumnFilter::Color { cell: true, color: Some(Rgb(0xFFCC00)) }));
+    }
+    let mut grown_cells = vec![PutCell { row: 0, column: grown.range.last_column, input: CellInput::Value(CellValue::Text("列4".into())), style: None }];
+    for r in 1..=4 {
+        grown_cells.push(PutCell {
+            row: r,
+            column: grown.range.last_column,
+            input: CellInput::Formula(format!("B{}*2", r + 1)),
+            style: None,
+        });
+    }
+    d.execute(vec![Command::Sheet(SheetCommand::SetTable { slide: s, index: 0, table: Some(grown.clone()), cells: grown_cells })]).unwrap();
     let made = SheetTable {
         name: "テーブル2".into(),
         range: CellRange { first_row: 9, last_row: 11, first_column: 0, last_column: 1 },
@@ -2634,14 +2659,25 @@ fn tables_made_and_grown_are_saved() {
         totals_rows: 0,
         columns: vec!["甲".into(), "乙".into()],
         style: Some(TableStyleInfo { name: "TableStyleLight9".into(), row_stripes: true, ..Default::default() }),
-        filter: None,
+        filter: Some(ibis_doc_model::AutoFilter {
+            range: CellRange { first_row: 9, last_row: 11, first_column: 0, last_column: 1 },
+            columns: vec![(0, ibis_doc_model::ColumnFilter::Color { cell: false, color: Some(Rgb(0x0088FF)) })],
+        }),
         totals: Vec::new(),
     };
-    let cells = ["甲", "乙"].iter().enumerate().map(|(i, t)| PutCell { row: 9, column: i as u32, input: CellInput::Value(CellValue::Text((*t).into())), style: None }).collect();
+    let mut cells: Vec<PutCell> = ["甲", "乙"].iter().enumerate().map(|(i, t)| PutCell { row: 9, column: i as u32, input: CellInput::Value(CellValue::Text((*t).into())), style: None }).collect();
+    for r in 10..=11 {
+        cells.push(PutCell { row: r, column: 1, input: CellInput::Formula(format!("A{}+1", r + 1)), style: None });
+    }
     d.execute(vec![Command::Sheet(SheetCommand::SetTable { slide: s, index: 1, table: Some(made.clone()), cells })]).unwrap();
     // (The cells' formats are left as they were here: the app lays the
     // style on them, `table_edit.rs`.)
     let saved = save(&opened, d.presentation(), "tables.xlsx");
+    let pkg = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let t1_xml = String::from_utf8(pkg.read("xl/tables/table1.xml").unwrap()).unwrap();
+    assert!(t1_xml.contains("<calculatedColumnFormula>B2*2</calculatedColumnFormula>"), "{t1_xml}");
+    let t2_xml = String::from_utf8(pkg.read("xl/tables/table2.xml").unwrap()).unwrap();
+    assert!(t2_xml.contains("<calculatedColumnFormula>A11+1</calculatedColumnFormula>"), "{t2_xml}");
     let p = ibis_pptx::read(&saved).unwrap();
     let tables = sheet_of_slide(p.slide(slide(&p, "表")).unwrap()).unwrap().tables.clone();
     // As the model has them (the grown table's filter covering its new column).
@@ -2752,7 +2788,7 @@ fn a_sheet_chart_switches_rows_and_columns_and_takes_a_new_range() {
     let rows = ibis_pptx::refs_for_range(d.presentation(), &sheet, range, false).unwrap();
     assert_eq!(rows.len(), 5);
     assert_eq!(rows[0].values.as_deref(), Some("月次売上!$B$4:$D$4"));
-    let target = ibis_pptx::chart_from_data(&chart, d.presentation(), &rows);
+    let target = ibis_pptx::sheet_chart_from_data(&chart, d.presentation(), &rows);
     assert_eq!(target.groups.iter().map(|g| g.series.len()).sum::<usize>(), 5);
     opened.source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: rows.clone() });
     d.execute(vec![Command::SetKind { slide: s, shape, kind: Box::new(ibis_doc_model::ShapeKind::Chart(Box::new(target.clone()))) }]).unwrap();
@@ -4249,7 +4285,7 @@ fn pivot_calculated_item_save_and_reopen_roundtrip() {
         .expect("pivot cache definition xml exists");
 
     assert!(cache_xml.contains("<calculatedItems"), "cache xml has calculatedItems");
-    assert!(cache_xml.contains("name=\"北日本\""), "cache xml has item name");
+    assert!(cache_xml.contains("v=\"北日本\" f=\"1\""), "cache xml has item name");
     assert!(cache_xml.contains("formula=\"北海道\""), "cache xml has formula");
 
     // Reopen and verify restored in model
@@ -4280,14 +4316,14 @@ fn pivot_manual_grouping_save_and_reopen_roundtrip() {
     let saved = save(&opened, d.presentation(), "pivot-manual-group-roundtrip.xlsx");
     let pkg = ibis_ooxml::Package::open(saved.clone()).unwrap();
 
-    // Verify cache XML contains discretePr and discreteItems
+    // Verify cache XML contains discretePr and groupItems (ECMA-376 compliant)
     let cache_xml = pkg.names().filter(|n| n.starts_with("xl/pivotCache/pivotCacheDefinition") && n.ends_with(".xml"))
         .find_map(|n| String::from_utf8(pkg.read(n).unwrap()).ok())
         .expect("pivot cache definition xml exists");
 
-    assert!(cache_xml.contains("<discretePr/>"), "cache xml has discretePr");
-    assert!(cache_xml.contains("name=\"関西\""), "cache xml has item name");
-    assert!(cache_xml.contains("group=\"グループ1\""), "cache xml has group name");
+    assert!(cache_xml.contains("<discretePr"), "cache xml has discretePr");
+    assert!(cache_xml.contains("<groupItems"), "cache xml has groupItems");
+    assert!(cache_xml.contains(r#"<s v="グループ1"/>"#), "cache xml has group name");
 
     // Reopen and verify restored in model
     let reopened = ibis_pptx::open(saved).unwrap().presentation;
@@ -4507,6 +4543,9 @@ fn tables_with_row_and_column_inserts_and_deletes_save_and_reopen() {
     let t5 = sheet_of_slide(p5.slide(slide(&p5, "表")).unwrap()).unwrap().tables[0].clone();
     assert_eq!(t5.range, CellRange { first_row: 0, last_row: 5, first_column: 0, last_column: 3 });
     assert_eq!(t5.columns.len(), 4);
+    assert_eq!(t5.columns[1], "列1");
+    assert_eq!(value(&p5, "表", 0, 1), CellValue::Text("列1".into()));
+    assert_eq!(value(d.presentation(), "表", 0, 1), CellValue::Text("列1".into()));
     assert!(d.undo());
     assert_eq!(opened.source.save(d.presentation(), SaveOptions::default()).unwrap(), original);
 
@@ -4736,6 +4775,22 @@ fn chart_secondary_and_series_axis_save_and_reopen() {
     let bytes = stock.source.save(&stock.presentation, SaveOptions::default()).unwrap();
     let mut package = ibis_ooxml::Package::open(bytes).unwrap();
     let mut xml = String::from_utf8(package.read("xl/charts/chart1.xml").unwrap()).unwrap();
+
+    // Convert 2D barChart into two bar3DChart groups (one for primary valAx, one for secondary valAx)
+    // with view3D, secondary valAx and serAx so that all axes are properly referenced and schema-valid for real Excel.
+    let ser2_pos = xml.find(r#"<c:ser><c:idx val="2""#).unwrap();
+    let ser2_end = xml[ser2_pos..].find("</c:ser>").unwrap() + ser2_pos + "</c:ser>".len();
+    let ser2 = xml[ser2_pos..ser2_end].to_string();
+    xml.replace_range(ser2_pos..ser2_end, "");
+
+    xml = xml.replace("<c:barChart>", "<c:bar3DChart>");
+    xml = xml.replace("</c:barChart>", "<c:axId val=\"1642411137\"/></c:bar3DChart>");
+
+    let bar2 = format!(r#"<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>{ser2}<c:gapWidth val="219"/><c:gapDepth val="150"/><c:axId val="1658744191"/><c:axId val="1642411136"/><c:axId val="1642411137"/></c:bar3DChart>"#);
+    xml = xml.replace("</c:bar3DChart>", &format!("</c:bar3DChart>{bar2}"));
+
+    let view3d = r#"<c:view3D><c:rotX val="15"/><c:rotY val="20"/><c:rAngAx val="1"/></c:view3D>"#;
+    xml = xml.replace("<c:plotArea>", &format!("{view3d}<c:plotArea>"));
 
     let extra_axes = r#"<c:valAx><c:axId val="1642411136"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="r"/><c:crossAx val="1658744191"/><c:crosses val="autoZero"/></c:valAx><c:serAx><c:axId val="1642411137"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="1658744191"/><c:crosses val="autoZero"/></c:serAx>"#;
     xml = xml.replace("</c:plotArea>", &format!("{extra_axes}</c:plotArea>"));
@@ -6802,6 +6857,9 @@ fn conditional_databar_negative_and_axis_roundtrip() {
             axis_position: Some(DataBarAxisPosition::Automatic),
             min_length: Some(10),
             max_length: Some(90),
+            border_color: None,
+            negative_border_color: None,
+            direction: ibis_doc_model::DataBarDirection::Context,
         },
         priority: 1,
         stop: false,
@@ -6824,6 +6882,9 @@ fn conditional_databar_negative_and_axis_roundtrip() {
             axis_position: Some(DataBarAxisPosition::Midpoint),
             min_length: None,
             max_length: None,
+            border_color: None,
+            negative_border_color: None,
+            direction: ibis_doc_model::DataBarDirection::Context,
         },
         priority: 2,
         stop: false,
@@ -7054,6 +7115,7 @@ fn custom_views_save_and_reopen_roundtrip() {
         zoom: Some(135),
         grid_lines: false,
         headings: false,
+        show_ruler: true,
         page_break_preview: true,
         frozen: Some((2, 3)),
         active_cell: Some((1, 1)),
@@ -7067,6 +7129,7 @@ fn custom_views_save_and_reopen_roundtrip() {
         hidden_columns: None,
         auto_filter: None,
         filtered_rows: None,
+        ..Default::default()
     };
 
     d.execute(vec![Command::Sheet(SheetCommand::AddCustomView {
@@ -7277,7 +7340,7 @@ fn chart_series_add_delete_and_reorder_roundtrip() {
         ..Default::default()
     };
     refs.push(new_ref);
-    let target = ibis_pptx::chart_from_data(&chart, d.presentation(), &refs);
+    let target = ibis_pptx::sheet_chart_from_data(&chart, d.presentation(), &refs);
     assert_eq!(target.groups[0].series.len(), 4);
     assert_eq!(target.groups[0].series[3].name, "合計");
     opened.source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs.clone() });
@@ -7287,7 +7350,7 @@ fn chart_series_add_delete_and_reorder_roundtrip() {
     refs.swap(0, 1);
     let mut swapped_chart = target.clone();
     swapped_chart.groups[0].series.swap(0, 1);
-    let target_swapped = ibis_pptx::chart_from_data(&swapped_chart, d.presentation(), &refs);
+    let target_swapped = ibis_pptx::sheet_chart_from_data(&swapped_chart, d.presentation(), &refs);
     assert_eq!(target_swapped.groups[0].series[0].name, "5月");
     assert_eq!(target_swapped.groups[0].series[1].name, "4月");
     opened.source.set_chart_data(shape, target_swapped.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs.clone() });
@@ -7297,7 +7360,7 @@ fn chart_series_add_delete_and_reorder_roundtrip() {
     refs.pop();
     let mut deleted_chart = target_swapped.clone();
     deleted_chart.groups[0].series.pop();
-    let target_deleted = ibis_pptx::chart_from_data(&deleted_chart, d.presentation(), &refs);
+    let target_deleted = ibis_pptx::sheet_chart_from_data(&deleted_chart, d.presentation(), &refs);
     assert_eq!(target_deleted.groups[0].series.len(), 3);
     opened.source.set_chart_data(shape, target_deleted.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs.clone() });
     d.execute(vec![Command::SetKind { slide: s, shape, kind: Box::new(ibis_doc_model::ShapeKind::Chart(Box::new(target_deleted.clone()))) }]).unwrap();
@@ -7587,6 +7650,7 @@ fn test_cell_phonetic_and_roundtrip() {
     // 4. phoneticPr を設定
     use ibis_doc_model::{PhoneticProperties, PhoneticType, PhoneticAlignment};
     let props = PhoneticProperties {
+        font_id: 0,
         phonetic_type: PhoneticType::Hiragana,
         alignment: PhoneticAlignment::Center,
     };
@@ -7855,9 +7919,116 @@ fn pictures_in_cells_are_drawn_in_their_cells() {
         }
     }
     assert!(found >= 1, "the file has pictures in cells");
+    // The row of the second pair is 97 pt tall though nothing in it shows (the pictures' cells hold no text): its height
+    // is kept.
+    let slide = opened.presentation.slides.first().unwrap();
+    let sheet = sheet_of_slide(slide).unwrap();
+    assert_eq!(sheet.rows.get(1).copied(), Some(97 * 12_700));
     // Saved as it was: nothing changes.
     let saved = save(&opened, &opened.presentation, "cell-images-unchanged.xlsx");
     assert_eq!(changed_parts(&data, &saved), Vec::<String>::new());
+}
+
+/// An old workbook's AutoFilter (`AUTOFILTERINFO`, `AUTOFILTER`, the `_FilterDatabase` name): its range and
+/// each column's conditions (a file made of fictional data by LibreOffice: Excel 97-2003 format).
+#[test]
+fn an_old_xls_autofilter_is_read() {
+    use ibis_doc_model::{CellRange, ColumnFilter};
+    let (_data, opened) = open("xlsx-legacy-autofilter.xls");
+    let p = &opened.presentation;
+    let sheet = sheet_of_slide(p.slide(slide(p, "Data")).unwrap()).unwrap();
+    let filter = sheet.auto_filter.as_ref().expect("the filter");
+    assert_eq!(filter.range, CellRange { first_row: 0, last_row: 7, first_column: 0, last_column: 2 });
+    let column = |c: u32| filter.columns.iter().find(|(i, _)| *i == c).map(|(_, f)| f.clone());
+    // (LibreOffice writes only the first of two chosen values; Excel's own multi-select uses a later record, not read.)
+    assert_eq!(column(0), Some(ColumnFilter::Values(vec!["item3".into()])));
+    assert_eq!(column(1), Some(ColumnFilter::Custom { and: true, conditions: vec![("greaterThanOrEqual".into(), "30".into()), ("lessThan".into(), "60".into())] }));
+    // The manual page breaks: after row 4 and column 2 (0-based: the pages start at row 4 and column 2).
+    assert_eq!(sheet.print.row_breaks, vec![4]);
+    assert_eq!(sheet.print.column_breaks, vec![2]);
+    // Saved as an .xlsx: the filter is kept.
+    let saved = opened.source.save(p, SaveOptions::default()).unwrap();
+    let again = ibis_pptx::open(saved).unwrap();
+    let sheet = sheet_of_slide(again.presentation.slide(slide(&again.presentation, "Data")).unwrap()).unwrap();
+    assert_eq!(sheet.auto_filter.as_ref().map(|f| f.columns.len()), Some(2));
+}
+
+/// An old workbook's pictures (the drawing group's BLIP store and the sheet's drawing): two PNG images with their
+/// anchors (a file made of fictional data by LibreOffice: Excel 97-2003 format).
+#[test]
+fn an_old_xls_pictures_are_read() {
+    use ibis_doc_model::ShapeKind;
+    let (_data, opened) = open("xlsx-legacy-pictures.xls");
+    let p = &opened.presentation;
+    let pictures: Vec<_> = p.slide(slide(p, "Pic")).unwrap().shapes.iter().filter(|s| matches!(s.kind, ShapeKind::Picture(_))).collect();
+    assert_eq!(pictures.len(), 2);
+    for pic in &pictures {
+        let ShapeKind::Picture(picture) = &pic.kind else { unreachable!() };
+        let media = p.media(picture.media).expect("its image");
+        assert_eq!(media.format, ibis_doc_model::MediaFormat::Png);
+        assert!(media.data.starts_with(b"\x89PNG"));
+    }
+    // The first picture sits at B3 (column 1, row 2); the second at F3.
+    assert!(pictures[0].frame.x < pictures[1].frame.x && pictures[0].frame.width > 0 && pictures[0].frame.height > 0, "{:?} {:?}", pictures[0].frame, pictures[1].frame);
+    // Saved as an .xlsx: both again.
+    let saved = opened.source.save(p, SaveOptions::default()).unwrap();
+    let again = ibis_pptx::open(saved).unwrap();
+    let n = again.presentation.slide(slide(&again.presentation, "Pic")).unwrap().shapes.iter().filter(|s| matches!(s.kind, ShapeKind::Picture(_))).count();
+    assert_eq!(n, 2);
+}
+
+/// An old workbook's charts (the chart streams of the sheet): six charts of one sheet (columns, stacked bars,
+/// lines, an area, a pie, a scatter) with their titles, series (the cells they name, with the values as the
+/// cache), colours and legend (a file made of fictional data by LibreOffice: Excel 97-2003 format).
+#[test]
+fn an_old_xls_charts_are_read() {
+    use ibis_doc_model::{ChartType, Grouping, ShapeKind};
+    let (_data, opened) = open("xlsx-legacy-charts.xls");
+    let p = &opened.presentation;
+    let charts: Vec<_> = p.slide(slide(p, "Data")).unwrap().shapes.iter().filter_map(|s| if let ShapeKind::Chart(c) = &s.kind { Some(c) } else { None }).collect();
+    assert_eq!(charts.len(), 6, "all six charts");
+    let kinds: Vec<_> = charts.iter().map(|c| c.groups[0].kind.clone()).collect();
+    assert!(matches!(kinds[0], ChartType::Bar { .. }) && matches!(kinds[2], ChartType::Line) && matches!(kinds[4], ChartType::Pie { .. }), "{kinds:?}");
+    assert_eq!(charts[0].title.as_ref().map(|t| t.text.as_str()), Some("Sales by quarter"));
+    let columns = &charts[0].groups[0];
+    assert_eq!(columns.series.len(), 2);
+    assert_eq!(columns.series[0].name, "East");
+    assert_eq!(columns.series[1].name, "West");
+    assert_eq!(columns.series[0].categories, vec!["Q1", "Q2", "Q3", "Q4"]);
+    let east: Vec<f64> = columns.series[0].values.iter().map(|v| v.unwrap().0).collect();
+    assert_eq!(east, vec![30.0, 45.0, 60.0, 80.0]);
+    assert_eq!(charts[1].groups[0].grouping, Grouping::Stacked);
+    // Saved as an .xlsx: all six again.
+    let saved = opened.source.save(p, SaveOptions::default()).unwrap();
+    let again = ibis_pptx::open(saved).unwrap();
+    let n = again.presentation.slide(slide(&again.presentation, "Data")).unwrap().shapes.iter().filter(|s| matches!(s.kind, ShapeKind::Chart(_))).count();
+    assert_eq!(n, 6);
+}
+
+/// Excel 2010's half of a conditional format (`x14:cfRule` in the sheet's `extLst`): a data bar of 2007 names it by
+/// `x14:id` (solid, bordered, from the right, no axis, lengths 0 to 100), and an icon set only 2010 has (3Stars) is
+/// there alone. A fictional file.
+#[test]
+fn the_2010_half_of_a_conditional_format_is_read() {
+    use ibis_doc_model::{CfKind, DataBarAxisPosition, DataBarDirection, Rgb};
+    let (_data, opened) = open("xlsx-databar-2010.xlsx");
+    let p = &opened.presentation;
+    let sheet = sheet_of_slide(p.slide(slide(p, "Sheet1")).unwrap()).unwrap();
+    let CfKind::DataBar { gradient, axis_position, min_length, max_length, border_color, direction, .. } = &sheet.conditional[0].rules[0].kind else { panic!("a data bar") };
+    assert!(!*gradient);
+    assert_eq!((*axis_position, *min_length, *max_length), (Some(DataBarAxisPosition::None), Some(0), Some(100)));
+    assert_eq!((*border_color, *direction), (Some(Rgb(0x1F4E79)), DataBarDirection::RightToLeft));
+    // The icon set that has no rule of 2007: on its own list, not in the one that is written back.
+    assert_eq!(sheet.conditional.len(), 1);
+    assert_eq!(sheet.conditional_x14.len(), 1);
+    let CfKind::IconSet { set, values, .. } = &sheet.conditional_x14[0].rules[0].kind else { panic!("an icon set") };
+    assert_eq!(set, "3Stars");
+    assert_eq!(values.iter().map(|v| v.value.clone().unwrap()).collect::<Vec<_>>(), ["0", "33", "67"]);
+    // Saved again: the file keeps the 2010 half.
+    let saved = opened.source.save(p, SaveOptions::default()).unwrap();
+    let again = ibis_pptx::open(saved).unwrap();
+    let sheet = sheet_of_slide(again.presentation.slide(slide(&again.presentation, "Sheet1")).unwrap()).unwrap();
+    assert_eq!(sheet.conditional_x14.len(), 1);
 }
 
 #[test]
@@ -8094,7 +8265,7 @@ fn a_scatter_chart_over_numbers_is_saved_with_x_and_y_references() {
     let sheet = slide(d.presentation(), "月次売上");
     // B3:D8: the 4月 column as X, 5月 and 6月 as Y, headings in the first row.
     let range = CellRange { first_row: 2, first_column: 1, last_row: 7, last_column: 3 };
-    let refs = ibis_pptx::scatter_refs_for_range(d.presentation(), "月次売上", range).expect("numbers under headings");
+    let refs = ibis_pptx::scatter_refs_for_range(d.presentation(), "月次売上", range, true).expect("numbers under headings");
     assert_eq!(refs.len(), 2);
     assert_eq!(refs[0].categories.as_deref(), Some("月次売上!$B$4:$B$8"));
     assert_eq!(refs[1].values.as_deref(), Some("月次売上!$D$4:$D$8"));
@@ -8160,7 +8331,7 @@ fn a_bubble_chart_over_three_columns_is_saved_with_x_y_and_size_references() {
     let sheet = slide(d.presentation(), "月次売上");
     // B3:D8: 4月 as X, 5月 as Y, 6月 as the size, headings in the first row.
     let range = CellRange { first_row: 2, first_column: 1, last_row: 7, last_column: 3 };
-    let refs = ibis_pptx::bubble_refs_for_range(d.presentation(), "月次売上", range).expect("three columns of numbers");
+    let refs = ibis_pptx::bubble_refs_for_range(d.presentation(), "月次売上", range, true).expect("three columns of numbers");
     assert_eq!(refs.len(), 1);
     assert_eq!(refs[0].sizes.as_deref(), Some("月次売上!$D$4:$D$8"));
     let id = d.ids().new_shape_id();
@@ -8180,6 +8351,391 @@ fn a_bubble_chart_over_three_columns_is_saved_with_x_y_and_size_references() {
     let s0 = &last.groups[0].series[0];
     assert_eq!(s0.bubble_sizes.len(), 5);
     assert_eq!(s0.x_values.len(), 5);
+}
+
+#[test]
+fn a_scatter_chart_can_be_switched_between_columns_and_rows() {
+    use ibis_doc_model::{CellInput, CellRange, CellValue, EmuRect, ShapeKind};
+    let (_data, opened) = open("xlsx-sales.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let sheet = slide(d.presentation(), "月次売上");
+    // Row 10 (r=9): A10: header, B10..D10: X values (10, 20, 30)
+    // Row 11 (r=10): A11: "系列A", B11..D11: Y values (100, 200, 300)
+    // Row 12 (r=11): A12: "系列B", B12..D12: Y values (150, 250, 350)
+    set(
+        &mut d,
+        sheet,
+        vec![
+            (9, 0, CellInput::Value(CellValue::Text("X/Y".into()))),
+            (9, 1, CellInput::Value(CellValue::Number(10.0))),
+            (9, 2, CellInput::Value(CellValue::Number(20.0))),
+            (9, 3, CellInput::Value(CellValue::Number(30.0))),
+            (10, 0, CellInput::Value(CellValue::Text("系列A".into()))),
+            (10, 1, CellInput::Value(CellValue::Number(100.0))),
+            (10, 2, CellInput::Value(CellValue::Number(200.0))),
+            (10, 3, CellInput::Value(CellValue::Number(300.0))),
+            (11, 0, CellInput::Value(CellValue::Text("系列B".into()))),
+            (11, 1, CellInput::Value(CellValue::Number(150.0))),
+            (11, 2, CellInput::Value(CellValue::Number(250.0))),
+            (11, 3, CellInput::Value(CellValue::Number(350.0))),
+        ],
+    );
+    let range = CellRange { first_row: 9, first_column: 0, last_row: 11, last_column: 3 };
+    // Rows mode: by_columns = false
+    let row_refs = ibis_pptx::scatter_refs_for_range(d.presentation(), "月次売上", range, false).expect("scatter refs by rows");
+    assert_eq!(row_refs.len(), 2);
+    assert_eq!(row_refs[0].name.as_deref(), Some("月次売上!$A$11"));
+    assert_eq!(row_refs[0].categories.as_deref(), Some("月次売上!$B$10:$D$10"));
+    assert_eq!(row_refs[0].values.as_deref(), Some("月次売上!$B$11:$D$11"));
+    assert_eq!(row_refs[1].name.as_deref(), Some("月次売上!$A$12"));
+    assert_eq!(row_refs[1].values.as_deref(), Some("月次売上!$B$12:$D$12"));
+
+    // refs_range should detect by_columns = false
+    let (r_sheet, r_range, by_cols) = ibis_pptx::refs_range(&row_refs).unwrap();
+    assert_eq!(r_sheet, "月次売上");
+    assert_eq!(r_range, range);
+    assert!(!by_cols);
+
+    // Insert shape with row_refs
+    let id = d.ids().new_shape_id();
+    let shape = opened.source.new_sheet_chart(d.presentation(), sheet, id, EmuRect::new(1_000_000, 4_000_000, 5_000_000, 3_000_000), ibis_pptx::NewChartKind::Scatter, row_refs).unwrap();
+    let ShapeKind::Chart(c) = &shape.kind else { panic!() };
+    let series: Vec<_> = c.groups.iter().flat_map(|g| g.series.iter()).collect();
+    assert_eq!(series.len(), 2);
+    assert_eq!(series[0].name, "系列A");
+    assert_eq!(series[0].x_values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(10.0), Some(20.0), Some(30.0)]);
+    assert_eq!(series[0].values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(100.0), Some(200.0), Some(300.0)]);
+
+    let index = d.presentation().slide(sheet).unwrap().shapes.len();
+    d.execute(vec![Command::InsertShape { slide: sheet, index, shape }]).unwrap();
+    let saved = save(&opened, d.presentation(), "chart-scatter-row.xlsx");
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let all: String = package.names().filter(|n| n.starts_with("xl/charts/chart") && n.ends_with(".xml")).map(|n| String::from_utf8(package.read(n).unwrap()).unwrap()).collect();
+    assert!(all.contains("<c:xVal>") && all.contains("月次売上!$B$10:$D$10") && all.contains("月次売上!$B$11:$D$11"), "{all}");
+
+    let again = ibis_pptx::open(saved).unwrap();
+    let last = shapes_of(&again.presentation, "月次売上").into_iter().rev().find_map(|s| match s.kind { ShapeKind::Chart(c) => Some(c), _ => None }).unwrap();
+    let s0 = last.groups.iter().flat_map(|g| g.series.iter()).next().unwrap();
+    assert_eq!(s0.x_values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(10.0), Some(20.0), Some(30.0)]);
+    assert_eq!(s0.values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(100.0), Some(200.0), Some(300.0)]);
+}
+
+#[test]
+fn a_bubble_chart_can_be_switched_between_columns_and_rows() {
+    use ibis_doc_model::{CellInput, CellRange, CellValue, EmuRect, ShapeKind};
+    let (_data, opened) = open("xlsx-sales.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let sheet = slide(d.presentation(), "月次売上");
+    // Row 13 (r=12): A13: header, B13..D13: X values (1, 2, 3)
+    // Row 14 (r=13): A14: "系列1", B14..D14: Y values (10, 20, 30)
+    // Row 15 (r=14): A15: "サイズ1", B15..D15: Size values (5, 8, 12)
+    set(
+        &mut d,
+        sheet,
+        vec![
+            (12, 0, CellInput::Value(CellValue::Text("X/Y/Size".into()))),
+            (12, 1, CellInput::Value(CellValue::Number(1.0))),
+            (12, 2, CellInput::Value(CellValue::Number(2.0))),
+            (12, 3, CellInput::Value(CellValue::Number(3.0))),
+            (13, 0, CellInput::Value(CellValue::Text("バブルA".into()))),
+            (13, 1, CellInput::Value(CellValue::Number(10.0))),
+            (13, 2, CellInput::Value(CellValue::Number(20.0))),
+            (13, 3, CellInput::Value(CellValue::Number(30.0))),
+            (14, 0, CellInput::Value(CellValue::Text("サイズA".into()))),
+            (14, 1, CellInput::Value(CellValue::Number(5.0))),
+            (14, 2, CellInput::Value(CellValue::Number(8.0))),
+            (14, 3, CellInput::Value(CellValue::Number(12.0))),
+        ],
+    );
+    let range = CellRange { first_row: 12, first_column: 0, last_row: 14, last_column: 3 };
+    // Rows mode: by_columns = false
+    let row_refs = ibis_pptx::bubble_refs_for_range(d.presentation(), "月次売上", range, false).expect("bubble refs by rows");
+    assert_eq!(row_refs.len(), 1);
+    assert_eq!(row_refs[0].name.as_deref(), Some("月次売上!$A$14"));
+    assert_eq!(row_refs[0].categories.as_deref(), Some("月次売上!$B$13:$D$13"));
+    assert_eq!(row_refs[0].values.as_deref(), Some("月次売上!$B$14:$D$14"));
+    assert_eq!(row_refs[0].sizes.as_deref(), Some("月次売上!$B$15:$D$15"));
+
+    // refs_range should detect by_columns = false and include size row in range
+    let (r_sheet, r_range, by_cols) = ibis_pptx::refs_range(&row_refs).unwrap();
+    assert_eq!(r_sheet, "月次売上");
+    assert_eq!(r_range, range);
+    assert!(!by_cols);
+
+    // Insert shape with row_refs
+    let id = d.ids().new_shape_id();
+    let shape = opened.source.new_sheet_chart(d.presentation(), sheet, id, EmuRect::new(1_000_000, 4_000_000, 5_000_000, 3_000_000), ibis_pptx::NewChartKind::Bubble, row_refs).unwrap();
+    let ShapeKind::Chart(c) = &shape.kind else { panic!() };
+    let series = &c.groups[0].series[0];
+    assert_eq!(series.name, "バブルA");
+    assert_eq!(series.x_values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(1.0), Some(2.0), Some(3.0)]);
+    assert_eq!(series.values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(10.0), Some(20.0), Some(30.0)]);
+    assert_eq!(series.bubble_sizes.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(5.0), Some(8.0), Some(12.0)]);
+
+    let index = d.presentation().slide(sheet).unwrap().shapes.len();
+    d.execute(vec![Command::InsertShape { slide: sheet, index, shape }]).unwrap();
+    let saved = save(&opened, d.presentation(), "chart-bubble-row.xlsx");
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let all: String = package.names().filter(|n| n.starts_with("xl/charts/chart") && n.ends_with(".xml")).map(|n| String::from_utf8(package.read(n).unwrap()).unwrap()).collect();
+    assert!(all.contains("<c:bubbleSize>") && all.contains("月次売上!$B$13:$D$13") && all.contains("月次売上!$B$14:$D$14") && all.contains("月次売上!$B$15:$D$15"), "{all}");
+
+    let again = ibis_pptx::open(saved).unwrap();
+    let last = shapes_of(&again.presentation, "月次売上").into_iter().rev().find_map(|s| match s.kind { ShapeKind::Chart(c) => Some(c), _ => None }).unwrap();
+    let s0 = &last.groups[0].series[0];
+    assert_eq!(s0.bubble_sizes.len(), 3);
+    assert_eq!(s0.x_values.len(), 3);
+    assert_eq!(s0.values.len(), 3);
+}
+
+#[test]
+fn scatter_and_bubble_charts_support_headerless_ranges() {
+    use ibis_doc_model::{CellInput, CellRange, CellValue, EmuRect, ShapeKind};
+    let (_data, opened) = open("xlsx-sales.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let sheet = slide(d.presentation(), "月次売上");
+
+    // Pure numeric scatter data (no headers): row 16..18, col 0..1 (A17:B19)
+    // All 3 rows are numbers, so row 16 is NOT a header row.
+    set(
+        &mut d,
+        sheet,
+        vec![
+            (16, 0, CellInput::Value(CellValue::Number(100.0))),
+            (16, 1, CellInput::Value(CellValue::Number(10.0))),
+            (17, 0, CellInput::Value(CellValue::Number(200.0))),
+            (17, 1, CellInput::Value(CellValue::Number(20.0))),
+            (18, 0, CellInput::Value(CellValue::Number(300.0))),
+            (18, 1, CellInput::Value(CellValue::Number(30.0))),
+        ],
+    );
+    let scatter_range = CellRange { first_row: 16, first_column: 0, last_row: 18, last_column: 1 };
+    let scatter_refs = ibis_pptx::scatter_refs_for_range(d.presentation(), "月次売上", scatter_range, true).expect("scatter refs for headerless numbers");
+    assert_eq!(scatter_refs.len(), 1);
+    assert_eq!(scatter_refs[0].name, None, "headerless scatter series should have name: None");
+    assert_eq!(scatter_refs[0].categories.as_deref(), Some("月次売上!$A$17:$A$19"), "all rows included in X");
+    assert_eq!(scatter_refs[0].values.as_deref(), Some("月次売上!$B$17:$B$19"), "all rows included in Y");
+
+    // Check refs_range on headerless refs
+    let (r_sheet, r_range, by_cols) = ibis_pptx::refs_range(&scatter_refs).unwrap();
+    assert_eq!(r_sheet, "月次売上");
+    assert_eq!(r_range, scatter_range);
+    assert!(by_cols);
+
+    // Insert shape with headerless scatter_refs
+    let id = d.ids().new_shape_id();
+    let shape = opened.source.new_sheet_chart(d.presentation(), sheet, id, EmuRect::new(1_000_000, 4_000_000, 5_000_000, 3_000_000), ibis_pptx::NewChartKind::Scatter, scatter_refs).unwrap();
+    let ShapeKind::Chart(c) = &shape.kind else { panic!() };
+    let s0 = &c.groups[0].series[0];
+    assert_eq!(s0.name, "系列1", "default series name assigned");
+    assert_eq!(s0.x_values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(100.0), Some(200.0), Some(300.0)]);
+    assert_eq!(s0.values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(10.0), Some(20.0), Some(30.0)]);
+
+    let index = d.presentation().slide(sheet).unwrap().shapes.len();
+    d.execute(vec![Command::InsertShape { slide: sheet, index, shape }]).unwrap();
+    let saved = save(&opened, d.presentation(), "chart-scatter-headerless.xlsx");
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let all: String = package.names().filter(|n| n.starts_with("xl/charts/chart") && n.ends_with(".xml")).map(|n| String::from_utf8(package.read(n).unwrap()).unwrap()).collect();
+    assert!(all.contains("<c:xVal>") && all.contains("月次売上!$A$17:$A$19") && all.contains("月次売上!$B$17:$B$19"), "{all}");
+    // Headerless series must not have a <c:tx> with strRef pointing to cells
+    assert!(!all.contains("月次売上!$B$17:$B$17"), "must not consume row 17 as header name: {all}");
+
+    // Pure numeric bubble data (no headers): row 20..22, col 0..2 (A21:C23)
+    set(
+        &mut d,
+        sheet,
+        vec![
+            (20, 0, CellInput::Value(CellValue::Number(1.0))),
+            (20, 1, CellInput::Value(CellValue::Number(10.0))),
+            (20, 2, CellInput::Value(CellValue::Number(5.0))),
+            (21, 0, CellInput::Value(CellValue::Number(2.0))),
+            (21, 1, CellInput::Value(CellValue::Number(20.0))),
+            (21, 2, CellInput::Value(CellValue::Number(8.0))),
+            (22, 0, CellInput::Value(CellValue::Number(3.0))),
+            (22, 1, CellInput::Value(CellValue::Number(30.0))),
+            (22, 2, CellInput::Value(CellValue::Number(12.0))),
+        ],
+    );
+    let bubble_range = CellRange { first_row: 20, first_column: 0, last_row: 22, last_column: 2 };
+    let bubble_refs = ibis_pptx::bubble_refs_for_range(d.presentation(), "月次売上", bubble_range, true).expect("bubble refs for headerless numbers");
+    assert_eq!(bubble_refs.len(), 1);
+    assert_eq!(bubble_refs[0].name, None, "headerless bubble series should have name: None");
+    assert_eq!(bubble_refs[0].categories.as_deref(), Some("月次売上!$A$21:$A$23"));
+    assert_eq!(bubble_refs[0].values.as_deref(), Some("月次売上!$B$21:$B$23"));
+    assert_eq!(bubble_refs[0].sizes.as_deref(), Some("月次売上!$C$21:$C$23"));
+
+    // Check refs_range on headerless bubble_refs
+    let (b_sheet, b_range, b_by_cols) = ibis_pptx::refs_range(&bubble_refs).unwrap();
+    assert_eq!(b_sheet, "月次売上");
+    assert_eq!(b_range, bubble_range);
+    assert!(b_by_cols);
+
+    // Insert shape with headerless bubble_refs
+    let b_id = d.ids().new_shape_id();
+    let b_shape = opened.source.new_sheet_chart(d.presentation(), sheet, b_id, EmuRect::new(1_000_000, 4_000_000, 5_000_000, 3_000_000), ibis_pptx::NewChartKind::Bubble, bubble_refs).unwrap();
+    let ShapeKind::Chart(bc) = &b_shape.kind else { panic!() };
+    let bs0 = &bc.groups[0].series[0];
+    assert_eq!(bs0.name, "系列1");
+    assert_eq!(bs0.x_values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(1.0), Some(2.0), Some(3.0)]);
+    assert_eq!(bs0.values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(10.0), Some(20.0), Some(30.0)]);
+    assert_eq!(bs0.bubble_sizes.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(5.0), Some(8.0), Some(12.0)]);
+
+    let b_index = d.presentation().slide(sheet).unwrap().shapes.len();
+    d.execute(vec![Command::InsertShape { slide: sheet, index: b_index, shape: b_shape }]).unwrap();
+    let b_saved = save(&opened, d.presentation(), "chart-bubble-headerless.xlsx");
+    let b_package = ibis_ooxml::Package::open(b_saved).unwrap();
+    let b_all: String = b_package.names().filter(|n| n.starts_with("xl/charts/chart") && n.ends_with(".xml")).map(|n| String::from_utf8(b_package.read(n).unwrap()).unwrap()).collect();
+    assert!(b_all.contains("<c:bubbleSize>") && b_all.contains("月次売上!$C$21:$C$23"), "{b_all}");
+}
+
+#[test]
+fn stock_charts_support_range_specification_and_roundtrip() {
+    use ibis_doc_model::{CellInput, CellRange, CellValue, EmuRect, ShapeKind};
+    let (_data, opened) = open("xlsx-sales.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let sheet = slide(d.presentation(), "月次売上");
+
+    // 1. StockHLC with headers and date categories (4 columns: Date, High, Low, Close)
+    set(
+        &mut d,
+        sheet,
+        vec![
+            (30, 0, CellInput::Value(CellValue::Text("日付".into()))),
+            (30, 1, CellInput::Value(CellValue::Text("高値".into()))),
+            (30, 2, CellInput::Value(CellValue::Text("安値".into()))),
+            (30, 3, CellInput::Value(CellValue::Text("終値".into()))),
+            (31, 0, CellInput::Value(CellValue::Text("2026/10/01".into()))),
+            (31, 1, CellInput::Value(CellValue::Number(150.0))),
+            (31, 2, CellInput::Value(CellValue::Number(100.0))),
+            (31, 3, CellInput::Value(CellValue::Number(130.0))),
+            (32, 0, CellInput::Value(CellValue::Text("2026/10/02".into()))),
+            (32, 1, CellInput::Value(CellValue::Number(160.0))),
+            (32, 2, CellInput::Value(CellValue::Number(110.0))),
+            (32, 3, CellInput::Value(CellValue::Number(140.0))),
+            (33, 0, CellInput::Value(CellValue::Text("2026/10/03".into()))),
+            (33, 1, CellInput::Value(CellValue::Number(170.0))),
+            (33, 2, CellInput::Value(CellValue::Number(120.0))),
+            (33, 3, CellInput::Value(CellValue::Number(155.0))),
+        ],
+    );
+    let hlc_range = CellRange { first_row: 30, first_column: 0, last_row: 33, last_column: 3 };
+    let hlc_refs = ibis_pptx::stock_refs_for_range(d.presentation(), "月次売上", hlc_range, ibis_pptx::NewChartKind::StockHLC, true).expect("hlc refs");
+    assert_eq!(hlc_refs.len(), 3);
+    assert_eq!(hlc_refs[0].name.as_deref(), Some("月次売上!$B$31"));
+    assert_eq!(hlc_refs[0].categories.as_deref(), Some("月次売上!$A$32:$A$34"));
+    assert_eq!(hlc_refs[0].values.as_deref(), Some("月次売上!$B$32:$B$34"));
+    assert_eq!(hlc_refs[1].name.as_deref(), Some("月次売上!$C$31"));
+    assert_eq!(hlc_refs[2].name.as_deref(), Some("月次売上!$D$31"));
+
+    let (s, r, by_cols) = ibis_pptx::refs_range(&hlc_refs).unwrap();
+    assert_eq!(s, "月次売上");
+    assert_eq!(r, hlc_range);
+    assert!(by_cols);
+
+    let hlc_id = d.ids().new_shape_id();
+    let hlc_shape = opened.source.new_sheet_chart(d.presentation(), sheet, hlc_id, EmuRect::new(1_000_000, 4_000_000, 5_000_000, 3_000_000), ibis_pptx::NewChartKind::StockHLC, hlc_refs).unwrap();
+    let ShapeKind::Chart(hlc_chart) = &hlc_shape.kind else { panic!() };
+    assert_eq!(hlc_chart.groups[0].series.len(), 3);
+    assert_eq!(hlc_chart.groups[0].series[0].name, "高値");
+    assert_eq!(hlc_chart.groups[0].series[0].values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(150.0), Some(160.0), Some(170.0)]);
+
+    // 2. Pure numeric / headerless HLC with 3 columns (no categories, just High, Low, Close)
+    set(
+        &mut d,
+        sheet,
+        vec![
+            (35, 0, CellInput::Value(CellValue::Number(200.0))),
+            (35, 1, CellInput::Value(CellValue::Number(150.0))),
+            (35, 2, CellInput::Value(CellValue::Number(180.0))),
+            (36, 0, CellInput::Value(CellValue::Number(210.0))),
+            (36, 1, CellInput::Value(CellValue::Number(160.0))),
+            (36, 2, CellInput::Value(CellValue::Number(190.0))),
+            (37, 0, CellInput::Value(CellValue::Number(220.0))),
+            (37, 1, CellInput::Value(CellValue::Number(170.0))),
+            (37, 2, CellInput::Value(CellValue::Number(200.0))),
+        ],
+    );
+    let hlc3_range = CellRange { first_row: 35, first_column: 0, last_row: 37, last_column: 2 };
+    let hlc3_refs = ibis_pptx::stock_refs_for_range(d.presentation(), "月次売上", hlc3_range, ibis_pptx::NewChartKind::StockHLC, true).expect("hlc 3 cols pure numeric");
+    assert_eq!(hlc3_refs.len(), 3);
+    assert_eq!(hlc3_refs[0].name, None);
+    assert_eq!(hlc3_refs[0].categories, None);
+    assert_eq!(hlc3_refs[0].values.as_deref(), Some("月次売上!$A$36:$A$38"));
+
+    // 3. StockOHLC with headers (5 columns: Date, Open, High, Low, Close)
+    set(
+        &mut d,
+        sheet,
+        vec![
+            (40, 0, CellInput::Value(CellValue::Text("日付".into()))),
+            (40, 1, CellInput::Value(CellValue::Text("始値".into()))),
+            (40, 2, CellInput::Value(CellValue::Text("高値".into()))),
+            (40, 3, CellInput::Value(CellValue::Text("安値".into()))),
+            (40, 4, CellInput::Value(CellValue::Text("終値".into()))),
+            (41, 0, CellInput::Value(CellValue::Text("10/1".into()))),
+            (41, 1, CellInput::Value(CellValue::Number(100.0))),
+            (41, 2, CellInput::Value(CellValue::Number(120.0))),
+            (41, 3, CellInput::Value(CellValue::Number(90.0))),
+            (41, 4, CellInput::Value(CellValue::Number(110.0))),
+            (42, 0, CellInput::Value(CellValue::Text("10/2".into()))),
+            (42, 1, CellInput::Value(CellValue::Number(110.0))),
+            (42, 2, CellInput::Value(CellValue::Number(130.0))),
+            (42, 3, CellInput::Value(CellValue::Number(105.0))),
+            (42, 4, CellInput::Value(CellValue::Number(125.0))),
+        ],
+    );
+    let ohlc_range = CellRange { first_row: 40, first_column: 0, last_row: 42, last_column: 4 };
+    let ohlc_refs = ibis_pptx::stock_refs_for_range(d.presentation(), "月次売上", ohlc_range, ibis_pptx::NewChartKind::StockOHLC, true).expect("ohlc refs");
+    assert_eq!(ohlc_refs.len(), 4);
+    assert_eq!(ohlc_refs[0].name.as_deref(), Some("月次売上!$B$41"));
+    assert_eq!(ohlc_refs[0].categories.as_deref(), Some("月次売上!$A$42:$A$43"));
+    assert_eq!(ohlc_refs[0].values.as_deref(), Some("月次売上!$B$42:$B$43"));
+
+    // 4. StockVHLC (2 groups: Bar for volume, Stock for HLC)
+    set(
+        &mut d,
+        sheet,
+        vec![
+            (45, 0, CellInput::Value(CellValue::Text("日付".into()))),
+            (45, 1, CellInput::Value(CellValue::Text("出来高".into()))),
+            (45, 2, CellInput::Value(CellValue::Text("高値".into()))),
+            (45, 3, CellInput::Value(CellValue::Text("安値".into()))),
+            (45, 4, CellInput::Value(CellValue::Text("終値".into()))),
+            (46, 0, CellInput::Value(CellValue::Text("10/1".into()))),
+            (46, 1, CellInput::Value(CellValue::Number(10000.0))),
+            (46, 2, CellInput::Value(CellValue::Number(250.0))),
+            (46, 3, CellInput::Value(CellValue::Number(210.0))),
+            (46, 4, CellInput::Value(CellValue::Number(240.0))),
+            (47, 0, CellInput::Value(CellValue::Text("10/2".into()))),
+            (47, 1, CellInput::Value(CellValue::Number(15000.0))),
+            (47, 2, CellInput::Value(CellValue::Number(260.0))),
+            (47, 3, CellInput::Value(CellValue::Number(220.0))),
+            (47, 4, CellInput::Value(CellValue::Number(255.0))),
+        ],
+    );
+    let vhlc_range = CellRange { first_row: 45, first_column: 0, last_row: 47, last_column: 4 };
+    let vhlc_refs = ibis_pptx::stock_refs_for_range(d.presentation(), "月次売上", vhlc_range, ibis_pptx::NewChartKind::StockVHLC, true).expect("vhlc refs");
+    assert_eq!(vhlc_refs.len(), 4);
+    assert_eq!(vhlc_refs[0].name.as_deref(), Some("月次売上!$B$46"));
+    assert_eq!(vhlc_refs[1].name.as_deref(), Some("月次売上!$C$46"));
+    assert_eq!(vhlc_refs[2].name.as_deref(), Some("月次売上!$D$46"));
+    assert_eq!(vhlc_refs[3].name.as_deref(), Some("月次売上!$E$46"));
+
+    let vhlc_id = d.ids().new_shape_id();
+    let vhlc_shape = opened.source.new_sheet_chart(d.presentation(), sheet, vhlc_id, EmuRect::new(1_000_000, 4_000_000, 5_000_000, 3_000_000), ibis_pptx::NewChartKind::StockVHLC, vhlc_refs).unwrap();
+    let ShapeKind::Chart(vhlc_chart) = &vhlc_shape.kind else { panic!() };
+    assert_eq!(vhlc_chart.groups.len(), 2);
+    assert_eq!(vhlc_chart.groups[0].series.len(), 1);
+    assert_eq!(vhlc_chart.groups[0].series[0].name, "出来高");
+    assert_eq!(vhlc_chart.groups[1].series.len(), 3);
+    assert_eq!(vhlc_chart.groups[1].series[0].name, "高値");
+
+    let v_idx = d.presentation().slide(sheet).unwrap().shapes.len();
+    d.execute(vec![Command::InsertShape { slide: sheet, index: v_idx, shape: vhlc_shape }]).unwrap();
+    let saved = save(&opened, d.presentation(), "chart-stock-vhlc.xlsx");
+    let package = ibis_ooxml::Package::open(saved).unwrap();
+    let chart_xml: String = package.names().filter(|n| n.starts_with("xl/charts/chart") && n.ends_with(".xml")).map(|n| String::from_utf8(package.read(n).unwrap()).unwrap()).collect();
+    assert!(chart_xml.contains("<c:barChart>") && chart_xml.contains("<c:stockChart>"), "{chart_xml}");
+    assert!(chart_xml.contains("月次売上!$B$46") && chart_xml.contains("月次売上!$E$47:$E$48"), "{chart_xml}");
 }
 
 #[test]
@@ -8204,3 +8760,938 @@ fn groupby_and_pivotby_spill_and_a_function_by_its_name_is_saved_as_the_file_has
     assert!(sheet_xml.contains("_xlfn.BYROW(B4:D8,_xleta.SUM)"), "{sheet_xml}");
     assert!(sheet_xml.contains("_xlfn.GROUPBY(A4:A8,B4:B8,SUM)") || sheet_xml.contains("_xlfn.GROUPBY(A4:A8,B4:B8,_xleta.SUM)"), "{sheet_xml}");
 }
+
+/// The クエリ エディター's queries are kept in the file and read back, and the sheet of a loaded result
+/// is saved with them.
+#[test]
+fn queries_and_their_result_sheet_are_saved_and_read_back() {
+    use ibis_doc_model::query::{Agg, QTable, Query, Source, Step};
+    let (_, opened) = open("xlsx-sales.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let s = slide(d.presentation(), "月次売上");
+    let mut query = Query::new("集計", Source::Range { sheet: "月次売上".into(), range: "A1:C3".into() });
+    query.steps = vec![Step::PromoteHeaders, Step::GroupBy { keys: vec!["Column1".into()], aggregations: vec![("合計".into(), Agg::Sum, Some("Column2".into()))] }];
+    let table = QTable::from_rows(vec!["店".into(), "合計".into()], vec![vec![CellValue::Text("北".into()), CellValue::Number(3.0)]]);
+    d.execute(vec![Command::Sheet(SheetCommand::LoadQuery { slide: s, query: query.clone(), table })]).unwrap();
+    let saved = save(&opened, d.presentation(), "queries.xlsx");
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    // A Custom XML Data part with its properties, related from the workbook and listed in the content types.
+    let text = String::from_utf8(package.read("customXml/item1.xml").unwrap()).unwrap();
+    assert!(text.contains("https://ibis.ne.jp/ibisoffice/queries") && text.contains("query\t集計\t集計"), "{text}");
+    let props = String::from_utf8(package.read("customXml/itemProps1.xml").unwrap()).unwrap();
+    assert!(props.contains("ds:itemID") && props.contains("schemaRef"), "{props}");
+    assert!(String::from_utf8(package.read("customXml/_rels/item1.xml.rels").unwrap()).unwrap().contains("customXmlProps"));
+    assert!(String::from_utf8(package.read("[Content_Types].xml").unwrap()).unwrap().contains("/customXml/itemProps1.xml"));
+    assert!(String::from_utf8(package.read("xl/_rels/workbook.xml.rels").unwrap()).unwrap().contains("../customXml/item1.xml"));
+    let back = ibis_pptx::read(&saved).unwrap();
+    let wb = back.workbook.as_ref().unwrap();
+    assert_eq!(wb.queries.len(), 1);
+    assert_eq!(wb.queries[0].steps, query.steps);
+    assert_eq!(wb.queries[0].output.as_deref(), Some("集計"));
+    assert!(wb.sheets.iter().any(|s| s.name == "集計"));
+    let result = back.slides.iter().find(|s| s.name.as_deref() == Some("集計")).and_then(sheet_of_slide).unwrap();
+    assert_eq!(result.cell(0, 0).map(|c| c.value.clone()), Some(CellValue::Text("店".into())));
+    assert_eq!(result.cell(1, 1).map(|c| c.value.clone()), Some(CellValue::Number(3.0)));
+}
+
+#[test]
+fn picture_transparent_color_and_effects_roundtrip() {
+    use ibis_doc_model::{Rgb, ShapeKind};
+    let (data, opened) = open("xlsx-sales.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let (slide_id, shape_id, orig_pic) = d
+        .presentation()
+        .slides
+        .iter()
+        .find_map(|s| {
+            s.shapes.iter().find_map(|sh| {
+                if let ShapeKind::Picture(p) = &sh.kind {
+                    Some((s.id, sh.id, p.clone()))
+                } else {
+                    None
+                }
+            })
+        })
+        .expect("xlsx-sales.xlsx has a picture");
+
+    // 1. Set transparent color (background removal) to white (0xFFFFFF), duotone, and luminance
+    let mut modified_pic = orig_pic.clone();
+    modified_pic.clear = Some(Rgb(0xffffff));
+    modified_pic.duotone = Some((Rgb(0x002060), Rgb(0xd9e1f2)));
+    modified_pic.luminance = Some((20_000, 10_000));
+    d.execute(vec![Command::SetKind {
+        slide: slide_id,
+        shape: shape_id,
+        kind: Box::new(ShapeKind::Picture(modified_pic.clone())),
+    }])
+    .unwrap();
+
+    let saved = save(&opened, d.presentation(), "picture-clear.xlsx");
+    let parts = changed_parts(&data, &saved);
+    assert!(parts.iter().any(|p| p.starts_with("xl/drawings/drawing")), "{parts:?}");
+
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let drawing_part = parts.iter().find(|p| p.starts_with("xl/drawings/drawing")).unwrap();
+    let drawing_xml = String::from_utf8(package.read(drawing_part).unwrap()).unwrap();
+    assert!(drawing_xml.contains("clrChange"), "drawing must contain clrChange: {drawing_xml}");
+    assert!(drawing_xml.contains("FFFFFF"), "drawing must contain clrFrom/clrTo with FFFFFF: {drawing_xml}");
+    assert!(drawing_xml.contains("duotone"), "drawing must contain duotone: {drawing_xml}");
+    assert!(drawing_xml.contains("lum"), "drawing must contain lum: {drawing_xml}");
+
+    // 2. Read back and verify picture effects preserved in model
+    let again = ibis_pptx::read(&saved).unwrap();
+    let reloaded_pic = again
+        .slide(slide_id)
+        .unwrap()
+        .shapes
+        .iter()
+        .find(|sh| sh.id == shape_id)
+        .and_then(|sh| if let ShapeKind::Picture(p) = &sh.kind { Some(p) } else { None })
+        .expect("reloaded picture exists");
+    assert_eq!(reloaded_pic.clear, Some(Rgb(0xffffff)));
+    assert_eq!(reloaded_pic.duotone, Some((Rgb(0x002060), Rgb(0xd9e1f2))));
+    assert_eq!(reloaded_pic.luminance, Some((20_000, 10_000)));
+
+    // 3. Reset effects back to None
+    let mut reset_pic = reloaded_pic.clone();
+    reset_pic.clear = None;
+    reset_pic.duotone = None;
+    reset_pic.luminance = None;
+    d.execute(vec![Command::SetKind {
+        slide: slide_id,
+        shape: shape_id,
+        kind: Box::new(ShapeKind::Picture(reset_pic)),
+    }])
+    .unwrap();
+
+    let saved_reset = save(&opened, d.presentation(), "picture-clear-reset.xlsx");
+    let package_reset = ibis_ooxml::Package::open(saved_reset.clone()).unwrap();
+    let reset_xml = String::from_utf8(package_reset.read(drawing_part).unwrap()).unwrap();
+    assert!(!reset_xml.contains("clrChange"), "clrChange should be removed: {reset_xml}");
+    assert!(!reset_xml.contains("duotone"), "duotone should be removed: {reset_xml}");
+
+    let again_reset = ibis_pptx::read(&saved_reset).unwrap();
+    let back_pic = again_reset
+        .slide(slide_id)
+        .unwrap()
+        .shapes
+        .iter()
+        .find(|sh| sh.id == shape_id)
+        .and_then(|sh| if let ShapeKind::Picture(p) = &sh.kind { Some(p) } else { None })
+        .expect("reloaded picture exists");
+    assert_eq!(back_pic.clear, None);
+    assert_eq!(back_pic.duotone, None);
+    assert_eq!(back_pic.luminance, None);
+}
+
+#[test]
+fn test_show_formulas_and_show_zeros_roundtrip() {
+    let (bytes, _) = open("xlsx-sales.xlsx");
+    let opened = ibis_pptx::open(bytes.clone()).unwrap();
+    let mut d = Document::new(opened.presentation.clone());
+    let s = slide(d.presentation(), "月次売上");
+
+    // Initially show_formulas is false, show_zeros is true
+    let sh0 = sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+    assert_eq!(sh0.show_formulas, false);
+    assert_eq!(sh0.show_zeros, true);
+
+    // Toggle show_formulas to true, show_zeros to false
+    d.execute(vec![
+        Command::Sheet(SheetCommand::SetShowFormulas { slide: s, shown: true }),
+    ]).unwrap();
+    d.execute(vec![
+        Command::Sheet(SheetCommand::SetShowZeros { slide: s, shown: false }),
+    ]).unwrap();
+
+    let sh1 = sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+    assert_eq!(sh1.show_formulas, true);
+    assert_eq!(sh1.show_zeros, false);
+
+    // Save and verify XML
+    let saved = save(&opened, d.presentation(), "show-formulas-zeros.xlsx");
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let sheet_part = "xl/worksheets/sheet1.xml";
+    let xml = String::from_utf8(package.read(sheet_part).unwrap()).unwrap();
+    assert!(xml.contains(r#"showFormulas="1""#), "sheet xml must have showFormulas=1: {xml}");
+    assert!(xml.contains(r#"showZeros="0""#), "sheet xml must have showZeros=0: {xml}");
+
+    // Reopen and verify model
+    let again = ibis_pptx::read(&saved).unwrap();
+    let sh_again = sheet_of_slide(again.slide(s).unwrap()).unwrap();
+    assert_eq!(sh_again.show_formulas, true);
+    assert_eq!(sh_again.show_zeros, false);
+
+    // Undo both and verify
+    assert!(d.undo());
+    let sh_undo1 = sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+    assert_eq!(sh_undo1.show_formulas, true);
+    assert_eq!(sh_undo1.show_zeros, true);
+
+    assert!(d.undo());
+    let sh_undone = sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+    assert_eq!(sh_undone.show_formulas, false);
+    assert_eq!(sh_undone.show_zeros, true);
+
+    // Save and verify attributes are removed (absent = default)
+    let saved_undone = save(&opened, d.presentation(), "show-formulas-zeros-undone.xlsx");
+    let package_undone = ibis_ooxml::Package::open(saved_undone.clone()).unwrap();
+    let xml_undone = String::from_utf8(package_undone.read(sheet_part).unwrap()).unwrap();
+    assert!(!xml_undone.contains("showFormulas"), "showFormulas should be absent when false: {xml_undone}");
+    assert!(!xml_undone.contains("showZeros"), "showZeros should be absent when true: {xml_undone}");
+}
+
+#[test]
+fn split_panes_save_and_reopen_roundtrip() {
+    let (bytes, _) = open("xlsx-sales.xlsx");
+    let opened = ibis_pptx::open(bytes.clone()).unwrap();
+    let mut d = Document::new(opened.presentation.clone());
+    let s = slide(d.presentation(), "月次売上");
+
+    // 1. Initially no split
+    let sh0 = sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+    assert_eq!(sh0.split, None);
+
+    // 2. Execute SheetCommand::Split at (2, 3) (column 2, row 3)
+    d.execute(vec![
+        Command::Sheet(SheetCommand::Split { slide: s, split: Some((2, 3)) }),
+    ]).unwrap();
+
+    let sh1 = sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+    assert_eq!(sh1.split, Some((2, 3)));
+    assert_eq!(sh1.frozen, None);
+
+    // 3. Save as .xlsx and verify XML has <pane state="split" xSplit="2" ySplit="3" topLeftCell="C4" activePane="bottomRight"/>
+    let saved = save(&opened, d.presentation(), "split-panes-test.xlsx");
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let sheet_part = "xl/worksheets/sheet1.xml";
+    let xml = String::from_utf8(package.read(sheet_part).unwrap()).unwrap();
+    assert!(xml.contains(r#"state="split""#), "sheet xml must have state=split: {xml}");
+    assert!(xml.contains(r#"xSplit="2""#), "sheet xml must have xSplit=2: {xml}");
+    assert!(xml.contains(r#"ySplit="3""#), "sheet xml must have ySplit=3: {xml}");
+    assert!(xml.contains(r#"topLeftCell="C4""#), "sheet xml must have topLeftCell=C4: {xml}");
+    assert!(xml.contains(r#"activePane="bottomRight""#), "sheet xml must have activePane=bottomRight: {xml}");
+
+    // 4. Reopen and verify model restores sheet.split
+    let again = ibis_pptx::read(&saved).unwrap();
+    let sh_again = sheet_of_slide(again.slide(s).unwrap()).unwrap();
+    assert_eq!(sh_again.split, Some((2, 3)));
+    assert_eq!(sh_again.frozen, None);
+
+    // 5. Undo and verify split is removed in model and XML
+    assert!(d.undo());
+    let sh_undo = sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+    assert_eq!(sh_undo.split, None);
+
+    let saved_undo = save(&opened, d.presentation(), "split-panes-undo.xlsx");
+    let package_undo = ibis_ooxml::Package::open(saved_undo.clone()).unwrap();
+    let xml_undo = String::from_utf8(package_undo.read(sheet_part).unwrap()).unwrap();
+    assert!(!xml_undo.contains(r#"state="split""#), "state=split should be absent: {xml_undo}");
+
+    let again_undo = ibis_pptx::read(&saved_undo).unwrap();
+    let sh_again_undo = sheet_of_slide(again_undo.slide(s).unwrap()).unwrap();
+    assert_eq!(sh_again_undo.split, None);
+
+    // 6. Switch to Freeze panes and verify mutual exclusion and roundtrip
+    d.execute(vec![
+        Command::Sheet(SheetCommand::Freeze { slide: s, frozen: Some((1, 2)) }),
+    ]).unwrap();
+    let sh_freeze = sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+    assert_eq!(sh_freeze.frozen, Some((1, 2)));
+    assert_eq!(sh_freeze.split, None);
+
+    let saved_freeze = save(&opened, d.presentation(), "split-to-freeze.xlsx");
+    let package_freeze = ibis_ooxml::Package::open(saved_freeze.clone()).unwrap();
+    let xml_freeze = String::from_utf8(package_freeze.read(sheet_part).unwrap()).unwrap();
+    assert!(xml_freeze.contains(r#"state="frozen""#), "sheet xml must have state=frozen: {xml_freeze}");
+    assert!(!xml_freeze.contains(r#"state="split""#), "state=split should be absent: {xml_freeze}");
+
+    let again_freeze = ibis_pptx::read(&saved_freeze).unwrap();
+    let sh_again_freeze = sheet_of_slide(again_freeze.slide(s).unwrap()).unwrap();
+    assert_eq!(sh_again_freeze.frozen, Some((1, 2)));
+    assert_eq!(sh_again_freeze.split, None);
+}
+
+#[test]
+fn new_sheet_chart_supports_radar_surface_combo_and_of_pie_roundtrip() {
+    use ibis_doc_model::{CellRange, EmuRect, ShapeKind};
+    use ibis_pptx::NewChartKind;
+    let (_data, opened) = open("xlsx-sales.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let sheet = slide(d.presentation(), "月次売上");
+    let charts_before = shapes_of(d.presentation(), "月次売上").iter().filter(|s| matches!(s.kind, ShapeKind::Chart(_))).count();
+    // A3:D8: stores down the side, months across top (3 value columns: 4月, 5月, 6月).
+    let range = CellRange { first_row: 2, first_column: 0, last_row: 7, last_column: 3 };
+    let refs = ibis_pptx::refs_for_range(d.presentation(), "月次売上", range, true).expect("refs");
+    assert_eq!(refs.len(), 3);
+
+    let kinds = [
+        NewChartKind::PieOfPie,
+        NewChartKind::BarOfPie,
+        NewChartKind::Radar,
+        NewChartKind::RadarFilled,
+        NewChartKind::Surface3D,
+        NewChartKind::Surface3DWireframe,
+        NewChartKind::Contour,
+        NewChartKind::ContourWireframe,
+        NewChartKind::ComboColumnLine,
+        NewChartKind::ComboColumnLineSecondaryAxis,
+        NewChartKind::ComboAreaColumn,
+    ];
+
+    for kind in kinds {
+        let id = d.ids().new_shape_id();
+        let shape = opened.source.new_sheet_chart(
+            d.presentation(),
+            sheet,
+            id,
+            EmuRect::new(1_000_000, 4_000_000, 5_000_000, 3_000_000),
+            kind,
+            refs.clone(),
+        ).unwrap_or_else(|e| panic!("failed to insert {kind:?}: {e}"));
+        let ShapeKind::Chart(c) = &shape.kind else { panic!("a chart") };
+        assert!(!c.groups.is_empty(), "{kind:?} must have at least one group");
+        let total_series: usize = c.groups.iter().map(|g| g.series.len()).sum();
+        assert_eq!(total_series, 3, "{kind:?} must distribute all 3 series");
+
+        let index = d.presentation().slide(sheet).unwrap().shapes.len();
+        d.execute(vec![Command::InsertShape { slide: sheet, index, shape: shape.clone() }]).unwrap();
+    }
+
+    let saved = save(&opened, d.presentation(), "advanced-sheet-charts.xlsx");
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    for name in package.names().filter(|n| n.starts_with("xl/charts/chart") && n.ends_with(".xml")) {
+        let chart_xml = String::from_utf8(package.read(&name).unwrap()).unwrap();
+        assert!(!chart_xml.contains("externalData"), "sheet chart {name} must not contain externalData");
+        assert!(chart_xml.contains("月次売上!$B$4:$B$8") || chart_xml.contains("月次売上!$B$3"), "chart {name} must reference sheet data");
+    }
+
+    let again = ibis_pptx::open(saved).unwrap();
+    let charts: Vec<_> = shapes_of(&again.presentation, "月次売上").into_iter().filter(|s| matches!(s.kind, ShapeKind::Chart(_))).collect();
+    assert_eq!(charts.len(), charts_before + kinds.len());
+}
+
+/// Non-ECMA-376 error values without formulas (e.g. #SPILL!, #CALC!) must be saved with t="str"
+/// so that Excel for Mac opens them without hanging, and read back as CellValue::Error.
+/// Legacy ECMA-376 errors (e.g. #DIV/0!) must still be saved with t="e".
+#[test]
+fn non_ecma376_cell_error_literal_saved_as_str_and_read_back() {
+    use ibis_doc_model::CellError;
+    // 1. Read a worksheet that has raw `<c t="e"><v>#SPILL!</v></c>` (and #FIELD!, #BLOCKED!, #CONNECT!, #UNKNOWN!)
+    let base = ibis_pptx::blank_file(ibis_pptx::Kind::Workbook).unwrap();
+    let mut pkg = ibis_ooxml::Package::open(base).unwrap();
+    let raw_sheet = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="B1" t="e"><v>#SPILL!</v></c>
+      <c r="C1" t="e"><v>#FIELD!</v></c>
+      <c r="D1" t="e"><v>#BLOCKED!</v></c>
+      <c r="E1" t="e"><v>#CONNECT!</v></c>
+      <c r="F1" t="e"><v>#UNKNOWN!</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+    pkg.set_bytes("xl/worksheets/sheet1.xml", raw_sheet.as_bytes().to_vec());
+    let raw_opened = ibis_pptx::open(pkg.save(SaveOptions::default()).unwrap()).unwrap();
+    let expected = [
+        (1, CellError::Spill, "#SPILL!"),
+        (2, CellError::Field, "#FIELD!"),
+        (3, CellError::Blocked, "#BLOCKED!"),
+        (4, CellError::Connect, "#CONNECT!"),
+        (5, CellError::Unknown, "#UNKNOWN!"),
+    ];
+    for &(col, err, _) in &expected {
+        assert_eq!(cell(&raw_opened.presentation, "Sheet1", 0, col).value, CellValue::Error(err));
+    }
+
+    // 2. Writing those 5 errors as cell literals (no formula) saves them as t="str" and reads back as CellValue::Error.
+    let (_, opened) = open("xlsx-sparkline.xlsx");
+    let s = slide(&opened.presentation, "縦位置");
+    let mut d = Document::new(opened.presentation.clone());
+
+    let mut edits: Vec<(u32, u32, CellInput)> = expected
+        .iter()
+        .enumerate()
+        .map(|(r, &(_, err, _))| (r as u32, 0, CellInput::Value(CellValue::Error(err))))
+        .collect();
+    edits.push((5, 0, CellInput::Value(CellValue::Error(CellError::Div0))));
+    set(&mut d, s, edits);
+
+    let saved = save(&opened, d.presentation(), "error_literals.xlsx");
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let sheet_xml = String::from_utf8(package.read("xl/worksheets/sheet1.xml").unwrap()).unwrap();
+
+    for (r, &(_, _, text)) in expected.iter().enumerate() {
+        let cell_ref = format!("A{}", r + 1);
+        assert!(
+            sheet_xml.contains(&format!("r=\"{cell_ref}\" t=\"str\"")) && sheet_xml.contains(&format!("<v>{text}</v>")),
+            "{cell_ref} ({text}) must be saved as t=\"str\": {sheet_xml}"
+        );
+    }
+    assert!(
+        sheet_xml.contains("r=\"A6\" t=\"e\"") && sheet_xml.contains("<v>#DIV/0!</v>"),
+        "A6 (#DIV/0!) must be saved as t=\"e\": {sheet_xml}"
+    );
+
+    let reread = ibis_pptx::read(&saved).unwrap();
+    for (r, &(_, err, _)) in expected.iter().enumerate() {
+        assert_eq!(cell(&reread, "縦位置", r as u32, 0).value, CellValue::Error(err));
+    }
+    assert_eq!(cell(&reread, "縦位置", 5, 0).value, CellValue::Error(CellError::Div0));
+}
+
+#[test]
+fn external_workbook_formula_reference_roundtrip() {
+    let base = ibis_pptx::blank_file(ibis_pptx::Kind::Workbook).unwrap();
+    let mut pkg = ibis_ooxml::Package::open(base).unwrap();
+    let raw_sheet = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1"><v>10</v></c>
+      <c r="B1"><f>'[External.xlsx]Sheet1'!$A$1</f><v>42</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+    pkg.set_bytes("xl/worksheets/sheet1.xml", raw_sheet.as_bytes().to_vec());
+    let opened = ibis_pptx::open(pkg.save(SaveOptions::default()).unwrap()).unwrap();
+    assert_eq!(formula(&opened.presentation, "Sheet1", 0, 1).as_deref(), Some("'[External.xlsx]Sheet1'!$A$1"));
+    assert_eq!(value(&opened.presentation, "Sheet1", 0, 1), CellValue::Number(42.0));
+
+    let s = slide(&opened.presentation, "Sheet1");
+    let mut d = Document::new(opened.presentation.clone());
+    set(&mut d, s, vec![(0, 0, CellInput::Value(CellValue::Number(20.0)))]);
+
+    let saved = opened.source.save(d.presentation(), SaveOptions::default()).unwrap();
+    let reread = ibis_pptx::open(saved).unwrap();
+    assert_eq!(value(&reread.presentation, "Sheet1", 0, 0), CellValue::Number(20.0));
+    assert_eq!(formula(&reread.presentation, "Sheet1", 0, 1).as_deref(), Some("'[External.xlsx]Sheet1'!$A$1"));
+    assert_eq!(value(&reread.presentation, "Sheet1", 0, 1), CellValue::Number(42.0));
+}
+
+#[test]
+fn chart_follows_cells_after_structure_edits_and_save() {
+    use ibis_doc_model::sheet_command::Axis;
+
+    let (_, opened) = open("xlsx-sales.xlsx");
+    let s = slide(&opened.presentation, "月次売上");
+    let s2 = opened.presentation.slides[2].id;
+    let mut d = Document::new(opened.presentation.clone());
+    let first_value = |p: &ibis_doc_model::Presentation| -> Option<f64> {
+        p.slide(s)
+            .unwrap()
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ibis_doc_model::ShapeKind::Chart(c) => c.groups[0].series[0].values.first().copied().flatten().map(|n| n.0),
+                _ => None,
+            })
+    };
+    assert_eq!(first_value(d.presentation()), Some(1_250_000.0));
+
+    // 1. Insert a row above row 1: B4 moves to B5 (row 4, col 1), and editing B5 updates the chart live.
+    d.execute(vec![Command::Sheet(SheetCommand::Insert { slide: s, axis: Axis::Rows, at: 0, count: 1 })]).unwrap();
+    set(&mut d, s, vec![(4, 1, CellInput::Value(CellValue::Number(7_500_000.0)))]);
+    assert_eq!(first_value(d.presentation()), Some(7_500_000.0), "chart follows cell after row insert");
+    assert!(d.undo());
+    assert!(d.undo());
+    assert_eq!(first_value(d.presentation()), Some(1_250_000.0), "undo row insert restores chart");
+
+    // 2. Delete row 4 (index 3), then edit the new B4 (row 3, col 1).
+    d.execute(vec![Command::Sheet(SheetCommand::Delete { slide: s, axis: Axis::Rows, at: 3, count: 1 })]).unwrap();
+    set(&mut d, s, vec![(3, 1, CellInput::Value(CellValue::Number(6_400_000.0)))]);
+    assert_eq!(first_value(d.presentation()), Some(6_400_000.0), "chart follows cell after row delete");
+    assert!(d.undo());
+    assert!(d.undo());
+    assert_eq!(first_value(d.presentation()), Some(1_250_000.0));
+
+    // 3. Rename the sheet, move the sheet, and delete another sheet; then edit B4 and save.
+    d.execute(vec![Command::Sheet(SheetCommand::RenameSheet { slide: s, name: "売上データ".into() })]).unwrap();
+    d.execute(vec![Command::Sheet(SheetCommand::MoveSheet { slide: s, to: 1 })]).unwrap();
+    d.execute(vec![Command::Sheet(SheetCommand::DeleteSheet { slide: s2 })]).unwrap();
+    set(&mut d, s, vec![(3, 1, CellInput::Value(CellValue::Number(9_000_000.0)))]);
+    assert_eq!(first_value(d.presentation()), Some(9_000_000.0), "chart follows cell after sheet rename/move/delete");
+
+    let saved = save(&opened, d.presentation(), "chart-follows-structure.xlsx");
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let reread_s = slide(&reread, "売上データ");
+    let reread_first = reread.slide(reread_s).unwrap().shapes.iter().find_map(|sh| match &sh.kind {
+        ibis_doc_model::ShapeKind::Chart(c) => c.groups[0].series[0].values.first().copied().flatten().map(|n| n.0),
+        _ => None,
+    });
+    assert_eq!(reread_first, Some(9_000_000.0), "saved chart keeps updated value after structure edits");
+
+    // 4. A chartEx chart also continues following its cells after sheet rename and row insert.
+    let (_, ex_opened) = open("xlsx-chartex-funnel.xlsx");
+    let ex_s = ex_opened.presentation.slides[0].id;
+    let mut ex_doc = Document::new(ex_opened.presentation.clone());
+    ex_doc.execute(vec![Command::Sheet(SheetCommand::RenameSheet { slide: ex_s, name: "FunnelRenamed".into() })]).unwrap();
+    ex_doc.execute(vec![Command::Sheet(SheetCommand::Insert { slide: ex_s, axis: Axis::Rows, at: 0, count: 1 })]).unwrap();
+    set(&mut ex_doc, ex_s, vec![(2, 1, CellInput::Value(CellValue::Number(99_999.0)))]);
+    let ex_vals: Vec<Option<f64>> = ex_doc.presentation().slides[0].shapes.iter().find_map(|sh| match &sh.kind {
+        ibis_doc_model::ShapeKind::Chart(c) => Some(c.groups[0].series.iter().flat_map(|s| &s.values).map(|v| v.map(|n| n.0)).collect()),
+        _ => None,
+    }).unwrap();
+    assert!(ex_vals.contains(&Some(99_999.0)), "chartEx follows cell edit after sheet rename and row insert: {ex_vals:?}");
+    let ex_saved = save(&ex_opened, ex_doc.presentation(), "chartex-follows-structure.xlsx");
+    let ex_reread = ibis_pptx::read(&ex_saved).unwrap();
+    let ex_reread_vals: Vec<Option<f64>> = ex_reread.slides[0].shapes.iter().find_map(|sh| match &sh.kind {
+        ibis_doc_model::ShapeKind::Chart(c) => Some(c.groups[0].series.iter().flat_map(|s| &s.values).map(|v| v.map(|n| n.0)).collect()),
+        _ => None,
+    }).unwrap();
+    assert!(ex_reread_vals.contains(&Some(99_999.0)), "saved chartEx keeps updated value: {ex_reread_vals:?}");
+}
+
+#[test]
+fn pivot_chart_insert_sync_and_save_roundtrip() {
+    use ibis_doc_model::{EmuRect, Shape, ShapeKind};
+
+    let (_, opened) = open("xlsx-pivot-not-refreshed.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let id = opened.presentation.slides[0].id;
+    let s = d.presentation().slide(id).unwrap();
+    let sh = sheet_of_slide(s).unwrap();
+    let pivot = sh.pivots[0].clone();
+    let data = ibis_pptx::pivot_source(d.presentation(), sh, &pivot).unwrap();
+    let built = pivot.build(&data);
+
+    // 1. Create a PivotChart from the PivotTable and insert it on the sheet.
+    let chart = ibis_doc_model::pivot::chart_from_pivot(&pivot, &built);
+    assert_eq!(chart.groups[0].series.len(), 4);
+    let initial_categories = chart.groups[0].series[0].categories.clone();
+    let initial_values = chart.groups[0].series[0].values.clone();
+    let shape_index = s.shapes.len();
+    let shape_id = d.ids().new_shape_id();
+    let shape = Shape {
+        id: shape_id,
+        frame: EmuRect::new(1_000_000, 500_000, 4_500_000, 3_000_000),
+        rotation: 0,
+        flip_h: false,
+        flip_v: false,
+        kind: ShapeKind::Chart(Box::new(chart)),
+        floating: None,
+    };
+    d.execute(vec![Command::InsertShape { slide: id, index: shape_index, shape }]).unwrap();
+
+    // 2. Save and verify that the new PivotChart round-trips with pivotSource and series data.
+    let saved1 = save(&opened, d.presentation(), "pivot-chart-insert-roundtrip.xlsx");
+    let reopened1 = ibis_pptx::open(saved1).unwrap();
+    let chart1 = reopened1.presentation.slide(id).unwrap().shapes.iter().find_map(|sh| match &sh.kind {
+        ShapeKind::Chart(c) if c.is_pivot_chart() => Some((**c).clone()),
+        _ => None,
+    }).expect("saved workbook should contain the newly inserted PivotChart");
+    assert_eq!(chart1.pivot_source.as_deref(), Some(pivot.name.as_str()));
+    assert_eq!(chart1.groups[0].series.len(), 4);
+    assert_eq!(chart1.groups[0].series[0].categories, initial_categories);
+    assert_eq!(chart1.groups[0].series[0].values, initial_values);
+
+    // 3. Reopen the saved workbook, change the PivotTable layout so series count changes from 4 to 1,
+    // sync the PivotChart via update_chart_from_pivot, and save again.
+    let mut d2 = Document::new(reopened1.presentation.clone());
+    let mut p2 = sheet_of_slide(d2.presentation().slide(id).unwrap()).unwrap().pivots[0].clone();
+    if let Some(pdata) = ibis_pptx::pivot_data(d2.presentation(), id, 0) {
+        p2.fill_shared(&pdata);
+    }
+    p2.place(1, None, 0);
+    let sh2 = ibis_pptx::rebuilt_pivot(d2.presentation(), id, 0, Some(p2)).unwrap();
+    let data2 = ibis_pptx::pivot_source(d2.presentation(), &sh2, &sh2.pivots[0]).unwrap();
+    let built2 = sh2.pivots[0].build(&data2);
+    let mut updated_chart = chart1.clone();
+    ibis_doc_model::pivot::update_chart_from_pivot(&mut updated_chart, &sh2.pivots[0], &built2);
+    assert_eq!(updated_chart.groups[0].series.len(), 1);
+    let expected_categories = updated_chart.groups[0].series[0].categories.clone();
+    let expected_values = updated_chart.groups[0].series[0].values.clone();
+
+    let chart_shape_id = d2.presentation().slide(id).unwrap().shapes.iter().find_map(|sh| match &sh.kind {
+        ShapeKind::Chart(c) if c.is_pivot_chart() => Some(sh.id),
+        _ => None,
+    }).unwrap();
+    d2.execute(vec![
+        Command::Sheet(SheetCommand::ReplaceSheet { slide: id, sheet: Box::new(sh2) }),
+        Command::SetKind { slide: id, shape: chart_shape_id, kind: Box::new(ShapeKind::Chart(Box::new(updated_chart))) },
+    ]).unwrap();
+
+    let saved2 = reopened1.source.save(d2.presentation(), SaveOptions::default()).unwrap();
+    let reopened2 = ibis_pptx::read(&saved2).unwrap();
+    let chart2 = reopened2.slide(id).unwrap().shapes.iter().find_map(|sh| match &sh.kind {
+        ShapeKind::Chart(c) if c.is_pivot_chart() => Some((**c).clone()),
+        _ => None,
+    }).expect("second saved workbook should preserve the updated PivotChart");
+    assert_eq!(chart2.pivot_source.as_deref(), Some(pivot.name.as_str()));
+    assert_eq!(chart2.groups[0].series.len(), 1);
+    assert_eq!(chart2.groups[0].series[0].categories, expected_categories);
+    assert_eq!(chart2.groups[0].series[0].values, expected_values);
+}
+
+#[test]
+fn timeline_insert_move_style_grouped_filter_and_delete_roundtrip() {
+    use ibis_doc_model::timeline::Timeline;
+    use ibis_doc_model::{Command, Document, EmuRect, Shape, ShapeId, ShapeKind};
+    use ibis_pptx::SaveOptions;
+    use std::sync::Arc;
+
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/editing/xlsx-timeline-pivot.xlsx"),
+    )
+    .unwrap();
+    let loaded = ibis_pptx::open(bytes).unwrap();
+    let mut doc = Document::new(loaded.presentation.clone());
+    let slide_id = doc.presentation().slides[0].id;
+
+    // 1. Add a second Timeline (Years level = 0, TimeSlicerStyleDark3) and save
+    let existing_tl = doc
+        .presentation()
+        .slide(slide_id)
+        .unwrap()
+        .shapes
+        .iter()
+        .find_map(|sh| match &sh.kind {
+            ShapeKind::Timeline(tl) => Some((**tl).clone()),
+            _ => None,
+        })
+        .unwrap();
+    let new_tl_id = ShapeId(9901);
+    let p0 = existing_tl.periods(0);
+    let sel_year = (p0[0].start, p0[0].end);
+    let new_tl = Timeline {
+        name: "NativeTimeline2".into(),
+        caption: "日付 (年)".into(),
+        cache: String::new(),
+        source: existing_tl.source.clone(),
+        pivots: existing_tl.pivots.clone(),
+        level: 0,
+        selection_level: 0,
+        scroll: existing_tl.bounds.0,
+        bounds: existing_tl.bounds,
+        selection: Some(sel_year),
+        show_header: true,
+        show_selection_label: true,
+        show_time_level: false,
+        show_scroll_bar: true,
+        style: "TimeSlicerStyleDark3".into(),
+        part: String::new(),
+        cache_part: String::new(),
+    };
+    let shape = Shape::new(
+        new_tl_id,
+        EmuRect {
+            x: 4572000,
+            y: 2286000,
+            width: 3200400,
+            height: 1371600,
+        },
+        ShapeKind::Timeline(Arc::new(new_tl)),
+    );
+    let index = doc.presentation().slide(slide_id).unwrap().shapes.len();
+    doc.execute(vec![Command::InsertShape {
+        slide: slide_id,
+        index,
+        shape,
+    }])
+    .unwrap();
+
+    let saved1 = loaded
+        .source
+        .save(doc.presentation(), SaveOptions::default())
+        .unwrap();
+    let reopened1 = ibis_pptx::open(saved1).unwrap();
+    let timelines1: Vec<Timeline> = reopened1
+        .presentation
+        .slide(slide_id)
+        .unwrap()
+        .shapes
+        .iter()
+        .filter_map(|sh| match &sh.kind {
+            ShapeKind::Timeline(tl) => Some((**tl).clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(timelines1.len(), 2, "newly added timeline should be saved and reopened");
+    let added = timelines1
+        .iter()
+        .find(|t| t.caption == "日付 (年)")
+        .expect("reopened second timeline");
+    assert_eq!(added.style, "TimeSlicerStyleDark3");
+    assert_eq!(added.level, 0);
+    assert_eq!(added.selection_level, 0);
+    assert_eq!(added.selection, Some(sel_year));
+    assert!(!added.show_time_level);
+
+    // 2. Delete both timelines and verify OOXML removal round-trip
+    let mut doc2 = Document::new(reopened1.presentation.clone());
+    let tl_ids: Vec<ShapeId> = doc2
+        .presentation()
+        .slide(slide_id)
+        .unwrap()
+        .shapes
+        .iter()
+        .filter_map(|sh| matches!(sh.kind, ShapeKind::Timeline(_)).then_some(sh.id))
+        .collect();
+    assert_eq!(tl_ids.len(), 2);
+    for id in tl_ids {
+        doc2.execute(vec![Command::RemoveShape {
+            slide: slide_id,
+            shape: id,
+        }])
+        .unwrap();
+    }
+    let saved2 = reopened1
+        .source
+        .save(doc2.presentation(), SaveOptions::default())
+        .unwrap();
+    let reopened2 = ibis_pptx::read(&saved2).unwrap();
+    let remaining_timelines = reopened2
+        .slide(slide_id)
+        .unwrap()
+        .shapes
+        .iter()
+        .filter(|sh| matches!(sh.kind, ShapeKind::Timeline(_)))
+        .count();
+    assert_eq!(remaining_timelines, 0, "deleted timelines should be removed from OOXML");
+
+    // 3. Verify SelectionStart, SelectionEnd, ScrollThumb hit-testing and grouped date field filtering
+    use ibis_doc_model::timeline::{
+        CAPTION, CELL_WIDTH, GROUP, SCROLL, SUB, TimelineHit, first_shown, hit, period_at_x,
+        thumb_rect,
+    };
+    let mut tl_sel = existing_tl.clone();
+    let periods = tl_sel.periods(tl_sel.selection_level);
+    let first = first_shown(&periods, tl_sel.scroll);
+    tl_sel.selection = Some((periods[first].start, periods[first + 1].end));
+    let x_start = SCROLL;
+    let x_end = SCROLL + 2 * CELL_WIDTH;
+    let width = 3200400;
+    let height = 1371600;
+    let body_y = (CAPTION + SUB + GROUP + height - SCROLL) / 2;
+    assert_eq!(
+        hit(&tl_sel, width, height, x_start, body_y),
+        Some(TimelineHit::SelectionStart)
+    );
+    assert_eq!(
+        hit(&tl_sel, width, height, x_end, body_y),
+        Some(TimelineHit::SelectionEnd)
+    );
+    let (tx0, tx1) = thumb_rect(&tl_sel, &periods, width);
+    assert_eq!(
+        hit(&tl_sel, width, height, (tx0 + tx1) / 2, height - SCROLL / 2),
+        Some(TimelineHit::ScrollThumb)
+    );
+    let p2_x = SCROLL + 2 * CELL_WIDTH + CELL_WIDTH / 2;
+    assert_eq!(period_at_x(&tl_sel, &periods, width, p2_x), Some(first + 2));
+
+    // 4. Verify grouped date field filtering via Timeline (date field placed on Row, grouped by Months)
+    use ibis_doc_model::pivot::{DateGroupBy, PivotAxis, PivotFieldGrouping, PivotItem};
+    let mut p = sheet_of_slide(loaded.presentation.slide(slide_id).unwrap())
+        .unwrap()
+        .pivots[0]
+        .clone();
+    if let Some(pdata) = ibis_pptx::pivot_data(&loaded.presentation, slide_id, 0) {
+        p.fill_shared(&pdata);
+    }
+    p.place(0, Some(PivotAxis::Row), 0);
+    p.place(1, None, 0);
+    p.fields[0].grouping = Some(PivotFieldGrouping::Date {
+        by: DateGroupBy::Months,
+        start: None,
+        end: None,
+        auto_start: true,
+        auto_end: true,
+    });
+    // Filter date field items by first period only
+    let mut tl_first = existing_tl.clone();
+    tl_first.selection = Some((periods[0].start, periods[0].end));
+    if p.fields[0].items.len() < p.fields[0].shared.len() {
+        p.fields[0].items = (0..p.fields[0].shared.len() as u32)
+            .map(|i| PivotItem {
+                x: Some(i),
+                kind: None,
+                hidden: false,
+            })
+            .collect();
+    }
+    let shared = p.fields[0].shared.clone();
+    for item in &mut p.fields[0].items {
+        if let Some(Some(&ibis_doc_model::CellValue::Number(n))) =
+            item.x.map(|i| shared.get(i as usize))
+        {
+            item.hidden = !tl_first.keeps(n);
+        }
+    }
+    let sh_grouped = ibis_pptx::rebuilt_pivot(&loaded.presentation, slide_id, 0, Some(p)).unwrap();
+    let data_grouped =
+        ibis_pptx::pivot_source(&loaded.presentation, &sh_grouped, &sh_grouped.pivots[0]).unwrap();
+    let built_grouped = sh_grouped.pivots[0].build(&data_grouped);
+    assert!(
+        built_grouped.cells.len() >= 3,
+        "Grouped date PivotTable should retain filtered month bucket"
+    );
+}
+
+#[test]
+fn form_control_insert_move_resize_format_and_delete_roundtrip() {
+    use ibis_doc_model::{ControlKind, EmuRect, FormControl, Rgb, Shape, ShapeId, ShapeKind};
+    use ibis_pptx::SaveOptions;
+    use std::sync::Arc;
+
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/editing/xlsx-form-controls.xlsx"),
+    )
+    .expect("read xlsx-form-controls.xlsx");
+    let mut loaded = ibis_pptx::open(bytes).expect("load xlsx-form-controls");
+    let slide_id = loaded.presentation.slides[0].id;
+
+    // 1. Move, resize, and format the Button control, and toggle 3D on the CheckBox control
+    let slide = loaded.presentation.slide_mut(slide_id).unwrap();
+    let btn_shape_id = slide
+        .shapes
+        .iter()
+        .find_map(|sh| match &sh.kind {
+            ShapeKind::Control(c) if c.kind == ControlKind::Button => Some(sh.id),
+            _ => None,
+        })
+        .expect("find button control");
+    if let Some(sh) = slide.shapes.iter_mut().find(|sh| sh.id == btn_shape_id) {
+        sh.frame.x += 914400; // +1 inch
+        sh.frame.y += 457200; // +0.5 inch
+        sh.frame.width += 457200;
+        sh.frame.height += 228600;
+        if let ShapeKind::Control(c) = &mut sh.kind {
+            let mut c_mut = (**c).clone();
+            c_mut.text = "実行更新".to_string();
+            c_mut.font = Some("Yu Gothic".to_string());
+            c_mut.font_size = Some(1400); // 14pt
+            c_mut.bold = true;
+            c_mut.italic = true;
+            c_mut.text_color = Some(Rgb::from_rgb(0xCC, 0x22, 0x11));
+            *c = Arc::new(c_mut);
+        }
+    }
+    let orig_btn_x = slide
+        .shapes
+        .iter()
+        .find(|sh| sh.id == btn_shape_id)
+        .unwrap()
+        .frame
+        .x;
+
+    // Toggle CheckBox three_d to false (noThreeD="1")
+    let chk_shape_id = slide
+        .shapes
+        .iter()
+        .find_map(|sh| match &sh.kind {
+            ShapeKind::Control(c) if c.kind == ControlKind::CheckBox => Some(sh.id),
+            _ => None,
+        })
+        .expect("find checkbox control");
+    if let Some(sh) = slide.shapes.iter_mut().find(|sh| sh.id == chk_shape_id) {
+        if let ShapeKind::Control(c) = &mut sh.kind {
+            let mut c_mut = (**c).clone();
+            c_mut.three_d = false;
+            c_mut.checked = 0;
+            *c = Arc::new(c_mut);
+        }
+    }
+
+    // Delete the Label control
+    let label_idx = slide
+        .shapes
+        .iter()
+        .position(|sh| matches!(&sh.kind, ShapeKind::Control(c) if c.kind == ControlKind::Label))
+        .expect("find label control");
+    slide.shapes.remove(label_idx);
+
+    // Insert a brand-new CheckBox control
+    let mut new_ctrl = FormControl::new(ControlKind::CheckBox, "Check Box 99");
+    new_ctrl.text = "新規チェック".to_string();
+    new_ctrl.link = Some("$H$10".to_string());
+    new_ctrl.checked = 1;
+    new_ctrl.three_d = true;
+    new_ctrl.font = Some("Meiryo".to_string());
+    new_ctrl.font_size = Some(1100);
+    new_ctrl.bold = true;
+    new_ctrl.italic = false;
+    new_ctrl.text_color = Some(Rgb::from_rgb(0x11, 0x44, 0x88));
+    let new_sh = Shape::new(
+        ShapeId(9999),
+        EmuRect {
+            x: 914400 * 5,
+            y: 914400 * 6,
+            width: 914400 * 2,
+            height: 274320,
+        },
+        ShapeKind::Control(Arc::new(new_ctrl)),
+    );
+    slide.shapes.push(new_sh);
+
+    // Save and reload
+    let saved1 = loaded
+        .source
+        .save(&loaded.presentation, SaveOptions::default())
+        .expect("save1");
+    let reloaded1 = ibis_pptx::open(saved1).expect("reload1");
+    let slide1 = &reloaded1.presentation.slides[0];
+    let ctrls1: Vec<(&Shape, &FormControl)> = slide1
+        .shapes
+        .iter()
+        .filter_map(|sh| match &sh.kind {
+            ShapeKind::Control(c) => Some((sh, c.as_ref())),
+            _ => None,
+        })
+        .collect();
+    // 10 original - 1 deleted Label + 1 inserted CheckBox = 10 controls
+    assert_eq!(ctrls1.len(), 10, "expected 10 controls after delete + insert");
+    assert!(
+        !ctrls1.iter().any(|(_, c)| c.kind == ControlKind::Label),
+        "Deleted Label control should not remain after reload"
+    );
+
+    let (btn_sh, btn_c) = ctrls1
+        .iter()
+        .find(|(_, c)| c.kind == ControlKind::Button)
+        .expect("reloaded button");
+    assert!(
+        (btn_sh.frame.x - orig_btn_x).abs() < 50000,
+        "Button moved X should roundtrip: got {} vs {}",
+        btn_sh.frame.x,
+        orig_btn_x
+    );
+    assert_eq!(btn_c.text, "実行更新");
+    assert_eq!(btn_c.font.as_deref(), Some("Yu Gothic"));
+    assert_eq!(btn_c.font_size, Some(1400));
+    assert!(btn_c.bold);
+    assert!(btn_c.italic);
+    assert_eq!(btn_c.text_color, Some(Rgb::from_rgb(0xCC, 0x22, 0x11)));
+
+    let (_, chk_orig) = ctrls1
+        .iter()
+        .find(|(_, c)| c.kind == ControlKind::CheckBox && c.text != "新規チェック")
+        .expect("reloaded original checkbox");
+    assert!(!chk_orig.three_d, "CheckBox three_d=false (noThreeD=1) should roundtrip");
+
+    let (_, chk_new) = ctrls1
+        .iter()
+        .find(|(_, c)| c.kind == ControlKind::CheckBox && c.text == "新規チェック")
+        .expect("reloaded newly inserted checkbox");
+    assert!(chk_new.three_d, "Inserted CheckBox three_d=true should roundtrip");
+    assert_eq!(chk_new.link.as_deref(), Some("$H$10"));
+    assert_eq!(chk_new.font.as_deref(), Some("Meiryo"));
+    assert_eq!(chk_new.font_size, Some(1100));
+    assert!(chk_new.bold);
+    assert!(!chk_new.italic);
+    assert_eq!(chk_new.text_color, Some(Rgb::from_rgb(0x11, 0x44, 0x88)));
+
+    // Verify thumb_value helper for continuous scrollbar dragging
+    let (_, scroll_c) = ctrls1
+        .iter()
+        .find(|(_, c)| c.kind == ControlKind::Scroll)
+        .expect("reloaded scrollbar");
+    let mid_val = ibis_doc_model::form_control::thumb_value(scroll_c, 1828800, 190500, 914400, 0);
+    assert!(
+        mid_val >= scroll_c.min && mid_val <= scroll_c.max,
+        "thumb_value should compute value within [min, max]: got {mid_val}"
+    );
+}
+

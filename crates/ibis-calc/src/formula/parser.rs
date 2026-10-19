@@ -32,6 +32,8 @@ pub struct SheetRef {
     pub last: Option<String>,
     /// An external workbook (`[1]`).
     pub book: Option<String>,
+    /// The directory path of an external workbook (`'C:\dir\[Book.xlsx]Sheet1'!A1`).
+    pub path: Option<String>,
 }
 
 /// A rectangle of cells as written: `A1`, `A1:B2`, `A:C` (whole columns,
@@ -350,8 +352,8 @@ impl Parser {
                 Ok(if items.len() == 1 { items.pop().unwrap() } else { Expr::Union(items) })
             }
             Token::LBrace => self.array(),
-            Token::Sheet { first, last, book } => {
-                let sheet = SheetRef { first, last, book };
+            Token::Sheet { first, last, book, path } => {
+                let sheet = SheetRef { first, last, book, path };
                 match self.next() {
                     Some(Token::Word(w)) => Ok(word_on_sheet(&w, Some(sheet), self)),
                     Some(Token::Number(n)) => {

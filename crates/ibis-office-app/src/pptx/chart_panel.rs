@@ -37,6 +37,88 @@ pub(crate) struct ChartPanel {
     error: Option<SharedString>,
 }
 
+impl ChartPanel {
+    /// The fields for `chart` (`target`: where it is, for the editor that holds the panel).
+    pub(crate) fn new(chart: &Chart, target: (SlideId, ShapeId), window: &mut Window, cx: &mut Context<SlideEditor>) -> Self {
+        let mut field = |text: String| cx.new(|cx| InputState::new(window, cx).default_value(text));
+        let title = chart.title.as_ref().map(|t| field(t.text.clone()));
+        let series: Vec<_> = chart.groups.iter().flat_map(|g| g.series.iter()).collect();
+        let names = series.iter().map(|s| field(s.name.clone())).collect();
+        let categories = series.iter().find(|s| !s.categories.is_empty()).map(|s| s.categories.iter().map(|c| field(c.clone())).collect()).unwrap_or_default();
+        let values = series.iter().map(|s| s.values.iter().map(|v| field(shown(*v))).collect()).collect();
+        let val_axis = chart.axes.iter().find(|a| a.kind == AxisKind::Value);
+        let val_min = val_axis.map(|a| field(shown(a.min)));
+        let val_max = val_axis.map(|a| field(shown(a.max)));
+        let val_major = val_axis.map(|a| field(shown(a.major_unit)));
+        let val_reversed = val_axis.is_some_and(|a| a.reversed);
+        let val_log_scale = val_axis.is_some_and(|a| a.log_base.is_some());
+        ChartPanel { target, title, names, categories, values, val_min, val_max, val_major, val_reversed, val_log_scale, error: None }
+    }
+
+    /// `chart` with what was typed in the fields; the message when a value is not a number.
+    pub(crate) fn apply_to(&self, mut chart: Chart, cx: &App) -> Result<Chart, SharedString> {
+        let panel = self;
+        let read = |e: &Entity<InputState>| e.read(cx).value().to_string();
+        if let (Some(t), Some(field)) = (chart.title.as_mut(), &panel.title) {
+            t.text = read(field);
+        }
+        let old_categories: Option<Vec<String>> = chart.groups.iter().flat_map(|g| g.series.iter()).find(|s| !s.categories.is_empty()).map(|s| s.categories.clone());
+        let categories: Vec<String> = panel.categories.iter().map(read).collect();
+        let mut bad = false;
+        let mut index = 0;
+        for series in chart.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+            if let Some(name) = panel.names.get(index) {
+                series.name = read(name);
+            }
+            // The same categories are every series'.
+            if old_categories.as_ref().is_some_and(|c| *c == series.categories) && categories.len() == series.categories.len() {
+                series.categories = categories.clone();
+            }
+            if let Some(fields) = panel.values.get(index) {
+                for (v, field) in series.values.iter_mut().zip(fields) {
+                    match typed(&read(field)) {
+                        Ok(x) => *v = x,
+                        Err(()) => bad = true,
+                    }
+                }
+            }
+            index += 1;
+        }
+        let mut min_val = None;
+        let mut max_val = None;
+        let mut major_val = None;
+        if let Some(f) = &panel.val_min {
+            match typed(&read(f)) {
+                Ok(v) => min_val = v,
+                Err(()) => bad = true,
+            }
+        }
+        if let Some(f) = &panel.val_max {
+            match typed(&read(f)) {
+                Ok(v) => max_val = v,
+                Err(()) => bad = true,
+            }
+        }
+        if let Some(f) = &panel.val_major {
+            match typed(&read(f)) {
+                Ok(v) => major_val = v,
+                Err(()) => bad = true,
+            }
+        }
+        if bad {
+            return Err(crate::shell::i18n::text("pptx.chart-panel.values-must-numeric-blank-auto"));
+        }
+        if let Some(v_axis) = chart.axes.iter_mut().find(|a| a.kind == AxisKind::Value) {
+            v_axis.min = min_val;
+            v_axis.max = max_val;
+            v_axis.major_unit = major_val;
+            v_axis.reversed = panel.val_reversed;
+            v_axis.log_base = if panel.val_log_scale { Some(Number(10.0)) } else { None };
+        }
+        Ok(chart)
+    }
+}
+
 /// A value as the grid shows it.
 fn shown(v: Option<Number>) -> String {
     v.map(|Number(x)| format!("{x}")).unwrap_or_default()
@@ -123,21 +205,10 @@ impl SlideEditor {
         if chart.ex.is_some() {
             return self.open_chart_data(window, cx);
         }
-        let mut field = |text: String| cx.new(|cx| InputState::new(window, cx).default_value(text));
-        let title = chart.title.as_ref().map(|t| field(t.text.clone()));
-        let series: Vec<_> = chart.groups.iter().flat_map(|g| g.series.iter()).collect();
-        let names = series.iter().map(|s| field(s.name.clone())).collect();
-        let categories = series.iter().find(|s| !s.categories.is_empty()).map(|s| s.categories.iter().map(|c| field(c.clone())).collect()).unwrap_or_default();
-        let values = series.iter().map(|s| s.values.iter().map(|v| field(shown(*v))).collect()).collect();
-        let val_axis = chart.axes.iter().find(|a| a.kind == AxisKind::Value);
-        let val_min = val_axis.map(|a| field(shown(a.min)));
-        let val_max = val_axis.map(|a| field(shown(a.max)));
-        let val_major = val_axis.map(|a| field(shown(a.major_unit)));
-        let val_reversed = val_axis.is_some_and(|a| a.reversed);
-        let val_log_scale = val_axis.is_some_and(|a| a.log_base.is_some());
+        let panel = ChartPanel::new(&chart, (slide, shape), window, cx);
         if let Some(s) = self.pptx_mut() {
             s.timing_panel = None; s.section_panel = None; s.gradient_panel = None; s.shadow_panel = None; s.glow_panel = None; s.paragraph_panel = None; s.find = None; s.size_panel = None; s.insets_panel = None; s.crop_panel = None; s.frame_panel = None; s.comments = None; s.header_footer = None;
-            s.chart_panel = Some(ChartPanel { target: (slide, shape), title, names, categories, values, val_min, val_max, val_major, val_reversed, val_log_scale, error: None });
+            s.chart_panel = Some(panel);
         }
         self.sidebar_open = true;
         cx.notify();
@@ -147,67 +218,15 @@ impl SlideEditor {
         let Some(panel) = self.pptx().and_then(|s| s.chart_panel.as_ref()) else { return };
         let (slide, shape) = panel.target;
         let Some(ShapeKind::Chart(chart)) = self.presentation().slide(slide).and_then(|s| s.shape(shape)).map(|s| s.kind.clone()) else { return };
-        let mut chart = *chart;
-        let read = |e: &Entity<InputState>| e.read(cx).value().to_string();
-        if let (Some(t), Some(field)) = (chart.title.as_mut(), &panel.title) {
-            t.text = read(field);
-        }
-        let old_categories: Option<Vec<String>> = chart.groups.iter().flat_map(|g| g.series.iter()).find(|s| !s.categories.is_empty()).map(|s| s.categories.clone());
-        let categories: Vec<String> = panel.categories.iter().map(read).collect();
-        let mut bad = false;
-        let mut index = 0;
-        for series in chart.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
-            if let Some(name) = panel.names.get(index) {
-                series.name = read(name);
-            }
-            // The same categories are every series'.
-            if old_categories.as_ref().is_some_and(|c| *c == series.categories) && categories.len() == series.categories.len() {
-                series.categories = categories.clone();
-            }
-            if let Some(fields) = panel.values.get(index) {
-                for (v, field) in series.values.iter_mut().zip(fields) {
-                    match typed(&read(field)) {
-                        Ok(x) => *v = x,
-                        Err(()) => bad = true,
-                    }
+        let chart = match panel.apply_to(*chart, cx) {
+            Ok(chart) => chart,
+            Err(error) => {
+                if let Some(p) = self.pptx_mut().and_then(|s| s.chart_panel.as_mut()) {
+                    p.error = Some(error);
                 }
+                return cx.notify();
             }
-            index += 1;
-        }
-        let mut min_val = None;
-        let mut max_val = None;
-        let mut major_val = None;
-        if let Some(f) = &panel.val_min {
-            match typed(&read(f)) {
-                Ok(v) => min_val = v,
-                Err(()) => bad = true,
-            }
-        }
-        if let Some(f) = &panel.val_max {
-            match typed(&read(f)) {
-                Ok(v) => max_val = v,
-                Err(()) => bad = true,
-            }
-        }
-        if let Some(f) = &panel.val_major {
-            match typed(&read(f)) {
-                Ok(v) => major_val = v,
-                Err(()) => bad = true,
-            }
-        }
-        if bad {
-            if let Some(p) = self.pptx_mut().and_then(|s| s.chart_panel.as_mut()) {
-                p.error = Some(crate::shell::i18n::text("pptx.chart-panel.values-must-numeric-blank-auto"));
-            }
-            return cx.notify();
-        }
-        if let Some(v_axis) = chart.axes.iter_mut().find(|a| a.kind == AxisKind::Value) {
-            v_axis.min = min_val;
-            v_axis.max = max_val;
-            v_axis.major_unit = major_val;
-            v_axis.reversed = panel.val_reversed;
-            v_axis.log_base = if panel.val_log_scale { Some(Number(10.0)) } else { None };
-        }
+        };
         let current = self.presentation().slide(slide).and_then(|s| s.shape(shape)).map(|s| s.kind.clone());
         if current != Some(ShapeKind::Chart(Box::new(chart.clone()))) {
             self.run(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(chart))) }], cx);
@@ -232,6 +251,7 @@ impl SlideEditor {
 
     /// データラベル: the selected chart's series' values shown as labels, or
     /// no labels. Read back through the file, as a new legend is.
+    #[allow(dead_code)]
     pub(crate) fn set_chart_labels(&mut self, show: bool, cx: &mut Context<Self>) {
         if show {
             self.set_chart_labels_position(Some(None), cx);
@@ -259,40 +279,11 @@ impl SlideEditor {
     /// グラフの種類の変更: the selected chart's one group made `preset`
     /// (the file's reading of it, as a new legend is).
     pub(crate) fn set_chart_type(&mut self, preset: ChartPreset, cx: &mut Context<Self>) {
-        let Some((slide, shape, mut chart)) = self.selected_chart() else { return };
-        let [group] = chart.groups.as_mut_slice() else {
-            return self.set_status(crate::shell::i18n::text("pptx.chart-panel.type-combo-chart-cannot-changed").to_string(), cx);
-        };
-        let is_axis_bearing = matches!(group.kind, ChartType::Bar { .. } | ChartType::Line | ChartType::Area);
-        let is_pie_family = matches!(group.kind, ChartType::Pie { .. } | ChartType::Doughnut { .. });
-        let is_scatter_family = matches!(group.kind, ChartType::Scatter { .. } | ChartType::Bubble { .. });
-        if !is_axis_bearing && !is_pie_family && !is_scatter_family {
-            return self.set_status(crate::shell::i18n::text("pptx.chart-panel.chart-type-cannot-changed").to_string(), cx);
+        let Some((slide, shape, chart)) = self.selected_chart() else { return };
+        match chart_with_preset(chart, preset) {
+            Ok(chart) => self.set_chart_through_file(slide, shape, chart, cx),
+            Err(key) => self.set_status(crate::shell::i18n::text(key).to_string(), cx),
         }
-        let (kind, grouping) = preset.parts();
-        let target_is_pie_family = matches!(kind, ChartType::Pie { .. } | ChartType::Doughnut { .. });
-        let target_is_scatter_family = matches!(kind, ChartType::Scatter { .. } | ChartType::Bubble { .. });
-        let target_is_axis_bearing = matches!(kind, ChartType::Bar { .. } | ChartType::Line | ChartType::Area);
-        if (is_axis_bearing && !target_is_axis_bearing)
-            || (is_pie_family && !target_is_pie_family)
-            || (is_scatter_family && !target_is_scatter_family)
-        {
-            return self.set_status(crate::shell::i18n::text("pptx.chart-panel.cannot-convert-between-charts").to_string(), cx);
-        }
-        let kind = match (group.kind, kind) {
-            (ChartType::Pie { first_angle }, ChartType::Doughnut { hole, .. }) => {
-                ChartType::Doughnut { first_angle, hole }
-            }
-            (ChartType::Doughnut { first_angle, .. }, ChartType::Pie { .. }) => {
-                ChartType::Pie { first_angle }
-            }
-            (ChartType::Bubble { scale }, ChartType::Bubble { .. }) => {
-                ChartType::Bubble { scale }
-            }
-            _ => kind,
-        };
-        (group.kind, group.grouping) = (kind, grouping);
-        self.set_chart_through_file(slide, shape, chart, cx);
     }
 
     /// 最初の扇形の角度: the selected chart's first slice angle (Pie or Doughnut).
@@ -371,6 +362,50 @@ impl SlideEditor {
         }
     }
 
+    /// chartEx のグラフ: the chart's `ex_format` changed by `change` (read back through the file, as the new title is).
+    fn change_chart_ex_format(&mut self, change: impl FnOnce(&mut ibis_doc_model::ExFormat), cx: &mut Context<Self>) {
+        let Some((slide, shape, mut chart)) = self.selected_chart() else { return };
+        let Some(format) = chart.ex_format.as_mut() else { return };
+        change(format);
+        self.set_chart_through_file(slide, shape, chart, cx);
+    }
+
+    /// データ ラベル (chartEx): none (`None`) or what they show and where.
+    pub(crate) fn set_chart_ex_labels(&mut self, labels: Option<ibis_doc_model::ExLabels>, cx: &mut Context<Self>) {
+        self.change_chart_ex_format(|f| f.labels = labels, cx);
+    }
+
+    /// 値軸の最小・最大・主目盛 (chartEx): each `Some(value)` sets it (`value` `None`: automatic).
+    pub(crate) fn set_chart_ex_axis(&mut self, min: Option<Option<Number>>, max: Option<Option<Number>>, major: Option<Option<Number>>, cx: &mut Context<Self>) {
+        self.change_chart_ex_format(
+            |f| {
+                if let Some(v) = min {
+                    f.axis_min = v;
+                }
+                if let Some(v) = max {
+                    f.axis_max = v;
+                }
+                if let Some(v) = major {
+                    f.axis_major = v;
+                }
+            },
+            cx,
+        );
+    }
+
+    /// 系列の塗りつぶし (chartEx): the fill of series `index` (a waterfall's increase, decrease or total), `None` the chart's own.
+    pub(crate) fn set_chart_ex_fill(&mut self, index: usize, fill: Option<ibis_doc_model::Rgb>, cx: &mut Context<Self>) {
+        self.change_chart_ex_format(
+            |f| {
+                if f.fills.len() <= index {
+                    f.fills.resize(index + 1, None);
+                }
+                f.fills[index] = fill;
+            },
+            cx,
+        );
+    }
+
     /// グラフタイトル: the selected chart's title shown or hidden. The new
     /// chart is the file's reading of it (its text takes the chart's).
     pub(crate) fn set_chart_title(&mut self, show: bool, cx: &mut Context<Self>) {
@@ -429,6 +464,37 @@ impl SlideEditor {
 
     pub(crate) fn chart_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.pptx()?.chart_panel.as_ref()?;
+        let actions = ChartPanelActions { reversed: Self::toggle_chart_panel_val_reversed, log: Self::toggle_chart_panel_val_log_scale, apply: Self::apply_chart_panel, cancel: Self::close_chart_panel };
+        Some(chart_panel_sidebar(p, actions, cx))
+    }
+}
+
+/// What the panel's buttons do (the editor holds the panel: a slide's, a document's).
+#[derive(Clone, Copy)]
+pub(crate) struct ChartPanelActions {
+    pub(crate) reversed: fn(&mut SlideEditor, &mut Context<SlideEditor>),
+    pub(crate) log: fn(&mut SlideEditor, &mut Context<SlideEditor>),
+    pub(crate) apply: fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>),
+    pub(crate) cancel: fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>),
+}
+
+impl ChartPanel {
+    pub(crate) fn set_error(&mut self, error: SharedString) {
+        self.error = Some(error);
+    }
+
+    pub(crate) fn toggle_reversed(&mut self) {
+        self.val_reversed = !self.val_reversed;
+    }
+
+    pub(crate) fn toggle_log_scale(&mut self) {
+        self.val_log_scale = !self.val_log_scale;
+    }
+}
+
+/// データの編集's panel: the grid of the chart's data, its title and value axis.
+pub(crate) fn chart_panel_sidebar(p: &ChartPanel, actions: ChartPanelActions, cx: &mut Context<SlideEditor>) -> SidebarPanel {
+    {
         let cell = |e: &Entity<InputState>| div().w(px(84.)).flex_none().child(Input::new(e).small());
         let label = |t: &str| div().w(px(84.)).flex_none().text_size(px(12.)).text_color(rgb(0x5f6368)).child(crate::shell::i18n::text(t));
         let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
@@ -478,14 +544,14 @@ impl SlideEditor {
                 .small()
                 .ghost()
                 .label(rev_label)
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_chart_panel_val_reversed(cx)));
+                .on_click(cx.listener(move |this, _, _, cx| (actions.reversed)(this, cx)));
             let log_mark = if p.val_log_scale { "☑ " } else { "☐ " };
             let log_label = format!("{}{}", log_mark, crate::shell::i18n::text("pptx.chart.axis.log-scale"));
             let log_btn = Button::new("pptx-chart-val-log")
                 .small()
                 .ghost()
                 .label(log_label)
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_chart_panel_val_log_scale(cx)));
+                .on_click(cx.listener(move |this, _, _, cx| (actions.log)(this, cx)));
             body = body.child(h_flex().gap_2().child(rev_btn).child(log_btn));
         }
         if let Some(error) = &p.error {
@@ -494,22 +560,24 @@ impl SlideEditor {
         body = body.child(
             h_flex()
                 .gap_1()
-                .child(Button::new("pptx-chart-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_chart_panel(w, cx))))
-                .child(Button::new("pptx-chart-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_chart_panel(w, cx)))),
+                .child(Button::new("pptx-chart-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(move |e, _, w, cx| (actions.apply)(e, w, cx))))
+                .child(Button::new("pptx-chart-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(move |e, _, w, cx| (actions.cancel)(e, w, cx)))),
         );
-        Some(SidebarPanel { title: crate::shell::i18n::text("pptx.chart-data.chart-data"), body: body.into_any_element() })
+        SidebarPanel { title: crate::shell::i18n::text("pptx.chart-data.chart-data"), body: body.into_any_element() }
     }
+}
 
+impl SlideEditor {
     pub(crate) fn toggle_chart_panel_val_reversed(&mut self, cx: &mut Context<Self>) {
         if let Some(p) = self.pptx_mut().and_then(|s| s.chart_panel.as_mut()) {
-            p.val_reversed = !p.val_reversed;
+            p.toggle_reversed();
             cx.notify();
         }
     }
 
     pub(crate) fn toggle_chart_panel_val_log_scale(&mut self, cx: &mut Context<Self>) {
         if let Some(p) = self.pptx_mut().and_then(|s| s.chart_panel.as_mut()) {
-            p.val_log_scale = !p.val_log_scale;
+            p.toggle_log_scale();
             cx.notify();
         }
     }
@@ -898,4 +966,31 @@ mod tests {
         assert_eq!(typed("abc"), Err(()));
         assert_eq!(shown(Some(Number(12.0))), "12");
     }
+}
+
+/// `chart` with its one group made `preset`: an error is the key of the message why it cannot be
+/// (a combo chart; a kind of chart that has no such presets; a change between axis, pie and scatter charts).
+pub(crate) fn chart_with_preset(mut chart: Chart, preset: ChartPreset) -> Result<Chart, &'static str> {
+    let [group] = chart.groups.as_mut_slice() else { return Err("pptx.chart-panel.type-combo-chart-cannot-changed") };
+    let is_axis_bearing = matches!(group.kind, ChartType::Bar { .. } | ChartType::Line | ChartType::Area);
+    let is_pie_family = matches!(group.kind, ChartType::Pie { .. } | ChartType::Doughnut { .. });
+    let is_scatter_family = matches!(group.kind, ChartType::Scatter { .. } | ChartType::Bubble { .. });
+    if !is_axis_bearing && !is_pie_family && !is_scatter_family {
+        return Err("pptx.chart-panel.chart-type-cannot-changed");
+    }
+    let (kind, grouping) = preset.parts();
+    let target_is_pie_family = matches!(kind, ChartType::Pie { .. } | ChartType::Doughnut { .. });
+    let target_is_scatter_family = matches!(kind, ChartType::Scatter { .. } | ChartType::Bubble { .. });
+    let target_is_axis_bearing = matches!(kind, ChartType::Bar { .. } | ChartType::Line | ChartType::Area);
+    if (is_axis_bearing && !target_is_axis_bearing) || (is_pie_family && !target_is_pie_family) || (is_scatter_family && !target_is_scatter_family) {
+        return Err("pptx.chart-panel.cannot-convert-between-charts");
+    }
+    let kind = match (group.kind, kind) {
+        (ChartType::Pie { first_angle }, ChartType::Doughnut { hole, .. }) => ChartType::Doughnut { first_angle, hole },
+        (ChartType::Doughnut { first_angle, .. }, ChartType::Pie { .. }) => ChartType::Pie { first_angle },
+        (ChartType::Bubble { scale }, ChartType::Bubble { .. }) => ChartType::Bubble { scale },
+        _ => kind,
+    };
+    (group.kind, group.grouping) = (kind, grouping);
+    Ok(chart)
 }

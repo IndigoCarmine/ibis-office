@@ -22,12 +22,32 @@ use crate::save::unsupported;
 
 /// Elements of a timing tree the model does not read: rewriting it would
 /// lose them.
-const UNREAD: &[&str] = &["cRg", "graphicEl", "oleChartEl", "inkTgt", "sndTgt", "audio", "video", "cmd", "excl", "iterate", "subTnLst", "bldGraphic", "bldOleChart", "bldDgm"];
+const UNREAD: &[&str] = &["cRg", "oleChartEl", "inkTgt", "sndTgt", "audio", "video", "cmd", "excl", "subTnLst", "bldOleChart"];
 
 /// Whether `timing` (a slide's `p:timing`) can be rebuilt from the model.
 fn rewritable(doc: &XmlDocument, timing: NodeId) -> bool {
     let nodes = doc.descendants(timing);
-    let unread = nodes.iter().any(|&n| doc.is_element(n) && UNREAD.contains(&doc.local_name(n)));
+    let unread = nodes.iter().any(|&n| doc.is_element(n) && UNREAD.contains(&doc.local_name(n)))
+        // An iteration the model keeps: by word or by letter, with a gap in percent or milliseconds.
+        || nodes.iter().any(|&n| {
+            doc.is_element(n)
+                && doc.local_name(n) == "iterate"
+                && !(matches!(doc.attr(n, "type"), Some("wd" | "lt")) && doc.children(n).iter().any(|&c| doc.is_element(c) && matches!(doc.local_name(c), "tmPct" | "tmAbs")))
+        })
+        || nodes.iter().any(|&n| {
+            doc.is_element(n)
+                && doc.local_name(n) == "graphicEl"
+                && !doc.children(n).iter().any(|&c| doc.is_element(c) && doc.local_name(c) == "dgm")
+        })
+        || nodes.iter().any(|&n| {
+            doc.is_element(n)
+                && doc.local_name(n) == "bldGraphic"
+                && !doc.children(n).iter().any(|&sub| {
+                    doc.is_element(sub)
+                        && doc.local_name(sub) == "bldSub"
+                        && doc.children(sub).iter().any(|&c| doc.is_element(c) && doc.local_name(c) == "bldChart")
+                })
+        });
     let unknown_sequences = nodes.iter().any(|&n| {
         doc.is_element(n)
             && doc.local_name(n) == "seq"
@@ -37,7 +57,7 @@ fn rewritable(doc: &XmlDocument, timing: NodeId) -> bool {
                     && doc.attr(c, "nodeType").is_some_and(|t| t != "mainSeq" && t != "interactiveSeq")
             })
     });
-    // Effects on paragraphs (`txEl/pRg`) are read and written; those on characters are not.
+    // Effects on paragraphs (`txEl/pRg`) and on characters (`txEl/charRg`) are read and written.
     !(unread || unknown_sequences)
 }
 
@@ -63,9 +83,24 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
         *id += 1;
         n
     };
-    let target = match a.paragraph {
-        Some((first, last)) => format!("<{p}tgtEl><{p}spTgt spid=\"{spid}\"><{p}txEl><{p}pRg st=\"{first}\" end=\"{last}\"/></{p}txEl></{p}spTgt></{p}tgtEl>"),
-        None => format!("<{p}tgtEl><{p}spTgt spid=\"{spid}\"/></{p}tgtEl>"),
+    let target = match (a.paragraph, a.chars, a.chart_element, &a.dgm_element) {
+        (Some((first, last)), _, _, _) => format!("<{p}tgtEl><{p}spTgt spid=\"{spid}\"><{p}txEl><{p}pRg st=\"{first}\" end=\"{last}\"/></{p}txEl></{p}spTgt></{p}tgtEl>"),
+        (None, Some((first, last)), _, _) => format!("<{p}tgtEl><{p}spTgt spid=\"{spid}\"><{p}txEl><{p}charRg st=\"{first}\" end=\"{last}\"/></{p}txEl></{p}spTgt></{p}tgtEl>"),
+        (None, None, Some(el), _) => format!("<{p}tgtEl><{p}spTgt spid=\"{spid}\"><{p}cEl><{p}cChartEl seriesIdx=\"{}\" categoryIdx=\"{}\"/></{p}cEl></{p}spTgt></{p}tgtEl>", el.series_idx, el.category_idx),
+        (None, None, None, Some(dgm)) => {
+            let dgm_id = if dgm.id.starts_with('{') {
+                dgm.id.clone()
+            } else if let Ok(n) = dgm.id.parse::<u64>() {
+                format!("{{{n:08X}-0000-0000-0000-000000000000}}")
+            } else {
+                format!(
+                    "{{{:0>8}-0000-0000-0000-000000000000}}",
+                    dgm.id.chars().filter(|c| c.is_ascii_hexdigit()).take(8).collect::<String>().to_ascii_uppercase()
+                )
+            };
+            format!("<{p}tgtEl><{p}spTgt spid=\"{spid}\"><{p}graphicEl><a:dgm id=\"{dgm_id}\" bldStep=\"{}\"/></{p}graphicEl></{p}spTgt></{p}tgtEl>", dgm.bld_step)
+        }
+        (None, None, None, None) => format!("<{p}tgtEl><{p}spTgt spid=\"{spid}\"/></{p}tgtEl>"),
     };
     let visibility = |n: u32, at: u32, to: &str| {
         format!(
@@ -110,6 +145,98 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
             let (x, y, v) = (next(), next(), next());
             let (tx, ty) = off(side);
             (2, side_subtype(side), format!("{}{}{}", fly(x, "ppt_x", "#ppt_x", tx), fly(y, "ppt_y", "#ppt_y", ty), visibility(v, dur.saturating_sub(1), "hidden")))
+        }
+        (AnimationClass::Entrance, AnimationLook::Zoom) => {
+            let (v, s) = (next(), next());
+            (
+                24,
+                0,
+                format!(
+                    "{}<{p}animScale><{p}cBhvr><{p}cTn id=\"{s}\" dur=\"{dur}\" fill=\"hold\"/>{target}</{p}cBhvr><{p}from x=\"0\" y=\"0\"/><{p}to x=\"100000\" y=\"100000\"/></{p}animScale>",
+                    visibility(v, 0, "visible")
+                ),
+            )
+        }
+        (AnimationClass::Exit, AnimationLook::Zoom) => {
+            let (s, v) = (next(), next());
+            (
+                24,
+                0,
+                format!(
+                    "<{p}animScale><{p}cBhvr><{p}cTn id=\"{s}\" dur=\"{dur}\" fill=\"hold\"/>{target}</{p}cBhvr><{p}from x=\"100000\" y=\"100000\"/><{p}to x=\"0\" y=\"0\"/></{p}animScale>{}",
+                    visibility(v, dur.saturating_sub(1), "hidden")
+                ),
+            )
+        }
+        (AnimationClass::Entrance, AnimationLook::Float(side)) => {
+            let (v, f) = (next(), next());
+            let sub = if side == AnimationSide::Bottom { 2 } else { 1 };
+            (
+                25,
+                sub,
+                format!(
+                    "{}<{p}animEffect transition=\"in\" filter=\"fade\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>",
+                    visibility(v, 0, "visible")
+                ),
+            )
+        }
+        (AnimationClass::Exit, AnimationLook::Float(side)) => {
+            let (f, v) = (next(), next());
+            let sub = if side == AnimationSide::Bottom { 2 } else { 1 };
+            (
+                25,
+                sub,
+                format!(
+                    "<{p}animEffect transition=\"out\" filter=\"fade\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>{}",
+                    visibility(v, dur.saturating_sub(1), "hidden")
+                ),
+            )
+        }
+        (AnimationClass::Entrance, AnimationLook::Wipe(side)) => {
+            let (v, f) = (next(), next());
+            let sub = side_subtype(side);
+            (
+                22,
+                sub,
+                format!(
+                    "{}<{p}animEffect transition=\"in\" filter=\"wipe\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>",
+                    visibility(v, 0, "visible")
+                ),
+            )
+        }
+        (AnimationClass::Exit, AnimationLook::Wipe(side)) => {
+            let (f, v) = (next(), next());
+            let sub = side_subtype(side);
+            (
+                22,
+                sub,
+                format!(
+                    "<{p}animEffect transition=\"out\" filter=\"wipe\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>{}",
+                    visibility(v, dur.saturating_sub(1), "hidden")
+                ),
+            )
+        }
+        (AnimationClass::Entrance, AnimationLook::Replay) => {
+            let (v, f) = (next(), next());
+            (
+                28,
+                0,
+                format!(
+                    "{}<{p}animEffect transition=\"in\" filter=\"fade\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>",
+                    visibility(v, 0, "visible")
+                ),
+            )
+        }
+        (AnimationClass::Exit, AnimationLook::Replay) => {
+            let (f, v) = (next(), next());
+            (
+                28,
+                0,
+                format!(
+                    "<{p}animEffect transition=\"out\" filter=\"fade\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>{}",
+                    visibility(v, dur.saturating_sub(1), "hidden")
+                ),
+            )
         }
         (AnimationClass::Emphasis, AnimationLook::Spin(by)) => {
             let n = next();
@@ -163,10 +290,21 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
     };
     let auto_rev_attr = if a.auto_reverse { " autoRev=\"1\"" } else { "" };
     let rewind_attr = if a.rewind { " rewind=\"1\"" } else { "" };
+    let iterate = match a.text_unit {
+        Some((unit, gap)) => {
+            let kind = if unit == ibis_doc_model::TextUnit::Word { "wd" } else { "lt" };
+            let gap = match gap {
+                ibis_doc_model::UnitGap::Percent(v) => format!("<{p}tmPct val=\"{v}\"/>"),
+                ibis_doc_model::UnitGap::Millis(v) => format!("<{p}tmAbs val=\"{v}\"/>"),
+            };
+            format!("<{p}iterate type=\"{kind}\">{gap}</{p}iterate>")
+        }
+        None => String::new(),
+    };
     let accel_attr = if a.accel > 0 { format!(" accel=\"{}\"", a.accel) } else { String::new() };
     let decel_attr = if a.decel > 0 { format!(" decel=\"{}\"", a.decel) } else { String::new() };
     Ok(format!(
-        "<{p}par><{p}cTn id=\"{effect_id}\" presetID=\"{preset}\" presetClass=\"{class}\" presetSubtype=\"{subtype}\" fill=\"{fill}\"{repeat_attr}{auto_rev_attr}{rewind_attr}{accel_attr}{decel_attr} grpId=\"0\" nodeType=\"{node}\"><{p}stCondLst><{p}cond delay=\"{delay}\"/></{p}stCondLst><{p}childTnLst>{behaviours}</{p}childTnLst></{p}cTn></{p}par>"
+        "<{p}par><{p}cTn id=\"{effect_id}\" presetID=\"{preset}\" presetClass=\"{class}\" presetSubtype=\"{subtype}\" fill=\"{fill}\"{repeat_attr}{auto_rev_attr}{rewind_attr}{accel_attr}{decel_attr} grpId=\"0\" nodeType=\"{node}\"><{p}stCondLst><{p}cond delay=\"{delay}\"/></{p}stCondLst>{iterate}<{p}childTnLst>{behaviours}</{p}childTnLst></{p}cTn></{p}par>"
     ))
 }
 
@@ -254,18 +392,57 @@ fn timing_xml(p: &str, animations: &[Animation], spid: &dyn Fn(ShapeId) -> Optio
         ));
     }
 
-    // The shapes built paragraph by paragraph (`p:bldLst`).
-    let mut built: Vec<String> = Vec::new();
-    for a in animations.iter().filter(|a| a.paragraph.is_some()) {
-        if let Some(shape) = spid(a.shape)
-            && !built.contains(&shape)
-        {
-            built.push(shape);
+    // The shapes built paragraph by paragraph, chart element, or diagram (`p:bldLst`).
+    let mut built_p: Vec<String> = Vec::new();
+    let mut built_chart: Vec<(String, ibis_doc_model::ChartBuildStep, bool)> = Vec::new();
+    let mut built_dgm: Vec<(String, ibis_doc_model::DiagramBuildStep)> = Vec::new();
+    for a in animations {
+        if a.paragraph.is_some() {
+            if let Some(shape) = spid(a.shape)
+                && !built_p.contains(&shape)
+            {
+                built_p.push(shape);
+            }
+        }
+        if let Some((step, anim_bg)) = a.chart_build {
+            if let Some(shape) = spid(a.shape)
+                && !built_chart.iter().any(|(s, _, _)| s == &shape)
+            {
+                built_chart.push((shape, step, anim_bg));
+            }
+        }
+        if let Some(step) = a.dgm_build {
+            if let Some(shape) = spid(a.shape)
+                && !built_dgm.iter().any(|(s, _)| s == &shape)
+            {
+                built_dgm.push((shape, step));
+            }
         }
     }
-    let build_list = if built.is_empty() { String::new() } else { format!("<{p}bldLst>{}</{p}bldLst>", built.iter().map(|s| format!("<{p}bldP spid=\"{s}\" grpId=\"0\" build=\"p\"/>")).collect::<String>()) };
+    let mut bld_entries = String::new();
+    for s in &built_p {
+        bld_entries.push_str(&format!("<{p}bldP spid=\"{s}\" grpId=\"0\" build=\"p\"/>"));
+    }
+    for (s, step, anim_bg) in &built_chart {
+        let anim_bg_val = if *anim_bg { "1" } else { "0" };
+        bld_entries.push_str(&format!(
+            "<{p}bldGraphic spid=\"{s}\" grpId=\"0\"><{p}bldSub><a:bldChart bld=\"{}\" animBg=\"{anim_bg_val}\"/></{p}bldSub></{p}bldGraphic>",
+            step.as_str()
+        ));
+    }
+    for (s, step) in &built_dgm {
+        bld_entries.push_str(&format!("<{p}bldDgm spid=\"{s}\" grpId=\"0\" bld=\"{}\"/>", step.as_str()));
+    }
+    let build_list = if bld_entries.is_empty() { String::new() } else { format!("<{p}bldLst>{bld_entries}</{p}bldLst>") };
+    let main_seq = if clicks.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<{p}seq concurrent=\"1\" nextAc=\"seek\"><{p}cTn id=\"2\" dur=\"indefinite\" nodeType=\"mainSeq\"><{p}childTnLst>{clicks}</{p}childTnLst></{p}cTn><{p}prevCondLst><{p}cond evt=\"onPrev\" delay=\"0\"><{p}tgtEl><{p}sldTgt/></{p}tgtEl></{p}cond></{p}prevCondLst><{p}nextCondLst><{p}cond evt=\"onNext\" delay=\"0\"><{p}tgtEl><{p}sldTgt/></{p}tgtEl></{p}cond></{p}nextCondLst></{p}seq>"
+        )
+    };
     Ok(format!(
-        "<{p}timing xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\"><{p}tnLst><{p}par><{p}cTn id=\"1\" dur=\"indefinite\" restart=\"never\" nodeType=\"tmRoot\"><{p}childTnLst><{p}seq concurrent=\"1\" nextAc=\"seek\"><{p}cTn id=\"2\" dur=\"indefinite\" nodeType=\"mainSeq\"><{p}childTnLst>{clicks}</{p}childTnLst></{p}cTn><{p}prevCondLst><{p}cond evt=\"onPrev\" delay=\"0\"><{p}tgtEl><{p}sldTgt/></{p}tgtEl></{p}cond></{p}prevCondLst><{p}nextCondLst><{p}cond evt=\"onNext\" delay=\"0\"><{p}tgtEl><{p}sldTgt/></{p}tgtEl></{p}cond></{p}nextCondLst></{p}seq>{interactive_seqs}</{p}childTnLst></{p}cTn></{p}par></{p}tnLst>{build_list}</{p}timing>"
+        "<{p}timing xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><{p}tnLst><{p}par><{p}cTn id=\"1\" dur=\"indefinite\" restart=\"never\" nodeType=\"tmRoot\"><{p}childTnLst>{main_seq}{interactive_seqs}</{p}childTnLst></{p}cTn></{p}par></{p}tnLst>{build_list}</{p}timing>"
     ))
 }
 
@@ -314,8 +491,41 @@ mod tests {
             decel: 0,
             after_effect: ibis_doc_model::AnimationAfterEffect::Hold,
             trigger: AnimationTrigger::None,
-            paragraph: None, path: Vec::new(),
+            paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+            chart_element: None, chart_build: None,
+            dgm_element: None, dgm_build: None,
         }
+    }
+
+    #[test]
+    fn diagram_animation_timing() {
+        let mut a = effect(1, AnimationClass::Entrance, AnimationStart::OnClick, AnimationLook::Appear, 1);
+        a.dgm_element = Some(ibis_doc_model::DiagramAnimationElement { id: "2".to_string(), bld_step: "sp".to_string() });
+        a.dgm_build = Some(ibis_doc_model::DiagramBuildStep::DepthByNode);
+        let xml = timing_xml("p:", &[a], &|s| Some(format!("{}", s.0 + 3))).unwrap();
+        assert!(xml.contains("<p:graphicEl><a:dgm id=\"{00000002-0000-0000-0000-000000000000}\" bldStep=\"sp\"/></p:graphicEl>"));
+        assert!(xml.contains("<p:bldDgm spid=\"4\" grpId=\"0\" bld=\"depthByNode\"/>"));
+        assert!(XmlDocument::parse(format!("<r xmlns:p=\"urn:p\" xmlns:a=\"urn:a\">{xml}</r>").as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn ink_replay_animation_timing() {
+        let a = effect(1, AnimationClass::Entrance, AnimationStart::OnClick, AnimationLook::Replay, 2000);
+        let xml = timing_xml("p:", &[a], &|s| Some(format!("{}", s.0 + 3))).unwrap();
+        assert!(xml.contains("presetID=\"28\" presetClass=\"entr\""));
+        assert!(xml.contains("<p:spTgt spid=\"4\"/>"));
+        assert!(XmlDocument::parse(format!("<r xmlns:p=\"urn:p\">{xml}</r>").as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn chart_animation_timing() {
+        let mut a = effect(1, AnimationClass::Entrance, AnimationStart::OnClick, AnimationLook::Appear, 1);
+        a.chart_element = Some(ibis_doc_model::ChartAnimationElement { series_idx: 0, category_idx: -1 });
+        a.chart_build = Some((ibis_doc_model::ChartBuildStep::Series, true));
+        let xml = timing_xml("p:", &[a], &|s| Some(format!("{}", s.0 + 5))).unwrap();
+        assert!(xml.contains("<p:cEl><p:cChartEl seriesIdx=\"0\" categoryIdx=\"-1\"/></p:cEl>"));
+        assert!(xml.contains("<p:bldGraphic spid=\"6\" grpId=\"0\"><p:bldSub><a:bldChart bld=\"series\" animBg=\"1\"/></p:bldSub></p:bldGraphic>"));
+        assert!(XmlDocument::parse(format!("<r xmlns:p=\"urn:p\" xmlns:a=\"urn:a\">{xml}</r>").as_bytes()).is_ok());
     }
 
     #[test]

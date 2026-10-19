@@ -4,7 +4,7 @@
 //! Numeric size controls for the inline picture at the caret.
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input,InputEvent,InputState};
-use gpui_kit::component::{Icon, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{FlowPos,FlowRunKind,FlowCommand,EmuSize,MediaId,PictureLook,Crop,Stroke,Color,Rgb,LineDash};
 use crate::shell::{chrome::SidebarPanel,editor::SlideEditor,icons::Material};
@@ -36,11 +36,36 @@ pub(crate) const PICTURE_BORDER_DASHES: [(&str, LineDash); 5] = [
     ("_docx.dash-dot", LineDash::DashDot),
 ];
 
+pub(crate) const PICTURE_CROP_SHAPES: [(&str, Option<&str>); 15] = [
+    ("docx.picture.crop-to-shape.rect", None),
+    ("docx.picture.crop-to-shape.round-rect", Some("roundRect")),
+    ("docx.picture.crop-to-shape.ellipse", Some("ellipse")),
+    ("docx.picture.crop-to-shape.triangle", Some("triangle")),
+    ("docx.picture.crop-to-shape.diamond", Some("diamond")),
+    ("docx.picture.crop-to-shape.parallelogram", Some("parallelogram")),
+    ("docx.picture.crop-to-shape.trapezoid", Some("trapezoid")),
+    ("docx.picture.crop-to-shape.hexagon", Some("hexagon")),
+    ("docx.picture.crop-to-shape.octagon", Some("octagon")),
+    ("docx.picture.crop-to-shape.heart", Some("heart")),
+    ("docx.picture.crop-to-shape.star5", Some("star5")),
+    ("docx.picture.crop-to-shape.cloud", Some("cloud")),
+    ("docx.picture.crop-to-shape.arrow", Some("rightArrow")),
+    ("docx.picture.crop-to-shape.teardrop", Some("teardrop")),
+    ("docx.picture.crop-to-shape.callout", Some("wedgeRoundRectCallout")),
+];
+
 /// A recolouring of a picture (Word's 色).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PictureRecolor {
     Grayscale,
     Sepia,
+    Washout,
+    BlackAndWhite50,
+    Blue,
+    Green,
+    Red,
+    Orange,
+    Purple,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,7 +108,7 @@ impl SlideEditor {
         let mut previous=None;
         for run in &p.runs {
             match &run.kind {
-                FlowRunKind::Picture {media,size,..}=> {
+                FlowRunKind::Picture {media,size,..} | FlowRunKind::PictureControl {media,size,..} => {
                     let found=Some((FlowPos::new(p.id,offset),*media,*size));
                     if offset==start.offset {return found;}
                     if offset+1==start.offset {previous=found;}
@@ -157,7 +182,7 @@ impl SlideEditor {
         let mut offset=0;
         for run in &p.runs {
             match &run.kind {
-                FlowRunKind::Picture {look,..}=> {
+                FlowRunKind::Picture {look,..} | FlowRunKind::PictureControl {look,..} => {
                     if offset==at.offset {return Some(look.clone());}
                 }
                 FlowRunKind::Shape(shape) => {
@@ -174,6 +199,10 @@ impl SlideEditor {
                             decorative: pic.decorative,
                             name: pic.name.clone(),
                             ole: pic.ole,
+                            linked_file: None,
+                            soft_edge: pic.soft_edge,
+                            effects: pic.effects,
+                            geometry: pic.geometry.clone(),
                         });
                     }
                 }
@@ -192,7 +221,7 @@ impl SlideEditor {
         for run in &p.runs {
             if offset == at.offset {
                 return match &run.kind {
-                    FlowRunKind::Picture { .. } => Some(ibis_doc_model::PictureWrapType::Inline),
+                    FlowRunKind::Picture { .. } | FlowRunKind::PictureControl { .. } => Some(ibis_doc_model::PictureWrapType::Inline),
                     FlowRunKind::Shape(shape) => {
                         let anchor = shape.floating.as_ref();
                         match anchor {
@@ -239,6 +268,218 @@ impl SlideEditor {
         anchor.dist_t = distance[2];
         anchor.dist_b = distance[3];
         self.run_flow(vec![FlowCommand::SetPictureFloating { at, anchor: Some(anchor) }], cx);
+    }
+
+    /// 折返し点の編集モードかどうか (DOCX-FLOAT-006).
+    pub(crate) fn is_editing_wrap_points(&self) -> bool {
+        self.doc_state().is_some_and(|s| s.editing_wrap_points)
+    }
+
+    /// 折返し点の編集モードの切り替え (DOCX-FLOAT-006).
+    pub(crate) fn toggle_edit_wrap_points(&mut self, cx: &mut Context<Self>) {
+        let now = !self.is_editing_wrap_points();
+        if let Some(state) = self.doc_state_mut() {
+            state.editing_wrap_points = now;
+        }
+        if now && let Some((at, ..)) = self.picture_at_caret() {
+            let wrap = self.picture_wrap_at_caret().unwrap_or(ibis_doc_model::PictureWrapType::Inline);
+            if !matches!(wrap, ibis_doc_model::PictureWrapType::Tight | ibis_doc_model::PictureWrapType::Through) {
+                self.run_flow(vec![FlowCommand::SetPictureWrap { at, wrap: ibis_doc_model::PictureWrapType::Tight }], cx);
+            } else if let Some(mut anchor) = self.picture_floating_at_caret()
+                && anchor.wrap_polygon.is_none()
+            {
+                anchor.wrap_polygon = Some(ibis_doc_model::WrapPolygon::default_rect_21600());
+                self.run_flow(vec![FlowCommand::SetPictureFloating { at, anchor: Some(anchor) }], cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// キャレット位置の画像の折返しポリゴンを取得 (DOCX-FLOAT-006).
+    pub(crate) fn picture_wrap_polygon_at_caret(&self) -> Option<ibis_doc_model::WrapPolygon> {
+        self.picture_floating_at_caret().and_then(|a| a.wrap_polygon)
+    }
+
+    /// キャレット位置の画像の折返しポリゴンを設定（1ステップ Undo/Redo 対応、DOCX-FLOAT-006）.
+    pub(crate) fn set_picture_wrap_polygon(&mut self, polygon: Option<ibis_doc_model::WrapPolygon>, cx: &mut Context<Self>) -> bool {
+        let Some((at, ..)) = self.picture_at_caret() else { return false };
+        let mut cmds = Vec::new();
+        if self.picture_floating_at_caret().is_none() {
+            cmds.push(FlowCommand::SetPictureWrap { at, wrap: ibis_doc_model::PictureWrapType::Tight });
+        }
+        let mut anchor = self.picture_floating_at_caret().unwrap_or_else(|| {
+            let mut a = ibis_doc_model::FloatingAnchor::default();
+            a.wrap = "tight".to_string();
+            a
+        });
+        if polygon.is_some() && !matches!(anchor.wrap.as_str(), "tight" | "through") {
+            anchor.wrap = "tight".to_string();
+        }
+        anchor.wrap_polygon = polygon;
+        cmds.push(FlowCommand::SetPictureFloating { at, anchor: Some(anchor) });
+        let ok = self.run_flow(cmds, cx);
+        cx.notify();
+        ok
+    }
+
+    /// 折返し点を既定の矩形（0..21600）にリセット (DOCX-FLOAT-006).
+    pub(crate) fn reset_picture_wrap_points(&mut self, cx: &mut Context<Self>) -> bool {
+        self.set_picture_wrap_polygon(Some(ibis_doc_model::WrapPolygon::default_rect_21600()), cx)
+    }
+
+    /// 折返しポリゴンのプリセット適用 (DOCX-FLOAT-006: "rect", "diamond", "octagon", "inset").
+    pub(crate) fn apply_picture_wrap_polygon_preset(&mut self, preset: &str, cx: &mut Context<Self>) -> bool {
+        let poly = match preset {
+            "diamond" => ibis_doc_model::WrapPolygon::diamond_21600(),
+            "octagon" => ibis_doc_model::WrapPolygon::octagon_21600(),
+            "inset" => ibis_doc_model::WrapPolygon::inset_rect_21600(2700),
+            _ => ibis_doc_model::WrapPolygon::default_rect_21600(),
+        };
+        self.set_picture_wrap_polygon(Some(poly), cx)
+    }
+
+    /// 折返しポリゴンの頂点 `index`（0 = start、1.. = line_to）を更新 (DOCX-FLOAT-006).
+    pub(crate) fn set_picture_wrap_point(&mut self, index: usize, point: ibis_doc_model::WrapPoint, cx: &mut Context<Self>) -> bool {
+        let mut poly = self
+            .picture_wrap_polygon_at_caret()
+            .unwrap_or_else(ibis_doc_model::WrapPolygon::default_rect_21600);
+        if index == 0 {
+            let old_start = poly.start;
+            poly.start = point;
+            if let Some(last) = poly.line_to.last_mut()
+                && *last == old_start
+            {
+                *last = point;
+            }
+        } else if let Some(slot) = poly.line_to.get_mut(index - 1) {
+            *slot = point;
+        } else {
+            return false;
+        }
+        poly.edited = true;
+        self.set_picture_wrap_polygon(Some(poly), cx)
+    }
+
+    /// 折返しポリゴンの頂点 `index` を `(dx, dy)` だけ移動 (DOCX-FLOAT-006).
+    pub(crate) fn nudge_picture_wrap_point(&mut self, index: usize, dx: i64, dy: i64, cx: &mut Context<Self>) -> bool {
+        let poly = self
+            .picture_wrap_polygon_at_caret()
+            .unwrap_or_else(ibis_doc_model::WrapPolygon::default_rect_21600);
+        let cur = if index == 0 {
+            poly.start
+        } else if let Some(&pt) = poly.line_to.get(index - 1) {
+            pt
+        } else {
+            return false;
+        };
+        let next = ibis_doc_model::WrapPoint::new(
+            (cur.x + dx).clamp(-10_800, 32_400),
+            (cur.y + dy).clamp(-10_800, 32_400),
+        );
+        self.set_picture_wrap_point(index, next, cx)
+    }
+
+    /// 折返しポリゴンに新しい頂点を挿入 (DOCX-FLOAT-006).
+    pub(crate) fn insert_picture_wrap_point(&mut self, after_index: usize, point: ibis_doc_model::WrapPoint, cx: &mut Context<Self>) -> bool {
+        let mut poly = self
+            .picture_wrap_polygon_at_caret()
+            .unwrap_or_else(ibis_doc_model::WrapPolygon::default_rect_21600);
+        let pos = after_index.min(poly.line_to.len());
+        poly.line_to.insert(pos, point);
+        poly.edited = true;
+        self.set_picture_wrap_polygon(Some(poly), cx)
+    }
+
+    /// 折返しポリゴンから頂点 `index`（1..）を削除 (DOCX-FLOAT-006).
+    pub(crate) fn remove_picture_wrap_point(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
+        let mut poly = self
+            .picture_wrap_polygon_at_caret()
+            .unwrap_or_else(ibis_doc_model::WrapPolygon::default_rect_21600);
+        if poly.line_to.len() <= 3 || index == 0 || index > poly.line_to.len() {
+            return false;
+        }
+        poly.line_to.remove(index - 1);
+        poly.edited = true;
+        self.set_picture_wrap_polygon(Some(poly), cx)
+    }
+
+    /// ページ上の折返し点オーバーレイ（赤い破線枠と黒い頂点ハンドル）を描画 (DOCX-FLOAT-006).
+    pub(crate) fn wrap_points_overlay(&self, page_index: usize, k: f32) -> Vec<AnyElement> {
+        let mut out = Vec::new();
+        if !self.is_editing_wrap_points() {
+            return out;
+        }
+        let Some((at, ..)) = self.picture_at_caret() else { return out };
+        let Some(doc) = self.flow() else { return out };
+        let Some(paragraph) = self.paragraph_of(at.para) else { return out };
+        let mut offset = 0;
+        let mut found_shape = None;
+        for run in &paragraph.runs {
+            if offset == at.offset
+                && let FlowRunKind::Shape(shape) = &run.kind
+                && let Some(anchor) = shape.floating.as_ref()
+            {
+                let poly = anchor
+                    .wrap_polygon
+                    .clone()
+                    .unwrap_or_else(ibis_doc_model::WrapPolygon::default_rect_21600);
+                found_shape = Some((shape.id, poly));
+            }
+            offset += run.len();
+        }
+        let Some((shape_id, poly)) = found_shape else { return out };
+        let laid = super::flow_layout::pages(doc, &self.resources);
+        let Some(pg) = laid.pages.get(page_index) else { return out };
+        for item in &pg.items {
+            if let super::flow_layout::Item::Shape { shape, x, y, w, h } = item
+                && shape.id == shape_id
+            {
+                let mut pts = Vec::with_capacity(1 + poly.line_to.len());
+                pts.push(poly.start);
+                pts.extend(poly.line_to.iter().copied());
+                let red = rgb(0xd93025);
+                for (&p0, &p1) in pts.iter().zip(pts.iter().skip(1)) {
+                    let x0 = *x + (p0.x as f32 / 21_600.0) * *w;
+                    let y0 = *y + (p0.y as f32 / 21_600.0) * *h;
+                    let x1 = *x + (p1.x as f32 / 21_600.0) * *w;
+                    let y1 = *y + (p1.y as f32 / 21_600.0) * *h;
+                    let min_x = x0.min(x1);
+                    let min_y = y0.min(y1);
+                    let seg_w = (x1 - x0).abs().max(1.5 / k);
+                    let seg_h = (y1 - y0).abs().max(1.5 / k);
+                    out.push(
+                        div()
+                            .absolute()
+                            .left(px(min_x * k))
+                            .top(px(min_y * k))
+                            .w(px(seg_w * k))
+                            .h(px(seg_h * k))
+                            .border_1()
+                            .border_color(red)
+                            .into_any_element(),
+                    );
+                }
+                for (vi, pt) in pts.iter().enumerate() {
+                    let vx = *x + (pt.x as f32 / 21_600.0) * *w;
+                    let vy = *y + (pt.y as f32 / 21_600.0) * *h;
+                    out.push(
+                        div()
+                            .id(("wrap-point-handle", vi))
+                            .absolute()
+                            .left(px(vx * k - 3.0))
+                            .top(px(vy * k - 3.0))
+                            .w(px(6.0))
+                            .h(px(6.0))
+                            .bg(rgb(0x000000))
+                            .border_1()
+                            .border_color(red)
+                            .into_any_element(),
+                    );
+                }
+                break;
+            }
+        }
+        out
     }
 
     /// Set the horizontal alignment of the floating picture at the caret.
@@ -491,6 +732,54 @@ impl SlideEditor {
         self.run_flow(vec![FlowCommand::SetPictureLook {at,look}],cx);
         cx.notify();
     }
+    /// Outline geometry of the picture at caret, if any preset was applied.
+    pub(crate) fn picture_geometry_at_caret(&self) -> Option<ibis_doc_model::Geometry> {
+        self.picture_look_at_caret().and_then(|l| l.geometry)
+    }
+
+    /// Preset name of the picture crop shape at caret (e.g. "roundRect", "ellipse", "heart"),
+    /// or None if rect/default.
+    pub(crate) fn picture_geometry_preset_at_caret(&self) -> Option<&'static str> {
+        let geom = self.picture_geometry_at_caret()?;
+        match &geom {
+            ibis_doc_model::Geometry::Rect => None,
+            ibis_doc_model::Geometry::RoundRect { .. } => Some("roundRect"),
+            ibis_doc_model::Geometry::Ellipse => Some("ellipse"),
+            ibis_doc_model::Geometry::Formula(f) => match f.preset.as_deref() {
+                Some("triangle") => Some("triangle"),
+                Some("diamond") => Some("diamond"),
+                Some("parallelogram") => Some("parallelogram"),
+                Some("trapezoid") => Some("trapezoid"),
+                Some("hexagon") => Some("hexagon"),
+                Some("octagon") => Some("octagon"),
+                Some("heart") => Some("heart"),
+                Some("star5") => Some("star5"),
+                Some("cloud") => Some("cloud"),
+                Some("rightArrow") => Some("rightArrow"),
+                Some("teardrop") => Some("teardrop"),
+                Some("wedgeRoundRectCallout") => Some("wedgeRoundRectCallout"),
+                _ => None,
+            },
+        }
+    }
+
+    /// 図形に合わせてトリミング (DOCX-IMAGE-005): crop picture to preset shape (None or "rect" resets to rect).
+    pub(crate) fn crop_picture_to_shape(&mut self, preset: Option<&str>, cx: &mut Context<Self>) {
+        self.change_picture_look(|l| {
+            l.geometry = match preset {
+                None | Some("rect") => None,
+                Some(name) => ibis_pptx::geometry::preset(name),
+            };
+        }, cx);
+    }
+
+    /// 図のリセット (DOCX-IMAGE-023): the picture's turn, flips, crop, border, brightness and contrast and recolouring are taken
+    /// back; its size, name and alternative text stay. One step of undo.
+    pub(crate) fn reset_picture(&mut self, cx: &mut Context<Self>) {
+        self.change_picture_look(|l| {
+            *l = PictureLook { alt_text: std::mem::take(&mut l.alt_text), decorative: l.decorative, name: std::mem::take(&mut l.name), linked_file: l.linked_file.take(), ..Default::default() };
+        }, cx);
+    }
     /// Outline (border) of the picture at the caret, if any.
     pub(crate) fn picture_stroke_at_caret(&self)->Option<Stroke> {
         self.picture_look_at_caret().and_then(|l| l.stroke)
@@ -504,14 +793,93 @@ impl SlideEditor {
             l.luminance = (b != 0 || c != 0).then_some((b, c));
         }, cx);
     }
-    /// 色: the picture recoloured (grayscale, sepia) or as it was (`None`).
+    /// 色: the picture recoloured or as it was (`None`).
     pub(crate) fn recolor_picture(&mut self, kind: Option<PictureRecolor>, cx: &mut Context<Self>) {
         self.change_picture_look(|l| {
-            l.duotone = kind.map(|k| match k {
-                PictureRecolor::Grayscale => (Rgb(0x000000), Rgb(0xFFFFFF)),
-                PictureRecolor::Sepia => (Rgb(0x3F2300), Rgb(0xFFF3D6)),
-            });
+            match kind {
+                None => {
+                    l.duotone = None;
+                    l.effects.bilevel = None;
+                    l.effects.grayscale = false;
+                }
+                Some(PictureRecolor::Grayscale) => {
+                    l.duotone = Some((Rgb(0x000000), Rgb(0xFFFFFF)));
+                    l.effects.bilevel = None;
+                    l.effects.grayscale = true;
+                }
+                Some(PictureRecolor::Sepia) => {
+                    l.duotone = Some((Rgb(0x3F2300), Rgb(0xFFF3D6)));
+                    l.effects.bilevel = None;
+                    l.effects.grayscale = false;
+                }
+                Some(PictureRecolor::Washout) => {
+                    l.duotone = None;
+                    l.effects.bilevel = None;
+                    l.effects.grayscale = false;
+                    l.luminance = Some((70_000, -70_000));
+                }
+                Some(PictureRecolor::BlackAndWhite50) => {
+                    l.duotone = None;
+                    l.effects.bilevel = Some(50_000);
+                    l.effects.grayscale = false;
+                }
+                Some(PictureRecolor::Blue) => {
+                    l.duotone = Some((Rgb(0x002060), Rgb(0xD9E1F2)));
+                    l.effects.bilevel = None;
+                    l.effects.grayscale = false;
+                }
+                Some(PictureRecolor::Green) => {
+                    l.duotone = Some((Rgb(0x004010), Rgb(0xE2EFDA)));
+                    l.effects.bilevel = None;
+                    l.effects.grayscale = false;
+                }
+                Some(PictureRecolor::Red) => {
+                    l.duotone = Some((Rgb(0x600000), Rgb(0xFCE4D6)));
+                    l.effects.bilevel = None;
+                    l.effects.grayscale = false;
+                }
+                Some(PictureRecolor::Orange) => {
+                    l.duotone = Some((Rgb(0x803000), Rgb(0xFFE6CC)));
+                    l.effects.bilevel = None;
+                    l.effects.grayscale = false;
+                }
+                Some(PictureRecolor::Purple) => {
+                    l.duotone = Some((Rgb(0x400060), Rgb(0xF2E6FF)));
+                    l.effects.bilevel = None;
+                    l.effects.grayscale = false;
+                }
+            }
         }, cx);
+    }
+    /// 透明度: the picture's opacity (0 to 100 000, 100 000 = 100% opaque, None = opaque).
+    pub(crate) fn set_picture_opacity(&mut self, opacity: Option<i32>, cx: &mut Context<Self>) {
+        self.change_picture_look(|l| {
+            l.effects.opacity = opacity.filter(|&a| a < 100_000);
+        }, cx);
+    }
+    /// 透明度 of the picture at caret.
+    pub(crate) fn picture_opacity_at_caret(&self) -> Option<i32> {
+        self.picture_look_at_caret().and_then(|l| l.effects.opacity)
+    }
+    /// 色の彩度: the picture's saturation (0 to 400 000, 100 000 = 100% normal, None = normal).
+    pub(crate) fn set_picture_saturation(&mut self, saturation: Option<i32>, cx: &mut Context<Self>) {
+        self.change_picture_look(|l| {
+            l.effects.saturation = saturation.filter(|&s| s != 100_000);
+        }, cx);
+    }
+    /// 色の彩度 of the picture at caret.
+    pub(crate) fn picture_saturation_at_caret(&self) -> Option<i32> {
+        self.picture_look_at_caret().and_then(|l| l.effects.saturation)
+    }
+    /// ぼかし・ソフトエッジ: the soft edge blur radius in EMU.
+    pub(crate) fn set_picture_soft_edge(&mut self, rad: Option<i64>, cx: &mut Context<Self>) {
+        self.change_picture_look(|l| {
+            l.soft_edge = rad.filter(|&r| r > 0);
+        }, cx);
+    }
+    /// ぼかし・ソフトエッジ of the picture at caret.
+    pub(crate) fn picture_soft_edge_at_caret(&self) -> Option<i64> {
+        self.picture_look_at_caret().and_then(|l| l.soft_edge)
     }
     /// Set or change the border width (EMU) of the picture at the caret.
     pub(crate) fn set_picture_border_width(&mut self, width: i64, cx: &mut Context<Self>) {
@@ -691,6 +1059,12 @@ impl SlideEditor {
         let decorative = edit.decorative;
         let stroke_now = self.picture_stroke_at_caret();
         let duotone_now = self.picture_look_at_caret().and_then(|l| l.duotone);
+        let opacity_now = self.picture_opacity_at_caret();
+        let saturation_now = self.picture_saturation_at_caret();
+        let soft_edge_now = self.picture_soft_edge_at_caret();
+        let bilevel_now = self.picture_look_at_caret().and_then(|l| l.effects.bilevel);
+        let lum_now = self.picture_look_at_caret().and_then(|l| l.luminance);
+        let geom_preset = self.picture_geometry_preset_at_caret();
         let row=|label:&'static str,field:&Entity<InputState>|h_flex().gap_2().child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label))).child(Input::new(field).small());
         let mut body=v_flex().gap_2().px(px(18.)).py(px(8.))
             .child(h_flex().gap_2()
@@ -701,26 +1075,68 @@ impl SlideEditor {
             .children(error.map(|e|div().text_sm().child(e)))
             .child(h_flex().gap_2()
                 .child(Button::new("picture-size-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this,_,window,cx|this.apply_picture_edit(window,cx))))
-                .child(Button::new("picture-replace").small().label(crate::shell::i18n::text("_docx.change-picture")).on_click(cx.listener(|this,_,window,cx|this.doc_pick_replacement_picture(window,cx)))))
+                .child(Button::new("picture-replace").small().label(crate::shell::i18n::text("_docx.change-picture")).on_click(cx.listener(|this,_,window,cx|this.doc_pick_replacement_picture(window,cx))))
+                .child(Button::new("picture-compress").small().label(crate::shell::i18n::text("docx.picture.compress")).on_click(cx.listener(|this,_,window,cx|this.open_docx_compress_panel(window,cx)))))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("fix.picture-panel.rotate-flip")))
             .child(h_flex().gap_1().flex_wrap()
                 .child(Button::new("picture-turn-left").small().label(crate::shell::i18n::text("fix.picture-panel.rotate-left-90")).on_click(cx.listener(|this,_,_,cx|this.turn_picture(-1,cx))))
                 .child(Button::new("picture-turn-right").small().label(crate::shell::i18n::text("fix.picture-panel.rotate-right-90")).on_click(cx.listener(|this,_,_,cx|this.turn_picture(1,cx))))
                 .child(Button::new("picture-flip-h").small().label(crate::shell::i18n::text("fix.picture-panel.flip-horizontal")).on_click(cx.listener(|this,_,_,cx|this.flip_picture(true,cx))))
                 .child(Button::new("picture-flip-v").small().label(crate::shell::i18n::text("fix.picture-panel.flip-vertical")).on_click(cx.listener(|this,_,_,cx|this.flip_picture(false,cx)))))
+            .child(Button::new("picture-reset").small().label(crate::shell::i18n::text("docx.picture.reset")).on_click(cx.listener(|this,_,_,cx|this.reset_picture(cx))))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("fix.picture-panel.crop")))
             .child(row("_shell.top",&crop[0])).child(row("_shell.bottom",&crop[1])).child(row("_shell.left",&crop[2])).child(row("_shell.right",&crop[3]))
             .child(Button::new("picture-crop-apply").primary().small().label(crate::shell::i18n::text("fix.picture-panel.apply-crop")).on_click(cx.listener(|this,_,_,cx|this.apply_picture_crop(cx))))
+            .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture.crop-to-shape.label")))
+            .child(h_flex().gap_1().flex_wrap()
+                .child(Button::new("pic-crop-rect").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.rect")).selected(geom_preset.is_none()).on_click(cx.listener(|this,_,_,cx|this.crop_picture_to_shape(None,cx))))
+                .child(Button::new("pic-crop-round-rect").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.round-rect")).selected(geom_preset == Some("roundRect")).on_click(cx.listener(|this,_,_,cx|this.crop_picture_to_shape(Some("roundRect"),cx))))
+                .child(Button::new("pic-crop-ellipse").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.ellipse")).selected(geom_preset == Some("ellipse")).on_click(cx.listener(|this,_,_,cx|this.crop_picture_to_shape(Some("ellipse"),cx))))
+                .child(Button::new("pic-crop-triangle").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.triangle")).selected(geom_preset == Some("triangle")).on_click(cx.listener(|this,_,_,cx|this.crop_picture_to_shape(Some("triangle"),cx))))
+                .child(Button::new("pic-crop-diamond").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.diamond")).selected(geom_preset == Some("diamond")).on_click(cx.listener(|this,_,_,cx|this.crop_picture_to_shape(Some("diamond"),cx))))
+                .child(Button::new("pic-crop-heart").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.heart")).selected(geom_preset == Some("heart")).on_click(cx.listener(|this,_,_,cx|this.crop_picture_to_shape(Some("heart"),cx))))
+                .child(Button::new("pic-crop-star5").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.star5")).selected(geom_preset == Some("star5")).on_click(cx.listener(|this,_,_,cx|this.crop_picture_to_shape(Some("star5"),cx))))
+                .child(Button::new("pic-crop-cloud").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.cloud")).selected(geom_preset == Some("cloud")).on_click(cx.listener(|this,_,_,cx|this.crop_picture_to_shape(Some("cloud"),cx)))))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.picture-corrections")))
             .child(h_flex().gap_1().flex_wrap()
                 .child(Button::new("pic-bright-down").small().label(crate::shell::i18n::text("docx.picture-panel.brightness-10-percent")).on_click(cx.listener(|this,_,_,cx|this.adjust_picture_luminance(true,-10,cx))))
                 .child(Button::new("pic-bright-up").small().label(crate::shell::i18n::text("docx.picture-panel.brightness-plus-10-percent")).on_click(cx.listener(|this,_,_,cx|this.adjust_picture_luminance(true,10,cx))))
                 .child(Button::new("pic-contrast-down").small().label(crate::shell::i18n::text("docx.picture-panel.contrast-10-percent")).on_click(cx.listener(|this,_,_,cx|this.adjust_picture_luminance(false,-10,cx))))
                 .child(Button::new("pic-contrast-up").small().label(crate::shell::i18n::text("docx.picture-panel.contrast-plus-10-percent")).on_click(cx.listener(|this,_,_,cx|this.adjust_picture_luminance(false,10,cx)))))
+            .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.color-recolor")))
             .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new("pic-recolor-none").small().label(crate::shell::i18n::text("docx.picture-panel.no-recolor")).selected(duotone_now.is_none()).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(None,cx))))
+                .child(Button::new("pic-recolor-none").small().label(crate::shell::i18n::text("docx.picture-panel.no-recolor")).selected(duotone_now.is_none() && bilevel_now.is_none() && lum_now != Some((70_000, -70_000))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(None,cx))))
                 .child(Button::new("pic-recolor-gray").small().label(crate::shell::i18n::text("pptx.print-panel.grayscale")).selected(duotone_now==Some((Rgb(0x000000),Rgb(0xFFFFFF)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Grayscale),cx))))
-                .child(Button::new("pic-recolor-sepia").small().label(crate::shell::i18n::text("docx.picture-panel.sepia")).selected(duotone_now==Some((Rgb(0x3F2300),Rgb(0xFFF3D6)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Sepia),cx)))))
+                .child(Button::new("pic-recolor-sepia").small().label(crate::shell::i18n::text("docx.picture-panel.sepia")).selected(duotone_now==Some((Rgb(0x3F2300),Rgb(0xFFF3D6)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Sepia),cx))))
+                .child(Button::new("pic-recolor-washout").small().label(crate::shell::i18n::text("docx.picture-panel.washout")).selected(lum_now == Some((70_000, -70_000))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Washout),cx))))
+                .child(Button::new("pic-recolor-bw50").small().label(crate::shell::i18n::text("docx.picture-panel.black-and-white")).selected(bilevel_now == Some(50_000)).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::BlackAndWhite50),cx))))
+                .child(Button::new("pic-recolor-blue").small().label(crate::shell::i18n::text("_docx.blue")).selected(duotone_now==Some((Rgb(0x002060),Rgb(0xD9E1F2)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Blue),cx))))
+                .child(Button::new("pic-recolor-green").small().label(crate::shell::i18n::text("_docx.green")).selected(duotone_now==Some((Rgb(0x004010),Rgb(0xE2EFDA)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Green),cx))))
+                .child(Button::new("pic-recolor-red").small().label(crate::shell::i18n::text("_docx.red")).selected(duotone_now==Some((Rgb(0x600000),Rgb(0xFCE4D6)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Red),cx))))
+                .child(Button::new("pic-recolor-orange").small().label(crate::shell::i18n::text("_docx.orange")).selected(duotone_now==Some((Rgb(0x803000),Rgb(0xFFE6CC)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Orange),cx))))
+                .child(Button::new("pic-recolor-purple").small().label(crate::shell::i18n::text("docx.picture-panel.purple")).selected(duotone_now==Some((Rgb(0x400060),Rgb(0xF2E6FF)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Purple),cx)))))
+            .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.saturation")))
+            .child(h_flex().gap_1().flex_wrap()
+                .child(Button::new("pic-sat-0").small().label("0%").selected(saturation_now == Some(0)).on_click(cx.listener(|this,_,_,cx|this.set_picture_saturation(Some(0),cx))))
+                .child(Button::new("pic-sat-50").small().label("50%").selected(saturation_now == Some(50_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_saturation(Some(50_000),cx))))
+                .child(Button::new("pic-sat-100").small().label("100%").selected(saturation_now.is_none() || saturation_now == Some(100_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_saturation(None,cx))))
+                .child(Button::new("pic-sat-200").small().label("200%").selected(saturation_now == Some(200_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_saturation(Some(200_000),cx))))
+                .child(Button::new("pic-sat-300").small().label("300%").selected(saturation_now == Some(300_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_saturation(Some(300_000),cx)))))
+            .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.transparency")))
+            .child(h_flex().gap_1().flex_wrap()
+                .child(Button::new("pic-trans-0").small().label("0%").selected(opacity_now.is_none()).on_click(cx.listener(|this,_,_,cx|this.set_picture_opacity(None,cx))))
+                .child(Button::new("pic-trans-15").small().label("15%").selected(opacity_now == Some(85_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_opacity(Some(85_000),cx))))
+                .child(Button::new("pic-trans-30").small().label("30%").selected(opacity_now == Some(70_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_opacity(Some(70_000),cx))))
+                .child(Button::new("pic-trans-50").small().label("50%").selected(opacity_now == Some(50_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_opacity(Some(50_000),cx))))
+                .child(Button::new("pic-trans-65").small().label("65%").selected(opacity_now == Some(35_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_opacity(Some(35_000),cx))))
+                .child(Button::new("pic-trans-80").small().label("80%").selected(opacity_now == Some(20_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_opacity(Some(20_000),cx)))))
+            .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.soft-edge")))
+            .child(h_flex().gap_1().flex_wrap()
+                .child(Button::new("pic-soft-0").small().label(crate::shell::i18n::text("pptx.chrome.no-border")).selected(soft_edge_now.is_none()).on_click(cx.listener(|this,_,_,cx|this.set_picture_soft_edge(None,cx))))
+                .child(Button::new("pic-soft-1").small().label("1 pt").selected(soft_edge_now == Some(12_700)).on_click(cx.listener(|this,_,_,cx|this.set_picture_soft_edge(Some(12_700),cx))))
+                .child(Button::new("pic-soft-2").small().label("2.5 pt").selected(soft_edge_now == Some(31_750)).on_click(cx.listener(|this,_,_,cx|this.set_picture_soft_edge(Some(31_750),cx))))
+                .child(Button::new("pic-soft-5").small().label("5 pt").selected(soft_edge_now == Some(63_500)).on_click(cx.listener(|this,_,_,cx|this.set_picture_soft_edge(Some(63_500),cx))))
+                .child(Button::new("pic-soft-10").small().label("10 pt").selected(soft_edge_now == Some(127_000)).on_click(cx.listener(|this,_,_,cx|this.set_picture_soft_edge(Some(127_000),cx)))))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture.border.label")))
             .child(h_flex().gap_1().flex_wrap()
                 .child(Button::new("pic-border-none").small().label(crate::shell::i18n::text("pptx.chrome.no-border")).selected(stroke_now.is_none()).on_click(cx.listener(|this,_,_,cx|this.clear_picture_border(cx))))
@@ -739,6 +1155,43 @@ impl SlideEditor {
                 .child(row("docx.picture.alt-text.desc",&alt_desc))
                 .child(Button::new("picture-alt-text-apply").primary().small().label(crate::shell::i18n::text("docx.picture.alt-text.apply")).on_click(cx.listener(|this,_,_,cx|this.apply_picture_alt_text(cx))));
         }
+        let editing_wp = self.is_editing_wrap_points();
+        let poly_opt = self.picture_wrap_polygon_at_caret();
+        body = body
+            .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture.edit-wrap-points")))
+            .child(h_flex().gap_1().flex_wrap()
+                .child(Button::new("pic-wrap-points-toggle").small().label(crate::shell::i18n::text("docx.picture.edit-wrap-points")).selected(editing_wp).on_click(cx.listener(|this,_,_,cx|this.toggle_edit_wrap_points(cx))))
+                .child(Button::new("pic-wrap-points-rect").small().label(crate::shell::i18n::text("docx.picture.wrap-points.rect")).on_click(cx.listener(|this,_,_,cx|{ this.apply_picture_wrap_polygon_preset("rect", cx); })))
+                .child(Button::new("pic-wrap-points-diamond").small().label(crate::shell::i18n::text("docx.picture.wrap-points.diamond")).on_click(cx.listener(|this,_,_,cx|{ this.apply_picture_wrap_polygon_preset("diamond", cx); })))
+                .child(Button::new("pic-wrap-points-octagon").small().label(crate::shell::i18n::text("docx.picture.wrap-points.octagon")).on_click(cx.listener(|this,_,_,cx|{ this.apply_picture_wrap_polygon_preset("octagon", cx); })))
+                .child(Button::new("pic-wrap-points-inset").small().label(crate::shell::i18n::text("docx.picture.wrap-points.inset")).on_click(cx.listener(|this,_,_,cx|{ this.apply_picture_wrap_polygon_preset("inset", cx); })))
+                .child(Button::new("pic-wrap-points-reset").small().label(crate::shell::i18n::text("docx.picture.wrap-points.reset")).on_click(cx.listener(|this,_,_,cx|{ this.reset_picture_wrap_points(cx); }))));
+        if editing_wp || poly_opt.is_some() {
+            let poly = poly_opt.unwrap_or_else(ibis_doc_model::WrapPolygon::default_rect_21600);
+            let mut vertices = vec![poly.start];
+            vertices.extend(poly.line_to.iter().copied());
+            for (idx, pt) in vertices.iter().enumerate().take(8) {
+                let pct_x = (pt.x as f64 / 216.0).round() as i32;
+                let pct_y = (pt.y as f64 / 216.0).round() as i32;
+                body = body.child(
+                    h_flex().gap_1().items_center()
+                        .child(div().w(px(88.)).text_xs().child(format!("#{idx} ({pct_x}%, {pct_y}%)")))
+                        .child(Button::new(("wp-left", idx)).small().label("←").on_click(cx.listener(move |this,_,_,cx|{ this.nudge_picture_wrap_point(idx, -1080, 0, cx); })))
+                        .child(Button::new(("wp-right", idx)).small().label("→").on_click(cx.listener(move |this,_,_,cx|{ this.nudge_picture_wrap_point(idx, 1080, 0, cx); })))
+                        .child(Button::new(("wp-up", idx)).small().label("↑").on_click(cx.listener(move |this,_,_,cx|{ this.nudge_picture_wrap_point(idx, 0, -1080, cx); })))
+                        .child(Button::new(("wp-down", idx)).small().label("↓").on_click(cx.listener(move |this,_,_,cx|{ this.nudge_picture_wrap_point(idx, 0, 1080, cx); })))
+                        .child(Button::new(("wp-del", idx)).small().label("-").disabled(idx == 0 || poly.line_to.len() <= 3).on_click(cx.listener(move |this,_,_,cx|{ this.remove_picture_wrap_point(idx, cx); })))
+                );
+            }
+            body = body.child(
+                Button::new("pic-wrap-points-add")
+                    .small()
+                    .label(crate::shell::i18n::text("docx.picture.wrap-points.add-vertex"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.insert_picture_wrap_point(1, ibis_doc_model::WrapPoint::new(10_800, 2_700), cx);
+                    })),
+            );
+        }
         Some(SidebarPanel {title:crate::shell::i18n::text("docx.picture-panel.picture-size"),body:body.into_any_element()})
     }
 
@@ -751,7 +1204,7 @@ impl SlideEditor {
                 let mut offset = 0;
                 for r in &p.runs {
                     match &r.kind {
-                        FlowRunKind::Picture { size, look, .. } => {
+                        FlowRunKind::Picture { size, look, .. } | FlowRunKind::PictureControl { size, look, .. } => {
                             let name = if look.name.is_empty() {
                                 crate::shell::i18n::format("_docx.picture-n", &[("n", &(list.len() + 1))])
                             } else {

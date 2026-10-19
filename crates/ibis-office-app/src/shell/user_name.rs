@@ -10,6 +10,16 @@ use std::sync::{OnceLock, RwLock};
 static CUSTOM_NAME: RwLock<Option<String>> = RwLock::new(None);
 static CUSTOM_INITIALS: RwLock<Option<String>> = RwLock::new(None);
 
+/// The custom name and initials forgotten (the scenarios start each from the defaults).
+pub(crate) fn reset() {
+    if let Ok(mut g) = CUSTOM_NAME.write() {
+        *g = None;
+    }
+    if let Ok(mut g) = CUSTOM_INITIALS.write() {
+        *g = None;
+    }
+}
+
 /// The default user name discovered from system or environment.
 pub(crate) fn default_user_name() -> &'static str {
     static NAME: OnceLock<String> = OnceLock::new();

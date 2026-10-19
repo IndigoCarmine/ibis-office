@@ -10,3 +10,9 @@
 [submodule "forks/gpui-pre-windows"]
 	path = forks/gpui-pre-windows
 	url = https://github.com/IndigoCarmine/gpui-pre-windows.git
+[submodule "forks/gpui-pre-linux"]
+	path = forks/gpui-pre-linux
+	url = https://github.com/ibisjp/gpui-pre-linux.git
+[submodule "forks/gpui-pre-wgpu"]
+	path = forks/gpui-pre-wgpu
+	url = https://github.com/ibisjp/gpui-pre-wgpu.git

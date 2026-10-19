@@ -89,6 +89,88 @@ pub struct Subpath {
     pub closed: bool,
 }
 
+/// A vertex of an outline with its Bézier handles (頂点の編集): the point, and the control points of the curve coming
+/// into it and going out of it (`None`: a straight line there).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Node {
+    pub p: (f64, f64),
+    pub cin: Option<(f64, f64)>,
+    pub cout: Option<(f64, f64)>,
+}
+
+impl Node {
+    pub fn corner(p: (f64, f64)) -> Self {
+        Node { p, cin: None, cout: None }
+    }
+}
+
+impl FormulaGeometry {
+    /// The closed figures of the outline for a shape `w` × `h`, as vertices with their curves, in the shape's
+    /// coordinates; `None` if a path has an arc or is not closed (the outline can be had as lines only).
+    pub fn nodes(&self, w: f64, h: f64) -> Option<Vec<Vec<Node>>> {
+        let mut v = Values::new(w, h);
+        v.set_all(&self.def.adjust);
+        v.set_all(&self.adjust);
+        v.set_all(&self.def.guides);
+        let mut out = Vec::new();
+        for path in &self.def.paths {
+            if path.fill == PathFill::None {
+                continue;
+            }
+            let sx = if path.width > 0 { w / path.width as f64 } else { 1.0 };
+            let sy = if path.height > 0 { h / path.height as f64 } else { 1.0 };
+            let pt = |x: &str, y: &str| (v.get(x) * sx, v.get(y) * sy);
+            let mut current: Vec<Node> = Vec::new();
+            for op in &path.ops {
+                match op {
+                    PathOp::MoveTo(x, y) => {
+                        if !current.is_empty() {
+                            return None;
+                        }
+                        current.push(Node::corner(pt(x, y)));
+                    }
+                    PathOp::LineTo(x, y) => current.push(Node::corner(pt(x, y))),
+                    PathOp::QuadTo([cx, cy, x, y]) => {
+                        let (c, t) = (pt(cx, cy), pt(x, y));
+                        let last = current.last_mut()?;
+                        let p0 = last.p;
+                        last.cout = Some((p0.0 + 2.0 / 3.0 * (c.0 - p0.0), p0.1 + 2.0 / 3.0 * (c.1 - p0.1)));
+                        current.push(Node { p: t, cin: Some((t.0 + 2.0 / 3.0 * (c.0 - t.0), t.1 + 2.0 / 3.0 * (c.1 - t.1))), cout: None });
+                    }
+                    PathOp::CubicTo([ax, ay, bx, by, x, y]) => {
+                        let (c1, c2, t) = (pt(ax, ay), pt(bx, by), pt(x, y));
+                        // A handle on its own vertex is none (a line at that side).
+                        let apart = |h: (f64, f64), p: (f64, f64)| ((h.0 - p.0).abs() >= 0.5 || (h.1 - p.1).abs() >= 0.5).then_some(h);
+                        let last = current.last_mut()?;
+                        last.cout = apart(c1, last.p);
+                        current.push(Node { p: t, cin: apart(c2, t), cout: None });
+                    }
+                    PathOp::ArcTo { .. } => return None,
+                    PathOp::Close => {
+                        // The last point on the first: one vertex (a curve closing on it comes into it).
+                        if current.len() >= 2 {
+                            let (first, last) = (current[0], *current.last()?);
+                            if (first.p.0 - last.p.0).abs() < 0.5 && (first.p.1 - last.p.1).abs() < 0.5 {
+                                current[0].cin = last.cin;
+                                current.pop();
+                            }
+                        }
+                        if current.len() >= 3 {
+                            out.push(std::mem::take(&mut current));
+                        } else {
+                            current.clear();
+                        }
+                    }
+                }
+            }
+            if !current.is_empty() {
+                return None;
+            }
+        }
+        (!out.is_empty()).then_some(out)
+    }
+}
+
 /// 60 000ths of a degree to radians.
 fn radians(angle: f64) -> f64 {
     (angle / 60_000.0).to_radians()
@@ -215,9 +297,12 @@ impl FormulaGeometry {
 }
 
 fn outline_path(path: &GeometryPath, v: &Values, w: f64, h: f64) -> Outline {
-    let sx = if path.width > 0 { w / path.width as f64 } else { 1.0 };
-    let sy = if path.height > 0 { h / path.height as f64 } else { 1.0 };
-    let pt = |x: &str, y: &str| (v.get(x) * sx, v.get(y) * sy);
+    let (sx, sy) = if path.width > 0 && path.height > 0 {
+        (w / path.width as f64, h / path.height as f64)
+    } else {
+        (1.0, 1.0)
+    };
+    let pt = |x: &str, y: &str| (v.get(x), v.get(y));
     let mut subpaths: Vec<Subpath> = Vec::new();
     let mut current = (0.0, 0.0);
     let open = |subpaths: &mut Vec<Subpath>, at: (f64, f64)| {
@@ -272,7 +357,7 @@ fn outline_path(path: &GeometryPath, v: &Values, w: f64, h: f64) -> Outline {
                 if subpaths.last().is_none_or(|s| s.closed) {
                     open(&mut subpaths, current);
                 }
-                let (rx, ry) = (v.get(wr) * sx, v.get(hr) * sy);
+                let (rx, ry) = (v.get(wr), v.get(hr));
                 let (start, sweep) = (v.get(start), v.get(sweep));
                 let arc = arc_points(current, rx, ry, start, sweep);
                 if let Some(last) = arc.last() {
@@ -287,6 +372,14 @@ fn outline_path(path: &GeometryPath, v: &Values, w: f64, h: f64) -> Outline {
                         current = *first;
                     }
                 }
+            }
+        }
+    }
+    if (sx - 1.0).abs() > 1e-9 || (sy - 1.0).abs() > 1e-9 {
+        for subpath in &mut subpaths {
+            for pt in &mut subpath.points {
+                pt.0 *= sx;
+                pt.1 *= sy;
             }
         }
     }
@@ -382,5 +475,38 @@ mod tests {
         assert!((end.0 - 40.0).abs() < 1e-6 && (end.1 - 10.0).abs() < 1e-6, "{end:?}");
         // It passes through the top of the ellipse.
         assert!(points.iter().any(|p| (p.1 - 0.0).abs() < 0.5));
+    }
+
+    #[test]
+    fn scaled_path_with_arcs_preserves_continuity() {
+        // A path defined in 43200x43200 local space with arcs, evaluated at 400x200 (aspect ratio 2:1).
+        let def = GeometryDef {
+            text_rect: None,
+            adjust: Vec::new(),
+            guides: Vec::new(),
+            paths: vec![GeometryPath {
+                width: 43200,
+                height: 43200,
+                fill: PathFill::Normal,
+                stroke: true,
+                ops: vec![
+                    PathOp::MoveTo(s("3900"), s("14370")),
+                    PathOp::ArcTo { wr: s("6753"), hr: s("9190"), start: s("-11429249"), sweep: s("7426832") },
+                    PathOp::ArcTo { wr: s("5333"), hr: s("7267"), start: s("-8646143"), sweep: s("5396714") },
+                    PathOp::Close,
+                ],
+            }],
+        };
+        let geometry = FormulaGeometry { preset: None, adjust: Vec::new(), def: Arc::new(def) };
+        let outline = geometry.outline(400.0, 200.0);
+        assert_eq!(outline.len(), 1);
+        let subpath = &outline[0].subpaths[0];
+        assert!(subpath.closed);
+        let first = subpath.points.first().unwrap();
+        // The start point is scaled from (3900, 14370) by (400/43200, 200/43200)
+        let expected_x = 3900.0 * (400.0 / 43200.0);
+        let expected_y = 14370.0 * (200.0 / 43200.0);
+        assert!((first.0 - expected_x).abs() < 1e-6);
+        assert!((first.1 - expected_y).abs() < 1e-6);
     }
 }

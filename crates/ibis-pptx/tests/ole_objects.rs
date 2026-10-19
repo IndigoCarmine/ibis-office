@@ -183,6 +183,39 @@ fn a_moved_object_keeps_its_part() {
     assert_eq!(p.slides[0].shapes.iter().find(|s| matches!(&s.kind, ShapeKind::Picture(p) if p.ole.is_some())).unwrap().frame, frame);
 }
 
+/// The size the object's application draws it at (`imgW`, `imgH`) is read,
+/// and written for a new object and for an edited one, so Office keeps the
+/// object's scale when its application redraws it.
+#[test]
+fn an_objects_natural_size_is_kept() {
+    let with_size = |file: &[u8], natural: (i64, i64), content: &[u8]| {
+        let opened = ibis_pptx::open(file.to_vec()).unwrap();
+        let mut document = Document::new(opened.presentation.clone());
+        let slide = document.presentation().slides[0].id;
+        let shape = document.presentation().slides[0].shapes.iter().find(|s| matches!(&s.kind, ShapeKind::Picture(p) if p.ole.is_some())).unwrap().clone();
+        let ShapeKind::Picture(mut picture) = shape.kind else { unreachable!() };
+        let ole = document.ids().add_ole(PROG_ID, object(content), false);
+        document.ids().set_ole_natural(ole, Some(natural));
+        picture.ole = Some(ole);
+        document.execute(vec![Command::SetKind { slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) }]).unwrap();
+        opened.source.save(document.presentation(), SaveOptions::default()).unwrap()
+    };
+    let natural = |file: &[u8]| {
+        let p = ibis_pptx::read(file).unwrap();
+        p.ole(objects(&p)[0].ole.unwrap()).unwrap().natural
+    };
+    assert_eq!(natural(&with_object()), None, "not known, not written");
+    assert!(!slide_xml(&with_object()).contains("imgW="));
+
+    let first = with_size(&with_object(), (500_000, 375_000), b"second");
+    assert!(slide_xml(&first).contains(r#"imgW="500000" imgH="375000""#), "{}", slide_xml(&first));
+    assert_eq!(natural(&first), Some((500_000, 375_000)));
+    let again = with_size(&first, (600_000, 375_000), b"third");
+    let xml = slide_xml(&again);
+    assert!(xml.contains(r#"imgW="600000""#) && !xml.contains(r#"imgW="500000""#), "{xml}");
+    assert_eq!(natural(&again), Some((600_000, 375_000)));
+}
+
 fn objects_shape(p: &Presentation) -> ibis_doc_model::ShapeId {
     p.slides[0].shapes.iter().find(|s| matches!(&s.kind, ShapeKind::Picture(p) if p.ole.is_some())).unwrap().id
 }
@@ -393,7 +426,7 @@ fn an_object_inserted_on_a_sheet_reads_back() {
     assert!(at("<pageMargins") < at("<legacyDrawing") && at("<legacyDrawing") < at("<oleObjects"), "{xml}");
     let shape_id = xml.split("shapeId=\"").nth(1).unwrap().split('"').next().unwrap();
     let vml = vml_xml(&saved).expect("a VML drawing");
-    assert!(vml.contains(&format!("id=\"_x0000_s{shape_id}\"")) && vml.contains("ObjectType=\"Pict\"") && vml.contains("<x:Anchor>\r\n   1, 0, 2, 0, 3, 0, 6, 0</x:Anchor>"), "{vml}");
+    assert!(vml.contains(&format!("id=\"_x0000_s{shape_id}\"")) && vml.contains("ObjectType=\"Pict\"") && vml.contains("filled=\"f\" stroked=\"f\"") && !vml.contains("<v:fill") && vml.contains("<x:Anchor>\r\n   1, 0, 2, 0, 3, 0, 6, 0</x:Anchor>"), "{vml}");
 
     let package = Package::open(saved.clone()).unwrap();
     assert_eq!(package.content_type("xl/embeddings/oleObject1.bin").unwrap().as_deref(), Some("application/vnd.openxmlformats-officedocument.oleObject"));

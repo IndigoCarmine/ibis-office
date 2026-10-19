@@ -11,7 +11,6 @@
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -19,6 +18,13 @@ use ibis_doc_model::{CellRange, SlideId, cell_name, sheet_command::Axis};
 
 use crate::shell::icons::Material;
 use crate::shell::editor::{SlideEditor, SlideLayout, Tool, WorkspaceContent, sheet_of};
+
+/// Dragging with ⌘ held to deselect (unselect) a rectangle of cells.
+#[derive(Clone, Debug)]
+pub(crate) struct DeselectDrag {
+    pub(crate) anchor: (u32, u32),
+    pub(crate) base_ranges: Vec<CellRange>,
+}
 
 actions!(
     ibis_office,
@@ -75,6 +81,8 @@ actions!(
         CellPaste,
         /// Paste values only (⇧⌘V).
         CellPastePlain,
+        /// Open the Paste Special dialog (⌘⌥V / ⌃⌥V).
+        CellPasteSpecialDialog,
         /// Take the formats off the selected cells (⌘\\).
         ClearCellFormats,
         /// Tab: finish the entry and go right (remembering where the Tabs began).
@@ -95,6 +103,10 @@ actions!(
         FillDown,
         /// ⌘R (⌃R): copy the selection's first column right over it.
         FillRight,
+        /// Copy the selection's last row up over it.
+        FillUp,
+        /// Copy the selection's last column left over it.
+        FillLeft,
         /// ⌃; today's date into the cell (Excel's current date).
         InsertDate,
         /// ⌘; (⌃⇧; on Windows) the time now into the cell.
@@ -108,6 +120,8 @@ actions!(
         CellFillSelection,
         /// ⌥Enter (Excel's Alt+Enter): a line break in what is being typed.
         CellLineBreak,
+        /// ⌥↓ (Excel's Alt+↓): Pick from Drop-down List (or validation list).
+        PickFromList,
         /// ⌃E: フラッシュ フィル.
         FlashFill,
         /// Hide the selected rows (⌃9), as Excel.
@@ -122,20 +136,56 @@ actions!(
         CalculateNow,
         /// Shift+F9: calculate active worksheet.
         CalculateSheet,
+        /// ⌃` (⌘`): toggle show formulas in sheet cells.
+        ToggleShowFormulas,
+        /// ⌥⌘L (⌃⌥L): reapply active autofilter or table filter.
+        ReapplyFilter,
+        /// ⇧F2: insert or edit note (新しいメモ / メモの編集).
+        EditNote,
+        /// ⇧F3: insert function (関数の挿入).
+        InsertFunction,
+        /// Go to previous comment or note on active sheet.
+        PreviousComment,
+        /// Go to next comment or note on active sheet.
+        NextComment,
+        /// Toggle show all notes.
+        ToggleShowAllNotes,
+        /// ⌘+ (⌃+): insert cells/rows/columns according to selection.
+        SheetInsert,
+        /// ⌘- (⌃-): delete cells/rows/columns according to selection.
+        SheetDelete,
     ]
 );
 
 /// Height of the column headers (A, B, C…), in pixels.
 pub(crate) const COLUMN_HEADER_HEIGHT: f32 = 20.0;
-/// Width of the row headers (1, 2, 3…), in pixels.
+/// Width of the row headers (1, 2, 3…), in pixels (base width for up to 4 digits).
 pub(crate) const ROW_HEADER_WIDTH: f32 = 44.0;
+/// Excel's maximum row count per worksheet (1-indexed: 1..=1,048,576; 0-indexed: 0..1,048,576).
+pub(crate) const MAX_SHEET_ROWS: u32 = 1_048_576;
+/// Excel's maximum column count per worksheet (1-indexed: 1..=16,384; 0-indexed: 0..16,384).
+pub(crate) const MAX_SHEET_COLUMNS: u32 = 16_384;
+
+/// Width of the row headers dynamically sized based on sheet row count digits (Excel specification).
+pub(crate) fn row_header_width(sheet: &ibis_doc_model::Sheet) -> f32 {
+    let max_row = sheet.rows.len().max(sheet.row_offsets().len().saturating_sub(1));
+    row_header_width_for_rows(max_row)
+}
+
+pub(crate) fn row_header_width_for_rows(max_row: usize) -> f32 {
+    let digits = max_row.max(1).to_string().len().max(4);
+    // 4 digits (up to 9,999): base 44.0 px
+    // Each additional digit adds 8.0 px (character width ~7.0px at 11pt + margin)
+    // 5 digits (10k+): 52.0px, 6 digits (100k+): 60.0px, 7 digits (1M+, e.g. 1,048,576): 68.0px
+    ROW_HEADER_WIDTH + (digits.saturating_sub(4) as f32) * 8.0
+}
 /// Room kept for the workspace's scrollbars when a cell is scrolled into view.
 pub(super) const SCROLLBAR_ROOM: f32 = 14.0;
 
 /// The tint over the selected range (Excel's translucent grey).
 const RANGE_TINT: u32 = 0x2020201a;
 /// Excel's green, for the selected cell and sheet tab.
-const SELECTION_COLOR: u32 = 0x107c41;
+pub(crate) const SELECTION_COLOR: u32 = 0x107c41;
 /// The line along the edge of frozen panes.
 pub(crate) const FROZEN_LINE: u32 = 0x9b9b9b;
 /// Page break preview: the grey over the cells outside the print area (a
@@ -159,7 +209,103 @@ pub(crate) fn column_letters(column: u32) -> String {
     cell_name(column, 0).trim_end_matches(|c: char| c.is_ascii_digit()).to_string()
 }
 
+use super::cell_edit::BAR_LINE_HEIGHT;
+
+/// The height of the formula bar's text field when widened: four lines.
+pub(crate) const BAR_EXPANDED_HEIGHT: f32 = BAR_LINE_HEIGHT * 4.0 + 4.0;
+
+/// The lines of the formula bar's text: widened, in a column that scrolls; closed, the one line.
+fn bar_text(rows: Vec<impl IntoElement>, expanded: bool, scroll: Option<&ScrollHandle>) -> AnyElement {
+    if !expanded {
+        return h_flex().truncate().children(rows).into_any_element();
+    }
+    let mut column = div().id("formula-bar-text").flex().flex_col().flex_1().min_w_0().h_full().overflow_y_scroll().children(rows);
+    if let Some(handle) = scroll {
+        column = column.track_scroll(handle);
+    }
+    column.into_any_element()
+}
+
 impl SlideEditor {
+    /// The ▼ of the formula bar: widen it to several lines, or close it again.
+    pub(crate) fn toggle_formula_bar_expanded(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = self.sheet_state_mut() {
+            state.bar_expanded = !state.bar_expanded;
+            state.bar_scroll.set_offset(point(px(0.), px(0.)));
+        }
+        cx.notify();
+    }
+
+    /// 関数の挿入 (fx / ⇧F3 / xlsx.insert-function):
+    /// If not currently editing, starts editing with `=`.
+    /// If editing and text doesn't start with `=`, prepends `=`.
+    pub(crate) fn insert_function_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cell_edit().is_none() && self.selection.is_none() && self.current_cell().is_some() {
+            self.begin_cell_edit(super::cell_edit::EditMode::Edit, true, cx);
+        }
+        if let Some(edit) = self.cell_edit_mut() {
+            if !edit.text.starts_with('=') {
+                edit.text.insert(0, '=');
+                edit.caret = edit.text.encode_utf16().count();
+                edit.anchor = None;
+            }
+        }
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    /// Insert a function call (e.g. `SUM(`) into the active cell:
+    /// - If not currently editing, starts editing with `={name}(`
+    /// - If editing, appends or inserts `{name}(` at caret
+    pub(crate) fn insert_function_named(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cell_edit().is_none() && self.selection.is_none() && self.current_cell().is_some() {
+            self.begin_cell_edit(super::cell_edit::EditMode::Edit, true, cx);
+        }
+        if let Some(edit) = self.cell_edit_mut() {
+            let func_call = format!("{name}(");
+            if edit.text.is_empty() {
+                edit.text = format!("={func_call}");
+            } else if !edit.text.starts_with('=') {
+                edit.text.insert(0, '=');
+                edit.text.push_str(&func_call);
+            } else {
+                let caret = edit.caret.min(edit.text.encode_utf16().count());
+                let b = super::cell_edit::byte_at(&edit.text, caret);
+                edit.text.insert_str(b, &func_call);
+            }
+            edit.caret = edit.text.encode_utf16().count();
+            edit.anchor = None;
+        }
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    /// 校閲 > 文章校正 > 類義語辞典 (xlsx.thesaurus)
+    pub(crate) fn open_thesaurus(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let word = self.current_cell()
+            .and_then(|(col, row)| self.current_sheet().and_then(|(_, s)| s.cell(row, col)))
+            .map(|c| {
+                if !c.text.is_empty() {
+                    c.text.clone()
+                } else {
+                    match &c.value {
+                        ibis_doc_model::CellValue::Text(s) => s.clone(),
+                        ibis_doc_model::CellValue::Number(n) => n.to_string(),
+                        _ => String::new(),
+                    }
+                }
+            })
+            .unwrap_or_default();
+        let trimmed = word.trim();
+        if trimmed.is_empty() {
+            self.status = Some(crate::shell::i18n::text("xlsx.thesaurus.select-word").into());
+        } else {
+            self.status = Some(crate::shell::i18n::format("xlsx.thesaurus.lookup", &[("word", &trimmed)]).into());
+        }
+        cx.notify();
+    }
+
+
     /// The name box and the content of the selected cell: its formula
     /// (with `=`) if it has one, otherwise its value as displayed. The
     /// content is read-only; a reference typed in the name box is selected.
@@ -174,7 +320,27 @@ impl SlideEditor {
         let editing_text = self.cell_edit().filter(|e| e.slide == self.current_slide).map(|e| e.text.clone());
         // While typed into, the bar shows the caret and the selection as the cell does.
         let bar_rect = self.sheet_state().map(|s| s.bar_bounds.clone());
-        let editing_parts = self.cell_edit().filter(|e| e.slide == self.current_slide).map(|e| e.bar_parts());
+        let expanded = self.sheet_state().is_some_and(|s| s.bar_expanded);
+        let bar_scroll = self.sheet_state().map(|s| s.bar_scroll.clone());
+        // Widened and typing: the caret's line kept in view.
+        if let (true, Some(handle), Some(edit)) = (expanded, bar_scroll.as_ref(), self.cell_edit().filter(|e| e.slide == self.current_slide)) {
+            let (top, bottom) = (edit.caret_line() as f32 * BAR_LINE_HEIGHT, (edit.caret_line() + 1) as f32 * BAR_LINE_HEIGHT);
+            let seen = -f32::from(handle.offset().y);
+            let shown = BAR_EXPANDED_HEIGHT - 4.0;
+            if top < seen {
+                handle.set_offset(point(px(0.), px(-top)));
+            } else if bottom > seen + shown {
+                handle.set_offset(point(px(0.), px(-(bottom - shown))));
+            }
+        }
+        let editing_lines: Option<Vec<(usize, String)>> = self.cell_edit().filter(|e| e.slide == self.current_slide).map(|e| {
+            let lines = super::cell_edit::text_lines(&e.text);
+            if expanded { lines.into_iter().map(|(a, l)| (a, l.to_string())).collect() } else { vec![lines[e.caret_line()]].into_iter().map(|(a, l)| (a, l.to_string())).collect() }
+        });
+        let editing_bar_lines: Option<Vec<super::cell_edit::BarLine>> = self.cell_edit().filter(|e| e.slide == self.current_slide).and(editing_lines.as_ref()).map(|lines| {
+            let edit = self.cell_edit().unwrap();
+            lines.iter().map(|(a, l)| edit.bar_line(*a, l)).collect()
+        });
         let content = match (self.selection, self.current_sheet(), self.current_cell()) {
             _ if editing_text.is_some() => editing_text.clone().unwrap_or_default(),
             // 数式を表示しない on a protected sheet: nothing.
@@ -187,15 +353,15 @@ impl SlideEditor {
             }
             (None, Some((_, sheet)), Some((column, row))) => {
                 let content = sheet.cell(row, column).map(|cell| match &cell.formula {
-                    Some(formula) => format!("={formula}"),
+                    Some(formula) => format!("={}", sheet.formula_shown(row, column, formula)),
                     // A number as it is (a date or time as shown), as Excel's bar shows it.
                     None => match &cell.value {
                         ibis_doc_model::CellValue::Number(n) if !ibis_calc::numfmt::parsed(&sheet.styles[cell.style as usize].number_format).first().is_some_and(|s| s.is_date()) => ibis_calc::eval::number_to_text(*n),
                         _ => cell.text.clone(),
                     },
                 });
-                // One line, as the bar is one line high.
-                content.unwrap_or_default().replace(['\r', '\n'], " ")
+                // Line breaks stay: closed, the bar shows the first line; widened, all of them.
+                content.unwrap_or_default().replace("\r\n", "\n").replace('\r', "\n")
             }
             (Some(shape_id), _, _) => {
                 let formula = self.slide().shape_formulas.get(&shape_id);
@@ -216,21 +382,22 @@ impl SlideEditor {
         };
         let field = || {
             div()
-                .h(px(22.))
+                .h(px(if expanded { BAR_EXPANDED_HEIGHT } else { 22. }))
                 .px_2()
                 .flex()
-                .items_center()
+                .when(!expanded, |d| d.items_center())
                 .border_1()
                 .border_color(theme.border)
                 .rounded_sm()
                 .bg(theme.background)
         };
         h_flex()
-            .h(px(30.))
+            .h(px(if expanded { BAR_EXPANDED_HEIGHT + 8. } else { 30. }))
             .flex_shrink_0()
             .px_2()
             .gap_2()
-            .items_center()
+            .when(!expanded, |d| d.items_center())
+            .when(expanded, |d| d.items_start().py(px(4.)))
             .text_sm()
             .bg(theme.title_bar)
             .border_b_1()
@@ -252,7 +419,20 @@ impl SlideEditor {
                     )
                     .child(Input::new(&self.wb().jump.name_box).small()),
             )
-            .child(div().px_1().italic().text_color(theme.muted_foreground).child("fx"))
+            .child(
+                div()
+                    .id("fx-button")
+                    .px_1()
+                    .italic()
+                    .text_color(theme.muted_foreground)
+                    .hover(|d| d.text_color(theme.foreground).bg(theme.accent))
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .child("fx")
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                        this.insert_function_action(window, cx);
+                    })),
+            )
             .child(
                 field()
                     .flex_1()
@@ -273,20 +453,97 @@ impl SlideEditor {
                     )
                     .when_some(bar_rect, |d, rect| d.child(canvas(|_, _, _| {}, move |bounds, _, _, _| rect.set(Some(bounds))).absolute().size_full()))
                     .relative()
-                    .child(match editing_parts {
-                        Some((before, selected, after, caret_first)) => {
-                            let caret = || div().w(px(1.)).h(px(14.)).flex_shrink_0().bg(theme.foreground);
-                            h_flex()
-                                .truncate()
-                                .child(SharedString::from(before))
-                                .when(caret_first || selected.is_empty(), |d| d.child(caret()))
-                                .when(!selected.is_empty(), |d| d.child(div().bg(rgba(0x3390ff55)).child(SharedString::from(selected.clone()))))
-                                .when(!caret_first && !selected.is_empty(), |d| d.child(caret()))
-                                .child(SharedString::from(after))
-                                .into_any_element()
+                    .overflow_hidden()
+                    .child(match editing_bar_lines {
+                        Some(lines) => {
+                            let fg = theme.foreground;
+                            let rows = lines.into_iter().map(|bar_line| {
+                                let text = bar_line.text;
+                                let sel = bar_line.selection_bytes;
+                                let caret = bar_line.caret_byte;
+                                let overlay_text = text.clone();
+                                h_flex()
+                                    .relative()
+                                    .h(px(BAR_LINE_HEIGHT))
+                                    .flex_shrink_0()
+                                    .items_center()
+                                    .whitespace_nowrap()
+                                    .child(div().child(SharedString::from(text)))
+                                    .when(sel.is_some() || caret.is_some(), |d| {
+                                        d.child(
+                                            canvas(
+                                                |_, _, _| {},
+                                                move |bounds, _, window, _| {
+                                                    let style = window.text_style();
+                                                    let size = window.rem_size() * 0.875;
+                                                    let shaped = if overlay_text.is_empty() {
+                                                        None
+                                                    } else {
+                                                        let run = TextRun {
+                                                            len: overlay_text.len(),
+                                                            font: style.font(),
+                                                            color: style.color,
+                                                            background_color: None,
+                                                            underline: None,
+                                                            strikethrough: None,
+                                                        };
+                                                        Some(window.text_system().shape_line(SharedString::from(overlay_text.clone()), size, &[run], None))
+                                                    };
+                                                    let x_at = |b: usize| -> Pixels {
+                                                        shaped.as_ref().map_or(px(0.), |s| s.x_for_index(b.min(overlay_text.len())))
+                                                    };
+                                                    let top = bounds.origin.y + (bounds.size.height - px(14.)) * 0.5;
+                                                    if let Some(r) = &sel {
+                                                        let x0 = x_at(r.start);
+                                                        let x1 = x_at(r.end);
+                                                        if x1 > x0 {
+                                                            window.paint_quad(fill(
+                                                                Bounds::new(point(bounds.origin.x + x0, top), gpui_kit::size(x1 - x0, px(14.))),
+                                                                rgba(0x3390ff55),
+                                                            ));
+                                                        }
+                                                    }
+                                                    if let Some(c) = caret {
+                                                        let cx = x_at(c);
+                                                        window.paint_quad(fill(
+                                                            Bounds::new(point(bounds.origin.x + cx, top), gpui_kit::size(px(1.), px(14.))),
+                                                            fg,
+                                                        ));
+                                                    }
+                                                },
+                                            )
+                                            .absolute()
+                                            .size_full(),
+                                        )
+                                    })
+                            });
+                            bar_text(rows.collect::<Vec<_>>(), expanded, bar_scroll.as_ref())
                         }
-                        None => div().truncate().child(SharedString::from(content)).into_any_element(),
+                        None => {
+                            // Closed: the first line; widened: all of them.
+                            let rows: Vec<Div> = if expanded {
+                                content.split('\n').map(|l| div().h(px(BAR_LINE_HEIGHT)).flex_shrink_0().whitespace_nowrap().child(SharedString::from(l.to_string()))).collect()
+                            } else {
+                                vec![div().truncate().child(SharedString::from(content.split('\n').next().unwrap_or("").to_string()))]
+                            };
+                            bar_text(rows, expanded, bar_scroll.as_ref())
+                        }
                     }),
+            )
+            // The ▼ at the right end: the bar widened to several lines and back (as Excel's 数式バーの展開).
+            .child(
+                Button::new("formula-bar-expand")
+                    .ghost()
+                    .small()
+                    .icon(Icon::new(Material(if expanded { "keyboard_arrow_up" } else { "keyboard_arrow_down" })).size(px(16.)))
+                    .tooltip(crate::shell::i18n::text(if expanded { "fix.formula-bar.collapse" } else { "fix.formula-bar.expand" }))
+                    .w(px(24.))
+                    .h(px(22.))
+                    .flex_shrink_0()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_formula_bar_expanded(cx);
+                        this.focus_handle.focus(window, cx);
+                    })),
             )
             // Over the sheet, under the name box.
             .when(self.wb().jump.goto_open, |d| d.relative().child(deferred(self.render_goto(cx)).with_priority(1)))
@@ -520,12 +777,30 @@ impl SlideEditor {
         }
         let scale = content.scale;
         let to_px = |origin: Pixels, at: i64, offset: i64| f32::from(origin) + (at + offset) as f32 * scale;
-        let xs: Vec<f32> = sheet.column_offsets().into_iter().map(|o| to_px(content.slide_origin.x, shape.frame.x, o)).collect();
-        let ys: Vec<f32> = sheet.row_offsets().into_iter().map(|o| to_px(content.slide_origin.y, shape.frame.y, o)).collect();
+        let mut xs: Vec<f32> = sheet.column_offsets().into_iter().map(|o| to_px(content.slide_origin.x, shape.frame.x, o)).collect();
+        let mut ys: Vec<f32> = sheet.row_offsets().into_iter().map(|o| to_px(content.slide_origin.y, shape.frame.y, o)).collect();
+        let target_right_px = to_px(content.slide_origin.x, shape.frame.x, 0) + f32::from(content.size.width) + 2000.0;
+        let target_bottom_px = to_px(content.slide_origin.y, shape.frame.y, 0) + f32::from(content.size.height) + 2000.0;
+        let default_col_px = (sheet.default_column as f32 * scale).max(1.0);
+        let default_row_px = (sheet.default_row as f32 * scale).max(1.0);
+        let mut cur_x = *xs.last().unwrap_or(&0.0);
+        let mut col_count = sheet.columns.len();
+        while cur_x < target_right_px && col_count < 16_384 {
+            cur_x += default_col_px;
+            xs.push(cur_x);
+            col_count += 1;
+        }
+        let mut cur_y = *ys.last().unwrap_or(&0.0);
+        let mut row_count = sheet.rows.len();
+        while cur_y < target_bottom_px && row_count < 1_048_576 {
+            cur_y += default_row_px;
+            ys.push(cur_y);
+            row_count += 1;
+        }
         let range = self.selected_range().filter(|_| self.selection.is_none());
         let scroll = self.workspace_scroll.clone();
         let font = font(cx.theme().font_family.clone());
-        let (head_w, head_h) = (px(ROW_HEADER_WIDTH), px(COLUMN_HEADER_HEIGHT));
+        let (head_w, head_h) = (px(row_header_width(sheet)), px(COLUMN_HEADER_HEIGHT));
         // Frozen columns and rows stay put; the others scroll past them.
         let (frozen_columns, frozen_rows) = sheet.frozen.unwrap_or((0, 0));
         let split = self.frozen_split(content).unwrap_or((None, None));
@@ -540,7 +815,7 @@ impl SlideEditor {
             let offset = scroll.offset();
             let o = bounds.origin;
             let geometry = paint_geometry.clone();
-            *geometry.borrow_mut() = super::headers::HeaderGeometry { scale, origin: (f32::from(o.x), f32::from(o.y)), ..Default::default() };
+            *geometry.borrow_mut() = super::headers::HeaderGeometry { scale, origin: (f32::from(o.x), f32::from(o.y)), row_header_width: f32::from(head_w), ..Default::default() };
             let (background, line, text, selected, green) =
                 (rgb(HEADER_BACKGROUND), rgb(HEADER_LINE), rgb(HEADER_TEXT), rgb(HEADER_SELECTED), rgb(SELECTION_COLOR));
             let label = |window: &mut Window, cx: &mut App, s: String, color: Rgba, x: Pixels, y: Pixels, w: Pixels, h: Pixels| {
@@ -645,7 +920,11 @@ impl SlideEditor {
 
             // A line being dragged: where the column or row will end, across the sheet.
             if let Some(d) = drag {
-                let at = px(d.current.max(d.start));
+                let max_px = match d.axis {
+                    Axis::Rows => super::headers::MAX_ROW_HEIGHT_PT * ibis_doc_model::EMU_PER_POINT as f32 * scale,
+                    Axis::Columns => super::headers::MAX_COLUMN_WIDTH_CHARS * 6.4 * ibis_doc_model::EMU_PER_POINT as f32 * scale,
+                };
+                let at = px(d.current.clamp(d.start, d.start + max_px));
                 let guide = match d.axis {
                     Axis::Columns => Bounds::new(point(at, o.y), size(px(1.), bounds.size.height)),
                     Axis::Rows => Bounds::new(point(o.x, at), size(bounds.size.width, px(1.))),
@@ -724,6 +1003,7 @@ impl SlideEditor {
                 .children(self.render_pivot_popup(cx))
                 .children(self.render_completion(cx))
                 .children(self.render_comment_card(cx))
+                .children(self.render_all_notes(cx))
                 .into_any_element(),
         )
     }
@@ -738,14 +1018,32 @@ impl SlideEditor {
         let (shape, sheet) = self.current_sheet()?;
         let range = self.selected_range()?;
         let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
-        let at = |offsets: &[i64], i: u32| offsets[(i as usize).min(offsets.len() - 1)];
-        let x = |c: u32| (shape.frame.x + at(&xs, c)) as f32 * scale;
-        let y = |r: u32| (shape.frame.y + at(&ys, r)) as f32 * scale;
+        let at_x = |offsets: &[i64], i: u32| {
+            let len = offsets.len();
+            if (i as usize) < len {
+                offsets[i as usize]
+            } else {
+                let last = offsets.last().copied().unwrap_or(0);
+                last + (i as usize - (len - 1)) as i64 * sheet.default_column
+            }
+        };
+        let at_y = |offsets: &[i64], i: u32| {
+            let len = offsets.len();
+            if (i as usize) < len {
+                offsets[i as usize]
+            } else {
+                let last = offsets.last().copied().unwrap_or(0);
+                last + (i as usize - (len - 1)) as i64 * sheet.default_row
+            }
+        };
+        let x = |c: u32| (shape.frame.x + at_x(&xs, c)) as f32 * scale;
+        let y = |r: u32| (shape.frame.y + at_y(&ys, r)) as f32 * scale;
         let (x0, x1, y0, y1) = (x(range.first_column), x(range.last_column + 1), y(range.first_row), y(range.last_row + 1));
         if x1 <= x0 || y1 <= y0 {
             return None;
         }
         let green = rgb(SELECTION_COLOR);
+        let editing_here = self.cell_edit().is_some_and(|e| e.slide == self.current_slide);
         // The tint: the range less the selected cell (or its merged range).
         let mut tint = Vec::new();
         if let Some((column, row)) = self.current_cell() {
@@ -767,64 +1065,129 @@ impl SlideEditor {
                 tint.push(div().absolute().left(px(l - x0 - 1.0)).top(px(t - y0 - 1.0)).w(px(rr - l)).h(px(b - t)).bg(rgba(RANGE_TINT)));
             }
         }
-        // The cell being typed into: its text over the cell, with the caret.
+        // The cell being typed into: its text over the cell, laid out as the cell is when not edited (`sheet_view::edit_layout`), with the caret.
         let editor = self.cell_edit().filter(|e| e.slide == self.current_slide).map(|e| {
-            let (ex0, ex1, ey0, ey1) = (x(e.column), x(e.column + 1), y(e.row), y(e.row + 1));
+            let (ex0, ex1, ey0, ey1) = if let Some(m) = sheet.merge_at(e.row, e.column) {
+                (x(m.first_column), x(m.last_column + 1), y(m.first_row), y(m.last_row + 1))
+            } else {
+                (x(e.column), x(e.column + 1), y(e.row), y(e.row + 1))
+            };
             let style = sheet.cell(e.row, e.column).map(|c| sheet.styles[c.style as usize].clone()).unwrap_or_default();
-            let size = style.font_size as f32 / 100.0 * ibis_doc_model::EMU_PER_POINT as f32 * scale;
-            let items = e.items();
+            let px_per_point = ibis_doc_model::EMU_PER_POINT as f32 * scale;
+            e.pixels_per_point.set(px_per_point);
+            let cell_size = (style.font_size as f32 / 100.0 * px_per_point).max(6.0);
+            // The sheet's own coordinates, which the cell's text is placed in when not edited.
+            let origin = (ex0 - shape.frame.x as f32 * scale, ey0 - shape.frame.y as f32 * scale);
+            let runs = e.runs.clone().map(std::sync::Arc::new);
+            let ts = WindowTextSystem::new(cx.text_system().clone());
+            let layout = std::rc::Rc::new(super::sheet_view::edit_layout(&ts, sheet, &self.resources, e.row, e.column, &e.text, runs, origin, (ex1 - ex0, ey1 - ey0), px_per_point));
+            *e.layout.borrow_mut() = Some(layout.clone());
+            let default_font_name = sheet.styles.first().and_then(|s| s.font.as_deref()).unwrap_or("游ゴシック"); // i18n-ok（既定のフォント名）
+            let effective_font = style.font.as_deref().unwrap_or(default_font_name);
+            let ghost = self
+                .flash_fill_preview()
+                .first()
+                .filter(|(r, _)| *r == e.row)
+                .and_then(|(_, pred)| pred.strip_prefix(&e.text).filter(|s| !s.is_empty()).map(|s| s.to_string()))
+                .map(|suffix| (suffix, self.resources.font(&ibis_doc_model::TextStyle { font: Some(effective_font.to_string()), ..Default::default() })));
+            let selection = e.selection().map(|r| (super::cell_edit::byte_at(&e.text, r.start), super::cell_edit::byte_at(&e.text, r.end)));
+            let caret = e.caret_byte();
             let rect = e.rect.clone();
-            e.pixels_per_point.set(ibis_doc_model::EMU_PER_POINT as f32 * scale);
-            let cell_size = size.max(6.0);
-            let mut line = div()
+            let painted = layout.clone();
+            let (box_w, box_h) = (layout.width, layout.height);
+            div()
                 .absolute()
                 .left(px(ex0 - x0 - 1.0))
                 .top(px(ey0 - y0 - 1.0))
-                .min_w(px(ex1 - ex0 + 2.0))
-                .h(px(ey1 - ey0 + 2.0))
-                .px(px(2.0))
-                .flex()
-                .items_end()
-                .bg(white())
-                .border_2()
-                .border_color(green)
-                .text_size(px(size.max(6.0)))
-                .text_color(rgb(style.color.0))
-                .whitespace_nowrap();
-            for item in items {
-                line = match item {
-                    super::cell_edit::EditItem::Caret => line.child(div().w(px(1.0)).h(px(cell_size * 1.2)).bg(rgb(0x000000))),
-                    super::cell_edit::EditItem::Text { text, run, selected } => {
-                        let mut part = div().child(SharedString::from(text));
-                        if let Some(r) = &run {
-                            if r.bold.unwrap_or(style.bold) {
-                                part = part.font_weight(FontWeight::BOLD);
+                .w(px(box_w + 1.0))
+                .h(px(box_h + 1.0))
+                .bg(style.fill.map_or_else(|| white(), |c| rgb(c.0).into()))
+                .max_h(px(409.5 * px_per_point))
+                .overflow_hidden()
+                .border_1()
+                .border_color(rgb(SELECTION_COLOR))
+                // A press anywhere in the box (over the cells beside and below it too) places the caret and starts a selection by dragging: it never reaches the cells under it.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.focus_handle.focus(window, cx);
+                        this.selection = None;
+                        this.press_in_cell_text(e.position, e.click_count, e.modifiers.shift, cx);
+                    }),
+                )
+                .child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, cx| {
+                            // The box's border is a pixel wide and the box starts a pixel before the cell: the text is placed from the cell's corner.
+                            let o = bounds.origin - point(px(1.0), px(1.0));
+                            rect.set(Some(Bounds::new(o, bounds.size)));
+                            if let Some((b0, b1)) = selection {
+                                for l in painted.lines.iter() {
+                                    let (a, b) = (b0.max(l.start), b1.min(l.end));
+                                    if a < b {
+                                        let (xa, xb) = (l.x_at(a), l.x_at(b));
+                                        window.paint_quad(fill(
+                                            Bounds::new(point(o.x + px(xa), o.y + px(l.baseline - l.ascent)), gpui_kit::size(px(xb - xa), px(l.ascent + l.descent))),
+                                            rgba(0x3390ff55),
+                                        ));
+                                    }
+                                }
                             }
-                            if r.italic.unwrap_or(style.italic) {
-                                part = part.italic();
+                            for l in painted.lines.iter() {
+                                for p in &l.pieces {
+                                    if let Some(s) = &p.shaped {
+                                        s.paint(point(o.x + px(p.x), o.y + px(l.baseline) - s.ascent), s.ascent + s.descent, TextAlign::Left, None, window, cx).ok();
+                                    }
+                                }
                             }
-                            if r.underline.unwrap_or(style.underline).enabled() {
-                                part = part.underline();
+                            if let Some(l) = painted.lines.last() {
+                                if let Some((suffix, font)) = &ghost {
+                                    let run = TextRun { len: suffix.len(), font: font.clone(), color: rgb(0x888888).into(), background_color: None, underline: None, strikethrough: None };
+                                    let shaped = window.text_system().shape_line(SharedString::from(suffix.clone()), px(cell_size), &[run], None);
+                                    shaped.paint(point(o.x + px(l.x_at(l.end)), o.y + px(l.baseline) - shaped.ascent), shaped.ascent + shaped.descent, TextAlign::Left, None, window, cx).ok();
+                                }
                             }
-                            if r.strike.unwrap_or(style.strike) {
-                                part = part.line_through();
+                            if let Some(l) = painted.lines.get(painted.line_of(caret)) {
+                                let cx0 = l.x_at(caret);
+                                window.paint_quad(fill(Bounds::new(point(o.x + px(cx0), o.y + px(l.baseline - l.ascent)), gpui_kit::size(px(1.0), px(l.ascent + l.descent))), rgb(0x000000)));
                             }
-                            if let Some(c) = r.color {
-                                part = part.text_color(rgb(c.0));
-                            }
-                            if let Some(s) = r.size {
-                                part = part.text_size(px((s as f32 / 100.0 * ibis_doc_model::EMU_PER_POINT as f32 * scale).max(6.0)));
-                            }
-                        }
-                        if selected {
-                            part = part.bg(rgba(0x3390ff55));
-                        }
-                        line.child(part)
-                    }
-                };
-            }
-            line.child(canvas(|_, _, _| {}, move |bounds, _, _, _| rect.set(Some(bounds))).absolute().size_full())
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                )
         });
+        let flash_ghosts: Vec<AnyElement> = self
+            .flash_fill_preview()
+            .into_iter()
+            .filter(|(r, _)| Some(*r) != self.cell_edit().map(|e| e.row))
+            .map(|(r, pred)| {
+                let col = self.cell_edit().map_or(0, |e| e.column);
+                let (gx0, gx1, gy0, gy1) = (x(col), x(col + 1), y(r), y(r + 1));
+                let style = sheet.cell(r, col).map(|c| sheet.styles[c.style as usize].clone()).unwrap_or_default();
+                let size = (style.font_size as f32 / 100.0 * ibis_doc_model::EMU_PER_POINT as f32 * scale).max(6.0);
+                let default_font_name = sheet.styles.first().and_then(|s| s.font.as_deref()).unwrap_or("游ゴシック"); // i18n-ok（既定のフォント名）
+                let effective_font = style.font.as_deref().unwrap_or(default_font_name).to_string();
+                div()
+                    .absolute()
+                    .left(px(gx0 - x0))
+                    .top(px(gy0 - y0))
+                    .w(px(gx1 - gx0))
+                    .h(px(gy1 - gy0))
+                    .pl(px(2.0))
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_size(px(size))
+                    .text_color(rgb(0x888888))
+                    .font_family(effective_font)
+                    .child(SharedString::from(pred))
+                    .into_any_element()
+            })
+            .collect();
         // データの入力規則 of the selected cell: a list's drop-down button at
         // its right, and the message under it.
         let validation = self.current_rule().filter(|_| self.cell_edit().is_none()).map(|rule| {
@@ -873,6 +1236,81 @@ impl SlideEditor {
             }
             parts
         });
+        let validation_warning = self
+            .sheet_state()
+            .and_then(|s| s.validation_warning.clone())
+            .filter(|w| w.edit.slide == self.current_slide)
+            .map(|warn| {
+                let (wx0, wy1) = (x(warn.edit.column), y(warn.edit.row + 1));
+                let btn = |id: &'static str, label: SharedString, primary: bool, on_click: fn(&mut Self, &mut Context<Self>)| {
+                    div()
+                        .id(id)
+                        .px(px(8.))
+                        .py(px(2.))
+                        .rounded(px(3.))
+                        .border_1()
+                        .border_color(rgb(if primary { 0x107C41 } else { 0xA6A6A6 }))
+                        .bg(rgb(if primary { 0x107C41 } else { 0xF2F2F2 }))
+                        .text_color(rgb(if primary { 0xFFFFFF } else { 0x000000 }))
+                        .cursor_pointer()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                on_click(this, cx);
+                            }),
+                        )
+                        .child(label)
+                };
+                v_flex()
+                    .id("validation-warning-card")
+                    .absolute()
+                    .left(px(wx0 - x0))
+                    .top(px(wy1 - y0 + 4.0))
+                    .w(px(260.))
+                    .p(px(8.))
+                    .gap(px(6.))
+                    .bg(rgb(0xFFFDF0))
+                    .border_1()
+                    .border_color(rgb(0xD9A300))
+                    .rounded(px(4.))
+                    .shadow_md()
+                    .text_size(px(12.))
+                    .text_color(rgb(0x000000))
+                    .child(SharedString::from(warn.message))
+                    .child(div().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("fix.validation.continue")))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(6.))
+                            .child(btn("validation-warning-yes", crate::shell::i18n::text("fix.update.yes"), true, Self::validation_warning_yes))
+                            .child(btn("validation-warning-no", crate::shell::i18n::text("fix.update.no"), false, Self::validation_warning_no))
+                            .child(btn("validation-warning-cancel", crate::shell::i18n::text("fix.validation.cancel"), false, Self::validation_warning_cancel)),
+                    )
+            });
+        let table_total = self.current_cell_table_total().filter(|_| self.cell_edit().is_none()).map(|(table_idx, col_idx)| {
+            let (_cx0, cx1, cy0, cy1) = self.current_cell().map_or((x0, x1, y0, y1), |(c, r)| (x(c), x(c + 1), y(r), y(r + 1)));
+            let side = (cy1 - cy0 - 2.0).clamp(12.0, 18.0);
+            div()
+                .id("table-total-dropdown")
+                .absolute()
+                .left(px(cx1 - x0 - side - 1.0))
+                .top(px(cy0 - y0 + 1.0))
+                .size(px(side))
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(rgb(0xF2F2F2))
+                .border_1()
+                .border_color(rgb(0xA6A6A6))
+                .text_size(px(side * 0.6))
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_table_total_menu(table_idx, col_idx, e.position, window, cx);
+                }))
+                .child("▼")
+        });
         Some(
             div()
                 .absolute()
@@ -881,10 +1319,14 @@ impl SlideEditor {
                 .w(px(x1 - x0 + 2.0))
                 .h(px(y1 - y0 + 2.0))
                 .border_2()
-                .border_color(green)
+                // While typing the box has its own frame: the selection's is not drawn.
+                .border_color(if editing_here { gpui::transparent_black() } else { green.into() })
                 .children(tint)
                 .children(editor)
+                .children(flash_ghosts)
                 .children(validation)
+                .children(validation_warning)
+                .children(table_total)
                 // エラー チェック: the button at the left of the selected cell that has an error.
                 .children(self.current_error().filter(|_| self.cell_edit().is_none()).map(|_| {
                     let (cx0, cy0) = self.current_cell().map_or((x0, y0), |(c, r)| (x(c), y(r)));
@@ -934,21 +1376,23 @@ impl SlideEditor {
                         }))
                         .child("▼")
                 }))
-                .child(
-                    // A little larger than it looks, to be easy to catch.
-                    div()
-                        .id("fill-handle")
-                        .absolute()
-                        .right(px(-6.))
-                        .bottom(px(-6.))
-                        .size(px(11.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor(CursorStyle::Crosshair)
-                        .on_mouse_down(MouseButton::Left, cx.listener(Self::on_fill_handle_down))
-                        .child(div().size(px(7.)).bg(green).border_1().border_color(white())),
-                ),
+                .when(!editing_here, |d| {
+                    d.child(
+                        // A little larger than it looks, to be easy to catch.
+                        div()
+                            .id("fill-handle")
+                            .absolute()
+                            .right(px(-6.))
+                            .bottom(px(-6.))
+                            .size(px(11.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor(CursorStyle::Crosshair)
+                            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_fill_handle_down))
+                            .child(div().size(px(7.)).bg(green).border_1().border_color(white())),
+                    )
+                }),
         )
     }
 
@@ -958,10 +1402,21 @@ impl SlideEditor {
             // A text box may be drawn over the sheet.
             return self.on_workspace_down(event, window, cx);
         }
+        // The pen of the Draw panel draws (or erases) over the cells.
+        if self.ink_press(event.position, cx) {
+            cx.stop_propagation();
+            return;
+        }
         cx.stop_propagation();
         self.commit_edit(window, cx);
         self.focus_handle.focus(window, cx);
         self.selection = None;
+        // A press in the box of the text being typed (which may reach over other cells) stays in it.
+        if self.cell_edit().is_some_and(|e| e.slide == self.current_slide && e.rect.get().is_some_and(|r| r.contains(&event.position)))
+            && self.press_in_cell_text(event.position, event.click_count, event.modifiers.shift, cx)
+        {
+            return;
+        }
         let Some((column, row)) = self.cell_under(event.position) else { return cx.notify() };
         // A press on the text being typed puts the caret there (and selects by dragging).
         if self.cell_edit().is_some_and(|e| (e.column, e.row) == (column, row) && e.slide == self.current_slide)
@@ -986,24 +1441,51 @@ impl SlideEditor {
                 return;
             }
             self.begin_cell_edit(super::cell_edit::EditMode::Edit, true, cx);
+            self.seed_edit_geometry(cx);
+            self.press_in_cell_text(event.position, 1, false, cx);
             return;
         }
         // ⌘-click on a linked cell follows the link; elsewhere it adds a
-        // range to those selected (Excel's Ctrl+クリック), dragging stretches it.
+        // range to those selected (Excel's Ctrl+クリック), or deselects if already selected.
         if event.modifiers.platform && !event.modifiers.shift {
+            let current = self.selected_ranges();
+            let is_in_selection = current.iter().any(|r| {
+                (r.first_row..=r.last_row).contains(&row) && (r.first_column..=r.last_column).contains(&column)
+            });
+            let total_cells: u32 = current.iter().map(|r| (r.last_row - r.first_row + 1) * (r.last_column - r.first_column + 1)).sum();
+
+            if is_in_selection {
+                if total_cells > 1 {
+                    let base_ranges = current.clone();
+                    let deselect_rect = CellRange { first_row: row, last_row: row, first_column: column, last_column: column };
+                    let remaining = super::goto_special::subtract_ranges(&base_ranges, deselect_rect);
+                    if !remaining.is_empty() {
+                        self.set_selected_ranges(&remaining);
+                        let state = self.wb_mut();
+                        state.deselect_drag = Some(DeselectDrag { anchor: (column, row), base_ranges });
+                        state.cell_drag = true;
+                    }
+                }
+                return cx.notify();
+            }
+
             let kept = self.selected_ranges();
             self.set_cell(column, row);
             if self.follow_cell_link(window, cx) {
                 return;
             }
             self.keep_with_selection(kept);
-            self.wb_mut().cell_drag = true;
+            let state = self.wb_mut();
+            state.deselect_drag = None;
+            state.cell_drag = true;
             return cx.notify();
         }
         if event.modifiers.shift {
             // Shift extends the selection to the cell pressed.
+            let was_kept = self.selected_ranges().len() > 1;
             let slide = self.current_slide;
             self.wb_mut().cell_ends.insert(slide, (column, row));
+            self.extra_ranges_follow(was_kept);
         } else {
             self.set_cell(column, row);
         }
@@ -1013,12 +1495,23 @@ impl SlideEditor {
     }
 
     /// Press on the fill handle at the selection's corner: dragging it
-    /// selects a range from the selected cell.
-    pub(crate) fn on_fill_handle_down(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    /// selects a range from the selected cell, or double-clicking fills down
+    /// to the end of adjacent data.
+    pub(crate) fn on_fill_handle_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
         self.commit_edit(window, cx);
         self.commit_cell_edit(cx);
         self.focus_handle.focus(window, cx);
+        if event.click_count >= 2 {
+            if self.double_click_fill_handle(cx) {
+                self.wb_mut().cell_drag = false;
+                if let Some(state) = self.sheet_state_mut() {
+                    state.fill_source = None;
+                }
+                cx.notify();
+                return;
+            }
+        }
         self.begin_fill();
         self.wb_mut().cell_drag = true;
         cx.notify();
@@ -1032,7 +1525,7 @@ impl SlideEditor {
         let (shape, sheet) = self.current_sheet()?;
         let (columns, rows) = sheet.frozen.or_else(|| self.split_panes().map(|p| p.at))?;
         let at = |offsets: Vec<i64>, i: u32| offsets[(i as usize).min(offsets.len() - 1)];
-        let head_w = if sheet.headings { ROW_HEADER_WIDTH } else { 0.0 };
+        let head_w = if sheet.headings { row_header_width(sheet) } else { 0.0 };
         let head_h = if sheet.headings { COLUMN_HEADER_HEIGHT } else { 0.0 };
         let x = (columns > 0).then(|| {
             (f32::from(content.slide_origin.x) + (shape.frame.x + at(sheet.column_offsets(), columns)) as f32 * content.scale)
@@ -1048,6 +1541,10 @@ impl SlideEditor {
     /// The slide's layout for a window position: over the frozen panes the
     /// sheet does not scroll on their axis.
     fn sheet_layout_at(&self, position: Point<Pixels>) -> Option<SlideLayout> {
+        // The page layout view: the page under the pointer (none over a margin or a gap).
+        if self.page_layout_shown() {
+            return self.page_layout_at(position);
+        }
         let mut layout = self.slide_layout()?;
         let (Some(ws), Some(content)) = (self.workspace_bounds, self.workspace_content()) else { return Some(layout) };
         let Some((split_x, split_y)) = self.frozen_split(content) else { return Some(layout) };
@@ -1065,23 +1562,99 @@ impl SlideEditor {
     /// The window position of a cell's centre (unfrozen part), for scripted clicks.
     #[allow(dead_code)] // For the scenario tests.
     pub(crate) fn cell_center(&self, column: u32, row: u32) -> Option<Point<Pixels>> {
+        if column >= MAX_SHEET_COLUMNS || row >= MAX_SHEET_ROWS {
+            return None;
+        }
+        if self.page_layout_shown() {
+            return self.page_layout_cell_center(column, row);
+        }
         let layout = self.slide_layout()?;
         let (shape, sheet) = self.current_sheet()?;
         let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
-        let x = shape.frame.x + (xs.get(column as usize)? + xs.get(column as usize + 1)?) / 2;
-        let y = shape.frame.y + (ys.get(row as usize)? + ys.get(row as usize + 1)?) / 2;
+        let at_x = |i: u32| {
+            if (i as usize) < xs.len() {
+                xs[i as usize]
+            } else {
+                let last = xs.last().copied().unwrap_or(0);
+                let def = sheet.default_column.max(1);
+                last + (i as usize - (xs.len().saturating_sub(1))) as i64 * def
+            }
+        };
+        let at_y = |i: u32| {
+            if (i as usize) < ys.len() {
+                ys[i as usize]
+            } else {
+                let last = ys.last().copied().unwrap_or(0);
+                let def = sheet.default_row.max(1);
+                last + (i as usize - (ys.len().saturating_sub(1))) as i64 * def
+            }
+        };
+        let x = shape.frame.x + (at_x(column) + at_x(column + 1)) / 2;
+        let y = shape.frame.y + (at_y(row) + at_y(row + 1)) / 2;
         Some(point(layout.origin.x + layout.to_px(x), layout.origin.y + layout.to_px(y)))
+    }
+
+    /// The box of the cell being typed into (window position) and its text's layout, as the next paint
+    /// makes them, so a press that starts the edit (a double-click) can find the character under it
+    /// before anything has been painted.
+    pub(crate) fn seed_edit_geometry(&mut self, cx: &mut Context<Self>) {
+        let Some(e) = self.cell_edit().cloned() else { return };
+        let Some(layout) = self.slide_layout() else { return };
+        let Some((shape, sheet)) = self.current_sheet() else { return };
+        let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
+        let at = |offsets: &[i64], i: u32, default: i64| {
+            if (i as usize) < offsets.len() {
+                offsets[i as usize]
+            } else {
+                offsets.last().copied().unwrap_or(0) + (i as usize - offsets.len().saturating_sub(1)) as i64 * default.max(1)
+            }
+        };
+        let range = sheet.merge_at(e.row, e.column).unwrap_or(CellRange { first_row: e.row, first_column: e.column, last_row: e.row, last_column: e.column });
+        let (l, r) = (at(&xs, range.first_column, sheet.default_column), at(&xs, range.last_column + 1, sheet.default_column));
+        let (t, b) = (at(&ys, range.first_row, sheet.default_row), at(&ys, range.last_row + 1, sheet.default_row));
+        let scale = f32::from(layout.to_px(1_000_000)) / 1_000_000.0;
+        let px_per_point = ibis_doc_model::EMU_PER_POINT as f32 * scale;
+        let origin = point(layout.origin.x + layout.to_px(shape.frame.x + l), layout.origin.y + layout.to_px(shape.frame.y + t));
+        let (w, h) = (r - l, b - t);
+        let ts = WindowTextSystem::new(cx.text_system().clone());
+        let runs = e.runs.clone().map(std::sync::Arc::new);
+        let sheet_origin = (l as f32 * scale, t as f32 * scale);
+        let laid = super::sheet_view::edit_layout(&ts, sheet, &self.resources, e.row, e.column, &e.text, runs, sheet_origin, (w as f32 * scale, h as f32 * scale), px_per_point);
+        e.pixels_per_point.set(px_per_point);
+        e.rect.set(Some(Bounds::new(origin, size(px(laid.width), px(laid.height)))));
+        *e.layout.borrow_mut() = Some(std::rc::Rc::new(laid));
     }
 
     /// The window position of a cell's bottom-right corner (where the fill
     /// handle is when it ends the selection), for scripted drags.
     #[allow(dead_code)] // For the scenario tests.
     pub(crate) fn cell_corner(&self, column: u32, row: u32) -> Option<Point<Pixels>> {
+        if column >= MAX_SHEET_COLUMNS || row >= MAX_SHEET_ROWS {
+            return None;
+        }
         let layout = self.slide_layout()?;
         let (shape, sheet) = self.current_sheet()?;
         let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
-        let x = shape.frame.x + xs.get(column as usize + 1)?;
-        let y = shape.frame.y + ys.get(row as usize + 1)?;
+        let at_x = |i: u32| {
+            if (i as usize) < xs.len() {
+                xs[i as usize]
+            } else {
+                let last = xs.last().copied().unwrap_or(0);
+                let def = sheet.default_column.max(1);
+                last + (i as usize - (xs.len().saturating_sub(1))) as i64 * def
+            }
+        };
+        let at_y = |i: u32| {
+            if (i as usize) < ys.len() {
+                ys[i as usize]
+            } else {
+                let last = ys.last().copied().unwrap_or(0);
+                let def = sheet.default_row.max(1);
+                last + (i as usize - (ys.len().saturating_sub(1))) as i64 * def
+            }
+        };
+        let x = shape.frame.x + at_x(column + 1);
+        let y = shape.frame.y + at_y(row + 1);
         Some(point(layout.origin.x + layout.to_px(x), layout.origin.y + layout.to_px(y)))
     }
 
@@ -1098,6 +1671,10 @@ impl SlideEditor {
     pub(crate) fn render_page_break_preview(&self, scale: f32, lines_layer: bool) -> Option<Div> {
         let (shape, sheet) = self.current_sheet()?;
         if !sheet.page_break_preview && !sheet.page_layout {
+            return None;
+        }
+        // (The page layout view draws the pages themselves, where it can: page_layout.rs.)
+        if self.page_layout_shown() {
             return None;
         }
         let layout_view = sheet.page_layout;
@@ -1232,6 +1809,16 @@ impl SlideEditor {
         if let Some(source) = self.sheet_state().and_then(|s| s.fill_source) {
             (column, row) = super::fill::fill_target(source, (column, row), (px_, py_), &xs, &ys);
         }
+        if let Some(drag) = self.sheet_state().and_then(|s| s.deselect_drag.clone()) {
+            let deselect_rect = CellRange {
+                first_row: drag.anchor.1.min(row),
+                last_row: drag.anchor.1.max(row),
+                first_column: drag.anchor.0.min(column),
+                last_column: drag.anchor.0.max(column),
+            };
+            self.deselect_range(&drag.base_ranges, deselect_rect);
+            return;
+        }
         let anchor = self.current_cell();
         let was_kept = self.selected_ranges().len() > 1;
         if anchor == Some((column, row)) {
@@ -1247,12 +1834,26 @@ impl SlideEditor {
     /// Move the selection one cell (or past the merged range it is on),
     /// skipping hidden rows and columns and stopping at the sheet's edge.
     pub(crate) fn move_cell(&mut self, dx: i32, dy: i32, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(d) = self.sheet_state_mut().and_then(|s| s.panels.cells_dialog.as_mut()) {
+            if dy > 0 {
+                d.choice = (d.choice + 1).min(3);
+                cx.notify();
+                return;
+            } else if dy < 0 {
+                d.choice = d.choice.saturating_sub(1);
+                cx.notify();
+                return;
+            }
+        }
         if self.editing.is_some() {
             return;
         }
         // While typing: ← → move the caret in Edit mode; otherwise the entry is finished first.
         if self.cell_edit().is_some() {
             if dy == 0 && self.cell_caret(dx, cx) {
+                return;
+            }
+            if dx == 0 && self.cell_caret_line(dy, false, cx) {
                 return;
             }
             if dx == 0 && self.completion_move(dy, cx) {
@@ -1266,18 +1867,22 @@ impl SlideEditor {
         // From the selected cell (or its merged range), not the whole range.
         let range = sheet.merge_at(row, column).unwrap_or(CellRange { first_row: row, first_column: column, last_row: row, last_column: column });
         let (columns, rows) = (sheet.columns.clone(), sheet.rows.clone());
-        let step = |at: u32, first: u32, last: u32, d: i32, sizes: &[i64]| -> Option<u32> {
+        let step = |at: u32, first: u32, last: u32, d: i32, sizes: &[i64], limit: u32| -> Option<u32> {
             if d == 0 {
                 return Some(at);
             }
             let mut i = if d > 0 { last as i64 + 1 } else { first as i64 - 1 };
-            while (0..sizes.len() as i64).contains(&i) && sizes[i as usize] == 0 {
+            while (0..limit as i64).contains(&i) {
+                let is_hidden = (0..sizes.len() as i64).contains(&i) && sizes[i as usize] == 0;
+                if !is_hidden {
+                    break;
+                }
                 i += d.signum() as i64;
             }
-            (0..sizes.len() as i64).contains(&i).then_some(i as u32)
+            (0..limit as i64).contains(&i).then_some(i as u32)
         };
-        let next = step(column, range.first_column, range.last_column, dx, &columns)
-            .zip(step(row, range.first_row, range.last_row, dy, &rows));
+        let next = step(column, range.first_column, range.last_column, dx, &columns, MAX_SHEET_COLUMNS)
+            .zip(step(row, range.first_row, range.last_row, dy, &rows, MAX_SHEET_ROWS));
         let Some((column, row)) = next else { return };
         self.selection = None;
         self.set_cell(column, row);
@@ -1302,18 +1907,35 @@ impl SlideEditor {
 
     /// Enter: down a row; after Tabs, back to the column they began at (Excel).
     pub(crate) fn cell_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sheet_state().is_some_and(|s| s.panels.cells_dialog.is_some()) {
+            self.apply_cells_dialog(cx);
+            return;
+        }
         let tab = self.wb_mut().tab_start.take().filter(|t| Some(t.1) == self.current_cell());
         match tab {
             Some((start, (_, row))) => {
                 self.commit_cell_edit(cx);
-                if self.current_sheet().is_some_and(|(_, s)| (row as usize + 1) < s.rows.len()) {
+                if row + 1 < MAX_SHEET_ROWS {
                     self.selection = None;
                     self.set_cell(start, row + 1);
                     self.scroll_cell_into_view();
                 }
                 cx.notify();
             }
-            None => self.move_cell(0, 1, window, cx),
+            None => {
+                // Enter finishes typing and goes to the next cell (↓ in a cell of many lines would move the caret instead).
+                if self.cell_edit().is_some() {
+                    if self.accept_flash_fill_preview(cx) {
+                        self.move_cell(0, 1, window, cx);
+                        return;
+                    }
+                    self.commit_cell_edit(cx);
+                    if self.cell_edit().is_some() {
+                        return;
+                    }
+                }
+                self.move_cell(0, 1, window, cx)
+            }
         }
     }
 
@@ -1327,6 +1949,9 @@ impl SlideEditor {
         if dy == 0 && self.cell_extend_selection(dx, cx) {
             return;
         }
+        if dx == 0 && self.cell_caret_line(dy, true, cx) {
+            return;
+        }
         let (Some((_, sheet)), Some(range), Some((column, row))) = (self.current_sheet(), self.selected_range(), self.current_cell()) else {
             return;
         };
@@ -1334,17 +1959,22 @@ impl SlideEditor {
         // cell is not on.
         let far_column = if column > range.first_column { range.first_column } else { range.last_column };
         let far_row = if row > range.first_row { range.first_row } else { range.last_row };
-        let step = |at: u32, d: i32, sizes: &[i64]| -> u32 {
+        let step = |at: u32, d: i32, sizes: &[i64], limit: u32| -> u32 {
             if d == 0 {
                 return at;
             }
             let mut i = at as i64 + d as i64;
-            while (0..sizes.len() as i64).contains(&i) && sizes[i as usize] == 0 {
-                i += d as i64;
+            while (0..limit as i64).contains(&i) {
+                let is_hidden = (0..sizes.len() as i64).contains(&i) && sizes[i as usize] == 0;
+                if !is_hidden {
+                    break;
+                }
+                i += d.signum() as i64;
             }
-            if (0..sizes.len() as i64).contains(&i) { i as u32 } else { at }
+            if (0..limit as i64).contains(&i) { i as u32 } else { at }
         };
-        let end = (step(far_column, dx, &sheet.columns), step(far_row, dy, &sheet.rows));
+        let end = (step(far_column, dx, &sheet.columns, MAX_SHEET_COLUMNS), step(far_row, dy, &sheet.rows, MAX_SHEET_ROWS));
+        let was_kept = self.selected_ranges().len() > 1;
         if end == (column, row) {
             let slide = self.current_slide;
             self.wb_mut().cell_ends.remove(&slide);
@@ -1352,6 +1982,7 @@ impl SlideEditor {
             let slide = self.current_slide;
             self.wb_mut().cell_ends.insert(slide, end);
         }
+        self.extra_ranges_follow(was_kept);
         self.scroll_cell_into_view();
         cx.notify();
     }
@@ -1368,7 +1999,7 @@ impl SlideEditor {
     }
 
     /// Scroll the workspace so the selected cell is in view, clear of the headers.
-    fn scroll_cell_into_view(&self) {
+    pub(crate) fn scroll_cell_into_view(&self) {
         self.scroll_range_into_view(false);
     }
 
@@ -1377,6 +2008,10 @@ impl SlideEditor {
     /// and name box do) on each axis it is not in view, with the range at
     /// the view's top or left, past frozen panes.
     pub(crate) fn scroll_range_into_view(&self, top_left: bool) {
+        if self.page_layout_shown() {
+            self.page_layout_scroll_into_view();
+            return;
+        }
         let (Some(content), Some(ws), Some((shape, sheet)), Some(range)) =
             (self.workspace_content(), self.workspace_bounds, self.current_sheet(), self.selected_range())
         else {
@@ -1388,10 +2023,28 @@ impl SlideEditor {
         // always in view, so that axis does not scroll.
         let (frozen_columns, frozen_rows) = sheet.frozen.unwrap_or((0, 0));
         let (split_x, split_y) = self.frozen_split(content).unwrap_or((None, None));
-        let at = |offsets: &[i64], i: u32| offsets[(i as usize).min(offsets.len() - 1)];
-        let span = |origin: Pixels, frame: i64, offsets: &[i64], first: u32, last: u32| {
-            let start = f32::from(origin) + (frame + at(offsets, first)) as f32 * scale;
-            let end = f32::from(origin) + (frame + at(offsets, last + 1)) as f32 * scale;
+        let at_x = |offsets: &[i64], i: u32| {
+            let len = offsets.len();
+            if (i as usize) < len {
+                offsets[i as usize]
+            } else {
+                let last = offsets.last().copied().unwrap_or(0);
+                last + (i as usize - (len - 1)) as i64 * sheet.default_column
+            }
+        };
+        let at_y = |offsets: &[i64], i: u32| {
+            let len = offsets.len();
+            if (i as usize) < len {
+                offsets[i as usize]
+            } else {
+                let last = offsets.last().copied().unwrap_or(0);
+                last + (i as usize - (len - 1)) as i64 * sheet.default_row
+            }
+        };
+        let span = |origin: Pixels, frame: i64, offsets: &[i64], first: u32, last: u32, is_y: bool| {
+            let (f, l) = if is_y { (at_y(offsets, first), at_y(offsets, last + 1)) } else { (at_x(offsets, first), at_x(offsets, last + 1)) };
+            let start = f32::from(origin) + (frame + f) as f32 * scale;
+            let end = f32::from(origin) + (frame + l) as f32 * scale;
             (start, end)
         };
         // `visible` is the scrolled-away amount; the view shows content from
@@ -1412,15 +2065,15 @@ impl SlideEditor {
         let x = if range.last_column < frozen_columns {
             f32::from(offset.x)
         } else {
-            let (start, end) = span(content.slide_origin.x, shape.frame.x, &xs, range.first_column, range.last_column);
+            let (start, end) = span(content.slide_origin.x, shape.frame.x, &xs, range.first_column, range.last_column, false);
             // The scrolling pane starts after the frozen columns.
-            let head = split_x.unwrap_or(if sheet.headings { ROW_HEADER_WIDTH } else { 0.0 });
+            let head = split_x.unwrap_or(if sheet.headings { row_header_width(sheet) } else { 0.0 });
             axis(-f32::from(offset.x), (start, end), head, f32::from(ws.size.width), f32::from(content.size.width))
         };
         let y = if range.last_row < frozen_rows {
             f32::from(offset.y)
         } else {
-            let (start, end) = span(content.slide_origin.y, shape.frame.y, &ys, range.first_row, range.last_row);
+            let (start, end) = span(content.slide_origin.y, shape.frame.y, &ys, range.first_row, range.last_row, true);
             let head = split_y.unwrap_or(if sheet.headings { COLUMN_HEADER_HEIGHT } else { 0.0 });
             axis(-f32::from(offset.y), (start, end), head, f32::from(ws.size.height), f32::from(content.size.height))
         };
@@ -1449,6 +2102,8 @@ pub(crate) struct CellJump {
     /// A jump was made before the workspace was laid out: its range is to
     /// be scrolled into view once it is.
     pub(crate) pending_scroll: bool,
+    /// History of jump references (cells, ranges, names).
+    pub(crate) goto_history: Vec<String>,
     /// The name field over a sheet tab being renamed (a double-click on
     /// the tab, or シートの名前を変更).
     pub(crate) tab_rename: Entity<InputState>,
@@ -1496,6 +2151,7 @@ impl CellJump {
             goto_open: false,
             goto_error: None,
             pending_scroll: false,
+            goto_history: Vec::new(),
             tab_rename,
             renaming: None,
             _subscriptions: [name_box_subscription, goto_subscription, rename_subscription],
@@ -1523,8 +2179,8 @@ pub(crate) enum Target {
 /// to the sheet's grid.
 pub(crate) const OPEN_END: u32 = u32::MAX;
 /// Excel's limits: columns A to XFD, rows 1 to 1,048,576.
-const MAX_COLUMNS: u32 = 16_384;
-const MAX_ROWS: u32 = 1_048_576;
+pub(crate) const MAX_COLUMNS: u32 = 16_384;
+pub(crate) const MAX_ROWS: u32 = 1_048_576;
 
 /// Read a reference as Excel's name box does: `B12`, `$B$12`, `b12`,
 /// `A1:C5`, `A:C`, `3:5`, `Sheet2!A1`, `'Sheet name'!A1` (a `'` in the
@@ -1729,6 +2385,7 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &CellCut, _, cx| if this.cell_edit().is_some() { this.edit_copy(true, cx) } else { this.copy_cells(true, cx) }))
             .on_action(cx.listener(|this, _: &CellPaste, _, cx| if this.cell_edit().is_some() { this.edit_paste(cx) } else { this.paste_cells(false, cx) }))
             .on_action(cx.listener(|this, _: &CellPastePlain, _, cx| if this.cell_edit().is_some() { this.edit_paste(cx) } else { this.paste_cells(true, cx) }))
+            .on_action(cx.listener(|this, _: &CellPasteSpecialDialog, _, cx| this.open_paste_special_dialog(cx)))
             .on_action(cx.listener(|this, _: &ClearCellFormats, _, cx| this.clear_cell_formats(cx)))
             .on_action(cx.listener(|this, _: &CellTab, window, cx| this.cell_tab(window, cx)))
             .on_action(cx.listener(|this, _: &SelectAllCells, _, cx| this.select_all_cells(cx)))
@@ -1741,19 +2398,22 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &FillDown, _, cx| {
                 // With shapes selected, ⌘D duplicates them (as in Excel).
                 if this.selected_shapes().is_empty() {
-                    this.fill_selection_edge(true, cx);
+                    this.fill_selection_edge(crate::xlsx::fill::FillDirection::Down, cx);
                 } else {
                     this.duplicate_selected(cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenCellFormat, window, cx| this.open_custom_format(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleFilter, _, cx| this.toggle_auto_filter(cx)))
-            .on_action(cx.listener(|this, _: &FillRight, _, cx| this.fill_selection_edge(false, cx)))
+            .on_action(cx.listener(|this, _: &FillRight, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Right, cx)))
+            .on_action(cx.listener(|this, _: &FillUp, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Up, cx)))
+            .on_action(cx.listener(|this, _: &FillLeft, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Left, cx)))
             .on_action(cx.listener(|this, _: &InsertDate, _, cx| this.insert_now_stamp(true, cx)))
             .on_action(cx.listener(|this, _: &InsertTime, _, cx| this.insert_now_stamp(false, cx)))
             .on_action(cx.listener(|this, _: &SelectColumns, _, cx| this.select_selection_lines(Axis::Columns, cx)))
             .on_action(cx.listener(|this, _: &SelectRows, _, cx| this.select_selection_lines(Axis::Rows, cx)))
             .on_action(cx.listener(|this, _: &CellLineBreak, _, cx| this.cell_line_break(cx)))
+            .on_action(cx.listener(|this, _: &PickFromList, window, cx| this.pick_from_drop_down_list(window, cx)))
             .on_action(cx.listener(|this, _: &FlashFill, _, cx| this.flash_fill_column(cx)))
             .on_action(cx.listener(|this, _: &HideRows, _, cx| this.hide_lines(Axis::Rows, true, cx)))
             .on_action(cx.listener(|this, _: &HideColumns, _, cx| this.hide_lines(Axis::Columns, true, cx)))
@@ -1766,6 +2426,15 @@ impl SlideEditor {
                 let slide = this.current_slide;
                 this.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::CalculateSheet { slide })], cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleShowFormulas, _, cx| this.toggle_show_formulas(cx)))
+            .on_action(cx.listener(|this, _: &ReapplyFilter, _, cx| this.reapply_auto_filter(cx)))
+            .on_action(cx.listener(|this, _: &EditNote, window, cx| this.open_note_panel(window, cx)))
+            .on_action(cx.listener(|this, _: &InsertFunction, window, cx| this.insert_function_action(window, cx)))
+            .on_action(cx.listener(|this, _: &PreviousComment, _, cx| this.select_next_comment(false, cx)))
+            .on_action(cx.listener(|this, _: &NextComment, _, cx| this.select_next_comment(true, cx)))
+            .on_action(cx.listener(|this, _: &ToggleShowAllNotes, _, cx| this.toggle_show_all_notes(cx)))
+            .on_action(cx.listener(|this, _: &SheetInsert, _, cx| this.smart_insert(cx)))
+            .on_action(cx.listener(|this, _: &SheetDelete, _, cx| this.smart_delete(cx)))
             .on_action(cx.listener(|this, _: &CellDelete, window, cx| {
                 if this.cells_take_typing(window, cx) {
                     this.cell_delete(true, cx);
@@ -1829,6 +2498,7 @@ impl SlideEditor {
             }
         };
         if extend {
+            let was_kept = self.selected_ranges().len() > 1;
             if to == (column, row) {
                 let slide = self.current_slide;
                 self.wb_mut().cell_ends.remove(&slide);
@@ -1836,6 +2506,7 @@ impl SlideEditor {
                 let slide = self.current_slide;
                 self.wb_mut().cell_ends.insert(slide, to);
             }
+            self.extra_ranges_follow(was_kept);
         } else {
             self.selection = None;
             self.set_cell(to.0, to.1);
@@ -1890,15 +2561,15 @@ impl SlideEditor {
                 let index = self.presentation().workbook.as_ref().and_then(|w| w.sheets.iter().position(|s| s.slide == Some(slide.id)));
                 let names = &self.presentation().workbook.as_ref()?.names;
                 let defined = names.iter().find(|n| n.name.eq_ignore_ascii_case(name) && n.sheet.is_some() && n.sheet == index).or_else(|| names.iter().find(|n| n.name.eq_ignore_ascii_case(name) && n.sheet.is_none()))?;
-                let target = parse_reference(&defined.formula)?;
+                let target = parse_reference(defined.formula.trim().trim_start_matches('='))?;
                 if matches!(target.target, Target::Name(_)) {
                     return None;
                 }
                 return self.resolve_reference(&target);
             }
         };
-        let last_column = sheet.columns.len().checked_sub(1)? as u32;
-        let last_row = sheet.rows.len().checked_sub(1)? as u32;
+        let last_column = MAX_SHEET_COLUMNS.saturating_sub(1);
+        let last_row = MAX_SHEET_ROWS.saturating_sub(1);
         Some((
             slide.id,
             CellRange {
@@ -1937,25 +2608,96 @@ impl SlideEditor {
         true
     }
 
-    /// Ctrl+G or F5: open the ジャンプ dialog, its 参照先 empty.
+    /// Ctrl+G or F5 (or ⌘G on Mac): open the ジャンプ dialog.
     pub(crate) fn open_goto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.is_workbook() || self.editing.is_some() {
             return cx.propagate();
         }
         self.wb_mut().jump.goto_open = true;
         self.wb_mut().jump.goto_error = None;
+        let initial_val = self.wb().jump.goto_history.first().cloned().unwrap_or_default();
         self.wb().jump.goto_input.update(cx, |input, cx| {
-            input.set_value("", window, cx);
+            input.set_value(&initial_val, window, cx);
+            input.select_all(window, cx);
             input.focus(window, cx);
         });
         cx.notify();
     }
 
+    /// Add a jump reference to recent history (up to 30 items, duplicates moved to top).
+    pub(crate) fn add_goto_history(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let jump = &mut self.wb_mut().jump;
+        jump.goto_history.retain(|h| !h.eq_ignore_ascii_case(text));
+        jump.goto_history.insert(0, text.to_string());
+        if jump.goto_history.len() > 30 {
+            jump.goto_history.truncate(30);
+        }
+    }
+
+    /// Select an item from the destination list into the input box.
+    pub(crate) fn select_goto_item(&mut self, item: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.wb().jump.goto_input.update(cx, |input, cx| {
+            input.set_value(item, window, cx);
+            input.select_all(window, cx);
+            input.focus(window, cx);
+        });
+        self.wb_mut().jump.goto_error = None;
+        cx.notify();
+    }
+
+    /// Double click an item: select and immediately confirm jump.
+    pub(crate) fn double_click_goto_item(&mut self, item: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_goto_item(item, window, cx);
+        self.confirm_goto(window, cx);
+    }
+
+    /// Special... button: close goto dialog and open Go To Special sidebar panel.
+    pub(crate) fn open_goto_special_from_goto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_goto(window, cx);
+        self.open_goto_special_panel(cx);
+    }
+
+    /// Collect defined names and history for the Go To dialog.
+    pub(crate) fn goto_destinations(&self) -> Vec<(String, bool)> {
+        let mut list = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // 1. Defined names from workbook (visible, non-system)
+        if let Some(workbook) = self.presentation().workbook.as_ref() {
+            let mut names: Vec<_> = workbook
+                .names
+                .iter()
+                .filter(|n| !n.hidden && !n.name.starts_with("_xlnm.") && !n.name.is_empty())
+                .map(|n| n.name.clone())
+                .collect();
+            names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            for name in names {
+                if seen.insert(name.to_lowercase()) {
+                    list.push((name, true));
+                }
+            }
+        }
+
+        // 2. Recent history
+        for history in &self.wb().jump.goto_history {
+            if seen.insert(history.to_lowercase()) {
+                list.push((history.clone(), false));
+            }
+        }
+
+        list
+    }
+
     /// OK in the ジャンプ dialog: jump, or say the reference is wrong and
     /// keep the dialog open.
-    fn confirm_goto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.wb().jump.goto_input.read(cx).value().to_string();
+    pub(crate) fn confirm_goto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.wb().jump.goto_input.read(cx).value().trim().to_string();
         if self.go_to_reference(&text, window, cx) {
+            self.add_goto_history(&text);
             self.close_goto(window, cx);
         } else {
             self.wb_mut().jump.goto_error = Some(crate::shell::i18n::text("_xlsx.invalid-reference").into());
@@ -1964,7 +2706,7 @@ impl SlideEditor {
         }
     }
 
-    fn close_goto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_goto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.wb_mut().jump.goto_open = false;
         self.focus_handle.focus(window, cx);
         cx.notify();
@@ -1982,6 +2724,13 @@ impl SlideEditor {
         if self.cancel_cell_edit(cx) {
             return true;
         }
+        if let Some(state) = self.sheet_state_mut() {
+            if state.panels.cells_dialog.is_some() {
+                state.panels.cells_dialog = None;
+                cx.notify();
+                return true;
+            }
+        }
         if self.wb().jump.goto_open {
             self.close_goto(window, cx);
             return true;
@@ -1996,15 +2745,18 @@ impl SlideEditor {
         false
     }
 
-    /// The ジャンプ dialog, under the name box: 参照先 with OK and キャンセル.
+    /// The ジャンプ dialog, under the name box: destinations list, 参照先 with Special, OK and キャンセル.
     fn render_goto(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let destinations = self.goto_destinations();
+        let current_val = self.wb().jump.goto_input.read(cx).value().trim().to_string();
+
         v_flex()
             .id("goto")
             .absolute()
             .top(px(34.))
             .left(px(8.))
-            .w(px(300.))
+            .w(px(340.))
             .p_3()
             .gap_2()
             .bg(theme.background)
@@ -2014,32 +2766,99 @@ impl SlideEditor {
             .shadow_lg()
             .occlude()
             .on_mouse_down_out(cx.listener(|this, _, window, cx| this.close_goto(window, cx)))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.go-to")))
             .child(
                 h_flex()
-                    .gap_2()
+                    .justify_between()
                     .items_center()
-                    .child(div().flex_shrink_0().child(crate::shell::i18n::text("_xlsx.reference")))
-                    .child(div().flex_1().child(Input::new(&self.wb().jump.goto_input).small())),
+                    .child(div().font_weight(FontWeight::SEMIBOLD).text_sm().child(crate::shell::i18n::text("_xlsx.go-to"))),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(div().text_xs().text_color(theme.muted_foreground).child(crate::shell::i18n::text("xlsx.goto-destination")))
+                    .child(
+                        v_flex()
+                            .id("goto-destinations-list")
+                            .h(px(130.))
+                            .overflow_y_scroll()
+                            .border_1()
+                            .border_color(theme.border)
+                            .rounded_sm()
+                            .bg(theme.background)
+                            .p_1()
+                            .gap_0p5()
+                            .children(if destinations.is_empty() {
+                                vec![div().p_2().text_xs().text_color(theme.muted_foreground).child(crate::shell::i18n::text("xlsx.goto-no-destinations")).into_any_element()]
+                            } else {
+                                destinations.into_iter().enumerate().map(|(idx, (dest, is_named))| {
+                                    let is_selected = current_val.eq_ignore_ascii_case(&dest);
+                                    let d_clone = dest.clone();
+                                    let d_clone2 = dest.clone();
+                                    h_flex()
+                                        .id(ElementId::NamedInteger("goto-item".into(), idx as u64))
+                                        .px_2()
+                                        .py_1()
+                                        .rounded_sm()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .when(is_selected, |s| s.bg(theme.primary.opacity(0.15)))
+                                        .hover(|h| h.bg(theme.muted))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.select_goto_item(&d_clone, window, cx);
+                                        }))
+                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                                            if ev.button == MouseButton::Left && ev.click_count >= 2 {
+                                                this.double_click_goto_item(&d_clone2, window, cx);
+                                            }
+                                        }))
+                                        .child(div().text_xs().child(dest))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground)
+                                                .child(if is_named { crate::shell::i18n::text("xlsx.goto-type-name") } else { crate::shell::i18n::text("xlsx.goto-type-history") })
+                                        )
+                                        .into_any_element()
+                                }).collect()
+                            })
+                    )
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(div().text_xs().text_color(theme.muted_foreground).child(crate::shell::i18n::text("_xlsx.reference")))
+                    .child(Input::new(&self.wb().jump.goto_input).small()),
             )
             .when_some(self.wb().jump.goto_error.clone(), |d, error| d.child(div().text_xs().text_color(theme.danger).child(error)))
             .child(
                 h_flex()
-                    .gap_2()
-                    .justify_end()
+                    .justify_between()
+                    .items_center()
+                    .pt_1()
                     .child(
-                        Button::new("goto-cancel")
+                        Button::new("goto-special")
                             .small()
-                            .label(crate::shell::i18n::text("_shell.cancel"))
-                            .on_click(cx.listener(|this, _, window, cx| this.close_goto(window, cx))),
+                            .label(crate::shell::i18n::text("xlsx.goto-special-button"))
+                            .on_click(cx.listener(|this, _, window, cx| this.open_goto_special_from_goto(window, cx)))
                     )
                     .child(
-                        Button::new("goto-ok")
-                            .primary()
-                            .small()
-                            .label("OK")
-                            .on_click(cx.listener(|this, _, window, cx| this.confirm_goto(window, cx))),
-                    ),
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("goto-cancel")
+                                    .small()
+                                    .label(crate::shell::i18n::text("_shell.cancel"))
+                                    .on_click(cx.listener(|this, _, window, cx| this.close_goto(window, cx))),
+                            )
+                            .child(
+                                Button::new("goto-ok")
+                                    .primary()
+                                    .small()
+                                    .label("OK")
+                                    .on_click(cx.listener(|this, _, window, cx| this.confirm_goto(window, cx))),
+                            ),
+                    )
             )
     }
 }
@@ -2125,5 +2944,15 @@ mod tests {
         assert_eq!(column_letters(26), "AA");
         assert_eq!(column_letters(701), "ZZ");
         assert_eq!(column_letters(702), "AAA");
+    }
+
+    #[test]
+    fn row_header_width_expands_for_large_row_counts() {
+        assert_eq!(super::row_header_width_for_rows(0), 44.0);
+        assert_eq!(super::row_header_width_for_rows(10), 44.0);
+        assert_eq!(super::row_header_width_for_rows(9999), 44.0);
+        assert_eq!(super::row_header_width_for_rows(10000), 52.0); // 5 digits
+        assert_eq!(super::row_header_width_for_rows(100000), 60.0); // 6 digits
+        assert_eq!(super::row_header_width_for_rows(1048576), 68.0); // 7 digits (Excel max rows)
     }
 }

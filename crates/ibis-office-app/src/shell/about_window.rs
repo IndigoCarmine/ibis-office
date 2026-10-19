@@ -5,7 +5,7 @@
 //! the version, "Powered by ibisOffice" with the link to the project, the
 //! copyright and the license. The "Powered by ibisOffice" line and its link
 //! are the additional term under AGPL-3.0 section 7(b) (NOTICE,
-//! TRADEMARK.md): a derivative keeps them on its own About screen.
+//! docs/TRADEMARK.md): a derivative keeps them on its own About screen.
 use gpui_kit::component::{ActiveTheme as _, Root, v_flex};
 use gpui_kit::*;
 

@@ -72,6 +72,7 @@ pub(crate) enum Filled {
 /// them, `backward`: index 0 is the one next to the sources). `copy`: copy
 /// in turn instead of making a series. Returns each with its source index
 /// (for the format).
+#[allow(dead_code)]
 pub(crate) fn fill(sources: &[Source], count: usize, backward: bool, copy: bool) -> Vec<(Filled, usize)> {
     fill_as(sources, count, backward, if copy { FillMode::Copy } else { FillMode::Series })
 }
@@ -261,6 +262,15 @@ pub(crate) fn fill_target(source: CellRange, (column, row): (u32, u32), (x, y): 
     }
 }
 
+/// Direction of the edge fill (編集 > フィル > 下方向・右方向・上方向・左方向へフィル).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FillDirection {
+    Down,
+    Right,
+    Up,
+    Left,
+}
+
 impl SlideEditor {
     /// オートフィル オプション: the last fill done again as `mode` (in place of it).
     pub(crate) fn refill(&mut self, mode: FillMode, cx: &mut Context<Self>) {
@@ -336,36 +346,146 @@ impl SlideEditor {
         self.fill_to(source, column, row, copy, cx);
     }
 
+    /// Excel's double-click on the fill handle: fills down to the end of the
+    /// adjacent data range (left column preferred, then right column, or
+    /// table end if inside a table).
+    pub(crate) fn double_click_fill_handle(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return false;
+        }
+        let Some(source) = self.selected_range() else { return false };
+        let Some((_, sheet)) = self.current_sheet() else { return false };
+
+        let target_row = Self::find_fill_handle_target_row(sheet, source);
+        let Some(target_row) = target_row else { return false };
+        if target_row <= source.last_row {
+            return false;
+        }
+
+        self.fill_to(source, source.last_column, target_row, false, cx);
+        true
+    }
+
+    /// Determine target row for double-clicking the fill handle based on
+    /// adjacent data columns or containing table.
+    pub(crate) fn find_fill_handle_target_row(sheet: &ibis_doc_model::Sheet, source: CellRange) -> Option<u32> {
+        let is_empty = |r: u32, c: u32| -> bool {
+            match sheet.cell(r, c) {
+                None => true,
+                Some(cell) => cell.formula.is_none() && matches!(cell.value, CellValue::Empty),
+            }
+        };
+
+        // 1. If inside an Excel table, target is the last data row of the table.
+        for table in &sheet.tables {
+            let data_first_row = table.range.first_row + table.header_rows;
+            let data_last_row = if table.range.last_row >= table.totals_rows {
+                table.range.last_row - table.totals_rows
+            } else {
+                table.range.last_row
+            };
+            if source.first_row >= data_first_row
+                && source.last_row <= data_last_row
+                && source.first_column >= table.range.first_column
+                && source.last_column <= table.range.last_column
+            {
+                if data_last_row > source.last_row {
+                    return Some(data_last_row);
+                }
+            }
+        }
+
+        // Helper to find contiguous non-empty cell run in column `col` starting alongside `source`
+        let scan_column = |col: u32| -> Option<u32> {
+            // Check if there is data in column `col` alongside the source selection
+            let has_data_at_source = (source.first_row..=source.last_row).any(|r| !is_empty(r, col));
+            if !has_data_at_source {
+                return None;
+            }
+            // Check if the row directly below source has data in column `col`
+            let next_row = source.last_row + 1;
+            if next_row >= super::sheet_ui::MAX_ROWS || is_empty(next_row, col) {
+                return None;
+            }
+            // Scan downwards while cells in `col` are not empty
+            let mut r = next_row;
+            while r < super::sheet_ui::MAX_ROWS && !is_empty(r, col) {
+                r += 1;
+            }
+            let end_row = r - 1;
+            if end_row > source.last_row {
+                Some(end_row)
+            } else {
+                None
+            }
+        };
+
+        // 2. Check left adjacent column first (preferred)
+        if source.first_column > 0 {
+            if let Some(target) = scan_column(source.first_column - 1) {
+                return Some(target);
+            }
+        }
+
+        // 3. Check right adjacent column
+        if source.last_column + 1 < super::sheet_ui::MAX_COLUMNS {
+            if let Some(target) = scan_column(source.last_column + 1) {
+                return Some(target);
+            }
+        }
+
+        None
+    }
+
     /// Fill from `source` towards the cell (`column`, `row`): down, up,
     /// right or left, whichever it lies beyond (rows first, as Excel).
     pub(crate) fn fill_to(&mut self, source: CellRange, column: u32, row: u32, copy: bool, cx: &mut Context<Self>) {
         self.fill_to_as(source, column, row, if copy { FillMode::Copy } else { FillMode::Series }, cx);
     }
 
-    /// ⌘D / ⌘R (編集 > フィル > 下方向へコピー・右方向へコピー): the first row
+    /// ⌘D / ⌘R (編集 > フィル > 下方向へコピー・右方向へコピー・上方向・左方向): the edge row
     /// (column) of the selection copied over the rest, or, with one row
-    /// (column) selected, the one above (to the left) copied into it. The
+    /// (column) selected, the one adjacent copied into it. The
     /// selection stays as it was.
-    pub(crate) fn fill_selection_edge(&mut self, down: bool, cx: &mut Context<Self>) {
+    pub(crate) fn fill_selection_edge(&mut self, direction: FillDirection, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         if self.protection_refuses(super::protection::Guarded::Cells, cx) {
             return;
         }
         let Some(r) = self.selected_range() else { return };
-        let (source, column, row) = if down {
-            if r.last_row > r.first_row {
-                (CellRange { last_row: r.first_row, ..r }, r.first_column, r.last_row)
-            } else if r.first_row > 0 {
-                (CellRange { first_row: r.first_row - 1, last_row: r.first_row - 1, ..r }, r.first_column, r.last_row)
-            } else {
-                return;
+        let (source, column, row) = match direction {
+            FillDirection::Down => {
+                if r.last_row > r.first_row {
+                    (CellRange { last_row: r.first_row, ..r }, r.first_column, r.last_row)
+                } else if r.first_row > 0 {
+                    (CellRange { first_row: r.first_row - 1, last_row: r.first_row - 1, ..r }, r.first_column, r.last_row)
+                } else {
+                    return;
+                }
             }
-        } else if r.last_column > r.first_column {
-            (CellRange { last_column: r.first_column, ..r }, r.last_column, r.first_row)
-        } else if r.first_column > 0 {
-            (CellRange { first_column: r.first_column - 1, last_column: r.first_column - 1, ..r }, r.last_column, r.first_row)
-        } else {
-            return;
+            FillDirection::Right => {
+                if r.last_column > r.first_column {
+                    (CellRange { last_column: r.first_column, ..r }, r.last_column, r.first_row)
+                } else if r.first_column > 0 {
+                    (CellRange { first_column: r.first_column - 1, last_column: r.first_column - 1, ..r }, r.last_column, r.first_row)
+                } else {
+                    return;
+                }
+            }
+            FillDirection::Up => {
+                if r.last_row > r.first_row {
+                    (CellRange { first_row: r.last_row, ..r }, r.first_column, r.first_row)
+                } else {
+                    (CellRange { first_row: r.last_row + 1, last_row: r.last_row + 1, ..r }, r.first_column, r.first_row)
+                }
+            }
+            FillDirection::Left => {
+                if r.last_column > r.first_column {
+                    (CellRange { first_column: r.last_column, ..r }, r.first_column, r.first_row)
+                } else {
+                    (CellRange { first_column: r.last_column + 1, last_column: r.last_column + 1, ..r }, r.first_column, r.first_row)
+                }
+            }
         };
         self.fill_to(source, column, row, true, cx);
         // Back to what was selected (the fill extended it over the source).
