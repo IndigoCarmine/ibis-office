@@ -25,7 +25,7 @@ Our aim is simple: a document made in Microsoft Office should look the same when
 
 - **Download the desktop app** from [Releases](https://github.com/ibisjp/ibis-office/releases/latest):
   - macOS (11 or later): get `ibisOffice-<version>-macOS.zip`, unzip it and move `ibisOffice.app` to your Applications folder.
-  - Windows (64-bit): get `ibisOffice-<version>-Windows.zip`, unzip it and run `ibisOffice.exe` in the `ibisOffice` folder.
+  - Windows (64-bit): get `ibisOffice-<version>-Windows-Setup.exe` and run it. It installs for your user only (no administrator rights needed), adds ibisOffice to the Start menu, and offers it in "Open with" for Word, Excel and PowerPoint files. Or get `ibisOffice-<version>-Windows.zip`, unzip it and run `ibisOffice.exe` in the `ibisOffice` folder.
 - **Try the web version**: open the [playground](https://ibisjp.github.io/ibis-office/) in your browser — no installation (a browser with WebGPU). Open the sample Word, Excel and PowerPoint documents and try it right away.
 - **Watch the video**: an introduction to ibisOffice (YouTube).
 
@@ -141,6 +141,7 @@ cargo build --release
 
 - Requires the latest stable Rust.
 - On macOS, `scripts/bundle-macos.sh` builds the app at `target/release/ibisOffice.app`.
+- On Windows, `pwsh scripts/bundle-windows.ps1` builds the release zip and the installer in `target/dist` (the installer needs [Inno Setup 6](https://jrsoftware.org/isdl.php)).
 - For the browser edition, build with `scripts/build-web.sh --release` and serve `www/` (browsers with WebGPU: Chrome, Edge, Safari 26 or later).
 
 ## Implemented Features

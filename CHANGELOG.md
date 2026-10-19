@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- A Windows installer, `ibisOffice-<version>-Windows-Setup.exe`. It installs ibisOffice for the current user in `%LOCALAPPDATA%\Programs\ibisOffice` without administrator rights, so the automatic update can still replace it. It adds a Start menu shortcut (and, if you choose, a desktop one), and offers ibisOffice in "Open with" and in Default apps for .docx, .xlsx, .pptx, .docm, .xlsm and .pptm files, without taking them from the app that opens them now. Uninstalling keeps your settings.
+- `scripts/bundle-windows.ps1` builds the Windows release zip, its SHA-256 and the installer.
+
 ## [0.8.1] - 2026-10-12
 
 ### Added

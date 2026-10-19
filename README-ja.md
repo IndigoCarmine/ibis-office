@@ -25,7 +25,7 @@ ibisOffice は、Word・Excel・PowerPoint の文書を、表示し、編集し�
 
 - **デスクトップアプリ版をダウンロード**：[Releases](https://github.com/ibisjp/ibis-office/releases/latest) から
   - macOS（11 以降）：`ibisOffice-<版>-macOS.zip` をダウンロードし、展開した `ibisOffice.app` をアプリケーション フォルダに移してください。
-  - Windows（64 ビット）：`ibisOffice-<版>-Windows.zip` をダウンロードし、展開した `ibisOffice` フォルダの `ibisOffice.exe` を起動してください。
+  - Windows（64 ビット）：`ibisOffice-<版>-Windows-Setup.exe` をダウンロードして実行してください。使っているユーザーだけにインストールされ（管理者の権限は要りません）、スタート メニューに加わり、Word・Excel・PowerPoint のファイルの「プログラムから開く」に出ます。インストールしない場合は、`ibisOffice-<版>-Windows.zip` を展開し、`ibisOffice` フォルダの `ibisOffice.exe` を起動してください。
 - **Web 版を試す**：インストールせずに、ブラウザで [playground](https://ibisjp.github.io/ibis-office/) を開いてください（WebGPU に対応したブラウザ）。見本の文書（Word・Excel・PowerPoint）を開いて、すぐに試せます。
 - **動画で見る**：ibisOffice の紹介動画（YouTube）。
 
@@ -141,6 +141,7 @@ cargo build --release
 
 - Rust の最新の stable が要ります。
 - macOS のアプリは `scripts/bundle-macos.sh` で、`target/release/ibisOffice.app` に作られます。
+- Windows の配布用 zip とインストーラーは `pwsh scripts/bundle-windows.ps1` で、`target/dist` に作られます（インストーラーには [Inno Setup 6](https://jrsoftware.org/isdl.php) が要ります）。
 - ブラウザ版は `scripts/build-web.sh --release` でビルドし、`www/` を配信します（WebGPU に対応したブラウザ：Chrome・Edge・Safari 26 以降）。
 
 ## 実装済み
