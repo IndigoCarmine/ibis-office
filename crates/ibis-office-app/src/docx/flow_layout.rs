@@ -6534,3 +6534,69 @@ fn turn_page_items(items: Vec<Item>, direction: ibis_doc_model::CellDirection, w
     }
     out
 }
+
+#[cfg(test)]
+mod word_lines_tests {
+    use super::{FlowAlign, FlowDocument, Unit, justify_extra, may_break, squeezable};
+    use gpui_kit::font;
+
+    /// A character `width` wide, `auto_space` of it the space after it.
+    fn ch(c: char, width: f32, auto_space: f32) -> Unit {
+        Unit::Char { c, width: width + auto_space, inset: 0.0, font: font("Arial"), size: 10.0, style: 0, line: 12.0, ascent: 9.0, lead: 0.0, auto_space }
+    }
+
+    /// Latin text: letters 5 wide, spaces 2.5.
+    fn latin(text: &str) -> Vec<Unit> {
+        text.chars().map(|c| ch(c, if c == ' ' { 2.5 } else { 5.0 }, 0.0)).collect()
+    }
+
+    fn at(gaps: &[bool]) -> Vec<usize> {
+        gaps.iter().enumerate().filter(|(_, g)| **g).map(|(k, _)| k).collect()
+    }
+
+    #[test]
+    fn a_line_breaks_after_a_hyphen_inside_a_word() {
+        let doc = FlowDocument::default();
+        assert!(may_break(Some('-'), Some('k'), true, true, &doc), "well-|known");
+        assert!(!may_break(Some('-'), Some('5'), true, true, &doc), "not a minus before a number");
+        assert!(may_break(Some('\u{2013}'), Some('5'), true, true, &doc), "after an en dash");
+        assert!(!may_break(Some('a'), Some('b'), true, true, &doc), "a word holds together");
+    }
+
+    #[test]
+    fn justified_latin_text_spreads_at_its_spaces() {
+        let units = latin("ab cd ef");
+        // 6 letters and 2 spaces: 35 of 40.
+        let (extra, gaps) = justify_extra(&units, units.len(), FlowAlign::Justify, false, 40.0, 35.0);
+        assert!((extra - 2.5).abs() < 1e-4, "{extra}");
+        assert_eq!(at(&gaps), vec![2, 5]);
+        // The last line is not spread.
+        assert_eq!(justify_extra(&units, units.len(), FlowAlign::Justify, true, 40.0, 35.0).0, 0.0);
+    }
+
+    #[test]
+    fn justified_japanese_text_spreads_between_its_characters() {
+        let units: Vec<Unit> = "日本語".chars().map(|c| ch(c, 10.0, 0.0)).collect();
+        let (extra, gaps) = justify_extra(&units, 3, FlowAlign::Justify, false, 32.0, 30.0);
+        assert!((extra - 1.0).abs() < 1e-4, "{extra}");
+        assert_eq!(at(&gaps), vec![0, 1]);
+    }
+
+    #[test]
+    fn an_overfull_justified_line_narrows_only_its_spaces() {
+        let units = latin("ab cd ef");
+        // A word more than the room: the two spaces give a point.
+        let (extra, gaps) = justify_extra(&units, units.len(), FlowAlign::Justify, true, 34.0, 35.0);
+        assert!((extra + 0.5).abs() < 1e-4, "{extra}");
+        assert_eq!(at(&gaps), vec![2, 5]);
+        // Text not justified is never narrowed.
+        assert_eq!(justify_extra(&units, units.len(), FlowAlign::Left, false, 34.0, 35.0).0, 0.0);
+    }
+
+    #[test]
+    fn spaces_and_the_space_between_japanese_and_latin_may_narrow() {
+        assert_eq!(squeezable(&ch(' ', 2.5, 0.0)), 2.5);
+        assert_eq!(squeezable(&ch('語', 10.0, 2.25)), 2.25);
+        assert_eq!(squeezable(&ch('a', 5.0, 0.0)), 0.0);
+    }
+}
