@@ -24,7 +24,8 @@ pub(crate) const LINE_HEIGHT: f32 = crate::render::font_metrics::POWERPOINT_SING
 
 /// Decoded pictures and the fonts available to draw with, for one presentation.
 /// Identifies one rotated drawing of a picture.
-type RotatedKey = (MediaId, i32, bool, bool, ibis_doc_model::Crop, i64, i64);
+/// The picture, turn, flips, crop, size and (a hash of) its colour effects.
+type RotatedKey = (MediaId, i32, bool, bool, ibis_doc_model::Crop, i64, i64, u64);
 
 /// Color and contrast rendering mode for presentations and accessibility (表示 > カラー/白黒).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -3569,13 +3570,20 @@ fn styled_picture_image(shape: &Shape, picture: &Picture, frame: EmuRect, res: &
 /// The picture of `shape` rotated and flipped, with its bounds relative to
 /// the frame's top-left corner; `None` if its format cannot be wrapped.
 fn rotated_image(shape: &Shape, picture: &Picture, frame: EmuRect, res: &Resources) -> Option<(Arc<Image>, EmuRect)> {
-    let key = (picture.media, shape.rotation, shape.flip_h, shape.flip_v, picture.crop, frame.width, frame.height);
+    let look = crate::render::picture_svg::Look { luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| ((a.r(), a.g(), a.b()), (b.r(), b.g(), b.b()))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect };
+    let look_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{look:?}").hash(&mut hasher);
+        hasher.finish()
+    };
+    let key = (picture.media, shape.rotation, shape.flip_h, shape.flip_v, picture.crop, frame.width, frame.height, look_hash);
     if let Some(found) = res.rotated.borrow().get(&key) {
         return Some(found.clone());
     }
     let (encoding, data) = res.source(picture.media)?;
     let local = EmuRect { x: 0, y: 0, ..frame };
-    let wrapped = crate::render::picture_svg::rotated_picture(&data, encoding, local, shape.rotation, shape.flip_h, shape.flip_v, picture.crop);
+    let wrapped = crate::render::picture_svg::rotated_picture(&data, encoding, local, shape.rotation, shape.flip_h, shape.flip_v, picture.crop, &look);
     let entry = (Arc::new(Image::from_bytes(ImageFormat::Svg, wrapped.svg)), wrapped.bounds);
     res.rotated.borrow_mut().insert(key, entry.clone());
     Some(entry)
@@ -3669,8 +3677,9 @@ pub(crate) fn text_body_element(
             (paragraph.margin_left + paragraph.indent).max(0) - paragraph.margin_left
         };
         // PowerPoint puts no space above the first paragraph of a body, nor
-        // below the last (measured: at the bottom of its box).
-        let space_before = if index == 0 { 0 } else { paragraph.space_before };
+        // below the last (measured: at the bottom of its box). Word keeps the
+        // space above the first paragraph of a text box (`clip`: Word's).
+        let space_before = if index == 0 && !body.clip { 0 } else { paragraph.space_before };
         let space_after = if index + 1 == body.paragraphs.len() { 0 } else { paragraph.space_after };
         // An empty paragraph still takes a line at its mark's size.
         let mark = [ibis_doc_model::Run { text: String::new(), style: paragraph.end_style.clone() }];
