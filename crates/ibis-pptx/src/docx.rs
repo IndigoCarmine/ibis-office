@@ -980,6 +980,10 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             field_start: read.field_start.take(),
             field_end: read.field_end,
             subdoc,
+            mark_deleted: ppr
+                .and_then(|p| child(p, "rPr"))
+                .and_then(|r| child(r, "del").or_else(|| child(r, "moveFrom")))
+                .map(|d| wattr(d, "author").unwrap_or("").to_string()),
             section: ppr.and_then(|p| child(p, "sectPr")).map(|s| {
                 self.sections.push(id);
                 Arc::new(section_setup(s))

@@ -2333,6 +2333,10 @@ pub struct FlowParagraph {
     /// (`w:autoSpaceDE`), and between Japanese and digits (`w:autoSpaceDN`).
     pub auto_space_letters: bool,
     pub auto_space_digits: bool,
+    /// The paragraph mark is tracked as deleted (`w:pPr/w:rPr/w:del` or
+    /// `w:moveFrom`), by this author: the final view joins the paragraph
+    /// with the next.
+    pub mark_deleted: Option<String>,
     pub page_break_before: bool,
     /// Its lines get no line numbers (`w:suppressLineNumbers`).
     pub suppress_line_numbers: bool,

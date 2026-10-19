@@ -269,6 +269,10 @@ struct WrapObstacleInPara {
     extra: Vec<(f32, f32, f32, f32)>,
 }
 
+/// A shape placed above its paragraph (see `Layouter::raised`): the page's
+/// index, its obstacle, the shape as placed and its id.
+type RaisedShape = (usize, WrapObstacle, Item, u64);
+
 /// The paragraph's shape the text wraps round (square, tight, through),
 /// but one of deleted text when the view leaves that out (`hide_deleted`).
 fn square_shape(p: &FlowParagraph, hide_deleted: bool) -> Option<&ibis_doc_model::Shape> {
@@ -319,6 +323,15 @@ pub(crate) struct Layouter<'r> {
     /// Floating shapes put off to the top of the next page (their paragraph's
     /// place left no room for them): their paragraphs leave them out.
     deferred_shapes: std::cell::RefCell<std::collections::HashSet<u64>>,
+    /// How far the column being laid out is from the left margin (points),
+    /// for placing floating shapes on the page from it.
+    column_dx: std::cell::Cell<f32>,
+    /// Shapes the text wraps round placed above their paragraph, over text
+    /// laid out before them (the page index, the obstacle, the shape as
+    /// placed, its id): a second laying out has them from the page's start.
+    raised: std::cell::RefCell<Vec<RaisedShape>>,
+    /// Those of a first laying out, placed at their pages' starts.
+    seeds: Vec<RaisedShape>,
     /// The table and cell coordinate (table_id, row_index, grid_col_index) being laid out, for formula evaluation.
     current_cell: std::cell::Cell<Option<(u32, usize, usize)>>,
     /// The paragraph whose fields are being made into text (a `STYLEREF` in the body looks back from it).
@@ -1534,10 +1547,7 @@ impl<'r> Layouter<'r> {
 
         let mark_size = p.mark.size as f32 / 100.0;
         let mark_metrics = {
-            let name = p.mark.font_for('あ');
-            let font = self.font(&p.mark, name);
-            let (ascent, line) = self.line_metrics(name, &font, mark_size);
-            (line, ascent, Self::leading(name) * mark_size)
+            self.mark_metrics(p, mark_size)
         };
         let default_line_h = self.resolve_line_height(p, mark_metrics.0, mark_metrics.2, in_table);
 
@@ -1745,7 +1755,7 @@ impl<'r> Layouter<'r> {
                 let mut slots = if is_intersecting {
                     let left_w = (line_shape_left - line_start).max(0.0);
                     let right_w = (line_end - line_shape_right).max(0.0);
-                    let min_slot_w = 15.0;
+                    let min_slot_w = MIN_WRAP_ROOM;
                     match wrap_text {
                         "left" => {
                             if left_w >= min_slot_w { vec![(line_start, left_w)] } else { vec![] }
@@ -1818,6 +1828,8 @@ impl<'r> Layouter<'r> {
                     let mut x = 0.0;
                     let mut last_break: Option<usize> = None;
                     let mut slot_ended = false;
+                    // What the spaces so far may give (justified text: `SPACE_GIVE`).
+                    let mut give = 0.0f32;
 
                     while i < units.len() {
                         match &units[i] {
@@ -1861,7 +1873,7 @@ impl<'r> Layouter<'r> {
                                 last_break = Some(i);
                             }
                         }
-                        if x + w > slot_w + 0.01 && i > start {
+                        if x + w > slot_w + give + 0.01 && i > start {
                             if c == Some(' ') {
                                 x += w;
                                 i += 1;
@@ -1884,6 +1896,9 @@ impl<'r> Layouter<'r> {
                             i = at;
                             slot_ended = true;
                             break;
+                        }
+                        if c == Some(' ') && p.align == FlowAlign::Justify {
+                            give += w * SPACE_GIVE;
                         }
                         x += w;
                         i += 1;
@@ -2019,16 +2034,8 @@ impl<'r> Layouter<'r> {
                     let visible_end = slice.iter().rposition(|u| unit_char(u).is_none_or(|c| c != ' ')).map_or(0, |p| p + 1);
                     let used: f32 = slice[..visible_end].iter().map(unit_width).sum();
                     let last = (n + 1 == physical_lines.len() && seg_idx + 1 == phys_line.len()) || seg.forced;
-                    let justify = match p.align {
-                        FlowAlign::Justify => !last,
-                        FlowAlign::Distribute => true,
-                        _ => false,
-                    };
-                    let has_tab = slice.iter().any(|u| matches!(u, Unit::Tab));
-                    let expands = justify_gaps(slice, visible_end, p.align == FlowAlign::Distribute);
-                    let gaps = expands.iter().filter(|e| **e).count();
                     let room = seg.slot_w;
-                    let extra = if justify && !has_tab && used < room && gaps > 0 { (room - used) / gaps as f32 } else { 0.0 };
+                    let (extra, expands) = justify_extra(slice, visible_end, p.align, last, room, used);
                     // A displayed formula alone on its line is centred.
                     let align = if slice.iter().any(|u| matches!(u, Unit::Math { display: true, .. })) && slice.iter().all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace())) { FlowAlign::Center } else { p.align };
                     let shift = match align {
@@ -2332,9 +2339,14 @@ impl<'r> Layouter<'r> {
         let mut x = 0.0;
         let mut i = 0;
         let mut last_break: Option<usize> = None;
+        // How much the spaces so far on the line may give (justified text).
+        let mut give = 0.0f32;
         while i < units.len() {
             let first_line = lines.is_empty();
             let room = width - right - line_start_x(first_line);
+            if i == start {
+                give = 0.0;
+            }
             match &units[i] {
                 Unit::LineBreak | Unit::PageBreak | Unit::ColumnBreak => {
                     lines.push((start, i + 1, true));
@@ -2379,7 +2391,7 @@ impl<'r> Layouter<'r> {
                     last_break = Some(i);
                 }
             }
-            if x + w > room + 0.01 && i > start {
+            if x + w > room + give + 0.01 && i > start {
                 // Spaces at the end of a line hang past the edge.
                 if c == Some(' ') {
                     x += w;
@@ -2407,6 +2419,9 @@ impl<'r> Layouter<'r> {
                 i = at;
                 continue;
             }
+            if c == Some(' ') && p.align == FlowAlign::Justify {
+                give += w * SPACE_GIVE;
+            }
             x += w;
             i += 1;
         }
@@ -2420,10 +2435,7 @@ impl<'r> Layouter<'r> {
 
         let mark_size = p.mark.size as f32 / 100.0;
         let mark_metrics = {
-            let name = p.mark.font_for('あ');
-            let font = self.font(&p.mark, name);
-            let (ascent, line) = self.line_metrics(name, &font, mark_size);
-            (line, ascent, Self::leading(name) * mark_size)
+            self.mark_metrics(p, mark_size)
         };
         let mut out = Vec::new();
         for (n, &(s, e, forced)) in lines.iter().enumerate() {
@@ -2448,15 +2460,7 @@ impl<'r> Layouter<'r> {
             let visible_end = slice.iter().rposition(|u| unit_char(u).is_none_or(|c| c != ' ')).map_or(0, |p| p + 1);
             let used: f32 = slice[..visible_end].iter().map(unit_width).sum();
             let last = n + 1 == lines.len() || forced;
-            let justify = match p.align {
-                FlowAlign::Justify => !last,
-                FlowAlign::Distribute => true,
-                _ => false,
-            };
-            let has_tab = slice.iter().any(|u| matches!(u, Unit::Tab));
-            let expands = justify_gaps(slice, visible_end, p.align == FlowAlign::Distribute);
-            let gaps = expands.iter().filter(|e| **e).count();
-            let extra = if justify && !has_tab && used < room && gaps > 0 { (room - used) / gaps as f32 } else { 0.0 };
+            let (extra, expands) = justify_extra(slice, visible_end, p.align, last, room, used);
             // A displayed formula alone on its line is centred.
             let align = if slice.iter().any(|u| matches!(u, Unit::Math { display: true, .. })) && slice.iter().all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace())) { FlowAlign::Center } else { p.align };
             let shift = match align {
@@ -2862,6 +2866,21 @@ fn unit_width(u: &Unit) -> f32 {
 }
 
 impl Layouter<'_> {
+    /// The line an empty paragraph (or its mark) takes, its ascent and its
+    /// leading: the taller of its mark's East Asian and Latin typefaces (Word's
+    /// PDF of a paper: an empty footer line of Times New Roman with ＭＳ 明朝
+    /// for East Asian text is Times' height, not Mincho's).
+    fn mark_metrics(&self, p: &FlowParagraph, size: f32) -> (f32, f32, f32) {
+        let metrics = |c: char| {
+            let name = p.mark.font_for(c);
+            let font = self.font(&p.mark, name);
+            let (ascent, line) = self.line_metrics(name, &font, size);
+            (line, ascent, Self::leading(name) * size)
+        };
+        let (east_asian, latin) = (metrics('あ'), metrics('a'));
+        if latin.0 + latin.2 > east_asian.0 + east_asian.2 + 0.01 { latin } else { east_asian }
+    }
+
     /// A floating shape of a paragraph placed as its anchor says, from the
     /// paragraph's line (`x` along it, `width` of text, the line `line_h` tall):
     /// x from the left margin, y from the line's top (or the top margin).
@@ -2873,6 +2892,8 @@ impl Layouter<'_> {
         let margin_l = pt(self.doc.page.left);
         let margin_r = pt(self.doc.page.right);
         let is_even = page_number % 2 == 0;
+        // The column's left on the page, from the left margin.
+        let col = self.column_dx.get();
 
         let (base_x0, base_w) = match f.relative_h.as_str() {
             "page" => (0.0, page_w),
@@ -2880,16 +2901,17 @@ impl Layouter<'_> {
             "rightMargin" => (page_w - margin_r, margin_r),
             "insideMargin" => if is_even { (page_w - margin_r, margin_r) } else { (0.0, margin_l) },
             "outsideMargin" => if is_even { (0.0, margin_l) } else { (page_w - margin_r, margin_r) },
-            "character" => (margin_l + x, (width - x).max(0.0)),
-            _ /* "column" | "margin" */ => (margin_l, width),
+            "character" => (margin_l + col + x, (width - x).max(0.0)),
+            "margin" => (margin_l, (page_w - margin_l - margin_r).max(0.0)),
+            _ /* "column" */ => (margin_l + col, width),
         };
 
         let abs_x = if f.relative_h == "character" {
             match f.align_h.as_deref() {
-                Some("center") => margin_l + x - sw / 2.0,
-                Some("right") => margin_l + x - sw,
-                Some("left") => margin_l + x,
-                _ => margin_l + x + pt(f.offset_x),
+                Some("center") => margin_l + col + x - sw / 2.0,
+                Some("right") => margin_l + col + x - sw,
+                Some("left") => margin_l + col + x,
+                _ => margin_l + col + x + pt(f.offset_x),
             }
         } else {
             match f.align_h.as_deref() {
@@ -2902,7 +2924,7 @@ impl Layouter<'_> {
             }
         };
         let abs_x = abs_x.clamp(0.0, (page_w - sw).max(0.0));
-        let sx = abs_x - margin_l;
+        let sx = abs_x - margin_l - col;
         let page_h = pt(self.doc.page.size.height);
         let margin_t = pt(self.doc.page.top);
         let margin_b = pt(self.doc.page.bottom);
@@ -2942,6 +2964,36 @@ fn unit_char(u: &Unit) -> Option<char> {
         Unit::Char { c, .. } => Some(*c),
         _ => None,
     }
+}
+
+/// The narrowest room beside a shape lines go into (points): narrower, the
+/// text goes on past the shape (and a shape leaving no wider room on either
+/// side of a column is across it).
+const MIN_WRAP_ROOM: f32 = 15.0;
+
+/// How much of its width a space of a justified line may give to fit one
+/// more word: Word's PDF of a paper has lines whose spaces are all down to
+/// 72 % of the font's (1.70 pt for Arial's 2.36 pt at 8.5 pt), none below.
+const SPACE_GIVE: f32 = 0.28;
+
+/// The extra width at each gap of a justified line (negative where the line
+/// is over its room: then only spaces give, see `SPACE_GIVE`), and where.
+fn justify_extra(slice: &[Unit], visible_end: usize, align: FlowAlign, last: bool, room: f32, used: f32) -> (f32, Vec<bool>) {
+    let has_tab = slice.iter().any(|u| matches!(u, Unit::Tab));
+    if has_tab || !matches!(align, FlowAlign::Justify | FlowAlign::Distribute) {
+        return (0.0, Vec::new());
+    }
+    if used > room + 0.01 && align == FlowAlign::Justify {
+        let spaces: Vec<bool> = (0..visible_end).map(|k| k + 1 < visible_end && slice.get(k).and_then(unit_char) == Some(' ')).collect();
+        let n = spaces.iter().filter(|s| **s).count();
+        return if n > 0 { ((room - used) / n as f32, spaces) } else { (0.0, Vec::new()) };
+    }
+    if last && align == FlowAlign::Justify {
+        return (0.0, Vec::new());
+    }
+    let expands = justify_gaps(slice, visible_end, align == FlowAlign::Distribute);
+    let gaps = expands.iter().filter(|e| **e).count();
+    if used < room && gaps > 0 { ((room - used) / gaps as f32, expands) } else { (0.0, Vec::new()) }
 }
 
 /// Which characters of a justified line take extra width after them, as
@@ -4173,7 +4225,7 @@ impl<'r> Layouter<'r> {
                     continue;
                 }
                 if let Block::Paragraph(p) = b {
-                    if let Some(shape) = square_shape(p, self.hides_deleted()) {
+                    if let Some(shape) = square_shape(p, self.hides_deleted()).filter(|s| !self.deferred_shapes.borrow().contains(&s.id.0)) {
                         let f = shape.floating.as_ref().unwrap();
                         if f.relative_v != "paragraph" && f.relative_v != "line" {
                             let sw = pt(shape.frame.width);
@@ -4302,8 +4354,23 @@ impl<'r> Layouter<'r> {
         // (a figure across both) keeps the text of the next column off it too.
         let mut page_obstacles: Vec<WrapObstacle> = Vec::new();
         // Floating shapes put off to the next page's top: the shape, x from
-        // the column, y from the first of them, width and height.
+        // the left margin, y from the first of them, width and height.
         let mut deferred: Vec<(Box<ibis_doc_model::Shape>, f32, f32, f32, f32)> = Vec::new();
+        // The shapes a first laying out placed above their paragraphs, on the
+        // page just begun: there from its start, the text round them.
+        macro_rules! seed_page {
+            () => {{
+                let index = pages.len() - 1;
+                for (_, obs, item, _) in self.seeds.iter().filter(|s| s.0 == index) {
+                    page_obstacles.push(obs.clone());
+                    if active_obstacle.is_none() {
+                        active_obstacle = Some(obs.clone());
+                    }
+                    pages.last_mut().expect("a page").items.push(item.clone());
+                }
+            }};
+        }
+        seed_page!();
         // The columns being filled on the page (段組み): the section's, the
         // column, where they start, how far each is filled, and the pieces
         // put in them (their items on the page, top, height and column; to
@@ -4348,7 +4415,7 @@ impl<'r> Layouter<'r> {
                 // The shapes put off to this page: at its top, the text round them.
                 let margin_l = pt(setups[$s].page.left);
                 for (shape, x, dy, w, h) in deferred.drain(..) {
-                    let (sx, sy) = (frame.left + x, frame.top + dy);
+                    let (sx, sy) = (margin_l + x, frame.top + dy);
                     if let Some(f) = shape.floating.as_ref()
                         && matches!(f.wrap.as_str(), "square" | "tight" | "through")
                     {
@@ -4367,6 +4434,7 @@ impl<'r> Layouter<'r> {
                     }
                     pages.last_mut().expect("a page").items.push(Item::Shape { shape, x: sx, y: sy, w, h });
                 }
+                seed_page!();
             }};
         }
         // On in the next column, or the next page after the last.
@@ -4388,6 +4456,8 @@ impl<'r> Layouter<'r> {
                 }
             }};
         }
+        // The block before had its mark deleted (joined with this one).
+        let mut joins_next = false;
         // Pieces are laid out with the number of the page they start on.
         for (b, block) in self.doc.body.iter().enumerate() {
             let s = sections_of[b];
@@ -4405,6 +4475,8 @@ impl<'r> Layouter<'r> {
                 (region_s, col, col_top) = (s, 0, y);
                 col_fill.clear();
                 placed.clear();
+                page_obstacles.clear();
+                seed_page!();
             }
             // A section that starts on the page (continuous): the columns
             // before are balanced (as Word does where a section ends), and
@@ -4466,13 +4538,15 @@ impl<'r> Layouter<'r> {
                 new_page!(s);
                 active_obstacle = find_page_obstacle(s, number, &frame).or(active_obstacle.take());
             }
-            // No block starts inside an obstacle across its column (a figure
-            // over the page's width): below it, or in the next column.
+            // No block starts inside an obstacle across its column down to the
+            // column's end (a figure over the page): in the next column. (One
+            // ending in the column, the block's lines go below it, a line at a
+            // time as Word's do.)
             loop {
                 let (left, right) = (frame.left - pt(setups[s].page.left), frame.left - pt(setups[s].page.left) + frame.width);
                 let Some(bottom) = page_obstacles
                     .iter()
-                    .filter(|o| o.shape_left <= left + 0.5 && o.shape_right >= right - 0.5 && o.y_top <= y + 0.5 && o.y_bottom > y + 0.01)
+                    .filter(|o| o.shape_left - left < MIN_WRAP_ROOM && right - o.shape_right < MIN_WRAP_ROOM && o.y_top <= y + 0.5 && o.y_bottom > y + 0.01)
                     .map(|o| o.y_bottom)
                     .reduce(f32::max)
                 else {
@@ -4481,10 +4555,10 @@ impl<'r> Layouter<'r> {
                 if bottom >= frame.bottom - 0.01 {
                     advance!(s);
                 } else {
-                    y = bottom;
                     break;
                 }
             }
+            self.column_dx.set(frame.left - pt(setups[s].page.left));
             let obstacle_for_block = if let Block::Paragraph(p) = block {
                 let pad = |b: Option<FlowBorder>| b.map_or(0.0, |b| pt(b.space) + pt(b.total()));
                 let before_pad = self.space_before(p) + pad(p.borders[0]);
@@ -4500,7 +4574,7 @@ impl<'r> Layouter<'r> {
                         .map(|o| (o.shape_left - col_dx, o.shape_right - col_dx, o.y_top - top, o.y_bottom - top))
                         .collect()
                 };
-                if let Some(shape) = square_shape(p, self.hides_deleted()) {
+                if let Some(shape) = square_shape(p, self.hides_deleted()).filter(|s| !self.deferred_shapes.borrow().contains(&s.id.0)) {
                     let f = shape.floating.as_ref().unwrap();
                     let sw = pt(shape.frame.width);
                     let sh = pt(shape.frame.height);
@@ -4552,10 +4626,7 @@ impl<'r> Layouter<'r> {
                     let para_top = y + before_pad;
                     let mark_size = p.mark.size as f32 / 100.0;
                     let mark_metrics = {
-                        let name = p.mark.font_for('あ');
-                        let font = self.font(&p.mark, name);
-                        let (ascent, line) = self.line_metrics(name, &font, mark_size);
-                        (line, ascent, Self::leading(name) * mark_size)
+                        self.mark_metrics(p, mark_size)
                     };
                     let line_h = self.resolve_line_height(p, mark_metrics.0, mark_metrics.2, false);
                     let (base_y0, base_h) = match f.relative_v.as_str() {
@@ -4591,6 +4662,8 @@ impl<'r> Layouter<'r> {
                         && abs_y + sh + db > frame.bottom + 0.5
                         && y > col_top + 0.5;
                     if put_off {
+                        // Placed from the next page's first column.
+                        self.column_dx.set(0.0);
                         for r in p.runs.iter().filter(|r| !run_deleted(r, self.hides_deleted())) {
                             if let FlowRunKind::Shape(other) = &r.kind
                                 && other.floating.as_ref().is_some_and(|g| matches!(g.relative_v.as_str(), "paragraph" | "line"))
@@ -4600,6 +4673,7 @@ impl<'r> Layouter<'r> {
                                 self.deferred_shapes.borrow_mut().insert(other.id.0);
                             }
                         }
+                        self.column_dx.set(col_dx);
                         None
                     } else {
                     let wrap_poly_abs = matches!(f.wrap.as_str(), "tight" | "through")
@@ -4619,6 +4693,11 @@ impl<'r> Layouter<'r> {
                         wrap_text: wrap_text.clone(),
                         wrap_polygon: wrap_poly_abs,
                     };
+                    // Above its paragraph, over text laid out before it.
+                    if abs_y + sh + db > col_top + 0.5 && abs_y - dt < para_top - 1.0 {
+                        let item = Item::Shape { shape: Box::new(shape.clone()), x: abs_x, y: abs_y, w: sw, h: sh };
+                        self.raised.borrow_mut().push((pages.len() - 1, obs.clone(), item, shape.id.0));
+                    }
                     let extra = extra_obstacles(&page_obstacles, None);
                     active_obstacle = Some(obs.clone());
                     page_obstacles.push(obs.clone());
@@ -4729,6 +4808,9 @@ impl<'r> Layouter<'r> {
                 continue;
             }
             let mut pieces = self.pieces(block, frame.width, number, obstacle_for_block.as_ref(), false);
+            self.column_dx.set(0.0);
+            // Where the pieces were laid out for (their obstacles are that column's).
+            let laid_for = (pages.len(), col);
             // A section ending with the document's last paragraph starts no page.
             if b + 1 == self.doc.body.len()
                 && matches!(block, Block::Paragraph(p) if p.section_break != SectionBreak::None)
@@ -4745,7 +4827,9 @@ impl<'r> Layouter<'r> {
                 if y + total > frame.bottom + 0.01 && (y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len()) && total <= frame.bottom - frame.top {
                     advance!(s);
                     if obstacle_for_block.is_some() {
+                        self.column_dx.set(frame.left - pt(setups[s].page.left));
                         pieces = self.pieces(block, frame.width, number, None, false);
+                        self.column_dx.set(0.0);
                     }
                 }
             }
@@ -4776,7 +4860,9 @@ impl<'r> Layouter<'r> {
                     if fit == 1 || (fit == n - 1 && n == 3) {
                         advance!(s);
                         if obstacle_for_block.is_some() {
-                            pieces = self.pieces(block, frame.width, number, None, false);
+                            self.column_dx.set(frame.left - pt(setups[s].page.left));
+                        pieces = self.pieces(block, frame.width, number, None, false);
+                        self.column_dx.set(0.0);
                         }
                     } else if fit == n - 1 {
                         break_before = Some(n - 2);
@@ -4790,6 +4876,18 @@ impl<'r> Layouter<'r> {
             // the paragraph before).
             let no_height = matches!(block, Block::Paragraph(p) if p.runs.is_empty() && p.section.is_some() && p.section_break == SectionBreak::Continuous)
                 && columns_of(s).len() != columns_of((s + 1).min(setups.len() - 1)).len();
+            // A paragraph whose mark is deleted, where the view leaves deleted
+            // text out, is one with the next: nothing of it when its text is all
+            // deleted too, else no space between the two (their lines are not
+            // joined).
+            let hide_deleted = self.hides_deleted();
+            let mark_gone = matches!(block, Block::Paragraph(p) if p.mark_deleted.as_ref().is_some_and(|a| hide_deleted || !is_reviewer_shown(a)));
+            let all_gone = matches!(block, Block::Paragraph(p) if p.runs.iter().all(|r| run_deleted(r, hide_deleted)));
+            let no_height = no_height || (mark_gone && all_gone);
+            let joined = joins_next;
+            if !no_height {
+                joins_next = mark_gone;
+            }
             let mut queue: std::collections::VecDeque<Piece> = pieces.into();
             let mut popped = 0usize;
             while let Some(mut piece) = queue.pop_front() {
@@ -4798,6 +4896,16 @@ impl<'r> Layouter<'r> {
                     break_before = None;
                 }
                 popped += 1;
+                if joined && popped == 1 && !no_height {
+                    let above = piece.space_before;
+                    piece.items = piece.items.into_iter().map(|it| offset(it, 0.0, -above)).collect();
+                    piece.height -= above;
+                    piece.space_before = 0.0;
+                }
+                if mark_gone && queue.is_empty() && !no_height {
+                    piece.height -= piece.space_after;
+                    piece.space_after = 0.0;
+                }
                 if no_height {
                     // Its line stays (for the caret), at the top of its place.
                     let above = piece.space_before;
@@ -4818,12 +4926,13 @@ impl<'r> Layouter<'r> {
                     y -= after.min(piece.space_before);
                 }
                 // A piece laid out before an obstacle of the page was there (a
-                // figure put off to this page) goes below one across its column.
-                while obstacle_for_block.is_none() {
+                // figure put off to this page, or the piece gone on to another
+                // column) goes below one across its column.
+                while obstacle_for_block.is_none() || (pages.len(), col) != laid_for {
                     let (left, right) = (frame.left - pt(setups[s].page.left), frame.left - pt(setups[s].page.left) + frame.width);
                     let Some(bottom) = page_obstacles
                         .iter()
-                        .filter(|o| o.shape_left <= left + 0.5 && o.shape_right >= right - 0.5 && o.y_top < y + piece.height - 0.01 && o.y_bottom > y + 0.01)
+                        .filter(|o| o.shape_left - left < MIN_WRAP_ROOM && right - o.shape_right < MIN_WRAP_ROOM && o.y_top < y + piece.height - 0.01 && o.y_bottom > y + 0.01)
                         .map(|o| o.y_bottom)
                         .reduce(f32::max)
                     else {
@@ -5750,7 +5859,7 @@ fn paginate_collapsed(doc: &FlowDocument, res: &Resources) -> Pagination {
 fn paginate_whole(doc: &FlowDocument, res: &Resources) -> Pagination {
     let ids = ibis_doc_model::flow_command::sections(doc);
     let first_pitch = ids.first().and_then(|id| ibis_doc_model::flow_command::section_setup(doc, *id)).and_then(|s| s.page.line_pitch);
-    let lay_out = |known_pages: Option<(u32, Vec<u32>)>, known_notes: Option<std::collections::HashMap<(bool, u32), String>>| {
+    let lay_out = |known_pages: Option<(u32, Vec<u32>)>, known_notes: Option<std::collections::HashMap<(bool, u32), String>>, seeds: Vec<RaisedShape>| {
         let layouter = Layouter {
             res,
             doc,
@@ -5765,16 +5874,24 @@ fn paginate_whole(doc: &FlowDocument, res: &Resources) -> Pagination {
             note_numbers: known_notes.unwrap_or_else(|| note_numbers(doc)),
             current_note: std::cell::RefCell::new(String::new()),
             contextual: contextual_spacing(doc),
-            deferred_shapes: Default::default(),
+            deferred_shapes: std::cell::RefCell::new(seeds.iter().map(|s| s.3).collect()),
+            column_dx: std::cell::Cell::new(0.0),
+            raised: Default::default(),
+            seeds,
             current_cell: std::cell::Cell::new(None),
             field_paragraph: std::cell::Cell::new(None),
             comment_runs: map_comment_runs(doc),
         };
         let mut pagination = layouter.lay_out();
         layouter.grid_text_boxes(&mut pagination);
-        pagination
+        (pagination, layouter.raised.take())
     };
-    let first = lay_out(None, None);
+    let (first, raised) = lay_out(None, None, Vec::new());
+    // Shapes placed above their paragraphs, over text laid out before them:
+    // again, with them there from their pages' starts (Word lays such a page
+    // out again round them).
+    let (first, seeds) = if raised.is_empty() { (first, raised) } else { (lay_out(None, None, raised.clone()).0, raised) };
+    let lay_out = |known_pages, known_notes| lay_out(known_pages, known_notes, seeds.clone()).0;
     let need_page_counts = doc.body.iter().any(has_page_counts);
     let need_each_page_notes = has_each_page_notes(doc);
     if !need_page_counts && !need_each_page_notes {
