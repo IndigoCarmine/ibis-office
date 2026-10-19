@@ -65,8 +65,8 @@ pub struct InsertFormat {
 /// A change of character formatting (direct formatting, `w:rPr`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunChange {
-    /// The language of the text and of its East Asian text (`None`: as it was).
-    Language { lang: Option<String>, east_asia: Option<String> },
+    /// The language of the text, of its East Asian text, and of its Complex Script/Bidi text (`None`: as it was).
+    Language { lang: Option<String>, east_asia: Option<String>, bidi: Option<String> },
     Bold(bool),
     Italic(bool),
     Underline(bool),
@@ -116,8 +116,18 @@ pub enum RunChange {
     Shadow(bool),
     /// 浮き出し (`w:emboss`).
     Emboss(bool),
+    /// 校正しない (`w:noProof`).
+    NoProof(bool),
     /// 浮き彫り (`w:imprint`).
     Imprint(bool),
+    /// OpenType 合字 (`w14:ligatures`).
+    Ligatures(crate::flow::Ligatures),
+    /// OpenType 数字のスタイル (`w14:numForm`).
+    NumberForm(crate::flow::NumberForm),
+    /// OpenType 数字の間隔 (`w14:numSpacing`).
+    NumberSpacing(crate::flow::NumberSpacing),
+    /// OpenType 前後関係に依存する異体字 (`w14:cntxtAlts`).
+    ContextualAlternates(bool),
     /// Remove the direct formatting (the character style stays).
     Clear,
 }
@@ -125,14 +135,18 @@ pub enum RunChange {
 impl RunChange {
     pub fn apply(&self, f: &mut RunFormat) {
         match self {
-            RunChange::Language { lang, east_asia } => {
+            RunChange::Language { lang, east_asia, bidi } => {
                 if lang.is_some() {
                     f.lang.clone_from(lang);
                 }
                 if east_asia.is_some() {
                     f.lang_east_asia.clone_from(east_asia);
                 }
+                if bidi.is_some() {
+                    f.lang_bidi.clone_from(bidi);
+                }
             }
+            RunChange::NoProof(v) => f.no_proof = Some(*v),
             RunChange::Bold(v) => f.bold = Some(*v),
             RunChange::Italic(v) => f.italic = Some(*v),
             RunChange::Underline(v) => f.underline = Some(*v),
@@ -221,6 +235,10 @@ impl RunChange {
                     f.emboss = Some(false);
                 }
             }
+            RunChange::Ligatures(v) => f.ligatures = Some(*v),
+            RunChange::NumberForm(v) => f.num_form = Some(*v),
+            RunChange::NumberSpacing(v) => f.num_spacing = Some(*v),
+            RunChange::ContextualAlternates(v) => f.contextual_alternates = Some(*v),
             RunChange::Clear => *f = RunFormat { hidden: f.hidden, ..RunFormat::default() },
         }
     }
@@ -489,6 +507,10 @@ pub enum ParaChange {
     Bidi(bool),
     /// 行グリッド線に合わせる (`w:snapToGrid`).
     SnapToGrid(bool),
+    /// ドロップ キャップ (`w:framePr w:dropCap="drop|margin"`).
+    DropCap(Option<crate::flow::DropCap>),
+    /// 見出し段落の折りたたみ (`w15:collapsed`).
+    Collapsed(bool),
 }
 
 impl ParaChange {
@@ -552,6 +574,8 @@ impl ParaChange {
             ParaChange::WordWrap(v) => d.word_wrap = Some(*v),
             ParaChange::Bidi(v) => d.bidi = Some(*v),
             ParaChange::SnapToGrid(v) => d.snap = Some(*v),
+            ParaChange::DropCap(v) => d.drop_cap = Some(*v),
+            ParaChange::Collapsed(v) => d.collapsed = Some(*v),
         }
     }
 }
@@ -598,24 +622,47 @@ pub enum FlowCommand {
     SetPictureWrap { at: FlowPos, wrap: crate::model::PictureWrapType },
     /// Change the floating anchor properties of the picture at `at`.
     SetPictureFloating { at: FlowPos, anchor: Option<crate::model::FloatingAnchor> },
+    /// Change the text wrapping polygon (折り返し点) of the picture at `at`.
+    SetPictureWrapPolygon { at: FlowPos, polygon: Option<crate::model::WrapPolygon> },
+    /// Set or clear the subdocument reference (`w:subDoc`, DOCX-TOC-016) on paragraph `para`.
+    SetParagraphSubdocument { para: u32, subdoc: Option<crate::flow::SubdocumentInfo> },
     /// A text box (a floating rectangle, white with a thin black line)
     /// at `at`, `size` big, holding `text` (paragraphs split at `\n`).
     InsertTextBox { at: FlowPos, size: crate::geometry::EmuSize, text: String },
     /// A floating shape (a preset geometry; Word's 挿入 > 図形) at `at`, `size` big, filled with `fill` and
     /// outlined as `line` (none: no fill / no line).
     InsertShape { at: FlowPos, size: crate::geometry::EmuSize, geometry: crate::drawing::Geometry, fill: Option<crate::drawing::Rgb>, line: Option<(crate::drawing::Rgb, crate::geometry::Emu)> },
+    /// An inline chart (Word's 挿入 > グラフ): `shape` (a `ShapeKind::Chart`) at `at`, formatted as the text before it.
+    InsertChart { at: FlowPos, shape: Box<crate::model::Shape> },
+    /// The chart at `at` changed to `chart` (データの編集, a look changed).
+    SetChart { at: FlowPos, chart: Box<crate::chart::Chart> },
     /// A floating straight line (an arrow when `stroke` has ends) at `at`, `size` wide and high from its start.
     InsertLine { at: FlowPos, size: crate::geometry::EmuSize, stroke: crate::drawing::Stroke },
+    /// A connector at `at` (DOCX-IMAGE-014): a straight line, or a shape of an elbow or curved connector's `geometry`, drawn
+    /// from the frame's top left to its bottom right (mirrored by the flips), glued to the shapes in `glue`.
+    InsertConnector { at: FlowPos, size: crate::geometry::EmuSize, stroke: crate::drawing::Stroke, geometry: Option<crate::Geometry>, flip_h: bool, flip_v: bool, glue: crate::model::Glue },
     /// The whole outline of the shape (or line) at `at`; `None` takes it away (a line cannot have none).
     SetShapeStroke { at: FlowPos, stroke: Option<crate::drawing::Stroke> },
     /// The fill and the line of the shape at `at`: `None` leaves one as it is, `Some(None)` takes it away.
+    /// 図形の塗り（グラデーションを含む）と影: the fill and the shadow of a drawn shape (`None`: as it is; the shadow `Some(None)`: none).
+    SetShapeEffects { at: FlowPos, fill: Option<crate::drawing::Fill>, shadow: Option<Option<crate::drawing::Shadow>>, glow: Option<Option<(crate::drawing::Color, i64)>>, soft_edge: Option<Option<i64>>, reflection: Option<Option<crate::drawing::Reflection>> },
     SetShapeStyle { at: FlowPos, fill: Option<Option<crate::drawing::Rgb>>, line: Option<Option<(crate::drawing::Rgb, crate::geometry::Emu)>> },
     /// The text of the text box (or any shape with text) at `at`; the
     /// first paragraph's and run's formatting stays.
     SetShapeText { at: FlowPos, text: String },
+    /// Where the text sits vertically in the shape at `at` (DOCX-IMAGE-011, ribbon line 254: テキストの配置).
+    SetShapeAnchor { at: FlowPos, anchor: crate::text::VerticalAnchor },
     /// The size and (for a floating shape) the offset from where it is anchored of the
     /// shape at `at`; `None` leaves it as it is.
     SetShapeGeometry { at: FlowPos, size: Option<crate::geometry::EmuSize>, offset: Option<(crate::geometry::Emu, crate::geometry::Emu)> },
+    /// The connectors glued to shapes follow them to where the shapes are now (DOCX-IMAGE-014).
+    RerouteConnectors,
+    /// Put the floating shape at `at` where it was drawn: `size` and the position (`x`, `y`) from the top left of the page
+    /// (DOCX-IMAGE-011, drawing a shape by dragging).
+    PlaceShapeOnPage { at: FlowPos, size: crate::geometry::EmuSize, x: crate::geometry::Emu, y: crate::geometry::Emu },
+    /// The formatting of characters `from..to` of the text of the shape at `at` (counted in the text, paragraphs separated by one
+    /// character): only those characters change (DOCX-IMAGE-015).
+    SetShapeRangeFormat { at: FlowPos, from: usize, to: usize, bold: Option<bool>, italic: Option<bool>, size: Option<u32>, color: Option<crate::drawing::Rgb> },
     /// The text formatting of the shape at `at`, all of its text; `None` leaves it as it is.
     SetShapeTextFormat { at: FlowPos, bold: Option<bool>, italic: Option<bool>, size: Option<u32>, color: Option<crate::drawing::Rgb> },
     /// The paper size and margins (of the document's last section).
@@ -634,7 +681,31 @@ pub enum FlowCommand {
     /// Change the date and displayed text of a date picker content control (DOCX-FORM-007).
     SetDatePickerDate { at: FlowPos, full_date: String, text: String },
     /// Change the text of a content control (DOCX-FORM-001, DOCX-FORM-002).
-    SetContentControlText { at: FlowPos, text: String },
+    SetContentControlText { at: FlowPos, text: String, placeholder: bool },
+    /// Change the text of a legacy text form field (DOCX-FORM-016).
+    SetFormFieldText { at: FlowPos, text: String },
+    /// Change the metadata properties of a legacy form field.
+    SetFormFieldMeta { at: FlowPos, name: String, enabled: bool, calc_on_exit: bool },
+    /// Insert a picture content control (DOCX-FORM-003).
+    InsertPictureControl { at: FlowPos, media: crate::model::MediaId, size: crate::geometry::EmuSize, placeholder: bool },
+    /// Reset a picture content control to placeholder (DOCX-FORM-003).
+    ResetPictureControl { at: FlowPos, placeholder_media: crate::model::MediaId, size: crate::geometry::EmuSize },
+    /// Change the gallery and category of a building block gallery content control (DOCX-FORM-008).
+    SetBuildingBlockGalleryMeta { at: FlowPos, gallery: String, category: String },
+    /// Insert an item into a repeating section content control (DOCX-FORM-009).
+    InsertRepeatingSectionItem { at: FlowPos, index: usize, text: String, restore_selected: Option<usize> },
+    /// Delete an item from a repeating section content control (DOCX-FORM-009).
+    DeleteRepeatingSectionItem { at: FlowPos, index: usize, restore_selected: Option<usize> },
+    /// Select the active item in a repeating section content control (DOCX-FORM-009).
+    SelectRepeatingSectionItem { at: FlowPos, index: usize },
+    /// Change the section title and insert/delete restriction of a repeating section (DOCX-FORM-009).
+    SetRepeatingSectionMeta { at: FlowPos, section_title: String, do_not_allow_insert_delete: bool },
+    /// Group the run at `at` into a group content control (DOCX-FORM-014).
+    GroupControl { at: FlowPos, text: String, placeholder: bool, control: Option<Box<crate::flow::ControlInfo>> },
+    /// Ungroup a group content control at `at`, converting it back to plain text (DOCX-FORM-014).
+    UngroupControl { at: FlowPos, restore: Option<(String, bool, Option<Box<crate::flow::ControlInfo>>)> },
+    /// The title, tag and lock of the content control at `at`.
+    SetControlInfo { at: FlowPos, info: Option<Box<crate::flow::ControlInfo>> },
     /// Make the text from `from` to `to` (in one paragraph) a link, or no
     /// link (`None`).
     SetLink { from: FlowPos, to: FlowPos, link: Option<crate::flow::Link> },
@@ -675,12 +746,24 @@ pub enum FlowCommand {
     /// Define style `id` as `style` (a new style, or a changed one), or
     /// remove it (`None`); the paragraphs are drawn again with it.
     SetStyle { id: String, style: Option<crate::flow::FlowStyle> },
+    /// ドキュメント全体の段落の間隔のプリセット（Word's デザイン > ドキュメントの書式設定 > 段落の間隔）.
+    SetDocumentParagraphSpacing {
+        preset: Option<crate::flow::ParagraphSpacingPreset>,
+        styles: Option<crate::flow::FlowStyles>,
+    },
+    /// ドキュメント全体のスタイル セットのプリセット（Word's デザイン > ドキュメントの書式設定 > スタイル セット）.
+    SetDocumentStyleSet {
+        preset: Option<crate::flow::StyleSetPreset>,
+        styles: Option<crate::flow::FlowStyles>,
+    },
     /// 文字種の変換 (DOCX-JA-020: 全角半角・大文字小文字・ひらがなカタカナ).
     ConvertCase { from: FlowPos, to: FlowPos, conversion: CaseConversion },
     /// ページの色 (`w:background`), or none.
     SetPageColor(Option<Rgb>),
     /// フィールドコードの表示/非表示（文書全体、Word の Alt+F9 / ⌥F9）。
     SetShowFieldCodes(bool),
+    /// コンテンツ コントロールのデザイン モード（Word の「デザイン モード」開発 > デザイン モード）。
+    SetFormDesignMode(bool),
     /// 文書のプロパティ（タイトル、作成者、作成日時等）の変更。
     SetDocProperties(crate::flow::DocProperties),
     /// 最終版としてマーク（Word の「最終版にする」）。
@@ -689,8 +772,18 @@ pub enum FlowCommand {
     SetReadOnlyRecommended(bool),
     /// 禁則文字の設定: the characters a line may not start (`start`) and end with; `None` is the standard ones.
     SetKinsokuLists { start: Option<String>, end: Option<String> },
+    /// 禁則処理の方式（Word の「禁則処理の方式」標準/厳密: `w:strictFirstAndLastChars`、DOCX-JA-010）。
+    SetStrictFirstAndLastChars(bool),
+    /// 文書の既定テーマフォント言語・既定言語（Word の「校正言語の設定 > 既定に設定」: `w:themeFontLang`、DOCX-JA-019）。
+    SetThemeFontLang(Option<crate::flow::ThemeFontLang>),
     /// 印刷前・文書オープン時にフィールドを更新（Word の「印刷前にフィールドを更新する」）。
     SetUpdateFields(bool),
+    /// 差し込み印刷の文書の種類（`w:mailMerge/w:mainDocumentType`）を設定する（`None`: 通常の文書）。
+    SetMailMergeType(Option<String>),
+    /// 差し込み印刷のフィールドと列の対応（`w:mailMerge/w:odso/w:fieldMapData`、DOCX-MERGE-009）。
+    SetMailMergeFieldMap(Vec<crate::merge::FieldMapData>),
+    /// 注の区切り線: the line above the footnotes (`endnote` false) or the endnotes.
+    SetNoteSeparator { endnote: bool, kind: crate::flow::NoteSeparator },
     /// 文書変数（Word の ActiveDocument.Variables、w:settings の w:docVars）。
     SetDocVariables(std::collections::BTreeMap<String, String>),
     /// 変更履歴の記録をロック（Word の「変更履歴の記録をロック」）。
@@ -703,6 +796,22 @@ pub enum FlowCommand {
     SetDocumentProtection(crate::flow::DocumentProtection),
     /// 書式変更の制限の変更（Word の `w:documentProtection/@w:formatting`、DOCX-SEC-003）。
     SetFormattingProtection(bool),
+    /// 画像の圧縮（メディアの置換およびトリミング破棄、DOCX-OPTIONS-011）。
+    CompressPicture { at: FlowPos, media: crate::model::MediaId, reset_crop: bool },
+    /// 画像の品質と圧縮設定の変更（Word の「画像のサイズと品質」、DOCX-OPTIONS-011）。
+    SetImageQualitySettings { default_dpi: Option<u32>, discard_crop: bool, do_not_compress: bool },
+    /// 自動回復用データの保存間隔の変更（Word の「自動回復用データの保存間隔」、DOCX-OPTIONS-012）。
+    SetSaveFrequency(Option<u32>),
+    /// フォントの埋め込み設定の変更（Word の「ファイルにフォントを埋め込む」、DOCX-OPTIONS-013）。
+    SetFontEmbedding { embed_true_type_fonts: bool, embed_system_fonts: bool, save_subset_fonts: bool },
+    /// 互換性オプションの変更（Word の「互換性オプション」、DOCX-OPTIONS-013）。
+    SetCompatibilityOptions { compatibility_mode: Option<u32>, use_fe_layout: bool, do_not_expand_shift_return: bool },
+    /// 添付テンプレートおよびスタイル自動更新の変更（Word の「テンプレートとアドイン」、DOCX-STYLE-017, DOCX-FILE-009）。
+    AttachTemplate { template: Option<String>, link_styles: bool },
+    /// 文書スタイルの一括更新（テンプレートからのスタイル適用、DOCX-STYLE-017, DOCX-FILE-009）。
+    UpdateStyles(std::sync::Arc<crate::flow::FlowStyles>),
+    /// 図形のグループ階層の変更（Word の `wpg:wgp` グループ化・グループ解除、DOCX-FLOAT-016）。
+    SetShapeGroups(Vec<crate::ShapeGroup>),
 }
 
 /// A change of a table (rows and cells by index, columns by grid column).
@@ -742,6 +851,8 @@ pub enum TableEdit {
     RepeatHeader { row: usize, on: bool },
     /// 行の途中で改ページしない: the rows kept on one page, or not.
     CantSplit { rows: Vec<usize>, on: bool },
+    /// A row's height (`w:trHeight`).
+    RowHeight { row: usize, height: crate::flow::RowHeight },
     /// 列の幅を揃える: the grid columns made as wide as each other, the
     /// table as wide as before.
     EqualColumns,
@@ -844,6 +955,58 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             }
             Ok(FlowCommand::SetStyle { id, style: old })
         }
+        FlowCommand::SetDocumentParagraphSpacing { preset, styles } => {
+            let old_preset = doc.paragraph_spacing_preset;
+            let old_styles = (*doc.styles).clone();
+            doc.paragraph_spacing_preset = preset;
+            if let Some(styles) = styles {
+                doc.styles = std::sync::Arc::new(styles);
+            } else if let Some(preset) = preset {
+                let (before, after, line) = preset.spacing();
+                let s = std::sync::Arc::make_mut(&mut doc.styles);
+                let normal_id = s.default_paragraph.clone().or_else(|| {
+                    s.paragraph_style_named("Normal").map(str::to_string)
+                });
+                if let Some(normal_id) = normal_id {
+                    if let Some(normal_style) = s.styles.get_mut(&normal_id) {
+                        normal_style.para.before = Some(before);
+                        normal_style.para.after = Some(after);
+                        normal_style.para.line = Some(line);
+                    }
+                } else {
+                    s.defaults_para.before = Some(before);
+                    s.defaults_para.after = Some(after);
+                    s.defaults_para.line = Some(line);
+                }
+            }
+            let styles = doc.styles.clone();
+            for list in [&mut doc.body, &mut doc.header, &mut doc.footer, &mut doc.header_first, &mut doc.footer_first, &mut doc.header_even, &mut doc.footer_even] {
+                resolve_all(list, &styles);
+            }
+            Ok(FlowCommand::SetDocumentParagraphSpacing {
+                preset: old_preset,
+                styles: Some(old_styles),
+            })
+        }
+        FlowCommand::SetDocumentStyleSet { preset, styles } => {
+            let old_preset = doc.style_set_preset;
+            let old_styles = (*doc.styles).clone();
+            doc.style_set_preset = preset;
+            if let Some(styles) = styles {
+                doc.styles = std::sync::Arc::new(styles);
+            } else if let Some(preset) = preset {
+                let s = std::sync::Arc::make_mut(&mut doc.styles);
+                preset.apply(s);
+            }
+            let styles = doc.styles.clone();
+            for list in [&mut doc.body, &mut doc.header, &mut doc.footer, &mut doc.header_first, &mut doc.footer_first, &mut doc.header_even, &mut doc.footer_even] {
+                resolve_all(list, &styles);
+            }
+            Ok(FlowCommand::SetDocumentStyleSet {
+                preset: old_preset,
+                styles: Some(old_styles),
+            })
+        }
         FlowCommand::ConvertCase { from, to, conversion } => {
             let (container, first, last, from, to) = ordered(doc, from, to)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
@@ -906,7 +1069,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 (0, vec![Block::Paragraph(p.clone()), Block::Table(table)])
             } else {
                 let mut first = FlowParagraph { runs: p.runs_before(at.offset), ..p.clone() };
-                let mut second = FlowParagraph { id: id(), runs: p.runs_after(at.offset), section_break: crate::flow::SectionBreak::None, section: None, bookmarks: Vec::new(), field_start: None, field_end: false, ..p.clone() };
+                let mut second = FlowParagraph { id: id(), runs: p.runs_after(at.offset), section_break: crate::flow::SectionBreak::None, section: None, bookmarks: Vec::new(), field_start: None, field_end: false, subdoc: None, ..p.clone() };
                 first.resolve(&styles);
                 first.normalize();
                 second.resolve(&styles);
@@ -930,10 +1093,47 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let (format, char_style, style) = old.format_at(at.offset);
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
-            p.runs.push(FlowRun { kind: FlowRunKind::Picture { media, size, look: Default::default() }, style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false });
+            p.runs.push(FlowRun { kind: FlowRunKind::Picture { media, size, look: Default::default() }, style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
             p.runs.extend(old.runs_after(at.offset));
             p.resolve(&styles);
             p.normalize();
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::InsertPictureControl { at, media, size, placeholder } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let (format, char_style, style) = old.format_at(at.offset);
+            let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
+            p.runs.push(FlowRun { kind: FlowRunKind::PictureControl { media, size, look: Default::default(), placeholder }, style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
+            p.runs.extend(old.runs_after(at.offset));
+            p.resolve(&styles);
+            p.normalize();
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::ResetPictureControl { at, placeholder_media, size } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let run = p.runs.get_mut(i).ok_or(EditError::IndexOutOfRange)?;
+            if let Some(c) = run.control.as_ref().filter(|_| run.is_content_control()) {
+                if c.lock.keeps_content() {
+                    return Err(EditError::ControlLocked);
+                }
+            }
+            match &mut run.kind {
+                FlowRunKind::PictureControl { media: m, size: s, look, placeholder } => {
+                    *m = placeholder_media;
+                    *s = size;
+                    *look = Default::default();
+                    *placeholder = true;
+                }
+                _ => return Err(EditError::IndexOutOfRange),
+            }
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
@@ -944,7 +1144,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let mut p = old.clone();
             let i = p.boundary(at.offset);
             match p.runs.get_mut(i) {
-                Some(FlowRun { kind: FlowRunKind::Picture { size: s, .. }, .. }) => *s = size,
+                Some(FlowRun { kind: FlowRunKind::Picture { size: s, .. } | FlowRunKind::PictureControl { size: s, .. }, .. }) => *s = size,
                 Some(FlowRun { kind: FlowRunKind::Shape(shape), .. }) => {
                     shape.frame.width = size.width;
                     shape.frame.height = size.height;
@@ -961,7 +1161,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let mut p = old.clone();
             let i = p.boundary(at.offset);
             match p.runs.get_mut(i) {
-                Some(FlowRun { kind: FlowRunKind::Picture { look: l, .. }, .. }) => *l = look,
+                Some(FlowRun { kind: FlowRunKind::Picture { look: l, .. } | FlowRunKind::PictureControl { look: l, .. }, .. }) => *l = look,
                 Some(FlowRun { kind: FlowRunKind::Shape(shape), .. }) => {
                     shape.rotation = look.rotation;
                     shape.flip_h = look.flip_h;
@@ -970,11 +1170,13 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         pic.crop = look.crop;
                         pic.stroke = look.stroke;
                         pic.luminance = look.luminance;
-                        pic.alpha = look.alpha;
                         pic.duotone = look.duotone;
                         pic.alt_text = look.alt_text;
                         pic.decorative = look.decorative;
                         pic.name = look.name;
+                        pic.effects = look.effects;
+                        pic.soft_edge = look.soft_edge;
+                        pic.geometry = look.geometry;
                     }
                 }
                 _ => return Err(EditError::IndexOutOfRange),
@@ -988,14 +1190,27 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let mut p = old.clone();
             let i = p.boundary(at.offset);
-            match p.runs.get_mut(i) {
-                Some(FlowRun { kind: FlowRunKind::Picture { media: m, size: s, .. }, .. }) => {
+            let run = p.runs.get_mut(i).ok_or(EditError::IndexOutOfRange)?;
+            if let Some(c) = run.control.as_ref().filter(|_| run.is_content_control()) {
+                if c.lock.keeps_content() {
+                    return Err(EditError::ControlLocked);
+                }
+            }
+            match &mut run.kind {
+                FlowRunKind::Picture { media: m, size: s, .. } => {
                     *m = media;
                     if let Some(new_size) = size {
                         *s = new_size;
                     }
                 }
-                Some(FlowRun { kind: FlowRunKind::Shape(shape), .. }) => {
+                FlowRunKind::PictureControl { media: m, size: s, placeholder, .. } => {
+                    *m = media;
+                    *placeholder = false;
+                    if let Some(new_size) = size {
+                        *s = new_size;
+                    }
+                }
+                FlowRunKind::Shape(shape) => {
                     if let crate::model::ShapeKind::Picture(pic) = &mut shape.kind {
                         pic.media = media;
                     }
@@ -1011,7 +1226,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         }
         FlowCommand::InsertTextBox { at, size, text } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
-            let shape_id = doc.new_id();
+            let shape_id = doc.new_shape_id();
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let (format, char_style, style) = old.format_at(at.offset);
@@ -1040,7 +1255,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 floating: Some(crate::model::FloatingAnchor::default()),
             };
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
-            p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false });
+            p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
             p.runs.extend(old.runs_after(at.offset));
             p.resolve(&styles);
             p.normalize();
@@ -1049,7 +1264,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         }
         FlowCommand::InsertShape { at, size, geometry, fill, line } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
-            let shape_id = doc.new_id();
+            let shape_id = doc.new_shape_id();
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let (format, char_style, style) = old.format_at(at.offset);
@@ -1075,7 +1290,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 floating: Some(crate::model::FloatingAnchor { wrap: "square".into(), ..Default::default() }),
             };
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
-            p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false });
+            p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
             p.runs.extend(old.runs_after(at.offset));
             p.resolve(&styles);
             p.normalize();
@@ -1084,7 +1299,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         }
         FlowCommand::InsertLine { at, size, stroke } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
-            let shape_id = doc.new_id();
+            let shape_id = doc.new_shape_id();
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let (format, char_style, style) = old.format_at(at.offset);
@@ -1098,10 +1313,78 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 floating: Some(crate::model::FloatingAnchor { wrap: "none".into(), ..Default::default() }),
             };
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
-            p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false });
+            p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
             p.runs.extend(old.runs_after(at.offset));
             p.resolve(&styles);
             p.normalize();
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::InsertConnector { at, size, stroke, geometry, flip_h, flip_v, glue } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let shape_id = doc.new_shape_id();
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let (format, char_style, style) = old.format_at(at.offset);
+            let kind = match geometry {
+                None => crate::model::ShapeKind::Line(stroke),
+                Some(geometry) => crate::model::ShapeKind::Auto(crate::model::AutoShape {
+                    geometry,
+                    fill: crate::drawing::Fill::None,
+                    stroke: Some(stroke),
+                    text: None,
+                    tilt: None,
+                    shadow: None,
+                    glow: None,
+                    inner_shadow: None,
+                    soft_edge: None,
+                    reflection: None,
+                    bevel: None,
+                }),
+            };
+            let shape = crate::model::Shape {
+                id: crate::model::ShapeId(shape_id as u64),
+                frame: crate::geometry::EmuRect::new(0, 0, size.width, size.height),
+                rotation: 0,
+                flip_h,
+                flip_v,
+                kind,
+                floating: Some(crate::model::FloatingAnchor { wrap: "none".into(), glue, ..Default::default() }),
+            };
+            let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
+            p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
+            p.runs.extend(old.runs_after(at.offset));
+            p.resolve(&styles);
+            p.normalize();
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::InsertChart { at, shape } => {
+            if !matches!(shape.kind, crate::model::ShapeKind::Chart(_)) {
+                return Err(EditError::IndexOutOfRange);
+            }
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let (format, char_style, style) = old.format_at(at.offset);
+            let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
+            p.runs.push(FlowRun { kind: FlowRunKind::Shape(shape), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
+            p.runs.extend(old.runs_after(at.offset));
+            p.resolve(&styles);
+            p.normalize();
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::SetChart { at, chart } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
+            let FlowRunKind::Shape(shape) = &mut run.kind else { return Err(EditError::IndexOutOfRange) };
+            let crate::model::ShapeKind::Chart(c) = &mut shape.kind else { return Err(EditError::IndexOutOfRange) };
+            **c = *chart;
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
@@ -1117,6 +1400,33 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 crate::model::ShapeKind::Auto(a) => a.stroke = stroke,
                 crate::model::ShapeKind::Line(s) => *s = stroke.ok_or(EditError::IndexOutOfRange)?,
                 _ => return Err(EditError::IndexOutOfRange),
+            }
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::SetShapeEffects { at, fill, shadow, glow, soft_edge, reflection } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
+            let FlowRunKind::Shape(shape) = &mut run.kind else { return Err(EditError::IndexOutOfRange) };
+            let crate::model::ShapeKind::Auto(auto) = &mut shape.kind else { return Err(EditError::IndexOutOfRange) };
+            if let Some(fill) = fill {
+                auto.fill = fill;
+            }
+            if let Some(shadow) = shadow {
+                auto.shadow = shadow;
+            }
+            if let Some(glow) = glow {
+                auto.glow = glow;
+            }
+            if let Some(soft_edge) = soft_edge {
+                auto.soft_edge = soft_edge;
+            }
+            if let Some(reflection) = reflection {
+                auto.reflection = reflection;
             }
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
@@ -1155,6 +1465,22 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
+        FlowCommand::SetShapeAnchor { at, anchor } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
+            let FlowRunKind::Shape(shape) = &mut run.kind else { return Err(EditError::IndexOutOfRange) };
+            match &mut shape.kind {
+                crate::model::ShapeKind::Auto(a) => a.text.get_or_insert_with(Default::default).anchor = anchor,
+                crate::model::ShapeKind::TextBox(body) => body.anchor = anchor,
+                _ => return Err(EditError::IndexOutOfRange),
+            }
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
         FlowCommand::SetShapeGeometry { at, size, offset } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
@@ -1167,6 +1493,10 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 shape.frame.width = size.width.max(12_700);
                 shape.frame.height = size.height.max(12_700);
             }
+            // A connector put somewhere by hand is no longer glued to the shapes it was attached to.
+            if (size.is_some() || offset.is_some()) && crate::connector::is_connector(shape) && let Some(f) = shape.floating.as_mut() {
+                f.glue = crate::model::Glue::default();
+            }
             if let Some((x, y)) = offset
                 && let Some(f) = shape.floating.as_mut()
             {
@@ -1177,6 +1507,67 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 shape.frame.x = x;
                 shape.frame.y = y;
             }
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::RerouteConnectors => {
+            let moves = crate::connector::rerouted(doc);
+            let mut undo = Vec::new();
+            for (index, run, shape) in moves {
+                let Some(Block::Paragraph(old)) = doc.body.get(index).cloned() else { continue };
+                let mut p = old.clone();
+                let Some(r) = p.runs.get_mut(run) else { continue };
+                r.kind = FlowRunKind::Shape(Box::new(shape));
+                doc.body[index] = Block::Paragraph(p);
+                undo.push(FlowCommand::ReplaceBlocks { container: Container::Body, index, remove: 1, blocks: vec![Block::Paragraph(old)] });
+            }
+            undo.reverse();
+            Ok(FlowCommand::Many(undo))
+        }
+        FlowCommand::PlaceShapeOnPage { at, size, x, y } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
+            let FlowRunKind::Shape(shape) = &mut run.kind else { return Err(EditError::IndexOutOfRange) };
+            let Some(f) = shape.floating.as_mut() else { return Err(EditError::IndexOutOfRange) };
+            shape.frame.width = size.width.max(12_700);
+            shape.frame.height = size.height.max(12_700);
+            f.relative_h = "page".into();
+            f.relative_v = "page".into();
+            f.align_h = None;
+            f.align_v = None;
+            f.offset_x = x;
+            f.offset_y = y;
+            shape.frame.x = x;
+            shape.frame.y = y;
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::SetShapeRangeFormat { at, from, to, bold, italic, size, color } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
+            let FlowRunKind::Shape(shape) = &mut run.kind else { return Err(EditError::IndexOutOfRange) };
+            let body = match &mut shape.kind {
+                crate::model::ShapeKind::Auto(a) => a.text.as_mut(),
+                crate::model::ShapeKind::TextBox(body) => Some(body),
+                _ => None,
+            }
+            .ok_or(EditError::IndexOutOfRange)?;
+            let format = crate::text::CharacterFormat {
+                bold,
+                italic,
+                font_size: size.map(|v| v.clamp(crate::text::TextStyle::MIN_FONT_SIZE, crate::text::TextStyle::MAX_FONT_SIZE)),
+                color,
+                ..Default::default()
+            };
+            body.format_runs(from, to, &format);
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
@@ -1228,7 +1619,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         FlowCommand::SetPictureWrap { at, wrap } => {
             use crate::model::PictureWrapType;
             let (container, index, _, at, _) = ordered(doc, at, at)?;
-            let shape_id = doc.new_id();
+            let shape_id = doc.new_shape_id();
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let mut p = old.clone();
@@ -1249,6 +1640,8 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         let anchor = crate::model::FloatingAnchor {
                             wrap: wrap_str.to_string(),
                             behind_doc,
+                            wrap_polygon: matches!(wrap, PictureWrapType::Tight | PictureWrapType::Through)
+                                .then(crate::model::WrapPolygon::default_rect_21600),
                             ..Default::default()
                         };
                         let pic = crate::model::Picture {
@@ -1259,15 +1652,17 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             duotone: look.duotone,
                             clear: None,
                             luminance: look.luminance,
-                            alpha: look.alpha,
                             clip: None,
                             shadow: None,
                             reflection: None,
-                            soft_edge: None,
+                            soft_edge: look.soft_edge,
                             alt_text: look.alt_text.clone(),
                             decorative: look.decorative,
                             name: look.name.clone(),
                             ole: look.ole,
+                            geometry: look.geometry.clone(),
+                            effects: look.effects, tile: None, fill_rect: None,
+                            artistic_effect: None,
                         };
                         let shape = crate::model::Shape {
                             id: crate::model::ShapeId(shape_id as u64),
@@ -1282,6 +1677,29 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                     }
                 }
                 FlowRunKind::Shape(shape) => {
+                    // A drawn shape or a text box wraps as a picture does (not inline: it floats).
+                    if !matches!(shape.kind, crate::model::ShapeKind::Picture(_)) {
+                        if wrap == PictureWrapType::Inline || shape.floating.is_none() {
+                            return Err(EditError::IndexOutOfRange);
+                        }
+                        let (wrap_str, behind_doc) = match wrap {
+                            PictureWrapType::Inline => unreachable!(),
+                            PictureWrapType::Square => ("square", false),
+                            PictureWrapType::Tight => ("tight", false),
+                            PictureWrapType::Through => ("through", false),
+                            PictureWrapType::TopAndBottom => ("topAndBottom", false),
+                            PictureWrapType::BehindText => ("none", true),
+                            PictureWrapType::InFrontOfText => ("none", false),
+                        };
+                        let anchor = shape.floating.as_mut().unwrap();
+                        anchor.wrap = wrap_str.to_string();
+                        anchor.behind_doc = behind_doc;
+                        if matches!(wrap, PictureWrapType::Tight | PictureWrapType::Through) && anchor.wrap_polygon.is_none() {
+                            anchor.wrap_polygon = Some(crate::model::WrapPolygon::default_rect_21600());
+                        }
+                        list[index] = Block::Paragraph(p);
+                        return Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] });
+                    }
                     let crate::model::ShapeKind::Picture(pic) = &shape.kind else { return Err(EditError::IndexOutOfRange) };
                     if wrap == PictureWrapType::Inline {
                         let media = pic.media;
@@ -1293,12 +1711,15 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             crop: pic.crop,
                             stroke: pic.stroke.clone(),
                             luminance: pic.luminance,
-                            alpha: pic.alpha,
                             duotone: pic.duotone,
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
                             name: pic.name.clone(),
                             ole: pic.ole,
+                            linked_file: None,
+                            soft_edge: pic.soft_edge,
+                            effects: pic.effects,
+                            geometry: pic.geometry.clone(),
                         };
                         run.kind = FlowRunKind::Picture { media, size, look };
                     } else {
@@ -1314,6 +1735,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         let anchor = shape.floating.get_or_insert_with(Default::default);
                         anchor.wrap = wrap_str.to_string();
                         anchor.behind_doc = behind_doc;
+                        if matches!(wrap, PictureWrapType::Tight | PictureWrapType::Through) && anchor.wrap_polygon.is_none() {
+                            anchor.wrap_polygon = Some(crate::model::WrapPolygon::default_rect_21600());
+                        }
                     }
                 }
                 _ => return Err(EditError::IndexOutOfRange),
@@ -1323,7 +1747,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         }
         FlowCommand::SetPictureFloating { at, anchor } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
-            let shape_id = doc.new_id();
+            let shape_id = doc.new_shape_id();
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let mut p = old.clone();
@@ -1342,12 +1766,15 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             crop: pic.crop,
                             stroke: pic.stroke.clone(),
                             luminance: pic.luminance,
-                            alpha: pic.alpha,
                             duotone: pic.duotone,
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
                             name: pic.name.clone(),
                             ole: pic.ole,
+                            linked_file: None,
+                            soft_edge: pic.soft_edge,
+                            effects: pic.effects,
+                            geometry: pic.geometry.clone(),
                         };
                         run.kind = FlowRunKind::Picture { media, size, look };
                     } else {
@@ -1363,15 +1790,17 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         duotone: look.duotone,
                         clear: None,
                         luminance: look.luminance,
-                        alpha: look.alpha,
                         clip: None,
                         shadow: None,
                         reflection: None,
-                        soft_edge: None,
+                        soft_edge: look.soft_edge,
                         alt_text: look.alt_text.clone(),
                         decorative: look.decorative,
                         name: look.name.clone(),
                         ole: look.ole,
+                        geometry: look.geometry.clone(),
+                        effects: look.effects, tile: None, fill_rect: None,
+                        artistic_effect: None,
                     };
                     let shape = crate::model::Shape {
                         id: crate::model::ShapeId(shape_id as u64),
@@ -1388,6 +1817,73 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             }
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::SetPictureWrapPolygon { at, polygon } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let shape_id = doc.new_shape_id();
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
+            match &mut run.kind {
+                FlowRunKind::Shape(shape) => {
+                    let anchor = shape.floating.get_or_insert_with(Default::default);
+                    if anchor.wrap != "through" {
+                        anchor.wrap = "tight".to_string();
+                    }
+                    anchor.behind_doc = false;
+                    anchor.wrap_polygon = polygon;
+                }
+                FlowRunKind::Picture { media, size, look } => {
+                    let anchor = crate::model::FloatingAnchor {
+                        wrap: "tight".to_string(),
+                        behind_doc: false,
+                        wrap_polygon: polygon,
+                        ..Default::default()
+                    };
+                    let pic = crate::model::Picture {
+                        media: *media,
+                        crop: look.crop,
+                        stroke: look.stroke.clone(),
+                        corner: 0,
+                        duotone: look.duotone,
+                        clear: None,
+                        luminance: look.luminance,
+                        clip: None,
+                        shadow: None,
+                        reflection: None,
+                        soft_edge: look.soft_edge,
+                        alt_text: look.alt_text.clone(),
+                        decorative: look.decorative,
+                        name: look.name.clone(),
+                        ole: look.ole,
+                        geometry: look.geometry.clone(),
+                        effects: look.effects, tile: None, fill_rect: None,
+                        artistic_effect: None,
+                    };
+                    let shape = crate::model::Shape {
+                        id: crate::model::ShapeId(shape_id as u64),
+                        frame: crate::geometry::EmuRect::new(0, 0, size.width, size.height),
+                        rotation: look.rotation,
+                        flip_h: look.flip_h,
+                        flip_v: look.flip_v,
+                        kind: crate::model::ShapeKind::Picture(pic),
+                        floating: Some(anchor),
+                    };
+                    run.kind = FlowRunKind::Shape(Box::new(shape));
+                }
+                _ => return Err(EditError::IndexOutOfRange),
+            }
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::SetParagraphSubdocument { para, subdoc } => {
+            let (container, index) = locate(doc, para).ok_or(EditError::IndexOutOfRange)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(p) = &mut list[index] else { return Err(EditError::IndexOutOfRange) };
+            let old = std::mem::replace(&mut p.subdoc, subdoc);
+            Ok(FlowCommand::SetParagraphSubdocument { para, subdoc: old })
         }
         FlowCommand::AddHeader { footer } => {
             let container = if footer { Container::Footer } else { Container::Header };
@@ -1456,7 +1952,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let (format, char_style, style) = old.format_at(at.offset);
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
-            p.runs.push(FlowRun { kind: FlowRunKind::PageNumber, style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false });
+            p.runs.push(FlowRun { kind: FlowRunKind::PageNumber, style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
             p.runs.extend(old.runs_after(at.offset));
             p.resolve(&styles);
             p.normalize();
@@ -1467,9 +1963,14 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
-            let (format, char_style, style) = old.format_at(at.offset);
+            let (mut format, char_style, style) = old.format_at(at.offset);
+            // A text content control's prompt is grey.
+            if matches!(kind, FlowRunKind::RichText { placeholder: true, .. } | FlowRunKind::PlainText { placeholder: true, .. } | FlowRunKind::BuildingBlockGallery { placeholder: true, .. } | FlowRunKind::Group { placeholder: true, .. })
+                || matches!(&kind, FlowRunKind::RepeatingSection { items, selected, .. } if items.get(*selected).is_some_and(|s| s == crate::flow::DEFAULT_REPEATING_SECTION_ITEM_PROMPT)) {
+                format.color = Some(crate::drawing::Rgb(0x808080));
+            }
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
-            p.runs.push(FlowRun { kind, style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false });
+            p.runs.push(FlowRun { kind, style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
             p.runs.extend(old.runs_after(at.offset));
             p.resolve(&styles);
             p.normalize();
@@ -1490,6 +1991,12 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         *checked = !*checked;
                         found = true;
                         break;
+                    } else if let FlowRunKind::FormField(field) = &mut run.kind {
+                        if let crate::flow::FormFieldKind::CheckBox { checked, .. } = &mut field.kind {
+                            *checked = !*checked;
+                            found = true;
+                            break;
+                        }
                     }
                 }
                 offset += len;
@@ -1516,6 +2023,14 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             old_selected = Some(*selected);
                             *selected = new_index;
                             break;
+                        }
+                    } else if let FlowRunKind::FormField(field) = &mut run.kind {
+                        if let crate::flow::FormFieldKind::DropDown { selected, items, .. } = &mut field.kind {
+                            if new_index < items.len() {
+                                old_selected = Some(*selected);
+                                *selected = new_index;
+                                break;
+                            }
                         }
                     }
                 }
@@ -1554,7 +2069,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::SetDatePickerDate { at, full_date: prev_date, text: prev_text })
         }
-        FlowCommand::SetContentControlText { at, text: new_text } => {
+        FlowCommand::SetContentControlText { at, text: new_text, placeholder: new_placeholder } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
@@ -1564,10 +2079,57 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             for run in &mut p.runs {
                 let len = run.len();
                 if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
-                    if let FlowRunKind::RichText { text } | FlowRunKind::PlainText { text } = &mut run.kind {
-                        old_text = Some(text.clone());
+                    if let Some(c) = run.control.as_ref().filter(|_| run.is_content_control()) {
+                        if c.lock.keeps_content() {
+                            return Err(EditError::ControlLocked);
+                        }
+                    }
+                    if let FlowRunKind::RichText { text, placeholder }
+                        | FlowRunKind::PlainText { text, placeholder }
+                        | FlowRunKind::BuildingBlockGallery { text, placeholder, .. }
+                        | FlowRunKind::Group { text, placeholder } = &mut run.kind {
+                        old_text = Some((text.clone(), *placeholder));
                         *text = new_text;
+                        *placeholder = new_placeholder;
                         break;
+                    }
+                    if let FlowRunKind::RepeatingSection { items, selected, .. } = &mut run.kind {
+                        if let Some(item) = items.get_mut(*selected) {
+                            old_text = Some((item.clone(), false));
+                            *item = new_text;
+                            break;
+                        }
+                    }
+                }
+                offset += len;
+            }
+            let Some((prev_text, prev_placeholder)) = old_text else {
+                return Err(EditError::IndexOutOfRange);
+            };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::SetContentControlText { at, text: prev_text, placeholder: prev_placeholder })
+        }
+        FlowCommand::SetFormFieldText { at, text: new_text } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut old_text = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
+                    if let FlowRunKind::FormField(field) = &mut run.kind {
+                        if let crate::flow::FormFieldKind::TextInput { value, max_length, .. } = &mut field.kind {
+                            old_text = Some(value.clone());
+                            let mut val = new_text;
+                            if *max_length > 0 && val.chars().count() > *max_length {
+                                val = val.chars().take(*max_length).collect();
+                            }
+                            *value = val;
+                            break;
+                        }
                     }
                 }
                 offset += len;
@@ -1577,7 +2139,342 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             };
             p.resolve(&styles);
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::SetContentControlText { at, text: prev_text })
+            Ok(FlowCommand::SetFormFieldText { at, text: prev_text })
+        }
+        FlowCommand::SetFormFieldMeta { at, name: new_name, enabled: new_enabled, calc_on_exit: new_calc_on_exit } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut old_meta = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
+                    if let FlowRunKind::FormField(field) = &mut run.kind {
+                        old_meta = Some((field.name.clone(), field.enabled, field.calc_on_exit));
+                        field.name = new_name;
+                        field.enabled = new_enabled;
+                        field.calc_on_exit = new_calc_on_exit;
+                        break;
+                    }
+                }
+                offset += len;
+            }
+            let Some((prev_name, prev_enabled, prev_calc)) = old_meta else {
+                return Err(EditError::IndexOutOfRange);
+            };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::SetFormFieldMeta { at, name: prev_name, enabled: prev_enabled, calc_on_exit: prev_calc })
+        }
+        FlowCommand::SetBuildingBlockGalleryMeta { at, gallery: new_gallery, category: new_category } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut old_meta = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
+                    if let FlowRunKind::BuildingBlockGallery { gallery, category, .. } = &mut run.kind {
+                        old_meta = Some((gallery.clone(), category.clone()));
+                        *gallery = new_gallery;
+                        *category = new_category;
+                        break;
+                    }
+                }
+                offset += len;
+            }
+            let Some((prev_gallery, prev_category)) = old_meta else {
+                return Err(EditError::IndexOutOfRange);
+            };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::SetBuildingBlockGalleryMeta { at, gallery: prev_gallery, category: prev_category })
+        }
+        FlowCommand::InsertRepeatingSectionItem { at, index: target_idx, text: new_text, restore_selected } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut prev_selected = None;
+            let mut actual_insert_at = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
+                    if let Some(c) = run.control.as_ref().filter(|_| run.is_content_control()) {
+                        if c.lock.keeps_content() {
+                            return Err(EditError::ControlLocked);
+                        }
+                    }
+                    if let FlowRunKind::RepeatingSection { items, selected, do_not_allow_insert_delete, .. } = &mut run.kind {
+                        if *do_not_allow_insert_delete {
+                            return Err(EditError::ControlLocked);
+                        }
+                        prev_selected = Some(*selected);
+                        let insert_at = target_idx.min(items.len());
+                        actual_insert_at = Some(insert_at);
+                        items.insert(insert_at, new_text);
+                        if let Some(sel) = restore_selected {
+                            *selected = sel.min(items.len().saturating_sub(1));
+                        } else {
+                            *selected = insert_at;
+                        }
+                        break;
+                    }
+                }
+                offset += len;
+            }
+            let (Some(prev_sel), Some(insert_at)) = (prev_selected, actual_insert_at) else {
+                return Err(EditError::IndexOutOfRange);
+            };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::DeleteRepeatingSectionItem { at, index: insert_at, restore_selected: Some(prev_sel) })
+        }
+        FlowCommand::DeleteRepeatingSectionItem { at, index: target_idx, restore_selected } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut removed_item = None;
+            let mut prev_selected = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
+                    if let Some(c) = run.control.as_ref().filter(|_| run.is_content_control()) {
+                        if c.lock.keeps_content() {
+                            return Err(EditError::ControlLocked);
+                        }
+                    }
+                    if let FlowRunKind::RepeatingSection { items, selected, do_not_allow_insert_delete, .. } = &mut run.kind {
+                        if *do_not_allow_insert_delete {
+                            return Err(EditError::ControlLocked);
+                        }
+                        if items.len() <= 1 || target_idx >= items.len() {
+                            return Err(EditError::IndexOutOfRange);
+                        }
+                        prev_selected = Some(*selected);
+                        let removed = items.remove(target_idx);
+                        if let Some(sel) = restore_selected {
+                            *selected = sel.min(items.len().saturating_sub(1));
+                        } else if *selected > target_idx {
+                            *selected -= 1;
+                        } else if *selected >= items.len() {
+                            *selected = items.len().saturating_sub(1);
+                        }
+                        removed_item = Some(removed);
+                        break;
+                    }
+                }
+                offset += len;
+            }
+            let (Some(text), Some(prev_sel)) = (removed_item, prev_selected) else {
+                return Err(EditError::IndexOutOfRange);
+            };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::InsertRepeatingSectionItem { at, index: target_idx, text, restore_selected: Some(prev_sel) })
+        }
+        FlowCommand::SelectRepeatingSectionItem { at, index: target_idx } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut prev_selected = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
+                    if let FlowRunKind::RepeatingSection { items, selected, .. } = &mut run.kind {
+                        if target_idx < items.len() {
+                            prev_selected = Some(std::mem::replace(selected, target_idx));
+                            break;
+                        }
+                    }
+                }
+                offset += len;
+            }
+            let Some(prev) = prev_selected else {
+                return Err(EditError::IndexOutOfRange);
+            };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::SelectRepeatingSectionItem { at, index: prev })
+        }
+        FlowCommand::SetRepeatingSectionMeta { at, section_title: new_title, do_not_allow_insert_delete: new_flag } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut old_meta = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
+                    if let FlowRunKind::RepeatingSection { section_title, do_not_allow_insert_delete, .. } = &mut run.kind {
+                        old_meta = Some((section_title.clone(), *do_not_allow_insert_delete));
+                        *section_title = new_title;
+                        *do_not_allow_insert_delete = new_flag;
+                        break;
+                    }
+                }
+                offset += len;
+            }
+            let Some((prev_title, prev_flag)) = old_meta else {
+                return Err(EditError::IndexOutOfRange);
+            };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::SetRepeatingSectionMeta { at, section_title: prev_title, do_not_allow_insert_delete: prev_flag })
+        }
+        FlowCommand::GroupControl { at, text: new_text, placeholder: new_placeholder, control: new_control } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut replaced = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
+                    let old_text = match &run.kind {
+                        FlowRunKind::Text(t) => t.clone(),
+                        FlowRunKind::Group { text, .. } => text.clone(),
+                        _ => String::new(),
+                    };
+                    let old_placeholder = match &run.kind {
+                        FlowRunKind::Group { placeholder, .. } => *placeholder,
+                        _ => false,
+                    };
+                    let old_ctrl = run.control.clone();
+                    run.kind = FlowRunKind::Group { text: new_text.clone(), placeholder: new_placeholder };
+                    run.control = new_control.clone();
+                    if new_placeholder {
+                        run.format.color = Some(crate::drawing::Rgb(0x808080));
+                    }
+                    replaced = Some((old_text, old_placeholder, old_ctrl));
+                    break;
+                }
+                offset += len;
+            }
+            if replaced.is_none() && p.runs.is_empty() {
+                let (mut format, char_style, style) = old.format_at(at.offset);
+                if new_placeholder {
+                    format.color = Some(crate::drawing::Rgb(0x808080));
+                }
+                p.runs.push(FlowRun {
+                    kind: FlowRunKind::Group { text: new_text.clone(), placeholder: new_placeholder },
+                    style,
+                    format,
+                    char_style,
+                    link: None,
+                    revision: None,
+                    show_field_code: false,
+                    field_locked: false,
+                    control: new_control.clone(),
+                });
+                replaced = Some((String::new(), false, None));
+            } else if replaced.is_none() && !p.runs.is_empty() && at.offset >= p.len() {
+                let run = p.runs.last_mut().unwrap();
+                let old_text = match &run.kind {
+                    FlowRunKind::Text(t) => t.clone(),
+                    FlowRunKind::Group { text, .. } => text.clone(),
+                    _ => String::new(),
+                };
+                let old_placeholder = match &run.kind {
+                    FlowRunKind::Group { placeholder, .. } => *placeholder,
+                    _ => false,
+                };
+                let old_ctrl = run.control.clone();
+                run.kind = FlowRunKind::Group { text: new_text.clone(), placeholder: new_placeholder };
+                run.control = new_control.clone();
+                if new_placeholder {
+                    run.format.color = Some(crate::drawing::Rgb(0x808080));
+                }
+                replaced = Some((old_text, old_placeholder, old_ctrl));
+            }
+            let Some((prev_text, prev_placeholder, prev_ctrl)) = replaced else {
+                return Err(EditError::IndexOutOfRange);
+            };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::UngroupControl { at, restore: Some((prev_text, prev_placeholder, prev_ctrl)) })
+        }
+        FlowCommand::UngroupControl { at, restore } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut un_grouped = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if (at.offset >= offset && at.offset < offset + len) || (at.offset == offset && len == 0) {
+                    let (g_text, g_placeholder) = match &run.kind {
+                        FlowRunKind::Group { text, placeholder } => (text.clone(), *placeholder),
+                        _ => {
+                            offset += len;
+                            continue;
+                        }
+                    };
+                    if let Some(c) = run.control.as_ref() {
+                        if c.lock.keeps_control() {
+                            return Err(EditError::ControlLocked);
+                        }
+                    }
+                    un_grouped = Some((g_text.clone(), g_placeholder, run.control.clone()));
+                    let t = if let Some((ref r_text, _, _)) = restore {
+                        r_text.clone()
+                    } else if g_placeholder {
+                        String::new()
+                    } else {
+                        g_text
+                    };
+                    let ctrl = if let Some((_, _, ref r_ctrl)) = restore {
+                        r_ctrl.clone()
+                    } else {
+                        None
+                    };
+                    run.kind = FlowRunKind::Text(t);
+                    run.control = ctrl;
+                    if g_placeholder {
+                        run.format.color = None;
+                    }
+                    break;
+                }
+                offset += len;
+            }
+            let Some((curr_text, curr_placeholder, curr_ctrl)) = un_grouped else {
+                return Err(EditError::IndexOutOfRange);
+            };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::GroupControl { at, text: curr_text, placeholder: curr_placeholder, control: curr_ctrl })
+        }
+        FlowCommand::SetControlInfo { at, info } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let mut offset = 0;
+            let mut previous = None;
+            for run in &mut p.runs {
+                let len = run.len();
+                if at.offset >= offset && (at.offset < offset + len || (at.offset == offset && len == 0)) && run.is_content_control() {
+                    previous = Some(std::mem::replace(&mut run.control, info));
+                    break;
+                }
+                offset += len;
+            }
+            let Some(previous) = previous else { return Err(EditError::IndexOutOfRange) };
+            p.resolve(&styles);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::SetControlInfo { at, info: previous })
         }
         FlowCommand::SetWatermark { watermark, sections } => {
             let old = std::mem::replace(&mut doc.watermark, watermark);
@@ -1610,10 +2507,69 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: count, blocks: vec![old] })
         }
         FlowCommand::InsertText { at, text, format } => {
+            let form_design_mode = doc.form_design_mode;
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let mut next_id = doc.new_id();
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            if old.subdoc.as_ref().is_some_and(|s| s.locked) {
+                return Err(EditError::ControlLocked);
+            }
+            // Text typed in a text content control is the control's text; the
+            // first typing replaces the prompt (w:showingPlcHdr).
+            if !text.is_empty() && !text.chars().any(char::is_control) {
+                if let Some((run, start)) = old.control_at(at.offset) {
+                    if old.runs[run].control.as_ref().is_some_and(|c| c.lock.keeps_content()) {
+                        return Err(EditError::ControlLocked);
+                    }
+                    let mut p = old.clone();
+                    let run_ref = &mut p.runs[run];
+                    if let FlowRunKind::RichText { text: t, placeholder }
+                        | FlowRunKind::PlainText { text: t, placeholder }
+                        | FlowRunKind::BuildingBlockGallery { text: t, placeholder, .. }
+                        | FlowRunKind::Group { text: t, placeholder } = &mut run_ref.kind {
+                        if *placeholder {
+                            if form_design_mode {
+                                let byte = t.char_indices().nth(at.offset.saturating_sub(start)).map_or(t.len(), |(b, _)| b);
+                                t.insert_str(byte, &text);
+                            } else {
+                                *t = text;
+                                *placeholder = false;
+                                // The prompt's look (PlaceholderText) is not the typed text's.
+                                if run_ref.char_style.as_deref() == Some("PlaceholderText") {
+                                    run_ref.char_style = None;
+                                }
+                                if run_ref.format.color == Some(crate::drawing::Rgb(0x808080)) {
+                                    run_ref.format.color = None;
+                                }
+                            }
+                        } else {
+                            let byte = t.char_indices().nth(at.offset.saturating_sub(start)).map_or(t.len(), |(b, _)| b);
+                            t.insert_str(byte, &text);
+                        }
+                    } else if let FlowRunKind::RepeatingSection { items, selected, .. } = &mut run_ref.kind {
+                        if let Some(t) = items.get_mut(*selected) {
+                            if t == crate::flow::DEFAULT_REPEATING_SECTION_ITEM_PROMPT {
+                                if form_design_mode {
+                                    let byte = t.char_indices().nth(at.offset.saturating_sub(start)).map_or(t.len(), |(b, _)| b);
+                                    t.insert_str(byte, &text);
+                                } else {
+                                    *t = text;
+                                    if run_ref.format.color == Some(crate::drawing::Rgb(0x808080)) {
+                                        run_ref.format.color = None;
+                                    }
+                                }
+                            } else {
+                                let byte = t.char_indices().nth(at.offset.saturating_sub(start)).map_or(t.len(), |(b, _)| b);
+                                t.insert_str(byte, &text);
+                            }
+                        }
+                    }
+                    p.resolve(&styles);
+                    list[index] = Block::Paragraph(p);
+                    return Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] });
+                }
+            }
             let (format, char_style, style) = match format {
                 Some(f) => {
                     let (_, base) = styles.paragraph_base_in(old.style.as_deref(), old.table_style.as_deref(), &old.table_regions);
@@ -1624,7 +2580,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             };
             // Text typed inside a link (not at its ends) is part of it.
             let link = old.link_inside(at.offset);
-            let make = |kind: FlowRunKind| FlowRun { kind, style: style.clone(), format: format.clone(), char_style: char_style.clone(), link: link.clone(), revision: None, show_field_code: false, field_locked: false };
+            let make = |kind: FlowRunKind| FlowRun { kind, style: style.clone(), format: format.clone(), char_style: char_style.clone(), link: link.clone(), revision: None, show_field_code: false, field_locked: false, control: None };
             let mut paragraphs = vec![FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() }];
             // Enter at the end of a paragraph starts one of its style's next
             // style (w:next: 標準 after a heading); inside it, both halves
@@ -1650,7 +2606,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             bookmarks: Vec::new(),
                             field_start: None,
                             field_end: false,
+                            subdoc: None,
                             style: next_style.clone().or_else(|| old.style.clone()),
+                            mark_format: format.clone(),
                             ..old.clone()
                         });
                         next_id += 1;
@@ -1690,10 +2648,94 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: count, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::Delete { from, to } => {
+            let form_design_mode = doc.form_design_mode;
             let (container, first, last, from, to) = ordered(doc, from, to)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let old: Vec<Block> = list[first..=last].to_vec();
+            for blk in &old {
+                if let Block::Paragraph(p) = blk && p.subdoc.as_ref().is_some_and(|s| s.locked) {
+                    return Err(EditError::ControlLocked);
+                }
+            }
             let (Block::Paragraph(a), Block::Paragraph(b)) = (&old[0], &old[old.len() - 1]) else { return Err(EditError::IndexOutOfRange) };
+            // A locked content control is not deleted or edited.
+            for (i, block) in old.iter().enumerate() {
+                let Block::Paragraph(p) = block else { continue };
+                let start = if i == 0 { from.offset } else { 0 };
+                let end = if i + 1 == old.len() { to.offset } else { p.len() };
+                let mut at = 0;
+                for run in &p.runs {
+                    let len = run.len();
+                    if let Some(c) = run.control.as_ref().filter(|_| run.is_content_control()) {
+                        let overlap = at.max(start) < (at + len).min(end);
+                        let covers = start < end && start <= at && end >= at + len;
+                        let inside = !covers && start < end && start >= at && end <= at + len;
+                        let partial = !covers && !inside && overlap;
+                        if (covers && c.lock.keeps_control()) || (inside && c.lock.keeps_content()) || (partial && c.lock != crate::flow::ControlLock::None) {
+                            return Err(EditError::ControlLocked);
+                        }
+                    }
+                    at += len;
+                }
+            }
+            // Deleting inside a text content control shortens its text; when
+            // nothing is left the prompt shows again.
+            if first == last && from.offset < to.offset {
+                if let Some((run, start)) = a.control_at(to.offset).filter(|&(run, start)| {
+                    start <= from.offset && (
+                        form_design_mode
+                        || matches!(&a.runs[run].kind, FlowRunKind::RichText { placeholder: false, .. } | FlowRunKind::PlainText { placeholder: false, .. } | FlowRunKind::BuildingBlockGallery { placeholder: false, .. } | FlowRunKind::Group { placeholder: false, .. })
+                        || matches!(&a.runs[run].kind, FlowRunKind::RepeatingSection { .. })
+                    )
+                }) {
+                    let mut p = a.clone();
+                    let run_ref = &mut p.runs[run];
+                    if let FlowRunKind::RepeatingSection { items, selected, .. } = &mut run_ref.kind {
+                        if let Some(t) = items.get_mut(*selected) {
+                            let kept: String = t.chars().enumerate().filter(|&(i, _)| i + start < from.offset || i + start >= to.offset).map(|(_, c)| c).collect();
+                            if kept.is_empty() {
+                                if !form_design_mode {
+                                    *t = crate::flow::DEFAULT_REPEATING_SECTION_ITEM_PROMPT.to_string();
+                                    run_ref.format.color = Some(crate::drawing::Rgb(0x808080));
+                                } else {
+                                    *t = kept;
+                                }
+                            } else {
+                                *t = kept;
+                            }
+                        }
+                    } else {
+                        let is_gallery = matches!(&run_ref.kind, FlowRunKind::BuildingBlockGallery { .. });
+                        let is_group = matches!(&run_ref.kind, FlowRunKind::Group { .. });
+                        if let FlowRunKind::RichText { text: t, placeholder }
+                            | FlowRunKind::PlainText { text: t, placeholder }
+                            | FlowRunKind::BuildingBlockGallery { text: t, placeholder, .. }
+                            | FlowRunKind::Group { text: t, placeholder } = &mut run_ref.kind {
+                            let kept: String = t.chars().enumerate().filter(|&(i, _)| i + start < from.offset || i + start >= to.offset).map(|(_, c)| c).collect();
+                            if kept.is_empty() {
+                                if !form_design_mode {
+                                    *t = if is_gallery {
+                                        crate::flow::DEFAULT_BUILDING_BLOCK_GALLERY_PROMPT.to_string()
+                                    } else if is_group {
+                                        crate::flow::DEFAULT_GROUP_PROMPT.to_string()
+                                    } else {
+                                        crate::flow::DEFAULT_CONTROL_PROMPT.to_string()
+                                    };
+                                    *placeholder = true;
+                                    run_ref.format.color = Some(crate::drawing::Rgb(0x808080));
+                                } else {
+                                    *t = kept;
+                                }
+                            } else {
+                                *t = kept;
+                            }
+                        }
+                    }
+                    p.resolve(&styles);
+                    list[first] = Block::Paragraph(p);
+                    return Ok(FlowCommand::ReplaceBlocks { container, index: first, remove: 1, blocks: old });
+                }
+            }
             let mut joined = a.clone();
             let mut runs = a.runs_before(from.offset);
             runs.extend(b.runs_after(to.offset));
@@ -1797,8 +2839,8 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             for (i, mut run) in std::mem::take(&mut p.runs).into_iter().enumerate() {
                 if i >= a && i < b {
                     match run.revision.as_ref().map(|r| &r.kind) {
-                        Some(crate::flow::RevisionKind::Insert) => continue,
-                        Some(crate::flow::RevisionKind::Delete) => {}
+                        Some(crate::flow::RevisionKind::Insert | crate::flow::RevisionKind::MoveTo) => continue,
+                        Some(crate::flow::RevisionKind::Delete | crate::flow::RevisionKind::MoveFrom) => {}
                         _ => run.revision = Some(crate::flow::Revision { kind: crate::flow::RevisionKind::Delete, author: author.clone(), date: date.clone() }),
                     }
                 }
@@ -1859,6 +2901,10 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let old = std::mem::replace(&mut doc.show_field_codes, show);
             Ok(FlowCommand::SetShowFieldCodes(old))
         }
+        FlowCommand::SetFormDesignMode(mode) => {
+            let old = std::mem::replace(&mut doc.form_design_mode, mode);
+            Ok(FlowCommand::SetFormDesignMode(old))
+        }
         FlowCommand::SetDocProperties(props) => {
             let old = std::mem::replace(&mut doc.properties, props);
             Ok(FlowCommand::SetDocProperties(old))
@@ -1876,9 +2922,29 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let old_end = std::mem::replace(&mut doc.no_line_end, end);
             Ok(FlowCommand::SetKinsokuLists { start: old_start, end: old_end })
         }
+        FlowCommand::SetStrictFirstAndLastChars(strict) => {
+            let old = std::mem::replace(&mut doc.strict_first_and_last_chars, strict);
+            Ok(FlowCommand::SetStrictFirstAndLastChars(old))
+        }
+        FlowCommand::SetThemeFontLang(theme_lang) => {
+            let old = std::mem::replace(&mut doc.theme_font_lang, theme_lang);
+            Ok(FlowCommand::SetThemeFontLang(old))
+        }
         FlowCommand::SetUpdateFields(uf) => {
             let old = std::mem::replace(&mut doc.update_fields, uf);
             Ok(FlowCommand::SetUpdateFields(old))
+        }
+        FlowCommand::SetNoteSeparator { endnote, kind } => {
+            let old = std::mem::replace(&mut doc.note_separators[usize::from(endnote)], kind);
+            Ok(FlowCommand::SetNoteSeparator { endnote, kind: old })
+        }
+        FlowCommand::SetMailMergeType(kind) => {
+            let old = std::mem::replace(&mut doc.mail_merge_type, kind);
+            Ok(FlowCommand::SetMailMergeType(old))
+        }
+        FlowCommand::SetMailMergeFieldMap(field_map) => {
+            let old = std::mem::replace(&mut doc.mail_merge_field_map, field_map);
+            Ok(FlowCommand::SetMailMergeFieldMap(old))
         }
         FlowCommand::SetDocVariables(vars) => {
             let old = std::mem::replace(&mut doc.doc_variables, vars);
@@ -1927,6 +2993,78 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         FlowCommand::SetFormattingProtection(prot) => {
             let old = std::mem::replace(&mut doc.formatting_protection, prot);
             Ok(FlowCommand::SetFormattingProtection(old))
+        }
+        FlowCommand::CompressPicture { at, media, reset_crop } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            match p.runs.get_mut(i) {
+                Some(FlowRun { kind: FlowRunKind::Picture { media: m, look, .. } | FlowRunKind::PictureControl { media: m, look, .. }, .. }) => {
+                    *m = media;
+                    if reset_crop {
+                        look.crop = Default::default();
+                    }
+                }
+                Some(FlowRun { kind: FlowRunKind::Shape(shape), .. }) => {
+                    if let crate::model::ShapeKind::Picture(pic) = &mut shape.kind {
+                        pic.media = media;
+                        if reset_crop {
+                            pic.crop = Default::default();
+                        }
+                    }
+                }
+                _ => return Err(EditError::IndexOutOfRange),
+            }
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::SetImageQualitySettings { default_dpi, discard_crop, do_not_compress } => {
+            let old_dpi = std::mem::replace(&mut doc.default_image_dpi, default_dpi);
+            let old_discard = std::mem::replace(&mut doc.discard_image_editing_data, discard_crop);
+            let old_compress = std::mem::replace(&mut doc.do_not_compress_images, do_not_compress);
+            Ok(FlowCommand::SetImageQualitySettings { default_dpi: old_dpi, discard_crop: old_discard, do_not_compress: old_compress })
+        }
+        FlowCommand::SetSaveFrequency(frequency) => {
+            let old = std::mem::replace(&mut doc.save_frequency, frequency);
+            Ok(FlowCommand::SetSaveFrequency(old))
+        }
+        FlowCommand::SetFontEmbedding { embed_true_type_fonts, embed_system_fonts, save_subset_fonts } => {
+            let old_true_type = std::mem::replace(&mut doc.embed_true_type_fonts, embed_true_type_fonts);
+            let old_system = std::mem::replace(&mut doc.embed_system_fonts, embed_system_fonts);
+            let old_subset = std::mem::replace(&mut doc.save_subset_fonts, save_subset_fonts);
+            Ok(FlowCommand::SetFontEmbedding {
+                embed_true_type_fonts: old_true_type,
+                embed_system_fonts: old_system,
+                save_subset_fonts: old_subset,
+            })
+        }
+        FlowCommand::SetCompatibilityOptions { compatibility_mode, use_fe_layout, do_not_expand_shift_return } => {
+            let old_mode = std::mem::replace(&mut doc.compatibility_mode, compatibility_mode);
+            let old_fe = std::mem::replace(&mut doc.use_fe_layout, use_fe_layout);
+            let old_shift = std::mem::replace(&mut doc.do_not_expand_shift_return, do_not_expand_shift_return);
+            Ok(FlowCommand::SetCompatibilityOptions {
+                compatibility_mode: old_mode,
+                use_fe_layout: old_fe,
+                do_not_expand_shift_return: old_shift,
+            })
+        }
+        FlowCommand::AttachTemplate { template, link_styles } => {
+            let old_template = std::mem::replace(&mut doc.attached_template, template);
+            let old_link = std::mem::replace(&mut doc.link_styles, link_styles);
+            Ok(FlowCommand::AttachTemplate {
+                template: old_template,
+                link_styles: old_link,
+            })
+        }
+        FlowCommand::UpdateStyles(new_styles) => {
+            let old_styles = std::mem::replace(&mut doc.styles, new_styles);
+            Ok(FlowCommand::UpdateStyles(old_styles))
+        }
+        FlowCommand::SetShapeGroups(new_groups) => {
+            let old_groups = std::mem::replace(&mut doc.shape_groups, new_groups);
+            Ok(FlowCommand::SetShapeGroups(old_groups))
         }
     }
 }
@@ -2014,6 +3152,21 @@ fn set_section_state(doc: &mut FlowDocument, state: &SectionState, ids: &[u32], 
     doc.page_chapter = state.page_chapter.clone();
     doc.restart_numbering = state.restart_numbering;
     let _ = styles;
+}
+
+/// The command clearing all headers and footers from the document and sections.
+pub fn clear_all_headers_footers(doc: &FlowDocument) -> Option<FlowCommand> {
+    let ids = section_paragraphs(doc);
+    let mut state = section_state(doc, &ids);
+    state.parts = [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    for (_, _, sec) in &mut state.breaks {
+        if let Some(sec_ref) = sec {
+            let mut s = (**sec_ref).clone();
+            s.parts = [Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new()), Some(Vec::new())];
+            *sec = Some(std::sync::Arc::new(s));
+        }
+    }
+    Some(FlowCommand::SetSections { state: Box::new(state) })
 }
 
 /// `state` with paragraph `id` ending a section of `kind` (or none). A new
@@ -2216,7 +3369,7 @@ pub fn insert_note(doc: &FlowDocument, at: FlowPos, endnote: bool) -> Option<(Ve
     let superscript = RunFormat { position: Some(crate::flow::VerticalPosition::Superscript), ..RunFormat::default() };
     let mark_format = if mark_style.is_some() { RunFormat::default() } else { superscript.clone() };
     let mut p = FlowParagraph { id: pid, style: styles.paragraph_style_named(text_style).map(str::to_string), ..FlowParagraph::default() };
-    p.runs.push(FlowRun { kind: FlowRunKind::NoteMark, style: FlowRunStyle::default(), format: mark_format.clone(), char_style: mark_style.clone(), link: None, revision: None, show_field_code: false, field_locked: false });
+    p.runs.push(FlowRun { kind: FlowRunKind::NoteMark, style: FlowRunStyle::default(), format: mark_format.clone(), char_style: mark_style.clone(), link: None, revision: None, show_field_code: false, field_locked: false, control: None });
     p.runs.push(FlowRun::new(FlowRunKind::Text(" ".into()), FlowRunStyle::default()));
     p.resolve(styles);
     let (mut footnotes, mut endnotes) = (doc.footnotes.clone(), doc.endnotes.clone());
@@ -2294,7 +3447,7 @@ fn comment_para_id(id: u32) -> String {
 
 /// Where comment `id`'s marks are: (paragraph, offset) of its start, end
 /// and reference.
-fn comment_marks(doc: &FlowDocument, id: u32) -> [Option<FlowPos>; 3] {
+pub fn comment_marks(doc: &FlowDocument, id: u32) -> [Option<FlowPos>; 3] {
     let mut out = [None; 3];
     for p in all_paragraphs(doc) {
         let mut at = 0;
@@ -2312,6 +3465,64 @@ fn comment_marks(doc: &FlowDocument, id: u32) -> [Option<FlowPos>; 3] {
         }
     }
     out
+}
+
+/// The text range covered by comment `id` (`from` .. `to`), if marks exist.
+pub fn comment_range(doc: &FlowDocument, id: u32) -> Option<(FlowPos, FlowPos)> {
+    let [start, end, ref_pos] = comment_marks(doc, id);
+    match (start, end) {
+        (Some(s), Some(e)) => Some((s, e)),
+        (Some(s), None) => Some((s, ref_pos.unwrap_or(s))),
+        (None, Some(e)) => Some((e, e)),
+        (None, None) => ref_pos.map(|r| (r, r)),
+    }
+}
+
+/// The comment (if any) containing `pos`. If multiple comments cover `pos`, returns the most specific (innermost/latest).
+pub fn comment_at_pos(doc: &FlowDocument, pos: FlowPos) -> Option<u32> {
+    let mut active: Vec<u32> = Vec::new();
+    for p in all_paragraphs(doc) {
+        let mut at = 0;
+        for r in &p.runs {
+            let len = r.len();
+            match r.kind {
+                FlowRunKind::CommentStart(id) => {
+                    active.push(id);
+                    if p.id == pos.para && pos.offset >= at && (pos.offset < at + len || (len == 0 && pos.offset == at)) {
+                        return Some(id);
+                    }
+                }
+                FlowRunKind::CommentEnd(id) => {
+                    if p.id == pos.para && pos.offset >= at && (pos.offset < at + len || (len == 0 && pos.offset == at)) {
+                        return Some(id);
+                    }
+                    active.retain(|&c| c != id);
+                }
+                FlowRunKind::CommentRef(id) => {
+                    if p.id == pos.para && pos.offset >= at && (pos.offset < at + len || (len == 0 && pos.offset == at)) {
+                        return Some(id);
+                    }
+                }
+                _ => {
+                    if p.id == pos.para && pos.offset >= at && (pos.offset < at + len || (len == 0 && pos.offset == at)) {
+                        if let Some(&id) = active.last() {
+                            return Some(id);
+                        }
+                    }
+                }
+            }
+            at += len;
+        }
+        if p.id == pos.para {
+            if pos.offset == at {
+                if let Some(&id) = active.last() {
+                    return Some(id);
+                }
+            }
+            break;
+        }
+    }
+    None
 }
 
 /// The commands putting a comment (`text`) on the text from `from` to `to`:
@@ -2343,7 +3554,9 @@ pub fn add_comment(doc: &FlowDocument, from: FlowPos, to: FlowPos, who: &Comment
 /// The commands answering comment `parent` with `text` (返信): a comment
 /// marked where it is, as Word writes replies.
 pub fn reply_comment(doc: &FlowDocument, parent: u32, who: &CommentAuthor, text: &str) -> Option<Vec<FlowCommand>> {
-    let [Some(start), Some(end), Some(reference)] = comment_marks(doc, parent) else { return None };
+    if !doc.comments.iter().any(|c| c.id == parent) {
+        return None;
+    }
     let id = doc.comments.iter().map(|c| c.id + 1).max().unwrap_or(0);
     let mut comments = doc.comments.clone();
     comments.push(crate::flow::Comment {
@@ -2356,12 +3569,17 @@ pub fn reply_comment(doc: &FlowDocument, parent: u32, who: &CommentAuthor, text:
         done: false,
         para_id: Some(comment_para_id(id)),
     });
-    // After the parent's marks, the last first so the earlier stay put.
-    let mut marks = [(start, FlowRunKind::CommentStart(id)), (end, FlowRunKind::CommentEnd(id)), (reference, FlowRunKind::CommentRef(id))];
-    marks.sort_by_key(|(p, _)| (all_paragraphs(doc).iter().position(|q| q.id == p.para), p.offset));
     let mut commands = vec![FlowCommand::SetComments(comments)];
-    for (pos, kind) in marks.into_iter().rev() {
-        commands.push(FlowCommand::InsertField { at: FlowPos::new(pos.para, pos.offset + 1), kind });
+    let [start_opt, end_opt, ref_opt] = comment_marks(doc, parent);
+    if let Some(pos) = start_opt.or(end_opt).or(ref_opt) {
+        let start = start_opt.unwrap_or(pos);
+        let end = end_opt.unwrap_or(pos);
+        let reference = ref_opt.unwrap_or(pos);
+        let mut marks = [(start, FlowRunKind::CommentStart(id)), (end, FlowRunKind::CommentEnd(id)), (reference, FlowRunKind::CommentRef(id))];
+        marks.sort_by_key(|(p, _)| (all_paragraphs(doc).iter().position(|q| q.id == p.para), p.offset));
+        for (pos, kind) in marks.into_iter().rev() {
+            commands.push(FlowCommand::InsertField { at: FlowPos::new(pos.para, pos.offset + 1), kind });
+        }
     }
     Some(commands)
 }
@@ -2419,6 +3637,27 @@ pub fn orphan_comments(doc: &FlowDocument) -> Vec<u32> {
     doc.comments.iter().filter(|c| gone.contains(&c.id) || c.parent.is_some_and(|p| gone.contains(&p))).map(|c| c.id).collect()
 }
 
+/// The commands removing all comments and their marks across the document.
+pub fn delete_all_comments(doc: &FlowDocument) -> Option<FlowCommand> {
+    if doc.comments.is_empty() {
+        return None;
+    }
+    let mut commands = vec![FlowCommand::SetComments(Vec::new())];
+    for p in all_paragraphs_everywhere(doc) {
+        let marked = |r: &FlowRun| matches!(r.kind, FlowRunKind::CommentStart(_) | FlowRunKind::CommentEnd(_) | FlowRunKind::CommentRef(_));
+        if !p.runs.iter().any(marked) {
+            continue;
+        }
+        let mut q = p.clone();
+        q.runs.retain(|r| !marked(r));
+        q.normalize();
+        if let Some((container, index)) = locate(doc, p.id) {
+            commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
+        }
+    }
+    Some(FlowCommand::Many(commands))
+}
+
 /// Apply `f` to the part of each paragraph from `from` to `to` (in one list
 /// of blocks), with that part's start and end; the old paragraphs are the
 /// inverse.
@@ -2465,16 +3704,66 @@ pub fn resolve_revisions_filter(
     let ps = all_paragraphs(doc);
     let order: Vec<u32> = ps.iter().map(|p| p.id).collect();
     let index = |id: u32| order.iter().position(|o| *o == id).unwrap_or(0);
+    // When resolving revisions within a selection, identify any MoveTo or MoveFrom revisions
+    // so that their paired counterparts (MoveFrom or MoveTo by the same author) are resolved together.
+    let mut target_moves: Vec<(bool, String, String)> = Vec::new();
+    if let Some((a, b)) = range {
+        for p in &ps {
+            let i = index(p.id);
+            if i < index(a.para) || i > index(b.para) {
+                continue;
+            }
+            let (lo, hi) = (if i == index(a.para) { a.offset } else { 0 }, if i == index(b.para) { b.offset } else { usize::MAX });
+            let mut at = 0;
+            for run in &p.runs {
+                let len = run.len();
+                let inside = at < hi && at + len > lo || (len == 0 && at >= lo && at <= hi) || (lo == hi && at <= lo && lo < at + len.max(1));
+                at += len;
+                if inside && let Some(r) = &run.revision {
+                    if let Some(filter) = author_filter && !filter.contains(&r.author) {
+                        continue;
+                    }
+                    match r.kind {
+                        RevisionKind::MoveTo => target_moves.push((true, r.author.clone(), r.date.clone())),
+                        RevisionKind::MoveFrom => target_moves.push((false, r.author.clone(), r.date.clone())),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     let mut commands = Vec::new();
     for p in ps {
         if !p.runs.iter().any(|r| r.revision.is_some()) {
             continue;
         }
         let i = index(p.id);
+        let within_range = match range {
+            None => true,
+            Some((a, b)) => i >= index(a.para) && i <= index(b.para),
+        };
         let (lo, hi) = match range {
             None => (0, usize::MAX),
             Some((a, b)) => {
-                if i < index(a.para) || i > index(b.para) {
+                let has_paired_move = p.runs.iter().any(|r| {
+                    if let Some(rev) = &r.revision {
+                        if let Some(filter) = author_filter && !filter.contains(&rev.author) {
+                            return false;
+                        }
+                        target_moves.iter().any(|(is_to, author, date)| {
+                            let matches_opposite = match rev.kind {
+                                RevisionKind::MoveFrom => *is_to,
+                                RevisionKind::MoveTo => !*is_to,
+                                _ => false,
+                            };
+                            matches_opposite && &rev.author == author && (date.is_empty() || rev.date.is_empty() || &rev.date == date)
+                        })
+                    } else {
+                        false
+                    }
+                });
+                if !within_range && !has_paired_move {
                     continue;
                 }
                 (if i == index(a.para) { a.offset } else { 0 }, if i == index(b.para) { b.offset } else { usize::MAX })
@@ -2485,16 +3774,35 @@ pub fn resolve_revisions_filter(
         let mut at = 0;
         for mut run in std::mem::take(&mut q.runs) {
             let len = run.len();
-            let inside = at < hi && at + len > lo || (len == 0 && at >= lo && at <= hi) || (lo == hi && at <= lo && lo < at + len.max(1));
+            let inside = range.is_none() || (within_range && (at < hi && at + len > lo || (len == 0 && at >= lo && at <= hi) || (lo == hi && at <= lo && lo < at + len.max(1))));
+            let is_paired_move = if !inside && let Some(r) = &run.revision {
+                if let Some(filter) = author_filter && !filter.contains(&r.author) {
+                    false
+                } else {
+                    target_moves.iter().any(|(is_to, author, date)| {
+                        let matches_opposite = match r.kind {
+                            RevisionKind::MoveFrom => *is_to,
+                            RevisionKind::MoveTo => !*is_to,
+                            _ => false,
+                        };
+                        matches_opposite && &r.author == author && (date.is_empty() || r.date.is_empty() || &r.date == date)
+                    })
+                }
+            } else {
+                false
+            };
             at += len;
-            if inside && let Some(r) = run.revision.take() {
+            if (inside || is_paired_move) && let Some(r) = run.revision.take() {
                 if let Some(filter) = author_filter && !filter.contains(&r.author) {
                     run.revision = Some(r);
                     runs.push(run);
                     continue;
                 }
                 match (r.kind, accept) {
-                    (RevisionKind::Insert, false) | (RevisionKind::Delete, true) => continue,
+                    (RevisionKind::Insert, false)
+                    | (RevisionKind::Delete, true)
+                    | (RevisionKind::MoveTo, false)
+                    | (RevisionKind::MoveFrom, true) => continue,
                     (RevisionKind::Format(old), false) => run.format = old,
                     _ => {}
                 }
@@ -2821,6 +4129,9 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
         TableEdit::ColumnWidth { column, width } => {
             t.autofit = None;
             *t.columns.get_mut(column).ok_or(EditError::IndexOutOfRange)? = (width / 635).max(1) * 635;
+        }
+        TableEdit::RowHeight { row, height } => {
+            t.rows.get_mut(row).ok_or(EditError::IndexOutOfRange)?.height = height;
         }
         TableEdit::EqualColumns => {
             t.autofit = None;
@@ -3175,6 +4486,33 @@ impl FlowParagraph {
         }
     }
 
+    /// The text content control (run index and its first position) that a
+    /// caret at `offset` is in: after its first character up to its end, or,
+    /// when it shows its prompt, anywhere in it.
+    pub fn control_at(&self, offset: usize) -> Option<(usize, usize)> {
+        let mut at = 0;
+        for (i, run) in self.runs.iter().enumerate() {
+            let len = run.len();
+            if let FlowRunKind::RichText { placeholder, .. }
+                | FlowRunKind::PlainText { placeholder, .. }
+                | FlowRunKind::BuildingBlockGallery { placeholder, .. }
+                | FlowRunKind::Group { placeholder, .. } = &run.kind {
+                let inside = if *placeholder { offset >= at && offset <= at + len } else { offset > at && offset <= at + len };
+                if inside {
+                    return Some((i, at));
+                }
+            } else if let FlowRunKind::RepeatingSection { items, selected, .. } = &run.kind {
+                let is_prompt = items.get(*selected).is_some_and(|s| s == crate::flow::DEFAULT_REPEATING_SECTION_ITEM_PROMPT);
+                let inside = if is_prompt { offset >= at && offset <= at + len } else { offset > at && offset <= at + len };
+                if inside {
+                    return Some((i, at));
+                }
+            }
+            at += len;
+        }
+        None
+    }
+
     /// The runs before `offset`, a text run cut at it.
     pub fn runs_before(&self, offset: usize) -> Vec<FlowRun> {
         let mut p = self.clone();
@@ -3323,9 +4661,38 @@ impl FlowParagraph {
                 FlowRunKind::DatePicker { text, .. } => {
                     s.push_str(text);
                 }
-                FlowRunKind::RichText { text } | FlowRunKind::PlainText { text } => {
+                FlowRunKind::RichText { text, .. }
+                | FlowRunKind::PlainText { text, .. }
+                | FlowRunKind::BuildingBlockGallery { text, .. }
+                | FlowRunKind::Group { text, .. } => {
                     s.push_str(text);
                 }
+                FlowRunKind::RepeatingSection { items, selected, .. } => {
+                    if let Some(item) = items.get(*selected) {
+                        s.push_str(item);
+                    }
+                }
+                FlowRunKind::FormField(field) => match &field.kind {
+                    crate::flow::FormFieldKind::TextInput { value, default, .. } => {
+                        if value.is_empty() {
+                            if !default.is_empty() {
+                                s.push_str(default);
+                            } else {
+                                s.push_str("\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}");
+                            }
+                        } else {
+                            s.push_str(value);
+                        }
+                    }
+                    crate::flow::FormFieldKind::CheckBox { checked, .. } => {
+                        s.push(if *checked { '☒' } else { '☐' });
+                    }
+                    crate::flow::FormFieldKind::DropDown { items, selected, .. } => {
+                        if let Some(item) = items.get(*selected) {
+                            s.push_str(item);
+                        }
+                    }
+                },
                 _ => s.push('\u{fffc}'),
             }
         }
@@ -3538,6 +4905,31 @@ mod tests {
         apply_to(&mut doc, undo).unwrap();
         let Block::Paragraph(res_undo) = &doc.body[0] else { panic!() };
         assert_eq!(res_undo.text(), "hello world");
+    }
+
+    #[test]
+    fn test_comment_range_and_at_pos() {
+        let mut doc = FlowDocument::default();
+        let p_id = doc.new_id();
+        let mut p = FlowParagraph { id: p_id, ..FlowParagraph::default() };
+        p.runs.push(FlowRun::new(FlowRunKind::Text("Hello ".into()), FlowRunStyle::default())); // 0..6
+        p.runs.push(FlowRun::new(FlowRunKind::CommentStart(1), FlowRunStyle::default())); // 6..7
+        p.runs.push(FlowRun::new(FlowRunKind::Text("world".into()), FlowRunStyle::default())); // 7..12
+        p.runs.push(FlowRun::new(FlowRunKind::CommentEnd(1), FlowRunStyle::default())); // 12..13
+        p.runs.push(FlowRun::new(FlowRunKind::CommentRef(1), FlowRunStyle::default())); // 13..14
+        p.runs.push(FlowRun::new(FlowRunKind::Text("!".into()), FlowRunStyle::default())); // 14..15
+        doc.body.push(Block::Paragraph(p));
+
+        let range = comment_range(&doc, 1);
+        assert_eq!(range, Some((FlowPos::new(p_id, 6), FlowPos::new(p_id, 12))));
+
+        assert_eq!(comment_at_pos(&doc, FlowPos::new(p_id, 0)), None);
+        assert_eq!(comment_at_pos(&doc, FlowPos::new(p_id, 5)), None);
+        assert_eq!(comment_at_pos(&doc, FlowPos::new(p_id, 6)), Some(1));
+        assert_eq!(comment_at_pos(&doc, FlowPos::new(p_id, 9)), Some(1));
+        assert_eq!(comment_at_pos(&doc, FlowPos::new(p_id, 12)), Some(1));
+        assert_eq!(comment_at_pos(&doc, FlowPos::new(p_id, 13)), Some(1));
+        assert_eq!(comment_at_pos(&doc, FlowPos::new(p_id, 14)), None);
     }
 
     #[test]
@@ -4795,6 +6187,736 @@ mod tests {
         assert_eq!(size.width, 300);
         assert_eq!(size.height, 400);
     }
+
+    #[test]
+    fn test_set_picture_wrap_polygon() {
+        use crate::model::{WrapPoint, WrapPolygon};
+        let mut d = doc();
+        // Insert an inline picture
+        run(&mut d, FlowCommand::InsertPicture { at: FlowPos::new(1, 0), media: crate::model::MediaId(99), size: crate::geometry::EmuSize::new(100, 200) });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::Picture { .. }));
+
+        // Apply custom wrap polygon to inline picture (converts to floating tight and verifies undo/redo automatically)
+        let poly = WrapPolygon::new(
+            WrapPoint::new(10, 10),
+            vec![
+                WrapPoint::new(10, 190),
+                WrapPoint::new(90, 190),
+                WrapPoint::new(90, 10),
+                WrapPoint::new(10, 10),
+            ],
+            true,
+        );
+        run(&mut d, FlowCommand::SetPictureWrapPolygon { at: FlowPos::new(1, 0), polygon: Some(poly.clone()) });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::Shape(shape) = &p.runs[0].kind else { panic!("expected shape") };
+        let anchor = shape.floating.as_ref().unwrap();
+        assert_eq!(anchor.wrap, "tight");
+        assert_eq!(anchor.wrap_polygon.as_ref().unwrap(), &poly);
+
+        // Modify wrap polygon with another point
+        let mut poly2 = poly.clone();
+        poly2.set_point(0, WrapPoint::new(20, 20));
+        run(&mut d, FlowCommand::SetPictureWrapPolygon { at: FlowPos::new(1, 0), polygon: Some(poly2.clone()) });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::Shape(shape) = &p.runs[0].kind else { panic!("expected shape") };
+        let anchor = shape.floating.as_ref().unwrap();
+        assert_eq!(anchor.wrap_polygon.as_ref().unwrap(), &poly2);
+    }
+
+    #[test]
+    fn test_compress_picture_and_quality_settings_commands() {
+        let mut d = doc();
+        // Insert an inline picture with crop
+        run(&mut d, FlowCommand::InsertPicture { at: FlowPos::new(1, 0), media: crate::model::MediaId(10), size: crate::geometry::EmuSize::new(100, 200) });
+        let mut look = crate::flow::PictureLook::default();
+        look.crop = crate::model::Crop { left: 10_000, top: 10_000, right: 10_000, bottom: 10_000 };
+        run(&mut d, FlowCommand::SetPictureLook { at: FlowPos::new(1, 0), look: look.clone() });
+
+        // Verify initial state
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::Picture { media, look: l, .. } = &p.runs[0].kind else { panic!() };
+        assert_eq!(*media, crate::model::MediaId(10));
+        assert_eq!(l.crop.left, 10_000);
+
+        // Compress picture and reset crop (run checks undo and redo automatically)
+        run(&mut d, FlowCommand::CompressPicture { at: FlowPos::new(1, 0), media: crate::model::MediaId(20), reset_crop: true });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::Picture { media, look: l, .. } = &p.runs[0].kind else { panic!() };
+        assert_eq!(*media, crate::model::MediaId(20));
+        assert_eq!(l.crop, crate::model::Crop::default());
+
+        // Test SetImageQualitySettings (run checks undo and redo automatically)
+        assert!(!d.do_not_compress_images);
+        assert_eq!(d.default_image_dpi, None);
+        assert!(!d.discard_image_editing_data);
+
+        run(&mut d, FlowCommand::SetImageQualitySettings {
+            default_dpi: Some(220),
+            discard_crop: true,
+            do_not_compress: true,
+        });
+        assert!(d.do_not_compress_images);
+        assert_eq!(d.default_image_dpi, Some(220));
+        assert!(d.discard_image_editing_data);
+
+        // Test SetSaveFrequency (run checks undo and redo automatically)
+        assert_eq!(d.save_frequency, None);
+        run(&mut d, FlowCommand::SetSaveFrequency(Some(15)));
+        assert_eq!(d.save_frequency, Some(15));
+        run(&mut d, FlowCommand::SetSaveFrequency(None));
+        assert_eq!(d.save_frequency, None);
+    }
+
+    #[test]
+    fn test_picture_control_commands_and_locking() {
+        use crate::flow::{ControlInfo, ControlLock};
+        let mut d = doc();
+        // Insert picture control with placeholder (run tests undo and redo automatically)
+        run(&mut d, FlowCommand::InsertPictureControl {
+            at: FlowPos::new(1, 0),
+            media: crate::model::MediaId(1),
+            size: crate::geometry::EmuSize::new(100, 100),
+            placeholder: true,
+        });
+
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        assert!(p.runs[0].is_content_control());
+        assert!(p.runs[0].is_picture());
+        let FlowRunKind::PictureControl { media, size, placeholder, .. } = &p.runs[0].kind else { panic!() };
+        assert_eq!(*media, crate::model::MediaId(1));
+        assert_eq!(*size, crate::geometry::EmuSize::new(100, 100));
+        assert!(*placeholder);
+
+        // Replace picture: sets new media, size, and clears placeholder (undo/redo verified)
+        run(&mut d, FlowCommand::ReplacePicture {
+            at: FlowPos::new(1, 0),
+            media: crate::model::MediaId(2),
+            size: Some(crate::geometry::EmuSize::new(200, 150)),
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::PictureControl { media, size, placeholder, .. } = &p.runs[0].kind else { panic!() };
+        assert_eq!(*media, crate::model::MediaId(2));
+        assert_eq!(*size, crate::geometry::EmuSize::new(200, 150));
+        assert!(!*placeholder);
+
+        // Reset picture control: restores placeholder media, size, and sets placeholder = true
+        run(&mut d, FlowCommand::ResetPictureControl {
+            at: FlowPos::new(1, 0),
+            placeholder_media: crate::model::MediaId(1),
+            size: crate::geometry::EmuSize::new(100, 100),
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::PictureControl { media, size, placeholder, .. } = &p.runs[0].kind else { panic!() };
+        assert_eq!(*media, crate::model::MediaId(1));
+        assert_eq!(*size, crate::geometry::EmuSize::new(100, 100));
+        assert!(*placeholder);
+
+        // Set control info with Content lock
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: Some(Box::new(ControlInfo {
+                title: "Photo".into(),
+                tag: "photo_tag".into(),
+                lock: ControlLock::Content,
+            })),
+        });
+
+        // Content lock must block replace picture
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::ReplacePicture {
+                at: FlowPos::new(1, 0),
+                media: crate::model::MediaId(3),
+                size: None,
+            }),
+            Err(EditError::ControlLocked)
+        );
+        // Content lock must block reset picture control
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::ResetPictureControl {
+                at: FlowPos::new(1, 0),
+                placeholder_media: crate::model::MediaId(1),
+                size: crate::geometry::EmuSize::new(100, 100),
+            }),
+            Err(EditError::ControlLocked)
+        );
+
+        // Set control lock to Control (cannot delete, but can edit content)
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: Some(Box::new(ControlInfo {
+                title: "Photo".into(),
+                tag: "photo_tag".into(),
+                lock: ControlLock::Control,
+            })),
+        });
+        // Deleting the picture control must be blocked
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::Delete {
+                from: FlowPos::new(1, 0),
+                to: FlowPos::new(1, 1),
+            }),
+            Err(EditError::ControlLocked)
+        );
+
+        // Unlock control
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: None,
+        });
+        // Now replace succeeds
+        run(&mut d, FlowCommand::ReplacePicture {
+            at: FlowPos::new(1, 0),
+            media: crate::model::MediaId(3),
+            size: None,
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        assert_eq!(p.runs[0].picture().unwrap().0, crate::model::MediaId(3));
+    }
+
+    #[test]
+    fn test_building_block_gallery_commands_and_locking() {
+        use crate::flow::{ControlInfo, ControlLock, DEFAULT_BUILDING_BLOCK_GALLERY_PROMPT};
+        let mut d = doc();
+        // Insert building block gallery control with placeholder
+        run(&mut d, FlowCommand::InsertField {
+            at: FlowPos::new(1, 0),
+            kind: FlowRunKind::BuildingBlockGallery {
+                gallery: "Custom".into(),
+                category: "General".into(),
+                text: DEFAULT_BUILDING_BLOCK_GALLERY_PROMPT.into(),
+                placeholder: true,
+            },
+        });
+
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        assert!(p.runs[0].is_content_control());
+        assert!(p.runs[0].is_building_block_gallery());
+        let (gallery, category, text, placeholder) = p.runs[0].building_block_gallery().unwrap();
+        assert_eq!(gallery, "Custom");
+        assert_eq!(category, "General");
+        assert_eq!(text, DEFAULT_BUILDING_BLOCK_GALLERY_PROMPT);
+        assert!(placeholder);
+        assert_eq!(p.runs[0].format.color, Some(crate::drawing::Rgb(0x808080)));
+
+        // Update gallery and category meta
+        run(&mut d, FlowCommand::SetBuildingBlockGalleryMeta {
+            at: FlowPos::new(1, 0),
+            gallery: "Quick Parts".into(),
+            category: "Built-In".into(),
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let (gallery, category, _, _) = p.runs[0].building_block_gallery().unwrap();
+        assert_eq!(gallery, "Quick Parts");
+        assert_eq!(category, "Built-In");
+
+        // Typing text replaces placeholder prompt and clears placeholder
+        run(&mut d, FlowCommand::InsertText {
+            at: FlowPos::new(1, 0),
+            text: "MyPart".into(),
+            format: None,
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let (_, _, text, placeholder) = p.runs[0].building_block_gallery().unwrap();
+        assert_eq!(text, "MyPart");
+        assert!(!placeholder);
+        assert_eq!(p.runs[0].format.color, None);
+
+        // Deleting all text restores the placeholder prompt
+        run(&mut d, FlowCommand::Delete {
+            from: FlowPos::new(1, 0),
+            to: FlowPos::new(1, 6),
+        });
+        let text_len = {
+            let Block::Paragraph(p) = &d.body[0] else { panic!() };
+            let (_, _, text, placeholder) = p.runs[0].building_block_gallery().unwrap();
+            assert_eq!(text, DEFAULT_BUILDING_BLOCK_GALLERY_PROMPT);
+            assert!(placeholder);
+            assert_eq!(p.runs[0].format.color, Some(crate::drawing::Rgb(0x808080)));
+            text.chars().count()
+        };
+
+        // Set content lock
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: Some(Box::new(ControlInfo {
+                title: "Gallery1".into(),
+                tag: "tag1".into(),
+                lock: ControlLock::Content,
+            })),
+        });
+
+        // Content lock must block InsertText
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::InsertText {
+                at: FlowPos::new(1, 0),
+                text: "Blocked".into(),
+                format: None,
+            }),
+            Err(EditError::ControlLocked)
+        );
+
+        // Set control lock
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: Some(Box::new(ControlInfo {
+                title: "Gallery1".into(),
+                tag: "tag1".into(),
+                lock: ControlLock::Control,
+            })),
+        });
+
+        // Control lock must block deleting the control
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::Delete {
+                from: FlowPos::new(1, 0),
+                to: FlowPos::new(1, text_len),
+            }),
+            Err(EditError::ControlLocked)
+        );
+
+        // Unlock and verify SetContentControlText
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: None,
+        });
+        run(&mut d, FlowCommand::SetContentControlText {
+            at: FlowPos::new(1, 0),
+            text: "SelectedPart".into(),
+            placeholder: false,
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let (_, _, text, placeholder) = p.runs[0].building_block_gallery().unwrap();
+        assert_eq!(text, "SelectedPart");
+        assert!(!placeholder);
+    }
+
+    #[test]
+    fn test_repeating_section_commands_and_locking() {
+        use crate::flow::{ControlInfo, ControlLock, DEFAULT_REPEATING_SECTION_TITLE};
+        let mut d = doc();
+        // Insert repeating section control
+        run(&mut d, FlowCommand::InsertField {
+            at: FlowPos::new(1, 0),
+            kind: FlowRunKind::RepeatingSection {
+                section_title: DEFAULT_REPEATING_SECTION_TITLE.into(),
+                items: vec!["Item 1".into()],
+                selected: 0,
+                do_not_allow_insert_delete: false,
+            },
+        });
+
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        assert!(p.runs[0].is_content_control());
+        assert!(p.runs[0].is_repeating_section());
+        let (title, items, selected, no_edit) = p.runs[0].repeating_section().unwrap();
+        assert_eq!(title, DEFAULT_REPEATING_SECTION_TITLE);
+        assert_eq!(items, &["Item 1".to_string()]);
+        assert_eq!(selected, 0);
+        assert!(!no_edit);
+
+        // Add a new item
+        run(&mut d, FlowCommand::InsertRepeatingSectionItem {
+            at: FlowPos::new(1, 0),
+            index: 1,
+            text: "Item 2".into(),
+            restore_selected: None,
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let (_, items, selected, _) = p.runs[0].repeating_section().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1], "Item 2");
+        assert_eq!(selected, 1);
+
+        // Switch active item
+        run(&mut d, FlowCommand::SelectRepeatingSectionItem {
+            at: FlowPos::new(1, 0),
+            index: 0,
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        assert_eq!(p.runs[0].repeating_section().unwrap().2, 0);
+
+        // Set metadata
+        run(&mut d, FlowCommand::SetRepeatingSectionMeta {
+            at: FlowPos::new(1, 0),
+            section_title: "InvoiceItem".into(),
+            do_not_allow_insert_delete: true,
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let (title, _, _, no_edit) = p.runs[0].repeating_section().unwrap();
+        assert_eq!(title, "InvoiceItem");
+        assert!(no_edit);
+
+        // do_not_allow_insert_delete blocks adding
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::InsertRepeatingSectionItem {
+                at: FlowPos::new(1, 0),
+                index: 2,
+                text: "Item 3".into(),
+                restore_selected: None,
+            }),
+            Err(EditError::ControlLocked)
+        );
+
+        // Unlock metadata
+        run(&mut d, FlowCommand::SetRepeatingSectionMeta {
+            at: FlowPos::new(1, 0),
+            section_title: "InvoiceItem".into(),
+            do_not_allow_insert_delete: false,
+        });
+
+        // Set control info with Content lock
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: Some(Box::new(ControlInfo {
+                title: "RepSec".into(),
+                tag: "tag_rep".into(),
+                lock: ControlLock::Content,
+            })),
+        });
+
+        // Content lock must block SetContentControlText
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::SetContentControlText {
+                at: FlowPos::new(1, 0),
+                text: "Blocked".into(),
+                placeholder: false,
+            }),
+            Err(EditError::ControlLocked)
+        );
+
+        // Delete item
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: None,
+        });
+        run(&mut d, FlowCommand::DeleteRepeatingSectionItem {
+            at: FlowPos::new(1, 0),
+            index: 1,
+            restore_selected: None,
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let (_, items, selected, _) = p.runs[0].repeating_section().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn test_group_control_commands_and_locking() {
+        use crate::flow::{ControlInfo, ControlLock, DEFAULT_GROUP_PROMPT};
+        let mut d = doc();
+        // 1. Insert group control with placeholder
+        run(&mut d, FlowCommand::InsertField {
+            at: FlowPos::new(1, 0),
+            kind: FlowRunKind::Group {
+                text: DEFAULT_GROUP_PROMPT.into(),
+                placeholder: true,
+            },
+        });
+
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        assert!(p.runs[0].is_content_control());
+        assert!(p.runs[0].is_group());
+        let (text, placeholder) = p.runs[0].group().unwrap();
+        assert_eq!(text, DEFAULT_GROUP_PROMPT);
+        assert!(placeholder);
+        assert_eq!(p.runs[0].format.color, Some(crate::drawing::Rgb(0x808080)));
+
+        // 2. Typing replaces placeholder prompt
+        run(&mut d, FlowCommand::InsertText {
+            at: FlowPos::new(1, 0),
+            text: "GroupedSection".into(),
+            format: None,
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let (text, placeholder) = p.runs[0].group().unwrap();
+        assert_eq!(text, "GroupedSection");
+        assert!(!placeholder);
+
+        // 3. Deleting all characters restores prompt
+        let count = "GroupedSection".chars().count();
+        run(&mut d, FlowCommand::Delete {
+            from: FlowPos::new(1, 0),
+            to: FlowPos::new(1, count),
+        });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let (text, placeholder) = p.runs[0].group().unwrap();
+        assert_eq!(text, DEFAULT_GROUP_PROMPT);
+        assert!(placeholder);
+        assert_eq!(p.runs[0].format.color, Some(crate::drawing::Rgb(0x808080)));
+
+        // 4. Content lock protects typing & SetContentControlText
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: Some(Box::new(ControlInfo {
+                title: "Grp1".into(),
+                tag: "GRP_TAG".into(),
+                lock: ControlLock::Content,
+            })),
+        });
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::InsertText {
+                at: FlowPos::new(1, 0),
+                text: "Blocked".into(),
+                format: None,
+            }),
+            Err(EditError::ControlLocked)
+        );
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::SetContentControlText {
+                at: FlowPos::new(1, 0),
+                text: "Blocked".into(),
+                placeholder: false,
+            }),
+            Err(EditError::ControlLocked)
+        );
+
+        // 5. Control lock protects Ungroup and Delete
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: Some(Box::new(ControlInfo {
+                title: "Grp1".into(),
+                tag: "GRP_TAG".into(),
+                lock: ControlLock::Control,
+            })),
+        });
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::UngroupControl {
+                at: FlowPos::new(1, 0),
+                restore: None,
+            }),
+            Err(EditError::ControlLocked)
+        );
+        let prompt_len = DEFAULT_GROUP_PROMPT.chars().count();
+        assert_eq!(
+            apply_to(&mut d, FlowCommand::Delete {
+                from: FlowPos::new(1, 0),
+                to: FlowPos::new(1, prompt_len),
+            }),
+            Err(EditError::ControlLocked)
+        );
+
+        // 6. Unlock and Ungroup (run internally tests both undo and redo)
+        run(&mut d, FlowCommand::SetControlInfo {
+            at: FlowPos::new(1, 0),
+            info: None,
+        });
+        run(&mut d, FlowCommand::UngroupControl {
+            at: FlowPos::new(1, 0),
+            restore: None,
+        });
+        {
+            let Block::Paragraph(p) = &d.body[0] else { panic!() };
+            assert!(!p.runs[0].is_content_control());
+            assert!(matches!(&p.runs[0].kind, FlowRunKind::Text(_)));
+        }
+
+        // 7. GroupControl on text and Undo/Redo symmetry (run internally tests both undo and redo)
+        run(&mut d, FlowCommand::GroupControl {
+            at: FlowPos::new(1, 0),
+            text: "ImportantSection".into(),
+            placeholder: false,
+            control: Some(Box::new(ControlInfo {
+                title: "ProtectedGroup".into(),
+                tag: "GRP_PROT".into(),
+                lock: ControlLock::Content,
+            })),
+        });
+        {
+            let Block::Paragraph(p) = &d.body[0] else { panic!() };
+            assert!(p.runs[0].is_group());
+            let (t, plc) = p.runs[0].group().unwrap();
+            assert_eq!(t, "ImportantSection");
+            assert!(!plc);
+            assert_eq!(p.runs[0].control.as_deref().unwrap().title, "ProtectedGroup");
+        }
+    }
+
+    #[test]
+    fn test_set_save_frequency_command_undo_redo() {
+        let mut d = doc();
+        assert_eq!(d.save_frequency, None);
+        run(&mut d, FlowCommand::SetSaveFrequency(Some(15)));
+        assert_eq!(d.save_frequency, Some(15));
+        run(&mut d, FlowCommand::SetSaveFrequency(Some(0)));
+        assert_eq!(d.save_frequency, Some(0));
+        run(&mut d, FlowCommand::SetSaveFrequency(None));
+        assert_eq!(d.save_frequency, None);
+    }
+
+    #[test]
+    fn test_picture_look_extended_effects_undo_redo() {
+        let mut d = doc();
+        run(&mut d, FlowCommand::InsertPicture { at: FlowPos::new(1, 0), media: crate::model::MediaId(1), size: crate::geometry::EmuSize::new(100, 200) });
+        let mut look = crate::flow::PictureLook::default();
+        look.effects.opacity = Some(50_000);
+        look.effects.saturation = Some(200_000);
+        look.effects.bilevel = Some(60_000);
+        look.soft_edge = Some(25_400);
+        run(&mut d, FlowCommand::SetPictureLook { at: FlowPos::new(1, 0), look: look.clone() });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::Picture { look: l, .. } = &p.runs[0].kind else { panic!() };
+        assert_eq!(l.effects.opacity, Some(50_000));
+        assert_eq!(l.effects.saturation, Some(200_000));
+        assert_eq!(l.effects.bilevel, Some(60_000));
+        assert_eq!(l.soft_edge, Some(25_400));
+    }
+
+    #[test]
+    fn test_picture_look_crop_to_shape_geometry_undo_redo() {
+        let mut d = doc();
+        run(&mut d, FlowCommand::InsertPicture { at: FlowPos::new(1, 0), media: crate::model::MediaId(1), size: crate::geometry::EmuSize::new(100, 200) });
+        let mut look = crate::flow::PictureLook::default();
+        look.geometry = Some(crate::drawing::Geometry::Ellipse);
+        run(&mut d, FlowCommand::SetPictureLook { at: FlowPos::new(1, 0), look: look.clone() });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::Picture { look: l, .. } = &p.runs[0].kind else { panic!() };
+        assert_eq!(l.geometry, Some(crate::drawing::Geometry::Ellipse));
+
+        // Test conversion to floating shape and back preserves geometry
+        run(&mut d, FlowCommand::SetPictureFloating { at: FlowPos::new(1, 0), anchor: Some(Default::default()) });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::Shape(shape) = &p.runs[0].kind else { panic!() };
+        let crate::model::ShapeKind::Picture(pic) = &shape.kind else { panic!() };
+        assert_eq!(pic.geometry, Some(crate::drawing::Geometry::Ellipse));
+
+        // Convert back to inline picture
+        run(&mut d, FlowCommand::SetPictureFloating { at: FlowPos::new(1, 0), anchor: None });
+        let Block::Paragraph(p) = &d.body[0] else { panic!() };
+        let FlowRunKind::Picture { look: l, .. } = &p.runs[0].kind else { panic!() };
+        assert_eq!(l.geometry, Some(crate::drawing::Geometry::Ellipse));
+    }
+
+    #[test]
+    fn test_font_embedding_and_compatibility_commands_undo_redo() {
+        let mut d = doc();
+        // Font embedding
+        assert!(!d.embed_true_type_fonts);
+        assert!(!d.embed_system_fonts);
+        assert!(!d.save_subset_fonts);
+        run(&mut d, FlowCommand::SetFontEmbedding {
+            embed_true_type_fonts: true,
+            embed_system_fonts: true,
+            save_subset_fonts: true,
+        });
+        assert!(d.embed_true_type_fonts);
+        assert!(d.embed_system_fonts);
+        assert!(d.save_subset_fonts);
+        run(&mut d, FlowCommand::SetFontEmbedding {
+            embed_true_type_fonts: false,
+            embed_system_fonts: false,
+            save_subset_fonts: false,
+        });
+        assert!(!d.embed_true_type_fonts);
+
+        // Compatibility options
+        assert_eq!(d.compatibility_mode, None);
+        assert!(!d.use_fe_layout);
+        assert!(!d.do_not_expand_shift_return);
+        run(&mut d, FlowCommand::SetCompatibilityOptions {
+            compatibility_mode: Some(15),
+            use_fe_layout: true,
+            do_not_expand_shift_return: true,
+        });
+        assert_eq!(d.compatibility_mode, Some(15));
+        assert!(d.use_fe_layout);
+        assert!(d.do_not_expand_shift_return);
+        run(&mut d, FlowCommand::SetCompatibilityOptions {
+            compatibility_mode: Some(14),
+            use_fe_layout: false,
+            do_not_expand_shift_return: false,
+        });
+        assert_eq!(d.compatibility_mode, Some(14));
+        assert!(!d.use_fe_layout);
+        assert!(!d.do_not_expand_shift_return);
+    }
+
+    #[test]
+    fn test_attach_template_and_update_styles_commands_undo_redo() {
+        let mut d = doc();
+        assert_eq!(d.attached_template, None);
+        assert!(!d.link_styles);
+
+        // Attach template with link_styles
+        run(&mut d, FlowCommand::AttachTemplate {
+            template: Some("MyTemplate.dotx".to_string()),
+            link_styles: true,
+        });
+        assert_eq!(d.attached_template.as_deref(), Some("MyTemplate.dotx"));
+        assert!(d.link_styles);
+
+        // Detach template and link_styles
+        run(&mut d, FlowCommand::AttachTemplate {
+            template: None,
+            link_styles: false,
+        });
+        assert_eq!(d.attached_template, None);
+        assert!(!d.link_styles);
+
+        // UpdateStyles
+        let old_styles = d.styles.clone();
+        let mut new_styles = (*old_styles).clone();
+        new_styles.styles.insert("CustomStyle".to_string(), crate::flow::FlowStyle {
+            name: "Custom Style".to_string(),
+            ..crate::flow::FlowStyle::default()
+        });
+        let new_styles_arc = std::sync::Arc::new(new_styles);
+        run(&mut d, FlowCommand::UpdateStyles(new_styles_arc.clone()));
+        assert!(d.styles.styles.contains_key("CustomStyle"));
+    }
+
+    #[test]
+    fn test_strict_first_and_last_chars_command_undo_redo() {
+        let mut d = doc();
+        d.strict_first_and_last_chars = true;
+
+        // Change strict to false (run tests execute, undo, and redo automatically)
+        run(&mut d, FlowCommand::SetStrictFirstAndLastChars(false));
+        assert!(!d.strict_first_and_last_chars);
+
+        // Change strict back to true
+        run(&mut d, FlowCommand::SetStrictFirstAndLastChars(true));
+        assert!(d.strict_first_and_last_chars);
+    }
+
+    #[test]
+    fn test_theme_font_lang_command_undo_redo() {
+        let mut d = doc();
+        assert!(d.theme_font_lang.is_none());
+
+        let tfl = crate::flow::ThemeFontLang {
+            val: Some("en-US".into()),
+            east_asia: Some("ja-JP".into()),
+            bidi: Some("ar-SA".into()),
+        };
+
+        // Set theme font lang
+        run(&mut d, FlowCommand::SetThemeFontLang(Some(tfl.clone())));
+        assert_eq!(d.theme_font_lang, Some(tfl));
+
+        // Clear theme font lang
+        run(&mut d, FlowCommand::SetThemeFontLang(None));
+        assert!(d.theme_font_lang.is_none());
+    }
+
+    #[test]
+    fn test_collapsed_heading_command_undo_redo() {
+        let mut d = doc();
+        let p_id = match &d.body[0] {
+            Block::Paragraph(p) => p.id,
+            _ => panic!("expected paragraph"),
+        };
+        assert!(!paragraph(&d, p_id).unwrap().collapsed);
+
+        // Collapse paragraph
+        run(&mut d, FlowCommand::SetParagraphFormat { first: p_id, last: p_id, change: ParaChange::Collapsed(true) });
+        assert!(paragraph(&d, p_id).unwrap().collapsed);
+
+        // Expand paragraph
+        run(&mut d, FlowCommand::SetParagraphFormat { first: p_id, last: p_id, change: ParaChange::Collapsed(false) });
+        assert!(!paragraph(&d, p_id).unwrap().collapsed);
+    }
 }
 
 /// The heading level (1 to 9) of a paragraph: its style's (a style named
@@ -4833,7 +6955,7 @@ pub fn heading_numbering(doc: &FlowDocument) -> Option<Vec<FlowCommand>> {
             pic_bullet: None,
         })
         .collect();
-    numbering.abstracts.insert(abstract_id, AbstractList { levels });
+    numbering.abstracts.insert(abstract_id, AbstractList { levels, num_style_link: None });
     numbering.nums.insert(num_id, ListInstance { abstract_id, start_overrides: Default::default() });
     let mut commands = vec![FlowCommand::SetNumbering { numbering }];
     for (n, id) in headings {
@@ -4981,6 +7103,12 @@ pub fn updated_fields_at(doc: &FlowDocument, now: Option<&crate::date_field::Loc
 
 /// [`updated_fields_at`] restricted to paragraph runs within `range` when given.
 pub fn updated_fields_in_range(doc: &FlowDocument, range: Option<(FlowPos, FlowPos)>, now: Option<&crate::date_field::LocalTime>) -> Vec<FlowCommand> {
+    updated_fields_in_range_with(doc, range, now, None)
+}
+
+/// As [`updated_fields_in_range`], with `include` giving the text an `INCLUDETEXT` field's instruction names (the file read by whoever
+/// has the file system; `None` to leave the result as it is).
+pub fn updated_fields_in_range_with(doc: &FlowDocument, range: Option<(FlowPos, FlowPos)>, now: Option<&crate::date_field::LocalTime>, include: Option<&dyn Fn(&str) -> Option<String>>) -> Vec<FlowCommand> {
     use std::collections::HashMap;
     let ps = all_paragraphs(doc);
     let order: Vec<u32> = ps.iter().map(|p| p.id).collect();
@@ -5188,6 +7316,11 @@ pub fn updated_fields_in_range(doc: &FlowDocument, range: Option<(FlowPos, FlowP
                 "INFO" => doc.info_text(eff_instruction),
                 "ASK" => Some(String::new()),
                 "FILLIN" | "FILL-IN" => Some(doc.fillin_text(eff_instruction)),
+                "AUTOTEXT" => Some(crate::field_format::format_autotext(eff_instruction)),
+                "AUTOTEXTLIST" => Some(crate::field_format::format_autotextlist(eff_instruction)),
+                "CITATION" => Some(crate::field_format::format_citation(eff_instruction)),
+                "BIBLIOGRAPHY" => Some(crate::field_format::format_bibliography(eff_instruction)),
+                "INCLUDETEXT" => include.and_then(|f| f(eff_instruction)).map(|v| crate::field_format::apply_instruction_text_switches(v, eff_instruction)),
                 _ => {
                     if eff_instruction.trim_start().starts_with('=') {
                         if let Some((table, row, col)) = find_table_cell_for_paragraph(doc, p.id) {
@@ -5293,7 +7426,7 @@ pub fn insert_caption_in_chapter(
             RunFormat { italic: Some(true), size: Some(900), color: Some(crate::drawing::Rgb(0x44546A)), ..RunFormat::default() }
         };
         let para = crate::flow::ParaFormat { after: (!japanese).then_some(200 * 635), ..Default::default() };
-        let style = crate::flow::FlowStyle { kind: crate::flow::StyleKind::Paragraph, name: "caption".into(), based_on: styles.default_paragraph.clone(), para, run, next: styles.default_paragraph.clone(), auto_update: false, conditional: Vec::new() };
+        let style = crate::flow::FlowStyle { kind: crate::flow::StyleKind::Paragraph, name: "caption".into(), based_on: styles.default_paragraph.clone(), para, run, next: styles.default_paragraph.clone(), auto_update: false, ui_priority: Some(35), quick: true, conditional: Vec::new(), num_id: None };
         styles.styles.insert(style_id.clone(), style.clone());
         commands.push(FlowCommand::SetStyle { id: style_id, style: Some(style) });
     }
@@ -5670,7 +7803,7 @@ pub enum Renumber {
 }
 
 /// The paragraphs of the body (and its tables) in order.
-fn all_paragraphs(doc: &FlowDocument) -> Vec<&FlowParagraph> {
+pub fn all_paragraphs(doc: &FlowDocument) -> Vec<&FlowParagraph> {
     fn walk<'a>(blocks: &'a [Block], out: &mut Vec<&'a FlowParagraph>) {
         for b in blocks {
             match b {
@@ -5688,6 +7821,73 @@ fn all_paragraphs(doc: &FlowDocument) -> Vec<&FlowParagraph> {
     let mut out = Vec::new();
     walk(&doc.body, &mut out);
     out
+}
+
+/// All paragraphs anywhere in the document (body, headers, footers, notes, comments).
+pub fn all_paragraphs_everywhere(doc: &FlowDocument) -> Vec<&FlowParagraph> {
+    fn walk<'a>(blocks: &'a [Block], out: &mut Vec<&'a FlowParagraph>) {
+        for b in blocks {
+            match b {
+                Block::Paragraph(p) => out.push(p),
+                Block::Table(t) => {
+                    for row in &t.rows {
+                        for cell in &row.cells {
+                            walk(&cell.blocks, out);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&doc.body, &mut out);
+    walk(&doc.header, &mut out);
+    walk(&doc.footer, &mut out);
+    walk(&doc.header_first, &mut out);
+    walk(&doc.footer_first, &mut out);
+    walk(&doc.header_even, &mut out);
+    walk(&doc.footer_even, &mut out);
+    for b in &doc.body {
+        if let Block::Paragraph(p) = b && let Some(sec) = &p.section {
+            for part in &sec.parts {
+                if let Some(blocks) = part {
+                    walk(blocks, &mut out);
+                }
+            }
+        }
+    }
+    for note in &doc.footnotes {
+        walk(&note.blocks, &mut out);
+    }
+    for note in &doc.endnotes {
+        walk(&note.blocks, &mut out);
+    }
+    for c in &doc.comments {
+        walk(&c.blocks, &mut out);
+    }
+    out
+}
+
+/// The commands removing all hidden text runs across the document.
+pub fn remove_all_hidden_text(doc: &FlowDocument) -> Option<FlowCommand> {
+    let is_hidden = |r: &FlowRun| r.style.hidden || r.format.hidden == Some(true);
+    let mut commands = Vec::new();
+    for p in all_paragraphs_everywhere(doc) {
+        if !p.runs.iter().any(is_hidden) {
+            continue;
+        }
+        let mut q = p.clone();
+        q.runs.retain(|r| !is_hidden(r));
+        q.normalize();
+        if let Some((container, index)) = locate(doc, p.id) {
+            commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
+        }
+    }
+    if commands.is_empty() {
+        None
+    } else {
+        Some(FlowCommand::Many(commands))
+    }
 }
 
 /// The commands numbering the list of paragraph `id` from there on as
@@ -5766,6 +7966,12 @@ pub struct TocInstruction {
     pub hide_in_web: bool,
     /// `\u`: アウトラインレベルを使用
     pub use_outline_levels: bool,
+    /// `\f ["id"]`: TC フィールドの項目から作る（`Some(None)` は識別子なし、`Some(Some(id))` はその識別子の TC だけ）
+    pub tc_entries: Option<Option<String>>,
+    /// `\l "from-to"`: TC 項目のレベルの範囲（既定 1〜9）
+    pub tc_levels: (u32, u32),
+    /// `\n`: ページ番号を付けない
+    pub no_page_numbers: bool,
 }
 
 impl Default for TocInstruction {
@@ -5777,6 +7983,9 @@ impl Default for TocInstruction {
             hyperlinks: true,
             hide_in_web: true,
             use_outline_levels: true,
+            tc_entries: None,
+            tc_levels: (1, 9),
+            no_page_numbers: false,
         }
     }
 }
@@ -5824,6 +8033,16 @@ impl TocInstruction {
         }
         if self.use_outline_levels {
             parts.push("\\u".to_string());
+        }
+        if let Some(id) = &self.tc_entries {
+            match id {
+                Some(id) => parts.push(format!("\\f \"{id}\"")),
+                None => parts.push("\\f".to_string()),
+            }
+            parts.push(format!("\\l \"{}-{}\"", self.tc_levels.0, self.tc_levels.1));
+        }
+        if self.no_page_numbers {
+            parts.push("\\n".to_string());
         }
         parts.join(" ")
     }
@@ -5874,10 +8093,40 @@ pub fn parse_toc_instruction(instruction: &str) -> TocInstruction {
     let mut hide_in_web = false;
     let mut use_outline_levels = false;
     let mut has_explicit_levels = false;
+    let mut tc_entries: Option<Option<String>> = None;
+    let mut tc_levels = (1u32, 9u32);
+    let mut no_page_numbers = false;
 
     let mut i = 0;
     while i < tokens.len() {
         let tok = &tokens[i];
+        if tok.eq_ignore_ascii_case("\\f") {
+            // `\f` alone, or with the identifier of the TC fields.
+            if i + 1 < tokens.len() && !tokens[i + 1].starts_with('\\') {
+                i += 1;
+                tc_entries = Some(Some(tokens[i].clone()));
+            } else {
+                tc_entries = Some(None);
+            }
+            i += 1;
+            continue;
+        }
+        if tok.eq_ignore_ascii_case("\\l") && i + 1 < tokens.len() {
+            i += 1;
+            let mut parts = tokens[i].split('-').filter_map(|p| p.trim().parse::<u32>().ok());
+            match (parts.next(), parts.next()) {
+                (Some(a), Some(b)) => tc_levels = (a, b),
+                (Some(a), None) => tc_levels = (a, a),
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        if tok.eq_ignore_ascii_case("\\n") {
+            no_page_numbers = true;
+            i += 1;
+            continue;
+        }
         if tok.eq_ignore_ascii_case("TOC") {
             i += 1;
             continue;
@@ -5929,21 +8178,53 @@ pub fn parse_toc_instruction(instruction: &str) -> TocInstruction {
         i += 1;
     }
 
-    if !has_explicit_levels && caption_label.is_none() {
+    if !has_explicit_levels && caption_label.is_none() && tc_entries.is_none() {
         heading_levels = Some((1, 3));
         hyperlinks = true;
         hide_in_web = true;
         use_outline_levels = true;
     }
 
-    TocInstruction {
-        heading_levels,
-        custom_styles,
-        caption_label,
-        hyperlinks,
-        hide_in_web,
-        use_outline_levels,
+    TocInstruction { heading_levels, custom_styles, caption_label, hyperlinks, hide_in_web, use_outline_levels, tc_entries, tc_levels, no_page_numbers }
+}
+
+/// What a `TC "text" \f "id" \l 2 \n` field marks: an entry of a table of contents.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TcSpec {
+    pub text: String,
+    /// `\l`: the entry's level (1 when not given).
+    pub level: u32,
+    /// `\f`: the identifier of the table it belongs to.
+    pub id: Option<String>,
+    /// `\n`: no page number.
+    pub no_page: bool,
+}
+
+/// The entry a TC field marks; `None` for another field.
+pub fn tc_spec(instruction: &str) -> Option<TcSpec> {
+    let tokens = tokenize_field_switches(instruction);
+    if !tokens.first()?.eq_ignore_ascii_case("TC") {
+        return None;
     }
+    let text = tokens.get(1).filter(|t| !t.starts_with('\\'))?.clone();
+    let mut level = 1;
+    let mut id = None;
+    let mut no_page = false;
+    let mut i = 2;
+    while i < tokens.len() {
+        let t = &tokens[i];
+        if t.eq_ignore_ascii_case("\\l") && i + 1 < tokens.len() {
+            i += 1;
+            level = tokens[i].parse::<u32>().ok().filter(|l| (1..=9).contains(l)).unwrap_or(1);
+        } else if t.eq_ignore_ascii_case("\\f") && i + 1 < tokens.len() {
+            i += 1;
+            id = Some(tokens[i].clone());
+        } else if t.eq_ignore_ascii_case("\\n") {
+            no_page = true;
+        }
+        i += 1;
+    }
+    Some(TcSpec { text, level, id, no_page })
 }
 
 /// スタイルIDまたは名前が対象スタイル名と一致するか照合する。
@@ -5991,6 +8272,27 @@ pub fn resolve_paragraph_toc_level(
     None
 }
 
+/// The style a new header (or footer) takes (`header`, `footer`) when the
+/// document lacks it, as Word defines it: based on the normal style, with a
+/// centre tab and a right tab at the text area's middle and end (A4 with 1
+/// inch margins: 4513 and 9026 twips; in the Japanese template 4252 and 8504).
+pub fn missing_header_footer_style(styles: &crate::flow::FlowStyles, footer: bool) -> Option<(String, crate::flow::FlowStyle)> {
+    use crate::flow::{FlowStyle, ParaFormat, StyleKind, TabAlign, TabChange, TabStop};
+    let name = if footer { "footer" } else { "header" };
+    if styles.paragraph_style_named(name).is_some() {
+        return None;
+    }
+    let normal = styles.default_paragraph.clone();
+    let (center, right) = if normal.as_deref() == Some("a") { (4252, 8504) } else { (4513, 9026) };
+    let stop = |twips: i64, align| TabChange { position: twips * 635, stop: Some(TabStop { position: twips * 635, align, leader: false }) };
+    let mut id = if footer { "Footer".to_string() } else { "Header".to_string() };
+    while styles.styles.contains_key(&id) {
+        id.push('_');
+    }
+    let para = ParaFormat { tabs: vec![stop(center, TabAlign::Center), stop(right, TabAlign::Right)], ..ParaFormat::default() };
+    Some((id, FlowStyle { kind: StyleKind::Paragraph, name: name.to_string(), based_on: normal.clone(), next: normal, para, ..FlowStyle::default() }))
+}
+
 /// The styles a table of contents of given levels uses (`toc 1`
 /// …) that the document lacks.
 pub fn missing_toc_styles_for_levels(
@@ -6020,7 +8322,7 @@ pub fn missing_toc_styles_for_levels(
             after: (!japanese).then_some(100 * 635),
             ..ParaFormat::default()
         };
-        out.push((id, FlowStyle { kind: StyleKind::Paragraph, name, based_on: normal.clone(), next: normal.clone(), para, ..FlowStyle::default() }));
+        out.push((id, FlowStyle { kind: StyleKind::Paragraph, name, based_on: normal.clone(), next: normal.clone(), para, ui_priority: Some(39), ..FlowStyle::default() }));
     }
     out
 }
@@ -6050,23 +8352,50 @@ pub fn toc_entries_with_instruction(
     let mut entries = Vec::new();
     let mut bookmarks = Vec::new();
     let mut id = first_id;
+    // The entries in the document's order: a heading (or a paragraph of a style given), then the TC fields in it.
+    struct Item {
+        level: u32,
+        text: String,
+        para: u32,
+        no_page: bool,
+        heading: bool,
+    }
+    let mut items: Vec<Item> = Vec::new();
     for b in &doc.body {
         let Block::Paragraph(h) = b else { continue };
-        let Some(level) = resolve_paragraph_toc_level(styles, h, instruction) else { continue };
-        let text: String = h.text().chars().filter(|c| !matches!(c, '\t' | '\u{b}' | '\u{c}' | '\u{e}' | '\u{fffc}')).collect();
-        if text.trim().is_empty() {
-            continue;
+        if let Some(level) = resolve_paragraph_toc_level(styles, h, instruction) {
+            let text: String = h.text().chars().filter(|c| !matches!(c, '\t' | '\u{b}' | '\u{c}' | '\u{e}' | '\u{fffc}')).collect();
+            if !text.trim().is_empty() {
+                // A numbered heading's number, as Word puts it in the entry.
+                let text = match labels.get(&h.id).filter(|l| !l.is_empty()) {
+                    Some(label) => format!("{label} {text}"),
+                    None => text,
+                };
+                items.push(Item { level, text, para: h.id, no_page: false, heading: true });
+            }
         }
-        // A numbered heading's number, as Word puts it in the entry.
-        let text = match labels.get(&h.id).filter(|l| !l.is_empty()) {
-            Some(label) => format!("{label} {text}"),
-            None => text,
-        };
+        if let Some(wanted) = &instruction.tc_entries {
+            for run in &h.runs {
+                let FlowRunKind::Field { instruction: field, .. } = &run.kind else { continue };
+                let Some(tc) = tc_spec(field) else { continue };
+                if tc.id != *wanted || !(instruction.tc_levels.0..=instruction.tc_levels.1).contains(&tc.level) || tc.text.trim().is_empty() {
+                    continue;
+                }
+                items.push(Item { level: tc.level, text: tc.text, para: h.id, no_page: tc.no_page || instruction.no_page_numbers, heading: false });
+            }
+        }
+    }
+    for item in items {
+        let (level, text, h_id) = (item.level, item.text, item.para);
+        let h = doc.body.iter().find_map(|b| match b { Block::Paragraph(p) if p.id == h_id => Some(p), _ => None }).expect("the paragraph");
+        let _ = item.heading;
         let bookmark = match h.bookmarks.iter().find(|b| b.starts_with("_Toc")) {
             Some(b) => b.clone(),
             None => {
                 let b = format!("_Toc{:09}", 100_000_000 + h.id);
-                bookmarks.push((h.id, b.clone()));
+                if !bookmarks.iter().any(|(p, _)| *p == h.id) {
+                    bookmarks.push((h.id, b.clone()));
+                }
                 b
             }
         };
@@ -6083,10 +8412,12 @@ pub fn toc_entries_with_instruction(
         let mut entry = FlowParagraph { id, style, direct, ..FlowParagraph::default() };
         id += 1;
         let base = FlowRunStyle::default();
-        entry.runs.push(FlowRun { kind: FlowRunKind::Text(text), style: base.clone(), format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false });
-        entry.runs.push(FlowRun { kind: FlowRunKind::Tab, style: base.clone(), format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false });
-        let shown = page_of(h.id).map_or(String::new(), |n| n.to_string());
-        entry.runs.push(FlowRun { kind: FlowRunKind::PageRef { bookmark, shown }, style: base, format: RunFormat::default(), char_style: None, link, revision: None, show_field_code: false, field_locked: false });
+        entry.runs.push(FlowRun { kind: FlowRunKind::Text(text), style: base.clone(), format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false, control: None });
+        if !item.no_page {
+            entry.runs.push(FlowRun { kind: FlowRunKind::Tab, style: base.clone(), format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false, control: None });
+            let shown = page_of(h.id).map_or(String::new(), |n| n.to_string());
+            entry.runs.push(FlowRun { kind: FlowRunKind::PageRef { bookmark, shown }, style: base, format: RunFormat::default(), char_style: None, link, revision: None, show_field_code: false, field_locked: false, control: None });
+        }
         entry.resolve(styles);
         entries.push(entry);
     }
@@ -6118,7 +8449,7 @@ pub fn manual_toc_entries(doc: &FlowDocument, first_id: u32, width: crate::geome
         let mut entry = FlowParagraph { id: first_id + i as u32, style, direct, ..FlowParagraph::default() };
         let base = FlowRunStyle::default();
         for kind in [FlowRunKind::Text(text.to_string()), FlowRunKind::Tab, FlowRunKind::Text(page.to_string())] {
-            entry.runs.push(FlowRun { kind, style: base.clone(), format: RunFormat::default(), char_style: None, link: None, revision: None, show_field_code: false, field_locked: false });
+            entry.runs.push(FlowRun { kind, style: base.clone(), format: RunFormat::default(), char_style: None, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
         }
         entry.resolve(styles);
         entries.push(entry);
@@ -6136,9 +8467,7 @@ pub fn toc_entries(doc: &FlowDocument, from: u32, to: u32, page_of: &dyn Fn(u32)
         heading_levels: Some((from, to)),
         custom_styles: Vec::new(),
         caption_label: None,
-        hyperlinks: true,
-        hide_in_web: true,
-        use_outline_levels: true,
+        ..Default::default()
     };
     toc_entries_with_instruction(doc, &instruction, page_of, first_id, width)
 }
@@ -6238,10 +8567,10 @@ pub fn table_of_figures_entries(
         let mut entry = FlowParagraph { id, style, direct, ..FlowParagraph::default() };
         id += 1;
         let base = FlowRunStyle::default();
-        entry.runs.push(FlowRun { kind: FlowRunKind::Text(text), style: base.clone(), format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false });
-        entry.runs.push(FlowRun { kind: FlowRunKind::Tab, style: base.clone(), format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false });
+        entry.runs.push(FlowRun { kind: FlowRunKind::Text(text), style: base.clone(), format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false, control: None });
+        entry.runs.push(FlowRun { kind: FlowRunKind::Tab, style: base.clone(), format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false, control: None });
         let shown = page_of(p.id).map_or(String::new(), |n| n.to_string());
-        entry.runs.push(FlowRun { kind: FlowRunKind::PageRef { bookmark, shown }, style: base, format: RunFormat::default(), char_style: None, link, revision: None, show_field_code: false, field_locked: false });
+        entry.runs.push(FlowRun { kind: FlowRunKind::PageRef { bookmark, shown }, style: base, format: RunFormat::default(), char_style: None, link, revision: None, show_field_code: false, field_locked: false, control: None });
         entry.resolve(styles);
         entries.push(entry);
     }
@@ -6413,6 +8742,11 @@ pub fn toggle_field_codes_at(doc: &FlowDocument, range: Option<(FlowPos, FlowPos
 /// 文書全体のすべてのフィールドコードの表示/非表示（`show_field_codes`）をトグルする（Word の「すべてのフィールドコードの表示/非表示」Alt+F9 / ⌥F9）。
 pub fn toggle_all_field_codes(doc: &FlowDocument) -> FlowCommand {
     FlowCommand::SetShowFieldCodes(!doc.show_field_codes)
+}
+
+/// コンテンツ コントロールのデザイン モードの有効/無効を切り替える（Word の「デザイン モード」開発 > デザイン モード）。
+pub fn toggle_form_design_mode(doc: &FlowDocument) -> FlowCommand {
+    FlowCommand::SetFormDesignMode(!doc.form_design_mode)
 }
 
 /// 文書内（または指定された範囲 `range` 内）のフィールド（`FlowRunKind::Field`, `PageRef`, `PageNumber`, `FileName`）の
@@ -6627,6 +8961,10 @@ pub fn evaluate_field_instruction(instruction: &str, doc: &FlowDocument, _pos: F
         "INFO" => doc.info_text(instruction).unwrap_or_default(),
         "ASK" => String::new(),
         "FILLIN" | "FILL-IN" => doc.fillin_text(instruction),
+        "AUTOTEXT" => crate::field_format::format_autotext(instruction),
+        "AUTOTEXTLIST" => crate::field_format::format_autotextlist(instruction),
+        "CITATION" => crate::field_format::format_citation(instruction),
+        "BIBLIOGRAPHY" => crate::field_format::format_bibliography(instruction),
         _ => {
             if instruction.trim_start().starts_with('=') {
                 if let Some((table, row, col)) = find_table_cell_for_paragraph(doc, _pos.para) {
@@ -6683,7 +9021,7 @@ pub fn insert_field_at_range(
         link: None,
         revision: None,
         show_field_code: show_code,
-        field_locked: false,
+        field_locked: false, control: None,
     };
 
     let mut q = FlowParagraph { runs: p.runs_before(lo), ..p.clone() };

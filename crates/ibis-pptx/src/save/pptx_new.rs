@@ -272,7 +272,11 @@ pub(crate) fn line_xml(x: &Prefixes, stroke: Option<&Stroke>) -> String {
         Some(s) => {
             let compound = if s.compound == ibis_doc_model::LineCompound::Single { String::new() } else { format!(" cmpd=\"{}\"", s.compound.name()) };
             let alignment = if s.alignment == ibis_doc_model::LineAlignment::Center { String::new() } else { format!(" algn=\"{}\"", s.alignment.name()) };
-            let mut out = format!("<{a}ln w=\"{}\" cap=\"{}\"{compound}{alignment}><{a}solidFill>{}</{a}solidFill>", s.width, cap_name(s.cap), color_xml(x, s.color));
+            let fill_str = match &s.fill {
+                Some(fill) => fill_xml(x, fill).unwrap_or_else(|_| format!("<{a}solidFill>{}</{a}solidFill>", color_xml(x, s.color))),
+                None => format!("<{a}solidFill>{}</{a}solidFill>", color_xml(x, s.color)),
+            };
+            let mut out = format!("<{a}ln w=\"{}\" cap=\"{}\"{compound}{alignment}>{fill_str}", s.width, cap_name(s.cap));
             if let Some(dash) = dash_name(s) {
                 write!(out, "<{a}prstDash val=\"{dash}\"/>").unwrap();
             }
@@ -474,7 +478,7 @@ fn run_props_xml(x: &Prefixes, element: &str, body: &TextStyle, run: &ibis_doc_m
     };
     let mut attrs = format!("{lang_attr} altLang=\"en-US\" sz=\"{}\" b=\"{}\" i=\"{}\"", style.font_size, style.bold as u8, style.italic as u8);
     if run.underline {
-        attrs.push_str(" u=\"sng\"");
+        write!(attrs, " u=\"{}\"", run.underline_kind.value()).unwrap();
     }
     if run.baseline != 0 {
         write!(attrs, " baseline=\"{}\"", run.baseline).unwrap();
@@ -633,7 +637,10 @@ fn paragraph_xml(x: &Prefixes, body: &TextStyle, p: &Paragraph, seed: u64, field
     }
     let mut s = format!("<{a}p><{a}pPr{attrs}>{children}</{a}pPr>");
     for run in &p.runs {
-        s.push_str(&run_xml(x, body, run, seed, field));
+        match &run.style.math {
+            Some(math) => s.push_str(&crate::math_xml::write_math_content(math, a, run.style.math_inline)),
+            None => s.push_str(&run_xml(x, body, run, seed, field)),
+        }
     }
     s.push_str(&run_props_xml(x, "endParaRPr", body, &p.end_style, ""));
     write!(s, "</{a}p>").unwrap();
@@ -720,7 +727,7 @@ fn text_body_xml_fields(x: &Prefixes, body: Option<&TextBody>, seed: u64, field:
     s
 }
 
-fn auto_effects_xml(x: &Prefixes, shape: &ibis_doc_model::AutoShape) -> Result<String, Error> {
+pub(crate) fn auto_effects_xml(x: &Prefixes, shape: &ibis_doc_model::AutoShape) -> Result<String, Error> {
     let a = &x.a;
     let mut effects = String::new();
     if let Some((color, radius)) = shape.glow {
@@ -785,6 +792,52 @@ fn auto_effects_xml(x: &Prefixes, shape: &ibis_doc_model::AutoShape) -> Result<S
         write!(effects, "<{a}softEdge rad=\"{radius}\"/>").unwrap();
     }
     Ok(if effects.is_empty() { effects } else { format!("<{a}effectLst>{effects}</{a}effectLst>") })
+}
+
+/// Normalize an angle in 60,000ths of a degree to non-negative OOXML `ST_Angle` [0, 21_600_000).
+/// PowerPoint crashes immediately when `<a:rot>` has negative angles (e.g. `lon="-2700000"`).
+pub(crate) fn normalize_ooxml_angle(angle: i32) -> i32 {
+    let m = 21_600_000;
+    (angle % m + m) % m
+}
+
+pub(crate) fn scene3d_xml(x: &Prefixes, tilt: &ibis_doc_model::Tilt) -> String {
+    let a = &x.a;
+    let prst = tilt.camera_preset.map(|p| p.as_str()).unwrap_or("orthographicFront");
+    format!(
+        "<{a}scene3d><{a}camera prst=\"{prst}\"><{a}rot lat=\"{}\" lon=\"{}\" rev=\"{}\"/></{a}camera><{a}lightRig rig=\"threePt\" dir=\"t\"/></{a}scene3d>",
+        normalize_ooxml_angle(tilt.lat),
+        normalize_ooxml_angle(tilt.lon),
+        normalize_ooxml_angle(tilt.rev)
+    )
+}
+
+pub(crate) fn sp3d_xml(x: &Prefixes, tilt: Option<&ibis_doc_model::Tilt>, bevel: Option<&ibis_doc_model::Bevel>) -> String {
+    let a = &x.a;
+    let mut attrs = String::new();
+    let mut children = String::new();
+    if let Some(t) = tilt {
+        if t.depth != 0 {
+            use std::fmt::Write as _;
+            write!(attrs, " z=\"{}\"", t.depth).ok();
+        }
+        if t.extrusion_h != 0 {
+            use std::fmt::Write as _;
+            write!(attrs, " extrusionH=\"{}\"", t.extrusion_h).ok();
+        }
+        if let Some(color) = t.extrusion_color {
+            let hex = format!("{:06X}", color.rgb.0 & 0xffffff);
+            children.push_str(&format!("<{a}extrusionClr><{a}srgbClr val=\"{hex}\"/></{a}extrusionClr>"));
+        }
+    }
+    if let Some(b) = bevel {
+        children.push_str(&format!("<{a}bevelT prst=\"{}\" w=\"{}\" h=\"{}\"/>", b.preset.as_str(), b.width, b.height));
+    }
+    if attrs.is_empty() && children.is_empty() {
+        String::new()
+    } else {
+        format!("<{a}sp3d{attrs}>{children}</{a}sp3d>")
+    }
 }
 
 /// The element for a new shape with drawing-object id `id`. A picture's
@@ -852,6 +905,17 @@ pub(crate) fn placeholder_shape_xml(x: &Prefixes, shape: &Shape, placeholder: &i
 }
 
 pub(crate) fn shape_xml(x: &Prefixes, shape: &Shape, id: u32, picture_rel: Option<&str>) -> Result<String, Error> {
+    shape_xml_with_glue(x, shape, id, picture_rel, None, None)
+}
+
+pub(crate) fn shape_xml_with_glue(
+    x: &Prefixes,
+    shape: &Shape,
+    id: u32,
+    picture_rel: Option<&str>,
+    glue: Option<&ibis_doc_model::Glue>,
+    id_map: Option<&std::collections::HashMap<u64, String>>,
+) -> Result<String, Error> {
     let check_body = |body: &TextBody| -> Result<(), Error> {
         if !(1_000..=100_000).contains(&body.font_scale) {return Err(unsupported("文字縮小率の範囲"));}
         for paragraph in &body.paragraphs {
@@ -869,6 +933,28 @@ pub(crate) fn shape_xml(x: &Prefixes, shape: &Shape, id: u32, picture_rel: Optio
     }
     let (a, p) = (&x.a, &x.p);
     let xfrm = xfrm_xml(x, &format!("{a}xfrm"), shape);
+
+    let cxn_glue_xml = match glue {
+        Some(g) => {
+            let mut s = String::new();
+            if let Some((target_id, idx)) = g.start {
+                let fallback = target_id.to_string();
+                let native_id = id_map.and_then(|m| m.get(&target_id)).unwrap_or(&fallback);
+                s.push_str(&format!("<{a}stCxn id=\"{native_id}\" idx=\"{idx}\"/>"));
+            }
+            if let Some((target_id, idx)) = g.end {
+                let fallback = target_id.to_string();
+                let native_id = id_map.and_then(|m| m.get(&target_id)).unwrap_or(&fallback);
+                s.push_str(&format!("<{a}endCxn id=\"{native_id}\" idx=\"{idx}\"/>"));
+            }
+            if s.is_empty() {
+                format!("<{p}cNvCxnSpPr/>")
+            } else {
+                format!("<{p}cNvCxnSpPr>{s}</{p}cNvCxnSpPr>")
+            }
+        }
+        None => format!("<{p}cNvCxnSpPr/>"),
+    };
     Ok(match &shape.kind {
         ShapeKind::TextBox(body) => format!(
             "<{p}sp><{p}nvSpPr><{p}cNvPr id=\"{id}\" name=\"TextBox {n}\"/>{}<{p}nvPr/></{p}nvSpPr><{p}spPr>{xfrm}<{a}prstGeom prst=\"rect\"><{a}avLst/></{a}prstGeom><{a}noFill/></{p}spPr>{}</{p}sp>",
@@ -877,9 +963,6 @@ pub(crate) fn shape_xml(x: &Prefixes, shape: &Shape, id: u32, picture_rel: Optio
             n = id - 1,
         ),
         ShapeKind::Auto(auto) => {
-            if auto.tilt.is_some() {
-                return Err(unsupported("3Dのある図形の追加"));
-            }
             let is_connector = match &auto.geometry {
                 Geometry::Formula(f) => matches!(
                     f.preset.as_deref(),
@@ -905,7 +988,7 @@ pub(crate) fn shape_xml(x: &Prefixes, shape: &Shape, id: u32, picture_rel: Optio
                 };
                 let line = line_xml(x, auto.stroke.as_ref());
                 return Ok(format!(
-                    "<{p}cxnSp><{p}nvCxnSpPr><{p}cNvPr id=\"{id}\" name=\"{name} {n}\"/><{p}cNvCxnSpPr/><{p}nvPr/></{p}nvCxnSpPr><{p}spPr>{xfrm}{}{line}</{p}spPr></{p}cxnSp>",
+                    "<{p}cxnSp><{p}nvCxnSpPr><{p}cNvPr id=\"{id}\" name=\"{name} {n}\"/>{cxn_glue_xml}<{p}nvPr/></{p}nvCxnSpPr><{p}spPr>{xfrm}{}{line}</{p}spPr></{p}cxnSp>",
                     geometry_xml(x, &auto.geometry)?,
                     n = id - 1,
                 ));
@@ -918,8 +1001,10 @@ pub(crate) fn shape_xml(x: &Prefixes, shape: &Shape, id: u32, picture_rel: Optio
                 None => line_xml(x, None),
             };
             let effects = auto_effects_xml(x, auto)?;
+            let scene3d = auto.tilt.as_ref().map(|t| scene3d_xml(x, t)).unwrap_or_default();
+            let sp3d = sp3d_xml(x, auto.tilt.as_ref(), auto.bevel.as_ref());
             format!(
-                "<{p}sp><{p}nvSpPr><{p}cNvPr id=\"{id}\" name=\"{name} {n}\"/>{nv}<{p}nvPr/></{p}nvSpPr><{p}spPr>{xfrm}{}{}{line}{effects}</{p}spPr>{}</{p}sp>",
+                "<{p}sp><{p}nvSpPr><{p}cNvPr id=\"{id}\" name=\"{name} {n}\"/>{nv}<{p}nvPr/></{p}nvSpPr><{p}spPr>{xfrm}{}{}{line}{effects}{scene3d}{sp3d}</{p}spPr>{}</{p}sp>",
                 geometry_xml(x, &auto.geometry)?,
                 fill_xml(x, &auto.fill)?,
                 text_body_xml_seeded(x, auto.text.as_ref(), shape.id.0),
@@ -927,7 +1012,7 @@ pub(crate) fn shape_xml(x: &Prefixes, shape: &Shape, id: u32, picture_rel: Optio
             )
         }
         ShapeKind::Line(stroke) => format!(
-            "<{p}cxnSp><{p}nvCxnSpPr><{p}cNvPr id=\"{id}\" name=\"Straight Connector {n}\"/><{p}cNvCxnSpPr/><{p}nvPr/></{p}nvCxnSpPr><{p}spPr>{xfrm}<{a}prstGeom prst=\"line\"><{a}avLst/></{a}prstGeom>{}</{p}spPr></{p}cxnSp>",
+            "<{p}cxnSp><{p}nvCxnSpPr><{p}cNvPr id=\"{id}\" name=\"Straight Connector {n}\"/>{cxn_glue_xml}<{p}nvPr/></{p}nvCxnSpPr><{p}spPr>{xfrm}<{a}prstGeom prst=\"line\"><{a}avLst/></{a}prstGeom>{}</{p}spPr></{p}cxnSp>",
             line_xml(x, Some(stroke)),
             n = id - 1,
         ),
@@ -1157,16 +1242,26 @@ fn picture_xml(x: &Prefixes, picture: &Picture, xfrm: &str, id: u32, shape: ibis
             write!(effects, "<{a}lum{attrs}/>").unwrap();
         }
     }
-    if let Some(amt) = picture.alpha {
+    if let Some(amt) = picture.effects.opacity {
         write!(effects, r#"<{a}alphaModFix amt="{amt}"/>"#).unwrap();
     }
     let is_svg = is_svg_media(picture.media);
-    let blip_ext = if is_svg {
-        format!(
-            r#"<{a}extLst><{a}ext uri="{{96DAC542-7B81-4868-9F9E-1EA1F31DC1F3}}"><asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" {r}embed="{rel}"/></{a}ext></{a}extLst>"#
-        )
-    } else {
+    let mut exts = Vec::new();
+    if is_svg {
+        exts.push(format!(
+            r#"<{a}ext uri="{{96DAC542-7B81-4868-9F9E-1EA1F31DC1F3}}"><asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" {r}embed="{rel}"/></{a}ext>"#
+        ));
+    }
+    if let Some(ref effect) = picture.artistic_effect {
+        let eff_xml = artistic_effect_xml(effect);
+        exts.push(format!(
+            r#"<{a}ext uri="{{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}}"><a14:imgProps xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"><a14:imgLayer><a14:imgEffect>{eff_xml}</a14:imgEffect></a14:imgLayer></a14:imgProps></{a}ext>"#
+        ));
+    }
+    let blip_ext = if exts.is_empty() {
         String::new()
+    } else {
+        format!("<{a}extLst>{}</{a}extLst>", exts.concat())
     };
     let c = picture.crop;
     let crop = if c == ibis_doc_model::Crop::default() {
@@ -1352,3 +1447,32 @@ pub(crate) fn placeholder_xml(id: u32, name: &str, ph_attrs: &str) -> String {
         escape(name)
     )
 }
+
+pub(crate) fn artistic_effect_xml(effect: &ibis_doc_model::ArtisticEffect) -> String {
+    use ibis_doc_model::ArtisticEffect;
+    match *effect {
+        ArtisticEffect::Blur { radius } => format!(r#"<a14:artisticBlur radius="{radius}"/>"#),
+        ArtisticEffect::Cement { crack_spacing, trans } => format!(r#"<a14:artisticCement crackSpacing="{crack_spacing}" trans="{trans}"/>"#),
+        ArtisticEffect::ChalkSketch { pressure, trans } => format!(r#"<a14:artisticChalkSketch pressure="{pressure}" trans="{trans}"/>"#),
+        ArtisticEffect::CrisscrossEtching { pressure, trans } => format!(r#"<a14:artisticCrisscrossEtching pressure="{pressure}" trans="{trans}"/>"#),
+        ArtisticEffect::Cutout { number_of_shades, trans } => format!(r#"<a14:artisticCutout numberOfShades="{number_of_shades}" trans="{trans}"/>"#),
+        ArtisticEffect::FilmGrain { grain_size, trans } => format!(r#"<a14:artisticFilmGrain grainSize="{grain_size}" trans="{trans}"/>"#),
+        ArtisticEffect::Glass { scaling, trans } => format!(r#"<a14:artisticGlass scaling="{scaling}" trans="{trans}"/>"#),
+        ArtisticEffect::GlowDiffused { intensity, trans } => format!(r#"<a14:artisticGlowDiffused intensity="{intensity}" trans="{trans}"/>"#),
+        ArtisticEffect::GlowEdges { smoothness, trans } => format!(r#"<a14:artisticGlowEdges smoothness="{smoothness}" trans="{trans}"/>"#),
+        ArtisticEffect::LightScreen { grid_size, trans } => format!(r#"<a14:artisticLightScreen gridSize="{grid_size}" trans="{trans}"/>"#),
+        ArtisticEffect::LineDrawing { pencil_size, trans } => format!(r#"<a14:artisticLineDrawing pencilSize="{pencil_size}" trans="{trans}"/>"#),
+        ArtisticEffect::Marker { size, trans } => format!(r#"<a14:artisticMarker size="{size}" trans="{trans}"/>"#),
+        ArtisticEffect::MosaicBubbles { pressure, trans } => format!(r#"<a14:artisticMosiaicBubbles pressure="{pressure}" trans="{trans}"/>"#),
+        ArtisticEffect::PaintBrush { brush_size, trans } => format!(r#"<a14:artisticPaintBrush brushSize="{brush_size}" trans="{trans}"/>"#),
+        ArtisticEffect::PaintStrokes { intensity, trans } => format!(r#"<a14:artisticPaintStrokes intensity="{intensity}" trans="{trans}"/>"#),
+        ArtisticEffect::PastelsSmooth { scaling, trans } => format!(r#"<a14:artisticPastelsSmooth scaling="{scaling}" trans="{trans}"/>"#),
+        ArtisticEffect::PencilGrayscale { pencil_size, trans } => format!(r#"<a14:artisticPencilGrayscale pencilSize="{pencil_size}" trans="{trans}"/>"#),
+        ArtisticEffect::PencilSketch { pressure, trans } => format!(r#"<a14:artisticPencilSketch pressure="{pressure}" trans="{trans}"/>"#),
+        ArtisticEffect::Photocopy { detail, trans } => format!(r#"<a14:artisticPhotocopy detail="{detail}" trans="{trans}"/>"#),
+        ArtisticEffect::PlasticWrap { smoothness, trans } => format!(r#"<a14:artisticPlasticWrap smoothness="{smoothness}" trans="{trans}"/>"#),
+        ArtisticEffect::Texturizer { scaling, trans } => format!(r#"<a14:artisticTexturizer scaling="{scaling}" trans="{trans}"/>"#),
+        ArtisticEffect::WatercolorSponge { brush_size, trans } => format!(r#"<a14:artisticWatercolorSponge brushSize="{brush_size}" trans="{trans}"/>"#),
+    }
+}
+

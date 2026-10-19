@@ -20,6 +20,7 @@ use crate::shell::i18n::text;
 
 /// What an operation needs on a protected sheet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum Guarded {
     /// Changing the cells' content (locked ones refused).
     Cells,
@@ -94,6 +95,9 @@ impl SlideEditor {
     }
 
     pub(crate) fn protection_refuses_ranges(&mut self, what: Guarded, ranges: &[CellRange], cx: &mut Context<Self>) -> bool {
+        if self.is_read_only() {
+            return true;
+        }
         let (Some(p), Some((_, sheet))) = (self.sheet_protection(), self.current_sheet()) else { return false };
         let a = p.allowed;
         let refused = match what {

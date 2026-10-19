@@ -13,8 +13,68 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use ibis_calc::input::{Typed, parse_input};
+use ibis_calc::input::{Typed, parse_date_in_order, parse_input};
 use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, SheetCommand, SlideId, StyleChange};
+use super::import_text::ColumnType;
+
+/// Converts split parts of a row into CellEdits and number format changes according to column types.
+pub(crate) fn convert_parts(
+    parts: &[String],
+    columns: &[ColumnType],
+    default_type: ColumnType,
+    to_row: u32,
+    destination_column: u32,
+    source_range: Option<CellRange>,
+    date1904: bool,
+    sheet: Option<&ibis_doc_model::Sheet>,
+) -> (Vec<CellEdit>, Vec<(CellRange, String)>) {
+    let mut edits = Vec::new();
+    let mut formats = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        let kind = columns.get(i).copied().unwrap_or(default_type);
+        let column = destination_column + i as u32;
+        if kind == ColumnType::Skip {
+            if let Some(src) = source_range {
+                if column == src.first_column && (src.first_row..=src.last_row).contains(&to_row) {
+                    edits.push(CellEdit { row: to_row, column, input: CellInput::Clear });
+                }
+            }
+            continue;
+        }
+        let one = CellRange { first_row: to_row, last_row: to_row, first_column: column, last_column: column };
+        let input = if part.is_empty() {
+            CellInput::Clear
+        } else {
+            match kind {
+                ColumnType::Text => {
+                    formats.push((one, "@".into()));
+                    CellInput::Value(CellValue::Text(part.clone()))
+                }
+                ColumnType::Date(order) => {
+                    if let Some(serial) = parse_date_in_order(part, order, date1904) {
+                        formats.push((one, "yyyy/m/d".into()));
+                        CellInput::Value(CellValue::Number(serial))
+                    } else {
+                        formats.push((one, "@".into()));
+                        CellInput::Value(CellValue::Text(part.clone()))
+                    }
+                }
+                _ => match parse_input(part, date1904) {
+                    Typed::Formula(f) => CellInput::Formula(f),
+                    Typed::Value(v, format) => {
+                        let general = sheet.is_none_or(|s| s.cell(to_row, column).is_none_or(|c| s.styles.get(c.style as usize).is_none_or(|st| st.number_format == "General")));
+                        if let (Some(code), true) = (format, general) {
+                            formats.push((one, code.to_string()));
+                        }
+                        CellInput::Value(v)
+                    }
+                },
+            }
+        };
+        edits.push(CellEdit { row: to_row, column, input });
+    }
+    (edits, formats)
+}
 
 /// How the text is split.
 #[derive(Clone, Debug, PartialEq)]
@@ -94,6 +154,8 @@ pub(crate) struct TextColumnsPanel {
     pub(crate) breaks: Entity<InputState>,
     /// Each part kept as text (文字列) rather than read as typed (標準).
     pub(crate) as_text: bool,
+    /// Per-column data formats (標準, 文字列, 日付, 読み込まない).
+    pub(crate) columns: Vec<ColumnType>,
     pub(crate) destination: Entity<InputState>,
     /// Asked whether to replace the cells there: the next apply does.
     pub(crate) confirm: bool,
@@ -103,6 +165,18 @@ pub(crate) struct TextColumnsPanel {
 }
 
 impl TextColumnsPanel {
+    pub(crate) fn column(&self, index: usize) -> ColumnType {
+        self.columns.get(index).copied().unwrap_or(if self.as_text { ColumnType::Text } else { ColumnType::Standard })
+    }
+
+    pub(crate) fn set_column_type(&mut self, index: usize, kind: ColumnType) {
+        let def = if self.as_text { ColumnType::Text } else { ColumnType::Standard };
+        if self.columns.len() <= index {
+            self.columns.resize(index + 1, def);
+        }
+        self.columns[index] = kind;
+    }
+
     fn split(&self, cx: &App) -> Result<Split, String> {
         if self.fixed {
             let text = self.breaks.read(cx).value().to_string();
@@ -135,6 +209,14 @@ impl TextColumnsPanel {
 }
 
 impl SlideEditor {
+    pub(crate) fn set_text_columns_type(&mut self, index: usize, kind: ColumnType, cx: &mut Context<Self>) {
+        if let Some(p) = self.wb_mut().panels.text_columns.as_mut() {
+            p.set_column_type(index, kind);
+            p.confirm = false;
+        }
+        cx.notify();
+    }
+
     pub(crate) fn open_text_columns_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let Some((column, row)) = self.current_cell() else { return };
@@ -156,6 +238,7 @@ impl SlideEditor {
             quote: Some('"'),
             breaks: input(String::new(), "3, 8", window, cx),
             as_text: false,
+            columns: Vec::new(),
             destination: input(ibis_doc_model::cell_name(source.first_column, source.first_row), "A1", window, cx),
             confirm: false,
             message: if source.first_column != source.last_column { crate::shell::i18n::text("fix.text-columns.only-one-column-can-converted").into() } else { String::new() },
@@ -212,44 +295,36 @@ impl SlideEditor {
         let Some(destination) = super::dedupe_edit::parse_range(&p.destination.read(cx).value()) else {
             return self.text_columns_message(crate::shell::i18n::text("fix.text-columns.enter-destination-cell-e-g").into(), cx);
         };
-        let (as_text, confirm, slide, source) = (p.as_text, p.confirm, p.slide, p.source);
+        let (as_text, confirm, slide, source, columns) = (p.as_text, p.confirm, p.slide, p.source, p.columns.clone());
         let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
         let rows = self.text_columns_source();
         let Some((_, sheet)) = self.current_sheet() else { return };
         let mut edits = Vec::new();
         let mut formats: Vec<(CellRange, String)> = Vec::new();
         let mut occupied = false;
+        let default_type = if as_text { ColumnType::Text } else { ColumnType::Standard };
         for (row, text) in &rows {
             let to_row = destination.first_row + (row - source.first_row);
-            for (i, part) in split_text(text, &split).into_iter().enumerate() {
-                let column = destination.first_column + i as u32;
-                let at = (to_row, column);
-                // A cell written that is not one of the source's and holds something.
-                if !(column == source.first_column && (source.first_row..=source.last_row).contains(&to_row))
-                    && sheet.cell(at.0, at.1).is_some_and(|c| !c.value.is_empty() || c.formula.is_some())
-                {
+            let parts = split_text(text, &split);
+            let (part_edits, part_formats) = convert_parts(
+                &parts,
+                &columns,
+                default_type,
+                to_row,
+                destination.first_column,
+                Some(source),
+                date1904,
+                Some(sheet),
+            );
+            for edit in &part_edits {
+                let at = (edit.row, edit.column);
+                let is_source = edit.column == source.first_column && (source.first_row..=source.last_row).contains(&edit.row);
+                if !is_source && sheet.cell(at.0, at.1).is_some_and(|c| !c.value.is_empty() || c.formula.is_some()) {
                     occupied = true;
                 }
-                let one = CellRange { first_row: to_row, last_row: to_row, first_column: column, last_column: column };
-                let input = if part.is_empty() {
-                    CellInput::Clear
-                } else if as_text {
-                    formats.push((one, "@".into()));
-                    CellInput::Value(CellValue::Text(part))
-                } else {
-                    match parse_input(&part, date1904) {
-                        Typed::Formula(f) => CellInput::Formula(f),
-                        Typed::Value(v, format) => {
-                            let general = sheet.cell(to_row, column).is_none_or(|c| sheet.styles[c.style as usize].number_format == "General");
-                            if let (Some(code), true) = (format, general) {
-                                formats.push((one, code.to_string()));
-                            }
-                            CellInput::Value(v)
-                        }
-                    }
-                };
-                edits.push(CellEdit { row: to_row, column, input });
             }
+            edits.extend(part_edits);
+            formats.extend(part_formats);
         }
         if edits.is_empty() {
             return self.text_columns_message(crate::shell::i18n::text("fix.text-columns.there-no-data-split").into(), cx);
@@ -276,10 +351,10 @@ impl SlideEditor {
     }
 
     pub(crate) fn text_columns_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let preview: Vec<String> = {
+        let preview_rows: Vec<Vec<String>> = {
             let p = self.sheet_state()?.panels.text_columns.as_ref()?;
             match p.split(cx) {
-                Ok(split) => self.text_columns_source().iter().take(5).map(|(_, t)| split_text(t, &split).join(" │ ")).collect(),
+                Ok(split) => self.text_columns_source().iter().take(2).map(|(_, t)| split_text(t, &split)).collect(),
                 Err(_) => Vec::new(),
             }
         };
@@ -340,51 +415,108 @@ impl SlideEditor {
                         .child(toggle("text-columns-space", check(p.space, "fix.text-columns.space"), |p| p.space = !p.space)),
                 )
                 .child(mark("other", Input::new(&p.other).small().into_any_element()))
-                .child(toggle("text-columns-consecutive", check(p.consecutive, "fix.text-columns.treat-consecutive-delimiters-one"), |p| p.consecutive = !p.consecutive))
-                .child(toggle(
-                    "text-columns-quote",
-                    crate::shell::i18n::format(
-                        "text-columns.quote",
-                        &[("quote", &match p.quote {
-                            Some('"') => "\"".into(),
-                            Some(_) => "'".into(),
-                            None => crate::shell::i18n::text("_shell.none"),
-                        })],
-                    ),
-                    |p| {
-                        p.quote = match p.quote {
-                            Some('"') => Some('\''),
-                            Some(_) => None,
-                            None => Some('"'),
-                        }
-                    },
-                ));
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .flex_wrap()
+                        .child(toggle("text-columns-consecutive", check(p.consecutive, "fix.text-columns.treat-consecutive-delimiters-one"), |p| p.consecutive = !p.consecutive))
+                        .child(toggle(
+                            "text-columns-quote",
+                            crate::shell::i18n::format(
+                                "text-columns.quote",
+                                &[("quote", &match p.quote {
+                                    Some('"') => "\"".into(),
+                                    Some(_) => "'".into(),
+                                    None => crate::shell::i18n::text("_shell.none"),
+                                })],
+                            ),
+                            |p| {
+                                p.quote = match p.quote {
+                                    Some('"') => Some('\''),
+                                    Some(_) => None,
+                                    None => Some('"'),
+                                }
+                            },
+                        )),
+                );
         }
-        body = body
-            .child(toggle("text-columns-format", crate::shell::i18n::format("text-columns.format", &[("format", &crate::shell::i18n::text(if p.as_text { "_xlsx.text" } else { "_xlsx.general" }))]), |p| p.as_text = !p.as_text))
-            .child(crate::shell::i18n::text("fix.text-columns.destination"))
-            .child(mark("destination", Input::new(&p.destination).small().into_any_element()))
-            .child(crate::shell::i18n::text("fix.text-columns.preview"));
-        for line in preview {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(line)));
-        }
-        body = body
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(mark(
-                "apply",
-                Button::new("text-columns-apply").primary().small().label(crate::shell::i18n::text(if p.confirm { "fix.text-columns.replace" } else { "fix.text-columns.split" })).on_click(cx.listener(|this, _, _, cx| this.apply_text_columns_panel(cx))).into_any_element(),
-            ))
-            .child(mark(
-                "close",
-                Button::new("text-columns-close")
+        let shown_cols = preview_rows.iter().map(Vec::len).max().unwrap_or(0).min(8);
+        let mut fmt_row = h_flex().gap_1().flex_wrap();
+        fmt_row = fmt_row.child(toggle(
+            "text-columns-format",
+            crate::shell::i18n::format("text-columns.format", &[("format", &crate::shell::i18n::text(if p.as_text { "_xlsx.text" } else { "_xlsx.general" }))]),
+            |p| {
+                p.as_text = !p.as_text;
+                let target_type = if p.as_text { ColumnType::Text } else { ColumnType::Standard };
+                for c in &mut p.columns {
+                    *c = target_type;
+                }
+            },
+        ));
+        for i in 0..shown_cols {
+            let kind = p.column(i);
+            fmt_row = fmt_row.child(mark(
+                &format!("text-columns-column-{i}"),
+                Button::new(SharedString::from(format!("text-columns-col-{i}")))
                     .small()
-                    .label(crate::shell::i18n::text("_shell.close"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.wb_mut().panels.text_columns = None;
+                    .label(crate::shell::i18n::format("import-text.column", &[("n", &(i + 1)), ("format", &crate::shell::i18n::text(kind.label()))]))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(p) = this.wb_mut().panels.text_columns.as_mut() {
+                            p.set_column_type(i, p.column(i).next());
+                            p.confirm = false;
+                        }
                         cx.notify();
                     }))
                     .into_any_element(),
             ));
+        }
+        body = body
+            .child(fmt_row)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(crate::shell::i18n::text("fix.text-columns.destination"))
+                    .child(div().flex_1().child(mark("destination", Input::new(&p.destination).small().into_any_element()))),
+            )
+            .child(crate::shell::i18n::text("fix.text-columns.preview"));
+        for record in &preview_rows {
+            let line = record
+                .iter()
+                .enumerate()
+                .map(|(i, val)| {
+                    let kind = p.column(i);
+                    if kind == ColumnType::Skip {
+                        format!("[{val} ({})]", crate::shell::i18n::text("_xlsx.do-not-import-column-skip"))
+                    } else {
+                        val.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" │ ");
+            body = body.child(div().text_size(px(12.)).child(SharedString::from(line)));
+        }
+        body = body
+            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(mark(
+                        "apply",
+                        Button::new("text-columns-apply").primary().small().label(crate::shell::i18n::text(if p.confirm { "fix.text-columns.replace" } else { "fix.text-columns.split" })).on_click(cx.listener(|this, _, _, cx| this.apply_text_columns_panel(cx))).into_any_element(),
+                    ))
+                    .child(mark(
+                        "close",
+                        Button::new("text-columns-close")
+                            .small()
+                            .label(crate::shell::i18n::text("_shell.close"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.wb_mut().panels.text_columns = None;
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    )),
+            );
         Some(SidebarPanel { title: "fix.text-columns.text-columns".into(), body: body.into_any_element() })
     }
 }
@@ -413,5 +545,79 @@ mod tests {
         assert_eq!(split_text("2026-10-07", &Split::Fixed(vec![4, 5, 7, 8])), ["2026", "-", "10", "-", "07"]);
         assert_eq!(split_text("ab", &Split::Fixed(vec![1, 5])), ["a", "b"]);
         assert_eq!(split_text("東京都千代田区", &Split::Fixed(vec![3])), ["東京都", "千代田区"]);
+    }
+
+    #[test]
+    fn column_conversion_types_and_skipping() {
+        use super::super::import_text::ColumnType;
+        use ibis_calc::input::DateOrder;
+        use ibis_doc_model::{CellInput, CellValue};
+
+        let parts = vec![
+            "2026/10/17".to_string(),
+            "012345".to_string(),
+            "ignore_me".to_string(),
+            "100.5".to_string(),
+        ];
+        let columns = vec![
+            ColumnType::Date(DateOrder::Ymd),
+            ColumnType::Text,
+            ColumnType::Skip,
+            ColumnType::Standard,
+        ];
+        let (edits, formats) = super::convert_parts(
+            &parts,
+            &columns,
+            ColumnType::Standard,
+            0,
+            0,
+            None,
+            false,
+            None,
+        );
+
+        // Column 0: Date -> serial number (> 40000.0) with yyyy/m/d format
+        assert_eq!(edits[0].column, 0);
+        assert!(matches!(edits[0].input, CellInput::Value(CellValue::Number(n)) if n > 40000.0));
+        assert_eq!(formats[0].1, "yyyy/m/d");
+
+        // Column 1: Text -> text value with @ format, leading zero preserved
+        assert_eq!(edits[1].column, 1);
+        assert_eq!(edits[1].input, CellInput::Value(CellValue::Text("012345".into())));
+        assert_eq!(formats[1].1, "@");
+
+        // Column 2: Skip -> omitted! No edit for column 2
+        // Column 3: Standard -> number 100.5
+        assert_eq!(edits[2].column, 3);
+        assert_eq!(edits[2].input, CellInput::Value(CellValue::Number(100.5)));
+        assert_eq!(edits.len(), 3);
+    }
+
+    #[test]
+    fn skip_first_column_clears_source_when_in_place() {
+        use super::super::import_text::ColumnType;
+        use ibis_doc_model::{CellInput, CellRange, CellValue};
+
+        let parts = vec!["raw_text".to_string(), "second".to_string()];
+        let columns = vec![ColumnType::Skip, ColumnType::Standard];
+        let source = CellRange { first_row: 0, last_row: 0, first_column: 0, last_column: 0 };
+        let (edits, _) = super::convert_parts(
+            &parts,
+            &columns,
+            ColumnType::Standard,
+            0,
+            0,
+            Some(source),
+            false,
+            None,
+        );
+
+        // Column 0 was in-place source -> cleared!
+        assert_eq!(edits[0].column, 0);
+        assert_eq!(edits[0].input, CellInput::Clear);
+
+        // Column 1 -> "second"
+        assert_eq!(edits[1].column, 1);
+        assert_eq!(edits[1].input, CellInput::Value(CellValue::Text("second".into())));
     }
 }

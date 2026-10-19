@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ibis_doc_model::{
-    AbstractList, ArtBorder, AutoFit, AutoShape, Block, BorderStyle, CellAnchor, Comment, EmuRect, EmuSize, Fill, FlowAlign, FlowBorder, FlowCell, FlowDocument, FlowParagraph, FlowRow, FlowRun,
+    AbstractList, ArtBorder, AutoFit, AutoShape, Block, BorderStyle, CellAnchor, Comment, DropCap, DropCapLocation, EmuRect, EmuSize, Fill, FlowAlign, FlowBorder, FlowCell, FlowDocument, FlowParagraph, FlowRow, FlowRun,
     FlowRunKind, FlowStyle, FlowStyles, FlowTable, FontAlign, Insets, LineCap, LineDash, LineHeight, Link, ListInstance, ListLevel, ListSuffix, MediaFormat, MediaId,
     Note, Numbering, PageSetup, Paragraph, PageColumns, ParaFormat, PartKind, PreferredWidth, Presentation, Revision, RevisionKind, Rgb, RowHeight, Run, RunFormat, RunStyle, SectionBreak,
     SectionSetup, ShadingPattern, Shape, ShapeId, ShapeKind, Slide, Stroke, StyleKind, TabAlign, TabChange, TabStop, TextBody, TextAlign, TextStyle, UnderlineStyle, VerticalAnchor,
@@ -40,6 +40,59 @@ fn wattr<'a>(node: Node<'a, '_>, name: &str) -> Option<&'a str> {
 /// Relationship attributes use their own URI; Word attributes are separate.
 fn rattr<'a>(node: Node<'a, '_>, name: &str) -> Option<&'a str> {
     node.attributes().find(|a| a.name() == name && a.namespace() == Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships")).map(|a| a.value())
+}
+
+/// An attribute of a `w14:` element by its name (they have their own URI).
+fn w14attr<'a>(node: Node<'a, '_>, name: &str) -> Option<&'a str> {
+    node.attributes().find(|a| a.name() == name).map(|a| a.value())
+}
+
+/// The colour in a `w14:` colour element (`w14:srgbClr`) and its opacity (`w14:alpha`, 0 to 255).
+fn w14color(node: Node) -> Option<(Rgb, u8)> {
+    let c = child(node, "srgbClr")?;
+    let rgb = w14attr(c, "val").and_then(hex)?;
+    let alpha = child(c, "alpha").and_then(|a| w14attr(a, "val")).and_then(|v| v.parse::<f64>().ok()).map_or(255, |v| (v / 100_000.0 * 255.0).round().clamp(0.0, 255.0) as u8);
+    Some((rgb, alpha))
+}
+
+/// A run's `w14:` text effects (outline, glow, shadow, gradient fill), `None` when it has none.
+fn text_effects(rpr: Node) -> Option<ibis_doc_model::TextEffects> {
+    let mut e = ibis_doc_model::TextEffects::default();
+    if let Some(o) = child(rpr, "textOutline") {
+        if let Some((color, _)) = child(o, "solidFill").and_then(w14color) {
+            e.outline = Some((w14attr(o, "w").and_then(|w| w.parse().ok()).unwrap_or(9525), color));
+        }
+    }
+    if let Some(g) = child(rpr, "glow") {
+        if let Some((color, alpha)) = w14color(g) {
+            e.glow = Some((w14attr(g, "rad").and_then(|w| w.parse().ok()).unwrap_or(0), color, alpha));
+        }
+    }
+    if let Some(s) = child(rpr, "shadow") {
+        if let Some((color, alpha)) = w14color(s) {
+            let num = |n: &str| w14attr(s, n).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+            e.shadow = Some(ibis_doc_model::TextShadow { blur: num("blurRad"), distance: num("dist"), direction: num("dir") as i32, color, alpha });
+        }
+    }
+    if let Some(grad) = child(rpr, "textFill").and_then(|f| child(f, "gradFill")) {
+        let stops: Vec<(u32, Rgb)> = child(grad, "gsLst").into_iter().flat_map(|l| children(l, "gs")).filter_map(|gs| Some((w14attr(gs, "pos")?.parse().ok()?, w14color(gs)?.0))).collect();
+        if stops.len() >= 2 {
+            e.gradient = Some((stops, child(grad, "lin").and_then(|l| w14attr(l, "ang")).and_then(|a| a.parse().ok()).unwrap_or(0)));
+        }
+    }
+    (e != ibis_doc_model::TextEffects::default()).then_some(e)
+}
+
+/// A content control's title, tag and lock (`w:alias`, `w:tag`, `w:lock`).
+fn control_info(sdt: Node) -> Option<Box<ibis_doc_model::ControlInfo>> {
+    let pr = child(sdt, "sdtPr")?;
+    let title = child(pr, "alias").and_then(|x| wattr(x, "val")).unwrap_or("").to_string();
+    let tag = child(pr, "tag").and_then(|x| wattr(x, "val")).unwrap_or("").to_string();
+    let lock = child(pr, "lock").and_then(|x| wattr(x, "val")).map_or(ibis_doc_model::ControlLock::None, ibis_doc_model::ControlLock::from_name);
+    if title.is_empty() && tag.is_empty() && lock == ibis_doc_model::ControlLock::None {
+        return None;
+    }
+    Some(Box::new(ibis_doc_model::ControlInfo { title, tag, lock }))
 }
 
 fn wval<'a>(node: Node<'a, '_>, name: &str) -> Option<&'a str> {
@@ -86,6 +139,7 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
     if let Some(l) = child(rpr, "lang") {
         f.lang = wattr(l, "val").map(str::to_string);
         f.lang_east_asia = wattr(l, "eastAsia").map(str::to_string);
+        f.lang_bidi = wattr(l, "bidi").map(str::to_string);
     }
     f.size = wval(rpr, "sz").and_then(|v| v.parse::<u32>().ok()).map(|sz| sz * 50);
     f.cs_size = wval(rpr, "szCs").and_then(|v| v.parse::<u32>().ok()).map(|sz| sz * 50);
@@ -113,6 +167,7 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
     f.shadow = toggle(rpr, "shadow");
     f.emboss = toggle(rpr, "emboss");
     f.imprint = toggle(rpr, "imprint");
+    f.no_proof = toggle(rpr, "noProof");
     f.emphasis = wval(rpr, "em").and_then(ibis_doc_model::EmphasisMark::from_name);
     // 組み文字と縦中横 (`w:eastAsianLayout`).
     if let Some(layout) = child(rpr, "eastAsianLayout") {
@@ -131,11 +186,7 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
         let shade_attr = wattr(c, "themeShade");
         if let Some(t) = theme_color_attr {
             let tc = ibis_doc_model::FlowThemeColor::new(t, tint_attr, shade_attr);
-            if t == "none" {
-                let byte = |n: &str| wattr(c, n).and_then(|v| u8::from_str_radix(v, 16).ok()).map_or(0, u32::from);
-                f.color = Some(Rgb(byte("themeTint") << 16 | byte("themeShade") << 8));
-                f.theme_color = Some(tc);
-            } else if let Some(rgb) = theme_color(theme, t, tint_attr, shade_attr) {
+            if let Some(rgb) = theme_color(theme, t, tint_attr, shade_attr) {
                 f.color = Some(rgb);
                 f.theme_color = Some(tc);
             } else {
@@ -147,11 +198,18 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
             f.theme_color = None;
         }
     }
+    // Word 2010's text effects.
+    f.effects = text_effects(rpr).map(|e| Some(std::sync::Arc::new(e)));
     let h = wval(rpr, "highlight");
     let h_color = h.and_then(highlight);
     let shd_color = child(rpr, "shd").and_then(|s| shading(s, theme));
+    // A stripe or a grid: the fill is the highlight, the pattern is drawn over it.
+    let shd_pattern = child(rpr, "shd").map(|s| shading_detail(s, theme)).and_then(|(fill, pattern, color)| Some((fill, pattern?, color)));
     if let Some(color) = h_color {
         f.highlight = Some(Some(color));
+    } else if let Some((fill, pattern, color)) = shd_pattern {
+        f.highlight = Some(Some(fill.unwrap_or(Rgb(0xffffff))));
+        f.shd_pattern = Some(Some((pattern, color.unwrap_or(Rgb::BLACK))));
     } else if let Some(color) = shd_color {
         f.highlight = Some(Some(color));
     } else if h == Some("none") {
@@ -167,6 +225,13 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
     f.hidden = toggle(rpr, "vanish");
     f.border = child(rpr, "bdr").map(|b| border(b, Some(theme)));
     f.kern = wval(rpr, "kern").and_then(|v| v.parse::<u32>().ok());
+    // OpenType features (w14:ligatures, w14:numForm, w14:numSpacing, w14:cntxtAlts).
+    f.ligatures = child(rpr, "ligatures").and_then(|l| w14attr(l, "val")).and_then(ibis_doc_model::Ligatures::from_ooxml);
+    f.num_form = child(rpr, "numForm").and_then(|n| w14attr(n, "val")).and_then(ibis_doc_model::NumberForm::from_ooxml);
+    f.num_spacing = child(rpr, "numSpacing").and_then(|n| w14attr(n, "val")).and_then(ibis_doc_model::NumberSpacing::from_ooxml);
+    if let Some(ca) = child(rpr, "cntxtAlts") {
+        f.contextual_alternates = Some(!matches!(w14attr(ca, "val"), Some("0" | "false" | "off")));
+    }
     f
 }
 
@@ -264,6 +329,7 @@ fn para_format(ppr: Node, theme: &Theme) -> ParaFormat {
     f.auto_space_letters = toggle(ppr, "autoSpaceDE");
     f.auto_space_digits = toggle(ppr, "autoSpaceDN");
     f.bidi = toggle(ppr, "bidi");
+    f.collapsed = child(ppr, "collapsed").map(|n| !matches!(attr(n, "val"), Some("0" | "false" | "off")));
     f.page_break_before = toggle(ppr, "pageBreakBefore");
     f.suppress_line_numbers = toggle(ppr, "suppressLineNumbers");
     f.suppress_auto_hyphens = toggle(ppr, "suppressAutoHyphens");
@@ -271,6 +337,18 @@ fn para_format(ppr: Node, theme: &Theme) -> ParaFormat {
     f.widow_control = toggle(ppr, "widowControl");
     f.keep_next = toggle(ppr, "keepNext");
     f.keep_lines = toggle(ppr, "keepLines");
+    if let Some(frame) = child(ppr, "framePr") {
+        let location = match wattr(frame, "dropCap") {
+            Some("drop" | "dropped") => DropCapLocation::Drop,
+            Some("margin") => DropCapLocation::Margin,
+            _ => DropCapLocation::None,
+        };
+        if location != DropCapLocation::None {
+            let lines = wattr(frame, "lines").and_then(|s| s.parse::<u32>().ok()).unwrap_or(3).clamp(1, 10);
+            let space = twips(frame, "hSpace").or_else(|| twips(frame, "space")).unwrap_or(0);
+            f.drop_cap = Some(Some(DropCap { location, lines, space }));
+        }
+    }
     if let Some(tabs) = child(ppr, "tabs") {
         for tab in children(tabs, "tab") {
             let Some(position) = twips(tab, "pos") else { continue };
@@ -340,11 +418,13 @@ fn theme_color(theme: &Theme, name: &str, tint: Option<&str>, shade: Option<&str
 /// The components of a shading (`w:shd`): (fill, pattern, pattern color).
 fn shading_detail(shd: Node, theme: &Theme) -> (Option<Rgb>, Option<ShadingPattern>, Option<Rgb>) {
     let fill = match wattr(shd, "themeFill") {
-        Some(t) => theme_color(theme, t, wattr(shd, "themeFillTint"), wattr(shd, "themeFillShade")),
+        Some(t) => theme_color(theme, t, wattr(shd, "themeFillTint"), wattr(shd, "themeFillShade"))
+            .or_else(|| wattr(shd, "fill").and_then(hex)),
         None => wattr(shd, "fill").and_then(hex),
     };
     let color = match wattr(shd, "themeColor") {
-        Some(t) => theme_color(theme, t, wattr(shd, "themeTint"), wattr(shd, "themeShade")),
+        Some(t) => theme_color(theme, t, wattr(shd, "themeTint"), wattr(shd, "themeShade"))
+            .or_else(|| wattr(shd, "color").and_then(hex)),
         None => wattr(shd, "color").and_then(hex),
     };
     let val = wattr(shd, "val").unwrap_or("clear");
@@ -465,7 +545,8 @@ fn numbering(root: Node, theme: &Theme) -> Numbering {
                 pic_bullet: wval(lvl, "lvlPicBulletId").and_then(|v| v.parse().ok()),
             });
         }
-        out.abstracts.insert(id, AbstractList { levels });
+        let num_style_link = wval(abs, "numStyleLink").map(str::to_string);
+        out.abstracts.insert(id, AbstractList { levels, num_style_link });
     }
     for num in children(root, "num") {
         let Some(id) = wattr(num, "numId").and_then(|v| v.parse().ok()) else { continue };
@@ -528,7 +609,9 @@ fn border(edge: Node, theme: Option<&Theme>) -> Option<FlowBorder> {
         color,
         style,
         space: wattr(edge, "space").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0) * 12_700,
-        art: None,
+        // A cell's art border is drawn as a plain line; the room it takes is its `w:sz` in points
+        // (see `art_room`).
+        art: ArtBorder::from_name(kind),
     })
 }
 
@@ -566,6 +649,8 @@ struct Reader<'p, 'd, 'i> {
     sections: Vec<u32>,
     /// The tracked change being read in (`w:ins`, `w:del`).
     revision: Option<Revision>,
+    /// Grouped shapes (`wpg:wgp`, DOCX-FLOAT-016).
+    shape_groups: Vec<ibis_doc_model::ShapeGroup>,
 }
 
 /// The page setup of a section (`w:sectPr`).
@@ -763,22 +848,6 @@ impl ParaRead<'_, '_> {
 }
 
 /// The picture an `a:blip` shows: its SVG version (`asvg:svgBlip`), else its own `r:embed`.
-/// A VML length (`85pt`, `1.5in`, `3cm`, `20mm`, `100px`; points when bare) in EMU.
-fn vml_length(v: &str) -> Option<i64> {
-    let split = v.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(v.len());
-    let number: f64 = v[..split].trim().parse().ok()?;
-    let per = match v[split..].trim() {
-        "" | "pt" => 12_700.0,
-        "in" => 914_400.0,
-        "cm" => 360_000.0,
-        "mm" => 36_000.0,
-        "px" => 9_525.0,
-        "pc" => 152_400.0,
-        _ => return None,
-    };
-    Some((number * per).round() as i64)
-}
-
 fn blip_embed<'a>(blip: Node<'a, '_>) -> Option<&'a str> {
     let svg = blip.descendants().find(|n| n.is_element() && n.tag_name().name() == "svgBlip").and_then(|n| rattr(n, "embed").or_else(|| attr(n, "embed")));
     svg.or_else(|| rattr(blip, "embed"))
@@ -855,6 +924,28 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         self.inline(p, rels, &base_run, &mut field, &mut read, &mut runs, &None);
         self.fields = field;
         let id = self.new_id();
+        let subdoc = child(p, "subDoc").and_then(|sd| {
+            let rid = rattr(sd, "id")?;
+            let target = rels.get(rid).map(|r| r.target.clone()).unwrap_or_else(|| rid.to_string());
+            let title = wattr(sd, "title").map(str::to_string).unwrap_or_else(|| target.clone());
+            let locked = wattr(sd, "locked").is_some_and(|v| v == "1" || v == "true");
+            let expanded = wattr(sd, "expanded").is_some_and(|v| v == "1" || v == "true");
+            let mut content_paragraphs = Vec::new();
+            for idx in 0..64 {
+                if let Some(line) = wattr(sd, &format!("subPara{idx}")) {
+                    content_paragraphs.push(line.to_string());
+                } else {
+                    break;
+                }
+            }
+            Some(ibis_doc_model::SubdocumentInfo {
+                target,
+                title,
+                expanded,
+                locked,
+                content_paragraphs,
+            })
+        });
         let mut paragraph = FlowParagraph {
             id,
             style,
@@ -868,6 +959,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             }).filter(|name| !p.descendants().any(|n| n.is_element() && n.tag_name().name() == "bookmarkStart" && wattr(n, "name") == Some(name.as_str()))).collect(),
             field_start: read.field_start.take(),
             field_end: read.field_end,
+            subdoc,
             section: ppr.and_then(|p| child(p, "sectPr")).map(|s| {
                 self.sections.push(id);
                 Arc::new(section_setup(s))
@@ -901,8 +993,27 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     let inner = url.or_else(|| wattr(node, "anchor").map(|a| Link::Anchor(a.to_string())));
                     self.inline(node, rels, base, field, read, out, &inner);
                 }
-                "ins" | "del" => {
-                    let kind = if node.tag_name().name() == "ins" { RevisionKind::Insert } else { RevisionKind::Delete };
+                "oMath" | "oMathPara" if node.tag_name().namespace() == Some(crate::math_xml::M) => {
+                    // A formula: one atom, its element kept as it is when the paragraph is saved.
+                    // Its size is its runs' (`w:rPr/w:sz` inside the `m:r`), the paragraph's when they say none.
+                    let mut format = RunFormat::default();
+                    if let Some(sz) = node.descendants().filter(|d| d.is_element() && d.tag_name().name() == "rPr").find_map(|r| wval(r, "sz")).and_then(|v| v.parse::<u32>().ok()) {
+                        format.size = Some(sz * 50);
+                    }
+                    let style = self.styles.run_format(base, None, &format).style();
+                    let math = crate::math_xml::read_math(node);
+                    read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
+                    out.push(FlowRun { kind: FlowRunKind::Math { math, display: node.tag_name().name() == "oMathPara" }, style, format, char_style: None, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: None });
+                }
+                // A tracked move is a moveFrom where the text was and a moveTo where it went.
+                "ins" | "del" | "moveFrom" | "moveTo" => {
+                    let kind = match node.tag_name().name() {
+                        "ins" => RevisionKind::Insert,
+                        "del" => RevisionKind::Delete,
+                        "moveTo" => RevisionKind::MoveTo,
+                        "moveFrom" => RevisionKind::MoveFrom,
+                        _ => RevisionKind::Insert,
+                    };
                     let revision = Revision { kind, author: wattr(node, "author").unwrap_or("").to_string(), date: wattr(node, "date").unwrap_or("").to_string() };
                     let outer = self.revision.replace(revision);
                     self.inline(node, rels, base, field, read, out, link);
@@ -935,14 +1046,14 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                                 }
                             })
                         });
-                        out.push(FlowRun { kind: FlowRunKind::Field { instruction, shown }, style, format: direct, char_style, link: field_link, revision: None, show_field_code: false, field_locked: simple_locked });
+                        out.push(FlowRun { kind: FlowRunKind::Field { instruction, shown }, style, format: direct, char_style, link: field_link, revision: None, show_field_code: false, field_locked: simple_locked, control: None });
                         read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
                     } else if page {
                         let rpr = result_rpr();
                         let direct = rpr.map(|r| run_format(r, self.theme)).unwrap_or_default();
                         let char_style = rpr.and_then(|r| wval(r, "rStyle")).map(str::to_string);
                         let style = self.styles.run_format(base, None, &direct).style();
-                        out.push(FlowRun { kind: FlowRunKind::PageNumber, style, format: direct, char_style, link: link.clone(), revision: None, show_field_code: false, field_locked: simple_locked });
+                        out.push(FlowRun { kind: FlowRunKind::PageNumber, style, format: direct, char_style, link: link.clone(), revision: None, show_field_code: false, field_locked: simple_locked, control: None });
                         read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
                     } else {
                         self.inline(node, rels, base, field, read, out, link);
@@ -952,7 +1063,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     let Some(id) = wattr(node, "id").and_then(|v| v.parse::<u32>().ok()) else { continue };
                     let kind = if node.tag_name().name() == "commentRangeStart" { FlowRunKind::CommentStart(id) } else { FlowRunKind::CommentEnd(id) };
                     let style = self.styles.run_format(base, None, &RunFormat::default()).style();
-                    out.push(FlowRun { kind, style, format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false });
+                    out.push(FlowRun { kind, style, format: RunFormat::default(), char_style: None, link: link.clone(), revision: None, show_field_code: false, field_locked: false, control: None });
                     read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
                 }
                 "sdt" => {
@@ -985,7 +1096,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                             unchecked_char,
                         };
                         read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
-                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false });
+                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: control_info(node) });
                     } else if let Some(pr) = child(node, "sdtPr")
                         && let Some(dd) = child(pr, "dropDownList").or_else(|| child(pr, "comboBox"))
                     {
@@ -1017,7 +1128,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                             combo,
                         };
                         read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
-                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false });
+                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: control_info(node) });
                     } else if let Some(pr) = child(node, "sdtPr")
                         && let Some(date_el) = child(pr, "date")
                     {
@@ -1052,7 +1163,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                             text,
                         };
                         read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
-                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false });
+                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: control_info(node) });
                     } else if let Some(pr) = child(node, "sdtPr")
                         && child(pr, "text").is_some()
                     {
@@ -1063,8 +1174,9 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                                 .filter_map(|d| d.text())
                                 .collect()
                         }).unwrap_or_default();
+                        let showing = child(pr, "showingPlcHdr").is_some() || content_text.is_empty();
                         let text = if content_text.is_empty() {
-                            "クリックまたはタップしてテキストを入力してください。".to_string()
+                            ibis_doc_model::flow::DEFAULT_CONTROL_PROMPT.to_string()
                         } else {
                             content_text
                         };
@@ -1075,12 +1187,191 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                         }
                         let char_style = content_rpr.and_then(|x| wval(x, "rStyle")).map(str::to_string);
                         let style = self.styles.run_format(base, char_style.as_deref(), &format).style();
-                        let kind = FlowRunKind::PlainText { text };
+                        let kind = FlowRunKind::PlainText { text, placeholder: showing };
                         read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
-                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false });
+                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: control_info(node) });
+                    } else if let Some(pr) = child(node, "sdtPr")
+                        && child(pr, "picture").is_some()
+                    {
+                        let content = child(node, "sdtContent");
+                        let showing = child(pr, "showingPlcHdr").is_some();
+                        let mut temp_runs = Vec::new();
+                        let mut sub_read = ParaRead { p: read.p, atoms: Vec::new(), field_start: None, field_end: false };
+                        if let Some(c) = content {
+                            self.inline(c, rels, base, field, &mut sub_read, &mut temp_runs, link);
+                        }
+                        if let Some(mut pic_run) = temp_runs.into_iter().find(|r| matches!(r.kind, FlowRunKind::Picture { .. } | FlowRunKind::Shape(_))) {
+                            if let FlowRunKind::Picture { media, size, look } = pic_run.kind {
+                                pic_run.kind = FlowRunKind::PictureControl { media, size, look, placeholder: showing };
+                                pic_run.control = control_info(node);
+                                read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
+                                out.push(pic_run);
+                            } else if let FlowRunKind::Shape(shape) = pic_run.kind {
+                                if let ibis_doc_model::ShapeKind::Picture(pic) = shape.kind {
+                                    let look = ibis_doc_model::PictureLook {
+                                        crop: pic.crop,
+                                        stroke: pic.stroke,
+                                        luminance: pic.luminance,
+                                        duotone: pic.duotone,
+                                        alt_text: pic.alt_text,
+                                        decorative: pic.decorative,
+                                        name: pic.name,
+                                        effects: pic.effects,
+                                        soft_edge: pic.soft_edge,
+                                        geometry: pic.geometry,
+                                        ..Default::default()
+                                    };
+                                    let size = ibis_doc_model::EmuSize::new(shape.frame.width, shape.frame.height);
+                                    pic_run.kind = FlowRunKind::PictureControl { media: pic.media, size, look, placeholder: showing };
+                                    pic_run.control = control_info(node);
+                                    read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
+                                    out.push(pic_run);
+                                }
+                            }
+                        } else {
+                            let data = ibis_doc_model::DEFAULT_PICTURE_CONTROL_PLACEHOLDER_PNG.to_vec();
+                            let media = self.presentation.add_media(ibis_doc_model::MediaFormat::Png, data);
+                            let size = ibis_doc_model::EmuSize::new(
+                                ibis_doc_model::DEFAULT_PICTURE_CONTROL_WIDTH_EMU,
+                                ibis_doc_model::DEFAULT_PICTURE_CONTROL_HEIGHT_EMU,
+                            );
+                            read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
+                            out.push(FlowRun {
+                                kind: FlowRunKind::PictureControl {
+                                    media,
+                                    size,
+                                    look: ibis_doc_model::PictureLook::default(),
+                                    placeholder: true,
+                                },
+                                style: self.styles.run_format(base, None, &RunFormat::default()).style(),
+                                format: RunFormat::default(),
+                                char_style: None,
+                                link: link.clone(),
+                                revision: self.revision.clone(),
+                                show_field_code: false,
+                                field_locked: false,
+                                control: control_info(node),
+                            });
+                        }
+                    } else if let Some(pr) = child(node, "sdtPr")
+                        && let Some(dp) = child(pr, "docPartList").or_else(|| child(pr, "docPartObj"))
+                    {
+                        let gallery = wval(dp, "docPartGallery").unwrap_or(ibis_doc_model::DEFAULT_BUILDING_BLOCK_GALLERY_NAME).to_string();
+                        let category = wval(dp, "docPartCategory").unwrap_or(ibis_doc_model::DEFAULT_BUILDING_BLOCK_GALLERY_CATEGORY).to_string();
+                        let content = child(node, "sdtContent");
+                        let content_text: String = content.map(|c| {
+                            c.descendants()
+                                .filter(|d| d.is_element() && d.tag_name().name() == "t")
+                                .filter_map(|d| d.text())
+                                .collect()
+                        }).unwrap_or_default();
+                        let showing = child(pr, "showingPlcHdr").is_some() || content_text.is_empty();
+                        let text = if content_text.is_empty() {
+                            ibis_doc_model::DEFAULT_BUILDING_BLOCK_GALLERY_PROMPT.to_string()
+                        } else {
+                            content_text
+                        };
+                        let content_rpr = content.and_then(|c| c.descendants().find(|d| d.is_element() && d.tag_name().name() == "rPr"));
+                        let mut format = RunFormat::default();
+                        if let Some(rpr) = content_rpr {
+                            format.overlay(&run_format(rpr, self.theme));
+                        }
+                        let char_style = content_rpr.and_then(|x| wval(x, "rStyle")).map(str::to_string);
+                        let style = self.styles.run_format(base, char_style.as_deref(), &format).style();
+                        let kind = FlowRunKind::BuildingBlockGallery {
+                            gallery,
+                            category,
+                            text,
+                            placeholder: showing,
+                        };
+                        read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
+                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: control_info(node) });
+                    } else if let Some(pr) = child(node, "sdtPr")
+                        && let Some(rep) = child(pr, "repeatingSection")
+                    {
+                        let section_title = child(rep, "sectionTitle")
+                            .and_then(|st| wattr(st, "val").or_else(|| attr(st, "val")))
+                            .unwrap_or(ibis_doc_model::DEFAULT_REPEATING_SECTION_TITLE)
+                            .to_string();
+                        let do_not_allow_insert_delete = child(rep, "doNotAllowInsertDelete").is_some();
+                        let content = child(node, "sdtContent");
+                        let mut items = Vec::new();
+                        if let Some(c) = content {
+                            for child_sdt in c.children().filter(|ch| ch.is_element() && ch.tag_name().name() == "sdt") {
+                                let item_pr = child(child_sdt, "sdtPr");
+                                let is_item = item_pr.map_or(false, |p| child(p, "repeatingSectionItem").is_some());
+                                if is_item {
+                                    let item_content = child(child_sdt, "sdtContent");
+                                    let text: String = item_content.map(|ic| {
+                                        ic.descendants()
+                                            .filter(|d| d.is_element() && d.tag_name().name() == "t")
+                                            .filter_map(|d| d.text())
+                                            .collect()
+                                    }).unwrap_or_default();
+                                    items.push(text);
+                                }
+                            }
+                            if items.is_empty() {
+                                let text: String = c.descendants()
+                                    .filter(|d| d.is_element() && d.tag_name().name() == "t")
+                                    .filter_map(|d| d.text())
+                                    .collect();
+                                if !text.is_empty() {
+                                    items.push(text);
+                                }
+                            }
+                        }
+                        if items.is_empty() {
+                            items.push(ibis_doc_model::DEFAULT_REPEATING_SECTION_ITEM_PROMPT.to_string());
+                        }
+                        let content_rpr = content.and_then(|c| c.descendants().find(|d| d.is_element() && d.tag_name().name() == "rPr"));
+                        let mut format = RunFormat::default();
+                        if let Some(rpr) = content_rpr {
+                            format.overlay(&run_format(rpr, self.theme));
+                        }
+                        let char_style = content_rpr.and_then(|x| wval(x, "rStyle")).map(str::to_string);
+                        let style = self.styles.run_format(base, char_style.as_deref(), &format).style();
+                        let kind = FlowRunKind::RepeatingSection {
+                            section_title,
+                            items,
+                            selected: 0,
+                            do_not_allow_insert_delete,
+                        };
+                        read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
+                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: control_info(node) });
+                    } else if let Some(pr) = child(node, "sdtPr")
+                        && child(pr, "group").is_some()
+                    {
+                        let content = child(node, "sdtContent");
+                        let content_text: String = content.map(|c| {
+                            c.descendants()
+                                .filter(|d| d.is_element() && d.tag_name().name() == "t")
+                                .filter_map(|d| d.text())
+                                .collect()
+                        }).unwrap_or_default();
+                        let showing = child(pr, "showingPlcHdr").is_some() || content_text.is_empty();
+                        let text = if content_text.is_empty() {
+                            ibis_doc_model::DEFAULT_GROUP_PROMPT.to_string()
+                        } else {
+                            content_text
+                        };
+                        let content_rpr = content.and_then(|c| c.descendants().find(|d| d.is_element() && d.tag_name().name() == "rPr"));
+                        let mut format = RunFormat::default();
+                        if let Some(rpr) = content_rpr {
+                            format.overlay(&run_format(rpr, self.theme));
+                        }
+                        let char_style = content_rpr.and_then(|x| wval(x, "rStyle")).map(str::to_string);
+                        let style = self.styles.run_format(base, char_style.as_deref(), &format).style();
+                        let kind = FlowRunKind::Group {
+                            text,
+                            placeholder: showing,
+                        };
+                        read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
+                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: control_info(node) });
                     } else if let Some(pr) = child(node, "sdtPr")
                         && child(pr, "placeholder").is_some()
                         && child(pr, "docPartObj").is_none()
+                        && child(pr, "group").is_none()
                         && child(pr, "citation").is_none()
                         && child(pr, "bibWord").is_none()
                     {
@@ -1091,8 +1382,9 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                                 .filter_map(|d| d.text())
                                 .collect()
                         }).unwrap_or_default();
+                        let showing = child(pr, "showingPlcHdr").is_some() || content_text.is_empty();
                         let text = if content_text.is_empty() {
-                            "クリックまたはタップしてテキストを入力してください。".to_string()
+                            ibis_doc_model::flow::DEFAULT_CONTROL_PROMPT.to_string()
                         } else {
                             content_text
                         };
@@ -1103,9 +1395,9 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                         }
                         let char_style = content_rpr.and_then(|x| wval(x, "rStyle")).map(str::to_string);
                         let style = self.styles.run_format(base, char_style.as_deref(), &format).style();
-                        let kind = FlowRunKind::RichText { text };
+                        let kind = FlowRunKind::RichText { text, placeholder: showing };
                         read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
-                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false });
+                        out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: control_info(node) });
                     } else if let Some(content) = child(node, "sdtContent") {
                         self.inline(content, rels, base, field, read, out, link);
                     }
@@ -1137,7 +1429,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                         align: ibis_doc_model::RubyAlign::from_name(pr.and_then(|p| wval(p, "rubyAlign")).unwrap_or("center")),
                     };
                     read.atoms.push(AtomSource::Field { nodes: vec![relative_path(node, read.p)] });
-                    out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false });
+                    out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: self.revision.clone(), show_field_code: false, field_locked: false, control: None });
                 }
                 _ => {}
             }
@@ -1161,7 +1453,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             let old = child(change, "rPr").map(|x| run_format(x, self.theme)).unwrap_or_default();
             Some(Revision { kind: RevisionKind::Format(old), author: wattr(change, "author").unwrap_or("").to_string(), date: wattr(change, "date").unwrap_or("").to_string() })
         });
-        let make = |kind: FlowRunKind| FlowRun { kind, style: style.clone(), format: direct.clone(), char_style: char_style.clone(), link: link.clone(), revision: revision.clone(), show_field_code: false, field_locked: false };
+        let make = |kind: FlowRunKind| FlowRun { kind, style: style.clone(), format: direct.clone(), char_style: char_style.clone(), link: link.clone(), revision: revision.clone(), show_field_code: false, field_locked: false, control: None };
         let push_text = |out: &mut Vec<FlowRun>, text: &str| {
             if text.is_empty() {
                 return;
@@ -1183,7 +1475,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 "fldChar" => match wattr(node, "fldCharType") {
                     Some("begin") => {
                         let locked = wattr(node, "fldLock").map_or(false, |v| v == "1" || v == "true");
-                        field.frames.push(Frame { locked, runs: vec![relative_path(r, read.p)], ..Frame::default() });
+                        let form_field = child(node, "ffData").and_then(parse_ff_data);
+                        field.frames.push(Frame { locked, form_field, runs: vec![relative_path(r, read.p)], ..Frame::default() });
                     }
                     Some("separate") => {
                         let empty = read.atoms.is_empty();
@@ -1193,6 +1486,26 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                         let Some(frame) = field.frames.last_mut() else { continue };
                         frame.showing = true;
                         if in_code {
+                            continue;
+                        }
+                        if let Some(ff) = frame.form_field.clone() {
+                            match ff.kind {
+                                ibis_doc_model::FormFieldKind::CheckBox { .. } | ibis_doc_model::FormFieldKind::DropDown { .. } => {
+                                    frame.atom = Some(read.atoms.len());
+                                    read.atoms.push(AtomSource::Field { nodes: Vec::new() });
+                                    let mut run = make(FlowRunKind::FormField(ff));
+                                    run.style.highlight = Some(ibis_doc_model::Rgb(0xd9d9d9));
+                                    out.push(run);
+                                    frame.form_field_emitted = true;
+                                    frame.replaced = true;
+                                }
+                                ibis_doc_model::FormFieldKind::TextInput { .. } => {
+                                    frame.replaced = true;
+                                    frame.form_field_text = true;
+                                    frame.atom = Some(read.atoms.len());
+                                    read.atoms.push(AtomSource::Field { nodes: Vec::new() });
+                                }
+                            }
                             continue;
                         }
                         let mut words = frame.instruction.split_whitespace();
@@ -1241,7 +1554,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                                 out.push(run);
                                 frame.page_ref = true;
                             }
-                            Some("TOC" | "INDEX") if empty => {
+                            Some("TOC" | "INDEX" | "TOA" | "BIBLIOGRAPHY") if empty => {
                                 read.field_start = Some(frame.instruction.trim().to_string());
                                 frame.toc = true;
                             }
@@ -1256,14 +1569,37 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                             {
                                 outer.instruction.push_str(&format!("{{ {} }}", frame.instruction.trim()));
                             }
-                            if let Some(i) = frame.atom {
+                            if let Some(mut ff) = frame.form_field {
+                                if !frame.form_field_emitted {
+                                    if let ibis_doc_model::FormFieldKind::TextInput { value, .. } = &mut ff.kind {
+                                        let clean = frame.result_text.trim_matches('\u{a0}').trim().to_string();
+                                        if !clean.is_empty() {
+                                            *value = clean;
+                                        }
+                                    }
+                                    if let Some(i) = frame.atom {
+                                        let mut runs = frame.runs;
+                                        runs.push(relative_path(r, read.p));
+                                        runs.dedup();
+                                        read.atoms[i] = AtomSource::Field { nodes: runs };
+                                    } else {
+                                        let mut runs = frame.runs;
+                                        runs.push(relative_path(r, read.p));
+                                        runs.dedup();
+                                        read.atoms.push(AtomSource::Field { nodes: runs });
+                                    }
+                                    let mut run = make(FlowRunKind::FormField(ff));
+                                    run.style.highlight = Some(ibis_doc_model::Rgb(0xd9d9d9));
+                                    out.push(run);
+                                }
+                            } else if let Some(i) = frame.atom {
                                 let mut runs = frame.runs;
                                 runs.push(relative_path(r, read.p));
                                 runs.dedup();
                                 read.atoms[i] = AtomSource::Field { nodes: runs };
                             } else if !frame.showing
                                 && field.frames.iter().all(|f| f.showing)
-                                && (enclosed_field(&frame.instruction).is_some() || frame.instruction.trim_start().starts_with("XE "))
+                                && (enclosed_field(&frame.instruction).is_some() || ["XE ", "TC ", "TA "].iter().any(|f| frame.instruction.trim_start().starts_with(f)))
                             {
                                 // 囲い文字 (EQ \o): a field without a result,
                                 // one position.
@@ -1283,21 +1619,64 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 "instrText" => {
                     if let Some(frame) = field.frames.last_mut() {
                         frame.instruction.push_str(node.text().unwrap_or(""));
+                        if frame.form_field.is_none() {
+                            let trimmed = frame.instruction.trim_start();
+                            if trimmed.starts_with("FORMCHECKBOX") {
+                                frame.form_field = Some(ibis_doc_model::FormFieldData {
+                                    name: String::new(),
+                                    enabled: true,
+                                    calc_on_exit: false,
+                                    kind: ibis_doc_model::FormFieldKind::CheckBox {
+                                        checked: false,
+                                        default: false,
+                                        size_auto: true,
+                                    },
+                                });
+                            } else if trimmed.starts_with("FORMTEXT") {
+                                frame.form_field = Some(ibis_doc_model::FormFieldData {
+                                    name: String::new(),
+                                    enabled: true,
+                                    calc_on_exit: false,
+                                    kind: ibis_doc_model::FormFieldKind::TextInput {
+                                        value: String::new(),
+                                        default: String::new(),
+                                        max_length: 0,
+                                    },
+                                });
+                            } else if trimmed.starts_with("FORMDROPDOWN") {
+                                frame.form_field = Some(ibis_doc_model::FormFieldData {
+                                    name: String::new(),
+                                    enabled: true,
+                                    calc_on_exit: false,
+                                    kind: ibis_doc_model::FormFieldKind::DropDown {
+                                        items: Vec::new(),
+                                        selected: 0,
+                                        default: 0,
+                                    },
+                                });
+                            }
+                        }
+                    }
+                }
+                // The file name's, page reference's, and form field's saved text goes
+                // into their fields.
+                "t" if field.frames.last().is_some_and(|f| f.showing && (f.file_name || f.page_ref || f.form_field_text)) => {
+                    let text = node.text().unwrap_or("");
+                    if field.frames.last().is_some_and(|f| f.form_field_text) {
+                        if let Some(frame) = field.frames.last_mut() {
+                            frame.result_text.push_str(text);
+                        }
+                    } else {
+                        match out.iter_mut().rev().find(|r| matches!(r.kind, FlowRunKind::FileName(_) | FlowRunKind::PageRef { .. } | FlowRunKind::Field { .. })) {
+                            Some(FlowRun { kind: FlowRunKind::FileName(t), .. }) => t.push_str(text),
+                            Some(FlowRun { kind: FlowRunKind::PageRef { shown, .. } | FlowRunKind::Field { shown, .. }, .. }) => shown.push_str(text),
+                            _ => {}
+                        }
                     }
                 }
                 // Text of a field's instructions, or a result replaced by
                 // the field itself, is not shown.
                 _ if field.frames.iter().any(|f| !f.showing || f.replaced) => {}
-                // The file name's and the page reference's saved text goes
-                // into their fields.
-                "t" if field.frames.last().is_some_and(|f| f.file_name || f.page_ref) => {
-                    let text = node.text().unwrap_or("");
-                    match out.iter_mut().rev().find(|r| matches!(r.kind, FlowRunKind::FileName(_) | FlowRunKind::PageRef { .. } | FlowRunKind::Field { .. })) {
-                        Some(FlowRun { kind: FlowRunKind::FileName(t), .. }) => t.push_str(text),
-                        Some(FlowRun { kind: FlowRunKind::PageRef { shown, .. } | FlowRunKind::Field { shown, .. }, .. }) => shown.push_str(text),
-                        _ => {}
-                    }
-                }
                 "t" | "delText" => {
                     let text = node.text().unwrap_or("");
                     read.in_run(r, node, text.chars().count());
@@ -1370,20 +1749,41 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     read.in_run(r, node, 1);
                     // The base's formatting is the run's (styles are
                     // resolved from it again).
-                    out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: revision.clone(), show_field_code: false, field_locked: false });
+                    out.push(FlowRun { kind, style, format, char_style, link: link.clone(), revision: revision.clone(), show_field_code: false, field_locked: false, control: None });
                 }
                 "drawing" => {
-                    if let Some(drawing) = self.drawing(node, rels) {
+                    let mut drawings = self.drawings(node, rels);
+                    if !drawings.is_empty() {
+                        for drawing in &mut drawings {
+                            // A picture that is the result of an `INCLUDEPICTURE "file"` field remembers the file.
+                            if let FlowRunKind::Picture { look, .. } = drawing {
+                                look.linked_file = field.frames.iter().rev().filter(|f| f.showing).find_map(|f| {
+                                    let words: Vec<&str> = f.instruction.split_whitespace().collect();
+                                    (words.first().is_some_and(|w| w.eq_ignore_ascii_case("INCLUDEPICTURE"))).then(|| words.get(1).map(|w| w.trim_matches('"').replace("\\\\", "/")))?
+                                });
+                            }
+                        }
+                        read.in_run(r, node, drawings.len());
+                        for drawing in drawings {
+                            out.push(make(drawing));
+                        }
+                    }
+                }
+                "pict" => {
+                    if let Some(shape) = self.vml_shape(node) {
                         read.in_run(r, node, 1);
-                        out.push(make(drawing));
+                        out.push(make(shape));
                     }
                 }
                 "AlternateContent" => {
-                    if let Some(drawing) = child(node, "Choice").and_then(|c| child(c, "drawing"))
-                        && let Some(drawing) = self.drawing(drawing, rels)
-                    {
-                        read.in_run(r, node, 1);
-                        out.push(make(drawing));
+                    if let Some(drawing) = child(node, "Choice").and_then(|c| child(c, "drawing")) {
+                        let drawings = self.drawings(drawing, rels);
+                        if !drawings.is_empty() {
+                            read.in_run(r, node, drawings.len());
+                            for d in drawings {
+                                out.push(make(d));
+                            }
+                        }
                     }
                 }
                 // An embedded object (`w:object`): its preview, inline, pointing at the object.
@@ -1450,6 +1850,18 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         Some(id)
     }
 
+    fn drawings(&mut self, drawing: Node, rels: &Rels) -> Vec<FlowRunKind> {
+        if let Some(holder) = elements(drawing).find(|n| matches!(n.tag_name().name(), "inline" | "anchor"))
+            && let Some(wgp) = holder.descendants().find(|n| n.is_element() && n.tag_name().name() == "wgp")
+        {
+            let grouped = self.group_shapes(holder, wgp, rels);
+            if !grouped.is_empty() {
+                return grouped;
+            }
+        }
+        self.drawing(drawing, rels).into_iter().collect()
+    }
+
     fn drawing(&mut self, drawing: Node, rels: &Rels) -> Option<FlowRunKind> {
         if let Some(picture) = self.picture(drawing, rels) {
             return Some(picture);
@@ -1458,6 +1870,86 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             return Some(chart);
         }
         self.shape(drawing, rels)
+    }
+
+    /// A WordprocessingGroup (`wpg:wgp`, DOCX-FLOAT-016): its child shapes (`wps:wsp`, `wps:cxnSp`)
+    /// transformed from the group's child space (`a:chOff`, `a:chExt`) into the anchor's space,
+    /// and recorded in `self.shape_groups`.
+    fn group_shapes(&mut self, holder: Node, wgp: Node, rels: &Rels) -> Vec<FlowRunKind> {
+        let extent = child(holder, "extent");
+        let cx = extent.and_then(|e| e.attribute("cx")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
+        let cy = extent.and_then(|e| e.attribute("cy")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
+        let base_floating = Self::parse_floating_anchor(holder).unwrap_or_else(|| ibis_doc_model::FloatingAnchor {
+            relative_h: "column".to_string(),
+            relative_v: "paragraph".to_string(),
+            wrap: "none".to_string(),
+            allow_overlap: true,
+            layout_in_cell: true,
+            relative_height: ibis_doc_model::FloatingAnchor::DEFAULT_RELATIVE_HEIGHT,
+            ..Default::default()
+        });
+        let doc_pr = child(holder, "docPr");
+        let group_id = doc_pr
+            .and_then(|d| attr(d, "id"))
+            .map(str::to_string)
+            .unwrap_or_else(|| self.new_id().to_string());
+        let group_name = doc_pr
+            .and_then(|d| attr(d, "name"))
+            .unwrap_or("")
+            .to_string();
+
+        let grp_xfrm = child(wgp, "grpSpPr").and_then(|p| child(p, "xfrm"));
+        let ext_cx = grp_xfrm.and_then(|x| child(x, "ext")).and_then(|e| attr(e, "cx")).and_then(|v| v.parse().ok()).unwrap_or(cx);
+        let ext_cy = grp_xfrm.and_then(|x| child(x, "ext")).and_then(|e| attr(e, "cy")).and_then(|v| v.parse().ok()).unwrap_or(cy);
+        let dest_cx = if cx > 0 { cx } else { ext_cx };
+        let dest_cy = if cy > 0 { cy } else { ext_cy };
+        let dest_x = base_floating.offset_x;
+        let dest_y = base_floating.offset_y;
+
+        let ch_x = grp_xfrm.and_then(|x| child(x, "chOff")).and_then(|o| attr(o, "x")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
+        let ch_y = grp_xfrm.and_then(|x| child(x, "chOff")).and_then(|o| attr(o, "y")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
+        let ch_cx = grp_xfrm.and_then(|x| child(x, "chExt")).and_then(|e| attr(e, "cx")).and_then(|v| v.parse().ok()).unwrap_or(dest_cx);
+        let ch_cy = grp_xfrm.and_then(|x| child(x, "chExt")).and_then(|e| attr(e, "cy")).and_then(|v| v.parse().ok()).unwrap_or(dest_cy);
+
+        let mut runs = Vec::new();
+        let mut members = Vec::new();
+        let mut used_ids = std::collections::HashSet::new();
+        for wsp in elements(wgp).filter(|n| matches!(n.tag_name().name(), "wsp" | "sp" | "cxnSp")) {
+            let sp_pr = child(wsp, "spPr");
+            let xfrm = sp_pr.and_then(|p| child(p, "xfrm"));
+            let c_off_x = xfrm.and_then(|x| child(x, "off")).and_then(|o| attr(o, "x")).and_then(|v| v.parse().ok()).unwrap_or(ch_x);
+            let c_off_y = xfrm.and_then(|x| child(x, "off")).and_then(|o| attr(o, "y")).and_then(|v| v.parse().ok()).unwrap_or(ch_y);
+            let c_ext_cx = xfrm.and_then(|x| child(x, "ext")).and_then(|e| attr(e, "cx")).and_then(|v| v.parse().ok()).unwrap_or(dest_cx);
+            let c_ext_cy = xfrm.and_then(|x| child(x, "ext")).and_then(|e| attr(e, "cy")).and_then(|v| v.parse().ok()).unwrap_or(dest_cy);
+
+            let mapped_x = dest_x + if ch_cx > 0 && dest_cx > 0 { (c_off_x - ch_x) * dest_cx / ch_cx } else { c_off_x - ch_x };
+            let mapped_y = dest_y + if ch_cy > 0 && dest_cy > 0 { (c_off_y - ch_y) * dest_cy / ch_cy } else { c_off_y - ch_y };
+            let mapped_cx = if ch_cx > 0 && dest_cx > 0 { c_ext_cx * dest_cx / ch_cx } else { c_ext_cx };
+            let mapped_cy = if ch_cy > 0 && dest_cy > 0 { c_ext_cy * dest_cy / ch_cy } else { c_ext_cy };
+
+            let raw_id = child(wsp, "cNvPr")
+                .and_then(|d| attr(d, "id"))
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|&id| id > 0 && !used_ids.contains(&id))
+                .unwrap_or_else(|| self.new_id() as u64);
+            used_ids.insert(raw_id);
+            let id = ShapeId(raw_id);
+            let mut child_floating = base_floating.clone();
+            child_floating.offset_x = mapped_x;
+            child_floating.offset_y = mapped_y;
+            let shape = self.shape_from_wsp(wsp, id, EmuRect::new(mapped_x, mapped_y, mapped_cx, mapped_cy), Some(child_floating), rels);
+            members.push(ibis_doc_model::GroupMember::Shape(id));
+            runs.push(FlowRunKind::Shape(Box::new(shape)));
+        }
+        if !members.is_empty() {
+            self.shape_groups.push(ibis_doc_model::ShapeGroup {
+                has_unmodelled_children: false,
+                native_id: group_id,
+                name: group_name,
+                children: members,
+            });
+        }
+        runs
     }
 
     /// A chart (`c:chart` in `a:graphicData`): its part read as
@@ -1543,6 +2035,17 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
     let allow_overlap = attr(holder, "allowOverlap").map_or(true, |v| v != "0" && v != "false");
     let layout_in_cell = attr(holder, "layoutInCell").map_or(true, |v| v != "0" && v != "false");
     let relative_height = attr(holder, "relativeHeight").and_then(|v| v.parse::<u32>().ok()).unwrap_or(ibis_doc_model::FloatingAnchor::DEFAULT_RELATIVE_HEIGHT);
+    let wrap_polygon = wrap_elem.and_then(|w| child(w, "wrapPolygon")).and_then(|poly| {
+        let edited = attr(poly, "edited").is_some_and(|v| v == "1" || v == "true");
+        let pt = |n: Node| {
+            let x = attr(n, "x").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+            let y = attr(n, "y").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+            ibis_doc_model::WrapPoint::new(x, y)
+        };
+        let start = pt(child(poly, "start")?);
+        let line_to: Vec<_> = children(poly, "lineTo").map(pt).collect();
+        Some(ibis_doc_model::WrapPolygon::new(start, line_to, edited))
+    });
 
     Some(ibis_doc_model::FloatingAnchor {
         offset_x,
@@ -1562,6 +2065,8 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         allow_overlap,
         layout_in_cell,
         relative_height,
+        wrap_polygon,
+        glue: Default::default(),
     })
 }
 
@@ -1623,15 +2128,17 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 duotone: look.duotone,
                 clear: None,
                 luminance: look.luminance,
-                alpha: look.alpha,
                 clip: None,
                 shadow: None,
                 reflection: None,
-                soft_edge: None,
+                soft_edge: look.soft_edge,
                 alt_text: look.alt_text.clone(),
                 decorative: look.decorative,
                 name: look.name.clone(),
                 ole: look.ole,
+                geometry: None,
+                effects: look.effects, tile: None, fill_rect: None,
+                artistic_effect: None,
             };
             let shape = Shape {
                 id,
@@ -1673,11 +2180,16 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 let (bright, contrast) = (value("bright"), value("contrast"));
                 (bright != 0 || contrast != 0).then_some((bright, contrast))
             });
-            look.alpha = blip.and_then(|b| child(b, "alphaModFix")).and_then(crate::reader::picture_alpha);
             look.duotone = blip.and_then(|b| child(b, "duotone")).and_then(|d| {
                 let found: Vec<_> = elements(d).filter_map(|c| colors.resolve(c, None)).collect();
                 Some((found.first()?.rgb, found.get(1)?.rgb))
             });
+            look.effects.opacity = blip.and_then(|b| child(b, "alphaModFix")).and_then(|a| a.attribute("amt")).and_then(|v| v.parse::<i64>().ok()).map(|v| v.clamp(0, 100_000) as i32).filter(|&v| v < 100_000);
+            look.effects.saturation = blip.and_then(|b| child(b, "satMod")).and_then(|s| s.attribute("amt")).and_then(|v| v.parse::<i64>().ok()).map(|v| v.clamp(0, 400_000) as i32);
+            look.effects.bilevel = blip.and_then(|b| child(b, "biLevel")).and_then(|b| b.attribute("thresh")).and_then(|v| v.parse::<i64>().ok()).map(|v| v.clamp(0, 100_000) as i32);
+            look.effects.grayscale = blip.and_then(|b| child(b, "grayscl")).is_some();
+            look.soft_edge = sp_pr.and_then(|p| child(p, "effectLst")).and_then(|e| child(e, "softEdge")).and_then(|s| crate::xml::attr_i64(s, "rad")).filter(|&r| r > 0);
+            look.geometry = sp_pr.and_then(|p| child(p, "prstGeom")).map(|g| crate::geometry::geometry(Some(g))).filter(|g| !matches!(g, ibis_doc_model::Geometry::Rect));
         }
         look
     }
@@ -1688,7 +2200,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         let mut cx = extent.and_then(|e| e.attribute("cx")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
         let mut cy = extent.and_then(|e| e.attribute("cy")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
 
-        let wsp = holder.descendants().find(|n| n.is_element() && matches!(n.tag_name().name(), "wsp" | "sp"))?;
+        let wsp = holder.descendants().find(|n| n.is_element() && matches!(n.tag_name().name(), "wsp" | "sp" | "cxnSp"))?;
         let sp_pr = child(wsp, "spPr");
         let xfrm = sp_pr.and_then(|p| child(p, "xfrm"));
         if cx == 0 || cy == 0 {
@@ -1701,6 +2213,22 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 }
             }
         }
+        let floating = Self::parse_floating_anchor(holder);
+        let (pos_x, pos_y) = floating.as_ref().map_or((0, 0), |f| (f.offset_x, f.offset_y));
+        let frame = EmuRect::new(pos_x, pos_y, cx, cy);
+        let doc_pr = child(holder, "docPr");
+        let id = doc_pr
+            .and_then(|d| attr(d, "id"))
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(ShapeId)
+            .unwrap_or_else(|| ShapeId(self.new_id() as u64));
+        let shape = self.shape_from_wsp(wsp, id, frame, floating, rels);
+        Some(FlowRunKind::Shape(Box::new(shape)))
+    }
+
+    fn shape_from_wsp(&mut self, wsp: Node, id: ShapeId, frame: EmuRect, mut floating: Option<ibis_doc_model::FloatingAnchor>, rels: &Rels) -> Shape {
+        let sp_pr = child(wsp, "spPr");
+        let xfrm = sp_pr.and_then(|p| child(p, "xfrm"));
         let rotation = xfrm.and_then(|x| attr(x, "rot")).and_then(|v| v.parse().ok()).unwrap_or(0);
         let flip_h = xfrm.and_then(|x| attr(x, "flipH")).is_some_and(|v| v == "1" || v == "true");
         let flip_v = xfrm.and_then(|x| attr(x, "flipV")).is_some_and(|v| v == "1" || v == "true");
@@ -1728,20 +2256,40 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 ))
             });
 
-        let floating = Self::parse_floating_anchor(holder);
-        let (pos_x, pos_y) = floating.as_ref().map_or((0, 0), |f| (f.offset_x, f.offset_y));
-        let frame = EmuRect::new(pos_x, pos_y, cx, cy);
-        let doc_pr = child(holder, "docPr");
-        let id = doc_pr
-            .and_then(|d| attr(d, "id"))
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(ShapeId)
-            .unwrap_or_else(|| ShapeId(self.new_id() as u64));
+        // A glow, soft edges and a reflection (`a:effectLst`).
+        let effect_list = sp_pr.and_then(|p| child(p, "effectLst"));
+        let number = |n: Node, name: &str, default: i64| crate::xml::attr_i64(n, name).unwrap_or(default);
+        let glow = effect_list.and_then(|e| child(e, "glow")).and_then(|g| {
+            let radius = number(g, "rad", 0);
+            (radius > 0).then(|| colors.in_parent(g, None).map(|c| (c, radius))).flatten()
+        });
+        let soft_edge = effect_list.and_then(|e| child(e, "softEdge")).map(|e| number(e, "rad", 0)).filter(|&r| r > 0);
+        let reflection = effect_list.and_then(|e| child(e, "reflection")).map(|e| ibis_doc_model::Reflection {
+            blur: number(e, "blurRad", 0),
+            start_alpha: number(e, "stA", 100_000) as i32,
+            end_alpha: number(e, "endA", 0) as i32,
+            start_pos: number(e, "stPos", 0) as i32,
+            end_pos: number(e, "endPos", 100_000) as i32,
+            distance: number(e, "dist", 0),
+            direction: number(e, "dir", 0) as i32,
+            fade_direction: number(e, "fadeDir", 5_400_000) as i32,
+            sx: number(e, "sx", 100_000) as i32,
+            sy: number(e, "sy", 100_000) as i32,
+            kx: number(e, "kx", 0) as i32,
+            ky: number(e, "ky", 0) as i32,
+            align: attr(e, "algn").map(ibis_doc_model::TileAlign::parse).unwrap_or(ibis_doc_model::TileAlign::Bottom),
+            rot_with_shape: attr(e, "rotWithShape").is_none_or(|v| v != "0" && v != "false"),
+        });
+        // A connector's glue: the shapes its ends are attached to (`a:stCxn`, `a:endCxn`).
+        if let (Some(f), Some(cnv)) = (floating.as_mut(), child(wsp, "cNvCnPr")) {
+            let end_of = |name: &str| child(cnv, name).and_then(|c| Some((attr(c, "id")?.parse::<u64>().ok()?, attr(c, "idx")?.parse::<u32>().ok()?)));
+            f.glue = ibis_doc_model::Glue { start: end_of("stCxn"), end: end_of("endCxn") };
+        }
         let preset = geometry_node.filter(|g| g.has_tag_name("prstGeom")).and_then(|g| attr(g, "prst"));
         let is_line = matches!(preset, Some("line" | "straightConnector1"))
             || (wsp.has_tag_name("cxnSp") && geometry_node.is_none());
 
-        let shape = if is_line && let Some(s) = stroke {
+        if is_line && let Some(s) = stroke {
             Shape { id, frame, rotation, flip_h, flip_v, kind: ShapeKind::Line(s), floating }
         } else {
             Shape {
@@ -1757,14 +2305,219 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                     text,
                     tilt: None,
                     shadow,
-                    glow: None,
+                    glow,
                     inner_shadow: None,
-                    soft_edge: None,
-                    reflection: None,
+                    soft_edge,
+                    reflection,
                     bevel: None,
                 }),
                 floating,
             }
+        }
+    }
+
+    /// A VML shape (`w:pict` with a `v:rect`, `v:roundrect`, `v:oval` or `v:line`, the old drawing format), as a shape: its
+    /// size, fill, outline, text box and place.
+    fn vml_shape(&mut self, pict: Node) -> Option<FlowRunKind> {
+        let vml = elements(pict).find(|n| matches!(n.tag_name().name(), "rect" | "roundrect" | "oval" | "line" | "polyline" | "shape"))?;
+        let name = vml.tag_name().name();
+        let style = vml_style(vml.attribute("style").unwrap_or(""));
+        let length = |key: &str| style.get(key).and_then(|v| vml_length(v));
+        let point = |v: Option<&str>| -> Option<(i64, i64)> {
+            let (x, y) = v?.split_once(',')?;
+            Some((vml_length(x)?, vml_length(y)?))
+        };
+        let (width, height);
+        let (mut flip_h, mut flip_v) = (false, false);
+        let mut polyline: Option<(Vec<(i64, i64)>, (i64, i64))> = None;
+        if name == "line" {
+            let (from, to) = (point(vml.attribute("from"))?, point(vml.attribute("to"))?);
+            (width, height) = ((to.0 - from.0).abs(), (to.1 - from.1).abs());
+            (flip_h, flip_v) = (to.0 < from.0, to.1 < from.1);
+        } else if name == "polyline" {
+            // The points are the shape's own: its size is theirs.
+            let nums: Vec<i64> = vml.attribute("points")?.split(',').filter_map(vml_length).collect();
+            let points: Vec<(i64, i64)> = nums.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+            let (min_x, max_x) = (points.iter().map(|p| p.0).min()?, points.iter().map(|p| p.0).max()?);
+            let (min_y, max_y) = (points.iter().map(|p| p.1).min()?, points.iter().map(|p| p.1).max()?);
+            (width, height) = ((max_x - min_x).max(1), (max_y - min_y).max(1));
+            polyline = Some((points, (min_x, min_y)));
+        } else {
+            width = length("width")?;
+            height = length("height")?;
+        }
+        let off = |v: &str| matches!(v, "f" | "false" | "0" | "no");
+        let color = |key: &str, default: Option<u32>| vml.attribute(key).and_then(vml_color).or(default.map(ibis_doc_model::Rgb));
+        // The fill (white unless it is said otherwise) and the outline (black, 0.75 pt).
+        let fill_el = child(vml, "fill");
+        let filled = !vml.attribute("filled").is_some_and(off) && !fill_el.and_then(|f| f.attribute("on")).is_some_and(off);
+        let fill = if name == "line" || !filled {
+            Fill::None
+        } else {
+            let first = color("fillcolor", Some(0xFFFFFF)).unwrap_or(ibis_doc_model::Rgb(0xFFFFFF));
+            let second = fill_el.and_then(|f| f.attribute("color2")).and_then(vml_color);
+            let kind = fill_el.and_then(|f| f.attribute("type")).unwrap_or("");
+            let alpha = fill_el.and_then(|f| f.attribute("opacity")).map_or(255, vml_opacity);
+            let with = |rgb: ibis_doc_model::Rgb| ibis_doc_model::Color { rgb, alpha };
+            let stop = |position: u32, rgb| ibis_doc_model::GradientStop { position, color: with(rgb) };
+            match (kind.starts_with("gradient"), second) {
+                (true, Some(second)) if kind == "gradientRadial" => Fill::Path { path: ibis_doc_model::GradientPath::Rect, focus: [50_000; 4], stops: vec![stop(0, second), stop(100_000, first)] },
+                (true, Some(second)) => {
+                    // VML's angle is clockwise from "up", the first colour at the far end: OOXML's is from the left.
+                    let degrees = fill_el.and_then(|f| f.attribute("angle")).and_then(|a| a.parse::<f64>().ok()).unwrap_or(0.0);
+                    let angle = ((270.0 - degrees).rem_euclid(360.0) * 60_000.0) as i32;
+                    // A focus of 50%: the second colour in the middle, the first at both ends.
+                    let centred = fill_el.and_then(|f| f.attribute("focus")).is_some_and(|f| f.trim() == "50%");
+                    let stops = if centred { vec![stop(0, first), stop(50_000, second), stop(100_000, first)] } else { vec![stop(0, first), stop(100_000, second)] };
+                    Fill::Linear { angle, scaled: false, stops }
+                }
+                _ => Fill::Solid(with(first)),
+            }
+        };
+        let stroke_el = child(vml, "stroke");
+        let stroked = !vml.attribute("stroked").is_some_and(off) && !stroke_el.and_then(|s| s.attribute("on")).is_some_and(off);
+        let stroke = stroked.then(|| {
+            let stroke_color = color("strokecolor", Some(0x000000)).unwrap_or(ibis_doc_model::Rgb(0));
+            let weight = vml.attribute("strokeweight").and_then(vml_length).or_else(|| stroke_el.and_then(|s| s.attribute("weight")).and_then(vml_length)).unwrap_or(9525);
+            let dash = stroke_el.and_then(|s| s.attribute("dashstyle")).map_or(LineDash::Solid, |d| match d {
+                "dot" => LineDash::SysDot,
+                "dash" => LineDash::SysDash,
+                "shortdash" => LineDash::SysDash,
+                "shortdot" => LineDash::SysDot,
+                "dashdot" | "shortdashdot" => LineDash::DashDot,
+                "longdash" => LineDash::LgDash,
+                "longdashdot" => LineDash::LgDashDot,
+                "longdashdotdot" | "shortdashdotdot" => LineDash::LgDashDotDot,
+                _ => LineDash::Solid,
+            });
+            let end = |kind: &str, w: &str, l: &str| {
+                let size = |v: Option<&str>| match v {
+                    Some("narrow") | Some("short") => Some("sm"),
+                    Some("wide") | Some("long") => Some("lg"),
+                    _ => Some("med"),
+                };
+                let ooxml = match stroke_el.and_then(|s| s.attribute(kind)) {
+                    Some("block") => "triangle",
+                    Some("classic") => "stealth",
+                    Some("open") => "arrow",
+                    Some("oval") => "oval",
+                    Some("diamond") => "diamond",
+                    _ => "",
+                };
+                ibis_doc_model::LineEnd::parse(Some(ooxml), size(stroke_el.and_then(|s| s.attribute(w))), size(stroke_el.and_then(|s| s.attribute(l))))
+            };
+            let compound = match stroke_el.and_then(|s| s.attribute("linestyle")) {
+                Some("thinThin") => ibis_doc_model::LineCompound::Double,
+                Some("thinThick") => ibis_doc_model::LineCompound::ThinThick,
+                Some("thickThin") => ibis_doc_model::LineCompound::ThickThin,
+                Some("thickBetweenThin") => ibis_doc_model::LineCompound::Triple,
+                _ => ibis_doc_model::LineCompound::Single,
+            };
+            let cap = match stroke_el.and_then(|s| s.attribute("endcap")) {
+                Some("round") => LineCap::Round,
+                Some("square") => LineCap::Square,
+                _ => LineCap::Flat,
+            };
+            let join = match stroke_el.and_then(|s| s.attribute("joinstyle")) {
+                Some("round") => ibis_doc_model::LineJoin::Round,
+                Some("bevel") => ibis_doc_model::LineJoin::Bevel,
+                _ => ibis_doc_model::LineJoin::Miter,
+            };
+            Stroke {
+                color: ibis_doc_model::Color::opaque(stroke_color),
+                width: weight,
+                dashed: dash != LineDash::Solid,
+                head: end("startarrow", "startarrowwidth", "startarrowlength"),
+                tail: end("endarrow", "endarrowwidth", "endarrowlength"),
+                dash,
+                cap,
+                join,
+                compound,
+                alignment: ibis_doc_model::LineAlignment::Center,
+                fill: None,
+            }
+        });
+        let geometry = match name {
+            "polyline" => {
+                let (points, (min_x, min_y)) = polyline.take().unwrap_or_default();
+                let path: Vec<VmlPath> = points.iter().enumerate().map(|(i, p)| if i == 0 { VmlPath::Move(p.0 - min_x, p.1 - min_y) } else { VmlPath::Line(p.0 - min_x, p.1 - min_y) }).collect();
+                vml_custom_geometry(width, height, &path, filled)
+            }
+            "shape" => {
+                let (cw, ch) = vml.attribute("coordsize").and_then(|c| c.split_once(',')).and_then(|(a, b)| Some((a.trim().parse::<i64>().ok()?, b.trim().parse::<i64>().ok()?))).unwrap_or((21_600, 21_600));
+                let path = vml_path(vml.attribute("path")?);
+                vml_custom_geometry(cw, ch, &path, filled)
+            }
+            "roundrect" => {
+                let arc = vml.attribute("arcsize").map(|a| a.trim().trim_end_matches('f').parse::<f64>().map(|v| if a.trim().ends_with('f') { v / 65536.0 } else { v }).unwrap_or(0.2)).unwrap_or(0.2);
+                ibis_doc_model::Geometry::RoundRect { radius: (arc.clamp(0.0, 0.5) * 100_000.0).round() as u32 }
+            }
+            "oval" => ibis_doc_model::Geometry::Ellipse,
+            _ => ibis_doc_model::Geometry::Rect,
+        };
+        // 影: an offset copy in the shadow's colour.
+        let shadow = child(vml, "shadow").filter(|sh| sh.attribute("on").is_some_and(|v| matches!(v, "t" | "true" | "1" | "on"))).and_then(|sh| {
+            let (ox, oy) = point(Some(sh.attribute("offset").unwrap_or("2pt,2pt")))?;
+            let rgb = sh.attribute("color").and_then(vml_color).unwrap_or(ibis_doc_model::Rgb(0x808080));
+            let alpha = sh.attribute("opacity").map_or(255, vml_opacity);
+            let distance = ((ox as f64).hypot(oy as f64)).round() as i64;
+            let direction = ((oy as f64).atan2(ox as f64).to_degrees().rem_euclid(360.0) * 60_000.0) as i32;
+            Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb, alpha }, 0, distance, direction))
+        });
+        let rotation = style.get("rotation").and_then(|r| r.trim().parse::<f64>().ok()).map_or(0, |d| (d.rem_euclid(360.0) * 60_000.0) as i32);
+        if let Some(f) = style.get("flip") {
+            flip_h |= f.contains('x');
+            flip_v |= f.contains('y');
+        }
+        // A text box: its paragraphs, its margins and where the text sits.
+        let colors = crate::theme::Colors::new(self.theme, None, &[]);
+        let mut text = self.shape_text(vml, &colors);
+        if let (Some(body), Some(tb)) = (text.as_mut(), child(vml, "textbox")) {
+            if let Some(inset) = tb.attribute("inset") {
+                let parts: Vec<Option<i64>> = inset.split(',').map(|p| if p.trim().is_empty() { None } else { vml_length(p) }).collect();
+                let get = |i: usize, default: i64| parts.get(i).copied().flatten().unwrap_or(default);
+                body.insets = Insets { left: get(0, 91440), top: get(1, 45720), right: get(2, 91440), bottom: get(3, 45720) };
+            }
+            // 文字列の方向 (`layout-flow`): turned a quarter turn, or the Japanese upright.
+            let flow = tb.attribute("style").map(vml_style).unwrap_or_default();
+            match flow.get("layout-flow").map(String::as_str) {
+                Some("vertical") => body.sideways = if flow.get("mso-layout-flow-alt").is_some_and(|a| a == "bottom-to-top") { 16_200_000 } else { 5_400_000 },
+                Some("vertical-ideographic") => {
+                    body.vertical = true;
+                    body.vertical_kind = ibis_doc_model::VerticalKind::EastAsian;
+                }
+                _ => {}
+            }
+            body.anchor = match style.get("v-text-anchor").map(String::as_str) {
+                Some("middle") => VerticalAnchor::Middle,
+                Some("bottom") => VerticalAnchor::Bottom,
+                _ => VerticalAnchor::Top,
+            };
+        }
+        // Where it is: in the text, or at a place on the page (`position:absolute`).
+        let floating = (style.get("position").map(String::as_str) == Some("absolute")).then(|| ibis_doc_model::FloatingAnchor {
+            offset_x: length("margin-left").unwrap_or(0),
+            offset_y: length("margin-top").unwrap_or(0),
+            relative_h: style.get("mso-position-horizontal-relative").cloned().unwrap_or_else(|| "margin".to_string()),
+            relative_v: style.get("mso-position-vertical-relative").cloned().unwrap_or_else(|| "paragraph".to_string()),
+            wrap: "none".to_string(),
+            behind_doc: style.get("z-index").and_then(|z| z.trim().parse::<i64>().ok()).is_some_and(|z| z < 0),
+            ..Default::default()
+        });
+        let frame = EmuRect::new(floating.as_ref().map_or(0, |f| f.offset_x), floating.as_ref().map_or(0, |f| f.offset_y), width, height);
+        let id = ShapeId(self.new_id() as u64);
+        let shape = match (name, &stroke) {
+            ("line", Some(s)) => Shape { id, frame, rotation, flip_h, flip_v, kind: ShapeKind::Line(s.clone()), floating },
+            ("line", None) => return None,
+            _ => Shape {
+                id,
+                frame,
+                rotation,
+                flip_h,
+                flip_v,
+                kind: ShapeKind::Auto(AutoShape { geometry, fill, stroke, text, tilt: None, shadow, glow: None, inner_shadow: None, soft_edge: None, reflection: None, bevel: None }),
+                floating,
+            },
         };
         Some(FlowRunKind::Shape(Box::new(shape)))
     }
@@ -1843,10 +2596,32 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         let ref_color = reference.and_then(|r| colors.in_parent(r, None));
         let ref_idx = reference.and_then(|r| crate::xml::attr_i64(r, "idx")).unwrap_or(0);
 
-        let color = if let Some(fill) = elements(ln).find(|n| matches!(n.tag_name().name(), "noFill" | "solidFill")) {
+        let mut stroke_fill = None;
+        let color = if let Some(fill) = elements(ln).find(|n| matches!(n.tag_name().name(), "noFill" | "solidFill" | "gradFill")) {
             match fill.tag_name().name() {
                 "noFill" => return None,
                 "solidFill" => colors.in_parent(fill, ref_color),
+                "gradFill" => {
+                    let mut stops: Vec<ibis_doc_model::GradientStop> = child(fill, "gsLst")
+                        .into_iter()
+                        .flat_map(|l| children(l, "gs"))
+                        .filter_map(|gs| {
+                            let color = colors.in_parent(gs, None)?;
+                            Some(ibis_doc_model::GradientStop {
+                                position: crate::xml::attr_i64(gs, "pos").unwrap_or(0).clamp(0, 100_000) as u32,
+                                color,
+                            })
+                        })
+                        .collect();
+                    stops.sort_by_key(|s| s.position);
+                    let first_color = stops.first().map(|s| s.color).or(ref_color);
+                    if !stops.is_empty() {
+                        let angle = child(fill, "lin").and_then(|l| crate::xml::attr_i64(l, "ang")).unwrap_or(0) as i32;
+                        let scaled = child(fill, "lin").and_then(|l| l.attribute("scaled")).is_some_and(|v| v == "1" || v == "true");
+                        stroke_fill = Some(Fill::Linear { angle, scaled, stops });
+                    }
+                    first_color
+                }
                 _ => ref_color,
             }
         } else if ref_idx > 0 {
@@ -1869,6 +2644,13 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             Some("sq") => LineCap::Square,
             _ => LineCap::Flat,
         };
+        let join = if child(ln, "round").is_some() {
+            ibis_doc_model::LineJoin::Round
+        } else if child(ln, "bevel").is_some() {
+            ibis_doc_model::LineJoin::Bevel
+        } else {
+            ibis_doc_model::LineJoin::Miter
+        };
         Some(Stroke {
             color,
             width,
@@ -1877,14 +2659,15 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             tail: end("tailEnd"),
             dash,
             cap,
-            join: ibis_doc_model::LineJoin::Miter,
+            join,
             compound: ibis_doc_model::LineCompound::Single,
             alignment: ibis_doc_model::LineAlignment::Center,
+            fill: stroke_fill,
         })
     }
 
     fn shape_text(&self, wsp: Node, colors: &crate::theme::Colors) -> Option<TextBody> {
-        let txbx = child(wsp, "txbx");
+        let txbx = child(wsp, "txbx").or_else(|| child(wsp, "textbox"));
         let tx_body = child(wsp, "txBody");
         let body_pr = child(wsp, "bodyPr");
 
@@ -2005,7 +2788,11 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         }
 
         if paragraphs.is_empty() {
-            return None;
+            if txbx.is_some() || tx_body.is_some() {
+                paragraphs.push(Paragraph::default());
+            } else {
+                return None;
+            }
         }
 
         let anchor = match body_pr.and_then(|b| attr(b, "anchor")) {
@@ -2020,15 +2807,41 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             bottom: body_pr.and_then(|b| crate::xml::attr_i64(b, "bIns")).unwrap_or(45720),
         };
         let wrap = body_pr.and_then(|b| attr(b, "wrap")).is_none_or(|w| w != "none");
-
-        Some(TextBody {
+        let mut body = TextBody {
             paragraphs,
             style: TextStyle::default(),
             insets,
             anchor,
             wrap,
+            clip: true,
             ..Default::default()
-        })
+        };
+        // The direction of the text (`vert`), its turn, upright and columns, as a presentation's body has them.
+        if let Some(pr) = body_pr {
+            if let Some(vert) = attr(pr, "vert") {
+                let kind = ibis_doc_model::VerticalKind::parse(vert);
+                body.vertical = kind.is_some();
+                body.vertical_kind = kind.unwrap_or_default();
+                body.sideways = match vert {
+                    "vert" => 5_400_000,
+                    "vert270" => 16_200_000,
+                    _ => 0,
+                };
+            }
+            if let Some(rot) = crate::xml::attr_i64(pr, "rot") {
+                body.rotation = (rot as i32).rem_euclid(21_600_000);
+            }
+            if let Some(upright) = attr(pr, "upright") {
+                body.upright = upright == "1" || upright == "true";
+            }
+            if let Some(cols) = crate::xml::attr_i64(pr, "numCol") {
+                body.columns = (cols as u32).clamp(1, 16);
+            }
+            if let Some(spc) = crate::xml::attr_i64(pr, "spcCol") {
+                body.column_spacing = spc.max(0);
+            }
+        }
+        Some(body)
     }
 
     fn table(&mut self, tbl: Node, path: &[u32], rels: &Rels) -> Option<FlowTable> {
@@ -2415,7 +3228,8 @@ fn computed_field(instruction: &str) -> bool {
         Some(
             "SEQ" | "LISTNUM" | "AUTONUM" | "AUTONUMLGL" | "AUTONUMOUT" | "FILESIZE" | "DOCVARIABLE" | "USERNAME" | "USERINITIALS" | "USERADDRESS" | "REF" | "NOTEREF" | "STYLEREF" | "NUMPAGES" | "SECTIONPAGES" | "SECTION" | "DATE" | "TIME" | "CREATEDATE" | "SAVEDATE"
             | "PRINTDATE" | "AUTHOR" | "TITLE" | "SUBJECT" | "COMMENTS" | "DOCPROPERTY" | "QUOTE" | "SYMBOL" | "SET" | "IF" | "COMPARE"
-            | "HYPERLINK" | "TEMPLATE" | "ADVANCE" | "INFO" | "ASK" | "FILLIN" | "FILL-IN" | "MERGEFIELD" | "MERGEREC" | "MERGESEQ" | "NEXT" | "NEXTIF" | "SKIPIF" | "XE",
+            | "HYPERLINK" | "TEMPLATE" | "ADVANCE" | "INFO" | "ASK" | "FILLIN" | "FILL-IN" | "MERGEFIELD" | "MERGEREC" | "MERGESEQ" | "NEXT" | "NEXTIF" | "SKIPIF" | "ADDRESSBLOCK" | "GREETINGLINE" | "XE" | "TC" | "TA" | "EQ" | "INCLUDETEXT"
+            | "AUTOTEXT" | "AUTOTEXTLIST" | "CITATION",
         ) => true,
         _ => false,
     }
@@ -2438,6 +3252,61 @@ struct Frame {
     /// The runs it takes in the paragraph being read, and its position.
     runs: Vec<Vec<u32>>,
     atom: Option<usize>,
+    form_field: Option<ibis_doc_model::FormFieldData>,
+    form_field_text: bool,
+    form_field_emitted: bool,
+    result_text: String,
+}
+
+fn parse_ff_data(ff_data: Node) -> Option<ibis_doc_model::FormFieldData> {
+    let name = child(ff_data, "name").and_then(|n| wattr(n, "val")).unwrap_or("").to_string();
+    let enabled = child(ff_data, "enabled").map_or(true, |n| wattr(n, "val").map_or(true, |v| v != "0" && v != "false"));
+    let calc_on_exit = child(ff_data, "calcOnExit").map_or(false, |n| wattr(n, "val").map_or(true, |v| v == "1" || v == "true"));
+    if let Some(text_input) = child(ff_data, "textInput") {
+        let default = child(text_input, "default").and_then(|n| wattr(n, "val")).unwrap_or("").to_string();
+        let max_length = child(text_input, "maxLength").and_then(|n| wattr(n, "val")).and_then(|v| v.parse().ok()).unwrap_or(0);
+        return Some(ibis_doc_model::FormFieldData {
+            name,
+            enabled,
+            calc_on_exit,
+            kind: ibis_doc_model::FormFieldKind::TextInput {
+                value: default.clone(),
+                default,
+                max_length,
+            },
+        });
+    }
+    if let Some(check_box) = child(ff_data, "checkBox") {
+        let checked = child(check_box, "checked").map_or(false, |n| wattr(n, "val").map_or(true, |v| v == "1" || v == "true"));
+        let default = child(check_box, "default").map_or(false, |n| wattr(n, "val").map_or(true, |v| v == "1" || v == "true"));
+        let size_auto = child(check_box, "sizeAuto").is_some();
+        return Some(ibis_doc_model::FormFieldData {
+            name,
+            enabled,
+            calc_on_exit,
+            kind: ibis_doc_model::FormFieldKind::CheckBox {
+                checked,
+                default,
+                size_auto,
+            },
+        });
+    }
+    if let Some(dd_list) = child(ff_data, "ddList") {
+        let result = child(dd_list, "result").and_then(|n| wattr(n, "val")).and_then(|v| v.parse().ok()).unwrap_or(0);
+        let default = child(dd_list, "default").and_then(|n| wattr(n, "val")).and_then(|v| v.parse().ok()).unwrap_or(0);
+        let items: Vec<String> = children(dd_list, "listEntry").filter_map(|n| wattr(n, "val").map(|s| s.to_string())).collect();
+        return Some(ibis_doc_model::FormFieldData {
+            name,
+            enabled,
+            calc_on_exit,
+            kind: ibis_doc_model::FormFieldKind::DropDown {
+                items,
+                selected: result,
+                default,
+            },
+        });
+    }
+    None
 }
 
 /// The complex fields open (nested), across paragraphs.
@@ -2528,6 +3397,8 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
                     run: child(style, "rPr").map(|r| run_format(r, &theme)).unwrap_or_default(),
                     next: wval(style, "next").map(str::to_string),
                     auto_update: child(style, "autoRedefine").is_some_and(|e| !matches!(wattr(e, "val"), Some("0" | "false" | "off"))),
+                    ui_priority: wval(style, "uiPriority").and_then(|v| v.parse().ok()),
+                    quick: child(style, "qFormat").is_some_and(|e| !matches!(wattr(e, "val"), Some("0" | "false" | "off"))),
                     conditional: children(style, "tblStylePr")
                         .filter_map(|c| {
                             Some(ibis_doc_model::TableCondition {
@@ -2538,6 +3409,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
                             })
                         })
                         .collect(),
+                    num_id: child(style, "pPr").and_then(|p| child(p, "numPr")).and_then(|n| wval(n, "numId")).and_then(|v| v.parse().ok()),
                 },
             );
             style_nodes.insert(id.to_string(), style);
@@ -2572,6 +3444,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         fields: FieldState::default(),
         sections: Vec::new(),
         revision: None,
+        shape_groups: Vec::new(),
     };
     let mut blocks = Vec::new();
     reader.blocks(body, &body_path, &rels, None, &mut blocks);
@@ -2630,6 +3503,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
     }
     // The footnotes and endnotes (not their separators).
     let mut notes: [Vec<Note>; 2] = Default::default();
+    let mut note_separators = [ibis_doc_model::NoteSeparator::Standard; 2];
     for (i, (suffix, element)) in [("/footnotes", "footnote"), ("/endnotes", "endnote")].into_iter().enumerate() {
         let Some(part) = rels.values().find(|r| !r.external && r.kind.ends_with(suffix)).map(|r| r.target.clone()) else { continue };
         let Ok(xml) = package.read_xml(&part) else { continue };
@@ -2637,6 +3511,18 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         let part_rels = package.relationships(&part)?;
         reader.part = part.clone();
         for (index, node) in elements(doc.root_element()).enumerate() {
+            if node.tag_name().name() == element && wattr(node, "type") == Some("separator") {
+                // The line above the notes: the short one, one across the text, or none (no mark in it).
+                let has = |name: &str| node.descendants().any(|d| d.is_element() && d.tag_name().name() == name);
+                let text = node.descendants().any(|d| d.is_element() && d.tag_name().name() == "t" && d.text().is_some_and(|t| !t.is_empty()));
+                note_separators[i] = if has("continuationSeparator") {
+                    ibis_doc_model::NoteSeparator::Full
+                } else if has("separator") || text {
+                    ibis_doc_model::NoteSeparator::Standard
+                } else {
+                    ibis_doc_model::NoteSeparator::Hidden
+                };
+            }
             if node.tag_name().name() != element || wattr(node, "type").is_some_and(|t| t != "normal") {
                 continue;
             }
@@ -2729,6 +3615,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
     let [header, footer, header_first, footer_first, header_even, footer_even] = last_parts.map(Option::unwrap_or_default);
     let id_floor = reader.last_id;
     let sources = std::mem::take(&mut reader.sources);
+    let shape_groups = std::mem::take(&mut reader.shape_groups);
     let title_page = sect.and_then(|s| toggle(s, "titlePg")).unwrap_or(false);
     let even_and_odd = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).is_some_and(|xml| xml.contains("evenAndOddHeaders") && !xml.contains("evenAndOddHeaders w:val=\"0\"") && !xml.contains("evenAndOddHeaders w:val=\"false\""));
     let default_tab_stop = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
@@ -2753,8 +3640,53 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         part_of("/settings").and_then(|p| package.read_xml(&p).ok()).is_some_and(|xml| xml.contains(&format!("<w:{name}")) && !xml.contains(&format!("{name} w:val=\"0\"")) && !xml.contains(&format!("{name} w:val=\"false\"")))
     };
     let (mirror_margins, gutter_at_top) = (settings_on("mirrorMargins"), settings_on("gutterAtTop"));
+    let book_fold = settings_on("bookFoldPrinting");
+    let reverse_book_fold = settings_on("bookFoldRevPrinting");
+    let two_on_one = settings_on("printTwoOnOne");
+    let book_fold_sheets = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
+        let at = xml.find("<w:bookFoldPrintingSheets")?;
+        let rest = &xml[at..xml[at..].find('>').map(|e| at + e).unwrap_or(xml.len())];
+        let v = rest.find("w:val=\"")? + "w:val=\"".len();
+        rest[v..v + rest[v..].find('"')?].parse::<u32>().ok()
+    });
+    let multiple_pages = if reverse_book_fold {
+        ibis_doc_model::MultiplePages::ReverseBookFold
+    } else if book_fold {
+        ibis_doc_model::MultiplePages::BookFold
+    } else if two_on_one {
+        ibis_doc_model::MultiplePages::TwoOnOne
+    } else if mirror_margins {
+        ibis_doc_model::MultiplePages::MirrorMargins
+    } else {
+        ibis_doc_model::MultiplePages::Normal
+    };
     let read_only_recommended = settings_on("readOnlyRecommended");
     let update_fields = settings_on("updateFields");
+    // 差し込み印刷の文書の種類 (`w:mailMerge/w:mainDocumentType`).
+    let mail_merge_type = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
+        let at = xml.find("<w:mainDocumentType")?;
+        let rest = &xml[at..xml[at..].find('>').map(|e| at + e)?];
+        let v = rest.find("w:val=\"")? + "w:val=\"".len();
+        Some(rest[v..v + rest[v..].find('"')?].to_string())
+    });
+    // 差し込み印刷のフィールドと列の対応 (`w:mailMerge/w:odso/w:fieldMapData`, DOCX-MERGE-009).
+    let settings_xml_for_merge = part_of("/settings").and_then(|p| package.read_xml(&p).ok());
+    let mail_merge_field_map = settings_xml_for_merge
+        .as_deref()
+        .and_then(|xml| roxmltree::Document::parse(xml).ok())
+        .map(|doc| {
+            let mut out = Vec::new();
+            for fmd in doc.descendants().filter(|n| n.is_element() && n.tag_name().name() == "fieldMapData") {
+                let name = child(fmd, "name").and_then(|n| wattr(n, "val")).unwrap_or_default().to_string();
+                let mapped_name = child(fmd, "mappedName").and_then(|n| wattr(n, "val")).unwrap_or_default().to_string();
+                let column = child(fmd, "column").and_then(|n| wattr(n, "val")).and_then(|v| v.parse().ok()).unwrap_or(0);
+                if !name.is_empty() || !mapped_name.is_empty() {
+                    out.push(ibis_doc_model::merge::FieldMapData { name, mapped_name, column });
+                }
+            }
+            out
+        })
+        .unwrap_or_default();
     // 禁則文字の設定: the lists for Japanese (`w:lang` ja…).
     let kinsoku_list = |name: &str| -> Option<String> {
         let xml = part_of("/settings").and_then(|p| package.read_xml(&p).ok())?;
@@ -2762,6 +3694,56 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         doc.descendants().find(|n| n.is_element() && n.tag_name().name() == name && wattr(*n, "lang").is_some_and(|l| l.starts_with("ja"))).and_then(|n| wattr(n, "val")).map(str::to_string)
     };
     let (no_line_start, no_line_end) = (kinsoku_list("noLineBreaksBefore"), kinsoku_list("noLineBreaksAfter"));
+    // 禁則処理の方式 (Word options / w:strictFirstAndLastChars, DOCX-JA-010, ECMA-376 Part 1 §17.15.1.84).
+    let strict_first_and_last_chars = settings_on("strictFirstAndLastChars");
+    // 文書の既定テーマフォント言語 (w:themeFontLang, DOCX-JA-019, ECMA-376 Part 1 §17.15.1.88).
+    let theme_font_lang = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
+        let doc = roxmltree::Document::parse(&xml).ok()?;
+        let node = doc.descendants().find(|n| n.is_element() && n.tag_name().name() == "themeFontLang")?;
+        Some(ibis_doc_model::ThemeFontLang {
+            val: wattr(node, "val").map(str::to_string),
+            east_asia: wattr(node, "eastAsia").map(str::to_string),
+            bidi: wattr(node, "bidi").map(str::to_string),
+        })
+    });
+    // 画像の品質と圧縮設定 (Word options / w14:defaultImageDpi, w14:discardImageEditingData, doNotAutoCompressPictures, DOCX-OPTIONS-011).
+    let do_not_compress_images = settings_on("doNotAutoCompressPictures");
+    let default_image_dpi = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
+        let at = xml.find("defaultImageDpi")?;
+        let rest = &xml[at..xml[at..].find('>').map(|e| at + e)?];
+        let v = rest.find("val=\"")? + "val=\"".len();
+        rest[v..v + rest[v..].find('"')?].parse::<u32>().ok()
+    });
+    let discard_image_editing_data = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).is_some_and(|xml| {
+        xml.contains("discardImageEditingData") && !xml.contains("discardImageEditingData w14:val=\"0\"") && !xml.contains("discardImageEditingData val=\"0\"")
+    });
+    // 自動回復用データの保存間隔 (Word options / w:saveFrequency, DOCX-OPTIONS-012, ECMA-376 Part 1 §17.15.1.72).
+    let save_frequency = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
+        let at = xml.find("saveFrequency")?;
+        let rest = &xml[at..xml[at..].find('>').map(|e| at + e)?];
+        let v = rest.find("val=\"")? + "val=\"".len();
+        rest[v..v + rest[v..].find('"')?].parse::<u32>().ok()
+    });
+    // フォントの埋め込み設定 (Word options / w:embedTrueTypeFonts, w:embedSystemFonts, w:saveSubsetFonts, DOCX-OPTIONS-013, ECMA-376 Part 1 §17.15.1.34, 35, 75).
+    let embed_true_type_fonts = settings_on("embedTrueTypeFonts");
+    let embed_system_fonts = settings_on("embedSystemFonts");
+    let save_subset_fonts = settings_on("saveSubsetFonts");
+    // 互換性オプション (Word options / w:compat, w:compatSetting, w:useFELayout, w:doNotExpandShiftReturn, DOCX-OPTIONS-013).
+    let (compatibility_mode, use_fe_layout, do_not_expand_shift_return) = match part_of("/settings").and_then(|p| package.read_xml(&p).ok()) {
+        Some(xml) => {
+            let mode = if xml.contains("compatibilityMode") {
+                let at = xml.find("compatibilityMode").unwrap();
+                let rest = &xml[at..xml[at..].find('>').map(|e| at + e).unwrap_or(xml.len())];
+                rest.find("val=\"").and_then(|v| rest[v + 5..].split('"').next()).and_then(|v| v.parse::<u32>().ok())
+            } else {
+                None
+            };
+            let fe = xml.contains("<w:useFELayout") && !xml.contains("useFELayout w:val=\"0\"") && !xml.contains("useFELayout w:val=\"false\"");
+            let shift_return = xml.contains("<w:doNotExpandShiftReturn") && !xml.contains("doNotExpandShiftReturn w:val=\"0\"") && !xml.contains("doNotExpandShiftReturn w:val=\"false\"");
+            (mode, fe, shift_return)
+        }
+        None => (None, false, false),
+    };
     // ページの色: Word shows it only with displayBackgroundShape.
     let page_color = child(root, "background")
         .filter(|_| settings_on("displayBackgroundShape"))
@@ -2774,6 +3756,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
     // section names none of its own.
     let mut doc_variables = std::collections::BTreeMap::new();
     let mut attached_template = None;
+    let mut link_styles = false;
     let mut view_mode = ibis_doc_model::DocumentViewMode::Print;
     let mut protection = ibis_doc_model::DocumentProtection::None;
     let mut formatting_protection = false;
@@ -2807,7 +3790,8 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
             }
         }
         if let Some(tmpl) = child(settings.root_element(), "attachedTemplate") {
-            if let Some(rid) = rattr(tmpl, "id") {
+            let rid = rattr(tmpl, "id").or_else(|| tmpl.attribute("r:id"));
+            if let Some(rid) = rid {
                 if let Some(settings_part) = part_of("/settings") {
                     if let Ok(settings_rels) = package.relationships(&settings_part) {
                         if let Some(rel) = settings_rels.get(rid) {
@@ -2817,15 +3801,22 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
                 }
             }
         }
+        if let Some(link) = child(settings.root_element(), "linkStyles") {
+            link_styles = wattr(link, "val").map_or(true, |v| v != "0" && v != "false" && v != "off");
+        }
     }
-    page.mirror_margins = mirror_margins;
+    page.mirror_margins = mirror_margins || multiple_pages.is_mirrored();
+    page.multiple_pages = multiple_pages;
+    page.book_fold_sheets = book_fold_sheets;
     page.gutter_at_top = gutter_at_top;
     for block in blocks.iter_mut() {
         if let Block::Paragraph(p) = block
             && let Some(section) = p.section.as_mut()
         {
             let section = Arc::make_mut(section);
-            section.page.mirror_margins = mirror_margins;
+            section.page.mirror_margins = page.mirror_margins;
+            section.page.multiple_pages = multiple_pages;
+            section.page.book_fold_sheets = book_fold_sheets;
             section.page.gutter_at_top = gutter_at_top;
         }
     }
@@ -2860,16 +3851,25 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         watermark,
         section_watermarks,
         page_color,
+        paragraph_spacing_preset: None,
+        style_set_preset: None,
         show_field_codes: false,
+        form_design_mode: false,
         properties,
         mark_as_final,
         read_only_recommended,
         no_line_start,
         no_line_end,
+        strict_first_and_last_chars,
+        theme_font_lang,
         update_fields,
+        note_separators,
+        mail_merge_type,
+        mail_merge_field_map,
         lock_tracking,
         doc_variables,
         attached_template,
+        link_styles,
         view_mode,
         protection,
         formatting_protection,
@@ -2880,6 +3880,17 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         } else {
             ibis_doc_model::DocumentInteractionMode::Editing
         },
+        do_not_compress_images,
+        default_image_dpi,
+        discard_image_editing_data,
+        save_frequency,
+        embed_true_type_fonts,
+        embed_system_fonts,
+        save_subset_fonts,
+        compatibility_mode,
+        use_fe_layout,
+        do_not_expand_shift_return,
+        shape_groups,
     });
     let id = presentation.new_slide_id();
     let mut slide = Slide::new(id);
@@ -2894,6 +3905,9 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         floating: None,
     });
     presentation.slides.push(slide);
+    presentation.theme_colors = theme.colors();
+    presentation.theme_fonts = Some(theme.fonts());
+    presentation.theme_effects = theme.fmt_scheme_name.clone();
     presentation.flow = Some(document);
     Ok((presentation, sources))
 }
@@ -3333,6 +4347,99 @@ mod namespace_tests {
 
 
 
+/// A VML `style` attribute's properties (`width:54pt;height:30pt`), the names as they are written.
+pub(crate) fn vml_style(value: &str) -> std::collections::HashMap<String, String> {
+    value.split(';').filter_map(|kv| kv.split_once(':')).map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).collect()
+}
+
+/// A VML length (`54pt`, `1.5in`, `2cm`, `10mm`, `20px`; no unit is pixels) in EMU.
+pub(crate) fn vml_length(value: &str) -> Option<i64> {
+    let v = value.trim();
+    let end = v.find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+'))).unwrap_or(v.len());
+    let n: f64 = v[..end].parse().ok()?;
+    let k = match v[end..].trim() {
+        "pt" => 12_700.0,
+        "in" => 914_400.0,
+        "cm" => 360_000.0,
+        "mm" => 36_000.0,
+        "pc" => 152_400.0,
+        "px" | "" => 9_525.0,
+        _ => return None,
+    };
+    Some((n * k).round() as i64)
+}
+
+/// A VML opacity (`.5` or `32768f`, the fraction of 65536) as an alpha, 0 to 255.
+pub(crate) fn vml_opacity(value: &str) -> u8 {
+    let v = value.trim();
+    let fraction = match v.strip_suffix('f') {
+        Some(n) => n.parse::<f64>().map(|x| x / 65536.0),
+        None => v.parse::<f64>(),
+    };
+    (fraction.unwrap_or(1.0).clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// A step of a VML path.
+pub(crate) enum VmlPath {
+    Move(i64, i64),
+    Line(i64, i64),
+    Curve([i64; 6]),
+    Close,
+}
+
+/// The steps of a VML `path` (`m0,0l21600,0,21600,21600xe`): `m` `l` `c` and `x`; `e` ends it.
+pub(crate) fn vml_path(value: &str) -> Vec<VmlPath> {
+    let mut out = Vec::new();
+    let mut chars = value.chars().peekable();
+    while let Some(c) = chars.next() {
+        if !c.is_ascii_alphabetic() {
+            continue;
+        }
+        let mut numbers = String::new();
+        while let Some(&n) = chars.peek() {
+            if n.is_ascii_alphabetic() {
+                break;
+            }
+            numbers.push(n);
+            chars.next();
+        }
+        let n: Vec<i64> = numbers.split(|ch: char| ch == ',' || ch.is_whitespace()).filter(|t| !t.is_empty()).filter_map(|t| t.parse().ok()).collect();
+        match c {
+            'm' => {
+                for (i, pair) in n.chunks_exact(2).enumerate() {
+                    out.push(if i == 0 { VmlPath::Move(pair[0], pair[1]) } else { VmlPath::Line(pair[0], pair[1]) });
+                }
+            }
+            'l' => out.extend(n.chunks_exact(2).map(|pair| VmlPath::Line(pair[0], pair[1]))),
+            'c' => out.extend(n.chunks_exact(6).map(|six| VmlPath::Curve([six[0], six[1], six[2], six[3], six[4], six[5]]))),
+            'x' => out.push(VmlPath::Close),
+            'e' => break,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A geometry of one path of `steps` in a box `width` × `height` of its own units; not filled when `filled` is off.
+pub(crate) fn vml_custom_geometry(width: i64, height: i64, steps: &[VmlPath], filled: bool) -> ibis_doc_model::Geometry {
+    let pt = |x: i64, y: i64| format!("<a:pt x=\"{x}\" y=\"{y}\"/>");
+    let mut path = String::new();
+    for step in steps {
+        match step {
+            VmlPath::Move(x, y) => path.push_str(&format!("<a:moveTo>{}</a:moveTo>", pt(*x, *y))),
+            VmlPath::Line(x, y) => path.push_str(&format!("<a:lnTo>{}</a:lnTo>", pt(*x, *y))),
+            VmlPath::Curve(c) => path.push_str(&format!("<a:cubicBezTo>{}{}{}</a:cubicBezTo>", pt(c[0], c[1]), pt(c[2], c[3]), pt(c[4], c[5]))),
+            VmlPath::Close => path.push_str("<a:close/>"),
+        }
+    }
+    let fill = if filled { "" } else { " fill=\"none\"" };
+    let xml = format!("<a:custGeom xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst><a:path w=\"{}\" h=\"{}\"{fill}>{path}</a:path></a:pathLst></a:custGeom>", width.max(1), height.max(1));
+    match roxmltree::Document::parse(&xml) {
+        Ok(doc) => crate::geometry::geometry(Some(doc.root_element())),
+        Err(_) => ibis_doc_model::Geometry::Rect,
+    }
+}
+
 /// The colour a VML colour (`#rrggbb`, `#rgb` or a name) is.
 pub(crate) fn vml_color(value: &str) -> Option<ibis_doc_model::Rgb> {
     let v = value.trim().split_whitespace().next()?;
@@ -3381,4 +4488,35 @@ pub(crate) fn watermark_in(root: Node) -> Option<ibis_doc_model::Watermark> {
     };
     let size = length("width").zip(length("height"));
     Some(ibis_doc_model::Watermark { text, font, color, semitransparent, rotation, size })
+}
+
+#[cfg(test)]
+mod vml_tests {
+    use super::*;
+
+    #[test]
+    fn lengths_opacities_and_paths() {
+        assert_eq!(vml_length("54pt"), Some(54 * 12_700));
+        assert_eq!(vml_length("1in"), Some(914_400));
+        assert_eq!(vml_length("2cm"), Some(720_000));
+        assert_eq!(vml_length("10px"), Some(95_250));
+        assert_eq!(vml_length("0"), Some(0));
+        assert_eq!(vml_length("12em"), None);
+        assert_eq!(vml_opacity(".5"), 128);
+        assert_eq!(vml_opacity("32768f"), 128);
+        assert_eq!(vml_opacity("1"), 255);
+        let path = vml_path("m0,21600l10800,0,21600,21600xe");
+        assert_eq!(path.len(), 4);
+        assert!(matches!(path[0], VmlPath::Move(0, 21600)) && matches!(path[2], VmlPath::Line(21600, 21600)) && matches!(path[3], VmlPath::Close));
+        let curve = vml_path("m0,10800c5400,0,16200,21600,21600,10800e");
+        assert!(matches!(curve[1], VmlPath::Curve([5400, 0, 16200, 21600, 21600, 10800])));
+        assert!(matches!(vml_custom_geometry(21600, 21600, &path, true), ibis_doc_model::Geometry::Formula(_)));
+    }
+
+    #[test]
+    fn a_vml_style_is_read_by_property() {
+        let style = vml_style("width:54pt;height:30pt;rotation:30");
+        assert_eq!(style.get("rotation").map(String::as_str), Some("30"));
+        assert_eq!(style.get("width").and_then(|w| vml_length(w)), Some(54 * 12_700));
+    }
 }

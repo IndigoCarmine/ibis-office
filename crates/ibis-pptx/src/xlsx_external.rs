@@ -105,6 +105,80 @@ pub fn refreshed_sheets(book: &ExternalBook, data: &[u8]) -> Result<Vec<External
         .collect())
 }
 
+/// A link to a workbook a formula names that the file does not link yet: `name` is the file's name as the
+/// formula writes it (`Budget.xlsx`, kept as the link's path: a name beside the workbook). With the file's
+/// bytes `data` (when it was found) the link knows its sheets and caches the cells `formula` reads of it
+/// (the areas named in `[name]…`, at most 10,000 cells each); without them it has no sheet (its cells are `#REF!`).
+pub fn new_external_book(name: &str, data: Option<&[u8]>, formula: &str) -> ExternalBook {
+    let (name_only, path) = if let Some(p) = name.find('[') && let Some(e) = name[p + 1..].find(']') {
+        let dir = &name[..p];
+        let file = &name[p + 1..p + 1 + e];
+        let path = if dir.is_empty() { file.to_string() } else { format!("{dir}{file}") };
+        (file.to_string(), path)
+    } else {
+        (name.to_string(), name.to_string())
+    };
+    let mut book = ExternalBook { name: name_only.clone(), path, sheets: Vec::new(), broken: false };
+    let Some(opened) = data.and_then(|d| crate::open(d.to_vec()).ok()) else { return book };
+    let sheets: Vec<(String, std::sync::Arc<ibis_doc_model::Sheet>)> = opened
+        .presentation
+        .slides
+        .iter()
+        .filter_map(|s| Some((s.name.clone()?, ibis_doc_model::sheet_calc::sheet_of_slide(s)?.clone())))
+        .collect();
+    book.sheets = sheets.iter().map(|(n, _)| ExternalSheet { name: n.clone(), cells: Default::default() }).collect();
+    ibis_calc::formula::rewrite_references(formula, |area| {
+        let Some(sheet_ref) = area.sheet.as_ref().filter(|s| {
+            s.book.as_deref().is_some_and(|b| {
+                b.eq_ignore_ascii_case(name) || b.eq_ignore_ascii_case(&name_only)
+            })
+        }) else { return Some(area.clone()) };
+        let Some(i) = sheets.iter().position(|(n, _)| n.eq_ignore_ascii_case(&sheet_ref.first)) else { return Some(area.clone()) };
+        let end_sheet = match &sheet_ref.last {
+            Some(l) => sheets.iter().position(|(n, _)| n.eq_ignore_ascii_case(l)).unwrap_or(i),
+            None => i,
+        };
+        let (first_s, last_s) = (i.min(end_sheet), i.max(end_sheet));
+        for s_idx in first_s..=last_s {
+            let (rows, columns) = (area.start.row.min(area.end.row)..=area.start.row.max(area.end.row).min(area.start.row.min(area.end.row) + 9_999), area.start.column.min(area.end.column)..=area.start.column.max(area.end.column).min(area.start.column.min(area.end.column) + 99));
+            for r in rows {
+                for c in columns.clone() {
+                    if let Some(cell) = sheets[s_idx].1.cell(r, c)
+                        && !cell.value.is_empty()
+                    {
+                        book.sheets[s_idx].cells.insert((r, c), cell.value.clone());
+                    }
+                }
+            }
+        }
+        Some(area.clone())
+    });
+    book
+}
+
+/// Reads an external workbook from `data`: its sheets and non-empty cells up to 10,000 cells per sheet.
+pub fn read_external_book(name: &str, path: &str, data: &[u8]) -> Result<ExternalBook, crate::Error> {
+    let opened = crate::open(data.to_vec())?;
+    let mut book = ExternalBook {
+        name: name.to_string(),
+        path: path.to_string(),
+        sheets: Vec::new(),
+        broken: false,
+    };
+    for (i, slide) in opened.presentation.slides.iter().enumerate() {
+        let Some(sheet) = ibis_doc_model::sheet_calc::sheet_of_slide(slide) else { continue };
+        let sheet_name = slide.name.clone().unwrap_or_else(|| format!("Sheet{}", i + 1));
+        let mut cells = std::collections::BTreeMap::new();
+        for cell in &sheet.cells {
+            if !cell.value.is_empty() && cells.len() < 10_000 {
+                cells.insert((cell.row, cell.column), cell.value.clone());
+            }
+        }
+        book.sheets.push(ExternalSheet { name: sheet_name, cells });
+    }
+    Ok(book)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -70,9 +70,9 @@ const WORKSPACE_MARGIN: f32 = 40.0;
 /// its shadow and little more, as in PowerPoint.
 const FIT_MARGIN: f32 = 8.0;
 
-/// Pixels per inch at 100% zoom: the slide at its real size on a 96 dpi
-/// screen (a point is 4/3 px), as in PowerPoint.
-const PX_PER_INCH_AT_100: f32 = 96.0;
+/// Pixels per inch at 100% zoom: a point is one pixel, as in PowerPoint and Word for Mac (#41; before, a point was 4/3 px on a 96 dpi
+/// screen). The slide, a page and a worksheet now share it.
+const PX_PER_INCH_AT_100: f32 = 72.0;
 /// A worksheet's: Excel for Mac draws a point as one pixel at 100%, 0.75 of
 /// the size a slide has there (the user's measure: ibisOffice's 70% looked
 /// like Excel's 100%).
@@ -356,6 +356,8 @@ pub struct SlideEditor {
     /// and right edges and the zoom slider's left edge (the sheet tabs'
     /// scrollbar lies between the tabs' left edge and the slider).
     pub(crate) status_layout: std::rc::Rc<std::cell::Cell<[f32; 3]>>,
+    /// Where the zoom percentage button of the status bar was painted (for the scenarios to press it).
+    pub(crate) zoom_trigger_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     _zoom_subscription: Subscription,
     /// The status bar's list of zooms is open.
     pub(crate) zoom_menu_open: bool,
@@ -387,6 +389,8 @@ pub struct SlideEditor {
     pub(crate) file_name: Option<SharedString>,
     /// Progress or error of the last file operation, for the status bar.
     pub(crate) status: Option<SharedString>,
+    /// What a save left out, to say once the save is done (an old .xls leaves things out).
+    pub(crate) save_note: Option<SharedString>,
     /// A chart's workbook (データの編集): the ranges its series take their
     /// data from, framed on the sheet.
     pub(crate) chart_ranges: Option<Vec<ibis_pptx::SeriesRefs>>,
@@ -401,6 +405,9 @@ pub struct SlideEditor {
     pub(crate) recent_colors: Vec<ibis_doc_model::Rgb>,
     /// The colour last picked from each toolbar palette button (by its id), for the split button's left half.
     pub(crate) last_colors: std::collections::HashMap<&'static str, ibis_doc_model::Rgb>,
+    /// The menu item last chosen from each split button of the toolbar (not a colour), by the button's id: what its
+    /// left half does at once (`ToolButton::last_used`).
+    pub(crate) last_choices: std::collections::HashMap<&'static str, String>,
     /// Scrolling of the recent files list of the start view.
     #[cfg(not(target_family = "wasm"))]
     pub(crate) recent_scroll: ScrollHandle,
@@ -459,6 +466,10 @@ pub struct SlideEditor {
     pub(crate) print_backgrounds: bool,
     /// 印刷オプション: 隠し文字を印刷する (DOCX-OPTIONS-010).
     pub(crate) print_hidden_text: bool,
+    /// 印刷オプション: 変更履歴とコメントを印刷する (DOCX-SEC-014).
+    pub(crate) print_markup: bool,
+    /// ヘッダー/フッター編集時に文書内のテキストを表示する (Word Header & Footer Tools > オプション > 文書内のテキストを表示).
+    pub(crate) show_document_text: bool,
     /// 変更履歴の特定の人物フィルタ (DOCX-REVIEW-005). None = すべての校閲者.
     pub(crate) reviewer_filter: Option<std::collections::HashSet<String>>,
     /// The title row and the menu bar are hidden (the toolbar's ^).
@@ -495,12 +506,24 @@ pub struct SlideEditor {
     pub(crate) is_recovered: bool,
     /// Path of the autorecover backup file associated with this open document (if any).
     pub(crate) active_autorecover_file: Option<std::path::PathBuf>,
+    /// 自動回復's panels (the settings, the recovery list), while one is the one shown.
+    pub(crate) autorecover_settings: Option<crate::shell::autorecover::AutoRecoverSettingsPanel>,
+    pub(crate) recover_unsaved: Option<crate::shell::autorecover::RecoverUnsavedPanel>,
+    /// 自動回復 is off for this file.
+    pub(crate) autorecover_off: bool,
+    /// When (ms) its last snapshot was written (or the timer started).
+    pub(crate) last_autorecover_ms: u64,
+    pub(crate) autorecover_timer_started: bool,
     /// Whether this document was opened after repairing corruption (XLSX-FILE-020).
     pub(crate) is_repaired: bool,
     /// Summary text of repairs applied (XLSX-FILE-020).
     pub(crate) repair_summary: Option<String>,
     /// Detailed report of repairs applied (XLSX-FILE-020).
     pub(crate) repair_report: Option<ibis_pptx::repair::RepairReport>,
+    /// Whether this document is opened in read-only / viewing mode (--read-only).
+    pub(crate) read_only: bool,
+    /// Whether the editor is currently streaming CSV rows in the background.
+    pub(crate) is_csv_streaming: bool,
 }
 
 static NEXT_WORKBOOK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -569,6 +592,7 @@ impl SlideEditor {
             zoom: None,
             zoom_slider,
             status_layout: Default::default(),
+            zoom_trigger_bounds: Default::default(),
             _zoom_subscription: zoom_subscription,
             zoom_menu_open: false,
             zoom_input,
@@ -586,6 +610,7 @@ impl SlideEditor {
             thumbnail_refresh: None,
             file_name: None,
             status: None,
+            save_note: None,
             chart_ranges: None,
             #[cfg(not(target_family = "wasm"))]
             recent_files: crate::shell::recent_files::load(),
@@ -593,6 +618,7 @@ impl SlideEditor {
             protection_password: None,
             recent_colors: Vec::new(),
             last_colors: Default::default(),
+            last_choices: Default::default(),
             #[cfg(not(target_family = "wasm"))]
             recent_scroll: ScrollHandle::new(),
             has_document: false,
@@ -622,6 +648,8 @@ impl SlideEditor {
             update_links_before_printing: false,
             print_backgrounds: false,
             print_hidden_text: false,
+            print_markup: true,
+            show_document_text: true,
             reviewer_filter: None,
             chrome_compact: false,
             source: None,
@@ -639,11 +667,23 @@ impl SlideEditor {
             is_syncing_scroll: std::cell::Cell::new(false),
             last_synced_scroll: std::cell::Cell::new(Point::default()),
             is_recovered: false,
+            autorecover_settings: None,
+            recover_unsaved: None,
+            autorecover_off: false,
+            last_autorecover_ms: 0,
+            autorecover_timer_started: false,
             active_autorecover_file: None,
             is_repaired: false,
             repair_summary: None,
             repair_report: None,
+            read_only: false,
+            is_csv_streaming: false,
         }
+    }
+
+    /// Whether this editor is currently in read-only / viewing mode (either via `--read-only` or during CSV streaming).
+    pub(crate) fn is_read_only(&self) -> bool {
+        self.read_only || self.is_csv_streaming
     }
 
     /// Replace the open presentation, dropping undo history and selection.
@@ -709,6 +749,9 @@ impl SlideEditor {
         self.document_id = NEXT_DOCUMENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.window_number = None;
         self.save_confirm_dialog_open = false;
+        self.autorecover_off = false;
+        #[cfg(not(target_family = "wasm"))]
+        self.start_autorecover_timer(window, cx);
         // A file with macros (.docm, .xlsm, .pptm) opens and saves with
         // them as they are; they never run.
         self.status = self
@@ -775,6 +818,7 @@ impl SlideEditor {
             let picked = cx.prompt_for_paths(PathPromptOptions {
                 files: true,
                 directories: false,
+                extensions: ibis_pptx::Kind::OPENABLE_EXTENSIONS.iter().map(|e| e.to_string()).collect(),
                 multiple: false,
                 prompt: Some(crate::shell::i18n::text("_shell.open").into()),
             });
@@ -872,17 +916,81 @@ impl SlideEditor {
                         this.load(loaded.presentation, tmpl_name, window, cx);
                         this.source = Some(loaded.source);
                         this.path = None;
-                    } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xls")) {
-                        // An old workbook is read as a new .xlsx: saving asks where, and leaves the .xls as it is.
+                        this.document.set_file(None);
+                    } else if path.extension().is_some_and(|e| ["xls", "ods", "ppt", "pps", "pot", "odp", "otp"].iter().any(|x| e.eq_ignore_ascii_case(x))) {
+                        // An old workbook or presentation (or an OpenDocument workbook) is read as a new .xlsx or .pptx: saving asks where, and leaves the old file as it is.
                         let stem = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                        this.load(loaded.presentation, format!("{stem}.xlsx").into(), window, cx);
+                        let extension = if ibis_pptx::Kind::of(&loaded.presentation) == ibis_pptx::Kind::Presentation { "pptx" } else { "xlsx" };
+                        this.load(loaded.presentation, format!("{stem}.{extension}").into(), window, cx);
                         this.source = Some(loaded.source);
                         this.path = None;
+                        this.document.set_file(None);
                     } else {
                         this.load(loaded.presentation, name, window, cx);
                         this.source = Some(loaded.source);
-                        this.path = Some(path.clone());
+                        this.set_file_path(Some(path.clone()));
                         this.protection_password = loaded.password;
+                    }
+                    if let Some(rx) = loaded.csv_stream {
+                        this.is_csv_streaming = true;
+                        this.set_status(crate::shell::i18n::text("editor.csv.loading-first").to_string(), cx);
+                        let rx = std::sync::Arc::new(std::sync::Mutex::new(rx));
+                        let format_commas = |n: usize| -> String {
+                            let s = n.to_string();
+                            let mut out = String::with_capacity(s.len() + s.len() / 3);
+                            let bytes = s.as_bytes();
+                            let len = bytes.len();
+                            for (i, &b) in bytes.iter().enumerate() {
+                                if i > 0 && (len - i) % 3 == 0 {
+                                    out.push(',');
+                                }
+                                out.push(b as char);
+                            }
+                            out
+                        };
+                        cx.spawn_in(window, async move |this, cx| {
+                            loop {
+                                let rx_clone = rx.clone();
+                                let chunk_res = cx.background_executor().spawn(async move {
+                                    rx_clone.lock().unwrap().recv()
+                                }).await;
+                                let Ok(chunk) = chunk_res else { break; };
+                                let is_last = chunk.is_last;
+                                let current_rows = chunk.current_rows;
+                                let updated = this.update_in(cx, |this, window, cx| {
+                                    let slide_id = this.current_slide;
+                                    if let Some(slide) = this.document.presentation_mut().slide_mut(slide_id) {
+                                        if let Some(shape) = slide.shapes.iter_mut().find(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Sheet(_))) {
+                                            let ibis_doc_model::ShapeKind::Sheet(sheet) = &mut shape.kind else { unreachable!() };
+                                            let sheet = std::sync::Arc::make_mut(sheet);
+                                            if !chunk.cells.is_empty() {
+                                                let mut cells = std::mem::take(&mut sheet.cells).into_vec();
+                                                cells.extend(chunk.cells);
+                                                sheet.cells = cells.into();
+                                                sheet.rows.extend(chunk.heights);
+                                                let total_h: ibis_doc_model::Emu = sheet.rows.iter().sum();
+                                                shape.frame.height = shape.frame.height.max(total_h);
+                                                this.sync_workbook_peers(cx);
+                                            }
+                                        }
+                                    }
+                                    let formatted = format_commas(current_rows);
+                                    if is_last {
+                                        this.is_csv_streaming = false;
+                                        this.set_status(crate::shell::i18n::format("editor.csv.loaded", &[("rows", &formatted)]), cx);
+                                    } else {
+                                        this.set_status(crate::shell::i18n::format("editor.csv.loading", &[("rows", &formatted)]), cx);
+                                    }
+                                    this.clamp_workspace_scroll();
+                                    cx.notify();
+                                    window.refresh();
+                                });
+                                if updated.is_err() || is_last {
+                                    break;
+                                }
+                            }
+                        })
+                        .detach();
                     }
                     if let Some(number) = slide {
                         this.show_slide_number(number, window, cx);
@@ -922,6 +1030,13 @@ impl SlideEditor {
     pub(crate) fn begin_loading(&mut self, kind: ibis_pptx::Kind, name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
         self.load(ibis_pptx::blank(kind), name, window, cx);
         self.loading = true;
+        // The bar of the loading box moves while the file is read.
+        cx.spawn_in(window, async move |this, cx| {
+            while this.update(cx, |this, cx| { cx.notify(); this.loading }).unwrap_or(false) {
+                cx.background_executor().timer(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .detach();
     }
 
     /// The file could not be opened: back to the start view if an empty
@@ -973,6 +1088,18 @@ impl SlideEditor {
             let my_entity_id = cx.entity_id();
             let other_matching = Self::find_other_matching_document_windows(my_id, my_entity_id, cx);
             if !other_matching.is_empty() {
+                if self.side_by_side {
+                    if let Some((_, peer_entity)) = self.side_by_side_peer.take() {
+                        let _ = peer_entity.update(cx, |peer, cx| {
+                            peer.side_by_side = false;
+                            peer.sync_scrolling = false;
+                            peer.side_by_side_peer = None;
+                            cx.notify();
+                        });
+                    }
+                    self.side_by_side = false;
+                    self.sync_scrolling = false;
+                }
                 self.document_id = 0;
                 self.window_number = None;
                 window.remove_window();
@@ -1036,9 +1163,14 @@ impl SlideEditor {
             return None;
         }
         let theme = cx.theme();
+        // How far a large file has got (only the reading that reports it, such as a big workbook's): a bar along the bottom edge of the box.
+        let progress = ibis_pptx::progress::current();
         Some(
             div().absolute().inset_0().flex().items_center().justify_center().child(
                 div()
+                    .relative()
+                    .overflow_hidden()
+                    .min_w(px(220.))
                     .px_4()
                     .py_2()
                     .rounded_md()
@@ -1047,7 +1179,11 @@ impl SlideEditor {
                     .border_color(theme.border)
                     .shadow_md()
                     .text_color(theme.muted_foreground)
-                    .child(crate::shell::i18n::text("_shell.loading")),
+                    .child(crate::shell::i18n::text("_shell.loading"))
+                    .when(progress > 0.0, |this| {
+                        this.child(div().absolute().left_0().bottom_0().w_full().h(px(3.)).bg(theme.border))
+                            .child(div().absolute().left_0().bottom_0().w(relative(progress.min(1.0))).h(px(3.)).bg(theme.primary))
+                    }),
             ),
         )
     }
@@ -1076,6 +1212,13 @@ impl SlideEditor {
     /// The worksheet of the current page and the shape that holds it.
     pub(crate) fn current_sheet(&self) -> Option<(&Shape, &std::sync::Arc<Sheet>)> {
         sheet_of(self.slide())
+    }
+
+    /// The worksheet of the current slide, mutable.
+    #[allow(dead_code)]
+    pub(crate) fn current_sheet_mut(&mut self) -> Option<&mut Sheet> {
+        let slide = self.current_slide;
+        ibis_doc_model::sheet_command::sheet_mut(self.document.presentation_mut(), slide).ok()
     }
 
     /// The selected cell of the current worksheet: (column, row) of the cell
@@ -1291,6 +1434,23 @@ impl SlideEditor {
         }
         true
     }
+
+    /// A pinch gesture on a trackpad over the workspace zooms about the pointer:
+    /// in (pinch out, fingers moving apart) increases zoom, out (pinch in) decreases zoom.
+    /// Returns whether the pinch event was handled.
+    pub(crate) fn on_pinch_zoom(&mut self, event: &PinchEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.has_document {
+            return false;
+        }
+        let Some(ws) = self.workspace_bounds else { return false };
+        let factor = 1.0 + event.delta;
+        if factor > 0.0 && factor != 1.0 {
+            let anchor = event.position - ws.origin;
+            self.set_zoom_at(Some(self.current_zoom() * factor), Some(anchor), window, cx);
+        }
+        true
+    }
+
 
     /// Zoom in (`grow`) or out by one step of the status bar's − / + buttons.
     pub(crate) fn step_zoom(&mut self, grow: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -1564,6 +1724,7 @@ impl SlideEditor {
     pub(crate) fn set_file_path(&mut self, path: Option<std::path::PathBuf>) {
         #[cfg(not(target_family = "wasm"))]
         {
+            self.document.set_file(path.as_ref().map(|p| p.to_string_lossy().into_owned()));
             self.path = path;
         }
         #[cfg(target_family = "wasm")]
@@ -1802,6 +1963,39 @@ impl SlideEditor {
         }
     }
 
+    pub(crate) fn find_other_document_windows(
+        my_entity_id: gpui::EntityId,
+        document_id: u64,
+        cx: &mut App,
+    ) -> Vec<(AnyWindowHandle, Entity<SlideEditor>)> {
+        let mut same_doc = Vec::new();
+        let mut diff_doc = Vec::new();
+        for &w in &cx.windows() {
+            if let Some(root) = w.downcast::<gpui_kit::component::Root>() {
+                if let Ok(Some((entity, is_same))) = root.update(cx, |root, _, app| {
+                    if let Ok(entity) = root.view().clone().downcast::<SlideEditor>() {
+                        if entity.entity_id() != my_entity_id && entity.read(app).is_document() {
+                            let is_same = document_id != 0 && entity.read(app).document_id == document_id;
+                            return Some((entity, is_same));
+                        }
+                    }
+                    None
+                }) {
+                    if is_same {
+                        same_doc.push((w, entity));
+                    } else {
+                        diff_doc.push((w, entity));
+                    }
+                }
+            }
+        }
+        if !same_doc.is_empty() {
+            same_doc
+        } else {
+            diff_doc
+        }
+    }
+
     pub(crate) fn find_other_workbook_windows(
         my_entity_id: gpui::EntityId,
         workbook_id: u64,
@@ -1852,7 +2046,11 @@ impl SlideEditor {
         }
 
         let my_id = cx.entity_id();
-        let other = Self::find_other_workbook_windows(my_id, self.workbook_id, cx);
+        let other = if self.is_document() {
+            Self::find_other_document_windows(my_id, self.document_id, cx)
+        } else {
+            Self::find_other_workbook_windows(my_id, self.workbook_id, cx)
+        };
         let Some((peer_window_handle, peer_entity)) = other.first().cloned() else {
             return;
         };
@@ -1872,11 +2070,12 @@ impl SlideEditor {
             cx.notify();
         });
 
-        Self::arrange_side_by_side_windows(window, peer_window_handle, cx);
+        Self::arrange_side_by_side_windows(self.is_document(), window, peer_window_handle, cx);
         cx.notify();
     }
 
     pub(crate) fn arrange_side_by_side_windows(
+        is_document: bool,
         window: &mut Window,
         peer_handle: AnyWindowHandle,
         cx: &mut App,
@@ -1888,8 +2087,11 @@ impl SlideEditor {
                 (f32::from(b.size.width), f32::from(b.size.height))
             })
             .unwrap_or((1280.0, 800.0));
-        let tile_w = screen_w;
-        let tile_h = (screen_h / 2.0).max(200.0);
+        let (tile_w, tile_h) = if is_document {
+            ((screen_w / 2.0).max(400.0), screen_h)
+        } else {
+            (screen_w, (screen_h / 2.0).max(200.0))
+        };
         window.resize(size(px(tile_w), px(tile_h)));
         window.bounds_changed(cx);
         let _ = peer_handle.update(cx, |_, w, cx| {
@@ -1910,7 +2112,7 @@ impl SlideEditor {
                 self.side_by_side_peer = None;
                 return;
             }
-            Self::arrange_side_by_side_windows(window, peer_handle, cx);
+            Self::arrange_side_by_side_windows(self.is_document(), window, peer_handle, cx);
             cx.notify();
         }
     }
@@ -1981,7 +2183,7 @@ impl SlideEditor {
         let cur = self.workspace_scroll.offset();
         self.workspace_scroll.set_offset(point(cur.x + delta.x, cur.y + delta.y));
         self.clamp_workspace_scroll();
-        if self.is_workbook() && self.sync_scrolling {
+        if (self.is_workbook() || self.is_document()) && self.sync_scrolling {
             self.sync_scroll_to_peer(cx);
         }
         cx.notify();
@@ -1999,9 +2201,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn confirm_discard_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_workbook() {
-            self.preserve_or_cleanup_autorecover_on_discard();
-        }
+        self.preserve_or_cleanup_autorecover_on_discard();
         self.force_close_file(window, cx);
     }
 
@@ -2212,7 +2412,7 @@ impl SlideEditor {
     /// Word: 閲覧・レビュー・編集モードを取得する (DOCX-VIEW-021).
     pub(crate) fn interaction_mode(&self) -> ibis_doc_model::DocumentInteractionMode {
         if let Some(doc) = self.flow() {
-            if self.is_read_mode() || doc.interaction_mode == ibis_doc_model::DocumentInteractionMode::Viewing || self.is_protection_read_only() {
+            if self.is_read_only() || self.is_read_mode() || doc.interaction_mode == ibis_doc_model::DocumentInteractionMode::Viewing || self.is_protection_read_only() {
                 ibis_doc_model::DocumentInteractionMode::Viewing
             } else if doc.interaction_mode == ibis_doc_model::DocumentInteractionMode::Reviewing || doc.track_changes {
                 ibis_doc_model::DocumentInteractionMode::Reviewing
@@ -2374,6 +2574,24 @@ impl SlideEditor {
             {
                 self.display_frame_for(shape, drag, layout)
             }
+            (Some(Drag::Move { shape: id, start, current, origin }), Some(layout))
+                if self.selected_ids().len() > 1
+                    && self.selected_ids().contains(&id)
+                    && self.selected_ids().contains(&shape.id) =>
+            {
+                let moved_primary = self.display_frame_for(
+                    &Shape { id, frame: origin, ..shape.clone() },
+                    Drag::Move { shape: id, start, current, origin },
+                    layout,
+                );
+                let (dx, dy) = (moved_primary.x - origin.x, moved_primary.y - origin.y);
+                EmuRect::new(
+                    (shape.frame.x + dx).max(0),
+                    (shape.frame.y + dy).max(0),
+                    shape.frame.width,
+                    shape.frame.height,
+                )
+            }
             _ => shape.frame,
         }
     }
@@ -2411,13 +2629,54 @@ impl SlideEditor {
     /// Drop references to shapes or slides that an undo or redo removed.
     fn fix_selection(&mut self) {
         if self.presentation().slide(self.current_slide).is_none() {
-            self.current_slide = self.presentation().slides[0].id;
+            let from_analysis = self
+                .sheet_state()
+                .and_then(|s| s.panels.analysis.as_ref())
+                .map(|p| p.slide)
+                .filter(|&id| self.presentation().slide(id).is_some());
+            self.current_slide = from_analysis
+                .or_else(|| {
+                    self.presentation()
+                        .workbook
+                        .as_ref()
+                        .and_then(|w| w.sheets.iter().find_map(|s| s.slide))
+                })
+                .unwrap_or(self.presentation().slides[0].id);
         }
         if let Some(id) = self.selection {
             if self.slide().shape(id).is_none() {
                 self.selection = None;
             }
         }
+    }
+
+    /// 表示 > カラー/白黒 (ColorMode: Color, Grayscale, HighContrast)
+    pub(crate) fn color_mode(&self) -> crate::render::ColorMode {
+        self.resources.color_mode
+    }
+
+    pub(crate) fn set_color_mode(&mut self, mode: crate::render::ColorMode, cx: &mut Context<Self>) {
+        if self.resources.color_mode != mode {
+            self.resources.color_mode = mode;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn toggle_high_contrast(&mut self, cx: &mut Context<Self>) {
+        let next = if self.resources.color_mode == crate::render::ColorMode::HighContrast {
+            crate::render::ColorMode::Color
+        } else {
+            crate::render::ColorMode::HighContrast
+        };
+        self.set_color_mode(next, cx);
+    }
+
+    pub(crate) fn is_high_contrast(&self) -> bool {
+        self.resources.color_mode == crate::render::ColorMode::HighContrast
+    }
+
+    pub(crate) fn is_grayscale(&self) -> bool {
+        self.resources.color_mode == crate::render::ColorMode::Grayscale
     }
 
     pub(crate) fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
@@ -2429,6 +2688,7 @@ impl SlideEditor {
         self.sync_sheet_zoom();
         self.sync_document_view_mode();
         self.fix_selection();
+        self.sheet_spelling_refresh(cx);
         self.sync_workbook_peers(cx);
         self.sync_document_peers(cx);
         cx.notify();
@@ -2443,6 +2703,7 @@ impl SlideEditor {
         self.sync_sheet_zoom();
         self.sync_document_view_mode();
         self.fix_selection();
+        self.sheet_spelling_refresh(cx);
         self.sync_workbook_peers(cx);
         self.sync_document_peers(cx);
         cx.notify();
@@ -2709,6 +2970,7 @@ impl SlideEditor {
         }
         if let Some(s) = self.pptx_mut() {
             s.slide_selection.clear();
+            s.slide_popup = None;
         }
         let list_focused = self.list_focus.is_focused(window);
         self.commit_edit(window, cx);
@@ -2745,6 +3007,15 @@ impl SlideEditor {
     /// scroll after a pause turns a page at once; the rest of a quick scroll
     /// (a spun wheel, a trackpad swipe and its momentum) counts pixels.
     pub(crate) fn on_workspace_scroll(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.on_wheel_zoom(event, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        // Over the Draw panel's ruler, the wheel turns the ruler.
+        if self.pptx_ink_wheel(event, cx) {
+            cx.stop_propagation();
+            return;
+        }
         // A worksheet scrolls like Excel's; its pages change with the tabs.
         // A document's pages scroll by, as in Word.
         if !self.pages_are_slides() || self.slide_overflows_vertically() {
@@ -2938,9 +3209,28 @@ impl SlideEditor {
             // Drawing a text box may start on top of another shape.
             return self.on_workspace_down(event, window, cx);
         }
+        if self.ink_press(event.position, cx) {
+            cx.stop_propagation();
+            return;
+        }
         cx.stop_propagation();
         if self.editing.as_ref().is_some_and(|e| e.shape == shape) {
             return; // the text field handles its own clicks
+        }
+        if self.slide().shape(shape).is_some_and(|s| matches!(s.kind, ShapeKind::Control(_))) {
+            self.commit_edit(window, cx);
+            self.focus_handle.focus(window, cx);
+            if self.control_press(shape, event, window, cx) {
+                return cx.notify();
+            }
+        }
+        if self.slide().shape(shape).is_some_and(|s| matches!(s.kind, ShapeKind::Timeline(_))) {
+            self.commit_edit(window, cx);
+            self.focus_handle.focus(window, cx);
+            if self.timeline_press(shape, event, cx) {
+                self.set_selection(vec![shape]);
+                return cx.notify();
+            }
         }
         if self.slide().shape(shape).is_some_and(|s| matches!(s.kind, ShapeKind::Slicer(_))) {
             self.commit_edit(window, cx);
@@ -2971,6 +3261,11 @@ impl SlideEditor {
             } else {
                 ids.push(shape);
             }
+            self.set_selection(ids);
+        } else if self.selected_ids().len() > 1 && self.selected_ids().contains(&shape) {
+            let mut ids = self.selected_ids();
+            ids.retain(|&id| id != shape);
+            ids.push(shape);
             self.set_selection(ids);
         } else {
             self.set_selection(vec![shape]);
@@ -3015,11 +3310,38 @@ impl SlideEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.ink_move(event.position, event.pressed_button == Some(MouseButton::Left), cx) {
+            return;
+        }
         if self.cell_edit().is_some_and(|e| e.dragging.is_some()) {
             if event.pressed_button == Some(MouseButton::Left) {
                 self.drag_in_cell_text(event.position, window, cx);
             } else if let Some(edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.as_mut()) {
                 edit.dragging = None;
+            }
+            return;
+        }
+        if self.sheet_state().is_some_and(|s| s.split_drag.is_some()) {
+            if event.pressed_button == Some(MouseButton::Left) {
+                self.on_split_move(event.position, cx);
+            } else {
+                self.on_split_up(event.position, cx);
+            }
+            return;
+        }
+        if self.sheet_state().is_some_and(|s| s.timeline_drag.is_some()) {
+            if event.pressed_button == Some(MouseButton::Left) {
+                self.on_timeline_drag_move(event.position, cx);
+            } else {
+                self.on_timeline_drag_up(cx);
+            }
+            return;
+        }
+        if self.sheet_state().is_some_and(|s| s.control_drag.is_some()) {
+            if event.pressed_button == Some(MouseButton::Left) {
+                self.on_control_drag_move(event.position, cx);
+            } else {
+                self.on_control_drag_up(cx);
             }
             return;
         }
@@ -3029,7 +3351,11 @@ impl SlideEditor {
                 cx.notify();
             } else if let Some(state) = self.sheet_state_mut() {
                 state.cell_drag = false;
+                state.deselect_drag = None;
             }
+            return;
+        }
+        if self.drag_ruler_margin(event.position, event.pressed_button == Some(MouseButton::Left), cx) {
             return;
         }
         let Some(drag) = self.drag.as_mut() else { return };
@@ -3041,7 +3367,23 @@ impl SlideEditor {
         cx.notify();
     }
 
-    pub(crate) fn on_pointer_up(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn on_pointer_up(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.ink_release(cx) {
+            return;
+        }
+        if self.end_ruler_margin_drag(cx) {
+            return;
+        }
+        if self.on_timeline_drag_up(cx) {
+            return;
+        }
+        if self.on_control_drag_up(cx) {
+            return;
+        }
+        if self.sheet_state().is_some_and(|s| s.split_drag.is_some()) {
+            self.on_split_up(event.position, cx);
+            return;
+        }
         if let Some(edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.as_mut())
             && edit.dragging.take().is_some()
         {
@@ -3051,6 +3393,7 @@ impl SlideEditor {
             && state.cell_drag
         {
             state.cell_drag = false;
+            state.deselect_drag = None;
             return cx.notify();
         }
         let Some(drag) = self.drag.take() else { return };
@@ -3064,7 +3407,29 @@ impl SlideEditor {
                 let Some(current_shape) = self.slide().shape(shape) else { return };
                 let frame = self.display_frame_for(current_shape, drag, layout);
                 if frame != current_shape.frame {
-                    self.execute(vec![Command::SetFrame { slide, shape, frame }], cx);
+                    if matches!(drag, Drag::Move { .. })
+                        && self.selected_ids().len() > 1
+                        && self.selected_ids().contains(&shape)
+                    {
+                        let (dx, dy) = (frame.x - current_shape.frame.x, frame.y - current_shape.frame.y);
+                        let cmds: Vec<Command> = self
+                            .selected_ids()
+                            .into_iter()
+                            .filter_map(|id| {
+                                let s = self.slide().shape(id)?;
+                                let next = EmuRect::new(
+                                    (s.frame.x + dx).max(0),
+                                    (s.frame.y + dy).max(0),
+                                    s.frame.width,
+                                    s.frame.height,
+                                );
+                                Some(Command::SetFrame { slide, shape: id, frame: next })
+                            })
+                            .collect();
+                        self.execute(cmds, cx);
+                    } else {
+                        self.execute(vec![Command::SetFrame { slide, shape, frame }], cx);
+                    }
                 }
             }
             Drag::Create { start, current } => {
@@ -3150,10 +3515,10 @@ fn zoom_axis_offset(anchor: f32, view: f32, old: f32, before_origin: f32, after_
     (anchor - at).clamp((view - content).min(0.0), 0.0)
 }
 
-/// Whether the wheel zooms with `modifiers` held: Command and Control on a
-/// Mac (`mac`), Control elsewhere, as in PowerPoint for Windows.
+/// Whether the wheel zooms with `modifiers` held: Command or Control on a
+/// Mac (`mac`), Control (or Super/Cmd) elsewhere.
 fn wheel_zooms(modifiers: &Modifiers, mac: bool) -> bool {
-    if mac { modifiers.platform && modifiers.control } else { modifiers.control }
+    if mac { modifiers.platform || modifiers.control } else { modifiers.control || modifiers.platform }
 }
 
 /// Whether the wheel's zoom modifier is a Mac's. In the browser, the
@@ -3219,7 +3584,8 @@ impl Render for SlideEditor {
             .on_action(cx.listener(Self::delete_selection))
             .on_action(cx.listener(Self::cancel_tool))
             .on_action(cx.listener(Self::open_file))
-            .on_action(cx.listener(|this, _: &crate::NewDocument, window, cx| this.new_file(ibis_pptx::Kind::Document, window, cx)))
+            .on_action(cx.listener(|_, _: &crate::OpenStartWindow, _, cx| crate::open_editor(None, None, cx)))
+            .on_action(cx.listener(|this, _: &crate::NewDocument, window, cx| this.new_file(this.kind(), window, cx)))
             .on_action(cx.listener(|this, _: &crate::NewFromTemplate, window, cx| this.new_from_template(window, cx)))
             // Only with a file open, so ファイル > 閉じる is greyed on the start view.
             .when(self.has_document, |d| d.on_action(cx.listener(Self::close_file)))
@@ -3230,6 +3596,10 @@ impl Render for SlideEditor {
                     cx.notify();
                 }))
             })
+            .on_action(cx.listener(|this, _: &crate::ZoomInView, window, cx| this.step_zoom(true, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ZoomOutView, window, cx| this.step_zoom(false, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ZoomActualView, window, cx| this.set_zoom(Some(1.0), window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ZoomFitView, window, cx| this.set_zoom(None, window, cx)))
             .on_action(cx.listener(Self::next_slide))
             .on_action(cx.listener(Self::previous_slide))
             .on_action(cx.listener(|this, _: &crate::FirstSlide, window, cx| this.end_slide(false, window, cx)))
@@ -3322,13 +3692,13 @@ impl SlideEditor {
         // document with the sidebar on its right, and the status bar.
         if !self.has_document {
             window.set_window_title(&crate::shell::start_view::start_title());
-            return d.child(self.render_title_row(cx)).child(self.render_start_view(cx));
+            return d.child(self.render_title_row(window, cx)).child(self.render_start_view(cx));
         }
         let compact = self.chrome_compact;
         let focus = self.is_focus_mode();
         let body = with_format!(self, render_body(self, window, cx));
         let sidebar = if focus { None } else { self.render_sidebar(window, cx) };
-        d.when(!compact && !focus, |d| d.child(self.render_title_row(cx)).child(self.render_menu_bar(window, cx)))
+        d.when(!compact && !focus, |d| d.child(self.render_title_row(window, cx)).child(self.render_menu_bar(window, cx)))
             .when(!focus, |d| d.child(self.render_toolbar(window, cx)))
             .child(
                 div()
@@ -3352,19 +3722,37 @@ pub(crate) fn bounds_observer(f: impl FnOnce(Bounds<Pixels>, &mut Window, &mut A
     canvas(move |bounds, window, cx| f(bounds, window, cx), |_, _, _, _| {}).absolute().top_0().left_0().size_full()
 }
 
-/// An element filling the (positioned) workspace that hands the wheel over
-/// it to `SlideEditor::on_wheel_zoom` before anything in the workspace
-/// scrolls, and stops the wheel there when it zooms.
+/// An element filling the (positioned) workspace that hands wheel and pinch
+/// gestures over it to `SlideEditor::on_wheel_zoom` and `on_pinch_zoom`
+/// before anything in the workspace scrolls, and stops the event there when
+/// it zooms.
 pub(crate) fn wheel_zoom_listener(cx: &Context<SlideEditor>) -> impl IntoElement {
-    let editor = cx.entity().downgrade();
-    let f = move |event: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
-        editor.update(cx, |this, cx| this.on_wheel_zoom(event, window, cx)).unwrap_or(false)
+    let editor_wheel = cx.entity().downgrade();
+    let editor_pinch = cx.entity().downgrade();
+    let f_wheel = move |event: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
+        editor_wheel.update(cx, |this, cx| this.on_wheel_zoom(event, window, cx)).unwrap_or(false)
+    };
+    let f_pinch = move |event: &PinchEvent, window: &mut Window, cx: &mut App| {
+        editor_pinch.update(cx, |this, cx| this.on_pinch_zoom(event, window, cx)).unwrap_or(false)
     };
     canvas(
         |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
         move |_, hitbox, window, _| {
+            let hitbox_pinch = hitbox.clone();
+            let hitbox_wheel = hitbox.clone();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_hovered(window) && f(event, window, cx) {
+                if phase == DispatchPhase::Capture
+                    && (hitbox_wheel.is_hovered(window) || hitbox_wheel.bounds.contains(&event.position))
+                    && f_wheel(event, window, cx)
+                {
+                    cx.stop_propagation();
+                }
+            });
+            window.on_mouse_event(move |event: &PinchEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture
+                    && (hitbox_pinch.is_hovered(window) || hitbox_pinch.bounds.contains(&event.position))
+                    && f_pinch(event, window, cx)
+                {
                     cx.stop_propagation();
                 }
             });
@@ -3425,10 +3813,12 @@ mod tests {
         let cmd_ctrl = Modifiers { control: true, platform: true, ..Default::default() };
         let cmd = Modifiers { platform: true, ..Default::default() };
         assert!(wheel_zooms(&cmd_ctrl, true));
-        assert!(!wheel_zooms(&ctrl, true));
-        assert!(!wheel_zooms(&cmd, true));
+        assert!(wheel_zooms(&ctrl, true));
+        assert!(wheel_zooms(&cmd, true));
         assert!(wheel_zooms(&ctrl, false));
-        assert!(!wheel_zooms(&cmd, false));
+        assert!(wheel_zooms(&cmd, false));
         assert!(!wheel_zooms(&Modifiers::default(), false));
+        assert!(!wheel_zooms(&Modifiers::default(), true));
     }
 }
+

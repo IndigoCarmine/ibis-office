@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui_kit::*;
-use ibis_doc_model::{Command, EMU_PER_POINT, Emu, SheetCommand, sheet_command::Axis};
+use ibis_doc_model::{CellRange, Command, EMU_PER_POINT, Emu, SheetCommand, sheet_command::Axis};
 
 use gpui_kit::component::menu::PopupMenu;
 
@@ -21,6 +21,11 @@ use crate::shell::editor::SlideEditor;
 
 /// How near the line between two headers (in pixels) a press takes it.
 const GRIP: f32 = 4.0;
+
+/// Excel's maximum row height (409 pt).
+pub(crate) const MAX_ROW_HEIGHT_PT: f32 = 409.0;
+/// Excel's maximum column width (255 characters, ~1632 pt).
+pub(crate) const MAX_COLUMN_WIDTH_CHARS: f32 = 255.0;
 
 /// Where the headers were last painted, in window pixels: (index, start,
 /// end) of each column and row shown, and px per EMU.
@@ -31,6 +36,17 @@ pub(crate) struct HeaderGeometry {
     pub(crate) scale: f32,
     /// The top-left corner of the headers (the workspace's).
     pub(crate) origin: (f32, f32),
+    pub(crate) row_header_width: f32,
+}
+
+impl HeaderGeometry {
+    pub(crate) fn head_w(&self) -> f32 {
+        if self.row_header_width > 0.0 {
+            self.row_header_width
+        } else {
+            super::sheet_ui::ROW_HEADER_WIDTH
+        }
+    }
 }
 
 pub(crate) type SharedGeometry = Rc<RefCell<HeaderGeometry>>;
@@ -43,6 +59,7 @@ pub(crate) struct HeaderDrag {
     /// Where the column or row starts, and where the pointer is, in window pixels.
     pub(crate) start: f32,
     pub(crate) current: f32,
+    pub(crate) moved: bool,
 }
 
 /// The header's menu, open.
@@ -135,11 +152,14 @@ impl SlideEditor {
         };
         match hit(spans, at) {
             Some(HeaderHit::Line { index, start }) => {
-                if event.click_count >= 2 && axis == Axis::Columns {
-                    return self.fit_columns(index, window, cx);
+                if event.click_count >= 2 {
+                    match axis {
+                        Axis::Columns => return self.fit_columns(index, window, cx),
+                        Axis::Rows => return self.fit_rows(index, window, cx),
+                    }
                 }
                 self.commit_cell_edit(cx);
-                self.wb_mut().header_drag = Some(HeaderDrag { axis, index, start, current: at });
+                self.wb_mut().header_drag = Some(HeaderDrag { axis, index, start, current: at, moved: false });
                 cx.notify();
             }
             Some(HeaderHit::Header(index)) => {
@@ -150,8 +170,35 @@ impl SlideEditor {
                 let anchor_cell = self.current_cell().map(|(c, r)| if axis == Axis::Columns { c } else { r });
                 match (event.modifiers.shift, anchor_cell.or(anchor)) {
                     (true, Some(a)) => self.select_lines(axis, a, index, cx),
-                    // ⌘: the column (row) added to those selected.
+                    // ⌘: if already selected, deselect it; otherwise add to selection.
                     _ if event.modifiers.platform => {
+                        let line_range = match axis {
+                            Axis::Columns => CellRange {
+                                first_column: index,
+                                last_column: index,
+                                first_row: 0,
+                                last_row: super::sheet_ui::MAX_ROWS - 1,
+                            },
+                            Axis::Rows => CellRange {
+                                first_column: 0,
+                                last_column: super::sheet_ui::MAX_COLUMNS - 1,
+                                first_row: index,
+                                last_row: index,
+                            },
+                        };
+                        let current = self.selected_ranges();
+                        let intersects = current.iter().any(|r| match axis {
+                            Axis::Columns => (r.first_column..=r.last_column).contains(&index),
+                            Axis::Rows => (r.first_row..=r.last_row).contains(&index),
+                        });
+                        if intersects {
+                            let remaining = super::goto_special::subtract_ranges(&current, line_range);
+                            if !remaining.is_empty() {
+                                self.set_selected_ranges(&remaining);
+                                cx.notify();
+                                return;
+                            }
+                        }
                         let kept = self.selected_ranges();
                         self.select_lines(axis, index, index, cx);
                         self.keep_with_selection(kept);
@@ -224,7 +271,7 @@ impl SlideEditor {
             // On a header's line: the resize pointer.
             let (x, y) = (f32::from(event.position.x), f32::from(event.position.y));
             let (ox, oy) = geometry.origin;
-            let (head_w, head_h) = (super::sheet_ui::ROW_HEADER_WIDTH, super::sheet_ui::COLUMN_HEADER_HEIGHT);
+            let (head_w, head_h) = (geometry.head_w(), super::sheet_ui::COLUMN_HEADER_HEIGHT);
             let hover = if (oy..oy + head_h).contains(&y) && x >= ox + head_w {
                 matches!(hit(&geometry.columns, x), Some(HeaderHit::Line { .. })).then_some(Axis::Columns)
             } else if (ox..ox + head_w).contains(&x) && y >= oy + head_h {
@@ -239,10 +286,17 @@ impl SlideEditor {
             return;
         }
         if let Some(drag) = state.header_drag.as_mut() {
-            drag.current = match drag.axis {
+            let scale = geometry.scale.max(1e-4);
+            let max_px = match drag.axis {
+                Axis::Rows => MAX_ROW_HEIGHT_PT * EMU_PER_POINT as f32 * scale,
+                Axis::Columns => MAX_COLUMN_WIDTH_CHARS * 6.4 * EMU_PER_POINT as f32 * scale,
+            };
+            let at = match drag.axis {
                 Axis::Columns => f32::from(event.position.x),
                 Axis::Rows => f32::from(event.position.y),
             };
+            drag.current = at.clamp(drag.start, drag.start + max_px);
+            drag.moved = true;
             return cx.notify();
         }
         if let Some(axis) = state.header_select {
@@ -265,19 +319,32 @@ impl SlideEditor {
         let Some(state) = self.sheet_state_mut() else { return };
         state.header_select = None;
         let Some(drag) = state.header_drag.take() else { return };
+        if !drag.moved {
+            return;
+        }
         let scale = self.header_geometry().scale;
         if scale <= 0.0 {
             return cx.notify();
         }
         // Less than a couple of pixels hides it, as in Excel.
         let px_size = (drag.current - drag.start).max(0.0);
-        let size: Emu = if px_size < 2.0 { 0 } else { ((px_size / scale) as Emu / (EMU_PER_POINT / 4)) * (EMU_PER_POINT / 4) };
+        let max_emu = match drag.axis {
+            Axis::Rows => (MAX_ROW_HEIGHT_PT * EMU_PER_POINT as f32).round() as Emu,
+            Axis::Columns => (MAX_COLUMN_WIDTH_CHARS * 6.4 * EMU_PER_POINT as f32).round() as Emu,
+        };
+        let size: Emu = if px_size < 2.0 {
+            0
+        } else {
+            (((px_size / scale) as Emu / (EMU_PER_POINT / 4)) * (EMU_PER_POINT / 4)).min(max_emu)
+        };
         // The selected columns or rows too, if the one dragged is among them.
         let (first, last) = self.selected_lines(drag.axis).filter(|(a, b)| (*a..=*b).contains(&drag.index)).unwrap_or((drag.index, drag.index));
         let slide = self.current_slide;
+        let started = crate::debug_timing::start();
         if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetSize { slide, axis: drag.axis, first, last, size })]) {
             log::warn!("sizing rejected: {err}");
         }
+        crate::debug_timing::report("resize header: execute", started);
         cx.notify();
     }
 
@@ -289,22 +356,35 @@ impl SlideEditor {
         let ts = window.text_system().clone();
         let mut commands = Vec::new();
         let slide = self.current_slide;
-        for column in first..=last {
-            let mut widest: f32 = 0.0;
-            for cell in sheet.cells.iter().filter(|c| c.column == column && !c.text.is_empty()) {
-                // A merged cell does not count, as in Excel.
-                if sheet.merge_at(cell.row, cell.column).is_some() {
-                    continue;
-                }
-                let style = &sheet.styles[cell.style as usize];
-                widest = widest.max(self.excel_text_width(&cell.text, style, &ts));
+        let started = crate::debug_timing::start();
+        // One pass over the cells for all the columns; each format's font found once (a column is a million cells of a few formats).
+        let mut widest = vec![0.0f32; (last - first + 1) as usize];
+        let mut measures: Vec<Option<(super::sheet_view::GlyphWidths, f32, f32, f32)>> = Vec::new();
+        measures.resize_with(sheet.styles.len(), || None);
+        for cell in sheet.cells.iter() {
+            if cell.column < first || cell.column > last || cell.text.is_empty() {
+                continue;
             }
+            // A merged cell does not count, as in Excel.
+            if sheet.merge_at(cell.row, cell.column).is_some() {
+                continue;
+            }
+            let style = &sheet.styles[cell.style as usize];
+            let slot = &mut measures[cell.style as usize];
+            let (glyphs, excel_digit, drawn_digit, italic) = slot.get_or_insert_with(|| self.excel_measure(style, &ts));
+            let width = glyphs.width(&cell.text) * *excel_digit / *drawn_digit + *italic + style.indent as f32 * 3.0 * *excel_digit;
+            let w = &mut widest[(cell.column - first) as usize];
+            *w = w.max(width);
+        }
+        for (i, widest) in widest.into_iter().enumerate() {
             if widest <= 0.0 {
                 continue;
             }
+            let column = first + i as u32;
             let size = fitted_width(widest);
             commands.push(Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Columns, first: column, last: column, size }));
         }
+        crate::debug_timing::report("fit columns: measure", started);
         if commands.is_empty() {
             return;
         }
@@ -312,6 +392,32 @@ impl SlideEditor {
             log::warn!("fitting rejected: {err}");
         }
         cx.notify();
+    }
+
+    /// Fit row `index` (and the selected ones, if it is among them) to
+    /// their contents, as a double-click on its bottom line does.
+    pub(crate) fn fit_rows(&mut self, index: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let (first, last) = self.selected_lines(Axis::Rows).filter(|(a, b)| (*a..=*b).contains(&index)).unwrap_or((index, index));
+        let ts = window.text_system().clone();
+        let commands = self.fit_rows_commands(first, last, &ts);
+        if !commands.is_empty()
+            && let Err(err) = self.document.execute(commands)
+        {
+            log::warn!("fitting rows rejected: {err}");
+        }
+        cx.notify();
+    }
+
+    /// What `excel_text_width` takes from a format, found once: its glyph widths, Excel's digit, the digit as drawn here, and the italic's extra.
+    pub(crate) fn excel_measure<'a>(&self, style: &ibis_doc_model::CellStyle, ts: &'a TextSystem) -> (super::sheet_view::GlyphWidths<'a>, f32, f32, f32) {
+        let default_size = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref()).map_or(11.0, |s| s.font_size as f32 / 100.0);
+        let digit = (default_size * 0.55).round().max(1.0);
+        let size = style.font_size as f32 / 100.0;
+        let excel_digit = digit * size / default_size;
+        let mut glyphs = super::sheet_view::GlyphWidths::new(style, &self.resources, ts);
+        let drawn_digit = glyphs.width("0").max(0.1);
+        let italic = if style.italic { 2.0 * size / 12.0 } else { 0.0 };
+        (glyphs, excel_digit, drawn_digit, italic)
     }
 
     /// How wide Excel draws a cell's text, in points. Excel measures in its
@@ -331,30 +437,67 @@ impl SlideEditor {
 
     /// The header's menu (the right button), for the columns or rows selected.
     pub(crate) fn header_menu(&self, axis: Axis) -> Vec<MenuEntry> {
+        let menus = self.menus();
         let (unit, before, after) = match axis {
             Axis::Columns => (crate::shell::i18n::text("_xlsx.column"), crate::shell::i18n::text("_shell.insert-column-left"), crate::shell::i18n::text("_shell.insert-column-right")),
             Axis::Rows => (crate::shell::i18n::text("_xlsx.row"), crate::shell::i18n::text("_shell.insert-row-above"), crate::shell::i18n::text("_shell.insert-row-below")),
         };
         let (cut, copy, paste): (&'static str, &'static str, &'static str) = ("xlsx.header-cut", "xlsx.header-copy", "xlsx.header-paste");
         let id = |c: &'static str, r: &'static str| if axis == Axis::Columns { c } else { r };
-        vec![
+        let mut out: Vec<MenuEntry> = vec![
             MenuItem::new(cut, "_xlsx.cut").icon("content_cut").shortcut("⌘X").on(|this, _, cx| this.copy_cells(true, cx)).into(),
             MenuItem::new(copy, "_shell.copy").icon("content_copy").shortcut("⌘C").on(|this, _, cx| this.copy_cells(false, cx)).into(),
             MenuItem::tr("xlsx.copy-as-picture").icon("image").on(|this, _, cx| this.copy_as_picture(cx)).into(),
             MenuItem::new(paste, "_xlsx.paste").icon("content_paste").shortcut("⌘V").on(|this, _, cx| this.paste_cells(false, cx)).into(),
+        ];
+        out.extend(menus.find_entry("xlsx.paste-special"));
+        out.extend([
             MenuEntry::Separator,
-            MenuItem::new(id("xlsx.header-insert-left", "xlsx.header-insert-above"), before).icon("add").on(move |this, _, cx| this.insert_lines(axis, false, cx)).into(),
+            MenuItem::new(id("xlsx.header-insert-left", "xlsx.header-insert-above"), before).icon("add").shortcut("⌘+").on(move |this, _, cx| this.insert_lines(axis, false, cx)).into(),
             MenuItem::new(id("xlsx.header-insert-right", "xlsx.header-insert-below"), after).icon("add").on(move |this, _, cx| this.insert_lines(axis, true, cx)).into(),
-            MenuItem::new(id("xlsx.header-delete-columns", "xlsx.header-delete-rows"), crate::shell::i18n::format("_xlsx.delete-unit", &[("unit", &unit)])).icon("delete").on(move |this, _, cx| this.delete_lines(axis, cx)).into(),
+            MenuItem::new(id("xlsx.header-delete-columns", "xlsx.header-delete-rows"), crate::shell::i18n::format("_xlsx.delete-unit", &[("unit", &unit)])).icon("delete").shortcut("⌘-").on(move |this, _, cx| this.delete_lines(axis, cx)).into(),
             MenuItem::tr("xlsx.header-clear").on(|this, _, cx| this.clear_selected_cells(cx)).into(),
             MenuItem::tr("xlsx.header-clear-formats").icon("format_clear").shortcut("⌘\\").on(|this, _, cx| this.clear_cell_formats(cx)).into(),
             MenuEntry::Separator,
+            MenuItem::new(id("xlsx.header-format-columns", "xlsx.header-format-rows"), "_xlsx.format-cells")
+                .icon("tune")
+                .on(|this, window, cx| this.open_custom_format(window, cx))
+                .into(),
+            MenuItem::new(id("xlsx.header-column-width", "xlsx.header-row-height"), if axis == Axis::Columns { crate::shell::i18n::text("_xlsx.column-width") } else { crate::shell::i18n::text("_xlsx.row-height") })
+                .on(move |this, window, cx| match axis {
+                    Axis::Columns => this.open_column_width_panel(window, cx),
+                    Axis::Rows => this.open_row_height_panel(window, cx),
+                })
+                .into(),
             MenuItem::new(id("xlsx.header-fit-columns", "xlsx.header-fit-rows"), if axis == Axis::Columns { crate::shell::i18n::text("_xlsx.autofit-column-width") } else { crate::shell::i18n::text("_xlsx.autofit-row-height") })
                 .on(move |this, window, cx| this.fit_selected(axis, window, cx))
                 .into(),
             MenuItem::new(id("xlsx.header-hide-columns", "xlsx.header-hide-rows"), crate::shell::i18n::format("_xlsx.hide-unit", &[("unit", &unit)])).icon("visibility_off").shortcut(if axis == Axis::Columns { "⌃0" } else { "⌃9" }).on(move |this, _, cx| this.hide_lines(axis, true, cx)).into(),
             MenuItem::new(id("xlsx.header-unhide-columns", "xlsx.header-unhide-rows"), crate::shell::i18n::format("_xlsx.unhide-unit", &[("unit", &unit)])).icon("visibility").on(move |this, _, cx| this.hide_lines(axis, false, cx)).into(),
-        ]
+            MenuEntry::Separator,
+            MenuItem::new(id("xlsx.header-group-columns", "xlsx.header-group-rows"), "xlsx.group")
+                .on(move |this, _, cx| this.group_lines_on_axis(axis, true, cx))
+                .into(),
+            MenuItem::new(id("xlsx.header-ungroup-columns", "xlsx.header-ungroup-rows"), "xlsx.ungroup")
+                .on(move |this, _, cx| this.group_lines_on_axis(axis, false, cx))
+                .into(),
+        ]);
+        if axis == Axis::Rows {
+            let has_break = self
+                .current_cell()
+                .zip(self.current_sheet())
+                .is_some_and(|((_, r), (_, s))| r > 0 && s.print.row_breaks.contains(&r));
+            let row0 = self.current_cell().is_none_or(|(_, r)| r == 0);
+            out.push(MenuEntry::Separator);
+            out.push(
+                MenuItem::new("xlsx.header-page-break", "_xlsx.page-break")
+                    .checked(has_break)
+                    .disabled(row0)
+                    .on(|this, _, cx| this.toggle_row_break(cx))
+                    .into(),
+            );
+        }
+        out
     }
 
     /// The commands fitting rows `first`–`last` to their contents, as
@@ -370,8 +513,13 @@ impl SlideEditor {
         for row in first..=last {
             let mut height = base;
             for cell in sheet.cells.iter().filter(|c| c.row == row && !c.text.is_empty()) {
+                // In Excel, merged cells spanning multiple rows or columns do not participate in row auto-fitting.
+                if sheet.merge_at(cell.row, cell.column).is_some_and(|m| m.first_row != m.last_row || m.first_column != m.last_column) {
+                    continue;
+                }
                 let style = &sheet.styles[cell.style as usize];
-                let size = style.font_size as f32 / 100.0;
+                // A part of the text in a larger size sets the line.
+                let size = cell.runs.iter().flat_map(|r| r.iter()).filter_map(|r| r.size).max().map_or(style.font_size, |s| s.max(style.font_size)) as f32 / 100.0;
                 let line = base * size / default_size;
                 let lines = if style.wrap {
                     let room = sheet.columns.get(cell.column as usize).copied().unwrap_or(0) as f32 / EMU_PER_POINT as f32 - 5.0;
@@ -390,7 +538,7 @@ impl SlideEditor {
                     }
                     lines.max(1)
                 } else {
-                    1
+                    cell.text.split('\n').count().max(1)
                 };
                 // Turned text needs the height of its turned line (not measured
                 // against Excel: its width by the angle's sine, its line by the
@@ -405,8 +553,9 @@ impl SlideEditor {
                 };
                 height = height.max(line * lines as f32).max(turned);
             }
-            let size = ((height * 4.0).round() / 4.0 * EMU_PER_POINT as f32) as Emu;
-            if sheet.rows.get(row as usize).is_some_and(|&h| h != size && h > 0) {
+            let size = ((height.min(409.5) * 4.0).round() / 4.0 * EMU_PER_POINT as f32) as Emu;
+            let current_h = sheet.rows.get(row as usize).copied().filter(|&h| h > 0).unwrap_or(sheet.default_row);
+            if current_h != size && size > 0 {
                 out.push(Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Rows, first: row, last: row, size }));
             }
         }
@@ -414,7 +563,7 @@ impl SlideEditor {
     }
 
     /// Fit the selected columns, or give the selected rows the sheet's default height.
-    fn fit_selected(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn fit_selected(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
         let Some(r) = self.selected_range() else { return };
         match axis {
             Axis::Columns => match self.selected_lines(Axis::Columns) {
@@ -462,5 +611,14 @@ mod tests {
         assert_eq!(hit(&spans, 118.0), Some(HeaderHit::Line { index: 2, start: 50.0 }));
         assert_eq!(hit(&spans, 80.0), Some(HeaderHit::Header(2)));
         assert_eq!(hit(&spans, 200.0), None);
+    }
+
+    #[test]
+    fn row_height_and_col_width_limits() {
+        use ibis_doc_model::EMU_PER_POINT;
+        assert_eq!(super::MAX_ROW_HEIGHT_PT, 409.0);
+        assert_eq!(super::MAX_COLUMN_WIDTH_CHARS, 255.0);
+        let max_row_emu = (super::MAX_ROW_HEIGHT_PT * EMU_PER_POINT as f32).round() as i64;
+        assert_eq!(max_row_emu, 409 * 12700);
     }
 }

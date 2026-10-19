@@ -25,7 +25,7 @@ pub(crate) struct XeSpec {
 }
 
 /// The words of a field's code: quoted words without their quotes (`\"` and `\\` in them unescaped), switches as they are.
-fn words(instruction: &str) -> Vec<String> {
+pub(crate) fn words(instruction: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut chars = instruction.chars().peekable();
     while let Some(&c) = chars.peek() {
@@ -58,7 +58,7 @@ fn words(instruction: &str) -> Vec<String> {
 }
 
 /// A field's switch argument (`\r "bookmark"`): the word after it.
-fn switch_value(words: &[String], switch: &str) -> Option<String> {
+pub(crate) fn switch_value(words: &[String], switch: &str) -> Option<String> {
     let at = words.iter().position(|w| w.eq_ignore_ascii_case(switch))?;
     words.get(at + 1).cloned()
 }
@@ -185,7 +185,7 @@ fn marks(doc: &FlowDocument, page_of: &dyn Fn(u32) -> Option<u32>) -> Vec<Mark> 
 /// The sort key of an entry's text: the Shift_JIS bytes of the text (Latin letters in lower case, which sorts them
 /// before the kana and the kanji, whose Shift_JIS codes follow the Japanese order of their readings), the reading's when
 /// it is sorted by readings.
-fn sort_key(text: &str) -> (Vec<u8>, Vec<u8>) {
+pub(crate) fn sort_key(text: &str) -> (Vec<u8>, Vec<u8>) {
     let lower: String = text.chars().map(|c| c.to_ascii_lowercase()).collect();
     // Of letters that differ only in case, the lower case one first.
     let swapped: String = text.chars().map(|c| if c.is_ascii_lowercase() { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() }).collect();
@@ -222,7 +222,7 @@ pub(crate) fn index_paragraphs(doc: &FlowDocument, instruction: &str, page_of: &
     let marks: Vec<Mark> = marks(doc, page_of).into_iter().filter(|m| m.spec.kind == spec.kind).collect();
     // The entries: one for each distinct list of levels, and one for each shorter list of one that has levels under it.
     let mut entries: Vec<Entry> = Vec::new();
-    let mut entry_at = |levels: &[String], entries: &mut Vec<Entry>| -> usize {
+    let entry_at = |levels: &[String], entries: &mut Vec<Entry>| -> usize {
         match entries.iter().position(|e| e.levels == levels) {
             Some(i) => i,
             None => {
@@ -327,7 +327,7 @@ pub(crate) fn index_paragraphs(doc: &FlowDocument, instruction: &str, page_of: &
             }
         }
         let see = e.see.clone();
-        let mut run = |p: &mut FlowParagraph, text: String, bold: bool, italic: bool| {
+        let run = |p: &mut FlowParagraph, text: String, bold: bool, italic: bool| {
             if text.is_empty() {
                 return;
             }

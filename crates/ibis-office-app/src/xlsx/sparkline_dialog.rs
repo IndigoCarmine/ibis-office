@@ -15,12 +15,23 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use ibis_doc_model::{Command, Rgb, SheetCommand, SparklineEmpty, SparklineGroup, SparklineKind, cell_name};
+use ibis_doc_model::{Command, Rgb, SheetCommand, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind, cell_name};
 
 use super::sheet_ui::{Reference, Target, parse_reference};
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
+
+/// 表示する点（頂点・低点・負の点・始点・終点・マーカー）の種類
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SparklinePointKind {
+    High,
+    Low,
+    Negative,
+    First,
+    Last,
+    Markers,
+}
 
 /// スパークラインの組み込みスタイル定義
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,12 +176,24 @@ pub(crate) struct SparklinePanel {
     pub(crate) low_color: Option<Rgb>,
     /// 非表示行列のデータ表示（displayHidden）
     pub(crate) display_hidden: bool,
+    /// 右から左の描画（rightToLeft）
+    pub(crate) right_to_left: bool,
     /// 日付軸（dateAxis）
     pub(crate) date_axis: bool,
     /// 日付範囲入力（<xm:f>）
     pub(crate) date_range_input: Entity<InputState>,
+    /// 縦軸の最小値モード（0: Individual, 1: Group, 2: Custom）
+    pub(crate) min_axis_kind: u8,
+    /// 縦軸の最小値カスタム入力欄（manualMin）
+    pub(crate) min_custom_input: Entity<InputState>,
+    /// 縦軸の最大値モード（0: Individual, 1: Group, 2: Custom）
+    pub(crate) max_axis_kind: u8,
+    /// 縦軸の最大値カスタム入力欄（manualMax）
+    pub(crate) max_custom_input: Entity<InputState>,
     /// 空白セルの表示方法（displayEmptyCellsAs）
     pub(crate) empty: SparklineEmpty,
+    /// マーカー色編集対象のポイント種類
+    pub(crate) selected_point_kind: SparklinePointKind,
     /// 選択中のスタイルプリセット番号
     pub(crate) style_preset: Option<usize>,
     /// エラー・案内メッセージ
@@ -224,6 +247,16 @@ impl SlideEditor {
             };
 
             let style_preset = SPARKLINE_STYLES.iter().position(|p| group.series == Some(p.series));
+            let (min_axis_kind, min_val_str) = match &group.min_axis {
+                SparklineAxis::Individual => (0, String::new()),
+                SparklineAxis::Group => (1, String::new()),
+                SparklineAxis::Custom(v) => (2, v.clone()),
+            };
+            let (max_axis_kind, max_val_str) = match &group.max_axis {
+                SparklineAxis::Individual => (0, String::new()),
+                SparklineAxis::Group => (1, String::new()),
+                SparklineAxis::Custom(v) => (2, v.clone()),
+            };
             SparklinePanel {
                 group_index: Some(idx),
                 kind: default_kind.unwrap_or(group.kind),
@@ -246,9 +279,15 @@ impl SlideEditor {
                 high_color: group.high_color,
                 low_color: group.low_color,
                 display_hidden: group.display_hidden,
+                right_to_left: group.right_to_left,
                 date_axis: group.date_axis,
                 date_range_input: input(group.date_range.clone().unwrap_or_default(), window, cx),
+                min_axis_kind,
+                min_custom_input: input(min_val_str, window, cx),
+                max_axis_kind,
+                max_custom_input: input(max_val_str, window, cx),
                 empty: group.empty,
+                selected_point_kind: SparklinePointKind::High,
                 style_preset,
                 message: String::new(),
                 ui: Default::default(),
@@ -289,9 +328,15 @@ impl SlideEditor {
                 high_color: Some(default_preset.high),
                 low_color: Some(default_preset.low),
                 display_hidden: false,
+                right_to_left: false,
                 date_axis: false,
                 date_range_input: input(String::new(), window, cx),
+                min_axis_kind: 0,
+                min_custom_input: input(String::new(), window, cx),
+                max_axis_kind: 0,
+                max_custom_input: input(String::new(), window, cx),
                 empty: SparklineEmpty::Gap,
+                selected_point_kind: SparklinePointKind::High,
                 style_preset: Some(0),
                 message: String::new(),
                 ui: Default::default(),
@@ -352,6 +397,39 @@ impl SlideEditor {
         cx.notify();
     }
 
+    pub(crate) fn set_sparkline_point_color(&mut self, point: SparklinePointKind, color: Option<Rgb>, cx: &mut Context<Self>) {
+        if let Some(p) = self.wb_mut().panels.sparkline.as_mut() {
+            match point {
+                SparklinePointKind::High => {
+                    p.high_color = color;
+                    if color.is_some() { p.high = true; }
+                }
+                SparklinePointKind::Low => {
+                    p.low_color = color;
+                    if color.is_some() { p.low = true; }
+                }
+                SparklinePointKind::Negative => {
+                    p.negative = color;
+                    if color.is_some() { p.negative_points = true; }
+                }
+                SparklinePointKind::First => {
+                    p.first_color = color;
+                    if color.is_some() { p.first = true; }
+                }
+                SparklinePointKind::Last => {
+                    p.last_color = color;
+                    if color.is_some() { p.last = true; }
+                }
+                SparklinePointKind::Markers => {
+                    p.markers_color = color;
+                    if color.is_some() { p.markers = true; }
+                }
+            }
+            p.style_preset = None;
+        }
+        cx.notify();
+    }
+
     pub(crate) fn set_sparkline_line_weight(&mut self, weight: u32, cx: &mut Context<Self>) {
         if let Some(p) = self.wb_mut().panels.sparkline.as_mut() {
             p.line_weight = weight;
@@ -359,6 +437,7 @@ impl SlideEditor {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_sparkline_display_hidden(&mut self, display_hidden: bool, cx: &mut Context<Self>) {
         if let Some(p) = self.wb_mut().panels.sparkline.as_mut() {
             p.display_hidden = display_hidden;
@@ -366,6 +445,7 @@ impl SlideEditor {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_sparkline_date_axis(&mut self, date_axis: bool, cx: &mut Context<Self>) {
         if let Some(p) = self.wb_mut().panels.sparkline.as_mut() {
             p.date_axis = date_axis;
@@ -378,6 +458,46 @@ impl SlideEditor {
             p.empty = empty;
         }
         cx.notify();
+    }
+
+    pub(crate) fn sparkline_group_at_selection(&self) -> Option<(usize, SparklineGroup)> {
+        let ranges = self.selected_ranges();
+        let (_, sheet) = self.current_sheet()?;
+        for (idx, g) in sheet.sparklines.iter().enumerate() {
+            if g.sparklines.iter().any(|s| {
+                ranges.iter().any(|r| {
+                    s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column
+                })
+            }) {
+                return Some((idx, g.clone()));
+            }
+        }
+        None
+    }
+
+    pub(crate) fn set_selected_sparklines_kind(&mut self, kind: SparklineKind, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        let ranges = self.selected_ranges();
+        let slide = self.current_slide;
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let mut commands = Vec::new();
+        for (idx, g) in sheet.sparklines.iter().enumerate() {
+            if g.sparklines.iter().any(|s| {
+                ranges.iter().any(|r| {
+                    s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column
+                })
+            }) {
+                let mut edited = g.clone();
+                edited.kind = kind;
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+            }
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+            cx.notify();
+        }
     }
 
     pub(crate) fn set_selected_sparklines_style(&mut self, style_idx: usize, cx: &mut Context<Self>) {
@@ -514,6 +634,221 @@ impl SlideEditor {
         }
     }
 
+    pub(crate) fn toggle_selected_sparklines_point(&mut self, point: SparklinePointKind, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        let ranges = self.selected_ranges();
+        let slide = self.current_slide;
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let mut commands = Vec::new();
+        for (idx, g) in sheet.sparklines.iter().enumerate() {
+            if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
+                let mut edited = g.clone();
+                match point {
+                    SparklinePointKind::High => edited.high = !edited.high,
+                    SparklinePointKind::Low => edited.low = !edited.low,
+                    SparklinePointKind::Negative => edited.negative_points = !edited.negative_points,
+                    SparklinePointKind::First => edited.first = !edited.first,
+                    SparklinePointKind::Last => edited.last = !edited.last,
+                    SparklinePointKind::Markers => edited.markers = !edited.markers,
+                }
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+            }
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_selected_sparklines_point_color(&mut self, point: SparklinePointKind, color: Option<Rgb>, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        let ranges = self.selected_ranges();
+        let slide = self.current_slide;
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let mut commands = Vec::new();
+        for (idx, g) in sheet.sparklines.iter().enumerate() {
+            if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
+                let mut edited = g.clone();
+                match point {
+                    SparklinePointKind::High => {
+                        edited.high_color = color;
+                        if color.is_some() { edited.high = true; }
+                    }
+                    SparklinePointKind::Low => {
+                        edited.low_color = color;
+                        if color.is_some() { edited.low = true; }
+                    }
+                    SparklinePointKind::Negative => {
+                        edited.negative = color;
+                        if color.is_some() { edited.negative_points = true; }
+                    }
+                    SparklinePointKind::First => {
+                        edited.first_color = color;
+                        if color.is_some() { edited.first = true; }
+                    }
+                    SparklinePointKind::Last => {
+                        edited.last_color = color;
+                        if color.is_some() { edited.last = true; }
+                    }
+                    SparklinePointKind::Markers => {
+                        edited.markers_color = color;
+                        if color.is_some() { edited.markers = true; }
+                    }
+                }
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+            }
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn toggle_selected_sparklines_display_x_axis(&mut self, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        let ranges = self.selected_ranges();
+        let slide = self.current_slide;
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let mut commands = Vec::new();
+        for (idx, g) in sheet.sparklines.iter().enumerate() {
+            if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
+                let mut edited = g.clone();
+                edited.display_x_axis = !edited.display_x_axis;
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+            }
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn toggle_selected_sparklines_right_to_left(&mut self, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        let ranges = self.selected_ranges();
+        let slide = self.current_slide;
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let mut commands = Vec::new();
+        for (idx, g) in sheet.sparklines.iter().enumerate() {
+            if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
+                let mut edited = g.clone();
+                edited.right_to_left = !edited.right_to_left;
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+            }
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_selected_sparklines_min_axis(&mut self, min_axis: SparklineAxis, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        let ranges = self.selected_ranges();
+        let slide = self.current_slide;
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let mut commands = Vec::new();
+        for (idx, g) in sheet.sparklines.iter().enumerate() {
+            if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
+                let mut edited = g.clone();
+                edited.min_axis = min_axis.clone();
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+            }
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_selected_sparklines_max_axis(&mut self, max_axis: SparklineAxis, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        let ranges = self.selected_ranges();
+        let slide = self.current_slide;
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let mut commands = Vec::new();
+        for (idx, g) in sheet.sparklines.iter().enumerate() {
+            if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
+                let mut edited = g.clone();
+                edited.max_axis = max_axis.clone();
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+            }
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn resolve_sparkline_data_range(&self, raw: &str) -> Option<(Option<String>, ibis_doc_model::CellRange)> {
+        let clean = raw.trim().trim_start_matches('=').trim();
+        if clean.is_empty() {
+            return None;
+        }
+        let parsed = parse_reference(clean)?;
+        if let Some((slide_id, range)) = self.resolve_reference(&parsed) {
+            let sheet_name = if slide_id == self.current_slide {
+                None
+            } else {
+                self.presentation().slides.iter().find(|s| s.id == slide_id).and_then(|s| s.name.clone())
+            };
+            return Some((sheet_name, range));
+        }
+        match parsed {
+            Reference { sheet, target: Target::Cells(range) } => Some((sheet, range)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn resolve_sparkline_location_range(&self, raw: &str) -> Option<ibis_doc_model::CellRange> {
+        let clean = raw.trim().trim_start_matches('=').trim();
+        if clean.is_empty() {
+            return None;
+        }
+        let parsed = parse_reference(clean)?;
+        if let Some((slide_id, range)) = self.resolve_reference(&parsed) {
+            if slide_id == self.current_slide {
+                return Some(range);
+            }
+            return None;
+        }
+        match parsed {
+            Reference { sheet: None, target: Target::Cells(range) } => Some(range),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_sparkline_range_from_selection(&mut self, field: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(r) = self.selected_range() else { return };
+        let val = if r.first_row == r.last_row && r.first_column == r.last_column {
+            cell_name(r.first_column, r.first_row)
+        } else {
+            format!("{}:{}", cell_name(r.first_column, r.first_row), cell_name(r.last_column, r.last_row))
+        };
+        let input = self.wb().panels.sparkline.as_ref().and_then(|p| match field {
+            "data" => Some(p.data_range_input.clone()),
+            "location" => Some(p.location_range_input.clone()),
+            "date" => Some(p.date_range_input.clone()),
+            _ => None,
+        });
+        if let Some(input) = input {
+            input.update(cx, |i, cx| i.set_value(val, window, cx));
+            cx.notify();
+        }
+    }
+
     pub(crate) fn apply_sparkline(&mut self, cx: &mut Context<Self>) {
         if self.protection_refuses(super::protection::Guarded::Cells, cx) {
             return;
@@ -526,10 +861,10 @@ impl SlideEditor {
             return self.sparkline_message(text("_xlsx.enter-a-data-range-and-a-location-range"), cx);
         }
 
-        let Some(Reference { sheet: data_sheet, target: Target::Cells(data_range) }) = parse_reference(&data_text) else {
+        let Some((data_sheet, data_range)) = self.resolve_sparkline_data_range(&data_text) else {
             return self.sparkline_message(text("_xlsx.enter-a-valid-data-range"), cx);
         };
-        let Some(Reference { target: Target::Cells(loc_range), .. }) = parse_reference(&loc_text) else {
+        let Some(loc_range) = self.resolve_sparkline_location_range(&loc_text) else {
             return self.sparkline_message(text("_xlsx.enter-a-valid-location-range"), cx);
         };
 
@@ -540,9 +875,35 @@ impl SlideEditor {
 
         let date_text = p.date_range_input.read(cx).value().trim().to_string();
         let date_range = if p.date_axis && !date_text.is_empty() {
-            Some(date_text)
+            let normalized = if let Some((sh, r)) = self.resolve_sparkline_data_range(&date_text) {
+                let r_str = if r.first_row == r.last_row && r.first_column == r.last_column {
+                    cell_name(r.first_column, r.first_row)
+                } else {
+                    format!("{}:{}", cell_name(r.first_column, r.first_row), cell_name(r.last_column, r.last_row))
+                };
+                match sh {
+                    Some(s_name) => format!("{s_name}!{r_str}"),
+                    None => r_str,
+                }
+            } else {
+                date_text
+            };
+            Some(normalized)
         } else {
             None
+        };
+
+        let min_custom_text = p.min_custom_input.read(cx).value().trim().to_string();
+        let min_axis = match p.min_axis_kind {
+            1 => SparklineAxis::Group,
+            2 => SparklineAxis::Custom(if min_custom_text.is_empty() { "0".to_string() } else { min_custom_text }),
+            _ => SparklineAxis::Individual,
+        };
+        let max_custom_text = p.max_custom_input.read(cx).value().trim().to_string();
+        let max_axis = match p.max_axis_kind {
+            1 => SparklineAxis::Group,
+            2 => SparklineAxis::Custom(if max_custom_text.is_empty() { "0".to_string() } else { max_custom_text }),
+            _ => SparklineAxis::Individual,
         };
 
         let slide = self.current_slide;
@@ -567,8 +928,11 @@ impl SlideEditor {
             group.high_color = p.high_color;
             group.low_color = p.low_color;
             group.display_hidden = p.display_hidden;
+            group.right_to_left = p.right_to_left;
             group.date_axis = p.date_axis;
             group.date_range = date_range;
+            group.min_axis = min_axis;
+            group.max_axis = max_axis;
             group.empty = p.empty;
             group.sparklines = sparklines;
 
@@ -593,11 +957,13 @@ impl SlideEditor {
                 high_color: p.high_color,
                 low_color: p.low_color,
                 display_hidden: p.display_hidden,
+                right_to_left: p.right_to_left,
                 date_axis: p.date_axis,
                 date_range,
+                min_axis,
+                max_axis,
                 empty: p.empty,
                 sparklines,
-                ..Default::default()
             };
             self.run_sheet(vec![Command::Sheet(SheetCommand::AddSparklineGroup { slide, group })], cx);
         }
@@ -678,10 +1044,10 @@ impl SlideEditor {
                 merged.sparklines.extend(sheet.sparklines[idx].sparklines.clone());
             }
             let mut commands = Vec::new();
-            commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: base_idx, group: merged }));
             for &idx in matching_indices[1..].iter().rev() {
                 commands.push(Command::Sheet(SheetCommand::DeleteSparklineGroup { slide, index: idx }));
             }
+            commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: base_idx, group: merged }));
             self.run_sheet(commands, cx);
             if let Some(s) = self.sheet_state_mut() {
                 s.panels.sparkline = None;
@@ -723,8 +1089,22 @@ impl SlideEditor {
         let current_series = p.series;
         let current_weight = p.line_weight;
         let current_empty = p.empty;
+        let selected_point_kind = p.selected_point_kind;
+        let current_point_color = match selected_point_kind {
+            SparklinePointKind::High => p.high_color,
+            SparklinePointKind::Low => p.low_color,
+            SparklinePointKind::Negative => p.negative,
+            SparklinePointKind::First => p.first_color,
+            SparklinePointKind::Last => p.last_color,
+            SparklinePointKind::Markers => p.markers_color,
+        };
         let display_hidden = p.display_hidden;
+        let right_to_left = p.right_to_left;
         let date_axis = p.date_axis;
+        let min_axis_kind = p.min_axis_kind;
+        let max_axis_kind = p.max_axis_kind;
+        let min_custom_input = p.min_custom_input.clone();
+        let max_custom_input = p.max_custom_input.clone();
 
         let kind_button = |kind: SparklineKind, label: gpui::SharedString, id: &'static str, cx: &mut Context<Self>| {
             let is_sel = current_kind == kind;
@@ -771,6 +1151,54 @@ impl SlideEditor {
                         .when(is_sel, |b| b.primary())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.set_sparkline_series_color(Some(*rgb), cx);
+                        }))
+                        .into_any_element(),
+                )
+            })
+            .collect();
+
+        let point_target_buttons: Vec<AnyElement> = [
+            ("xlsx.sparkline.point-target.high", "_xlsx.high-point", SparklinePointKind::High),
+            ("xlsx.sparkline.point-target.low", "_shell.at-least", SparklinePointKind::Low),
+            ("xlsx.sparkline.point-target.negative", "_xlsx.negative-points", SparklinePointKind::Negative),
+            ("xlsx.sparkline.point-target.first", "_xlsx.first-point", SparklinePointKind::First),
+            ("xlsx.sparkline.point-target.last", "_xlsx.last-point", SparklinePointKind::Last),
+            ("xlsx.sparkline.point-target.markers", "_xlsx.marker", SparklinePointKind::Markers),
+        ]
+        .into_iter()
+        .map(|(id, label, pt)| {
+            let is_sel = selected_point_kind == pt;
+            mark(
+                id,
+                Button::new(id)
+                    .label(text(label))
+                    .small()
+                    .when(is_sel, |b| b.primary())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(p) = this.wb_mut().panels.sparkline.as_mut() {
+                            p.selected_point_kind = pt;
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            )
+        })
+        .collect();
+
+        let point_color_buttons: Vec<AnyElement> = SPARKLINE_COLORS
+            .iter()
+            .enumerate()
+            .map(|(i, (label, rgb))| {
+                let is_sel = current_point_color == Some(*rgb);
+                let id = format!("xlsx.sparkline.point-color.{}", i + 1);
+                mark(
+                    &id,
+                    Button::new(id.clone())
+                        .label(text(label))
+                        .small()
+                        .when(is_sel, |b| b.primary())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_sparkline_point_color(selected_point_kind, Some(*rgb), cx);
                         }))
                         .into_any_element(),
                 )
@@ -858,19 +1286,54 @@ impl SlideEditor {
             .child(
                 v_flex()
                     .gap_1()
+                    .child(div().text_size(px(12.)).child(text("xlsx.sparkline-marker-colors")))
+                    .child(h_flex().gap_1().flex_wrap().children(point_target_buttons))
+                    .child(h_flex().gap_1().flex_wrap().children(point_color_buttons))
+            )
+            .child(
+                v_flex()
+                    .gap_1()
                     .child(div().text_size(px(12.)).child(text("pptx.chrome.line-weight")))
                     .child(h_flex().gap_1().flex_wrap().children(weight_buttons))
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).child(text("_xlsx.data-range")))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(div().text_size(px(12.)).child(text("_xlsx.data-range")))
+                            .child(mark(
+                                "xlsx.sparkline.use-data-range",
+                                Button::new("xlsx.sparkline.use-data-range")
+                                    .xsmall()
+                                    .ghost()
+                                    .label(text("xlsx.subtotal-use-selection"))
+                                    .on_click(cx.listener(|this, _, window, cx| this.set_sparkline_range_from_selection("data", window, cx)))
+                                    .into_any_element(),
+                            )),
+                    )
                     .child(mark("xlsx.sparkline.data-range", Input::new(&p.data_range_input).small().into_any_element()))
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).child(text("_xlsx.location-range")))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(div().text_size(px(12.)).child(text("_xlsx.location-range")))
+                            .child(mark(
+                                "xlsx.sparkline.use-location-range",
+                                Button::new("xlsx.sparkline.use-location-range")
+                                    .xsmall()
+                                    .ghost()
+                                    .label(text("xlsx.subtotal-use-selection"))
+                                    .on_click(cx.listener(|this, _, window, cx| this.set_sparkline_range_from_selection("location", window, cx)))
+                                    .into_any_element(),
+                            )),
+                    )
                     .child(mark("xlsx.sparkline.location-range", Input::new(&p.location_range_input).small().into_any_element()))
             )
             .child(
@@ -905,6 +1368,10 @@ impl SlideEditor {
                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.display_x_axis = *on; }
                         cx.notify();
                     })).into_any_element()))
+                    .child(mark("xlsx.sparkline.right-to-left", Checkbox::new("sparkline-right-to-left").label(text("xlsx.sparkline-right-to-left")).checked(right_to_left).on_click(cx.listener(|this, on: &bool, _, cx| {
+                        if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.right_to_left = *on; }
+                        cx.notify();
+                    })).into_any_element()))
                     .child(mark("xlsx.sparkline.display-hidden", Checkbox::new("sparkline-display-hidden").label(text("_xlsx.show-data-in-hidden-rows-and-columns")).checked(display_hidden).on_click(cx.listener(|this, on: &bool, _, cx| {
                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.display_hidden = *on; }
                         cx.notify();
@@ -918,10 +1385,122 @@ impl SlideEditor {
                 b.child(
                     v_flex()
                         .gap_1()
-                        .child(div().text_size(px(12.)).child(text("_xlsx.date-range")))
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .justify_between()
+                                .child(div().text_size(px(12.)).child(text("_xlsx.date-range")))
+                                .child(mark(
+                                    "xlsx.sparkline.use-date-range",
+                                    Button::new("xlsx.sparkline.use-date-range")
+                                        .xsmall()
+                                        .ghost()
+                                        .label(text("xlsx.subtotal-use-selection"))
+                                        .on_click(cx.listener(|this, _, window, cx| this.set_sparkline_range_from_selection("date", window, cx)))
+                                        .into_any_element(),
+                                )),
+                        )
                         .child(mark("xlsx.sparkline.date-range", Input::new(&p.date_range_input).small().into_any_element()))
                 )
             })
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(div().text_size(px(12.)).child(text("_xlsx.vertical-axis-min")))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .flex_wrap()
+                            .child(mark(
+                                "xlsx.sparkline.min.individual",
+                                Button::new("xlsx.sparkline.min.individual")
+                                    .label(text("_xlsx.automatic-for-each"))
+                                    .small()
+                                    .when(min_axis_kind == 0, |b| b.primary())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.min_axis_kind = 0; }
+                                        cx.notify();
+                                    }))
+                                    .into_any_element(),
+                            ))
+                            .child(mark(
+                                "xlsx.sparkline.min.group",
+                                Button::new("xlsx.sparkline.min.group")
+                                    .label(text("_xlsx.same-for-all"))
+                                    .small()
+                                    .when(min_axis_kind == 1, |b| b.primary())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.min_axis_kind = 1; }
+                                        cx.notify();
+                                    }))
+                                    .into_any_element(),
+                            ))
+                            .child(mark(
+                                "xlsx.sparkline.min.custom",
+                                Button::new("xlsx.sparkline.min.custom")
+                                    .label(text("_xlsx.custom-value"))
+                                    .small()
+                                    .when(min_axis_kind == 2, |b| b.primary())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.min_axis_kind = 2; }
+                                        cx.notify();
+                                    }))
+                                    .into_any_element(),
+                            )),
+                    )
+                    .when(min_axis_kind == 2, |b| {
+                        b.child(mark("xlsx.sparkline.min-value", Input::new(&min_custom_input).small().into_any_element()))
+                    }),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(div().text_size(px(12.)).child(text("_xlsx.vertical-axis-max")))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .flex_wrap()
+                            .child(mark(
+                                "xlsx.sparkline.max.individual",
+                                Button::new("xlsx.sparkline.max.individual")
+                                    .label(text("_xlsx.automatic-for-each"))
+                                    .small()
+                                    .when(max_axis_kind == 0, |b| b.primary())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.max_axis_kind = 0; }
+                                        cx.notify();
+                                    }))
+                                    .into_any_element(),
+                            ))
+                            .child(mark(
+                                "xlsx.sparkline.max.group",
+                                Button::new("xlsx.sparkline.max.group")
+                                    .label(text("_xlsx.same-for-all"))
+                                    .small()
+                                    .when(max_axis_kind == 1, |b| b.primary())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.max_axis_kind = 1; }
+                                        cx.notify();
+                                    }))
+                                    .into_any_element(),
+                            ))
+                            .child(mark(
+                                "xlsx.sparkline.max.custom",
+                                Button::new("xlsx.sparkline.max.custom")
+                                    .label(text("_xlsx.custom-value"))
+                                    .small()
+                                    .when(max_axis_kind == 2, |b| b.primary())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.max_axis_kind = 2; }
+                                        cx.notify();
+                                    }))
+                                    .into_any_element(),
+                            )),
+                    )
+                    .when(max_axis_kind == 2, |b| {
+                        b.child(mark("xlsx.sparkline.max-value", Input::new(&max_custom_input).small().into_any_element()))
+                    }),
+            )
             .child(
                 v_flex()
                     .gap_1()
@@ -949,6 +1528,9 @@ impl SlideEditor {
                     v_flex()
                         .gap_1()
                         .pt_2()
+                        .child(mark("xlsx.sparkline.group", Button::new("xlsx.sparkline.group").small().label(text("xlsx.group")).on_click(cx.listener(|this, _, _, cx| {
+                            this.group_selected_sparklines(cx);
+                        })).into_any_element()))
                         .child(mark("xlsx.sparkline.ungroup", Button::new("xlsx.sparkline.ungroup").small().label(text("_shell.ungroup")).on_click(cx.listener(|this, _, _, cx| {
                             this.ungroup_selected_sparklines(cx);
                         })).into_any_element()))

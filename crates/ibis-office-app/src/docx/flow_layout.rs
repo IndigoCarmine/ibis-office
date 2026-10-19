@@ -47,11 +47,15 @@ pub(crate) enum Item {
     /// A two-color shading pattern across `(x, y, w, h)`, expanded into
     /// absolute page coordinates before rendering.
     Shading { pattern: ShadingPattern, color: Hsla, x: f32, y: f32, w: f32, h: f32 },
+    /// A comment speech-bubble icon drawn outside the right edge of the paper.
+    CommentBubble { x: f32, y: f32, size: f32 },
 }
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Page {
     pub(crate) items: Vec<Item>,
+    /// Number of items that belong to the document body (before headers and footers).
+    pub(crate) body_items_count: usize,
     /// The paper's size (points), its section's.
     pub(crate) width: f32,
     pub(crate) height: f32,
@@ -70,7 +74,7 @@ pub(crate) struct Pagination {
     pub(crate) pages: Vec<Page>,
 }
 
-fn pt(emu: i64) -> f32 {
+pub(crate) fn pt(emu: i64) -> f32 {
     emu as f32 / EMU_PER_POINT as f32
 }
 
@@ -119,6 +123,7 @@ pub(crate) fn showing_markup() -> bool {
 }
 
 /// Show tracked changes or not: the pages are laid out again.
+#[allow(dead_code)]
 pub(crate) fn show_markup(on: bool) {
     set_markup_display_mode(if on { MarkupDisplayMode::All } else { MarkupDisplayMode::None });
 }
@@ -148,6 +153,19 @@ pub(crate) fn set_shown_reviewers(reviewers: Option<std::collections::HashSet<St
 
 /// The colour tracked changes are shown in (Word's first author's).
 const REVISION_COLOR: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xC00000);
+/// The colour tracked moves are shown in (Word's standard green).
+pub(crate) const MOVE_REVISION_COLOR: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0x008000);
+
+/// The highlight colour for commented text ranges (Word-compatible pale amber/yellow).
+pub(crate) const COMMENT_HIGHLIGHT_COLOR: ibis_doc_model::Color = ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0xfff2ac), alpha: 180 };
+/// The background colour of the comment indicator bubble in the margin.
+#[allow(dead_code)]
+pub(crate) const COMMENT_BUBBLE_BG: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xfef7e0);
+/// The border colour of the comment indicator bubble in the margin.
+#[allow(dead_code)]
+pub(crate) const COMMENT_BUBBLE_BORDER: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xf9ab00);
+/// The icon colour inside the comment indicator bubble in the margin.
+pub(crate) const COMMENT_BUBBLE_ICON: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xd9822b);
 
 /// The Latin typeface drawn for ＭＳ 明朝's half-width characters.
 const MINCHO_LATIN: &str = "Times New Roman";
@@ -164,15 +182,25 @@ fn full_width(c: char) -> bool {
 }
 
 /// Characters a line may not start with (closing brackets, punctuation,
-/// small kana).
-fn no_line_start(c: char) -> bool {
-    NO_LINE_START.contains(c)
-}
-
-/// The standard characters a line may not start with (禁則文字の設定の「標準」).
-pub(crate) const NO_LINE_START: &str = "、。，．・：；？！゛゜ヽヾゝゞ々ー）］｝」』】〕〉》’”)]}.,:;!?ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ―…‥％%"; // i18n-ok（行頭禁則の文字の集合。文字の並び）
+/// The strict characters a line may not start with (禁則文字の設定の「厳密」: 小書き仮名や長音記号等を含む).
+pub(crate) const STRICT_NO_LINE_START: &str = "、。，．・：；？！゛゜ヽヾゝゞ々ー）］｝」』】〕〉》’”)]}.,:;!?ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ―…‥％%"; // i18n-ok（行頭禁則の文字の集合。文字の並び）
+/// The normal/standard characters a line may not start with (禁則文字の設定の「標準」: 小書き仮名や長音記号を行頭に許す).
+pub(crate) const NORMAL_NO_LINE_START: &str = "、。，．・：；？！゛゜ヽヾゝゞ々）］｝」』】〕〉》’”)]}.,:;!?―…‥％%"; // i18n-ok（行頭禁則の文字の集合。文字の並び）
+/// Backward compatible alias for strict line-breaking start characters.
+#[allow(dead_code)]
+pub(crate) const NO_LINE_START: &str = STRICT_NO_LINE_START;
 /// The standard characters a line may not end with.
 pub(crate) const NO_LINE_END: &str = "（［｛「『【〔〈《‘“([{"; // i18n-ok（行末禁則の文字の集合。文字の並び）
+
+/// Characters a line may not start with (closing brackets, punctuation,
+/// small kana when strict).
+fn no_line_start(c: char, strict: bool) -> bool {
+    if strict {
+        STRICT_NO_LINE_START.contains(c)
+    } else {
+        NORMAL_NO_LINE_START.contains(c)
+    }
+}
 
 /// Characters a line may not end with (opening brackets).
 fn no_line_end(c: char) -> bool {
@@ -196,6 +224,8 @@ enum Unit {
     ListTab,
     Picture { media: MediaId, w: f32, h: f32 },
     Shape { shape: Box<ibis_doc_model::Shape>, w: f32, h: f32 },
+    /// A typeset formula (`w`, `h` its width and height, `descent` the part of `h` below its baseline).
+    Math { boxed: Arc<crate::render::math_view::MathBox>, w: f32, h: f32, descent: f32, font: Font, color: Hsla, display: bool },
     LineBreak,
     PageBreak,
     ColumnBreak,
@@ -211,6 +241,7 @@ struct LineBox {
     page_break: bool,
     column_break: bool,
     has_revision: bool,
+    comment_marks: Vec<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -220,6 +251,7 @@ struct WrapObstacle {
     y_top: f32,
     y_bottom: f32,
     wrap_text: String,
+    wrap_polygon: Option<(ibis_doc_model::WrapPolygon, f32, f32, f32, f32, f32, f32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -229,7 +261,9 @@ struct WrapObstacleInPara {
     rel_top: f32,
     rel_bottom: f32,
     wrap_text: String,
+    wrap_polygon: Option<(ibis_doc_model::WrapPolygon, f32, f32, f32, f32, f32, f32)>,
     shape_to_emit: Option<(ibis_doc_model::Shape, f32, f32, f32, f32, bool)>,
+    drop_cap_to_emit: Option<Item>,
 }
 
 fn square_shape(p: &FlowParagraph) -> Option<&ibis_doc_model::Shape> {
@@ -251,6 +285,8 @@ pub(crate) struct Layouter<'r> {
     chapter_prefix: std::cell::RefCell<String>,
     /// The line grid's pitch for the current section.
     line_pitch: std::cell::Cell<Option<Emu>>,
+    /// The width (points) of the line the paragraph being laid out breaks into (`f32::MAX` where it is not known).
+    line_room: std::cell::Cell<f32>,
     /// The number of pages of the document and of the current section, and
     /// the section's number, for `NUMPAGES`, `SECTIONPAGES` and `SECTION`,
     /// once the body is paginated (the headers and footers); before, the
@@ -273,6 +309,32 @@ pub(crate) struct Layouter<'r> {
     current_cell: std::cell::Cell<Option<(u32, usize, usize)>>,
     /// The paragraph whose fields are being made into text (a `STYLEREF` in the body looks back from it).
     field_paragraph: std::cell::Cell<Option<u32>>,
+    /// Active comment IDs covering run `(para_id, run_index)` in the document.
+    comment_runs: std::collections::HashMap<(u32, usize), Vec<u32>>,
+}
+
+fn map_comment_runs(doc: &FlowDocument) -> std::collections::HashMap<(u32, usize), Vec<u32>> {
+    let mut map: std::collections::HashMap<(u32, usize), Vec<u32>> = std::collections::HashMap::new();
+    let mut active: Vec<u32> = Vec::new();
+    for p in ibis_doc_model::all_paragraphs(doc) {
+        for (idx, r) in p.runs.iter().enumerate() {
+            match r.kind {
+                FlowRunKind::CommentStart(id) => {
+                    active.push(id);
+                }
+                FlowRunKind::CommentEnd(id) => {
+                    active.retain(|&c| c != id);
+                }
+                FlowRunKind::CommentRef(_) => {}
+                _ => {
+                    if !active.is_empty() {
+                        map.insert((p.id, idx), active.clone());
+                    }
+                }
+            }
+        }
+    }
+    map
 }
 
 /// The run index of a list item's number (drawn in `list_style`).
@@ -313,6 +375,15 @@ fn run_border_items(
     x_right: f32,
     y_bottom: f32,
 ) -> Vec<Item> {
+    // A wave is a line along each side, as a paragraph's.
+    if matches!(b.style, ibis_doc_model::BorderStyle::Wave | ibis_doc_model::BorderStyle::DoubleWave) {
+        let half = pt(b.total()) / 2.0;
+        let mut out = border_items(b, true, true, y_top + half, x_left, x_right, true, true);
+        out.extend(border_items(b, true, false, y_bottom - half, x_left, x_right, true, true));
+        out.extend(border_items(b, false, true, x_left + half, y_top, y_bottom, true, true));
+        out.extend(border_items(b, false, false, x_right - half, y_top, y_bottom, true, true));
+        return out;
+    }
     let color = hsla(ibis_doc_model::Color::opaque(b.color));
     let mut out = Vec::new();
     let dashes = b.dashes().map(|d| d.into_iter().map(pt).collect::<Vec<f32>>());
@@ -369,6 +440,14 @@ fn run_border_items(
     out
 }
 
+/// The height of a line with Hangul (ems) and how much of what it adds to a Latin or Japanese line is above the text.
+const HANGUL_LINE: f32 = 1.51;
+const HANGUL_ASCENT_SHARE: f32 = 0.8;
+
+fn is_hangul(c: char) -> bool {
+    matches!(c, '\u{1100}'..='\u{11ff}' | '\u{3130}'..='\u{318f}' | '\u{ac00}'..='\u{d7af}')
+}
+
 fn push_styled_text_items(
     items: &mut Vec<Item>,
     s: &ibis_doc_model::FlowRunStyle,
@@ -380,6 +459,71 @@ fn push_styled_text_items(
     size: f32,
     color: Hsla,
 ) {
+    // Word 2010's effects: a glow and a shadow behind, the outline around (a ring of copies), a gradient fill
+    // by the character.
+    if let Some(e) = &s.effects {
+        let rgba = |rgb: ibis_doc_model::Rgb, alpha: u8| {
+            let mut c = hsla(ibis_doc_model::Color::opaque(rgb));
+            c.a *= alpha as f32 / 255.0;
+            c
+        };
+        let copy = |items: &mut Vec<Item>, dx: f32, dy: f32, color: Hsla| items.push(Item::Text { x: x0 + dx, y: y_base + dy, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color });
+        if let Some((radius, rgb, alpha)) = e.glow {
+            let r = (radius as f32 / 12_700.0).min(1.5);
+            if r > 0.0 {
+                for ring in 1..=3 {
+                    let d = r * ring as f32 / 3.0;
+                    for k in 0..12 {
+                        let angle = k as f32 * std::f32::consts::TAU / 12.0;
+                        copy(items, d * angle.cos(), d * angle.sin(), rgba(rgb, (alpha as f32 * 0.25) as u8));
+                    }
+                }
+            }
+        }
+        if let Some(sh) = e.shadow {
+            let dist = sh.distance as f32 / 12_700.0;
+            let angle = (sh.direction as f32 / 60_000.0).to_radians();
+            let (dx, dy) = (dist * angle.cos(), dist * angle.sin());
+            let blur = sh.blur as f32 / 12_700.0;
+            if blur > 0.5 {
+                for (ox, oy) in [(-blur / 3.0, 0.0), (blur / 3.0, 0.0), (0.0, -blur / 3.0), (0.0, blur / 3.0)] {
+                    copy(items, dx + ox, dy + oy, rgba(sh.color, (sh.alpha as f32 * 0.25) as u8));
+                }
+            } else {
+                copy(items, dx, dy, rgba(sh.color, sh.alpha));
+            }
+        }
+        if let Some((width, rgb)) = e.outline {
+            let r = (width as f32 / 12_700.0 / 2.0).max(0.25);
+            for k in 0..8 {
+                let angle = k as f32 * std::f32::consts::TAU / 8.0;
+                copy(items, r * angle.cos(), r * angle.sin(), rgba(rgb, 255));
+            }
+        }
+        if let Some((stops, _angle)) = &e.gradient {
+            // The colour at a position across the run (left to right).
+            let total = offsets.last().copied().unwrap_or(0.0).max(0.001);
+            let at = |t: f32| -> ibis_doc_model::Rgb {
+                let t = (t * 100_000.0).clamp(0.0, 100_000.0);
+                let upper = stops.iter().position(|(p, _)| *p as f32 >= t).unwrap_or(stops.len() - 1);
+                if upper == 0 {
+                    return stops[0].1;
+                }
+                let (p0, c0) = stops[upper - 1];
+                let (p1, c1) = stops[upper];
+                let f = if p1 > p0 { ((t - p0 as f32) / (p1 - p0) as f32).clamp(0.0, 1.0) } else { 0.0 };
+                let mix = |a: u32, b: u32| ((a as f32) * (1.0 - f) + (b as f32) * f).round() as u32;
+                ibis_doc_model::Rgb((mix(c0.0 >> 16 & 255, c1.0 >> 16 & 255) << 16) | (mix(c0.0 >> 8 & 255, c1.0 >> 8 & 255) << 8) | mix(c0.0 & 255, c1.0 & 255))
+            };
+            for ((i, c), start) in text.char_indices().zip(offsets.iter()) {
+                let _ = i;
+                let width_of_char = offsets.get(text[..i].chars().count() + 1).map_or(0.0, |next| next - start);
+                let colour = rgba(at((start + width_of_char / 2.0) / total), 255);
+                items.push(Item::Text { x: x0 + start, y: y_base, text: c.to_string().into(), offsets: vec![0.0].into(), font: font.clone(), size, color: colour });
+            }
+            return;
+        }
+    }
     if s.shadow {
         let dx = (size * 0.05).max(0.6);
         let dy = (size * 0.05).max(0.6);
@@ -392,16 +536,16 @@ fn push_styled_text_items(
             items.push(Item::Text { x: x0 + ox, y: y_base + oy, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color });
         }
         items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffffff))) });
-    } else if s.emboss {
-        let ed = 0.5f32;
-        items.push(Item::Text { x: x0 - ed, y: y_base - ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffffff))) });
-        items.push(Item::Text { x: x0 + ed, y: y_base + ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x808080))) });
-        items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xbfbfbf))) });
-    } else if s.imprint {
-        let ed = 0.5f32;
-        items.push(Item::Text { x: x0 - ed, y: y_base - ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x808080))) });
-        items.push(Item::Text { x: x0 + ed, y: y_base + ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffffff))) });
-        items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xbfbfbf))) });
+    } else if s.emboss || s.imprint {
+        // Word's PDF: the text in its colour with a copy of it in 60 % grey (#999999) a point down and right (an
+        // emboss) or up and left (an imprint), behind it.
+        let ed = if s.emboss { 1.0f32 } else { -1.0f32 };
+        items.push(Item::Text { x: x0 + ed, y: y_base + ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x999999))) });
+        // The strokes of the text itself are heavier than plain text's (a third more black on the page).
+        for (ox, oy) in [(-0.3f32, -0.3f32), (0.3, -0.3), (-0.3, 0.3)] {
+            items.push(Item::Text { x: x0 + ox, y: y_base + oy, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color });
+        }
+        items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color });
     } else {
         items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color });
     }
@@ -444,6 +588,15 @@ impl<'r> Layouter<'r> {
         self.doc.default_tab_stop.map_or(851.0 / 20.0, pt)
     }
 
+    /// Effective markup display mode for this layout pass (honours print_markup during printing DOCX-SEC-014).
+    fn markup_mode(&self) -> MarkupDisplayMode {
+        if self.res.print && !self.res.print_markup {
+            MarkupDisplayMode::None
+        } else {
+            markup_display_mode()
+        }
+    }
+
     /// The lines of the text in text boxes on the line grid (`w:docGrid type="lines"`), as Word puts
     /// them: each paragraph's line is as many `linePitch`es high as its text needs (a 14 pt 游明朝
     /// line in two grids of 20 pt), as the lines of the body text are.
@@ -458,7 +611,7 @@ impl<'r> Layouter<'r> {
                     _ => None,
                 };
                 let Some(body) = body else { continue };
-                if shape.floating.is_none() || body.vertical {
+                if body.vertical {
                     continue;
                 }
                 // The first paragraph's baseline: where the text box draws it in an exact line, and
@@ -554,7 +707,10 @@ impl<'r> Layouter<'r> {
         // An exact line spacing leaves no room for the leading (DSEC-00011:
         // 10 pt 游ゴシック in an exact 15 pt line).
         let text_line = if grid > 0.0 || matches!(p.line, LineHeight::Exact(_)) { text_line } else { text_line + lead };
-        (height - grid - text_line).max(0.0) * 0.58 + grid * 0.5 + text_ascent
+        // A multiple (`w:lineRule="auto"`) puts all of its extra room below the text
+        // (DRUX-00730: 8 pt text in a double line sits at the top of it).
+        let above = if matches!(p.line, LineHeight::Auto(_)) { 0.0 } else { 0.58 };
+        (height - grid - text_line).max(0.0) * above + grid * 0.5 + text_ascent
     }
 
     fn font_for_size(&self, style: &FlowRunStyle, name: Option<&str>, size: u32) -> Font {
@@ -863,9 +1019,97 @@ impl<'r> Layouter<'r> {
             "INFO" => return self.doc.info_text(t),
             "ASK" => return Some(String::new()),
             "FILLIN" | "FILL-IN" => return Some(self.doc.fillin_text(t)),
+            "AUTOTEXT" => return Some(ibis_doc_model::field_format::format_autotext(t)),
+            "AUTOTEXTLIST" => return Some(ibis_doc_model::field_format::format_autotextlist(t)),
+            "CITATION" => return Some(ibis_doc_model::field_format::format_citation(t)),
+            "BIBLIOGRAPHY" => return Some(ibis_doc_model::field_format::format_bibliography(t)),
             _ => return None,
         };
         Some(format_field_number(n.into(), t).unwrap_or_else(|| n.to_string()))
+    }
+
+    /// A text box in the text that does not wrap its text (`wrap="none"`) is as wide as its longest line (and its
+    /// margins) when that is less than its width, as Word draws it (DTXB: a 2-character box is 33 pt wide
+    /// whatever the extent says); a longer line wraps at the extent.
+    fn fit_unwrapped_text_box(&self, shape: &mut ibis_doc_model::Shape) {
+        let frame_width = shape.frame.width;
+        let body = match &mut shape.kind {
+            ibis_doc_model::ShapeKind::Auto(a) => a.text.as_mut(),
+            ibis_doc_model::ShapeKind::TextBox(body) => Some(body),
+            _ => None,
+        };
+        let Some(body) = body else { return };
+        if body.wrap || body.vertical || body.sideways != 0 {
+            return;
+        }
+        let mut widest = 0.0f32;
+        for paragraph in &body.paragraphs {
+            let mut width = 0.0f32;
+            for r in paragraph.runs.iter().filter(|r| !r.text.is_empty()) {
+                let size = r.style.font_size.unwrap_or(body.style.font_size) as f32 / 100.0;
+                let cjk = r.text.chars().any(crate::render::rich_text::is_cjk);
+                let name = if cjk { r.style.font.as_deref() } else { r.style.fallback_font.as_deref().or(r.style.font.as_deref()) };
+                let font = self.res.font(&TextStyle { font_size: (size * 100.0) as u32, bold: r.style.bold.unwrap_or(false), italic: r.style.italic.unwrap_or(false), font: name.map(str::to_string), ..TextStyle::default() });
+                width += self.res.text_width(&r.text, &font, size);
+            }
+            widest = widest.max(width);
+        }
+        let natural = ((widest * 12_700.0).round() as i64) + body.insets.left + body.insets.right;
+        if natural > 0 && natural < frame_width {
+            shape.frame.width = natural;
+        } else {
+            // Too long for the box: it grows to the line it is on (the cell's width: DTXB, a 78.7 pt box in an
+            // 89.4 pt cell is 89.4 pt wide) and wraps there.
+            let room = self.line_room.get();
+            if room < f32::MAX && pt(frame_width) < room {
+                shape.frame.width = ((room * 12_700.0) as i64).min(natural);
+            }
+            body.wrap = true;
+        }
+    }
+
+    /// A formula as a unit: typeset at the run's size in the run's typeface, as wide and as high as it comes. Word's math typeface
+    /// is Cambria Math (the shared alias table finds a substitute for it).
+    fn math_unit(&self, math: &ibis_doc_model::math::Math, display: bool, style: &ibis_doc_model::FlowRunStyle, size: f32) -> Unit {
+        let font = self.font(style, Some("Cambria Math"));
+        let mut measure = |text: &str, size: f32, italic: bool| {
+            let mut f = font.clone();
+            if italic {
+                f.style = FontStyle::Italic;
+            }
+            let (ascent, descent, _) = self.res.line_metrics(&f);
+            (self.res.text_width(text, &f, size), ascent * size, descent * size)
+        };
+        let boxed = crate::render::math_view::typeset(math, size, &mut measure);
+        let (w, h, descent) = (boxed.width, boxed.ascent + boxed.descent, boxed.descent);
+        let color = hsla(ibis_doc_model::Color::opaque(style.color));
+        Unit::Math { boxed: Arc::new(boxed), w, h, descent, font, color, display }
+    }
+
+    /// A typeset formula as page items: its text where its pieces are (from `x` on the baseline `baseline`), its rules and lines.
+    fn math_items(&self, boxed: &crate::render::math_view::MathBox, x: f32, baseline: f32, font: &Font, color: Hsla) -> Vec<Item> {
+        use crate::render::math_view::Piece;
+        boxed
+            .pieces
+            .iter()
+            .map(|piece| match piece {
+                Piece::Text { x: dx, y, text, size, italic } => {
+                    let mut f = font.clone();
+                    if *italic {
+                        f.style = FontStyle::Italic;
+                    }
+                    let mut offsets = Vec::with_capacity(text.chars().count());
+                    let mut at = 0.0;
+                    for c in text.chars() {
+                        offsets.push(at);
+                        at += self.res.text_width(&c.to_string(), &f, *size);
+                    }
+                    Item::Text { x: x + dx, y: baseline + y, text: SharedString::from(text.clone()), offsets: offsets.into(), font: f, size: *size, color }
+                }
+                Piece::Rule { x: dx, y, w, h } => Item::Rect { x: x + dx, y: baseline + y, w: *w, h: *h, color },
+                Piece::Line { x0, y0, x1, y1, t } => Item::Stroke { x: x + x0, y: baseline + y0, x2: x + x1, y2: baseline + y1, w: *t, color },
+            })
+            .collect()
     }
 
     /// The paragraph's text as units, with the page number for `PAGE`.
@@ -897,7 +1141,12 @@ impl<'r> Layouter<'r> {
                 });
                 let font = self.font(style, name);
                 let width = self.res.text_width(&c.to_string(), &font, size);
-                let (ascent, line) = self.line_metrics(name, &font, size);
+                let (mut ascent, mut line) = self.line_metrics(name, &font, size);
+                if is_hangul(c) && line < size * HANGUL_LINE {
+                    let extra = size * HANGUL_LINE - line;
+                    ascent += extra * HANGUL_ASCENT_SHARE;
+                    line += extra;
+                }
                 out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(name) * size, auto_space: 0.0 });
                 positions.push((0, false));
             }
@@ -917,13 +1166,36 @@ impl<'r> Layouter<'r> {
                 ListSuffix::Nothing => {}
             }
         }
+        if let Some(sub) = &p.subdoc {
+            let style = &p.mark;
+            let size = (style.size as f32 / 100.0).max(9.0);
+            let lock_str = if sub.locked { " [ロック]" } else { "" }; // i18n-ok
+            let expand_str = if sub.expanded && !sub.content_paragraphs.is_empty() {
+                format!(" ({})", sub.content_paragraphs.join(" / "))
+            } else {
+                String::new()
+            };
+            let badge = if p.runs.is_empty() {
+                format!("[サブ文書: {}{}{}]", sub.target, lock_str, expand_str) // i18n-ok
+            } else {
+                format!("[サブ文書: {}{}] ", sub.target, lock_str) // i18n-ok
+            };
+            for c in badge.chars() {
+                let name = style.font_for(c);
+                let font = self.font(style, name);
+                let width = self.res.text_width(&c.to_string(), &font, size);
+                let (ascent, line) = self.line_metrics(name, &font, size);
+                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(name) * size, auto_space: 0.0 });
+                positions.push((0, false));
+            }
+        }
         for (index, run) in p.runs.iter().enumerate() {
             let before = out.len();
             let style = &run.style;
             let size = style.size as f32 / 100.0 * if style.position == VerticalPosition::Baseline { 1.0 } else { 0.65 };
             let half_points = (style.size + 25) / 50;
             let small_half_points = (half_points * 8 + 5) / 10;
-            let small_size = (small_half_points * 50) as f32 / 100.0 * if style.position == VerticalPosition::Baseline { 1.0 } else { 0.65 };
+            let _small_size = (small_half_points * 50) as f32 / 100.0 * if style.position == VerticalPosition::Baseline { 1.0 } else { 0.65 };
             let push_text = |text: &str, out: &mut Vec<Unit>| {
                 for c in text.chars() {
                     let char_style_size = style.size_for(c);
@@ -959,6 +1231,13 @@ impl<'r> Layouter<'r> {
                     // A comment's mark (U+200B) takes no room.
                     let width = if c == '\u{200b}' { 0.0 } else { cell * style.scale as f32 / 100.0 + pt(style.spacing) };
                     let (mut ascent, mut line) = self.line_metrics(name, &font, base_size);
+                    // A line with Hangul is 1.72 em high in Word (18.1 pt of 10.5 pt text, DNUM: its fallback font for
+                    // Hangul), the text sitting low in it.
+                    if is_hangul(c) && line < base_size * HANGUL_LINE {
+                        let extra = base_size * HANGUL_LINE - line;
+                        ascent += extra * HANGUL_ASCENT_SHARE;
+                        line += extra;
+                    }
                     if let Some(b) = &style.border {
                         let pad_v = pt(b.space);
                         let extra_bw = (pt(b.total()) - pt(b.width)).max(0.0);
@@ -975,14 +1254,14 @@ impl<'r> Layouter<'r> {
                 showing_hidden_text()
             };
             let rev_hidden = match run.revision.as_ref() {
-                Some(r) if is_reviewer_shown(&r.author) => match markup_display_mode() {
+                Some(r) if is_reviewer_shown(&r.author) => match self.markup_mode() {
                     MarkupDisplayMode::All => false,
-                    MarkupDisplayMode::Simple | MarkupDisplayMode::None => matches!(r.kind, ibis_doc_model::RevisionKind::Delete),
-                    MarkupDisplayMode::Original => matches!(r.kind, ibis_doc_model::RevisionKind::Insert),
+                    MarkupDisplayMode::Simple | MarkupDisplayMode::None => r.kind.is_delete(),
+                    MarkupDisplayMode::Original => r.kind.is_insert(),
                 },
                 Some(r) => {
                     // 非表示校閲者の変更は確定テキスト（挿入は表示、削除は非表示）として扱う
-                    matches!(r.kind, ibis_doc_model::RevisionKind::Delete)
+                    r.kind.is_delete()
                 }
                 None => false,
             };
@@ -1004,14 +1283,54 @@ impl<'r> Layouter<'r> {
                     }
                 }
                 FlowRunKind::DatePicker { text, .. }
-                | FlowRunKind::RichText { text }
-                | FlowRunKind::PlainText { text } => {
+                | FlowRunKind::RichText { text, .. }
+                | FlowRunKind::PlainText { text, .. }
+                | FlowRunKind::BuildingBlockGallery { text, .. }
+                | FlowRunKind::Group { text, .. } => {
                     if hidden {
                         push_text(&"\u{200b}".repeat(text.chars().count()), &mut out);
                     } else {
                         push_text(text, &mut out);
                     }
                 }
+                FlowRunKind::RepeatingSection { items, selected, .. } => {
+                    let text = items.get(*selected).map(|s| s.as_str()).unwrap_or("");
+                    if hidden {
+                        push_text(&"\u{200b}".repeat(text.chars().count()), &mut out);
+                    } else {
+                        push_text(text, &mut out);
+                    }
+                }
+                FlowRunKind::FormField(field) => match &field.kind {
+                    ibis_doc_model::FormFieldKind::TextInput { value, default, .. } => {
+                        let text = if value.is_empty() {
+                            if !default.is_empty() {
+                                default.as_str()
+                            } else {
+                                "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}"
+                            }
+                        } else {
+                            value.as_str()
+                        };
+                        if hidden {
+                            push_text(&"\u{200b}".repeat(text.chars().count()), &mut out);
+                        } else {
+                            push_text(text, &mut out);
+                        }
+                    }
+                    ibis_doc_model::FormFieldKind::CheckBox { checked, .. } => {
+                        let ch = if *checked { '☒' } else { '☐' };
+                        push_text(&ch.to_string(), &mut out);
+                    }
+                    ibis_doc_model::FormFieldKind::DropDown { items, selected, .. } => {
+                        let text = items.get(*selected).map(|s| s.as_str()).unwrap_or("");
+                        if hidden {
+                            push_text(&"\u{200b}".repeat(text.chars().count()), &mut out);
+                        } else {
+                            push_text(text, &mut out);
+                        }
+                    }
+                },
                 FlowRunKind::PageNumber if show_code => push_text("{ PAGE }", &mut out),
                 FlowRunKind::PageNumber => {
                     let text = match &*self.page_format.borrow() {
@@ -1032,7 +1351,11 @@ impl<'r> Layouter<'r> {
                     // is drawn over it).
                     None => match ibis_doc_model::field_format::enclosed(instruction) {
                         Some((enclosure, _)) => push_text(enclosure.chars().next().map(String::from).as_deref().unwrap_or("○"), &mut out),
-                        None => push_text(shown, &mut out),
+                        // An EQ field of fractions, roots, scripts…: typeset as a formula.
+                        None => match ibis_doc_model::eq_field::eq_math(instruction) {
+                            Some(math) => out.push(self.math_unit(&math, false, style, size)),
+                            None => push_text(shown, &mut out),
+                        },
                     },
                 },
                 FlowRunKind::PageRef { bookmark, .. } if show_code => {
@@ -1055,14 +1378,14 @@ impl<'r> Layouter<'r> {
                 FlowRunKind::LineBreak => out.push(Unit::LineBreak),
                 FlowRunKind::PageBreak => out.push(Unit::PageBreak),
                 FlowRunKind::ColumnBreak => out.push(Unit::ColumnBreak),
-                FlowRunKind::Picture { media, size, look } if look.is_visual_default() => out.push(Unit::Picture { media: *media, w: pt(size.width), h: pt(size.height) }),
+                FlowRunKind::Picture { media, size, look } | FlowRunKind::PictureControl { media, size, look, .. } if look.is_visual_default() => out.push(Unit::Picture { media: *media, w: pt(size.width), h: pt(size.height) }),
                 // A picture turned, flipped, cut or outlined: a shape (drawn as the pictures of a
                 // presentation are) whose room in the line is the box around it turned.
-                FlowRunKind::Picture { media, size, look } => {
+                FlowRunKind::Picture { media, size, look } | FlowRunKind::PictureControl { media, size, look, .. } => {
                     let angle = look.rotation as f32 / 60_000.0 * std::f32::consts::PI / 180.0;
                     let (sin, cos) = (angle.sin().abs(), angle.cos().abs());
                     let (w, h) = (pt(size.width), pt(size.height));
-                    let picture = ibis_doc_model::Picture { media: *media, crop: look.crop, stroke: look.stroke.clone(), corner: 0, duotone: look.duotone, clear: None, luminance: look.luminance, alpha: look.alpha, clip: None, alt_text: look.alt_text.clone(), decorative: look.decorative, name: look.name.clone(), shadow: None, reflection: None, soft_edge: None, ole: look.ole };
+                    let picture = ibis_doc_model::Picture { media: *media, crop: look.crop, stroke: look.stroke.clone(), corner: 0, duotone: look.duotone, clear: None, luminance: look.luminance, clip: None, alt_text: look.alt_text.clone(), decorative: look.decorative, name: look.name.clone(), shadow: None, reflection: None, soft_edge: look.soft_edge, geometry: look.geometry.clone(), effects: look.effects.clone(), tile: None, fill_rect: None, artistic_effect: None, ole: look.ole };
                     let shape = ibis_doc_model::Shape {
                         id: ibis_doc_model::ShapeId(0),
                         frame: ibis_doc_model::EmuRect::new(0, 0, size.width, size.height),
@@ -1074,10 +1397,15 @@ impl<'r> Layouter<'r> {
                     };
                     out.push(Unit::Shape { shape: Box::new(shape), w: w * cos + h * sin, h: w * sin + h * cos });
                 }
+                FlowRunKind::Math { math, display } => out.push(self.math_unit(math, *display, style, size)),
                 FlowRunKind::Shape(shape) => {
                     let is_floating = shape.floating.is_some();
+                    let mut shape = shape.clone();
+                    if !is_floating {
+                        self.fit_unwrapped_text_box(&mut shape);
+                    }
                     let (w, h) = if is_floating { (0.0, 0.0) } else { (pt(shape.frame.width), pt(shape.frame.height)) };
-                    out.push(Unit::Shape { shape: shape.clone(), w, h });
+                    out.push(Unit::Shape { shape, w, h });
                 }
             }
             // 組み文字: the run's room is its two half-size lines' (and
@@ -1163,7 +1491,9 @@ impl<'r> Layouter<'r> {
 
     /// Break a paragraph `width` points wide into lines.
     fn paragraph(&self, p: &FlowParagraph, width: f32, page_number: u32, obstacle: Option<&WrapObstacleInPara>, in_table: bool) -> Vec<LineBox> {
-        let (mut units, positions) = self.units(p, page_number);
+        self.line_room.set(width - pt(p.left) - pt(p.right));
+        let (mut units, mut positions) = self.units(p, page_number);
+        self.line_room.set(f32::MAX);
         let left = pt(p.left);
         let right = pt(p.right);
         // A list item's number centred on, or ending at, its position.
@@ -1267,19 +1597,81 @@ impl<'r> Layouter<'r> {
                     };
                     abs_y - margin_t
                 };
+                let wrap_polygon = matches!(f.wrap.as_str(), "tight" | "through")
+                    .then(|| f.wrap_polygon.clone())
+                    .flatten()
+                    .map(|poly| (poly, sx, sy, sw, sh, dl, dr));
                 WrapObstacleInPara {
                     shape_left: sx - dl,
                     shape_right: sx + sw + dr,
                     rel_top: sy - dt,
                     rel_bottom: sy + sh + db,
                     wrap_text,
+                    wrap_polygon,
                     shape_to_emit: Some((shape.clone(), sx, sy, sw, sh, f.behind_doc)),
+                    drop_cap_to_emit: None,
                 }
             })
         } else {
             None
         };
-        let effective_obs = obstacle.or(default_obs.as_ref());
+        let drop_cap_obs = if obstacle.is_none() && default_obs.is_none() {
+            if let Some(dc) = p.drop_cap.filter(|d| d.location != ibis_doc_model::DropCapLocation::None) {
+                let first_char_idx = units.iter().position(|u| matches!(u, Unit::Char { c, .. } if !c.is_whitespace() && *c != '\u{200b}'));
+                if let Some(idx) = first_char_idx {
+                    let (c, font, style) = match &units[idx] {
+                        Unit::Char { c, font, style, .. } => (*c, font.clone(), *style),
+                        _ => unreachable!(),
+                    };
+                    units.remove(idx);
+                    if idx < positions.len() {
+                        positions.remove(idx);
+                    }
+                    let lines_count = (dc.lines as f32).clamp(1.0, 10.0);
+                    let cap_h = default_line_h * lines_count;
+                    let cap_font_size = default_line_h * lines_count * 0.78;
+                    let cap_w = self.res.text_width(&c.to_string(), &font, cap_font_size);
+                    let space_pt = pt(dc.space);
+                    let cap_baseline = (lines_count - 1.0) * default_line_h + mark_metrics.1;
+                    let cap_color = p.runs.get(style).map_or_else(
+                        || hsla(ibis_doc_model::Color::opaque(p.list_style.color)),
+                        |r| hsla(ibis_doc_model::Color::opaque(r.style.color)),
+                    );
+                    let start_x = line_start_x(true);
+                    let (cap_x, obs_right) = if dc.location == ibis_doc_model::DropCapLocation::Margin {
+                        (start_x - cap_w - space_pt, start_x)
+                    } else {
+                        (start_x, start_x + cap_w + space_pt)
+                    };
+                    let item = Item::Text {
+                        x: cap_x,
+                        y: cap_baseline,
+                        text: c.to_string().into(),
+                        offsets: Arc::from([0.0]),
+                        font,
+                        size: cap_font_size,
+                        color: cap_color,
+                    };
+                    Some(WrapObstacleInPara {
+                        shape_left: cap_x,
+                        shape_right: obs_right,
+                        rel_top: 0.0,
+                        rel_bottom: cap_h,
+                        wrap_text: "right".to_string(),
+                        wrap_polygon: None,
+                        shape_to_emit: None,
+                        drop_cap_to_emit: Some(item),
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let effective_obs = obstacle.or(default_obs.as_ref()).or(drop_cap_obs.as_ref());
 
         if let Some(obs) = effective_obs {
             let shape_left = obs.shape_left;
@@ -1307,21 +1699,33 @@ impl<'r> Layouter<'r> {
                 let line_end = width - right;
                 let full_room = (line_end - line_start).max(0.0);
 
-                let is_intersecting = (cur_y < shape_bottom - 0.01) && (cur_y + default_line_h > shape_top + 0.01);
+                let (line_shape_left, line_shape_right, is_intersecting) = if (cur_y < shape_bottom - 0.01) && (cur_y + default_line_h > shape_top + 0.01) {
+                    if let Some((poly, sx, sy, sw, sh, dl, dr)) = &obs.wrap_polygon {
+                        if let Some((min_x, max_x)) = poly.x_span_for_y_band(*sx, *sy, *sw, *sh, cur_y, cur_y + default_line_h) {
+                            (min_x - dl, max_x + dr, true)
+                        } else {
+                            (shape_left, shape_right, false)
+                        }
+                    } else {
+                        (shape_left, shape_right, true)
+                    }
+                } else {
+                    (shape_left, shape_right, false)
+                };
                 let slots = if is_intersecting {
-                    let left_w = (shape_left - line_start).max(0.0);
-                    let right_w = (line_end - shape_right).max(0.0);
+                    let left_w = (line_shape_left - line_start).max(0.0);
+                    let right_w = (line_end - line_shape_right).max(0.0);
                     let min_slot_w = 15.0;
                     match wrap_text {
                         "left" => {
                             if left_w >= min_slot_w { vec![(line_start, left_w)] } else { vec![] }
                         }
                         "right" => {
-                            if right_w >= min_slot_w { vec![(shape_right, right_w)] } else { vec![] }
+                            if right_w >= min_slot_w { vec![(line_shape_right, right_w)] } else { vec![] }
                         }
                         "largest" => {
                             if right_w >= left_w && right_w >= min_slot_w {
-                                vec![(shape_right, right_w)]
+                                vec![(line_shape_right, right_w)]
                             } else if left_w >= min_slot_w {
                                 vec![(line_start, left_w)]
                             } else {
@@ -1331,7 +1735,7 @@ impl<'r> Layouter<'r> {
                         _ /* "bothSides" */ => {
                             let mut s = Vec::new();
                             if left_w >= min_slot_w { s.push((line_start, left_w)); }
-                            if right_w >= min_slot_w { s.push((shape_right, right_w)); }
+                            if right_w >= min_slot_w { s.push((line_shape_right, right_w)); }
                             s
                         }
                     }
@@ -1448,7 +1852,7 @@ impl<'r> Layouter<'r> {
 
                 let (text_line, lead) = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Char { line, lead, .. } = u { Some((*line, *lead)) } else { None }).fold((0.0f32, 0.0f32), |(l, d), (l2, d2)| (l.max(l2), d.max(d2)));
                 let (text_line, lead) = if text_line > 0.0 { (text_line, lead) } else { (mark_metrics.0, mark_metrics.2) };
-                let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
+                let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } | Unit::Math { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
                 let natural = text_line.max(picture);
                 let lead = if picture > text_line { 0.0 } else { lead };
                 let height = self.resolve_line_height(p, natural, lead, in_table);
@@ -1466,11 +1870,17 @@ impl<'r> Layouter<'r> {
                 let largest = if largest > 0.0 { largest } else { mark_size };
                 let (text_line, text_ascent, lead) = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Char { c, line, ascent, lead, style, size, .. } = u { let (line, ascent) = mark_room(p, *c, *style, *size, *line, *ascent); Some((line, ascent, *lead)) } else { None }).fold((0.0f32, 0.0f32, 0.0f32), |(l, a, d), (l2, a2, d2)| (l.max(l2), a.max(a2), d.max(d2)));
                 let (text_line, text_ascent, lead) = if text_line > 0.0 { (text_line, text_ascent, lead) } else { mark_metrics };
-                let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
+                let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } | Unit::Math { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
                 let natural = text_line.max(picture);
                 let lead = if picture > text_line { 0.0 } else { lead };
                 let height = self.resolve_line_height(p, natural, lead, in_table);
-                let baseline = if picture > text_line { height } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
+                let height = if physical_lines.len() <= 1 && obs.drop_cap_to_emit.is_some() {
+                    height.max(obs.rel_bottom)
+                } else {
+                    height
+                };
+                let math_below = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Math { descent, .. } = u { Some(*descent) } else { None }).fold(0.0f32, f32::max);
+                let baseline = if picture > text_line { height - math_below } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
                 let page_break = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).any(|u| matches!(u, Unit::PageBreak));
                 let column_break = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).any(|u| matches!(u, Unit::ColumnBreak));
                 let has_revision = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).any(|u| {
@@ -1484,7 +1894,31 @@ impl<'r> Layouter<'r> {
                         false
                     }
                 });
-                let mut line = LineBox { height, baseline, items: Vec::new(), page_break, column_break, has_revision };
+                let mut comment_marks = Vec::new();
+                for u in phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]) {
+                    if let Unit::Char { style, .. } = u {
+                        if *style != LABEL {
+                            if let Some(c_ids) = self.comment_runs.get(&(p.id, *style)) {
+                                for &id in c_ids {
+                                    if !comment_marks.contains(&id) {
+                                        comment_marks.push(id);
+                                    }
+                                }
+                            }
+                            if let Some(r) = p.runs.get(*style) {
+                                match r.kind {
+                                    FlowRunKind::CommentStart(id) | FlowRunKind::CommentRef(id) => {
+                                        if !comment_marks.contains(&id) {
+                                            comment_marks.push(id);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut line = LineBox { height, baseline, items: Vec::new(), page_break, column_break, has_revision, comment_marks };
 
                 if n == 0 {
                     if let Some((shape, sx, sy, sw, sh, behind_doc)) = &obs.shape_to_emit {
@@ -1500,6 +1934,9 @@ impl<'r> Layouter<'r> {
                         } else {
                             line.items.push(item);
                         }
+                    }
+                    if let Some(item) = &obs.drop_cap_to_emit {
+                        line.items.push(item.clone());
                     }
                 }
 
@@ -1518,7 +1955,9 @@ impl<'r> Layouter<'r> {
                     let gaps = visible_end.saturating_sub(1 + marks).max(1) as f32;
                     let room = seg.slot_w;
                     let extra = if justify && !has_tab && used < room { (room - used) / gaps } else { 0.0 };
-                    let shift = match p.align {
+                    // A displayed formula alone on its line is centred.
+                    let align = if slice.iter().any(|u| matches!(u, Unit::Math { display: true, .. })) && slice.iter().all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace())) { FlowAlign::Center } else { p.align };
+                    let shift = match align {
                         FlowAlign::Center => ((room - used) / 2.0).max(0.0),
                         FlowAlign::Right => (room - used).max(0.0),
                         FlowAlign::Left if p.bidi => (room - used).max(0.0),
@@ -1533,7 +1972,7 @@ impl<'r> Layouter<'r> {
                         if let Some((x0, text, offsets, font, size, style)) = run.take() {
                             let s = if style == LABEL { &p.list_style } else { &p.runs[style].style };
                             let revised;
-                            let is_all_markup = markup_display_mode() == MarkupDisplayMode::All;
+                            let is_all_markup = self.markup_mode() == MarkupDisplayMode::All;
                             let is_hidden_dotted = p.runs.get(style).is_some_and(|r| r.style.hidden && !self.res.print && showing_hidden_text() && style != LABEL);
                             let active_rev = p.runs.get(style).and_then(|r| r.revision.as_ref()).filter(|r| is_reviewer_shown(&r.author));
                             let s = match active_rev.map(|r| &r.kind).filter(|_| is_all_markup) {
@@ -1543,6 +1982,14 @@ impl<'r> Layouter<'r> {
                                 }
                                 Some(ibis_doc_model::RevisionKind::Delete) if style != LABEL => {
                                     revised = ibis_doc_model::FlowRunStyle { strike: true, color: REVISION_COLOR, ..s.clone() };
+                                    &revised
+                                }
+                                Some(ibis_doc_model::RevisionKind::MoveTo) if style != LABEL => {
+                                    revised = ibis_doc_model::FlowRunStyle { underline: true, underline_style: ibis_doc_model::UnderlineStyle::Single, color: MOVE_REVISION_COLOR, ..s.clone() };
+                                    &revised
+                                }
+                                Some(ibis_doc_model::RevisionKind::MoveFrom) if style != LABEL => {
+                                    revised = ibis_doc_model::FlowRunStyle { strike: true, color: MOVE_REVISION_COLOR, ..s.clone() };
                                     &revised
                                 }
                                 _ if is_hidden_dotted => {
@@ -1568,6 +2015,39 @@ impl<'r> Layouter<'r> {
                             };
                             let y_base = line.baseline + raise + align_shift;
                             let end = offsets.last().copied().unwrap_or(0.0);
+                            let show_comments = self.markup_mode() != MarkupDisplayMode::None && self.markup_mode() != MarkupDisplayMode::Original;
+                            if show_comments && style != LABEL && end > 0.0 {
+                                if let Some(c_ids) = self.comment_runs.get(&(p.id, style)) && !c_ids.is_empty() {
+                                    let color = hsla(COMMENT_HIGHLIGHT_COLOR);
+                                    if let Some(Item::Rect { x: last_x, w: last_w, color: last_c, .. }) = dec.highlights.last_mut()
+                                        && *last_c == color
+                                        && (*last_x + *last_w - x0).abs() < 0.02
+                                    {
+                                        *last_w = (x0 + end) - *last_x;
+                                    } else {
+                                        dec.highlights.push(Item::Rect { x: x0, y: 0.0, w: end, h: line.height, color });
+                                    }
+                                    let comment_ucolor = hsla(ibis_doc_model::Color::opaque(COMMENT_BUBBLE_ICON));
+                                    if let Some(last_u) = dec.underlines.last_mut()
+                                        && last_u.style == UnderlineStyle::Dash
+                                        && last_u.color == comment_ucolor
+                                        && (last_u.baseline - y_base).abs() < 0.01
+                                        && (last_u.size - s_size).abs() < 0.01
+                                        && (last_u.x + last_u.w - x0).abs() < 0.02
+                                    {
+                                        last_u.w = (x0 + end) - last_u.x;
+                                    } else {
+                                        dec.underlines.push(UnderlineBox {
+                                            style: UnderlineStyle::Dash,
+                                            size: s_size,
+                                            x: x0,
+                                            w: end,
+                                            baseline: y_base,
+                                            color: comment_ucolor,
+                                        });
+                                    }
+                                }
+                            }
                             if let Some(h) = s.highlight && end > 0.0 {
                                 let color = hsla(ibis_doc_model::Color::opaque(h));
                                 if let Some(Item::Rect { x: last_x, w: last_w, color: last_c, .. }) = dec.highlights.last_mut()
@@ -1577,6 +2057,10 @@ impl<'r> Layouter<'r> {
                                     *last_w = (x0 + end) - *last_x;
                                 } else {
                                     dec.highlights.push(Item::Rect { x: x0, y: 0.0, w: end, h: line.height, color });
+                                }
+                                // A stripe or a grid over the fill.
+                                if let Some((pattern, pattern_color)) = s.shd_pattern {
+                                    dec.highlights.push(Item::Shading { pattern, color: hsla(ibis_doc_model::Color::opaque(pattern_color)), x: x0, y: 0.0, w: end, h: line.height });
                                 }
                             }
                             if let Some(ref b) = s.border && end > 0.0 {
@@ -1745,6 +2229,12 @@ impl<'r> Layouter<'r> {
                                 line.items.push(Item::Picture { media: *media, x, y: line.baseline - h, w: *w, h: *h });
                                 x += w;
                             }
+                            Unit::Math { boxed, w, font, color, .. } => {
+                                flush(&mut run, &mut line, &mut dec);
+                                let items = self.math_items(boxed, x, line.baseline, font, *color);
+                                line.items.extend(items);
+                                x += w;
+                            }
                             Unit::Shape { .. } => {
                                 flush(&mut run, &mut line, &mut dec);
                             }
@@ -1870,12 +2360,13 @@ impl<'r> Layouter<'r> {
             // paragraph mark's on an empty line).
             let (text_line, text_ascent, lead) = slice.iter().filter_map(|u| if let Unit::Char { c, line, ascent, lead, style, size, .. } = u { let (line, ascent) = mark_room(p, *c, *style, *size, *line, *ascent); Some((line, ascent, *lead)) } else { None }).fold((0.0f32, 0.0f32, 0.0f32), |(l, a, d), (l2, a2, d2)| (l.max(l2), a.max(a2), d.max(d2)));
             let (text_line, text_ascent, lead) = if text_line > 0.0 { (text_line, text_ascent, lead) } else { mark_metrics };
-            let picture = slice.iter().filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
+            let picture = slice.iter().filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } | Unit::Math { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
             let natural = text_line.max(picture);
             let lead = if picture > text_line { 0.0 } else { lead };
                 let height = self.resolve_line_height(p, natural, lead, in_table);
             // Where Word puts the baseline in a line: see `baseline_in_line`.
-            let baseline = if picture > text_line { height } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
+            let math_below = slice.iter().filter_map(|u| if let Unit::Math { descent, .. } = u { Some(*descent) } else { None }).fold(0.0f32, f32::max);
+            let baseline = if picture > text_line { height - math_below } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
             let start_x = line_start_x(n == 0);
             let room = width - right - start_x;
             // Width used (without trailing spaces), and the gaps to spread
@@ -1892,7 +2383,9 @@ impl<'r> Layouter<'r> {
             let marks = slice[..visible_end].iter().filter(|u| unit_char(u) == Some('\u{200b}')).count();
             let gaps = visible_end.saturating_sub(1 + marks).max(1) as f32;
             let extra = if justify && !has_tab && used < room { (room - used) / gaps } else { 0.0 };
-            let shift = match p.align {
+            // A displayed formula alone on its line is centred.
+            let align = if slice.iter().any(|u| matches!(u, Unit::Math { display: true, .. })) && slice.iter().all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace())) { FlowAlign::Center } else { p.align };
+            let shift = match align {
                 FlowAlign::Center => ((room - used) / 2.0).max(0.0),
                 FlowAlign::Right => (room - used).max(0.0),
                 FlowAlign::Left if p.bidi => (room - used).max(0.0),
@@ -1909,13 +2402,37 @@ impl<'r> Layouter<'r> {
                     false
                 }
             });
-            let mut line = LineBox { height, baseline, items: Vec::new(), page_break: slice.iter().any(|u| matches!(u, Unit::PageBreak)), column_break: slice.iter().any(|u| matches!(u, Unit::ColumnBreak)), has_revision };
+            let mut comment_marks = Vec::new();
+            for u in slice {
+                if let Unit::Char { style, .. } = u {
+                    if *style != LABEL {
+                        if let Some(c_ids) = self.comment_runs.get(&(p.id, *style)) {
+                            for &id in c_ids {
+                                if !comment_marks.contains(&id) {
+                                    comment_marks.push(id);
+                                }
+                            }
+                        }
+                        if let Some(r) = p.runs.get(*style) {
+                            match r.kind {
+                                FlowRunKind::CommentStart(id) | FlowRunKind::CommentRef(id) => {
+                                    if !comment_marks.contains(&id) {
+                                        comment_marks.push(id);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            let mut line = LineBox { height, baseline, items: Vec::new(), page_break: slice.iter().any(|u| matches!(u, Unit::PageBreak)), column_break: slice.iter().any(|u| matches!(u, Unit::ColumnBreak)), has_revision, comment_marks };
             let mut x = start_x + shift;
             let line_x = x;
             let mut stops: Vec<(usize, f32)> = Vec::new();
             let mut run: Option<OpenRun> = None;
             let mut dec = LineDecorations::default();
-            let is_all_markup = markup_display_mode() == MarkupDisplayMode::All;
+            let is_all_markup = self.markup_mode() == MarkupDisplayMode::All;
             let flush = |run: &mut Option<OpenRun>, line: &mut LineBox, dec: &mut LineDecorations| {
                 if let Some((x0, text, offsets, font, size, style)) = run.take() {
                     let s = if style == LABEL { &p.list_style } else { &p.runs[style].style };
@@ -1931,6 +2448,14 @@ impl<'r> Layouter<'r> {
                         }
                         Some(ibis_doc_model::RevisionKind::Delete) if style != LABEL => {
                             revised = ibis_doc_model::FlowRunStyle { strike: true, color: REVISION_COLOR, ..s.clone() };
+                            &revised
+                        }
+                        Some(ibis_doc_model::RevisionKind::MoveTo) if style != LABEL => {
+                            revised = ibis_doc_model::FlowRunStyle { underline: true, underline_style: ibis_doc_model::UnderlineStyle::Single, color: MOVE_REVISION_COLOR, ..s.clone() };
+                            &revised
+                        }
+                        Some(ibis_doc_model::RevisionKind::MoveFrom) if style != LABEL => {
+                            revised = ibis_doc_model::FlowRunStyle { strike: true, color: MOVE_REVISION_COLOR, ..s.clone() };
                             &revised
                         }
                         _ if is_hidden_dotted => {
@@ -1956,6 +2481,39 @@ impl<'r> Layouter<'r> {
                     };
                     let y_base = line.baseline + raise + align_shift;
                     let end = offsets.last().copied().unwrap_or(0.0);
+                    let show_comments = self.markup_mode() != MarkupDisplayMode::None && self.markup_mode() != MarkupDisplayMode::Original;
+                    if show_comments && style != LABEL && end > 0.0 {
+                        if let Some(c_ids) = self.comment_runs.get(&(p.id, style)) && !c_ids.is_empty() {
+                            let color = hsla(COMMENT_HIGHLIGHT_COLOR);
+                            if let Some(Item::Rect { x: last_x, w: last_w, color: last_c, .. }) = dec.highlights.last_mut()
+                                && *last_c == color
+                                && (*last_x + *last_w - x0).abs() < 0.02
+                            {
+                                *last_w = (x0 + end) - *last_x;
+                            } else {
+                                dec.highlights.push(Item::Rect { x: x0, y: 0.0, w: end, h: line.height, color });
+                            }
+                            let comment_ucolor = hsla(ibis_doc_model::Color::opaque(COMMENT_BUBBLE_ICON));
+                            if let Some(last_u) = dec.underlines.last_mut()
+                                && last_u.style == UnderlineStyle::Dash
+                                && last_u.color == comment_ucolor
+                                && (last_u.baseline - y_base).abs() < 0.01
+                                && (last_u.size - s_size).abs() < 0.01
+                                && (last_u.x + last_u.w - x0).abs() < 0.02
+                            {
+                                last_u.w = (x0 + end) - last_u.x;
+                            } else {
+                                dec.underlines.push(UnderlineBox {
+                                    style: UnderlineStyle::Dash,
+                                    size: s_size,
+                                    x: x0,
+                                    w: end,
+                                    baseline: y_base,
+                                    color: comment_ucolor,
+                                });
+                            }
+                        }
+                    }
                     if let Some(h) = s.highlight && end > 0.0 {
                         let color = hsla(ibis_doc_model::Color::opaque(h));
                         if let Some(Item::Rect { x: last_x, w: last_w, color: last_c, .. }) = dec.highlights.last_mut()
@@ -1965,6 +2523,10 @@ impl<'r> Layouter<'r> {
                             *last_w = (x0 + end) - *last_x;
                         } else {
                             dec.highlights.push(Item::Rect { x: x0, y: 0.0, w: end, h: line.height, color });
+                        }
+                        // A stripe or a grid over the fill.
+                        if let Some((pattern, pattern_color)) = s.shd_pattern {
+                            dec.highlights.push(Item::Shading { pattern, color: hsla(ibis_doc_model::Color::opaque(pattern_color)), x: x0, y: 0.0, w: end, h: line.height });
                         }
                     }
                     if let Some(ref b) = s.border && end > 0.0 {
@@ -2137,6 +2699,12 @@ impl<'r> Layouter<'r> {
                         line.items.push(Item::Picture { media: *media, x, y: line.baseline - h, w: *w, h: *h });
                         x += w;
                     }
+                    Unit::Math { boxed, w, font, color, .. } => {
+                        flush(&mut run, &mut line, &mut dec);
+                        let items = self.math_items(boxed, x, line.baseline, font, *color);
+                        line.items.extend(items);
+                        x += w;
+                    }
                     Unit::Shape { shape, w, h } => {
                         flush(&mut run, &mut line, &mut dec);
                         if let Some(f) = &shape.floating {
@@ -2262,8 +2830,8 @@ struct CachedPieces {
 }
 
 thread_local! {
-    /// Laid-out blocks, by (id, width, styles, in_table, line_pitch, print, print_hidden): see `Layouter::pieces`.
-    static PIECES: std::cell::RefCell<std::collections::HashMap<(u32, u32, usize, bool, Option<Emu>, bool, bool), CachedPieces>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Laid-out blocks, by (id, width, styles, in_table, line_pitch, print, print_hidden, print_markup): see `Layouter::pieces`.
+    static PIECES: std::cell::RefCell<std::collections::HashMap<(u32, u32, usize, bool, Option<Emu>, bool, bool, bool), CachedPieces>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// Whether field `instruction` is one whose text depends on the page
@@ -2293,7 +2861,7 @@ type OpenRun = (f32, String, Vec<f32>, Font, f32, usize);
 fn unit_width(u: &Unit) -> f32 {
     match u {
         Unit::Char { width, .. } => *width,
-        Unit::Picture { w, .. } | Unit::Shape { w, .. } => *w,
+        Unit::Picture { w, .. } | Unit::Shape { w, .. } | Unit::Math { w, .. } => *w,
         _ => 0.0,
     }
 }
@@ -2330,8 +2898,8 @@ fn mark_room(p: &FlowParagraph, c: char, style: usize, size: f32, line: f32, asc
 /// Whether a line may break between `before` and `after`.
 pub(crate) fn may_break(before: Option<char>, after: Option<char>, kinsoku: bool, word_wrap: bool, doc: &FlowDocument) -> bool {
     let (Some(b), Some(a)) = (before, after) else { return true };
-    // The lists the document sets (禁則文字の設定) replace the standard ones.
-    let cannot_start = match &doc.no_line_start { Some(list) => list.contains(a), None => no_line_start(a) };
+    // The lists the document sets (禁則文字の設定) replace the standard/strict ones.
+    let cannot_start = match &doc.no_line_start { Some(list) => list.contains(a), None => no_line_start(a, doc.strict_first_and_last_chars) };
     let cannot_end = match &doc.no_line_end { Some(list) => list.contains(b), None => no_line_end(b) };
     if kinsoku && (cannot_start || cannot_end) {
         return false;
@@ -2481,7 +3049,7 @@ fn turn_japanese(items: impl Iterator<Item = Item>) -> Vec<Item> {
 fn item_top(item: &Item) -> f32 {
     match item {
         Item::Text { y, size, .. } | Item::Turned { y, size, .. } => y - size * 0.8,
-        Item::Rect { y, .. } | Item::Art { y, .. } | Item::Picture { y, .. } | Item::Shape { y, .. } | Item::Line { y, .. } | Item::Shading { y, .. } => *y,
+        Item::Rect { y, .. } | Item::Art { y, .. } | Item::Picture { y, .. } | Item::Shape { y, .. } | Item::Line { y, .. } | Item::Shading { y, .. } | Item::CommentBubble { y, .. } => *y,
         Item::Stroke { y, y2, .. } => y.min(*y2),
     }
 }
@@ -2566,7 +3134,7 @@ impl<'r> Layouter<'r> {
         label.extend(self.block_note_numbers(block));
         let fields = has_fields(block);
         let styles = Arc::as_ptr(&self.doc.styles) as usize;
-        let key = (id, width.to_bits(), styles, in_table, self.line_pitch.get(), self.res.print, self.res.print_hidden_text);
+        let key = (id, width.to_bits(), styles, in_table, self.line_pitch.get(), self.res.print, self.res.print_hidden_text, self.res.print_markup);
         let hit = PIECES.with(|cache| {
             let cache = cache.borrow();
             cache.get(&key).filter(|c| c.block == *block && c.labels == label && (!fields || (c.page == page_number && c.counts == self.counts()))).map(|c| c.pieces.clone())
@@ -2692,7 +3260,7 @@ impl<'r> Layouter<'r> {
                                 }
                             }
                             items.extend(l.items.into_iter().map(|it| offset(it, 0.0, before + above)));
-                            let mode = markup_display_mode();
+                            let mode = self.markup_mode();
                             if (mode == MarkupDisplayMode::All || mode == MarkupDisplayMode::Simple) && l.has_revision && !in_table {
                                 let margin_l = pt(self.doc.page.left);
                                 let bar_x = (inner_left - 10.0).max(-margin_l + 8.0);
@@ -2702,6 +3270,17 @@ impl<'r> Layouter<'r> {
                                     w: 1.5,
                                     h: l.height,
                                     color: hsla(ibis_doc_model::Color::opaque(REVISION_COLOR)),
+                                });
+                            }
+                            if (mode == MarkupDisplayMode::All || mode == MarkupDisplayMode::Simple) && !l.comment_marks.is_empty() && !in_table {
+                                let margin_l = pt(self.doc.page.left);
+                                let bubble_size = 16.0;
+                                let bubble_x = pt(self.doc.page.size.width) - margin_l + 8.0;
+                                let bubble_y = before + above + (l.height - bubble_size).max(0.0) / 2.0;
+                                items.push(Item::CommentBubble {
+                                    x: bubble_x,
+                                    y: bubble_y,
+                                    size: bubble_size,
                                 });
                             }
                             let page_break = l.page_break || (matches!(p.section_break, SectionBreak::NextPage | SectionBreak::OddPage | SectionBreak::EvenPage) && i + 1 == count);
@@ -2794,7 +3373,7 @@ impl<'r> Layouter<'r> {
                             }
                         }
                         items.extend(l.items);
-                        let mode = markup_display_mode();
+                        let mode = self.markup_mode();
                         if (mode == MarkupDisplayMode::All || mode == MarkupDisplayMode::Simple) && l.has_revision && !in_table {
                             let bar_x = (inner_left - 10.0).max(-margin_l + 8.0);
                             items.push(Item::Rect {
@@ -2803,6 +3382,16 @@ impl<'r> Layouter<'r> {
                                 w: 1.5,
                                 h: l.height,
                                 color: hsla(ibis_doc_model::Color::opaque(REVISION_COLOR)),
+                            });
+                        }
+                        if (mode == MarkupDisplayMode::All || mode == MarkupDisplayMode::Simple) && !l.comment_marks.is_empty() && !in_table {
+                            let bubble_size = 16.0;
+                            let bubble_x = pt(self.doc.page.size.width) - margin_l + 8.0;
+                            let bubble_y = (l.height - bubble_size).max(0.0) / 2.0;
+                            items.push(Item::CommentBubble {
+                                x: bubble_x,
+                                y: bubble_y,
+                                size: bubble_size,
                             });
                         }
                         let page_break = l.page_break || (matches!(p.section_break, SectionBreak::NextPage | SectionBreak::OddPage | SectionBreak::EvenPage) && i + 1 == count);
@@ -3161,7 +3750,9 @@ impl<'r> Layouter<'r> {
                         items.extend(shading_items(cell.shading_pattern, bg, cell.shading_color, left, cell_top, right - left, cell_h));
                     }
                     // The top border's width is taken off the room first.
-                    let border = cell.borders[0].map_or(0.0, |b| pt(b.width));
+                    // An art border takes as much room as its `w:sz` in points (a 1.5 pt line, 12 pt of room:
+                    // Word's text is 10 pt lower, DTBB).
+                    let border = cell.borders[0].map_or(0.0, |b| if b.art.is_some() { pt(b.width) * 8.0 } else { pt(b.width) });
                     let room = cell_h - pt(cell.margins[0]) - pt(cell.margins[2]) - border;
                     let dy = cell_top
                         + border
@@ -3231,7 +3822,10 @@ impl<'r> Layouter<'r> {
                 let is_table_left = laid.col == 0;
                 let is_table_right = laid.col + laid.span == t.columns.len();
                 if cell.merge != VerticalMerge::Continue {
-                    borders.push((top, true, true, row_top, left, right, is_table_top && is_table_left, is_table_top && is_table_right));
+                    // The table's top border starts at its top edge and goes down into the row (Word counts it in the
+                    // row and does not draw half of it above the table: DTBB).
+                    let top_at = if is_table_top { row_top + top.map_or(0.0, |b| pt(b.total()) / 2.0) } else { row_top };
+                    borders.push((top, true, true, top_at, left, right, is_table_top && is_table_left, is_table_top && is_table_right));
                     // Diagonal lines across the cell (as high as it spans).
                     let n = if cell.merge == VerticalMerge::Start { spans_down(r, laid.col) } else { 1 };
                     let h: f32 = heights[r..(r + n).min(heights.len())].iter().sum();
@@ -3248,10 +3842,16 @@ impl<'r> Layouter<'r> {
                     c.borders = [top, rgt, bottom, lft];
                 }
                 if cell.merge == VerticalMerge::None || cell.merge == VerticalMerge::Continue && !continues_below(t, &grid, r, laid.col) {
-                    borders.push((bottom, true, false, row_h, left, right, is_table_bottom && is_table_left, is_table_bottom && is_table_right));
+                    // At the table's bottom edge the border ends where the row does (it is inside the room the row
+                    // reserves for it), as the top one starts at the top edge.
+                    let bottom_at = if is_table_bottom { row_h - bottom.map_or(0.0, |b| pt(b.total()) / 2.0) } else { row_h };
+                    borders.push((bottom, true, false, bottom_at, left, right, is_table_bottom && is_table_left, is_table_bottom && is_table_right));
                 }
-                borders.push((lft, false, true, left, row_top, row_h, is_table_left && is_table_top, is_table_left && is_table_bottom));
-                borders.push((rgt, false, false, right, row_top, row_h, is_table_right && is_table_top, is_table_right && is_table_bottom));
+                // The sides meet the top border where it starts (at the table's top edge, see above).
+                let side_top = if is_table_top { row_top + top.map_or(0.0, |b| pt(b.total()) / 2.0) } else { row_top };
+                let side_bottom = if is_table_bottom { row_h - bottom.map_or(0.0, |b| pt(b.total()) / 2.0) } else { row_h };
+                borders.push((lft, false, true, left, side_top, side_bottom, is_table_left && is_table_top, is_table_left && is_table_bottom));
+                borders.push((rgt, false, false, right, side_top, side_bottom, is_table_right && is_table_top, is_table_right && is_table_bottom));
             }
             for (b, horizontal, outer_first, at, from, to, extend_start, extend_end) in borders {
                 if let Some(b) = b {
@@ -3313,11 +3913,11 @@ impl<'r> Layouter<'r> {
             let page = &setups[s].page;
             page.columns.layout(page.size.width - page.left - gutters(s).0 - page.right).into_iter().map(|(x, w)| (pt(x), pt(w))).collect()
         };
-        // 見開きページ: an even page's margins swapped (the inside on the
+        // 見開きページ・袋とじ: an even page's margins swapped (the inside on the
         // right): how far its text moves.
         let mirror_dx = |s: usize, number: u32| -> f32 {
             let page = &setups[s].page;
-            if page.mirror_margins && number % 2 == 0 { pt(page.right) - pt(page.left + gutters(s).0) } else { 0.0 }
+            if page.is_mirrored() && number % 2 == 0 { pt(page.right) - pt(page.left + gutters(s).0) } else { 0.0 }
         };
         let column_frame = |s: usize, c: usize| {
             let text = text_frame(s);
@@ -3328,6 +3928,7 @@ impl<'r> Layouter<'r> {
         let frame_of = |s: usize| column_frame(s, 0);
         let page_of = |s: usize, number: u32, first: bool| Page {
             items: Vec::new(),
+            body_items_count: 0,
             width: pt(setups[s].page.size.width),
             height: pt(setups[s].page.size.height),
             section: s,
@@ -3494,12 +4095,17 @@ impl<'r> Layouter<'r> {
                                 _ => base_y0 + pt(f.offset_y),
                             };
                             let sx = abs_x - margin_l;
+                            let wrap_polygon = matches!(f.wrap.as_str(), "tight" | "through")
+                                .then(|| f.wrap_polygon.clone())
+                                .flatten()
+                                .map(|poly| (poly, sx, abs_y, sw, sh, dl, dr));
                             return Some(WrapObstacle {
                                 shape_left: sx - dl,
                                 shape_right: sx + sw + dr,
                                 y_top: abs_y - dt,
                                 y_bottom: abs_y + sh + db,
                                 wrap_text,
+                                wrap_polygon,
                             });
                         }
                     }
@@ -3577,7 +4183,7 @@ impl<'r> Layouter<'r> {
                 close_region!();
                 next_page(&mut pages, &mut frame, &mut y, &mut number, $s);
                 region_s = $s;
-                col = 0;
+                let _ = col;
                 col_top = y;
                 col_fill.clear();
                 placed.clear();
@@ -3754,6 +4360,14 @@ impl<'r> Layouter<'r> {
                     };
                     let sx = abs_x - margin_l;
                     let sy = abs_y - para_top;
+                    let wrap_poly_abs = matches!(f.wrap.as_str(), "tight" | "through")
+                        .then(|| f.wrap_polygon.clone())
+                        .flatten()
+                        .map(|poly| (poly, sx, abs_y, sw, sh, dl, dr));
+                    let wrap_poly_rel = matches!(f.wrap.as_str(), "tight" | "through")
+                        .then(|| f.wrap_polygon.clone())
+                        .flatten()
+                        .map(|poly| (poly, sx, sy, sw, sh, dl, dr));
 
                     let obs = WrapObstacle {
                         shape_left: sx - dl,
@@ -3761,6 +4375,7 @@ impl<'r> Layouter<'r> {
                         y_top: abs_y - dt,
                         y_bottom: abs_y + sh + db,
                         wrap_text: wrap_text.clone(),
+                        wrap_polygon: wrap_poly_abs,
                     };
                     active_obstacle = Some(obs.clone());
                     Some(WrapObstacleInPara {
@@ -3769,19 +4384,26 @@ impl<'r> Layouter<'r> {
                         rel_top: sy - dt,
                         rel_bottom: sy + sh + db,
                         wrap_text,
+                        wrap_polygon: wrap_poly_rel,
                         shape_to_emit: Some((shape.clone(), sx, sy, sw, sh, f.behind_doc)),
+                        drop_cap_to_emit: None,
                     })
                 } else if let Some(ref obs) = active_obstacle {
                     let rel_top = obs.y_top - (y + before_pad);
                     let rel_bottom = obs.y_bottom - (y + before_pad);
                     if rel_bottom > 0.01 {
+                        let wrap_polygon = obs.wrap_polygon.as_ref().map(|(poly, sx, abs_y, sw, sh, dl, dr)| {
+                            (poly.clone(), *sx, *abs_y - (y + before_pad), *sw, *sh, *dl, *dr)
+                        });
                         Some(WrapObstacleInPara {
                             shape_left: obs.shape_left,
                             shape_right: obs.shape_right,
                             rel_top,
                             rel_bottom,
                             wrap_text: obs.wrap_text.clone(),
+                            wrap_polygon,
                             shape_to_emit: None,
+                            drop_cap_to_emit: None,
                         })
                     } else {
                         active_obstacle = None;
@@ -3856,7 +4478,7 @@ impl<'r> Layouter<'r> {
                     at += piece.height;
                 }
                 let [dl, dr, dt, db] = f.distance.map(pt);
-                active_obstacle = Some(WrapObstacle { shape_left: left - dl - text.left, shape_right: left + w + dr - text.left, y_top: top - dt, y_bottom: top + h + db, wrap_text: "bothSides".into() });
+                active_obstacle = Some(WrapObstacle { shape_left: left - dl - text.left, shape_right: left + w + dr - text.left, y_top: top - dt, y_bottom: top + h + db, wrap_text: "bothSides".into(), wrap_polygon: None });
                 continue;
             }
             let mut pieces = self.pieces(block, frame.width, number, obstacle_for_block.as_ref(), false);
@@ -4112,7 +4734,9 @@ impl<'r> Layouter<'r> {
                     })
                     .fold(frame.top, f32::max);
                 let mut note_y = (body_bottom + 12.0).min(frame.bottom);
-                pg.items.push(Item::Rect { x: frame.left, y: note_y + separator_h / 2.0, w: 144.0, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) });
+                if let Some(w) = separator_width(self.doc.note_separators[0], frame.width) {
+                    pg.items.push(Item::Rect { x: frame.left, y: note_y + separator_h / 2.0, w, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) });
+                }
                 note_y += separator_h;
                 for id in ids {
                     for piece in note_pieces(true, id) {
@@ -4125,7 +4749,8 @@ impl<'r> Layouter<'r> {
         if !doc_endnotes.is_empty() {
             let s = setups.len() - 1;
             let mut queue: Vec<Piece> = Vec::new();
-            queue.push(Piece { height: separator_h, items: vec![Item::Rect { x: 0.0, y: separator_h / 2.0, w: 144.0, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) }], page_break: false, column_break: false, keep_with_next: true, header: false, split: None, ..Default::default() });
+            let end_separator: Vec<Item> = separator_width(self.doc.note_separators[1], frame.width).map(|w| Item::Rect { x: 0.0, y: separator_h / 2.0, w, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) }).into_iter().collect();
+            queue.push(Piece { height: separator_h, items: end_separator, page_break: false, column_break: false, keep_with_next: true, header: false, split: None, ..Default::default() });
             for id in &doc_endnotes {
                 queue.extend(note_pieces(true, *id));
             }
@@ -4161,7 +4786,9 @@ impl<'r> Layouter<'r> {
                 }
                 _ => frame.bottom - notes_room(pg),
             };
-            pg.items.push(Item::Rect { x: frame.left, y: y + separator_h / 2.0, w: 144.0, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) });
+            if let Some(w) = separator_width(self.doc.note_separators[0], frame.width) {
+                pg.items.push(Item::Rect { x: frame.left, y: y + separator_h / 2.0, w, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) });
+            }
             y += separator_h;
             for id in pg.notes.clone() {
                 for piece in note_pieces(false, id) {
@@ -4311,6 +4938,7 @@ impl<'r> Layouter<'r> {
             chapter_now.as_ref().map_or(String::new(), |l| format!("{l}{separator}"))
         }).collect();
         for ((pg, &in_section), chapter) in pages.iter_mut().zip(&section_pages).zip(&chapter_prefixes) {
+            pg.body_items_count = pg.items.len();
             *self.chapter_prefix.borrow_mut() = chapter.clone();
             self.page_counts.set(Some((total, in_section, pg.section as u32 + 1)));
             let s = pg.section;
@@ -4556,6 +5184,15 @@ fn draw_art_edge(fb: &FlowBorder, art: ibis_doc_model::ArtBorder, part: ArtPart,
 /// when the border's outer side is the top or left one. The border is
 /// centred on the edge; its lines are extended by half its width at the
 /// ends, so the corners meet.
+/// The width (points) of the line above the notes: the short line is 2 inches, the full one the text's width; none for no line.
+fn separator_width(kind: ibis_doc_model::NoteSeparator, text_width: f32) -> Option<f32> {
+    match kind {
+        ibis_doc_model::NoteSeparator::Standard => Some(144.0),
+        ibis_doc_model::NoteSeparator::Full => Some(text_width),
+        ibis_doc_model::NoteSeparator::Hidden => None,
+    }
+}
+
 fn border_items(
     b: &FlowBorder,
     horizontal: bool,
@@ -4572,16 +5209,23 @@ fn border_items(
     // thinThickSmallGap has its thick line first, top to bottom and left to
     // right, on all four sides; thickThinSmallGap its thin one), not from
     // the outer side.
-    let _ = outer_first;
     let bands = b.bands();
     let total = pt(bands.iter().map(|b| b.0).sum());
     let dashes = b.dashes().map(|d| d.into_iter().map(pt).collect::<Vec<f32>>());
     let mut out = Vec::new();
     let mut across = at - total / 2.0;
-    let start = if extend_start { from - total / 2.0 } else { from };
-    let end = if extend_end { to + total / 2.0 } else { to };
+    let mut depth_from_top = 0.0f32;
+    let mut drawn_so_far = 0usize;
     for (width, drawn) in bands {
         let t = pt(width).max(0.25);
+        // The lines meet at the corners as nested rectangles do (a mitre): a band reaches past the edge's end by
+        // half the border's width less its own distance from the border's outer side (an inner line stops at
+        // the inner line of the border across).
+        let depth = if outer_first { depth_from_top } else { (total - depth_from_top - pt(width)).max(0.0) };
+        let reach = total / 2.0 - depth;
+        depth_from_top += pt(width);
+        let start = if extend_start { from - reach } else { from };
+        let end = if extend_end { to + reach } else { to };
         if drawn {
             let mut segments = Vec::new();
             match &dashes {
@@ -4598,6 +5242,31 @@ fn border_items(
                     }
                 }
                 _ => segments.push((start, end)),
+            }
+            // A wave is a sine line (Word's: 2.5 pt high, 5.75 pt long, measured on its PDF of DBRD); a double
+            // wave is two of them, a half turn apart, one above the other.
+            if matches!(b.style, ibis_doc_model::BorderStyle::Wave | ibis_doc_model::BorderStyle::DoubleWave) {
+                let (line, amplitude) = (0.5f32, (t - 0.75) / 2.0);
+                let length = 5.75f32;
+                let centre = across + t / 2.0;
+                let phase = if drawn_so_far % 2 == 1 { std::f32::consts::PI } else { 0.0 };
+                drawn_so_far += 1;
+                let steps = ((end - start) / length * 8.0).ceil().max(1.0) as usize;
+                let point = |i: usize| {
+                    let a = start + (end - start) * i as f32 / steps as f32;
+                    (a, centre + amplitude * ((a - start) / length * std::f32::consts::TAU + phase).sin())
+                };
+                for i in 0..steps {
+                    let (a0, c0) = point(i);
+                    let (a1, c1) = point(i + 1);
+                    out.push(if horizontal {
+                        Item::Stroke { x: a0, y: c0, x2: a1, y2: c1, w: line, color }
+                    } else {
+                        Item::Stroke { x: c0, y: a0, x2: c1, y2: a1, w: line, color }
+                    });
+                }
+                across += pt(width);
+                continue;
             }
             for (a, z) in segments {
                 out.push(if horizontal { Item::Rect { x: a, y: across, w: z - a, h: t, color } } else { Item::Rect { x: across, y: a, w: t, h: z - a, color } });
@@ -4619,6 +5288,7 @@ fn offset(item: Item, dx: f32, dy: f32) -> Item {
         Item::Line { para, x, y, h, stops, vertical } => Item::Line { para, x: x + dx, y: y + dy, h, stops, vertical },
         Item::Stroke { x, y, x2, y2, w, color } => Item::Stroke { x: x + dx, y: y + dy, x2: x2 + dx, y2: y2 + dy, w, color },
         Item::Shading { pattern, color, x, y, w, h } => Item::Shading { pattern, color, x: x + dx, y: y + dy, w, h },
+        Item::CommentBubble { x, y, size } => Item::CommentBubble { x: x + dx, y: y + dy, size },
     }
 }
 
@@ -4765,7 +5435,8 @@ pub(crate) fn paginate(doc: &FlowDocument, res: &Resources) -> Pagination {
 
 fn paginate_collapsed(doc: &FlowDocument, res: &Resources) -> Pagination {
     // Headings shown collapsed: what is under them is not laid out.
-    if !res.collapsed_headings.is_empty()
+    let any_collapsed = !res.collapsed_headings.is_empty() || doc.body.iter().any(|b| matches!(b, Block::Paragraph(p) if p.collapsed));
+    if any_collapsed
         && let Some(view) = super::outline_ops::collapsed_view(doc, &res.collapsed_headings)
     {
         return paginate_whole(&view, res);
@@ -4784,6 +5455,7 @@ fn paginate_whole(doc: &FlowDocument, res: &Resources) -> Pagination {
             page_format: std::cell::RefCell::new(doc.page_number_format.clone()),
             chapter_prefix: std::cell::RefCell::new(String::new()),
             line_pitch: std::cell::Cell::new(first_pitch),
+            line_room: std::cell::Cell::new(f32::MAX),
             page_counts: std::cell::Cell::new(None),
             known_pages,
             body_section: std::cell::Cell::new(0),
@@ -4792,6 +5464,7 @@ fn paginate_whole(doc: &FlowDocument, res: &Resources) -> Pagination {
             contextual: contextual_spacing(doc),
             current_cell: std::cell::Cell::new(None),
             field_paragraph: std::cell::Cell::new(None),
+            comment_runs: map_comment_runs(doc),
         };
         let mut pagination = layouter.lay_out();
         layouter.grid_text_boxes(&mut pagination);
@@ -4833,7 +5506,7 @@ fn has_page_counts(block: &Block) -> bool {
 thread_local! {
     /// Pagination of the documents open, by the document (held so its
     /// address is not reused).
-    static PAGINATIONS: std::cell::RefCell<Vec<(Arc<FlowDocument>, Arc<Pagination>, u64, bool, bool, Arc<std::collections::BTreeSet<u32>>, Option<Arc<std::collections::HashMap<String, String>>>)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PAGINATIONS: std::cell::RefCell<Vec<(Arc<FlowDocument>, Arc<Pagination>, u64, bool, bool, bool, Arc<std::collections::BTreeSet<u32>>, Option<Arc<std::collections::HashMap<String, String>>>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The pages of `doc`, laid out once.
@@ -4843,8 +5516,8 @@ pub(crate) fn pages(doc: &Arc<FlowDocument>, res: &Resources) -> Arc<Pagination>
         // Laid out again when art borders' pictures have come since (the
         // web version fetches them).
         let generation = crate::docx::art_border::generation();
-        cache.retain(|(_, _, g, _, _, _, _)| *g == generation);
-        if let Some((_, p, _, _, _, _, _)) = cache.iter().find(|(d, _, _, pr, ph, co, mv)| Arc::ptr_eq(d, doc) && *pr == res.print && *ph == res.print_hidden_text && **co == *res.collapsed_headings && *mv == res.merge_values) {
+        cache.retain(|(_, _, g, _, _, _, _, _)| *g == generation);
+        if let Some((_, p, _, _, _, _, _, _)) = cache.iter().find(|(d, _, _, pr, ph, pm, co, mv)| Arc::ptr_eq(d, doc) && *pr == res.print && *ph == res.print_hidden_text && *pm == res.print_markup && **co == *res.collapsed_headings && *mv == res.merge_values) {
             return p.clone();
         }
         let started = crate::debug_timing::start();
@@ -4855,7 +5528,7 @@ pub(crate) fn pages(doc: &Arc<FlowDocument>, res: &Resources) -> Arc<Pagination>
         if cache.len() >= 4 {
             cache.remove(0);
         }
-        cache.push((doc.clone(), p.clone(), generation, res.print, res.print_hidden_text, res.collapsed_headings.clone(), res.merge_values.clone()));
+        cache.push((doc.clone(), p.clone(), generation, res.print, res.print_hidden_text, res.print_markup, res.collapsed_headings.clone(), res.merge_values.clone()));
         p
     })
 }
@@ -4930,6 +5603,8 @@ fn add_watermark(doc: &FlowDocument, pagination: &mut Pagination) {
                 allow_overlap: true,
                 layout_in_cell: true,
                 relative_height: ibis_doc_model::FloatingAnchor::DEFAULT_RELATIVE_HEIGHT,
+                wrap_polygon: None,
+                glue: Default::default(),
             });
             // The piece's centre along the turned text.
             let along = (i as f32 + 0.5) * slot - sw / 2.0;

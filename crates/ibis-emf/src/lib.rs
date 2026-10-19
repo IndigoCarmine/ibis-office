@@ -9,7 +9,15 @@
 //! bitmap and returns it as an ordinary image file, keeping its transparency. Vector drawing is not interpreted: a
 //! metafile without a bitmap yields `None`.
 
+mod charset;
+mod emf;
 mod png;
+mod svg;
+mod wmf;
+
+pub use emf::{Picture, emf_picture, emf_to_svg};
+pub use svg::{FontMetricsFn, set_font_metrics};
+pub use wmf::wmf_to_svg;
 
 /// The encoding of an extracted image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,7 +93,7 @@ pub fn extract_image(emf: &[u8]) -> Option<(ImageFormat, Vec<u8>)> {
     candidates.into_iter().max_by_key(|(area, _)| *area).map(|(_, image)| image)
 }
 
-type Candidate = (u64, (ImageFormat, Vec<u8>));
+pub(crate) type Candidate = (u64, (ImageFormat, Vec<u8>));
 
 /// Bitmaps defined as EMF+ image objects, with their pixel area.
 fn emf_plus_bitmaps(data: &[u8]) -> Vec<Candidate> {
@@ -127,7 +135,7 @@ fn emf_plus_bitmaps(data: &[u8]) -> Vec<Candidate> {
 }
 
 /// An `EmfPlusImage` object holding a bitmap.
-fn emf_plus_image(body: &[u8]) -> Option<Candidate> {
+pub(crate) fn emf_plus_image(body: &[u8]) -> Option<Candidate> {
     if u32_at(body, 4)? != IMAGE_BITMAP {
         return None;
     }
@@ -258,7 +266,7 @@ fn to_rgba(data: &[u8], width: i32, height: i32, stride: i32, format: u32, botto
 }
 
 /// The format of an image file, from its signature.
-fn sniff(data: &[u8]) -> Option<ImageFormat> {
+pub(crate) fn sniff(data: &[u8]) -> Option<ImageFormat> {
     Some(match data {
         [0x89, b'P', b'N', b'G', ..] => ImageFormat::Png,
         [0xff, 0xd8, ..] => ImageFormat::Jpeg,

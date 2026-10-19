@@ -91,6 +91,18 @@ pub fn pages(data: &[u8]) -> Result<Vec<Page>, Error> {
     Ok(out)
 }
 
+/// The theme part the master (or the layout's master) `part` uses.
+fn theme_part_of(package: &Package, part: &str) -> Result<Option<String>, Error> {
+    let own = |p: &str| -> Result<Option<String>, Error> { Ok(package.relationships(p)?.into_iter().find(|r| r.kind == REL_THEME && !r.external).and_then(|r| r.target_part(p)).filter(|t| package.contains(t))) };
+    if let Some(theme) = own(part)? {
+        return Ok(Some(theme));
+    }
+    match package.relationships(part)?.into_iter().find(|r| r.kind == REL_SLIDE_MASTER && !r.external).and_then(|r| r.target_part(part)) {
+        Some(master) => own(&master),
+        None => Ok(None),
+    }
+}
+
 /// The tree of shapes of `doc` (`p:cSld/p:spTree`).
 fn tree(doc: &XmlDocument) -> Option<NodeId> {
     let root = doc.root_element()?;
@@ -247,10 +259,23 @@ pub fn apply(data: &[u8], edited: &[u8], part: &str) -> Result<Vec<u8>, Error> {
     let mut mapped: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut added: Vec<(String, String, String, bool)> = Vec::new();
     let at = doc.children(tree_id).iter().position(|&c| doc.is_element(c) && doc.local_name(c) == "extLst").unwrap_or(doc.children(tree_id).len());
-    for (i, shape) in shapes.iter().enumerate() {
+    // The background (背景の書式設定) as edited: the part's own, in the place the schema has it (first in `p:cSld`).
+    let slide_bg = slide_doc.root_element().and_then(|r| slide_doc.child(r, "cSld")).and_then(|c| slide_doc.child(c, "bg"));
+    let part_csld = doc.root_element().and_then(|r| doc.child(r, "cSld"));
+    if let Some(csld) = part_csld {
+        if let Some(old) = doc.child(csld, "bg") {
+            doc.detach(old);
+        }
+    }
+    let items: Vec<(NodeId, bool)> = slide_bg.map(|b| (b, true)).into_iter().chain(shapes.iter().map(|&n| (n, false))).collect();
+    for (i, (shape, is_bg)) in items.iter().enumerate() {
+        let (shape, is_bg) = (shape, *is_bg);
         let copy = doc.import(&slide_doc, *shape);
         // (In the tree first: the prefixes of its attributes are found from its ancestors.)
-        doc.insert(tree_id, at + i, copy);
+        match (is_bg, part_csld) {
+            (true, Some(csld)) => doc.insert(csld, 0, copy),
+            _ => doc.insert(tree_id, at + i - usize::from(slide_bg.is_some()), copy),
+        }
         // The relationships the shape names, made the part's own.
         for node in std::iter::once(copy).chain(doc.descendants(copy)) {
             if !doc.is_element(node) {
@@ -283,6 +308,15 @@ pub fn apply(data: &[u8], edited: &[u8], part: &str) -> Result<Vec<u8>, Error> {
         }
     }
     package.set_xml(part, doc);
+    // The theme (配色・フォント) as edited on the page: the master's theme part (a layout's through its master).
+    if let Some(theme) = theme_part_of(&package, part)? {
+        if edited.contains(&theme) {
+            let new = edited.read(&theme)?;
+            if package.read(&theme)? != new {
+                package.set_bytes(&theme, new);
+            }
+        }
+    }
     // The relationships made, and the parts they name copied from the edited file.
     let mut real: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for (placeholder, kind, target, external) in added {
@@ -445,4 +479,175 @@ pub fn set_text_style(data: &[u8], master: &str, kind: StyleKind, level: u8, cha
         }
     }
     Ok(package.save(SaveOptions::default())?)
+}
+
+/// What a placeholder added to a layout is (`p:ph/@type`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceholderKind {
+    /// タイトル (`title`).
+    Title,
+    /// テキスト (`body`).
+    Text,
+    /// コンテンツ (no type: text, table, chart, picture…).
+    Content,
+    /// 図 (`pic`).
+    Picture,
+    /// グラフ (`chart`).
+    Chart,
+    /// 表 (`tbl`).
+    Table,
+    /// メディア (`media`).
+    Media,
+}
+
+impl PlaceholderKind {
+    pub const ALL: [PlaceholderKind; 7] = [Self::Title, Self::Text, Self::Content, Self::Picture, Self::Chart, Self::Table, Self::Media];
+
+    /// The `p:ph` attributes (without `idx`), and the base of the shape's name.
+    fn attributes(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Title => (" type=\"title\"", "Title"),
+            Self::Text => (" type=\"body\" sz=\"quarter\"", "Text Placeholder"),
+            Self::Content => ("", "Content Placeholder"),
+            Self::Picture => (" type=\"pic\" sz=\"quarter\"", "Picture Placeholder"),
+            Self::Chart => (" type=\"chart\" sz=\"quarter\"", "Chart Placeholder"),
+            Self::Table => (" type=\"tbl\" sz=\"quarter\"", "Table Placeholder"),
+            Self::Media => (" type=\"media\" sz=\"quarter\"", "Media Placeholder"),
+        }
+    }
+}
+
+/// A placeholder of `kind` put on the layout (or master) `part`, in the middle of the slide, for the slides that
+/// follow the layout to take (レイアウトにプレースホルダーを挿入). The rest of the file is left as it was.
+pub fn add_placeholder(data: &[u8], part: &str, kind: PlaceholderKind) -> Result<Vec<u8>, Error> {
+    let mut package = Package::open(data.to_vec())?;
+    let main = main_part(&package)?;
+    // The slide's size, for the place.
+    let (cx, cy) = {
+        let doc = package.xml(&main)?;
+        let root = doc.root_element().ok_or_else(|| err("プレゼンテーションが空です"))?;
+        let size = doc.child(root, "sldSz");
+        let get = |name: &str, default: i64| size.and_then(|s| doc.attr(s, name)).and_then(|v| v.parse::<i64>().ok()).unwrap_or(default);
+        (get("cx", 12_192_000), get("cy", 6_858_000))
+    };
+    let doc = package.xml_mut(part)?;
+    let tree_id = tree(doc).ok_or_else(|| err("図形の木がありません"))?;
+    // The next shape id and placeholder index.
+    let (mut max_id, mut max_idx) = (1u64, 0u64);
+    let root = doc.root_element().ok_or_else(|| err("ページが空です"))?;
+    for node in doc.descendants(root) {
+        if !doc.is_element(node) {
+            continue;
+        }
+        match doc.local_name(node) {
+            "cNvPr" => max_id = max_id.max(doc.attr(node, "id").and_then(|v| v.parse().ok()).unwrap_or(0)),
+            "ph" => max_idx = max_idx.max(doc.attr(node, "idx").and_then(|v| v.parse().ok()).unwrap_or(0)),
+            _ => {}
+        }
+    }
+    let (attrs, base) = kind.attributes();
+    let id = max_id + 1;
+    let idx = if kind == PlaceholderKind::Title { String::new() } else { format!(" idx=\"{}\"", max_idx + 1) };
+    let (x, y, w, h) = if kind == PlaceholderKind::Title { (cx / 12, cy / 16, cx * 5 / 6, cy / 6) } else { (cx / 12, cy / 4, cx * 5 / 6, cy * 3 / 5) };
+    let x_ = crate::save::pptx_new::Prefixes::at(doc, tree_id);
+    let (a, p) = (&x_.a, &x_.p);
+    let xml = format!(
+        "<{p}sp><{p}nvSpPr><{p}cNvPr id=\"{id}\" name=\"{base} {id}\"/><{p}cNvSpPr><{a}spLocks noGrp=\"1\"/></{p}cNvSpPr><{p}nvPr><{p}ph{attrs}{idx}/></{p}nvPr></{p}nvSpPr>\
+         <{p}spPr><{a}xfrm><{a}off x=\"{x}\" y=\"{y}\"/><{a}ext cx=\"{w}\" cy=\"{h}\"/></{a}xfrm></{p}spPr>\
+         <{p}txBody><{a}bodyPr/><{a}lstStyle/><{a}p><{a}endParaRPr lang=\"ja-JP\"/></{a}p></{p}txBody></{p}sp>"
+    );
+    let shape = x_.import(doc, &xml)?;
+    let at = doc.children(tree_id).iter().position(|&c| doc.is_element(c) && doc.local_name(c) == "extLst").unwrap_or(doc.children(tree_id).len());
+    doc.insert(tree_id, at, shape);
+    Ok(package.save(SaveOptions::default())?)
+}
+
+const REL_NOTES_MASTER: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster";
+
+/// The part of the notes master (ノート マスター) of a file, if it has one.
+pub fn notes_master_part(data: &[u8]) -> Result<Option<String>, Error> {
+    let package = Package::open(data.to_vec())?;
+    let main = main_part(&package)?;
+    Ok(package.relationships(&main)?.into_iter().find(|r| r.kind == REL_NOTES_MASTER && !r.external).and_then(|r| r.target_part(&main)).filter(|p| package.contains(p)))
+}
+
+/// A file like `data` with one slide: the notes master (the page's image, the notes, the header, date, footer and
+/// number places) as a slide of the size of a notes page, which the ordinary editor opens. [`apply`] with the notes
+/// master's part puts the shapes, as edited, back; the notes' text styles and the rest are left as they were.
+pub fn build_notes_master(data: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut package = Package::open(data.to_vec())?;
+    let main = main_part(&package)?;
+    let part = notes_master_part(data)?.ok_or_else(|| err("ノート マスターがありません"))?;
+    // The layout the slide follows (any: it shows nothing).
+    let master = package.relationships(&main)?.into_iter().find(|r| r.kind == REL_SLIDE_MASTER && !r.external).and_then(|r| r.target_part(&main)).ok_or_else(|| err("スライド マスターがありません"))?;
+    let layout = layouts_of(&package, &master)?.into_iter().next().ok_or_else(|| err("レイアウトの無いマスターです"))?;
+    let slide_part = next_part_name(&package, "ppt/slides/slide1.xml");
+    let mut slide = package.xml(&part)?;
+    let slide_root = slide.root_element().ok_or_else(|| err("ノート マスターが空です"))?;
+    let prefix = slide.prefix(slide_root).map(|p| format!("{p}:")).unwrap_or_default();
+    slide.rename(slide_root, &format!("{prefix}sld"));
+    slide.set_attr(slide_root, "showMasterSp", "0");
+    for child in slide.children(slide_root).to_vec() {
+        if slide.is_element(child) && matches!(slide.local_name(child), "clrMap" | "hf" | "notesStyle") {
+            slide.detach(child);
+        }
+    }
+    if let Some(csld) = slide.child(slide_root, "cSld") {
+        if slide.child(csld, "bg").is_none() {
+            let x = crate::save::pptx_new::Prefixes::at(&slide, csld);
+            let bg = x.import(&mut slide, &format!("<{p}bg><{p}bgPr><{a}solidFill><{a}srgbClr val=\"FFFFFF\"/></{a}solidFill><{a}effectLst/></{p}bgPr></{p}bg>", p = x.p, a = x.a))?;
+            slide.insert(csld, 0, bg);
+        }
+    }
+    package.set_xml(&slide_part, slide);
+    package.set_override(&slide_part, CT_SLIDE)?;
+    for rel in package.relationships(&part)?.iter().filter(|r| r.kind != REL_THEME) {
+        let target = if rel.external { rel.target.clone() } else { match rel.target_part(&part) { Some(t) => relative(&slide_part, &t), None => continue } };
+        add_relationship_with_id(&mut package, &slide_part, &rel.id, &rel.kind, &target, rel.external)?;
+    }
+    package.add_relationship(&slide_part, REL_SLIDE_LAYOUT, &relative(&slide_part, &layout), false)?;
+    {
+        let doc = package.xml_mut(&layout)?;
+        if let Some(t) = tree(doc) {
+            empty_tree(doc, t);
+        }
+        let doc = package.xml_mut(&part)?;
+        if let Some(t) = tree(doc) {
+            empty_tree(doc, t);
+        }
+    }
+    let rid = package.add_relationship(&main, REL_SLIDE, &relative(&main, &slide_part), false)?;
+    let doc = package.xml_mut(&main)?;
+    let root = doc.root_element().ok_or_else(|| err("プレゼンテーションが空です"))?;
+    let notes_size = doc.child(root, "notesSz").map(|n| (doc.attr(n, "cx").unwrap_or("6858000").to_string(), doc.attr(n, "cy").unwrap_or("9144000").to_string())).unwrap_or(("6858000".into(), "9144000".into()));
+    let list = doc.child(root, "sldIdLst").ok_or_else(|| err("スライドの一覧がありません"))?;
+    for child in doc.children(list).to_vec() {
+        doc.detach(child);
+    }
+    let x = crate::save::pptx_new::Prefixes::at(doc, list);
+    let entry = x.import(doc, &format!("<{p}sldId id=\"256\" {r}id=\"{rid}\"/>", p = x.p, r = x.r))?;
+    doc.insert(list, 0, entry);
+    if let Some(size) = doc.child(root, "sldSz") {
+        doc.set_attr(size, "cx", &notes_size.0);
+        doc.set_attr(size, "cy", &notes_size.1);
+        doc.remove_attr(size, "type");
+    }
+    if let Some(shows) = doc.child(root, "custShowLst") {
+        doc.detach(shows);
+    }
+    if let Some(ext) = doc.child(root, "extLst") {
+        for e in doc.elements(ext).collect::<Vec<_>>() {
+            if doc.descendants(e).into_iter().any(|d| doc.is_element(d) && doc.local_name(d) == "sectionLst") {
+                doc.detach(e);
+            }
+        }
+    }
+    Ok(package.save(SaveOptions::default())?)
+}
+
+/// `data` with the shapes of the notes master those of the slide of `edited` (a file [`build_notes_master`] made from
+/// `data`, then edited).
+pub fn apply_notes_master(data: &[u8], edited: &[u8]) -> Result<Vec<u8>, Error> {
+    let part = notes_master_part(data)?.ok_or_else(|| err("ノート マスターがありません"))?;
+    apply(data, edited, &part)
 }

@@ -148,6 +148,23 @@ pub fn set_clock(now: fn() -> (i64, i64)) {
     let _ = CLOCK.set(now);
 }
 
+/// The file of the workbook being calculated (its whole path), for `CELL("filename")` and the sheet
+/// names `CELL("address")` gives for another sheet's cell. The app sets it when it opens or saves a
+/// workbook (the one it shows); `None` before it is saved.
+static WORKBOOK_FILE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Tell the calculator which file the workbook is (`None`: not saved yet).
+pub fn set_workbook_file(path: Option<String>) {
+    if let Ok(mut file) = WORKBOOK_FILE.lock() {
+        *file = path;
+    }
+}
+
+/// The workbook's file path, if it has one.
+pub fn workbook_file() -> Option<String> {
+    WORKBOOK_FILE.lock().ok().and_then(|f| f.clone())
+}
+
 /// Today as a serial number, if known.
 pub fn today_serial(date1904: bool) -> Option<i64> {
     let set = TODAY.load(std::sync::atomic::Ordering::Relaxed);

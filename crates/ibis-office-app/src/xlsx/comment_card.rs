@@ -78,6 +78,92 @@ impl SlideEditor {
         let at = self.cell_top_right(column, row)?;
         Some(deferred(anchored().position(point(at.x + px(6.), at.y)).snap_to_window_with_margin(px(8.)).child(card.id("comment-card").occlude())).with_priority(1).into_any_element())
     }
+
+    /// Move to the next or previous comment/note on the active sheet (wrapping around).
+    pub(crate) fn select_next_comment(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let mut cells: Vec<(u32, u32)> = sheet
+            .threads
+            .iter()
+            .map(|t| (t.column, t.row))
+            .chain(sheet.comments.iter().map(|c| (c.column, c.row)))
+            .collect();
+        if cells.is_empty() {
+            return;
+        }
+        cells.sort_by_key(|&(c, r)| (r, c));
+        cells.dedup();
+
+        let cur = self.current_cell();
+        let target = if forward {
+            if let Some((cc, cr)) = cur {
+                cells.iter().find(|&&(c, r)| (r, c) > (cr, cc)).copied().unwrap_or(cells[0])
+            } else {
+                cells[0]
+            }
+        } else {
+            if let Some((cc, cr)) = cur {
+                cells.iter().rfind(|&&(c, r)| (r, c) < (cr, cc)).copied().unwrap_or(*cells.last().unwrap())
+            } else {
+                *cells.last().unwrap()
+            }
+        };
+
+        self.set_cell(target.0, target.1);
+        self.scroll_range_into_view(true);
+        self.show_comment_card(Some(target), cx);
+    }
+
+    /// Toggle displaying all note cards simultaneously on the sheet.
+    pub(crate) fn toggle_show_all_notes(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.sheet_state_mut() {
+            s.show_all_notes = !s.show_all_notes;
+            cx.notify();
+        }
+    }
+
+    /// Render cards for all notes when `show_all_notes` is active.
+    pub(crate) fn render_all_notes(&self, _cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(s) = self.sheet_state() else { return Vec::new() };
+        if !s.show_all_notes || self.wb().filter_panel.is_some() || self.cell_edit().is_some() {
+            return Vec::new();
+        }
+        let Some((_, sheet)) = self.current_sheet() else { return Vec::new() };
+        let hover = s.comment_hover;
+        let mut cards = Vec::new();
+        for n in &sheet.comments {
+            if hover == Some((n.column, n.row)) {
+                continue;
+            }
+            let Some(at) = self.cell_top_right(n.column, n.row) else { continue };
+            let mut card = v_flex()
+                .w(px(220.))
+                .p_2()
+                .gap_1()
+                .bg(rgb(0xfff9c4))
+                .text_color(rgb(0x202124))
+                .border_1()
+                .border_color(rgb(0xd4a017))
+                .rounded_sm()
+                .shadow_md()
+                .text_size(px(12.));
+            if !n.author.is_empty() {
+                card = card.child(div().font_weight(FontWeight::SEMIBOLD).child(n.author.clone()));
+            }
+            card = card.child(div().child(n.text.clone()));
+            cards.push(
+                deferred(
+                    anchored()
+                        .position(point(at.x + px(6.), at.y))
+                        .snap_to_window_with_margin(px(8.))
+                        .child(card.id(ElementId::Name(format!("all-note-{}-{}", n.row, n.column).into())).occlude()),
+                )
+                .with_priority(1)
+                .into_any_element(),
+            );
+        }
+        cards
+    }
 }
 
 #[cfg(test)]

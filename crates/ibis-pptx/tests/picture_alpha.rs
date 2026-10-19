@@ -34,13 +34,13 @@ fn slide_picture_alpha_round_trips() {
     let media = document.ids().add_media(MediaFormat::Png, png());
     let id = document.ids().new_shape_id();
     let mut picture = Picture::new(media);
-    picture.alpha = Some(40_000);
+    picture.effects.opacity = Some(40_000);
     let index = document.presentation().slides[0].shapes.len();
     let shape = Shape { id, frame: EmuRect::new(0, 0, 914_400, 914_400), rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Picture(picture.clone()), floating: None };
     document.execute(vec![Command::InsertShape { slide, index, shape }]).unwrap();
     let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
     assert!(part(&saved, "ppt/slides/slide1.xml").contains(r#"<a:alphaModFix amt="40000"/>"#));
-    assert_eq!(slide_picture(&ibis_pptx::read(&saved).unwrap()).alpha, Some(40_000));
+    assert_eq!(slide_picture(&ibis_pptx::read(&saved).unwrap()).effects.opacity, Some(40_000));
 
     // Changed in the saved file, then taken away.
     let opened = ibis_pptx::open(saved).unwrap();
@@ -49,7 +49,7 @@ fn slide_picture_alpha_round_trips() {
     let shape = document.presentation().slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Picture(_))).unwrap().clone();
     let ShapeKind::Picture(mut picture) = shape.kind else { unreachable!() };
     for (alpha, xml) in [(Some(75_000), Some(r#"amt="75000""#)), (None, None)] {
-        picture.alpha = alpha;
+        picture.effects.opacity = alpha;
         document.execute(vec![Command::SetKind { slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture.clone())) }]).unwrap();
         let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
         let slide_xml = part(&saved, "ppt/slides/slide1.xml");
@@ -57,7 +57,7 @@ fn slide_picture_alpha_round_trips() {
         if let Some(xml) = xml {
             assert!(slide_xml.contains(xml), "{slide_xml}");
         }
-        assert_eq!(slide_picture(&ibis_pptx::read(&saved).unwrap()).alpha, alpha);
+        assert_eq!(slide_picture(&ibis_pptx::read(&saved).unwrap()).effects.opacity, alpha);
     }
 }
 
@@ -66,12 +66,12 @@ fn first_para(p: &Presentation) -> u32 {
 }
 
 /// The alpha of the document's first picture, inline or floating.
-fn document_alpha(p: &Presentation) -> Option<u32> {
+fn document_alpha(p: &Presentation) -> Option<i32> {
     p.flow.as_ref().unwrap().body.iter().find_map(|b| match b {
         Block::Paragraph(p) => p.runs.iter().find_map(|r| match &r.kind {
-            FlowRunKind::Picture { look, .. } => Some(look.alpha),
+            FlowRunKind::Picture { look, .. } => Some(look.effects.opacity),
             FlowRunKind::Shape(s) => match &s.kind {
-                ShapeKind::Picture(pic) => Some(pic.alpha),
+                ShapeKind::Picture(pic) => Some(pic.effects.opacity),
                 _ => None,
             },
             _ => None,
@@ -89,7 +89,8 @@ fn document_picture_alpha_round_trips() {
     document.execute(vec![Command::Flow(FlowCommand::InsertPicture { at, media, size: ibis_doc_model::EmuSize::new(914_400, 914_400) })]).unwrap();
     let save = |document: &Document| opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
 
-    let look = PictureLook { alpha: Some(50_000), ..Default::default() };
+    let mut look = PictureLook::default();
+    look.effects.opacity = Some(50_000);
     document.execute(vec![Command::Flow(FlowCommand::SetPictureLook { at, look: look.clone() })]).unwrap();
     let saved = save(&document);
     assert!(part(&saved, "word/document.xml").contains(r#"<a:alphaModFix amt="50000"/>"#));

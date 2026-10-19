@@ -484,3 +484,8 @@ fix.update.failed.detail	ダウンロードのページから入れ直してく�
 fix.update.setting	起動時に更新を確かめる
 fix.update.setting.note	新しいバージョンがあれば、ダウンロードして更新するかどうかを聞きます。
 fix.update.log-path	更新のログ：{log}
+fix.formula-bar.expand	数式バーを展開
+fix.formula-bar.collapse	数式バーを折りたたむ
+xlsx.chart-type	グラフの種類
+fix.validation.continue	続けますか？
+fix.validation.cancel	キャンセル

@@ -8,7 +8,7 @@
 //! close up in every formula of the file.
 
 use ibis_doc_model::{CellValue, ExternalBook, Presentation};
-use ibis_ooxml::Package;
+use ibis_ooxml::{Package, XmlDocument};
 
 use crate::Error;
 
@@ -28,14 +28,109 @@ fn cell_value(v: &CellValue) -> Option<(Option<&'static str>, String)> {
     })
 }
 
+const CT_EXTERNAL_LINK: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
+const REL_EXTERNAL_LINK: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink";
+const REL_EXTERNAL_LINK_PATH: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath";
+
+fn escape(s: &str) -> String {
+    s.chars().filter(|&c| c == '\t' || c == '\n' || c == '\r' || c >= ' ').map(|c| match c {
+        '&' => "&amp;".to_string(),
+        '<' => "&lt;".to_string(),
+        '>' => "&gt;".to_string(),
+        '"' => "&quot;".to_string(),
+        c => c.to_string(),
+    }).collect()
+}
+
+fn external_link_xml(path_rel: &str, book: &ExternalBook) -> String {
+    let names: String = book.sheets.iter().map(|s| format!("<sheetName val=\"{}\"/>", escape(&s.name))).collect();
+    let mut data = String::new();
+    for (id, sheet) in book.sheets.iter().enumerate() {
+        let mut rows = String::new();
+        let mut by_row: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
+        for (&(row, column), value) in &sheet.cells {
+            let Some((t, text)) = cell_value(value) else { continue };
+            let at = format!("{}{}", crate::csv::column_name(column), row + 1);
+            by_row.entry(row).or_default().push_str(&format!("<cell r=\"{at}\"{}><v>{}</v></cell>", t.map(|t| format!(" t=\"{t}\"")).unwrap_or_default(), escape(&text)));
+        }
+        for (row, cells) in by_row {
+            rows.push_str(&format!("<row r=\"{}\">{cells}</row>", row + 1));
+        }
+        data.push_str(&format!("<sheetData sheetId=\"{id}\">{rows}</sheetData>"));
+    }
+    format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<externalLink xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><externalBook r:id=\"{path_rel}\"><sheetNames>{names}</sheetNames><sheetDataSet>{data}</sheetDataSet></externalBook></externalLink>")
+}
+
+/// The links the file does not have yet (the model's books past the `existing` ones it was read with): each a
+/// new part with its cached cells, its file as an external relationship, and an `externalReference` in the
+/// workbook, numbered after the others.
+fn add_new_links(package: &mut Package, workbook_part: &str, existing: usize, new: &[ExternalBook]) -> Result<(), Error> {
+    for book in new.iter().skip(existing).filter(|b| !b.broken && !b.name.is_empty() && !b.sheets.is_empty()) {
+        let part = crate::save::pptx::next_part_name(package, "xl/externalLinks/externalLink1.xml");
+        package.set_xml(&part, XmlDocument::parse(b"<externalLink xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"/>").map_err(|e| Error::new(format!("{e}")))?);
+        let path_rel = package.add_relationship(&part, REL_EXTERNAL_LINK_PATH, &book.path, true)?;
+        let xml = external_link_xml(&path_rel, book);
+        package.set_xml(&part, XmlDocument::parse(xml.as_bytes()).map_err(|e| Error::new(format!("{e}")))?);
+        package.set_override(&part, CT_EXTERNAL_LINK)?;
+        let rel = package.add_relationship(workbook_part, REL_EXTERNAL_LINK, &crate::save::pptx::relative(workbook_part, &part), false)?;
+        let doc = package.xml_mut(workbook_part)?;
+        let root = doc.root_element().ok_or_else(|| Error::new("ブックの XML が空です"))?;
+        let prefix = doc.prefix(root).map(|p| format!("{p}:")).unwrap_or_default();
+        let list = match doc.child(root, "externalReferences") {
+            Some(l) => l,
+            None => {
+                // After sheets and functionGroups, before the defined names and the rest.
+                let l = doc.insert_element(XmlDocument::ROOT, 0, &format!("{prefix}externalReferences"));
+                doc.detach(l);
+                let before = ["definedNames", "calcPr", "oleSize", "customWorkbookViews", "pivotCaches", "smartTagPr", "smartTagTypes", "webPublishing", "fileRecoveryPr", "webPublishObjects", "extLst"];
+                let anchor = doc.elements(root).find(|&c| before.contains(&doc.local_name(c)));
+                match anchor {
+                    Some(a) => doc.insert_before(a, l),
+                    None => {
+                        let n = doc.children(root).len();
+                        doc.insert(root, n, l);
+                    }
+                }
+                l
+            }
+        };
+        let count = doc.children(list).len();
+        let reference = doc.insert_element(list, count, &format!("{prefix}externalReference"));
+        doc.set_attr(reference, "r:id", &rel);
+    }
+    Ok(())
+}
+
 /// The cells of links whose cache changed are written again; broken links go.
 pub(super) fn write_external_links(package: &mut Package, workbook_part: &str, parts: &[Option<String>], baseline: &Presentation, current: &Presentation) -> Result<(), Error> {
     let (old, new) = (books(baseline), books(current));
+    add_new_links(package, workbook_part, old.len(), new)?;
     for (i, (a, b)) in old.iter().zip(new).enumerate() {
-        if a.sheets == b.sheets || b.broken {
+        if (a.sheets == b.sheets && a.path == b.path && a.name == b.name) || b.broken {
             continue;
         }
         let Some(part) = parts.get(i).cloned().flatten() else { continue };
+        let mut path_rel_id = String::new();
+        if let Ok(rels) = package.relationships(&part) {
+            if let Some(rel) = rels.iter().find(|r| r.kind == REL_EXTERNAL_LINK_PATH) {
+                path_rel_id = rel.id.clone();
+            }
+        }
+        if a.path != b.path || a.name != b.name {
+            if !path_rel_id.is_empty() {
+                package.remove_relationship(&part, &path_rel_id).ok();
+            }
+            if let Ok(rel) = package.add_relationship(&part, REL_EXTERNAL_LINK_PATH, &b.path, true) {
+                path_rel_id = rel;
+            }
+        }
+        if !path_rel_id.is_empty() {
+            let xml = external_link_xml(&path_rel_id, b);
+            if let Ok(doc) = XmlDocument::parse(xml.as_bytes()) {
+                package.set_xml(&part, doc);
+                continue;
+            }
+        }
         let doc = package.xml_mut(&part)?;
         let Some(root) = doc.root_element() else { continue };
         for data in doc.descendants(root).into_iter().filter(|&n| doc.local_name(n) == "sheetData").collect::<Vec<_>>() {

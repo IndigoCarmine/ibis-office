@@ -17,6 +17,7 @@ pub mod formula;
 pub mod functions;
 pub mod input;
 pub mod numfmt;
+pub mod random;
 pub mod recalc;
 pub mod special;
 pub mod text_order;

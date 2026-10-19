@@ -34,7 +34,7 @@ pub(crate) enum ColumnType {
 }
 
 impl ColumnType {
-    fn next(self) -> Self {
+    pub(crate) fn next(self) -> Self {
         match self {
             Self::Standard => Self::Text,
             Self::Text => Self::Date(DateOrder::Ymd),
@@ -46,7 +46,7 @@ impl ColumnType {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Standard => "_xlsx.general",
             Self::Text => "_xlsx.text",
@@ -75,6 +75,11 @@ pub(crate) struct ImportTextPanel {
     /// How each column of the file is read (past the list: 標準).
     pub(crate) columns: Vec<ColumnType>,
     pub(crate) destination: Entity<InputState>,
+    /// Fixed-width columns (not delimited), cut before the characters at the positions in `breaks` (empty: found from the text).
+    pub(crate) fixed: bool,
+    pub(crate) breaks: Entity<InputState>,
+    /// Into a new sheet (from its A1) rather than from the destination cell.
+    pub(crate) new_sheet: bool,
     /// Asked whether to replace the cells there: the next apply does.
     pub(crate) confirm: bool,
     pub(crate) message: String,
@@ -85,7 +90,13 @@ pub(crate) struct ImportTextPanel {
 impl ImportTextPanel {
     fn options(&self, cx: &App) -> ImportOptions {
         let start_row = self.start_row.read(cx).value().trim().parse::<usize>().ok().filter(|&n| n >= 1).unwrap_or(1);
-        ImportOptions { encoding: self.encoding, delimiter: self.delimiter, start_row }
+        let fixed = self.fixed.then(|| {
+            let mut breaks: Vec<usize> = self.breaks.read(cx).value().split([',', '、', ' ']).filter_map(|p| p.trim().parse::<usize>().ok()).filter(|&n| n > 0).collect();
+            breaks.sort();
+            breaks.dedup();
+            breaks
+        });
+        ImportOptions { encoding: self.encoding, delimiter: self.delimiter, start_row, fixed }
     }
 
     fn column(&self, i: usize) -> ColumnType {
@@ -166,6 +177,9 @@ impl SlideEditor {
             start_row: input("1".into(), "1", window, cx),
             columns: Vec::new(),
             destination: input(ibis_doc_model::cell_name(column, row), "A1", window, cx),
+            fixed: false,
+            breaks: input(String::new(), "3, 8", window, cx),
+            new_sheet: false,
             confirm: false,
             message: String::new(),
             ui: Default::default(),
@@ -192,7 +206,7 @@ impl SlideEditor {
         {
             let picked = cx.prompt_for_paths(PathPromptOptions {
                 files: true,
-                directories: false,
+                directories: false, extensions: Vec::new(),
                 multiple: false,
                 prompt: Some(crate::shell::i18n::text("_xlsx.load").to_string().into()),
             });
@@ -234,7 +248,7 @@ impl SlideEditor {
         cx.notify();
     }
 
-    pub(crate) fn apply_import_text_panel(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn apply_import_text_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.protection_refuses(crate::xlsx::protection::Guarded::Cells, cx) {
             return;
         }
@@ -249,17 +263,23 @@ impl SlideEditor {
             Ok(i) => i,
             Err(e) => return self.import_text_message(e.to_string(), cx),
         };
-        let Some(destination) = super::dedupe_edit::parse_range(&p.destination.read(cx).value()) else {
-            return self.import_text_message(crate::shell::i18n::text("fix.text-columns.enter-destination-cell-e-g").into(), cx);
+        let new_sheet = p.new_sheet;
+        let destination = if new_sheet {
+            CellRange { first_row: 0, first_column: 0, last_row: 0, last_column: 0 }
+        } else {
+            let Some(destination) = super::dedupe_edit::parse_range(&p.destination.read(cx).value()) else {
+                return self.import_text_message(crate::shell::i18n::text("fix.text-columns.enter-destination-cell-e-g").into(), cx);
+            };
+            destination
         };
-        let (confirm, slide, columns) = (p.confirm, p.slide, p.columns.clone());
+        let (confirm, mut slide, columns) = (p.confirm, p.slide, p.columns.clone());
         let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
         let (edits, formats) = cells_of(&imported.rows, &columns, (destination.first_row, destination.first_column), date1904);
         if edits.is_empty() {
             return self.import_text_message(crate::shell::i18n::text("_xlsx.there-is-no-data-to-load").into(), cx);
         }
         let Some((_, sheet)) = self.current_sheet() else { return };
-        let occupied = edits.iter().any(|e| sheet.cell(e.row, e.column).is_some_and(|c| !c.value.is_empty() || c.formula.is_some()));
+        let occupied = !new_sheet && edits.iter().any(|e| sheet.cell(e.row, e.column).is_some_and(|c| !c.value.is_empty() || c.formula.is_some()));
         if occupied && !confirm {
             if let Some(p) = self.wb_mut().panels.import_text.as_mut() {
                 p.confirm = true;
@@ -267,16 +287,41 @@ impl SlideEditor {
             return self.import_text_message(crate::shell::i18n::text("_xlsx.there-is-already-data-here-press-load-again-to-r").into(), cx);
         }
         let rows = imported.rows.len();
-        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { slide, edits })];
+        // A new sheet after the current one, named for the file, made in the same step as its cells.
+        let mut commands = Vec::new();
+        if new_sheet {
+            let Some(wb) = self.presentation().workbook.clone() else { return };
+            let index = wb.sheets.iter().position(|s| s.slide == Some(self.current_slide)).map_or(wb.sheets.len(), |i| i + 1);
+            let stem = self.sheet_state().and_then(|s| s.panels.import_text.as_ref()).and_then(|p| p.name.clone()).map(|n| n.rsplit_once('.').map_or(n.clone(), |(a, _)| a.to_string())).filter(|n| !n.is_empty()).unwrap_or_else(|| "Sheet".into());
+            let stem: String = stem.chars().filter(|c| !"[]:*?/\\".contains(*c)).take(28).collect();
+            let mut n = 1;
+            let name = loop {
+                let name = if n == 1 { stem.clone() } else { format!("{stem} {n}") };
+                if ibis_doc_model::sheet_ops::valid_sheet_name(self.presentation(), &name, None) {
+                    break name;
+                }
+                n += 1;
+            };
+            slide = self.document.ids().new_slide_id();
+            let shape = self.document.ids().new_shape_id();
+            commands.push(Command::Sheet(SheetCommand::AddSheet { index, name, slide, shape }));
+        }
+        commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
         for (range, code) in formats {
             commands.push(Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
         }
         if let Err(error) = self.document.execute(commands) {
             return self.import_text_message(error.to_string(), cx);
         }
+        if new_sheet {
+            self.select_slide(slide, window, cx);
+        }
         self.wb_mut().last_fill = None;
         if let Some(p) = self.wb_mut().panels.import_text.as_mut() {
             p.confirm = false;
+            if new_sheet {
+                p.slide = slide;
+            }
         }
         self.import_text_message(crate::shell::i18n::format("import-text.done", &[("rows", &rows)]), cx);
     }
@@ -346,6 +391,11 @@ impl SlideEditor {
                     p.delimiter = DELIMITERS[(i + 1) % DELIMITERS.len()].0;
                 }),
             ))
+            .child(button(
+                "import-text-fixed".into(),
+                crate::shell::i18n::text(if p.fixed { "import-text.fixed-on" } else { "import-text.fixed-off" }).to_string(),
+                Box::new(|p| p.fixed = !p.fixed),
+            ))
             .child(crate::shell::i18n::text("_xlsx.start-at-row"))
             .child(mark("start-row", Input::new(&p.start_row).small().into_any_element()))
             .child(crate::shell::i18n::text("_xlsx.column-data-format-click-to-change"));
@@ -370,21 +420,38 @@ impl SlideEditor {
                 "import-text-all-text".into(),
                 crate::shell::i18n::text("_xlsx.make-all-columns-text").to_string(),
                 Box::new(move |p| {
-                    let n = p.data.as_ref().and_then(|d| ibis_pptx::csv::import(d, &ImportOptions { start_row: 1, ..ImportOptions { encoding: p.encoding, delimiter: p.delimiter, start_row: 1 } }).ok()).map_or(0, |i| i.rows.iter().map(Vec::len).max().unwrap_or(0));
+                    let n = p.data.as_ref().and_then(|d| ibis_pptx::csv::import(d, &ImportOptions { encoding: p.encoding, delimiter: p.delimiter, start_row: 1, fixed: p.fixed.then(Vec::new) }).ok()).map_or(0, |i| i.rows.iter().map(Vec::len).max().unwrap_or(0));
                     p.columns = vec![ColumnType::Text; n];
                 }),
             ));
         }
-        body = body.child(crate::shell::i18n::text("fix.text-columns.destination")).child(mark("destination", Input::new(&p.destination).small().into_any_element())).child(crate::shell::i18n::text("fix.text-columns.preview"));
-        for record in preview {
-            let line = record.iter().take(8).map(String::as_str).collect::<Vec<_>>().join(" │ ");
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(line)));
+        if p.fixed {
+            body = body.child(crate::shell::i18n::text("import-text.breaks")).child(mark("breaks", Input::new(&p.breaks).small().into_any_element()));
         }
+        body = body.child(button(
+            "import-text-new-sheet".into(),
+            crate::shell::i18n::text(if p.new_sheet { "import-text.to-new-sheet" } else { "import-text.to-this-sheet" }).to_string(),
+            Box::new(|p| p.new_sheet = !p.new_sheet),
+        ));
+        if !p.new_sheet {
+            body = body.child(crate::shell::i18n::text("fix.text-columns.destination")).child(mark("destination", Input::new(&p.destination).small().into_any_element()));
+        }
+        body = body.child(crate::shell::i18n::text("fix.text-columns.preview"));
+        // The preview as a table: a cell for each field, the columns the file has (up to 8).
+        let mut grid = v_flex().border_1().border_color(gpui_kit::rgb(0xBFBFBF));
+        for record in preview {
+            let mut line = h_flex();
+            for field in record.iter().take(8) {
+                line = line.child(div().min_w(px(44.)).max_w(px(110.)).px_1().border_1().border_color(gpui_kit::rgb(0xD9D9D9)).text_size(px(12.)).overflow_hidden().child(SharedString::from(field.clone())));
+            }
+            grid = grid.child(line);
+        }
+        body = body.child(grid);
         body = body
             .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
             .child(mark(
                 "apply",
-                Button::new("import-text-apply").primary().small().label(crate::shell::i18n::text(if p.confirm { "fix.text-columns.replace" } else { "_xlsx.import" })).on_click(cx.listener(|this, _, _, cx| this.apply_import_text_panel(cx))).into_any_element(),
+                Button::new("import-text-apply").primary().small().label(crate::shell::i18n::text(if p.confirm { "fix.text-columns.replace" } else { "_xlsx.import" })).on_click(cx.listener(|this, _, window, cx| this.apply_import_text_panel(window, cx))).into_any_element(),
             ))
             .child(mark(
                 "close",

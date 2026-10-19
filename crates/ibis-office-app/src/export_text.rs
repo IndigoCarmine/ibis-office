@@ -98,7 +98,7 @@ impl NoteFlow {
         // (UTF-16 start, length, run) of each run, once the text is in.
         let mut spans: Vec<(isize, isize, &crate::export_print::NoteRun)> = Vec::new();
         let mut at = 0isize;
-        let mut push = |plain: &mut String, text: &str, at: &mut isize| -> (isize, isize) {
+        let push = |plain: &mut String, text: &str, at: &mut isize| -> (isize, isize) {
             let start = *at;
             plain.push_str(text);
             let n = text.encode_utf16().count() as isize;

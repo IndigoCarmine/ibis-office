@@ -15,6 +15,7 @@
 //! Excel, and not 0.99 as the binary value would round.
 
 pub(crate) mod dbnum;
+mod locale;
 mod parse;
 
 use std::cell::RefCell;
@@ -911,7 +912,7 @@ fn fraction_section(value: f64, section: &Section, l: &Layout, out: &mut Formatt
         num = 0;
     }
     // Excel shows ### for a numerator it cannot hold.
-    if num > i32::MAX as u64 || (!has_whole && num > 32767 && f.numerator.len() == 1) || (!has_whole && x >= 2_147_483_648.0) {
+    if num > i32::MAX as u64 || (!has_whole && x >= 2_147_483_648.0) {
         out.overflow = true;
         return String::new();
     }
@@ -1087,6 +1088,8 @@ fn date_section(value: f64, section: &Section, date1904: bool, mut out: Formatte
         let h = h % 12;
         if h == 0 { 12 } else { h }
     };
+    // The names of the section's locale (`[$-407]`), when it is not English or Japanese.
+    let names = section.locale.and_then(locale::names);
     // Elapsed totals.
     let total_seconds_all = day_i * 86_400 + secs;
     let mut text = String::new();
@@ -1111,15 +1114,30 @@ fn date_section(value: f64, section: &Section, date1904: bool, mut out: Formatte
                 DatePart::Month(n) => match n {
                     1 => text.push_str(&num(mo.to_string(), false)),
                     2 => text.push_str(&num(format!("{:02}", mo), false)),
-                    3 => text.push_str(&MONTHS[mo as usize - 1][..3]),
-                    4 => text.push_str(MONTHS[mo as usize - 1]),
-                    _ => text.push_str(&MONTHS[mo as usize - 1][..1]),
+                    3 => match names {
+                        Some(n) => text.push_str(n.months_short[mo as usize - 1]),
+                        None => text.push_str(&MONTHS[mo as usize - 1][..3]),
+                    },
+                    4 => match names {
+                        Some(n) => text.push_str(n.months[mo as usize - 1]),
+                        None => text.push_str(MONTHS[mo as usize - 1]),
+                    },
+                    _ => match names {
+                        Some(n) => text.extend(n.months[mo as usize - 1].chars().next()),
+                        None => text.push_str(&MONTHS[mo as usize - 1][..1]),
+                    },
                 },
                 DatePart::Day(n) => match n {
                     1 => text.push_str(&num(d.to_string(), false)),
                     2 => text.push_str(&num(format!("{:02}", d), false)),
-                    3 => text.push_str(&DAYS[dow][..3]),
-                    _ => text.push_str(DAYS[dow]),
+                    3 => match names {
+                        Some(n) => text.push_str(n.days_short[dow]),
+                        None => text.push_str(&DAYS[dow][..3]),
+                    },
+                    _ => match names {
+                        Some(n) => text.push_str(n.days[dow]),
+                        None => text.push_str(DAYS[dow]),
+                    },
                 },
                 DatePart::JaDay(n) => {
                     text.push_str(DAYS_JA[dow]);
@@ -1146,7 +1164,9 @@ fn date_section(value: f64, section: &Section, date1904: bool, mut out: Formatte
                 DatePart::ElapsedSeconds(n) => text.push_str(&format!("{:0width$}", total_seconds_all, width = *n as usize)),
                 DatePart::AmPm(style) => {
                     let pm = h >= 12;
+                    let own = names.and_then(|n| n.am_pm).filter(|_| matches!(style, parse::AmPm::Upper | parse::AmPm::Lower));
                     let s = match style {
+                        _ if own.is_some() => if pm { own.map_or("PM", |o| o.1) } else { own.map_or("AM", |o| o.0) },
                         parse::AmPm::Upper => if pm { "PM" } else { "AM" },
                         parse::AmPm::Lower => if pm { "pm" } else { "am" },
                         parse::AmPm::A => if pm { "P" } else { "A" },
@@ -1213,6 +1233,53 @@ mod tests {
             digits.pop();
         }
         Decimal { digits, point: exponent + 1 }
+    }
+
+    #[test]
+    fn a_locale_gives_its_names_to_months_days_and_am_pm() {
+        // 2026-10-13 is a Tuesday; 14:05.
+        let v = CellValue::Number(46308.0 + 14.0 / 24.0 + 5.0 / 1440.0);
+        let show = |code: &str| format(&v, code, false).text;
+        assert_eq!(show("[$-409]dddd, mmmm d, yyyy"), "Tuesday, October 13, 2026");
+        assert_eq!(show("[$-407]dddd, d. mmmm yyyy"), "Dienstag, 13. Oktober 2026");
+        assert_eq!(show("[$-407]ddd d mmm"), "Di 13 Okt");
+        assert_eq!(show("[$-40C]dddd d mmmm yyyy"), "mardi 13 octobre 2026");
+        assert_eq!(show("[$-40A]dddd, d \\d\\e mmmm"), "martes, 13 de octubre");
+        assert_eq!(show("[$-412]yyyy mmmm d dddd"), "2026 10월 13 화요일");
+        assert_eq!(show("[$-804]mmmm dddd"), "十月 星期二");
+        assert_eq!(show("[$-412]h:mm AM/PM"), "2:05 오후");
+        assert_eq!(show("[$-407]h:mm AM/PM"), "2:05 PM");
+        assert_eq!(show("[$-de-DE]mmmm"), "Oktober");
+        // Russian (LCID 0x0419 and ru-RU tag)
+        assert_eq!(show("[$-419]dddd, d mmmm yyyy"), "вторник, 13 октябрь 2026");
+        assert_eq!(show("[$-ru-RU]ddd d mmm"), "вт 13 окт");
+        // Dutch (LCID 0x0413 and nl-NL tag)
+        assert_eq!(show("[$-413]dddd d mmmm yyyy"), "dinsdag 13 oktober 2026");
+        assert_eq!(show("[$-nl-NL]ddd d mmm"), "di 13 okt");
+        // Polish (LCID 0x0415 and pl-PL tag)
+        assert_eq!(show("[$-415]dddd, d mmmm yyyy"), "wtorek, 13 październik 2026");
+        assert_eq!(show("[$-pl-PL]ddd d mmm"), "wt 13 paź");
+        // Swedish (LCID 0x041D and sv-SE tag)
+        assert_eq!(show("[$-41D]dddd d mmmm yyyy"), "tisdag 13 oktober 2026");
+        assert_eq!(show("[$-sv-SE]ddd d mmm"), "tis 13 okt");
+        // Turkish (LCID 0x041F and tr-TR tag)
+        assert_eq!(show("[$-41F]d mmmm yyyy dddd"), "13 Ekim 2026 Salı");
+        assert_eq!(show("[$-tr-TR]d mmm ddd"), "13 Eki Sal");
+        // Arabic (LCID 0x0401)
+        assert_eq!(show("[$-401]dddd d mmmm yyyy"), "الثلاثاء 13 أكتوبر 2026");
+        assert_eq!(show("[$-401]h:mm AM/PM"), "2:05 م");
+        // Hindi (LCID 0x0439)
+        assert_eq!(show("[$-439]dddd, d mmmm yyyy"), "मंगलवार, 13 अक्टूबर 2026");
+        assert_eq!(show("[$-439]h:mm AM/PM"), "2:05 अपराह्न");
+        // Currency symbols with locales
+        let cur_val = CellValue::Number(1234.5);
+        let show_cur = |code: &str| format(&cur_val, code, false).text;
+        assert_eq!(show_cur("[$₽-419] #,##0.00"), "₽ 1,234.50");
+        assert_eq!(show_cur("#,##0.00\\ [$₽-419]"), "1,234.50 ₽");
+        assert_eq!(show_cur("[$€-40C] #,##0.00"), "€ 1,234.50");
+        assert_eq!(show_cur("[$£-809] #,##0.00"), "£ 1,234.50");
+        // English and Japanese stay as they are.
+        assert_eq!(show("[$-411]yyyy年m月d日 aaaa"), "2026年10月13日 火曜日");
     }
 
     #[test]
@@ -1365,6 +1432,8 @@ mod tests {
         assert_eq!(f(0.5, "?/4"), "2/4");
         assert_eq!(format(&CellValue::Number(1234.5678), "* # ?/?", false).text, "1234 4/7");
         assert_eq!(format(&CellValue::Number(0.5), "* # ?/?", false).text, " 1/2");
+        assert_eq!(f(999999.5, "?/?"), "1999999/2");
+        assert_eq!(f(12345678.0, "?/?"), "12345678/1");
     }
 
     #[test]

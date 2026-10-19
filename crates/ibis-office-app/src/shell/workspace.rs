@@ -32,13 +32,12 @@ impl SlideEditor {
         // were placed by the turn (past the top, the left pane went down
         // and back while the sheet beside it stayed: #5).
         self.clamp_workspace_scroll();
-        if self.is_workbook() && self.sync_scrolling {
+        if (self.is_workbook() || self.is_document()) && self.sync_scrolling {
             self.sync_scroll_to_peer(cx);
         }
         let theme = cx.theme();
         let layout = self.slide_layout();
         let content = self.workspace_content();
-
         // The outer element is the workspace (focus, pointer, its bounds for
         // the layout); the inner one scrolls a slide larger than it.
         div()
@@ -61,21 +60,25 @@ impl SlideEditor {
                     .overflow_scroll()
                     .track_scroll(&self.workspace_scroll)
                     .when_some(layout.zip(content), |d, (layout, content)| {
-                        d.child(
-                            div()
-                                .relative()
-                                .flex_none()
-                                .w(content.size.width)
-                                .h(content.size.height)
-                                .child(self.render_slide(layout, content, cx)),
-                        )
+                        // The page layout view: the papers (page_layout.rs); else the slide.
+                        match self.render_page_layout(content, cx) {
+                            Some(papers) => d.child(papers),
+                            None => d.child(
+                                div()
+                                    .relative()
+                                    .flex_none()
+                                    .w(content.size.width)
+                                    .h(content.size.height)
+                                    .child(self.render_slide(layout, content, cx)),
+                            ),
+                        }
                     }),
             )
             // Frozen panes: the sheet again, over the scrolled one, held
             // still on their axis.
-            .when_some(layout.zip(content), |d, (layout, content)| d.children(self.render_frozen_panes(layout, content, cx)))
+            .when_some(layout.zip(content).filter(|_| !self.page_layout_shown()), |d, (layout, content)| d.children(self.render_frozen_panes(layout, content, cx)))
             // Under the scrollbars, which stay usable at the headers' ends.
-            .when_some(content.and_then(|content| self.render_sheet_headers(content, cx)), |d, headers| {
+            .when_some(content.filter(|_| !self.page_layout_shown()).and_then(|content| self.render_sheet_headers(content, cx)), |d, headers| {
                 d.child(headers)
             })
             .children(self.render_loading(cx))
@@ -155,28 +158,115 @@ impl SlideEditor {
         if let (Some(w), Some(h)) = (split_x, split_y) {
             panes.push(pane(self, "frozen-corner", Some(w), Some(h), pane_shift, cx));
         }
-        let line = rgb(crate::xlsx::sheet_ui::FROZEN_LINE);
-        if let Some(h) = split_y {
-            panes.push(div().absolute().left_0().top(px(h - 1.0)).w_full().h(px(1.)).bg(line).into_any_element());
-        }
-        if let Some(w) = split_x {
-            panes.push(div().absolute().top_0().left(px(w - 1.0)).h_full().w(px(1.)).bg(line).into_any_element());
+        if split {
+            let bar_size = 4.0;
+            let bar_bg = rgb(0xD4D4D4);
+            let border_color = rgb(0x808080);
+
+            // Horizontal split bar
+            if let Some(h) = split_y {
+                let bar = div()
+                    .id("split-bar-h")
+                    .absolute()
+                    .left_0()
+                    .top(px(h - bar_size / 2.0))
+                    .w_full()
+                    .h(px(bar_size))
+                    .bg(bar_bg)
+                    .border_y_1()
+                    .border_color(border_color)
+                    .cursor(CursorStyle::ResizeUpDown)
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                        this.on_split_down(crate::xlsx::split_view::SplitAxis::Horizontal, e, cx);
+                    }));
+                panes.push(bar.into_any_element());
+            }
+
+            // Vertical split bar
+            if let Some(w) = split_x {
+                let bar = div()
+                    .id("split-bar-v")
+                    .absolute()
+                    .top_0()
+                    .left(px(w - bar_size / 2.0))
+                    .w(px(bar_size))
+                    .h_full()
+                    .bg(bar_bg)
+                    .border_x_1()
+                    .border_color(border_color)
+                    .cursor(CursorStyle::ResizeLeftRight)
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                        this.on_split_down(crate::xlsx::split_view::SplitAxis::Vertical, e, cx);
+                    }));
+                panes.push(bar.into_any_element());
+            }
+
+            // Intersection corner
+            if let (Some(w), Some(h)) = (split_x, split_y) {
+                let corner = div()
+                    .id("split-bar-both")
+                    .absolute()
+                    .left(px(w - bar_size / 2.0))
+                    .top(px(h - bar_size / 2.0))
+                    .w(px(bar_size))
+                    .h(px(bar_size))
+                    .bg(bar_bg)
+                    .cursor(CursorStyle::Crosshair)
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                        this.on_split_down(crate::xlsx::split_view::SplitAxis::Both, e, cx);
+                    }));
+                panes.push(corner.into_any_element());
+            }
+
+            // Guide lines while dragging
+            if let Some(drag) = self.sheet_state().and_then(|s| s.split_drag) {
+                let guide_color = rgb(crate::xlsx::sheet_ui::SELECTION_COLOR);
+                let ws_origin = self.workspace_bounds.map_or(Point::default(), |b| b.origin);
+                let cur_x = drag.current.x - ws_origin.x;
+                let cur_y = drag.current.y - ws_origin.y;
+                if drag.axis == crate::xlsx::split_view::SplitAxis::Vertical || drag.axis == crate::xlsx::split_view::SplitAxis::Both {
+                    panes.push(div().id("split-guide-v").absolute().top_0().left(cur_x - px(1.)).w(px(2.)).h_full().bg(guide_color).into_any_element());
+                }
+                if drag.axis == crate::xlsx::split_view::SplitAxis::Horizontal || drag.axis == crate::xlsx::split_view::SplitAxis::Both {
+                    panes.push(div().id("split-guide-h").absolute().left_0().top(cur_y - px(1.)).w_full().h(px(2.)).bg(guide_color).into_any_element());
+                }
+            }
+        } else {
+            let line = rgb(crate::xlsx::sheet_ui::FROZEN_LINE);
+            if let Some(h) = split_y {
+                panes.push(div().absolute().left_0().top(px(h - 1.0)).w_full().h(px(1.)).bg(line).into_any_element());
+            }
+            if let Some(w) = split_x {
+                panes.push(div().absolute().top_0().left(px(w - 1.0)).h_full().w(px(1.)).bg(line).into_any_element());
+            }
         }
         panes
+    }
+
+    /// The slide drawn for a page of the page layout view (its own scale, the cursor and the rest in it).
+    pub(crate) fn render_slide_for_pages(&self, layout: SlideLayout, content: WorkspaceContent, cx: &mut Context<Self>) -> Div {
+        self.render_slide(layout, content, cx)
     }
 
     fn render_slide(&self, layout: SlideLayout, content: WorkspaceContent, cx: &mut Context<Self>) -> Div {
         let slide = self.slide();
         let mut size = self.presentation().size_of(slide);
+        let scale = layout.scale;
         // A worksheet's page is its whole grid, past the cells it uses.
         if let Some((shape, _)) = self.current_sheet() {
-            size.width = size.width.max(shape.frame.right());
-            size.height = size.height.max(shape.frame.bottom());
+            let def_scale = scale.max(1e-9);
+            let content_emu_w = (f32::from(content.size.width) / def_scale) as i64;
+            let content_emu_h = (f32::from(content.size.height) / def_scale) as i64;
+            size.width = size.width.max(shape.frame.right()).max(content_emu_w);
+            size.height = size.height.max(shape.frame.bottom()).max(content_emu_h);
         }
-        let scale = layout.scale;
 
-        let mut shapes: Vec<AnyElement> =
-            slide.shown_shapes().map(|shape| self.render_shape(shape, scale, cx)).collect();
+        let hide_ink = self.is_workbook() && self.current_sheet().map(|(_, s)| s.hide_ink).unwrap_or(false);
+        let mut shapes: Vec<AnyElement> = slide
+            .shown_shapes()
+            .filter(|shape| !(hide_ink && crate::xlsx::ink::stroke_points(shape).is_some()))
+            .map(|shape| self.render_shape(shape, scale, cx))
+            .collect();
         // The selected cell is drawn over the worksheet and under the charts
         // and pictures on it, as in Excel.
         if let Some(index) = slide.shown_shapes().position(|s| matches!(s.kind, ShapeKind::Sheet(_))) {
@@ -201,6 +291,11 @@ impl SlideEditor {
             // Trace arrows over cells (参照元・参照先のトレース).
             if let Some(arrows) = self.render_trace_arrows(scale) {
                 shapes.insert(index + 1, arrows.into_any_element());
+                overlays += 1;
+            }
+            // The stroke being drawn with the pen (描画).
+            if let Some(stroke) = self.render_ink_preview(scale) {
+                shapes.insert(index + 1, stroke.into_any_element());
                 overlays += 1;
             }
             // A chart's data ranges (データの編集), over the cells.
@@ -236,14 +331,24 @@ impl SlideEditor {
 
     fn render_shape(&self, shape: &Shape, scale: f32, cx: &mut Context<Self>) -> AnyElement {
         let id = shape.id;
-        if let ShapeKind::Sheet(_) = shape.kind {
+        if let ShapeKind::Sheet(_) = &shape.kind {
             // The grid is the page itself: a press selects a cell, and the
             // shape is never moved, resized or removed.
-            return place(div().id(("shape", id.0)), shape.frame, scale)
+            let mut frame = shape.frame;
+            if self.is_workbook() {
+                if let Some(content) = self.workspace_content() {
+                    let def_scale = scale.max(1e-9);
+                    let content_emu_w = (f32::from(content.size.width) / def_scale) as i64;
+                    let content_emu_h = (f32::from(content.size.height) / def_scale) as i64;
+                    frame.width = frame.width.max(content_emu_w.saturating_sub(frame.x));
+                    frame.height = frame.height.max(content_emu_h.saturating_sub(frame.y));
+                }
+            }
+            return place(div().id(("shape", id.0)), frame, scale)
                 .when(self.tool == Tool::Select, |d| d.cursor(CursorStyle::Crosshair))
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::on_sheet_down))
                 .on_mouse_down(MouseButton::Right, cx.listener(Self::on_sheet_right_down))
-                .child(shape_element(shape, EmuRect { x: 0, y: 0, ..shape.frame }, scale, &self.resources, None))
+                .child(shape_element(shape, EmuRect { x: 0, y: 0, ..frame }, scale, &self.resources, None))
                 .into_any_element();
         }
         let frame = self.display_frame(shape);
@@ -315,6 +420,11 @@ impl SlideEditor {
     /// Selection frame and the eight resize handles.
     fn render_selection(&self, scale: f32, cx: &mut Context<Self>) -> Option<Div> {
         let shape = self.selected_shape()?;
+        if self.is_workbook() && self.current_sheet().map(|(_, s)| s.hide_ink).unwrap_or(false) {
+            if crate::xlsx::ink::stroke_points(shape).is_some() {
+                return None;
+            }
+        }
         let id = shape.id;
         let frame = self.display_frame(shape);
         let editing = self.editing.as_ref().is_some_and(|e| e.shape == id);

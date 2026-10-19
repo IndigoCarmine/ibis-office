@@ -442,7 +442,7 @@ impl SlideEditor {
 
     /// 挿入 > オブジェクト > ファイルから: a file an editor imports (by its extension).
     pub(crate) fn pick_embedded_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(i18n::text("_shell.insert").to_string().into()) });
+        let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(i18n::text("_shell.insert").to_string().into()) });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = picked.await else { return };
             let Some(path) = paths.into_iter().next() else { return };

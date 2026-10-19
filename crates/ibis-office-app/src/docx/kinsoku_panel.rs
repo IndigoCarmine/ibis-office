@@ -20,19 +20,53 @@ pub(crate) struct KinsokuPanel {
 }
 
 impl SlideEditor {
-    /// The lists now: what the document sets, else the standard ones.
+    /// 禁則処理の方式が「厳密」かどうか（`w:strictFirstAndLastChars`）。
+    pub(crate) fn strict_kinsoku(&self) -> bool {
+        self.flow().map_or(true, |d| d.strict_first_and_last_chars)
+    }
+
+    /// 禁則処理の方式を切り替える（1手の元に戻す）。
+    #[allow(dead_code)]
+    pub(crate) fn set_strict_kinsoku(&mut self, strict: bool, cx: &mut Context<Self>) {
+        self.run_flow(vec![FlowCommand::SetStrictFirstAndLastChars(strict)], cx);
+    }
+
+    /// 禁則プリセット（標準または厳密）を一括適用する（1手の元に戻す）。
+    pub(crate) fn set_kinsoku_preset(&mut self, strict: bool, cx: &mut Context<Self>) {
+        self.run_flow(
+            vec![
+                FlowCommand::SetStrictFirstAndLastChars(strict),
+                FlowCommand::SetKinsokuLists { start: None, end: None },
+            ],
+            cx,
+        );
+    }
+
+    /// The lists now: what the document sets, else the standard or strict ones.
     pub(crate) fn kinsoku_lists(&self) -> (String, String) {
         let doc = self.flow();
+        let strict = doc.map_or(true, |d| d.strict_first_and_last_chars);
+        let default_start = if strict {
+            super::flow_layout::STRICT_NO_LINE_START
+        } else {
+            super::flow_layout::NORMAL_NO_LINE_START
+        };
         (
-            doc.and_then(|d| d.no_line_start.clone()).unwrap_or_else(|| super::flow_layout::NO_LINE_START.to_string()),
+            doc.and_then(|d| d.no_line_start.clone()).unwrap_or_else(|| default_start.to_string()),
             doc.and_then(|d| d.no_line_end.clone()).unwrap_or_else(|| super::flow_layout::NO_LINE_END.to_string()),
         )
     }
 
-    /// Set the lists (`None`: the standard ones) in one step of undo.
+    /// Set the lists (`None`: the standard/strict ones) in one step of undo.
     pub(crate) fn set_kinsoku_lists(&mut self, start: Option<String>, end: Option<String>, cx: &mut Context<Self>) {
-        // A list equal to the standard one is not kept.
-        let start = start.filter(|s| s != super::flow_layout::NO_LINE_START);
+        let strict = self.strict_kinsoku();
+        let default_start = if strict {
+            super::flow_layout::STRICT_NO_LINE_START
+        } else {
+            super::flow_layout::NORMAL_NO_LINE_START
+        };
+        // A list equal to the default one is not kept.
+        let start = start.filter(|s| s != default_start);
         let end = end.filter(|s| s != super::flow_layout::NO_LINE_END);
         self.run_flow(vec![FlowCommand::SetKinsokuLists { start, end }], cx);
     }
@@ -71,19 +105,41 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// 適用: the two lists as typed (an empty one is the standard list).
+    /// 適用: the two lists as typed. If matching strict/normal default, saves as preset.
     pub(crate) fn apply_kinsoku_panel(&mut self, cx: &mut Context<Self>) {
         let Some(p) = self.doc_state().and_then(|s| s.helper.kinsoku.as_ref()) else { return };
         let (start, end) = (p.start.read(cx).value().to_string(), p.end.read(cx).value().to_string());
-        let list = |v: String| if v.trim().is_empty() { None } else { Some(v.chars().filter(|c| !c.is_whitespace()).collect::<String>()) };
-        self.set_kinsoku_lists(list(start), list(end), cx);
+        let clean = |v: String| v.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        let start_cleaned = clean(start);
+        let end_cleaned = clean(end);
+
+        let mut commands = Vec::new();
+        if start_cleaned.is_empty() || start_cleaned == super::flow_layout::STRICT_NO_LINE_START {
+            commands.push(FlowCommand::SetStrictFirstAndLastChars(true));
+            commands.push(FlowCommand::SetKinsokuLists {
+                start: None,
+                end: if end_cleaned.is_empty() || end_cleaned == super::flow_layout::NO_LINE_END { None } else { Some(end_cleaned) },
+            });
+        } else if start_cleaned == super::flow_layout::NORMAL_NO_LINE_START {
+            commands.push(FlowCommand::SetStrictFirstAndLastChars(false));
+            commands.push(FlowCommand::SetKinsokuLists {
+                start: None,
+                end: if end_cleaned.is_empty() || end_cleaned == super::flow_layout::NO_LINE_END { None } else { Some(end_cleaned) },
+            });
+        } else {
+            commands.push(FlowCommand::SetKinsokuLists {
+                start: Some(start_cleaned),
+                end: if end_cleaned.is_empty() || end_cleaned == super::flow_layout::NO_LINE_END { None } else { Some(end_cleaned) },
+            });
+        }
+        self.run_flow(commands, cx);
         self.close_kinsoku_panel(cx);
     }
 
-    /// 標準に戻す.
-    pub(crate) fn reset_kinsoku_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_kinsoku_lists(None, None, cx);
-        let (start, end) = self.kinsoku_lists();
+    /// 「標準」プリセットを入力欄に反映し適用.
+    pub(crate) fn select_normal_kinsoku_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_kinsoku_preset(false, cx);
+        let (start, end) = (super::flow_layout::NORMAL_NO_LINE_START.to_string(), super::flow_layout::NO_LINE_END.to_string());
         if let Some(p) = self.doc_state().and_then(|s| s.helper.kinsoku.as_ref()) {
             p.start.update(cx, |i, cx| i.set_value(&start, window, cx));
             p.end.update(cx, |i, cx| i.set_value(&end, window, cx));
@@ -91,14 +147,62 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// 「厳密」プリセットを入力欄に反映し適用.
+    pub(crate) fn select_strict_kinsoku_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_kinsoku_preset(true, cx);
+        let (start, end) = (super::flow_layout::STRICT_NO_LINE_START.to_string(), super::flow_layout::NO_LINE_END.to_string());
+        if let Some(p) = self.doc_state().and_then(|s| s.helper.kinsoku.as_ref()) {
+            p.start.update(cx, |i, cx| i.set_value(&start, window, cx));
+            p.end.update(cx, |i, cx| i.set_value(&end, window, cx));
+        }
+        cx.notify();
+    }
+
+    /// 標準に戻す.
+    pub(crate) fn reset_kinsoku_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_strict_kinsoku_panel(window, cx);
+    }
+
     pub(crate) fn kinsoku_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.doc_state()?.helper.kinsoku.as_ref()?;
         let theme = cx.theme();
+        let strict = self.strict_kinsoku();
+        let is_custom = self.flow().and_then(|d| d.no_line_start.as_ref()).is_some();
         let label = |key: &'static str| div().text_size(px(12.)).text_color(theme.muted_foreground).child(text(key));
         let body = v_flex()
             .gap_3()
             .p_3()
             .child(label("docx.kinsoku.description"))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(label("docx.kinsoku.rule_label"))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("kinsoku-preset-normal")
+                                    .small()
+                                    .label(text("docx.kinsoku.rule_normal"))
+                                    .on_click(cx.listener(|this, _, window, cx| this.select_normal_kinsoku_panel(window, cx))),
+                            )
+                            .child(
+                                Button::new("kinsoku-preset-strict")
+                                    .small()
+                                    .label(text("docx.kinsoku.rule_strict"))
+                                    .on_click(cx.listener(|this, _, window, cx| this.select_strict_kinsoku_panel(window, cx))),
+                            ),
+                    )
+                    .child(
+                        div().text_size(px(11.)).text_color(theme.muted_foreground).child(text(if is_custom {
+                            "docx.kinsoku.rule_custom"
+                        } else if strict {
+                            "docx.kinsoku.mode.strict"
+                        } else {
+                            "docx.kinsoku.mode.normal"
+                        })),
+                    ),
+            )
             .child(v_flex().gap_1().child(label("docx.kinsoku.start")).child(Input::new(&p.start).small()))
             .child(v_flex().gap_1().child(label("docx.kinsoku.end")).child(Input::new(&p.end).small()))
             .child(
@@ -133,5 +237,26 @@ mod tests {
         assert!(may_break(Some('「'), Some('う'), true, true, &doc));
         // Without 禁則処理 nothing is held.
         assert!(may_break(Some('う'), Some('あ'), false, true, &doc));
+    }
+
+    #[test]
+    fn strict_and_normal_kinsoku_rules() {
+        let mut doc = FlowDocument::default();
+        doc.strict_first_and_last_chars = true;
+
+        // Strict: small kana and prolonged sound mark cannot start a line
+        assert!(!may_break(Some('あ'), Some('っ'), true, true, &doc));
+        assert!(!may_break(Some('あ'), Some('ぁ'), true, true, &doc));
+        assert!(!may_break(Some('あ'), Some('ー'), true, true, &doc));
+        // Punctuation cannot start
+        assert!(!may_break(Some('あ'), Some('、'), true, true, &doc));
+
+        // Normal: small kana and prolonged sound mark CAN start a line
+        doc.strict_first_and_last_chars = false;
+        assert!(may_break(Some('あ'), Some('っ'), true, true, &doc));
+        assert!(may_break(Some('あ'), Some('ぁ'), true, true, &doc));
+        assert!(may_break(Some('あ'), Some('ー'), true, true, &doc));
+        // But punctuation still CANNOT start
+        assert!(!may_break(Some('あ'), Some('、'), true, true, &doc));
     }
 }

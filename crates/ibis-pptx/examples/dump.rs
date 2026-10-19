@@ -47,6 +47,8 @@ fn main() {
                     sheet.cells.iter().filter(|c| !c.text.is_empty()).take(12).map(|c| (c.row, c.column, c.text.as_str())).collect::<Vec<_>>()
                 ),
                 ShapeKind::Slicer(s) => format!("slicer {} items={}", s.name, s.items.len()),
+                ShapeKind::Timeline(t) => format!("timeline {} level={}", t.name, t.level),
+                ShapeKind::Control(c) => format!("control {:?} {} link={:?}", c.kind, c.name, c.link),
                 ShapeKind::Page { document, index } => {
                     let text = |b: &ibis_doc_model::Block| match b {
                         ibis_doc_model::Block::Paragraph(p) => p

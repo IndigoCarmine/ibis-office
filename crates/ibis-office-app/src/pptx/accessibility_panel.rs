@@ -520,6 +520,136 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// 特定のアクセシビリティ問題の図形を装飾用としてマークし、再検査する
+    pub(crate) fn mark_accessibility_issue_decorative(&mut self, issue_idx: usize, cx: &mut Context<Self>) {
+        self.jump_to_pptx_accessibility_issue(issue_idx, cx);
+        let slide = self.current_slide;
+        if let Some(shape) = self.selection {
+            self.run(vec![ibis_doc_model::Command::SetShapeDecorative { slide, shape, decorative: true }], cx);
+            self.recheck_pptx_accessibility(cx);
+        }
+    }
+
+    /// 特定のアクセシビリティ問題の表に対してタイトル行（見出し行）を有効化し、再検査する
+    pub(crate) fn enable_accessibility_issue_table_header(&mut self, issue_idx: usize, cx: &mut Context<Self>) {
+        self.jump_to_pptx_accessibility_issue(issue_idx, cx);
+        if !self.table_option_checked(crate::pptx::editing::TableOption::FirstRow) {
+            self.toggle_table_option(crate::pptx::editing::TableOption::FirstRow, cx);
+        }
+        self.recheck_pptx_accessibility(cx);
+    }
+
+    /// アクセシビリティ チェック項目カードの右クリック コンテキストメニュー項目 (PPTX-ACCESS-001..011, PPTX-AUDIT-003)
+    pub(crate) fn accessibility_issue_context_menu_entries(&self, issue_idx: usize) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem};
+        let Some(p) = self.pptx().and_then(|s| s.accessibility_panel.as_ref()) else { return Vec::new() };
+        let all: Vec<_> = p.report.errors.iter().chain(p.report.warnings.iter()).chain(p.report.tips.iter()).cloned().collect();
+        let Some(issue) = all.get(issue_idx).cloned() else { return Vec::new() };
+        let s_id = issue.slide_id;
+        let sh_id = issue.shape_id;
+
+        let mut entries: Vec<MenuEntry> = vec![
+            MenuItem::tr("_shell.view")
+                .icon("visibility")
+                .on(move |e, _, cx| e.jump_to_pptx_accessibility_issue(issue_idx, cx))
+                .into(),
+        ];
+
+        match issue.fix_type {
+            IssueFixType::AddAltText | IssueFixType::MarkDecorative => {
+                entries.push(MenuEntry::Separator);
+                entries.push(
+                    MenuItem::tr("pptx.alt-text")
+                        .icon("description")
+                        .on(move |e, w, cx| {
+                            e.jump_to_pptx_accessibility_issue(issue_idx, cx);
+                            e.open_alt_text_panel(w, cx);
+                        })
+                        .into(),
+                );
+                entries.push(
+                    MenuItem::tr("pptx.alt-text.decorative")
+                        .icon("check_circle")
+                        .on(move |e, _, cx| e.mark_accessibility_issue_decorative(issue_idx, cx))
+                        .into(),
+                );
+            }
+            IssueFixType::AddSlideTitle | IssueFixType::AddHiddenTitle => {
+                entries.push(MenuEntry::Separator);
+                entries.push(
+                    MenuItem::tr("pptx.accessibility-panel.add-hidden-title")
+                        .icon("title")
+                        .on(move |e, _, cx| {
+                            e.add_hidden_slide_title(s_id, None, cx);
+                            e.recheck_pptx_accessibility(cx);
+                        })
+                        .into(),
+                );
+            }
+            IssueFixType::EnableTableHeader => {
+                entries.push(MenuEntry::Separator);
+                entries.push(
+                    MenuItem::tr("pptx.table.first-row")
+                        .icon("table_rows")
+                        .on(move |e, _, cx| e.enable_accessibility_issue_table_header(issue_idx, cx))
+                        .into(),
+                );
+            }
+            IssueFixType::CheckReadingOrder => {
+                entries.push(MenuEntry::Separator);
+                entries.push(
+                    MenuItem::tr("pptx.accessibility-panel.check-reading-order")
+                        .icon("format_list_numbered")
+                        .on(move |e, _, cx| {
+                            e.current_slide = s_id;
+                            e.open_reading_order_pane(cx);
+                        })
+                        .into(),
+                );
+            }
+            IssueFixType::AddMediaCaptions => {
+                entries.push(MenuEntry::Separator);
+                entries.push(
+                    MenuItem::tr("_pptx.add-captions")
+                        .icon("closed_caption")
+                        .on(move |e, _, cx| {
+                            e.current_slide = s_id;
+                            if let Some(sid) = sh_id {
+                                e.selection = Some(sid);
+                                if let Some(s) = e.pptx_mut() {
+                                    s.selection = vec![sid];
+                                }
+                                e.add_selected_clip_caption(&crate::shell::i18n::text("_pptx.caption-track-language"), "ja-JP", &crate::shell::i18n::text("_pptx.caption-template"), cx);
+                            }
+                            e.recheck_pptx_accessibility(cx);
+                        })
+                        .into(),
+                );
+            }
+            IssueFixType::MakeTitleUnique | IssueFixType::UseMeaningfulLinkText | IssueFixType::FixContrast => {}
+        }
+
+        entries.extend([
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.inspect-panel.reinspect")
+                .icon("refresh")
+                .on(|e, _, cx| e.recheck_pptx_accessibility(cx))
+                .into(),
+            MenuItem::tr("_shell.close")
+                .icon("close")
+                .on(|e, _, cx| e.close_pptx_accessibility_panel(cx))
+                .into(),
+        ]);
+        entries
+    }
+
+    /// アクセシビリティ チェック項目カード上の右クリック メニューを開く
+    pub(crate) fn open_accessibility_issue_context_menu(&mut self, issue_idx: usize, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.jump_to_pptx_accessibility_issue(issue_idx, cx);
+        let entries = self.accessibility_issue_context_menu_entries(issue_idx);
+        self.open_popup_entries(entries, position, window, cx);
+    }
+
     /// サイドバーのアクセシビリティ チェック パネル UI 要素
     pub(crate) fn pptx_accessibility_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let panel = self.pptx()?.accessibility_panel.as_ref()?;
@@ -588,12 +718,24 @@ impl SlideEditor {
             };
 
             let item = v_flex()
+                .id(("access-issue-card", ix))
                 .p_2()
                 .gap_1()
                 .rounded_md()
                 .border_1()
                 .border_color(border_color)
                 .bg(bg_color)
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    this.jump_to_pptx_accessibility_issue(ix, cx);
+                }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.open_accessibility_issue_context_menu(ix, event.position, window, cx);
+                    }),
+                )
                 .child(
                     h_flex()
                         .justify_between()
@@ -609,6 +751,16 @@ impl SlideEditor {
                             h_flex()
                                 .gap_1()
                                 .items_center()
+                                .when(matches!(issue.fix_type, IssueFixType::AddAltText | IssueFixType::MarkDecorative), |el| {
+                                    el.child(
+                                        Button::new(("mark-decorative", ix))
+                                            .label(text("pptx.alt-text.decorative"))
+                                            .small()
+                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                this.mark_accessibility_issue_decorative(ix, cx);
+                                            })),
+                                    )
+                                })
                                 .when(matches!(issue.fix_type, IssueFixType::AddSlideTitle | IssueFixType::AddHiddenTitle), |el| {
                                     let s_id = issue.slide_id;
                                     el.child(
@@ -618,6 +770,16 @@ impl SlideEditor {
                                             .on_click(cx.listener(move |this, _, _window, cx| {
                                                 this.add_hidden_slide_title(s_id, None, cx);
                                                 this.recheck_pptx_accessibility(cx);
+                                            })),
+                                    )
+                                })
+                                .when(issue.fix_type == IssueFixType::EnableTableHeader, |el| {
+                                    el.child(
+                                        Button::new(("enable-table-header", ix))
+                                            .label(text("pptx.table.first-row"))
+                                            .small()
+                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                this.enable_accessibility_issue_table_header(ix, cx);
                                             })),
                                     )
                                 })
@@ -673,9 +835,22 @@ impl SlideEditor {
             issues_list = issues_list.child(item);
         }
 
+        let is_hc = self.is_high_contrast();
         let bottom_actions = h_flex()
             .gap_2()
             .justify_end()
+            .child(
+                Button::new("access-toggle-high-contrast")
+                    .label(if is_hc {
+                        text("pptx.accessibility-panel.color-view")
+                    } else {
+                        text("pptx.accessibility-panel.high-contrast")
+                    })
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_high_contrast(cx);
+                    })),
+            )
             .child(
                 Button::new("access-recheck")
                     .label(text("pptx.inspect-panel.reinspect"))

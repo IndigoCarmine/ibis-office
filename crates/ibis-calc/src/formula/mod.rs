@@ -329,9 +329,9 @@ pub fn rewrite_references(formula: &str, mut f: impl FnMut(&AreaRef) -> Option<A
         let start = i;
         let mut j = i;
         let sheet = match &tokens[j].token {
-            Token::Sheet { first, last, book } => {
+            Token::Sheet { first, last, book, path } => {
                 j += 1;
-                Some(SheetRef { first: first.clone(), last: last.clone(), book: book.clone() })
+                Some(SheetRef { first: first.clone(), last: last.clone(), book: book.clone(), path: path.clone() })
             }
             _ => None,
         };
@@ -411,6 +411,16 @@ pub fn books_by_name(formula: &str, books: &[String]) -> String {
     })
 }
 
+fn book_raw_name(b: &str) -> &str {
+    if let Some(pos) = b.find('[')
+        && let Some(end) = b[pos + 1..].find(']')
+    {
+        &b[pos + 1..pos + 1 + end]
+    } else {
+        b
+    }
+}
+
 /// The reverse of [`books_by_name`]: the formula as a file stores it, with the
 /// external workbooks by number.
 pub fn books_by_index(formula: &str, books: &[String]) -> String {
@@ -420,9 +430,15 @@ pub fn books_by_index(formula: &str, books: &[String]) -> String {
     rewrite_references(formula, |r| {
         let mut r = r.clone();
         if let Some(s) = r.sheet.as_mut()
-            && let Some(i) = s.book.as_deref().and_then(|b| books.iter().position(|n| !n.is_empty() && n.eq_ignore_ascii_case(b)))
+            && let Some(i) = s.book.as_deref().and_then(|b| {
+                let raw = book_raw_name(b);
+                books.iter().position(|n| {
+                    !n.is_empty() && (n.eq_ignore_ascii_case(b) || n.eq_ignore_ascii_case(raw) || book_raw_name(n).eq_ignore_ascii_case(raw) || b.ends_with(n))
+                })
+            })
         {
             s.book = Some((i + 1).to_string());
+            s.path = None;
         }
         Some(r)
     })
@@ -457,7 +473,48 @@ pub fn without_book(formula: &str, name: &str) -> String {
     if !has_external_book(formula) {
         return formula.to_string();
     }
-    rewrite_references(formula, |r| if r.sheet.as_ref().and_then(|s| s.book.as_deref()).is_some_and(|b| b.eq_ignore_ascii_case(name)) { None } else { Some(r.clone()) })
+    let target_raw = book_raw_name(name);
+    rewrite_references(formula, |r| {
+        if r.sheet.as_ref().and_then(|s| s.book.as_deref()).is_some_and(|b| {
+            let b_raw = book_raw_name(b);
+            b.eq_ignore_ascii_case(name) || b.eq_ignore_ascii_case(target_raw) || b_raw.eq_ignore_ascii_case(name) || b_raw.eq_ignore_ascii_case(target_raw)
+        }) {
+            None
+        } else {
+            Some(r.clone())
+        }
+    })
+}
+
+/// A formula whose references to the external workbook `old_name` are changed to `new_name`,
+/// optionally updating its path prefix.
+pub fn rename_book(formula: &str, old_name: &str, new_name: &str, new_path: Option<&str>) -> String {
+    if !has_external_book(formula) {
+        return formula.to_string();
+    }
+    rewrite_references(formula, |r| {
+        let mut r = r.clone();
+        if let Some(s) = r.sheet.as_mut() && s.book.as_deref().is_some_and(|b| b.eq_ignore_ascii_case(old_name)) {
+            s.book = Some(new_name.to_string());
+            if let Some(p) = new_path {
+                s.path = if p.is_empty() { None } else { Some(p.to_string()) };
+            }
+        }
+        Some(r)
+    })
+}
+
+/// The directory path prefix of an external workbook `book_name` if explicitly written in `formula`.
+pub fn book_path_in_formula(formula: &str, book_name: &str) -> Option<String> {
+    let tokens = tokenize(formula).ok()?;
+    for t in tokens {
+        if let Token::Sheet { book: Some(b), path: Some(p), .. } = t.token {
+            if b.eq_ignore_ascii_case(book_name) {
+                return Some(p);
+            }
+        }
+    }
+    None
 }
 
 /// The external workbooks `formula` names (not by number) that are not among `books`.
@@ -466,7 +523,13 @@ pub fn unknown_books(formula: &str, books: &[String]) -> Vec<String> {
     tokens
         .iter()
         .filter_map(|t| match &t.token {
-            Token::Sheet { book: Some(b), .. } if b.parse::<usize>().is_err() && !books.iter().any(|n| n.eq_ignore_ascii_case(b)) => Some(b.clone()),
+            Token::Sheet { book: Some(b), .. } if b.parse::<usize>().is_err() => {
+                let raw = book_raw_name(b);
+                let known = books.iter().any(|n| {
+                    !n.is_empty() && (n.eq_ignore_ascii_case(b) || n.eq_ignore_ascii_case(raw) || book_raw_name(n).eq_ignore_ascii_case(raw))
+                });
+                if known { None } else { Some(b.clone()) }
+            }
             _ => None,
         })
         .collect()
@@ -525,6 +588,32 @@ pub fn this_row_to_file(formula: &str, table: Option<&str>) -> String {
     })
 }
 
+/// `formula` (as stored) with the this-row references of `table` (the table
+/// the cell is in) in the short form Excel shows them: `Table1[[#This Row],[Qty]]`
+/// is `[@Qty]`, and `[@[Qty 1]]` when the column's name has a space or a
+/// symbol. One of another table, or of several columns, is left as it is.
+pub fn this_row_to_display(formula: &str, table: Option<&str>) -> String {
+    let Some(table) = table else { return formula.to_string() };
+    if !formula.to_ascii_lowercase().contains("#this row") {
+        return formula.to_string();
+    }
+    rewrite_structured(formula, |named, spec| {
+        if !named.is_empty() && !named.eq_ignore_ascii_case(table) {
+            return None;
+        }
+        let inner = spec.strip_prefix('[')?.strip_suffix(']')?;
+        let head = inner.get(..11).filter(|h| h.eq_ignore_ascii_case("[#This Row]"))?;
+        let rest = inner[head.len()..].strip_prefix(',')?;
+        let column = rest.strip_prefix('[')?.strip_suffix(']')?;
+        // A name with a bracket, a quote or a # needs escapes: left long.
+        if column.is_empty() || column.contains(['[', ']', '\'', '#']) {
+            return None;
+        }
+        let plain = column.chars().all(|c| c.is_alphanumeric() || c == '_' || (c as u32) > 0x7f && !c.is_whitespace());
+        Some(if plain { format!("[@{column}]") } else { format!("[@[{column}]]") })
+    })
+}
+
 /// A sheet name as a formula writes it: quoted when it has to be.
 pub fn quote_sheet(name: &str) -> String {
     let plain = !name.is_empty()
@@ -548,17 +637,28 @@ fn looks_like_r1c1(name: &str) -> bool {
 
 fn sheet_prefix(s: &SheetRef) -> String {
     let mut name = String::new();
+    if let Some(path) = &s.path {
+        name.push_str(path);
+    }
     if let Some(book) = &s.book {
-        name.push('[');
-        name.push_str(book);
-        name.push(']');
+        if book.contains('[') && book.ends_with(']') {
+            name.push_str(book);
+        } else {
+            name.push('[');
+            name.push_str(book);
+            name.push(']');
+        }
     }
     name.push_str(&s.first);
     if let Some(last) = &s.last {
         name.push(':');
         name.push_str(last);
     }
-    let quoted = quote_sheet(&s.first) != s.first || s.last.as_ref().is_some_and(|l| quote_sheet(l) != *l) || s.book.is_some() && name.contains(' ');
+    let quoted = s.path.is_some()
+        || quote_sheet(&s.first) != s.first
+        || s.last.as_ref().is_some_and(|l| quote_sheet(l) != *l)
+        || s.book.as_ref().is_some_and(|b| b.contains(' ') || b.contains('\\') || b.contains('/') || b.contains(':'))
+        || name.contains(' ');
     if quoted { format!("'{}'!", name.replace('\'', "''")) } else { format!("{name}!") }
 }
 
@@ -593,7 +693,7 @@ pub fn write_reference(r: &AreaRef) -> String {
 
 #[cfg(test)]
 mod spill_text_tests {
-    use super::{from_file, this_row_to_file, to_file};
+    use super::{from_file, this_row_to_display, this_row_to_file, to_file};
 
     #[test]
     fn a_function_named_alone_is_written_as_the_file_has_it() {
@@ -613,6 +713,17 @@ mod spill_text_tests {
         assert_eq!(this_row_to_file("[@Qty]", None), "[@Qty]");
         assert_eq!(this_row_to_file("Table1[@]", None), "Table1[[#This Row]]");
         assert_eq!(this_row_to_file("A1+\"[@x]\"", Some("T")), "A1+\"[@x]\"");
+    }
+
+    #[test]
+    fn this_row_shows_short() {
+        let long = "IMAGE(IF(RIGHT(T1[[#This Row],[画像指定]],5)=\".avif\",1,T1[[#This Row],[a b]]))";
+        assert_eq!(this_row_to_display(long, Some("T1")), "IMAGE(IF(RIGHT([@画像指定],5)=\".avif\",1,[@[a b]]))");
+        assert_eq!(this_row_to_display("T2[[#This Row],[x]]", Some("T1")), "T2[[#This Row],[x]]");
+        assert_eq!(this_row_to_display("T1[[#This Row],[a]:[b]]", Some("T1")), "T1[[#This Row],[a]:[b]]");
+        assert_eq!(this_row_to_display("[[#This Row],[x]]", None), "[[#This Row],[x]]");
+        assert_eq!(this_row_to_display("t1[[#This Row],[x]]+\"T1[[#This Row],[x]]\"", Some("T1")), "[@x]+\"T1[[#This Row],[x]]\"");
+        assert_eq!(this_row_to_file(&this_row_to_display("T1[[#This Row],[a b]]", Some("T1")), Some("T1")), "T1[[#This Row],[a b]]");
     }
 
     #[test]
@@ -689,6 +800,7 @@ mod tests {
         assert_eq!(renumber_books("[1]Alpha!B1+[3]Calc!D2+[2]East!F3", &[(1, None), (2, Some(1)), (3, Some(2))]), "#REF!+[2]Calc!D2+[1]East!F3");
         assert_eq!(renumber_books("SUM(A1:A3)", &[(1, None)]), "SUM(A1:A3)");
         assert_eq!(without_book("[予算.xlsx]Data!A1+Data!B1", "予算.xlsx"), "#REF!+Data!B1");
+        assert_eq!(without_book("SUM('C:\\dir\\[予算.xlsx]Data:Summary'!A1)+Data!B1", "予算.xlsx"), "SUM(#REF!)+Data!B1");
     }
 
     #[test]
@@ -700,6 +812,19 @@ mod tests {
         assert_eq!(books_by_index("SUM([売上.xlsx]Data!$A$1:$A$3)+'[Budget 2026.xlsx]Plan'!B2", &books), "SUM([1]Data!$A$1:$A$3)+[3]Plan!B2");
         assert_eq!(unknown_books("[新規.xlsx]S!A1+[1]S!A1+[売上.xlsx]S!A1", &books), ["新規.xlsx"]);
         assert!(!has_external_book("Table1[Qty]+A1"));
+        assert_eq!(rename_book("=[Old.xlsx]Sheet1!A1+[Other.xlsx]Sheet1!B2", "Old.xlsx", "New.xlsx", None), "=[New.xlsx]Sheet1!A1+[Other.xlsx]Sheet1!B2");
+        assert_eq!(rename_book("='[Old 2025.xlsx]Plan'!A1", "Old 2025.xlsx", "New 2026.xlsx", None), "='[New 2026.xlsx]Plan'!A1");
+        assert_eq!(book_path_in_formula(r"='C:\data\[Book.xlsx]Sheet1'!A1", "Book.xlsx"), Some(r"C:\data\".into()));
+        assert_eq!(books_by_index(r"='C:\data\[売上.xlsx]Data'!A1", &books), "=[1]Data!A1");
+
+        // 3D references across sheets in external workbooks:
+        assert_eq!(books_by_name("SUM([1]Data:Summary!$A$1:$A$3)+[3]Jan:Mar!B2", &books), "SUM([売上.xlsx]Data:Summary!$A$1:$A$3)+'[Budget 2026.xlsx]Jan:Mar'!B2");
+        assert_eq!(books_by_index("SUM([売上.xlsx]Data:Summary!$A$1:$A$3)+'[Budget 2026.xlsx]Jan:Mar'!B2", &books), "SUM([1]Data:Summary!$A$1:$A$3)+[3]Jan:Mar!B2");
+
+        // Directory path representations:
+        assert_eq!(books_by_index("SUM('C:\\dir\\[売上.xlsx]Data'!A1)", &books), "SUM([1]Data!A1)");
+        assert_eq!(books_by_index("AVERAGE('C:\\dir\\[売上.xlsx]Data:Summary'!A1:B2)", &books), "AVERAGE([1]Data:Summary!A1:B2)");
+        assert_eq!(unknown_books("'C:\\dir\\[売上.xlsx]Data'!A1+'C:\\dir\\[Other.xlsx]Sheet1'!A1", &books), ["Other.xlsx"]);
     }
 
     #[test]
@@ -901,13 +1026,13 @@ pub fn rename_sheet(formula: &str, old: &str, new: &str) -> String {
     let mut out = String::with_capacity(formula.len());
     let mut at = 0;
     for t in &tokens {
-        if let Token::Sheet { first, last, book: None } = &t.token
+        if let Token::Sheet { first, last, book: None, .. } = &t.token
             && (same(first) || last.as_deref().is_some_and(same))
         {
             let first = if same(first) { new.to_string() } else { first.clone() };
             let last = last.as_ref().map(|l| if same(l) { new.to_string() } else { l.clone() });
             out.push_str(&formula[at..t.start]);
-            out.push_str(&sheet_prefix(&SheetRef { first, last, book: None }));
+            out.push_str(&sheet_prefix(&SheetRef { first, last, book: None, path: None }));
             at = t.end;
         }
     }
@@ -924,7 +1049,7 @@ pub fn remove_sheet(formula: &str, name: &str) -> String {
     let mut i = 0;
     while i < tokens.len() {
         let t = &tokens[i];
-        if let Token::Sheet { first, last, book: None } = &t.token
+        if let Token::Sheet { first, last, book: None, .. } = &t.token
             && (same(first) || last.as_deref().is_some_and(same))
         {
             // The sheet and the reference after it: A1, A1:B2, A:C, 1:3 or a name.

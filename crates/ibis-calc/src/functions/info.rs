@@ -103,9 +103,29 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 "system" => Value::Text("mac".into()),
                 "memavail" | "memused" | "totmem" => err(CellError::NA),
                 "origin" => Value::Text("$A:$A$1".into()),
-                "directory" | "osversion" | "release" => {
+                "directory" => {
                     c.unsupported = true;
-                    err(CellError::NA)
+                    Value::Text(match crate::eval::convert::workbook_file() {
+                        Some(path) => match path.rfind(['/', '\\']) {
+                            Some(at) => path[..=at].to_string(),
+                            None => String::new(),
+                        },
+                        None => String::new(),
+                    })
+                }
+                "osversion" => {
+                    c.unsupported = true;
+                    Value::Text(if cfg!(target_os = "windows") {
+                        "Windows (64-bit)".into()
+                    } else if cfg!(target_os = "macos") {
+                        "macOS".into()
+                    } else {
+                        "Unix".into()
+                    })
+                }
+                "release" => {
+                    c.unsupported = true;
+                    Value::Text("16.0".into())
                 }
                 _ => err(CellError::Value),
             }
@@ -159,27 +179,112 @@ fn cell(c: &mut Ctx, a: &[Expr]) -> Value {
             };
             let mut text = crate::formula::write_reference(&r);
             if area.sheet != c.sheet {
-                text = format!("{}!{text}", crate::formula::quote_sheet(c.book.sheet_name(area.sheet)));
+                // Another sheet's cell: its book and sheet in quotes, as `'[Book1.xlsx]Sheet1'!$B$2`.
+                let book = crate::eval::convert::workbook_file().and_then(|p| p.rsplit(['/', '\\']).next().map(str::to_string)).unwrap_or_else(|| "Book1".to_string());
+                let sheet = c.book.sheet_name(area.sheet).replace('\'', "''");
+                text = format!("'[{book}]{sheet}'!{text}");
             }
             Value::Text(text)
+        }
+        "filename" => {
+            // The path, the book's name in brackets and the sheet's: empty before the workbook is saved.
+            let sheet = c.book.sheet_name(area.sheet);
+            Value::Text(match crate::eval::convert::workbook_file() {
+                Some(path) => match path.rfind(['/', '\\']) {
+                    Some(at) => format!("{}[{}]{sheet}", &path[..=at], &path[at + 1..]),
+                    None => format!("[{path}]{sheet}"),
+                },
+                None => String::new(),
+            })
         }
         "contents" => match c.cell_value(area.sheet, area.first_row, area.first_column) {
             Value::Empty => number(0.0),
             v => v,
         },
         "type" => Value::Text(
-            match c.cell_value(area.sheet, area.first_row, area.first_column) {
-                Value::Empty => "b",
-                Value::Text(_) => "l",
-                _ => "v",
+            if c.book.formula(area.sheet, area.first_row, area.first_column).is_some() {
+                "v"
+            } else {
+                match c.cell_value(area.sheet, area.first_row, area.first_column) {
+                    Value::Empty => "b",
+                    Value::Text(_) => "l",
+                    _ => "v",
+                }
             }
             .into(),
         ),
-        "color" | "filename" | "format" | "parentheses" | "prefix" | "protect" | "width" => {
-            // Valid options not known to this engine keep imported caches.
-            c.unsupported = true;
-            err(CellError::Value)
+        "color" | "format" | "parentheses" | "prefix" | "protect" | "width" => {
+            let Some(info) = c.book.cell_info(area.sheet, area.first_row, area.first_column) else {
+                c.unsupported = true;
+                return err(CellError::Value);
+            };
+            match what.as_str() {
+                "color" => number(f64::from(format_flags(&info.number_format).1)),
+                "parentheses" => number(f64::from(format_flags(&info.number_format).2)),
+                "format" => Value::Text(format_code(&info.number_format)),
+                "protect" => number(f64::from(info.locked)),
+                "width" => number(info.column_width.floor()),
+                _ => {
+                    // The prefix of a text cell by its alignment; nothing for the others.
+                    let is_text = matches!(c.cell_value(area.sheet, area.first_row, area.first_column), Value::Text(_));
+                    Value::Text(if is_text { info.prefix.map_or(String::new(), |p| p.to_string()) } else { String::new() })
+                }
+            }
         }
         _ => err(CellError::Value),
     }
+}
+
+
+/// (decimal places, negatives in colour, positives or all in parentheses) of a number format's code.
+fn format_flags(code: &str) -> (usize, u8, u8) {
+    let mut sections = code.split(';');
+    let first = sections.next().unwrap_or("");
+    let negative = sections.next().unwrap_or("");
+    let colour = negative.to_ascii_lowercase().contains("[red]") || negative.to_ascii_lowercase().contains("[color");
+    let parentheses = first.contains('(');
+    let decimals = first.split_once('.').map_or(0, |(_, rest)| rest.chars().take_while(|c| matches!(c, '0' | '#' | '?')).count());
+    (decimals, u8::from(colour), u8::from(parentheses))
+}
+
+/// `CELL("format")`: Excel's code for a number format.
+fn format_code(code: &str) -> String {
+    let first = code.split(';').next().unwrap_or("").trim();
+    let lower = first.to_ascii_lowercase();
+    if lower.is_empty() || lower == "general" || lower == "@" {
+        return "G".into();
+    }
+    let (decimals, colour, _) = format_flags(code);
+    let dash = if colour == 1 { "-" } else { "" };
+    match lower.replace(' ', "").as_str() {
+        "d-mmm-yy" | "dd-mmm-yy" => return "D1".into(),
+        "d-mmm" | "dd-mmm" => return "D2".into(),
+        "mmm-yy" => return "D3".into(),
+        "m/d/yy" | "mm/dd/yy" | "m/d/yyyy" | "mm/dd/yyyy" | "yyyy/m/d" | "yyyy/mm/dd" | "yyyy-mm-dd" | "m/d/yy h:mm" | "yyyy/m/dh:mm" => return "D4".into(),
+        "mm/dd" | "m/d" => return "D5".into(),
+        "h:mm:ssam/pm" => return "D6".into(),
+        "h:mmam/pm" => return "D7".into(),
+        "h:mm:ss" | "hh:mm:ss" => return "D8".into(),
+        "h:mm" | "hh:mm" => return "D9".into(),
+        _ => {}
+    }
+    if lower.contains("e+") || lower.contains("e-") {
+        return format!("S{decimals}");
+    }
+    if lower.contains('%') {
+        return format!("P{decimals}");
+    }
+    if first.contains('$') || first.contains('¥') || first.contains('€') || first.contains('£') {
+        return format!("C{decimals}{dash}");
+    }
+    if lower.contains('/') && lower.contains('?') {
+        return "G".into();
+    }
+    if lower.chars().any(|c| matches!(c, 'y' | 'd' | 'h' | 's' | 'm')) && !lower.contains('"') {
+        return "G".into();
+    }
+    if first.contains('0') || first.contains('#') {
+        return if first.contains("#,##") || first.contains("#,#") { format!(",{decimals}{dash}") } else { format!("F{decimals}{dash}") };
+    }
+    "G".into()
 }

@@ -33,3 +33,18 @@ fn smartart_shapes_are_read_from_its_drawing() {
     let texts: Vec<String> = p.slides[0].attached[&first.id].iter().filter_map(|id| p.slides[0].shape(*id)?.text_body().map(|b| b.text())).collect();
     assert_eq!(texts, vec!["計画", "設計", "実装", "試験", "公開"]);
 }
+
+#[test]
+fn smartart_handwritten_pptx_read() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/pptx-smartart.pptx");
+    if !path.exists() {
+        return;
+    }
+    let data = std::fs::read(path).unwrap();
+    let p = ibis_pptx::read(&data).unwrap();
+    let first = p.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Placeholder(Placeholder::Diagram))).expect("diagram shape");
+    let parts = p.slides[0].attached.get(&first.id).cloned().unwrap_or_default();
+    assert_eq!(parts.len(), 2, "attached shapes");
+    let texts: Vec<String> = parts.iter().filter_map(|id| p.slides[0].shape(*id)?.text_body().map(|b| b.text())).collect();
+    assert_eq!(texts, vec!["項目1", "項目2"]);
+}

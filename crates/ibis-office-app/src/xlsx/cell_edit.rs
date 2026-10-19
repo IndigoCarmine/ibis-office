@@ -56,6 +56,8 @@ pub(crate) struct CellEdit {
     /// Pixels per point of the text on screen (set when painted), to find the
     /// character under the pointer.
     pub(crate) pixels_per_point: Rc<Cell<f32>>,
+    /// The text's lines as painted (set when painted): where each glyph is, for the caret and for finding the character under the pointer.
+    pub(crate) layout: Rc<std::cell::RefCell<Option<Rc<super::sheet_view::EditLayout>>>>,
     /// Pressed on the text and dragging: the position (UTF-16 units) it began at.
     pub(crate) dragging: Option<usize>,
     /// Whether the press being dragged began in the formula bar (not in the cell).
@@ -106,6 +108,43 @@ pub(crate) fn runs_replace(runs: &mut Vec<CellRun>, b0: usize, b1: usize, text: 
     *runs = merge_runs(out);
 }
 
+/// `runs` with the bytes `b0..b1` of their text replaced by `inserted` runs,
+/// preserving character formatting of both the surrounding text and the inserted runs.
+pub(crate) fn runs_splice(runs: &mut Vec<CellRun>, b0: usize, b1: usize, inserted: &[CellRun]) {
+    let mut out: Vec<CellRun> = Vec::new();
+    let mut at = 0usize;
+    let mut did_insert = false;
+    for run in runs.iter() {
+        let (start, end) = (at, at + run.text.len());
+        at = end;
+        let format = CellRun { text: String::new(), ..run.clone() };
+        let before = &run.text[..b0.clamp(start, end) - start];
+        let after = &run.text[b1.clamp(start, end) - start..];
+        if !before.is_empty() {
+            out.push(CellRun { text: before.to_string(), ..format.clone() });
+        }
+        if !did_insert && b0 >= start && (b0 < end || (b0 == end && std::ptr::eq(run, runs.last().unwrap()))) {
+            for ins in inserted {
+                if !ins.text.is_empty() {
+                    out.push(ins.clone());
+                }
+            }
+            did_insert = true;
+        }
+        if !after.is_empty() && b1 < end {
+            out.push(CellRun { text: after.to_string(), ..format.clone() });
+        }
+    }
+    if !did_insert {
+        for ins in inserted {
+            if !ins.text.is_empty() {
+                out.push(ins.clone());
+            }
+        }
+    }
+    *runs = merge_runs(out);
+}
+
 /// Neighbouring parts of the same font as one; empty parts gone.
 pub(crate) fn merge_runs(runs: Vec<CellRun>) -> Vec<CellRun> {
     let mut out: Vec<CellRun> = Vec::new();
@@ -118,12 +157,15 @@ pub(crate) fn merge_runs(runs: Vec<CellRun>) -> Vec<CellRun> {
     out
 }
 
+/// The height of a line of the widened formula bar.
+pub(crate) const BAR_LINE_HEIGHT: f32 = 18.0;
+
 fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
 /// The byte offset of UTF-16 position `u` in `s`.
-fn byte_at(s: &str, u: usize) -> usize {
+pub(crate) fn byte_at(s: &str, u: usize) -> usize {
     let mut count = 0;
     for (i, c) in s.char_indices() {
         if count >= u {
@@ -134,7 +176,63 @@ fn byte_at(s: &str, u: usize) -> usize {
     s.len()
 }
 
+/// The lines of `text` (cut at line breaks), each with the UTF-16 position it starts at.
+pub(crate) fn text_lines(text: &str) -> Vec<(usize, &str)> {
+    let mut start = 0;
+    text.split('\n')
+        .map(|line| {
+            let at = start;
+            start += utf16_len(line) + 1;
+            (at, line)
+        })
+        .collect()
+}
+
+/// A line of the formula bar's text while typing, kept whole so moving the caret never splits text runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BarLine {
+    pub(crate) text: String,
+    pub(crate) selection_bytes: Option<Range<usize>>,
+    pub(crate) caret_byte: Option<usize>,
+}
+
 impl CellEdit {
+    /// The line the caret is on (an index into `text_lines`).
+    pub(crate) fn caret_line(&self) -> usize {
+        text_lines(&self.text).iter().rposition(|(start, _)| *start <= self.caret).unwrap_or(0)
+    }
+
+    /// Where the caret goes one line up (`dy` < 0) or down, to the same column or the end of a shorter line; none at the first or last line.
+    pub(crate) fn caret_after_line_move(&self, dy: i32) -> Option<usize> {
+        let lines = text_lines(&self.text);
+        let current = self.caret_line();
+        let target = current as i64 + dy as i64;
+        if target < 0 || target as usize >= lines.len() {
+            return None;
+        }
+        let column = self.caret - lines[current].0;
+        let (start, line) = lines[target as usize];
+        Some(start + column.min(utf16_len(line)))
+    }
+
+    /// One line of the text (starting at UTF-16 position `start`) as the bar shows it while typing: its full text, the selected byte range, and the caret byte offset.
+    pub(crate) fn bar_line(&self, start: usize, line: &str) -> BarLine {
+        let end = start + utf16_len(line);
+        let text = line.trim_end_matches('\r').to_string();
+        let text_len = text.len();
+        let selection_bytes = self.selection().and_then(|r| {
+            let a = r.start.clamp(start, end);
+            let b = r.end.clamp(start, end);
+            if a < b {
+                Some(byte_at(line, a - start).min(text_len)..byte_at(line, b - start).min(text_len))
+            } else {
+                None
+            }
+        });
+        let caret_byte = (start..=end).contains(&self.caret).then(|| byte_at(line, self.caret - start).min(text_len));
+        BarLine { text, selection_bytes, caret_byte }
+    }
+
     /// The caret as a byte offset into `text`.
     pub(crate) fn caret_byte(&self) -> usize {
         byte_at(&self.text, self.caret)
@@ -145,22 +243,6 @@ impl CellEdit {
         let a = self.anchor?;
         let (s, e) = (a.min(self.caret), a.max(self.caret));
         (s != e).then_some(s..e)
-    }
-
-    /// The text in three parts for the formula bar: before the selection (or
-    /// the caret), the selected text, and after it; and whether the caret
-    /// is at the start of the selected text (else at its end).
-    pub(crate) fn bar_parts(&self) -> (String, String, String, bool) {
-        match self.selection() {
-            Some(r) => {
-                let (b0, b1) = (byte_at(&self.text, r.start), byte_at(&self.text, r.end));
-                (self.text[..b0].to_string(), self.text[b0..b1].to_string(), self.text[b1..].to_string(), self.caret < r.end)
-            }
-            None => {
-                let b = self.caret_byte();
-                (self.text[..b].to_string(), String::new(), self.text[b..].to_string(), false)
-            }
-        }
     }
 
     fn replace(&mut self, range: Range<usize>, text: &str) -> Range<usize> {
@@ -190,6 +272,23 @@ impl CellEdit {
                     *runs = apply_to_runs(taken, b0, b0 + text.len(), change, &p.style);
                 }
             }
+        }
+        self.anchor = None;
+        self.text.replace_range(b0..b1, text);
+        let inserted = start..start + utf16_len(text);
+        self.caret = inserted.end;
+        inserted
+    }
+
+    fn replace_runs(&mut self, range: Range<usize>, text: &str, inserted_runs: &[CellRun]) -> Range<usize> {
+        let len = utf16_len(&self.text);
+        let (start, end) = (range.start.min(len), range.end.min(len).max(range.start.min(len)));
+        let (b0, b1) = (byte_at(&self.text, start), byte_at(&self.text, end));
+        if self.runs.is_none() {
+            self.runs = Some(vec![CellRun { text: self.text.clone(), ..Default::default() }]);
+        }
+        if let Some(runs) = self.runs.as_mut() {
+            runs_splice(runs, b0, b1, inserted_runs);
         }
         self.anchor = None;
         self.text.replace_range(b0..b1, text);
@@ -238,53 +337,25 @@ impl SlideEditor {
     /// The caret position (UTF-16 units) the pointer is at in the text being
     /// typed: the boundary between characters nearest to it. `None` before
     /// the text has been painted.
-    pub(crate) fn cell_text_index_at(&self, position: Point<Pixels>, cx: &App) -> Option<usize> {
+    pub(crate) fn cell_text_index_at(&self, position: Point<Pixels>, _cx: &App) -> Option<usize> {
         let edit = self.cell_edit()?;
         let rect = edit.rect.get()?;
-        let per_point = edit.pixels_per_point.get();
-        if per_point <= 0.0 {
-            return None;
+        let layout = edit.layout.borrow().clone()?;
+        let x = f32::from(position.x - rect.origin.x);
+        let y = f32::from(position.y - rect.origin.y);
+        // The line whose middle is nearest to the pointer, then the boundary between characters nearest in x.
+        let middle = |l: &super::sheet_view::EditLine| l.baseline + (l.descent - l.ascent) / 2.0;
+        let line = layout.lines.iter().min_by(|a, b| (y - middle(a)).abs().total_cmp(&(y - middle(b)).abs()))?;
+        let text = &edit.text;
+        let (start, end) = (line.start.min(text.len()), line.end.min(text.len()));
+        let mut best = (f32::MAX, start);
+        for (i, _) in text[start..end].char_indices().map(|(i, c)| (start + i, c)).chain(std::iter::once((end, ' '))) {
+            let d = (line.x_at(i) - x).abs();
+            if d < best.0 {
+                best = (d, i);
+            }
         }
-        let (_, sheet) = self.current_sheet()?;
-        let base = sheet.cell(edit.row, edit.column).map(|c| sheet.styles[c.style as usize].clone()).unwrap_or_default();
-        let ts = cx.text_system();
-        // The text starts after the border and the padding (2 + 2 px).
-        let x = f32::from(position.x - rect.origin.x) - 4.0;
-        let mut acc = 0.0f32;
-        let mut index = 0usize;
-        let mut byte = 0usize;
-        let mut run_start = 0usize;
-        let mut runs = edit.runs.iter().flatten();
-        let mut run = runs.next();
-        for c in edit.text.chars() {
-            while let Some(r) = run {
-                if byte >= run_start + r.text.len() {
-                    run_start += r.text.len();
-                    run = runs.next();
-                } else {
-                    break;
-                }
-            }
-            let mut style = base.clone();
-            if let Some(r) = run {
-                style.bold = r.bold.unwrap_or(style.bold);
-                style.italic = r.italic.unwrap_or(style.italic);
-                if let Some(size) = r.size {
-                    style.font_size = size as _;
-                }
-                if let Some(f) = &r.font {
-                    style.font = Some(f.clone());
-                }
-            }
-            let w = super::sheet_view::text_width_pt(&c.to_string(), &style, &self.resources, ts) * per_point;
-            if x < acc + w / 2.0 {
-                return Some(index);
-            }
-            acc += w;
-            index += c.len_utf16();
-            byte += c.len_utf8();
-        }
-        Some(index)
+        Some(utf16_len(&text[..best.1]))
     }
 
     /// The caret position (UTF-16 units) the pointer is at in the formula
@@ -292,16 +363,25 @@ impl SlideEditor {
     /// 8 px in from the field's edge).
     pub(crate) fn bar_text_index_at(&self, position: Point<Pixels>, window: &Window) -> Option<usize> {
         let edit = self.cell_edit()?;
-        let rect = self.sheet_state()?.bar_bounds.get()?;
+        let state = self.sheet_state()?;
+        let rect = state.bar_bounds.get()?;
+        let lines = text_lines(&edit.text);
+        // Closed, the bar shows the line the caret is on; widened, all of them from the scrolled top, each a line high.
+        let row = if state.bar_expanded {
+            let y = f32::from(position.y - rect.origin.y - state.bar_scroll.offset().y);
+            ((y / BAR_LINE_HEIGHT).floor().max(0.0) as usize).min(lines.len() - 1)
+        } else {
+            edit.caret_line()
+        };
+        let (start, line) = lines[row];
+        let line = line.trim_end_matches('\r');
         let style = window.text_style();
         let size = window.rem_size() * 0.875;
-        // The bar shows one line: a line break as a space.
-        let shown = edit.text.replace(['\r', '\n'], " ");
-        let run = TextRun { len: shown.len(), font: style.font(), color: style.color, background_color: None, underline: None, strikethrough: None };
-        let line = window.text_system().shape_line(SharedString::from(shown.clone()), size, &[run], None);
-        let byte = line.closest_index_for_x(position.x - rect.origin.x - px(8.)).min(shown.len());
-        let byte = (0..=byte).rev().find(|&b| shown.is_char_boundary(b)).unwrap_or(0);
-        Some(utf16_len(&shown[..byte]))
+        let run = TextRun { len: line.len(), font: style.font(), color: style.color, background_color: None, underline: None, strikethrough: None };
+        let shaped = window.text_system().shape_line(SharedString::from(line.to_string()), size, &[run], None);
+        let byte = shaped.closest_index_for_x(position.x - rect.origin.x - px(8.)).min(line.len());
+        let byte = (0..=byte).rev().find(|&b| line.is_char_boundary(b)).unwrap_or(0);
+        Some(start + utf16_len(&line[..byte]))
     }
 
     /// A press on the formula bar's text, as `press_in_cell_text` does on the cell's.
@@ -362,7 +442,7 @@ impl SlideEditor {
         self.sheet_state().and_then(|s| s.cell_edit.as_ref())
     }
 
-    fn cell_edit_mut(&mut self) -> Option<&mut CellEdit> {
+    pub(crate) fn cell_edit_mut(&mut self) -> Option<&mut CellEdit> {
         self.sheet_state_mut().and_then(|s| s.cell_edit.as_mut())
     }
 
@@ -381,14 +461,17 @@ impl SlideEditor {
 
     /// Start typing into the selected cell: with its content (F2), or empty.
     pub(crate) fn begin_cell_edit(&mut self, mode: EditMode, keep_content: bool, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
         // A locked cell of a protected sheet is not typed into.
         if self.protection_refuses(super::protection::Guarded::Cells, cx) {
             return;
         }
         let Some((column, row)) = self.current_cell() else { return };
         let text = if keep_content {
-            self.current_sheet().and_then(|(_, sheet)| sheet.cell(row, column)).map(|c| match &c.formula {
-                Some(f) => format!("={f}"),
+            self.current_sheet().and_then(|(_, sheet)| sheet.cell(row, column).map(|c| (sheet, c))).map(|(sheet, c)| match &c.formula {
+                Some(f) => format!("={}", sheet.formula_shown(row, column, f)),
                 None => match &c.value {
                     // A number as typed, not as shown.
                     CellValue::Number(n) => ibis_calc::eval::number_to_text(*n),
@@ -408,7 +491,8 @@ impl SlideEditor {
             None
         };
         if let Some(state) = self.sheet_state_mut() {
-            state.cell_edit = Some(CellEdit { slide, column, row, text, caret, marked: None, mode, anchor: None, runs, pointed: None, rect: Rc::new(Cell::new(None)), pixels_per_point: Rc::new(Cell::new(0.0)), dragging: None, dragging_in_bar: false, pending: None });
+            state.validation_warning = None;
+            state.cell_edit = Some(CellEdit { slide, column, row, text, caret, marked: None, mode, anchor: None, runs, pointed: None, rect: Rc::new(Cell::new(None)), pixels_per_point: Rc::new(Cell::new(0.0)), layout: Default::default(), dragging: None, dragging_in_bar: false, pending: None });
         }
         cx.notify();
     }
@@ -427,6 +511,7 @@ impl SlideEditor {
         let Some(edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.take()) else { return };
         if let Some(s) = self.sheet_state_mut() {
             s.last_fill = None;
+            s.validation_warning = None;
         }
         let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
         let sheet = self.presentation().slide(edit.slide).and_then(ibis_doc_model::sheet_calc::sheet_of_slide);
@@ -438,6 +523,8 @@ impl SlideEditor {
                     let format = sheet.and_then(|sheet| referenced_format(sheet, &f));
                     (CellInput::Formula(f), format)
                 }
+                // オートコレクト: the text typed in is corrected as Excel's is.
+                Typed::Value(CellValue::Text(t), f) => (CellInput::Value(CellValue::Text(super::autocorrect::correct_typed(&t))), f.map(str::to_string)),
                 Typed::Value(v, f) => (CellInput::Value(v), f.map(str::to_string)),
             }
         };
@@ -461,12 +548,18 @@ impl SlideEditor {
                 Ok(w) => warning = w,
             }
         }
+        // A workbook the formula names that the file does not link yet: linked in the same step.
+        let link_commands = match &input {
+            CellInput::Formula(f) if ibis_calc::formula::has_external_book(f) => self.link_new_books_commands(f),
+            _ => Vec::new(),
+        };
         let sheet = self.presentation().slide(edit.slide).and_then(ibis_doc_model::sheet_calc::sheet_of_slide);
         // The number format Excel gives what was typed, if the cell has none.
         let general = sheet
             .map(|sheet| sheet.cell(edit.row, edit.column).map_or("General".to_string(), |c| sheet.styles[c.style as usize].number_format.clone()))
             .is_some_and(|f| f == "General");
-        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { slide: edit.slide, edits: vec![ModelEdit { row: edit.row, column: edit.column, input: input.clone() }] })];
+        let mut commands = link_commands;
+        commands.push(Command::Sheet(SheetCommand::SetCells { slide: edit.slide, edits: vec![ModelEdit { row: edit.row, column: edit.column, input: input.clone() }] }));
         let auto_format = matches!(input, CellInput::Value(CellValue::Number(_))) && format.is_some() && general;
         if let (Some(code), true) = (format.clone(), general) {
             let range = CellRange { first_row: edit.row, first_column: edit.column, last_row: edit.row, last_column: edit.column };
@@ -500,8 +593,23 @@ impl SlideEditor {
         }
         // Text with a line break (⌥Enter): the cell wraps and its row grows
         // to the lines, as Excel's do (in the same step).
+        let orig_cell = sheet.and_then(|sh| sh.cell(edit.row, edit.column));
+        let orig_text = orig_cell.map(|c| c.text.as_str()).unwrap_or("");
+        let content_changed = orig_cell.map_or(!edit.text.is_empty(), |c| {
+            if c.formula.is_some() {
+                true
+            } else {
+                match &c.value {
+                    CellValue::Text(t) => t != &edit.text,
+                    CellValue::Number(n) => ibis_calc::eval::number_to_text(*n) != edit.text,
+                    CellValue::Empty => !edit.text.is_empty(),
+                    _ => c.text != edit.text,
+                }
+            }
+        });
         let broken = matches!(&input, CellInput::Value(CellValue::Text(t)) if t.contains('\n'));
-        if broken && sheet.is_some_and(|sheet| !sheet.cell(edit.row, edit.column).is_some_and(|c| sheet.styles[c.style as usize].wrap)) {
+        let newly_broken = broken && !orig_text.contains('\n');
+        if newly_broken && sheet.is_some_and(|sheet| !sheet.cell(edit.row, edit.column).is_some_and(|c| sheet.styles[c.style as usize].wrap)) {
             let range = CellRange { first_row: edit.row, first_column: edit.column, last_row: edit.row, last_column: edit.column };
             commands.push(Command::Sheet(SheetCommand::SetFormat { slide: edit.slide, ranges: vec![range], change: StyleChange::Wrap(true) }));
         }
@@ -511,8 +619,13 @@ impl SlideEditor {
         {
             commands.push(Command::Sheet(SheetCommand::SetRuns { slide: edit.slide, row: edit.row, column: edit.column, runs: runs.clone() }));
         }
+        let cell_size = self.presentation().slide(edit.slide).and_then(ibis_doc_model::sheet_calc::sheet_of_slide).and_then(|sh| sh.cell(edit.row, edit.column).map(|c| sh.styles[c.style as usize].font_size)).unwrap_or(1100);
+        // A part given another size while typing grows the row too, though the text is the same (Excel fits the row on the entry).
+        let runs_changed = edit.runs.as_ref().map(|r| r.to_vec()) != orig_cell.and_then(|c| c.runs.as_ref().map(|r| r.to_vec()));
+        let taller = (content_changed || runs_changed) && matches!((&edit.runs, &input), (Some(runs), CellInput::Value(CellValue::Text(_))) if runs.iter().any(|r| r.size.is_some_and(|size| size > cell_size)));
+        let is_merged = sheet.is_some_and(|sh| sh.merge_at(edit.row, edit.column).is_some_and(|m| m.first_row != m.last_row || m.first_column != m.last_column));
         let mut result = self.document.execute(commands.clone());
-        if broken && result.is_ok() && edit.slide == self.current_slide {
+        if !is_merged && (newly_broken || taller) && result.is_ok() && edit.slide == self.current_slide {
             let ts = cx.text_system().clone();
             let rows = self.current_sheet().map(|(_, s)| s.rows.get(edit.row as usize).copied().unwrap_or(0)).unwrap_or(0);
             let fit: Vec<Command> = self
@@ -533,8 +646,13 @@ impl SlideEditor {
             }
             Err(err) => log::warn!("cell entry rejected: {err}"),
         }
-        if let Some(w) = warning {
-            self.status = Some(w.into());
+        if let Some((w, is_warning)) = warning {
+            self.status = Some(w.clone().into());
+            if is_warning {
+                if let Some(s) = self.sheet_state_mut() {
+                    s.validation_warning = Some(super::validation::ValidationWarning { message: w, edit });
+                }
+            }
         }
         self.sync_workbook_peers(cx);
         cx.notify();
@@ -614,6 +732,25 @@ impl SlideEditor {
         true
     }
 
+    /// ↑ or ↓ while typing in Edit mode into text of several lines: the caret goes a line up or down (nothing at the first or last line, as in Excel). False when the text is one line, or not in Edit mode: the arrow is for the cells then.
+    pub(crate) fn cell_caret_line(&mut self, dy: i32, extend: bool, cx: &mut Context<Self>) -> bool {
+        let Some(edit) = self.cell_edit_mut() else { return false };
+        if edit.mode != EditMode::Edit || dy == 0 || !edit.text.contains('\n') {
+            return false;
+        }
+        if let Some(to) = edit.caret_after_line_move(dy) {
+            if extend {
+                edit.anchor = Some(edit.anchor.unwrap_or(edit.caret));
+            } else {
+                edit.anchor = None;
+            }
+            edit.caret = to;
+            edit.pending = None;
+            cx.notify();
+        }
+        true
+    }
+
     /// Shift+← or →: the selection of the text being edited grows or shrinks by a character. False when not editing in Edit mode.
     pub(crate) fn cell_extend_selection(&mut self, dx: i32, cx: &mut Context<Self>) -> bool {
         let Some(edit) = self.cell_edit_mut() else { return false };
@@ -645,7 +782,7 @@ impl SlideEditor {
         if edit.slide != slide || edit.text.starts_with('=') {
             return false;
         }
-        if !matches!(change, StyleChange::Bold(_) | StyleChange::Italic(_) | StyleChange::Underline(_) | StyleChange::UnderlineKind(_) | StyleChange::Strike(_) | StyleChange::Color(_) | StyleChange::ColorTheme(..) | StyleChange::FontSize(_)) {
+        if !matches!(change, StyleChange::Bold(_) | StyleChange::Italic(_) | StyleChange::Underline(_) | StyleChange::UnderlineKind(_) | StyleChange::Strike(_) | StyleChange::Color(_) | StyleChange::ColorTheme(..) | StyleChange::FontSize(_) | StyleChange::Font(_)) {
             return false;
         }
         // The caret alone: the change waits for the text typed next (the same toggle again takes it back).
@@ -661,6 +798,13 @@ impl SlideEditor {
             }
             if pending.changes.is_empty() {
                 edit.pending = None;
+            }
+            // When editing text with no selection, apply font changes to the entire text
+            // so the edited cell immediately reflects the selected font.
+            if matches!(change, StyleChange::Font(_) | StyleChange::FontSize(_)) && !edit.text.is_empty() {
+                let b_end = edit.text.len();
+                let runs = edit.runs.take().unwrap_or_else(|| vec![whole_run(&edit.text, &style)]);
+                edit.runs = Some(apply_to_runs(runs, 0, b_end, change, &style));
             }
             cx.notify();
             return true;
@@ -811,22 +955,25 @@ impl SlideEditor {
 /// The number format a formula typed into a General cell takes, as Excel
 /// gives it: that of the first cell it refers to on its own sheet (not for
 /// the COUNT functions, whose results are counts).
-/// A piece of the text being typed, for painting it.
-pub(crate) enum EditItem {
-    Text { text: String, run: Option<CellRun>, selected: bool },
-    Caret,
+/// A piece of the text being typed, cut only at formatting run boundaries so moving the caret never splits text runs.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct EditItem {
+    pub(crate) text: String,
+    pub(crate) run: Option<CellRun>,
+}
+
+/// Selection and caret byte offsets within one line of the inline cell editor.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LineOverlay {
+    pub(crate) selection_bytes: Option<Range<usize>>,
+    pub(crate) caret_byte: Option<usize>,
 }
 
 impl CellEdit {
-    /// The text as pieces (cut where a part, the selection or the caret begins), the caret among them.
+    /// The text as formatting runs only (never cut at the selection or caret).
     pub(crate) fn items(&self) -> Vec<EditItem> {
         let len = self.text.len();
-        let caret = self.caret_byte();
-        let sel = self.selection().map(|s| (byte_at(&self.text, s.start), byte_at(&self.text, s.end)));
-        let mut cuts = vec![0, len, caret];
-        if let Some((a, b)) = sel {
-            cuts.extend([a, b]);
-        }
+        let mut cuts = vec![0, len];
         let mut at = 0;
         for run in self.runs.iter().flatten() {
             at += run.text.len();
@@ -847,15 +994,23 @@ impl CellEdit {
         };
         let mut out = Vec::new();
         for w in cuts.windows(2) {
-            if w[0] == caret {
-                out.push(EditItem::Caret);
-            }
-            out.push(EditItem::Text { text: self.text[w[0]..w[1]].to_string(), run: run_at(w[0]), selected: sel.is_some_and(|(a, b)| w[0] >= a && w[1] <= b) });
+            out.push(EditItem { text: self.text[w[0]..w[1]].to_string(), run: run_at(w[0]) });
         }
-        if caret == len {
-            out.push(EditItem::Caret);
+        if out.is_empty() {
+            out.push(EditItem { text: String::new(), run: None });
         }
         out
+    }
+
+    /// Selection and caret byte offsets for each `'\n'`-separated line of `text`.
+    pub(crate) fn line_overlays(&self) -> Vec<LineOverlay> {
+        text_lines(&self.text)
+            .into_iter()
+            .map(|(start, line)| {
+                let bar = self.bar_line(start, line);
+                LineOverlay { selection_bytes: bar.selection_bytes, caret_byte: bar.caret_byte }
+            })
+            .collect()
     }
 }
 
@@ -911,6 +1066,7 @@ fn apply_to_runs(runs: Vec<CellRun>, b0: usize, b1: usize, change: &StyleChange,
             StyleChange::Strike(_) => run.strike = Some(strike_on),
             StyleChange::Color(c) | StyleChange::ColorTheme(c, _) => run.color = Some(*c),
             StyleChange::FontSize(s) => run.size = Some(*s),
+            StyleChange::Font(f) => run.font = f.clone(),
             _ => {}
         }
     }
@@ -1060,6 +1216,8 @@ impl SlideEditor {
     }
 }
 
+static CELL_EDIT_CLIPBOARD: std::sync::Mutex<Option<(String, Vec<CellRun>)>> = std::sync::Mutex::new(None);
+
 impl SlideEditor {
     /// ⌘C and ⌘X while typing into a cell: the selected text on the system
     /// clipboard (nothing selected: nothing happens), cut taking it out.
@@ -1068,7 +1226,18 @@ impl SlideEditor {
         let Some(sel) = edit.selection() else { return };
         let (b0, b1) = (byte_at(&edit.text, sel.start), byte_at(&edit.text, sel.end));
         let text = edit.text[b0..b1].to_string();
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+
+        // Save styled runs for internal paste
+        let copied_runs = if let Some(runs) = &edit.runs {
+            super::sheet_view::runs_between(runs, b0, b1)
+        } else {
+            vec![CellRun { text: text.clone(), ..Default::default() }]
+        };
+        if let Ok(mut clip) = CELL_EDIT_CLIPBOARD.lock() {
+            *clip = Some((text, copied_runs));
+        }
+
         if cut {
             self.replace_cell_text(b0, b1, "", cx);
         }
@@ -1084,9 +1253,77 @@ impl SlideEditor {
         if text.is_empty() {
             return;
         }
-        let Some(edit) = self.cell_edit() else { return };
+        let Some(edit) = self.cell_edit_mut() else { return };
         let range = edit.selection().unwrap_or(edit.caret..edit.caret);
-        let (b0, b1) = (byte_at(&edit.text, range.start), byte_at(&edit.text, range.end));
-        self.replace_cell_text(b0, b1, &text, cx);
+
+        // Check if internal clipboard has styled runs matching this text
+        let matched_runs = if let Ok(clip) = CELL_EDIT_CLIPBOARD.lock() {
+            if let Some((clip_text, runs)) = clip.as_ref() {
+                if clip_text == &text {
+                    Some(runs.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(runs) = matched_runs {
+            edit.replace_runs(range, &text, &runs);
+            cx.notify();
+        } else {
+            edit.replace(range, &text);
+            cx.notify();
+        }
     }
 }
+
+#[cfg(test)]
+mod caret_items_tests {
+    use super::{Cell, CellEdit, EditMode, Rc, SlideId, text_lines, utf16_len};
+
+    #[test]
+    fn caret_move_does_not_split_text_items() {
+        let text = "Hello AV 日本語\n2行目 Test".to_string();
+        let mut edit = CellEdit {
+            slide: SlideId(1),
+            column: 0,
+            row: 0,
+            text: text.clone(),
+            caret: 0,
+            marked: None,
+            mode: EditMode::Edit,
+            anchor: None,
+            runs: None,
+            pointed: None,
+            rect: Rc::new(Cell::new(None)),
+            pixels_per_point: Rc::new(Cell::new(1.0)),
+            layout: Default::default(),
+            dragging: None,
+            dragging_in_bar: false,
+            pending: None,
+        };
+        let baseline_items = edit.items();
+        assert_eq!(baseline_items.len(), 1);
+        assert_eq!(baseline_items[0].text, text);
+
+        let total_u16 = utf16_len(&text);
+        for pos in 0..=total_u16 {
+            edit.caret = pos;
+            edit.anchor = None;
+            assert_eq!(edit.items(), baseline_items);
+            for (start, line) in text_lines(&edit.text) {
+                let bar = edit.bar_line(start, line);
+                assert_eq!(bar.text, line.trim_end_matches('\r'));
+            }
+            if pos > 0 {
+                edit.anchor = Some(0);
+                assert_eq!(edit.items(), baseline_items);
+            }
+        }
+    }
+}
+

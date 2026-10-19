@@ -101,6 +101,8 @@ pub struct PivotTable {
     pub multiple_field_filters: bool,
     /// 集計アイテム / 計算アイテム (`calculatedItems`, ECMA-376 Part 4 §3.10.1.8).
     pub calculated_items: Vec<PivotCalculatedItem>,
+    /// ドリル ボタン（+/- ボタン）の表示 (`showDrill`).
+    pub show_drill: bool,
 }
 
 /// A calculated item within a pivot field (集計アイテム / 計算アイテム, ECMA-376 Part 4 §3.10.1.8 `calculatedItem`).
@@ -332,6 +334,10 @@ pub struct PivotField {
     pub sort_data_field: Option<usize>,
     /// Grouping of items (日付・数値のグループ化).
     pub grouping: Option<PivotFieldGrouping>,
+    /// 各項目の後に空行を入れる (`insertBlankRow`, ECMA-376 Part 1 §18.10.1.69).
+    pub insert_blank_row: bool,
+    /// Per-field repeat item labels (`x14:pivotField/@fillDownLabels`); `None` inherits `PivotTable::fill_down_labels`.
+    pub fill_down_labels: Option<bool>,
 }
 
 /// The order of a field's items.
@@ -454,6 +460,8 @@ pub enum PivotLineKind {
     Subtotal { depth: u32 },
     /// 総計.
     Grand,
+    /// 各アイテムの後の空行 (`insertBlankRow`).
+    Blank,
 }
 
 /// A cell of a built table.
@@ -766,6 +774,9 @@ fn tree(
             if field.default_subtotal && !field.subtotal_top {
                 out.push(Line { kind: PivotLineKind::Subtotal { depth: depth as u32 }, path: path.clone(), labels: vec![(depth, i)] });
             }
+            if field.insert_blank_row {
+                out.push(Line { kind: PivotLineKind::Blank, path: path.clone(), labels: Vec::new() });
+            }
         } else {
             // 表形式: on its first child's row; its subtotal below.
             let before = out.len();
@@ -778,6 +789,9 @@ fn tree(
             }
             if field.default_subtotal {
                 out.push(Line { kind: PivotLineKind::Subtotal { depth: depth as u32 }, path: path.clone(), labels: vec![(depth, i)] });
+            }
+            if field.insert_blank_row {
+                out.push(Line { kind: PivotLineKind::Blank, path: path.clone(), labels: Vec::new() });
             }
         }
         path.pop();
@@ -834,12 +848,23 @@ impl PivotTable {
         let mut items: Vec<CellValue> = Vec::new();
         let mut hidden: Vec<CellValue> = Vec::new();
         for it in &field.items {
-            let Some(v) = it.x.and_then(|x| field.shared.get(x as usize)) else { continue };
-            let mapped = field.map_value_to_group(v);
+            if !it.hidden {
+                let Some(v) = it.x.and_then(|x| field.shared.get(x as usize)) else { continue };
+                let mapped = field.map_value_to_group(v);
+                if !items.iter().any(|i| same_item(i, &mapped)) {
+                    items.push(mapped);
+                }
+            }
+        }
+        for it in &field.items {
             if it.hidden {
-                hidden.push(mapped);
-            } else if !items.iter().any(|i| same_item(i, &mapped)) {
-                items.push(mapped);
+                let Some(v) = it.x.and_then(|x| field.shared.get(x as usize)) else { continue };
+                let mapped = field.map_value_to_group(v);
+                if !items.iter().any(|i| same_item(i, &mapped))
+                    && !hidden.iter().any(|i| same_item(i, &mapped))
+                {
+                    hidden.push(mapped);
+                }
             }
         }
         let listed = !items.is_empty() || !hidden.is_empty();
@@ -1066,14 +1091,14 @@ impl PivotTable {
             }
         }
         for (f, field) in self.fields.iter().enumerate() {
-            let hidden: Vec<CellValue> = field.items.iter().filter(|i| i.hidden).filter_map(|i| i.x.and_then(|x| field.shared.get(x as usize))).map(|v| field.map_value_to_group(v)).collect();
+            let hidden: Vec<&CellValue> = field.items.iter().filter(|i| i.hidden).filter_map(|i| i.x.and_then(|x| field.shared.get(x as usize))).collect();
             if hidden.is_empty() {
                 continue;
             }
             if let Some(c) = self.data_column(f, data) {
                 records.retain(|r| {
                     let v = r.get(c).cloned().unwrap_or_default();
-                    !hidden.iter().any(|h| same_item(&field.map_value_to_group(&v), h))
+                    !hidden.iter().any(|h| same_item(&v, h))
                 });
             }
         }
@@ -1275,20 +1300,20 @@ impl PivotTable {
                 PivotLineKind::Item { .. } => {
                     let mut labels = line.labels.clone();
                     // 項目ラベルを繰り返す: the outer items again on the rows of their group, where each field has its own column.
-                    if self.fill_down_labels {
-                        for lv in 0..line.path.len().min(rows_levels.len()) {
-                            let field = &self.fields[rows_levels[lv].field];
-                            if !labels.iter().any(|&(l, _)| l == lv) && !(field.compact && field.outline) {
-                                labels.push((lv, line.path[lv]));
-                            }
+                    for lv in 0..line.path.len().min(rows_levels.len()) {
+                        let field = &self.fields[rows_levels[lv].field];
+                        let fill_down = field.fill_down_labels.unwrap_or(self.fill_down_labels);
+                        if fill_down && !labels.iter().any(|&(l, _)| l == lv) && !(field.compact && field.outline) {
+                            labels.push((lv, line.path[lv]));
                         }
                     }
                     for (lv, ix) in labels {
                         put(row, left + label_col[lv], item_value(&rows_levels[lv].items[ix]), PivotRole::RowLabel { indent: indent[lv] });
                     }
                 }
+                PivotLineKind::Blank => {}
             }
-            let values_shown = !matches!(line.kind, PivotLineKind::Item { last: false, subtotal: false, .. });
+            let values_shown = !matches!(line.kind, PivotLineKind::Item { last: false, subtotal: false, .. } | PivotLineKind::Blank);
             if !values_shown {
                 continue;
             }
@@ -1340,7 +1365,7 @@ impl PivotTable {
                 }
                 // 空白セルに表示する値、エラー値に表示する値.
                 match (&v, &self.missing_caption, &self.error_caption) {
-                    // Excel reads a caption that is a number, blank or "-" as 0 (measured on its output: "-", "0", " ", "-0" show 0; "x", "--", "N/A" show as they are).
+                    // Excel reads a caption that is a number, blank or "-" as 0 (measured on its output: "-", "0", " ", "-0" show 0; "x", "--", "N/A" show 0).
                     (CellValue::Empty, Some(c), _) => {
                         v = missing_caption_value(c);
                     }
@@ -1361,6 +1386,7 @@ impl PivotTable {
                     PivotLineKind::Grand => (Some("grand".to_string()), 0, vec![0]),
                     PivotLineKind::Subtotal { .. } => (Some("default".to_string()), 0, l.path.iter().map(|&i| i as u32).collect()),
                     PivotLineKind::Item { .. } => (None, repeat as u32, l.path[repeat.min(l.path.len())..].iter().map(|&i| i as u32).collect()),
+                    PivotLineKind::Blank => (Some("blank".to_string()), 0, vec![0]),
                 };
                 prev = l.path.clone();
                 let n = if several { self.data_fields.len().max(1) } else { 1 };
@@ -1418,14 +1444,14 @@ impl PivotTable {
             }
         }
         for (f, field) in self.fields.iter().enumerate() {
-            let hidden: Vec<CellValue> = field.items.iter().filter(|i| i.hidden).filter_map(|i| i.x.and_then(|x| field.shared.get(x as usize))).map(|v| field.map_value_to_group(v)).collect();
+            let hidden: Vec<&CellValue> = field.items.iter().filter(|i| i.hidden).filter_map(|i| i.x.and_then(|x| field.shared.get(x as usize))).collect();
             if hidden.is_empty() {
                 continue;
             }
             if let Some(c) = self.data_column(f, data) {
                 records.retain(|r| {
                     let v = r.get(c).cloned().unwrap_or_default();
-                    !hidden.iter().any(|h| same_item(&field.map_value_to_group(&v), h))
+                    !hidden.iter().any(|h| same_item(&v, h))
                 });
             }
         }
@@ -1487,7 +1513,7 @@ impl PivotTable {
         }
         let ri = (row - first_body) as usize;
         let row_line = row_lines.get(ri)?;
-        let values_shown = !matches!(row_line.kind, PivotLineKind::Item { last: false, subtotal: false, .. });
+        let values_shown = !matches!(row_line.kind, PivotLineKind::Item { last: false, subtotal: false, .. } | PivotLineKind::Blank);
         if !values_shown {
             return None;
         }
@@ -1521,6 +1547,305 @@ impl PivotTable {
             records: recs,
         })
     }
+
+    /// Whether cell `(row, column)` lies within this pivot table's bounds
+    /// (including report filters above the table).
+    pub fn contains_cell(&self, row: u32, column: u32) -> bool {
+        let top = if !self.page_fields.is_empty() {
+            self.location.first_row.saturating_sub(self.page_fields.len() as u32 + 1)
+        } else {
+            self.location.first_row
+        };
+        (top..=self.location.last_row).contains(&row)
+            && (self.location.first_column..=self.location.last_column).contains(&column)
+    }
+
+    /// Retrieve a data cell value according to Excel's GETPIVOTDATA rules.
+    pub fn get_pivot_data(
+        &self,
+        sheet: &crate::sheet::Sheet,
+        data_field: &str,
+        filter_pairs: &[(&str, &str)],
+    ) -> Option<CellValue> {
+        if self.is_empty() || self.data_fields.is_empty() {
+            return None;
+        }
+
+        let norm = |s: &str| -> String {
+            s.chars().filter(|c| !c.is_whitespace() && *c != '/' && *c != ':').collect::<String>().to_lowercase()
+        };
+
+        // 1. Identify the data field
+        let d_idx = if data_field.is_empty() {
+            if self.data_fields.len() == 1 {
+                Some(0)
+            } else {
+                None
+            }
+        } else {
+            self.data_fields.iter().position(|df| {
+                df.name.eq_ignore_ascii_case(data_field)
+                    || norm(&df.name) == norm(data_field)
+                    || self.fields.get(df.field as usize).is_some_and(|f| {
+                        f.name.eq_ignore_ascii_case(data_field) || norm(&f.name) == norm(data_field)
+                    })
+            })
+        };
+        let d_idx = d_idx?;
+
+        // 2. Validate all query fields exist in the pivot table
+        for &(fname, _) in filter_pairs {
+            if !self.fields.iter().any(|f| f.name.eq_ignore_ascii_case(fname) || norm(&f.name) == norm(fname)) {
+                return None;
+            }
+        }
+
+        // 3. Check page fields (report filters)
+        for p in &self.page_fields {
+            let Some(field) = self.fields.get(p.field as usize) else { continue };
+            if let Some((_, query_item)) = filter_pairs.iter().find(|(fname, _)| field.name.eq_ignore_ascii_case(fname) || norm(&field.name) == norm(fname)) {
+                if let Some(item_idx) = p.item {
+                    if !field_item_matches(field, item_idx, query_item) {
+                        return None;
+                    }
+                } else {
+                    let max_items = field.shared.len().max(field.items.len()) as u32;
+                    let exists = (0..max_items).any(|ix| field_item_matches(field, ix, query_item));
+                    if !exists {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        let row_fields_clean: Vec<usize> = self.row_fields.iter().filter(|&&f| f >= 0).map(|&f| f as usize).filter(|&f| f < self.fields.len()).collect();
+        let col_fields_clean: Vec<usize> = self.col_fields.iter().filter(|&&f| f >= 0).map(|&f| f as usize).filter(|&f| f < self.fields.len()).collect();
+
+        // 4. Verify no query field is outside rows, columns, or pages
+        for &(fname, _) in filter_pairs {
+            let is_row = row_fields_clean.iter().any(|&f| self.fields[f].name.eq_ignore_ascii_case(fname) || norm(&self.fields[f].name) == norm(fname));
+            let is_col = col_fields_clean.iter().any(|&f| self.fields[f].name.eq_ignore_ascii_case(fname) || norm(&self.fields[f].name) == norm(fname));
+            let is_page = self.page_fields.iter().any(|p| self.fields.get(p.field as usize).is_some_and(|f| f.name.eq_ignore_ascii_case(fname) || norm(&f.name) == norm(fname)));
+            if !is_row && !is_col && !is_page {
+                return None;
+            }
+        }
+
+        // 5. Build/use row and column lines
+        let (row_items_to_use, col_items_to_use, first_data_row, first_data_col, built_cells) = if self.row_items.is_empty() && self.source.range.is_some() {
+            let range = self.source.range.unwrap();
+            let data = source_data(sheet, range);
+            let built = self.build(&data);
+            (built.row_items, built.col_items, built.first_data_row, built.first_data_col, Some(built.cells))
+        } else {
+            (self.row_items.clone(), self.col_items.clone(), self.first_data_row, self.first_data_col, None)
+        };
+
+        let data_count = self.data_fields.len().max(1);
+        let mut row_paths: Vec<(PivotLineKind, Vec<u32>, usize)> = Vec::new();
+        if row_items_to_use.is_empty() {
+            if row_fields_clean.is_empty() {
+                let n = if self.data_on_rows { data_count } else { 1 };
+                for d in 0..n {
+                    row_paths.push((PivotLineKind::Grand, Vec::new(), d));
+                }
+            }
+        } else {
+            let mut current: Vec<u32> = Vec::new();
+            for line in &row_items_to_use {
+                let kind = match line.kind.as_deref() {
+                    Some("grand") => PivotLineKind::Grand,
+                    Some("blank") => PivotLineKind::Blank,
+                    Some("default") | Some("subtotal") => PivotLineKind::Subtotal { depth: line.repeat },
+                    _ => PivotLineKind::Item { depth: line.repeat, last: true, subtotal: false },
+                };
+                current.truncate(line.repeat as usize);
+                current.extend_from_slice(&line.items);
+                row_paths.push((kind, current.clone(), line.data as usize));
+            }
+        }
+
+        let mut col_paths: Vec<(PivotLineKind, Vec<u32>, usize)> = Vec::new();
+        if col_items_to_use.is_empty() {
+            if col_fields_clean.is_empty() {
+                let n = if !self.data_on_rows { data_count } else { 1 };
+                for d in 0..n {
+                    col_paths.push((PivotLineKind::Grand, Vec::new(), d));
+                }
+            }
+        } else {
+            let mut current: Vec<u32> = Vec::new();
+            for line in &col_items_to_use {
+                let kind = match line.kind.as_deref() {
+                    Some("grand") => PivotLineKind::Grand,
+                    Some("blank") => PivotLineKind::Blank,
+                    Some("default") | Some("subtotal") => PivotLineKind::Subtotal { depth: line.repeat },
+                    _ => PivotLineKind::Item { depth: line.repeat, last: true, subtotal: false },
+                };
+                current.truncate(line.repeat as usize);
+                current.extend_from_slice(&line.items);
+                col_paths.push((kind, current.clone(), line.data as usize));
+            }
+        }
+
+        // 6. Match row line
+        let mut specified_row_levels: Vec<(usize, &str)> = Vec::new();
+        for (lv, &f_idx) in row_fields_clean.iter().enumerate() {
+            if let Some((_, it)) = filter_pairs.iter().find(|(name, _)| self.fields[f_idx].name.eq_ignore_ascii_case(name) || norm(&self.fields[f_idx].name) == norm(name)) {
+                specified_row_levels.push((lv, *it));
+            }
+        }
+
+        let matching_ri = if row_fields_clean.is_empty() {
+            if self.data_on_rows {
+                row_paths.iter().position(|(_, _, d)| *d == d_idx)
+            } else {
+                Some(0)
+            }
+        } else if specified_row_levels.is_empty() {
+            row_paths.iter().position(|(kind, _, d)| matches!(kind, PivotLineKind::Grand) && (!self.data_on_rows || *d == d_idx))
+        } else {
+            let deepest_specified = specified_row_levels.iter().map(|&(lv, _)| lv).max().unwrap_or(0);
+            let all_levels_specified = deepest_specified + 1 >= row_fields_clean.len();
+            row_paths.iter().position(|(kind, path, d)| {
+                if self.data_on_rows && *d != d_idx {
+                    return false;
+                }
+                if matches!(kind, PivotLineKind::Grand | PivotLineKind::Blank) {
+                    return false;
+                }
+                for &(lv, query_item) in &specified_row_levels {
+                    let Some(&item_idx) = path.get(lv) else { return false; };
+                    let f_idx = row_fields_clean[lv];
+                    if !field_item_matches(&self.fields[f_idx], item_idx, query_item) {
+                        return false;
+                    }
+                }
+                if all_levels_specified {
+                    !matches!(kind, PivotLineKind::Subtotal { .. }) && path.len() >= row_fields_clean.len()
+                } else {
+                    matches!(kind, PivotLineKind::Subtotal { .. }) || path.len() == deepest_specified + 1
+                }
+            })
+        };
+        let matching_ri = matching_ri?;
+
+        // 7. Match col line
+        let mut specified_col_levels: Vec<(usize, &str)> = Vec::new();
+        for (lv, &f_idx) in col_fields_clean.iter().enumerate() {
+            if let Some((_, it)) = filter_pairs.iter().find(|(name, _)| self.fields[f_idx].name.eq_ignore_ascii_case(name) || norm(&self.fields[f_idx].name) == norm(name)) {
+                specified_col_levels.push((lv, *it));
+            }
+        }
+
+        let matching_ci = if col_fields_clean.is_empty() {
+            if !self.data_on_rows {
+                col_paths.iter().position(|(_, _, d)| *d == d_idx)
+            } else {
+                Some(0)
+            }
+        } else if specified_col_levels.is_empty() {
+            col_paths.iter().position(|(kind, _, d)| matches!(kind, PivotLineKind::Grand) && (self.data_on_rows || *d == d_idx))
+        } else {
+            let deepest_specified = specified_col_levels.iter().map(|&(lv, _)| lv).max().unwrap_or(0);
+            let all_levels_specified = deepest_specified + 1 >= col_fields_clean.len();
+            col_paths.iter().position(|(kind, path, d)| {
+                if !self.data_on_rows && *d != d_idx {
+                    return false;
+                }
+                if matches!(kind, PivotLineKind::Grand | PivotLineKind::Blank) {
+                    return false;
+                }
+                for &(lv, query_item) in &specified_col_levels {
+                    let Some(&item_idx) = path.get(lv) else { return false; };
+                    let f_idx = col_fields_clean[lv];
+                    if !field_item_matches(&self.fields[f_idx], item_idx, query_item) {
+                        return false;
+                    }
+                }
+                if all_levels_specified {
+                    !matches!(kind, PivotLineKind::Subtotal { .. }) && path.len() >= col_fields_clean.len()
+                } else {
+                    matches!(kind, PivotLineKind::Subtotal { .. }) || path.len() == deepest_specified + 1
+                }
+            })
+        };
+        let matching_ci = matching_ci?;
+
+        // 8. Find target cell coordinates
+        let target_row = self.location.first_row + first_data_row + matching_ri as u32;
+        let target_col = self.location.first_column + first_data_col + matching_ci as u32;
+
+        if let Some(cell) = sheet.cell(target_row, target_col) {
+            if !cell.value.is_empty() {
+                return Some(cell.value.clone());
+            }
+        }
+
+        if let Some(cells) = &built_cells {
+            if let Some(c) = cells.iter().find(|c| c.row == target_row && c.column == target_col) {
+                return Some(c.value.clone());
+            }
+        }
+
+        if let Some(range) = self.source.range {
+            let data = source_data(sheet, range);
+            let built = self.build(&data);
+            if let Some(c) = built.cells.iter().find(|c| c.row == target_row && c.column == target_col) {
+                return Some(c.value.clone());
+            }
+        }
+
+        None
+    }
+}
+
+fn field_item_matches(field: &PivotField, item_idx: u32, query_item: &str) -> bool {
+    let raw_val = if !field.items.is_empty() {
+        field.items.get(item_idx as usize).and_then(|it| {
+            if let Some(x) = it.x {
+                field.shared.get(x as usize)
+            } else {
+                field.shared.get(item_idx as usize)
+            }
+        })
+    } else {
+        field.shared.get(item_idx as usize)
+    };
+    let Some(v) = raw_val else { return false; };
+    let mapped = field.map_value_to_group(v);
+    cell_value_matches(&mapped, query_item) || cell_value_matches(v, query_item)
+}
+
+fn cell_value_matches(val: &CellValue, query: &str) -> bool {
+    let norm = |s: &str| -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase()
+    };
+    match val {
+        CellValue::Text(t) => t.eq_ignore_ascii_case(query) || norm(t) == norm(query),
+        CellValue::Number(n) => {
+            if format_num(*n) == query {
+                true
+            } else if let Ok(q_num) = query.parse::<f64>() {
+                (*n - q_num).abs() < 1e-9
+            } else if let Some(q_date) = ibis_calc::eval::convert::parse_date_time(query, false) {
+                (*n - q_date).abs() < 1e-5
+            } else {
+                false
+            }
+        }
+        CellValue::Bool(b) => {
+            if query.eq_ignore_ascii_case("true") {
+                *b
+            } else if query.eq_ignore_ascii_case("false") {
+                !*b
+            } else {
+                false
+            }
+        }
+        CellValue::Empty => query.is_empty() || query == BLANK_ITEM,
+        CellValue::Error(_) => false,
+    }
 }
 
 /// The data of `range` on `sheet`: its first row the headings, the rest the
@@ -1549,7 +1874,8 @@ impl PivotTable {
                 .iter()
                 .map(|l| match l.kind.as_deref() {
                     Some("grand") => PivotLineKind::Grand,
-                    Some("blank") | None => {
+                    Some("blank") => PivotLineKind::Blank,
+                    None => {
                         let depth = (l.repeat + l.items.len().max(1) as u32 - 1).min(deepest);
                         let subtotal = depth < deepest && fields.get(depth as usize).and_then(|&f| self.fields.get(f)).is_some_and(|f| f.outline && f.default_subtotal && f.subtotal_top);
                         PivotLineKind::Item { depth, last: depth == deepest, subtotal }
@@ -1708,7 +2034,7 @@ impl PivotTable {
                         shared.push(v);
                     }
                 }
-                PivotField { name: h.clone(), formula: None, axis: None, shared, items: Vec::new(), compact: true, outline: true, subtotal_top: true, default_subtotal: true, sort: PivotSort::Manual, sort_data_field: None, grouping: None }
+                PivotField { name: h.clone(), formula: None, axis: None, shared, items: Vec::new(), compact: true, outline: true, subtotal_top: true, default_subtotal: true, sort: PivotSort::Manual, sort_data_field: None, grouping: None, insert_blank_row: false, fill_down_labels: None }
             })
             .collect();
         PivotTable {
@@ -1751,6 +2077,7 @@ impl PivotTable {
             preserve_formatting: true,
             multiple_field_filters: false,
             calculated_items: Vec::new(),
+            show_drill: true,
         }
     }
 
@@ -2371,15 +2698,44 @@ pub fn chart_from_pivot(pivot: &PivotTable, built: &PivotBuilt) -> Chart {
         rounded_corners: false,
         title_overlay: false,
         ex: None,
+        ex_format: None,
         excel_layout: false,
+        cell_refs: Vec::new(),
+        ex_source: None,
     };
     update_chart_from_pivot(&mut chart, pivot, built);
     chart
 }
 
+/// Whether a PivotChart's `pivot_source` (`PivotTable1`, `Sheet1!PivotTable1`,
+/// or `[Book.xlsx]Sheet1!PivotTable1`) refers to `pivot_name` on `sheet_name`.
+pub fn pivot_source_matches(pivot_source: Option<&str>, sheet_name: Option<&str>, pivot_name: &str) -> bool {
+    let Some(ps) = pivot_source.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    if let Some((prefix, name)) = ps.rsplit_once('!') {
+        let name = name.trim().trim_matches('\'');
+        if !name.eq_ignore_ascii_case(pivot_name) && name != pivot_name {
+            return false;
+        }
+        if let Some(sn) = sheet_name.filter(|s| !s.is_empty()) {
+            let unquoted = prefix.trim().trim_matches('\'').replace("''", "'");
+            let sheet_part = unquoted.rsplit_once(']').map_or(unquoted.as_str(), |(_, s)| s).trim();
+            if !sheet_part.is_empty() && !sheet_part.eq_ignore_ascii_case(sn) && sheet_part != sn {
+                return false;
+            }
+        }
+        true
+    } else {
+        ps.eq_ignore_ascii_case(pivot_name) || ps == pivot_name
+    }
+}
+
 /// Update an existing `Chart`'s categories, series names and data values from `PivotTable` and `PivotBuilt`.
 pub fn update_chart_from_pivot(chart: &mut Chart, pivot: &PivotTable, built: &PivotBuilt) {
-    chart.pivot_source = Some(pivot.name.clone());
+    if chart.pivot_source.is_none() {
+        chart.pivot_source = Some(pivot.name.clone());
+    }
 
     // 1. Identify category rows (Item rows, not subtotal or grand total)
     // The data body starts at built.location.first_row + built.first_data_row
@@ -2463,6 +2819,7 @@ pub fn update_chart_from_pivot(chart: &mut Chart, pivot: &PivotTable, built: &Pi
         Rgb(0x70AD47), // Green
     ];
 
+    let existing_series = chart.groups.first().map(|g| g.series.as_slice()).unwrap_or(&[]);
     let mut new_series: Vec<Series> = Vec::new();
     for (s_idx, (col_idx, name)) in col_series.iter().enumerate() {
         let mut values: Vec<Option<Number>> = Vec::new();
@@ -2476,54 +2833,65 @@ pub fn update_chart_from_pivot(chart: &mut Chart, pivot: &PivotTable, built: &Pi
             values.push(val);
         }
 
+        let old_ser = existing_series.get(s_idx);
         let color = default_palette[s_idx % default_palette.len()];
-        let fill = Fill::Solid(Color::opaque(color));
-        let stroke = None;
+        let fill = old_ser.map(|s| s.fill.clone()).unwrap_or(Fill::Solid(Color::opaque(color)));
+        let stroke = old_ser.and_then(|s| s.stroke.clone());
+        let format = old_ser.map(|s| s.format.clone()).filter(|f| !f.is_empty()).unwrap_or_else(|| "General".to_string());
 
         new_series.push(Series {
             name: name.clone(),
             categories: categories.clone(),
             values,
-            format: "General".to_string(),
+            format,
             fill,
             stroke,
-            marker: None,
-            labels: None,
-            trendline: None,
-            error_bars: None,
+            marker: old_ser.and_then(|s| s.marker.clone()),
+            labels: old_ser.and_then(|s| s.labels.clone()),
+            trendline: old_ser.and_then(|s| s.trendline.clone()),
+            error_bars: old_ser.and_then(|s| s.error_bars.clone()),
             point_fills: Vec::new(),
             point_strokes: Vec::new(),
             x_values: Vec::new(),
             bubble_sizes: Vec::new(),
+            bubble_3d: false,
         });
     }
 
     // 4. Update or initialize group
-    let chart_type = chart.groups.first().map(|g| g.kind).unwrap_or(ChartType::Bar {
+    let existing_group = chart.groups.first();
+    let chart_type = existing_group.map(|g| g.kind).unwrap_or(ChartType::Bar {
         horizontal: false,
         gap_width: 150,
         overlap: 0,
     });
-    let grouping = chart.groups.first().map(|g| g.grouping).unwrap_or(crate::chart::Grouping::Standard);
+    let grouping = existing_group.map(|g| g.grouping).unwrap_or(crate::chart::Grouping::Standard);
+    let of_pie = existing_group.and_then(|g| g.of_pie.clone());
+    let group_axes = existing_group
+        .map(|g| g.axes.clone())
+        .filter(|a| !a.is_empty())
+        .unwrap_or_else(|| vec![100_000_001, 100_000_002]);
+    let three_d = existing_group.and_then(|g| g.three_d);
 
     chart.groups = vec![ChartGroup {
         kind: chart_type,
-        of_pie: None,
+        of_pie,
         grouping,
         series: new_series,
-        axes: vec![1, 2],
+        axes: group_axes,
+        three_d,
     }];
 
     // 5. Update axes
     if chart.axes.is_empty() {
         chart.axes = vec![
             Axis {
-                id: 1,
-                source_id: Some(1),
+                id: 100_000_001,
+                source_id: Some(100_000_001),
                 source_kind: AxisSourceKind::Category,
                 crosses: None,
                 crosses_at: None,
-                cross_axis_id: Some(2),
+                cross_axis_id: Some(100_000_002),
                 kind: AxisKind::Category,
                 side: Side::Bottom,
                 deleted: false,
@@ -2550,12 +2918,12 @@ pub fn update_chart_from_pivot(chart: &mut Chart, pivot: &PivotTable, built: &Pi
                 stagger_labels: false,
             },
             Axis {
-                id: 2,
-                source_id: Some(2),
+                id: 100_000_002,
+                source_id: Some(100_000_002),
                 source_kind: AxisSourceKind::Value,
                 crosses: None,
                 crosses_at: None,
-                cross_axis_id: Some(1),
+                cross_axis_id: Some(100_000_001),
                 kind: AxisKind::Value,
                 side: Side::Left,
                 deleted: false,
@@ -3096,6 +3464,72 @@ mod tests {
         let b_label = p.build(&data());
         let rows_label: Vec<CellValue> = (3..6).map(|r| text(&b_label, r, 0).unwrap()).collect();
         assert_eq!(rows_label, vec![CellValue::Text("関西".into()), CellValue::Text("関東".into()), CellValue::Text("九州".into())]);
+    }
+
+    #[test]
+    fn test_pivot_getpivotdata() {
+        let t = |s: &str| CellValue::Text(s.into());
+        let n = CellValue::Number;
+        let test_data = PivotData {
+            headings: vec!["地域".into(), "商品".into(), "売上".into()],
+            records: vec![
+                vec![t("関東"), t("みかん"), n(100.0)],
+                vec![t("関西"), t("りんご"), n(200.0)],
+                vec![t("関東"), t("りんご"), n(50.0)],
+                vec![t("九州"), t("みかん"), n(10.0)],
+            ],
+        };
+        let mut p = PivotTable::new("ピボットテーブル1", PivotSource::default(), &test_data, 2, 0);
+        p.place(0, Some(PivotAxis::Row), 0); // 地域 to Row
+        p.place(1, Some(PivotAxis::Column), 0); // 商品 to Col
+        p.place(2, Some(PivotAxis::Values), 0); // 売上 to Values
+
+        let b = p.build(&test_data);
+        p.row_items = b.row_items;
+        p.col_items = b.col_items;
+        p.location = b.location;
+        p.first_data_row = b.first_data_row;
+        p.first_data_col = b.first_data_col;
+
+        let mut sheet = crate::sheet::Sheet::default();
+        for c in &b.cells {
+            sheet.put_cell(c.row, c.column, Some(crate::sheet::SheetCell {
+                row: c.row,
+                column: c.column,
+                value: c.value.clone(),
+                text: String::new(),
+                kind: crate::sheet::CellKind::of(&c.value),
+                formula: None,
+                style: 0,
+                phonetic: None,
+                runs: None,
+            }));
+        }
+
+        // Test 1: Grand total
+        assert_eq!(p.get_pivot_data(&sheet, "売上", &[]), Some(n(360.0)));
+        assert_eq!(p.get_pivot_data(&sheet, "合計 / 売上", &[]), Some(n(360.0)));
+
+        // Test 2: Row filter (地域 = 関東) -> 100 + 50 = 150
+        assert_eq!(p.get_pivot_data(&sheet, "売上", &[("地域", "関東")]), Some(n(150.0)));
+
+        // Test 3: Col filter (商品 = みかん) -> 100 + 10 = 110
+        assert_eq!(p.get_pivot_data(&sheet, "売上", &[("商品", "みかん")]), Some(n(110.0)));
+
+        // Test 4: Intersection (地域 = 関東, 商品 = みかん) -> 100
+        assert_eq!(p.get_pivot_data(&sheet, "売上", &[("地域", "関東"), ("商品", "みかん")]), Some(n(100.0)));
+
+        // Test 5: Intersection (地域 = 関東, 商品 = りんご) -> 50
+        assert_eq!(p.get_pivot_data(&sheet, "売上", &[("地域", "関東"), ("商品", "りんご")]), Some(n(50.0)));
+
+        // Test 6: Nonexistent item -> None
+        assert_eq!(p.get_pivot_data(&sheet, "売上", &[("地域", "北海道")]), None);
+
+        // Test 7: Nonexistent field -> None
+        assert_eq!(p.get_pivot_data(&sheet, "売上", &[("担当", "田中")]), None);
+
+        // Test 8: Nonexistent data field -> None
+        assert_eq!(p.get_pivot_data(&sheet, "利益", &[]), None);
     }
 }
 

@@ -45,6 +45,21 @@ pub(crate) struct Reference {
 
 /// 数式表現（Expr）からすべてのセル参照（AreaRef）を再帰的に抽出する。
 pub(crate) fn collect_references(expr: &Expr, out: &mut Vec<Reference>) {
+    collect_references_with_names(expr, &[], None, &[], 0, out);
+}
+
+/// 名前定義（DefinedName）を展開しながら数式表現（Expr）からセル参照を再帰的に抽出する。
+pub(crate) fn collect_references_with_names(
+    expr: &Expr,
+    names: &[ibis_doc_model::DefinedName],
+    current_sheet_idx: Option<usize>,
+    sheet_names: &[String],
+    depth: u8,
+    out: &mut Vec<Reference>,
+) {
+    if depth > 8 {
+        return;
+    }
     match expr {
         Expr::Ref(r) => {
             let min_col = r.start.column.min(r.end.column);
@@ -54,68 +69,143 @@ pub(crate) fn collect_references(expr: &Expr, out: &mut Vec<Reference>) {
             let sheet = r.sheet.as_ref().map(|s| s.first.clone());
             out.push(Reference { sheet, min_col, min_row, max_col, max_row });
         }
+        Expr::Name { sheet: name_sheet, name } => {
+            let target_sheet_idx = match name_sheet {
+                Some(sref) => sheet_names.iter().position(|sn| sn.eq_ignore_ascii_case(&sref.first)),
+                None => current_sheet_idx,
+            };
+            let resolved = names
+                .iter()
+                .find(|dn| dn.sheet.is_some() && dn.sheet == target_sheet_idx && dn.name.eq_ignore_ascii_case(name))
+                .or_else(|| {
+                    if name_sheet.is_none() {
+                        names.iter().find(|dn| dn.sheet.is_none() && dn.name.eq_ignore_ascii_case(name))
+                    } else {
+                        None
+                    }
+                });
+            if let Some(dn) = resolved {
+                let f = dn.formula.trim().trim_start_matches('=');
+                if let Ok(sub_expr) = parse(f) {
+                    collect_references_with_names(&sub_expr, names, dn.sheet.or(target_sheet_idx), sheet_names, depth + 1, out);
+                }
+            }
+        }
         Expr::Call { args, .. } => {
             for arg in args {
-                collect_references(arg, out);
+                collect_references_with_names(arg, names, current_sheet_idx, sheet_names, depth, out);
             }
         }
         Expr::Invoke { callee, args } => {
-            collect_references(callee, out);
+            collect_references_with_names(callee, names, current_sheet_idx, sheet_names, depth, out);
             for arg in args {
-                collect_references(arg, out);
+                collect_references_with_names(arg, names, current_sheet_idx, sheet_names, depth, out);
             }
         }
         Expr::Array(rows) => {
             for row in rows {
                 for cell in row {
-                    collect_references(cell, out);
+                    collect_references_with_names(cell, names, current_sheet_idx, sheet_names, depth, out);
                 }
             }
         }
         Expr::Binary(_, a, b) | Expr::Range(a, b) | Expr::Intersect(a, b) => {
-            collect_references(a, out);
-            collect_references(b, out);
+            collect_references_with_names(a, names, current_sheet_idx, sheet_names, depth, out);
+            collect_references_with_names(b, names, current_sheet_idx, sheet_names, depth, out);
         }
         Expr::Neg(x) | Expr::Plus(x) | Expr::Percent(x) | Expr::Implicit(x) | Expr::Spill(x) => {
-            collect_references(x, out);
+            collect_references_with_names(x, names, current_sheet_idx, sheet_names, depth, out);
         }
         Expr::Union(items) => {
             for item in items {
-                collect_references(item, out);
+                collect_references_with_names(item, names, current_sheet_idx, sheet_names, depth, out);
             }
         }
-        Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Missing | Expr::Name { .. } | Expr::Structured { .. } => {}
+        Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Missing | Expr::Structured { .. } => {}
     }
 }
 
 impl SlideEditor {
     /// 選択中のセルが参照しているセル（参照元）へ向かうトレース矢印を追加する。
+    /// 既に直近の参照元矢印が存在する場合は、さらに次の段階（多段）の参照元をトレースする。
     pub(crate) fn trace_precedents(&mut self, cx: &mut Context<Self>) {
         let Some((target_col, target_row)) = self.current_cell() else { return };
         let Some((_, sheet)) = self.current_sheet() else { return };
-        let current_sheet_title = self.presentation().workbook.as_ref().and_then(|wb| {
-            wb.sheets.iter().find(|s| s.slide == Some(self.slide().id)).map(|s| s.name.clone())
-        }).unwrap_or_default();
+        let slide_id = self.slide().id;
+        let (current_sheet_idx, current_sheet_title, sheet_names, names) = self
+            .presentation()
+            .workbook
+            .as_ref()
+            .map(|wb| {
+                let idx = wb.sheets.iter().position(|s| s.slide == Some(slide_id));
+                let title = idx.and_then(|i| wb.sheets.get(i)).map(|s| s.name.clone()).unwrap_or_default();
+                let s_names: Vec<String> = wb.sheets.iter().map(|s| s.name.clone()).collect();
+                (idx, title, s_names, wb.names.clone())
+            })
+            .unwrap_or((None, String::new(), Vec::new(), Vec::new()));
 
-        let Some(cell) = sheet.cell(target_row, target_col) else { return };
-        let Some(formula) = &cell.formula else { return };
+        let arrows_for_cell = |col: u32, row: u32| -> Vec<TraceArrow> {
+            let Some(cell) = sheet.cell(row, col) else { return Vec::new() };
+            let Some(formula) = &cell.formula else { return Vec::new() };
+            let Ok(expr) = parse(formula.trim_start_matches('=')) else { return Vec::new() };
+            let mut refs = Vec::new();
+            collect_references_with_names(&expr, &names, current_sheet_idx, &sheet_names, 0, &mut refs);
+            refs.into_iter()
+                .map(|r| {
+                    let is_same_sheet = r.sheet.is_none() || r.sheet.as_deref() == Some(&current_sheet_title);
+                    TraceArrow {
+                        from_range: (r.min_col, r.min_row, r.max_col, r.max_row),
+                        to: (col, row),
+                        external_sheet: if is_same_sheet { None } else { r.sheet },
+                        kind: TraceArrowKind::Precedent,
+                    }
+                })
+                .collect()
+        };
 
-        let Ok(expr) = parse(formula.trim_start_matches('=')) else { return };
-        let mut refs = Vec::new();
-        collect_references(&expr, &mut refs);
-        if refs.is_empty() {
+        let level1 = arrows_for_cell(target_col, target_row);
+        if level1.is_empty() {
+            return;
+        }
+
+        let existing = self.sheet_state().map(|s| s.trace_arrows.clone()).unwrap_or_default();
+        let all_level1_present = level1.iter().all(|a| existing.contains(a));
+
+        let mut to_add = Vec::new();
+        if !all_level1_present {
+            to_add = level1;
+        } else {
+            let mut frontier_cells = Vec::new();
+            for arrow in &existing {
+                if arrow.kind == TraceArrowKind::Precedent && arrow.external_sheet.is_none() {
+                    let (c0, r0, c1, r1) = arrow.from_range;
+                    let count = ((c1 - c0 + 1) as u64) * ((r1 - r0 + 1) as u64);
+                    if count <= 64 {
+                        for r in r0..=r1 {
+                            for c in c0..=c1 {
+                                if !frontier_cells.contains(&(c, r)) {
+                                    frontier_cells.push((c, r));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for (c, r) in frontier_cells {
+                for next_arrow in arrows_for_cell(c, r) {
+                    if !existing.contains(&next_arrow) && !to_add.contains(&next_arrow) {
+                        to_add.push(next_arrow);
+                    }
+                }
+            }
+        }
+
+        if to_add.is_empty() {
             return;
         }
 
         let Some(state) = self.sheet_state_mut() else { return };
-        for r in refs {
-            let is_same_sheet = r.sheet.is_none() || r.sheet.as_deref() == Some(&current_sheet_title);
-            let arrow = TraceArrow {
-                from_range: (r.min_col, r.min_row, r.max_col, r.max_row),
-                to: (target_col, target_row),
-                external_sheet: if is_same_sheet { None } else { r.sheet },
-                kind: TraceArrowKind::Precedent,
-            };
+        for arrow in to_add {
             if !state.trace_arrows.contains(&arrow) {
                 state.trace_arrows.push(arrow);
             }
@@ -124,31 +214,72 @@ impl SlideEditor {
     }
 
     /// 選択中のセルを参照している数式セル（参照先）へ向かうトレース矢印を追加する。
+    /// 既に直近の参照先矢印が存在する場合は、さらに次の段階（多段）の参照先をトレースする。
     pub(crate) fn trace_dependents(&mut self, cx: &mut Context<Self>) {
         let Some((target_col, target_row)) = self.current_cell() else { return };
         let Some((_, sheet)) = self.current_sheet() else { return };
-        let current_sheet_title = self.presentation().workbook.as_ref().and_then(|wb| {
-            wb.sheets.iter().find(|s| s.slide == Some(self.slide().id)).map(|s| s.name.clone())
-        }).unwrap_or_default();
+        let slide_id = self.slide().id;
+        let (current_sheet_idx, current_sheet_title, sheet_names, names) = self
+            .presentation()
+            .workbook
+            .as_ref()
+            .map(|wb| {
+                let idx = wb.sheets.iter().position(|s| s.slide == Some(slide_id));
+                let title = idx.and_then(|i| wb.sheets.get(i)).map(|s| s.name.clone()).unwrap_or_default();
+                let s_names: Vec<String> = wb.sheets.iter().map(|s| s.name.clone()).collect();
+                (idx, title, s_names, wb.names.clone())
+            })
+            .unwrap_or((None, String::new(), Vec::new(), Vec::new()));
 
-        // シート上のすべての数式セルをスキャン
-        let mut new_arrows = Vec::new();
-        for cell in &sheet.cells {
-            let Some(formula) = &cell.formula else { continue };
-            let Ok(expr) = parse(formula.trim_start_matches('=')) else { continue };
-            let mut refs = Vec::new();
-            collect_references(&expr, &mut refs);
-            let refers_to_target = refs.into_iter().any(|r| {
-                let is_same_sheet = r.sheet.is_none() || r.sheet.as_deref() == Some(&current_sheet_title);
-                is_same_sheet && r.min_col <= target_col && target_col <= r.max_col && r.min_row <= target_row && target_row <= r.max_row
-            });
-            if refers_to_target {
-                new_arrows.push(TraceArrow {
-                    from_range: (target_col, target_row, target_col, target_row),
-                    to: (cell.column, cell.row),
-                    external_sheet: None,
-                    kind: TraceArrowKind::Dependent,
+        let dependents_of = |col: u32, row: u32| -> Vec<TraceArrow> {
+            let mut arrows = Vec::new();
+            for cell in &sheet.cells {
+                let Some(formula) = &cell.formula else { continue };
+                let Ok(expr) = parse(formula.trim_start_matches('=')) else { continue };
+                let mut refs = Vec::new();
+                collect_references_with_names(&expr, &names, current_sheet_idx, &sheet_names, 0, &mut refs);
+                let refers_to_target = refs.into_iter().any(|r| {
+                    let is_same_sheet = r.sheet.is_none() || r.sheet.as_deref() == Some(&current_sheet_title);
+                    is_same_sheet && r.min_col <= col && col <= r.max_col && r.min_row <= row && row <= r.max_row
                 });
+                if refers_to_target {
+                    arrows.push(TraceArrow {
+                        from_range: (col, row, col, row),
+                        to: (cell.column, cell.row),
+                        external_sheet: None,
+                        kind: TraceArrowKind::Dependent,
+                    });
+                }
+            }
+            arrows
+        };
+
+        let level1 = dependents_of(target_col, target_row);
+        if level1.is_empty() {
+            return;
+        }
+
+        let existing = self.sheet_state().map(|s| s.trace_arrows.clone()).unwrap_or_default();
+        let all_level1_present = level1.iter().all(|a| existing.contains(a));
+
+        let mut new_arrows = Vec::new();
+        if !all_level1_present {
+            new_arrows = level1;
+        } else {
+            let mut frontier_cells = Vec::new();
+            for arrow in &existing {
+                if arrow.kind == TraceArrowKind::Dependent && arrow.external_sheet.is_none() {
+                    if !frontier_cells.contains(&arrow.to) {
+                        frontier_cells.push(arrow.to);
+                    }
+                }
+            }
+            for (c, r) in frontier_cells {
+                for next_arrow in dependents_of(c, r) {
+                    if !existing.contains(&next_arrow) && !new_arrows.contains(&next_arrow) {
+                        new_arrows.push(next_arrow);
+                    }
+                }
             }
         }
 

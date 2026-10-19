@@ -44,7 +44,7 @@ pub(crate) fn scan(presentation: &Presentation, ignored: &HashSet<String>, langu
     let mut found = Vec::new();
     let mut body = |slide, shape, cell, body: &TextBody| {
         let text = body.text();
-        for m in crate::spelling::check(&text, language) {
+        for m in crate::spelling::check_by_settings(&text, language) {
             if ignored.contains(&m.word) {
                 continue;
             }
@@ -200,5 +200,17 @@ impl SlideEditor {
         let view = crate::shell::spell_panel::SpellView { prefix: "pptx-spell", current, total: p.issues.len(), word: p.issues.get(current).map(|i| i.word.as_str()), suggestions: &p.suggestions };
         let actions = crate::shell::spell_panel::SpellActions { change: Self::spelling_change, ignore: Self::spelling_ignore, learn: Self::spelling_learn, step: Self::spelling_next, close: Self::close_spelling };
         Some(crate::shell::spell_panel::sidebar(view, actions, cx))
+    }
+
+    /// ツール > 類義語辞典…: 選択中の語句の類義語を検索
+    pub(crate) fn open_pptx_thesaurus(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.edited_text().or_else(|| self.selected_shapes().into_iter().find_map(|s| s.text_body().map(|b| b.text()))).unwrap_or_default();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            self.status = Some(crate::shell::i18n::text("pptx.thesaurus.select-word").into());
+        } else {
+            self.status = Some(crate::shell::i18n::format("pptx.thesaurus.lookup", &[("word", &trimmed)]).into());
+        }
+        cx.notify();
     }
 }

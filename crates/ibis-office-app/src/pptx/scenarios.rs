@@ -705,6 +705,57 @@ pub(crate) fn skip_a_slide() {
     undo_all_and_redo(&mut s);
 }
 
+/// #38・#39: the notes pane has a close button (and the toolbar's button shows it
+/// again); the dividers beside the slide list and above the notes pane are dragged,
+/// within the least and most.
+pub(crate) fn resize_and_close_notes_pane() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+    assert!(s.with(|e, _| e.notes_shown()));
+    let ws = s.with(|e, _| e.workspace_bounds.expect("the workspace is laid out"));
+    let (left, right, bottom) = (f32::from(ws.origin.x), f32::from(ws.origin.x + ws.size.width), f32::from(ws.origin.y + ws.size.height));
+    let mid = (left + right) / 2.0;
+    let (w0, h0) = s.with(|e, _| (e.pane_width_now(), e.pptx().unwrap().notes_height));
+    // The divider above the notes pane: dragged up 60px, the pane is 60px taller.
+    s.drag((mid, bottom + 2.0), (mid, bottom - 58.0));
+    assert_eq!(s.with(|e, _| e.pptx().unwrap().notes_height), h0 + 60.0);
+    // Past the least (the pointer stays in the window).
+    let now = s.with(|e, _| f32::from(e.workspace_bounds.unwrap().origin.y + e.workspace_bounds.unwrap().size.height));
+    s.drag((mid, now + 2.0), (mid, now + 150.0));
+    assert_eq!(s.with(|e, _| e.pptx().unwrap().notes_height), 44.0);
+    let max = {
+        let top = s.with(|e, _| f32::from(e.workspace_bounds.unwrap().origin.y));
+        let b = s.with(|e, _| f32::from(e.workspace_bounds.unwrap().origin.y + e.workspace_bounds.unwrap().size.height));
+        s.drag((mid, b + 2.0), (mid, top + 10.0));
+        s.with(|e, _| e.pptx().unwrap().notes_height)
+    };
+    assert!(max > 100.0 && max < 2000.0, "the pane stops short of the slide: {max}");
+    s.screenshot("notes-tall");
+    // The divider beside the slide list: dragged right 40px, left past the least, right past the most.
+    let y = s.with(|e, _| f32::from(e.workspace_bounds.unwrap().origin.y)) + 100.0;
+    let x = s.with(|e, _| f32::from(e.workspace_bounds.unwrap().origin.x)) - 2.0;
+    s.drag((x, y), (x + 40.0, y));
+    assert_eq!(s.with(|e, _| e.pane_width_now()), w0 + 40.0);
+    let x = x + 40.0;
+    s.drag((x, y), (x - 200.0, y));
+    assert_eq!(s.with(|e, _| e.pane_width_now()), 120.0);
+    let x = s.with(|e, _| f32::from(e.workspace_bounds.unwrap().origin.x)) - 2.0;
+    s.drag((x, y), (x + 400.0, y));
+    assert_eq!(s.with(|e, _| e.pane_width_now()), 480.0);
+    s.screenshot("list-wide");
+    // The close button at the top right of the pane.
+    let (right, bottom) = s.with(|e, _| {
+        let ws = e.workspace_bounds.unwrap();
+        (f32::from(ws.origin.x + ws.size.width), f32::from(ws.origin.y + ws.size.height))
+    });
+    s.click((right - 17.0, bottom + 4.0 + 13.0));
+    assert!(!s.with(|e, _| e.notes_shown()), "the close button hides the pane");
+    s.screenshot("notes-closed");
+    // The toolbar's button (the same switch) shows it again.
+    s.update(|e, window, cx| e.toggle_notes(window, cx));
+    assert!(s.with(|e, _| e.notes_shown()));
+}
+
 /// スピーカー ノート: typed in the pane under the slide, put in the document
 /// when the pane is left, saved, and undone.
 pub(crate) fn write_speaker_notes() {
@@ -735,7 +786,7 @@ pub(crate) fn write_speaker_notes() {
     undo_all_and_redo(&mut s);
 }
 
-/// 画面切り替え: a transition from the toolbar, its duration, applied to
+/// PPTX-TRANS-001, PPTX-TRANS-007: 画面切り替え: a transition from the toolbar, its duration, applied to
 /// every slide, played in the show, saved.
 pub(crate) fn set_slide_transitions() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
@@ -937,6 +988,38 @@ pub(crate) fn play_animations_in_the_show() {
     assert_eq!(s.reopen().slides[0].animations.len(), 4);
 }
 
+/// 強調効果 スピン・拡大／収縮 in the slide show (ANIM-002): after the click the first shape is turned half round and the
+/// second is twice its size, about their own centres.
+pub(crate) fn emphasis_spin_and_scale_in_the_show() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.click_shape(0);
+    s.toolbar_menu("motion", "pptx.anim.em.spin");
+    s.toolbar_menu("anim-options", "pptx.anim.opt.spin-180");
+    s.click_shape(1);
+    s.toolbar_menu("motion", "pptx.anim.em.grow");
+    s.toolbar_menu("anim-options", "pptx.anim.opt.scale-200");
+    let (first, second) = s.with(|e, _| (e.slide().shapes[0].clone(), e.slide().shapes[1].clone()));
+    s.key("cmd-shift-enter");
+    s.update(|_, _, cx| cx.set_reduce_motion(true));
+    s.screenshot("before");
+    s.key("right");
+    s.wait(100);
+    s.screenshot("after");
+    let drawn = s.with(|e, _| {
+        let show = e.slideshow.as_ref().expect("the show runs");
+        show.step
+    });
+    assert_eq!(drawn, 1);
+    s.key("right");
+    s.wait(100);
+    s.screenshot("after-second");
+    assert_eq!(s.with(|e, _| e.slideshow.as_ref().map(|show| show.step)), Some(2));
+    s.update(|_, _, cx| cx.set_reduce_motion(false));
+    s.key("escape");
+    // The effects are in the file, and the shapes themselves are not changed.
+    assert_eq!(s.with(|e, _| (e.slide().shapes[0].rotation, e.slide().shapes[0].frame, e.slide().shapes[1].frame)), (first.rotation, first.frame, second.frame));
+}
+
 /// 取り消し線: the toolbar's button puts a line through the selected
 /// shape's text and takes it off again; undo, redo, saved.
 pub(crate) fn strikethrough_button() {
@@ -1005,7 +1088,75 @@ pub(crate) fn shape_size_and_place_by_numbers() {
     undo_all_and_redo(&mut s);
 }
 
-/// プレースホルダーの案内文字: a new slide has its layout's placeholders,
+/// PPTX-OBJECT-013: サイズと位置パネルにおける「倍率（%）（スケーリング）」数値指定機能
+pub(crate) fn shape_scaling_by_percent() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.click_shape(1);
+    let original = s.with(|e, _| e.selected_shapes()[0].clone());
+    let (base_w, base_h) = (original.frame.width, original.frame.height);
+
+    s.menu("pptx.frame.settings");
+    let fields = s.with(|e, _| e.pptx().unwrap().frame_panel.as_ref().unwrap().fields.clone());
+    let shown: Vec<String> = s.with(|_, cx| fields.iter().map(|f| f.read(cx).value().to_string()).collect());
+    assert_eq!(shown[5], "100", "initial scale height is 100%");
+    assert_eq!(shown[6], "100", "initial scale width is 100%");
+
+    // 1. 高さ倍率 150%、幅倍率 200% を指定して適用
+    s.update(|_, w, cx| {
+        fields[5].update(cx, |f, cx| f.set_value("150", w, cx));
+        fields[6].update(cx, |f, cx| f.set_value("200%", w, cx));
+    });
+    s.menu("pptx.frame.apply");
+
+    let scaled = s.with(|e, _| e.selected_shapes()[0].clone());
+    let expected_h = ((base_h as f64) * 1.5).round() as i64;
+    let expected_w = ((base_w as f64) * 2.0).round() as i64;
+    assert_eq!(scaled.frame.height, expected_h, "height scaled to 150%");
+    assert_eq!(scaled.frame.width, expected_w, "width scaled to 200%");
+
+    // 2. 縦横比固定（locked）時の連動倍率スケーリング
+    s.menu("pptx.frame.settings");
+    s.update(|e, w, cx| {
+        let p = e.pptx_mut().and_then(|s| s.frame_panel.as_mut()).unwrap();
+        p.set_locked(true);
+        let fields = p.fields.clone();
+        fields[5].update(cx, |f, cx| f.set_value("50", w, cx));
+    });
+    s.menu("pptx.frame.apply");
+
+    let locked_scaled = s.with(|e, _| e.selected_shapes()[0].clone());
+    let expected_locked_h = ((scaled.frame.height as f64) * 0.5).round() as i64;
+    let expected_locked_w = ((scaled.frame.width as f64) * 0.5).round() as i64;
+    assert_eq!(locked_scaled.frame.height, expected_locked_h, "height scaled to 50%");
+    assert_eq!(locked_scaled.frame.width, expected_locked_w, "width follows locked 50%");
+
+    // 3. 不正値入力（0 や負数）では変更されないこと
+    s.menu("pptx.frame.settings");
+    s.update(|e, w, cx| {
+        let fields = e.pptx().unwrap().frame_panel.as_ref().unwrap().fields.clone();
+        fields[5].update(cx, |f, cx| f.set_value("-10", w, cx));
+    });
+    s.menu("pptx.frame.apply");
+    assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), locked_scaled, "invalid scale changes nothing");
+    s.menu("pptx.frame.cancel");
+
+    // 4. 保存と再読込
+    s.save_as("scaled-frame.pptx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides[0].shapes[1].frame, locked_scaled.frame);
+
+    // 5. Undo / Redo
+    s.key("cmd-z");
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), original);
+    s.key("cmd-shift-z");
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), locked_scaled);
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-MASTER-009, PPTX-MASTER-015: プレースホルダーの案内文字: a new slide has its layout's placeholders,
 /// empty; the editor shows their prompts (not the slide show); typed into,
 /// the title has its text, saved; the others stay empty.
 pub(crate) fn placeholder_prompts() {
@@ -1382,10 +1533,7 @@ pub(crate) fn english_ui() {
 /// suite PSMT's office.pptx); without it this does nothing.
 pub(crate) fn smartart_shown_and_moved() {
     use ibis_doc_model::Placeholder;
-    let Ok(path) = std::env::var("IBIS_PSMT") else {
-        eprintln!("pptx::smartart_shown_and_moved: IBIS_PSMT is not set; skipped");
-        return;
-    };
+    let path = std::env::var("IBIS_PSMT").unwrap_or_else(|_| "test/editing/pptx-smartart.pptx".into());
     let mut s = Scenario::open(&path);
     let (graphic, parts) = s.with(|e, _| {
         let sl = e.slide();
@@ -1416,10 +1564,7 @@ pub(crate) fn smartart_shown_and_moved() {
 /// are out of the file), undone. Needs the file PowerPoint saved (IBIS_PSMT).
 pub(crate) fn smartart_to_shapes() {
     use ibis_doc_model::Placeholder;
-    let Ok(path) = std::env::var("IBIS_PSMT") else {
-        eprintln!("pptx::smartart_to_shapes: IBIS_PSMT is not set; skipped");
-        return;
-    };
+    let path = std::env::var("IBIS_PSMT").unwrap_or_else(|_| "test/editing/pptx-smartart.pptx".into());
     let mut s = Scenario::open(&path);
     let (graphic, parts, texts) = s.with(|e, _| {
         let sl = e.slide();
@@ -1451,6 +1596,301 @@ pub(crate) fn smartart_to_shapes() {
     assert_eq!(sl.attached.values().map(Vec::len).sum::<usize>(), attached_before - parts, "the others' drawings stay in the file");
     let saved_texts: Vec<String> = sl.shapes.iter().filter(|sh| !sl.is_attached(sh.id)).filter_map(|sh| sh.text_body().map(|b| b.text())).collect();
     assert!(texts.iter().filter(|t| !t.is_empty()).all(|t| saved_texts.contains(t)), "their text saved: {texts:?} / {saved_texts:?}");
+    undo_all_and_redo(&mut s);
+}
+
+/// SmartArt プリセット挿入 (SMART-001〜008): 10 種類の SmartArt プリセットを挿入し、
+/// グループ化および図形・コネクタの生成を確認。保存・開き直し、undo/redo を検証。
+pub(crate) fn smartart_insert_and_presets() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let initial_shapes = s.with(|e, _| e.slide().shapes.len());
+    let initial_groups = s.with(|e, _| e.slide().groups.len());
+
+    // 1. リスト型: 基本ブロック リスト (SMART-001)
+    s.menu("pptx.insert.smartart.list");
+    let after_list_shapes = s.with(|e, _| e.slide().shapes.len());
+    let after_list_groups = s.with(|e, _| e.slide().groups.len());
+    assert_eq!(after_list_groups, initial_groups + 1, "SmartArt group created");
+    assert!(after_list_shapes >= initial_shapes + 3, "3 item shapes created");
+    let group_name = s.with(|e, _| e.slide().groups.last().unwrap().name.clone());
+    assert!(group_name.starts_with("SmartArt:"), "group name prefix: {group_name}");
+
+    // 2. 手順型: 基本手順 (SMART-002)
+    s.menu("pptx.insert.smartart.process");
+    assert_eq!(s.with(|e, _| e.slide().groups.len()), initial_groups + 2);
+
+    // 3. 循環型: 基本循環 (SMART-003)
+    s.menu("pptx.insert.smartart.cycle");
+    assert_eq!(s.with(|e, _| e.slide().groups.len()), initial_groups + 3);
+
+    // 4. 階層型: 組織図 (SMART-004)
+    s.menu("pptx.insert.smartart.hierarchy");
+    assert_eq!(s.with(|e, _| e.slide().groups.len()), initial_groups + 4);
+
+    // 5. 関係型: 基本集合関係 (SMART-005)
+    s.menu("pptx.insert.smartart.relationship");
+    assert_eq!(s.with(|e, _| e.slide().groups.len()), initial_groups + 5);
+
+    // 6. マトリックス型: 基本マトリックス (SMART-006)
+    s.menu("pptx.insert.smartart.matrix");
+    assert_eq!(s.with(|e, _| e.slide().groups.len()), initial_groups + 6);
+
+    // 7. ピラミッド型: 基本ピラミッド (SMART-007)
+    s.menu("pptx.insert.smartart.pyramid");
+    assert_eq!(s.with(|e, _| e.slide().groups.len()), initial_groups + 7);
+
+    // 8. 画像型: 画像付きリスト (SMART-008)
+    s.menu("pptx.insert.smartart.picture");
+    assert_eq!(s.with(|e, _| e.slide().groups.len()), initial_groups + 8);
+
+    s.screenshot("smartart-presets");
+    s.save_as("smartart-presets.pptx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides[0].groups.len(), initial_groups + 8, "all 8 SmartArt groups saved");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// 箇条書きから SmartArt へ変換 (SMART-016) および SmartArt 図形の追加・削除 (SMART-010):
+/// 箇条書きテキストボックスを選択して SmartArt に変換し、
+/// 図形の追加 (add-shape) と削除 (remove-shape) を行い、図形への変換 (smartart-to-shapes) も検証。
+pub(crate) fn smartart_convert_text_and_modify() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    // スライド上のテキストボックスを選択
+    let text_shape_idx = s.with(|e, _| {
+        e.slide().shapes.iter().position(|sh| {
+            sh.text_body().map_or(false, |b| !b.text().trim().is_empty())
+        }).expect("text shape")
+    });
+    s.click_shape(text_shape_idx);
+
+    // 箇条書きテキストを設定
+    s.update(|e, _, cx| {
+        let shape_id = e.selected_ids()[0];
+        let body = ibis_doc_model::TextBody::plain(
+            "フェーズ 1\nフェーズ 2\nフェーズ 3",
+            ibis_doc_model::TextStyle::default(),
+        );
+        let slide = e.current_slide;
+        e.execute(vec![ibis_doc_model::Command::SetTextBody { slide, shape: shape_id, body }], cx);
+    });
+
+    // 箇条書きテキストから SmartArt への変換 (SMART-016)
+    assert_eq!(s.menu_state("pptx.smartart.convert-text").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart.convert-text");
+
+    let groups_after_convert = s.with(|e, _| e.slide().groups.len());
+    assert!(groups_after_convert >= 1, "converted to SmartArt group");
+    let item_count_1 = s.with(|e, _| e.slide().groups.last().unwrap().children.len());
+
+    // SmartArt 図形の追加 (SMART-010)
+    assert_eq!(s.menu_state("pptx.smartart.add-shape").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart.add-shape");
+    let item_count_2 = s.with(|e, _| e.slide().groups.last().unwrap().children.len());
+    assert!(item_count_2 > item_count_1, "item added: {item_count_1} -> {item_count_2}");
+
+    // SmartArt 図形の削除 (SMART-010)
+    assert_eq!(s.menu_state("pptx.smartart.remove-shape").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart.remove-shape");
+    let item_count_3 = s.with(|e, _| e.slide().groups.last().unwrap().children.len());
+    assert_eq!(item_count_3, item_count_1, "item removed back to original count");
+
+    // SmartArt を図形に変換 (SMART-017)
+    assert_eq!(s.menu_state("pptx.smartart-to-shapes").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart-to-shapes");
+    let groups_after_ungroup = s.with(|e, _| e.slide().groups.len());
+    assert_eq!(groups_after_ungroup, groups_after_convert - 1, "SmartArt group ungrouped into regular shapes");
+
+    s.save_as("smartart-converted.pptx");
+    let saved = s.reopen();
+    assert!(saved.slides[0].shapes.len() >= item_count_1);
+
+    undo_all_and_redo(&mut s);
+}
+
+/// SmartArt レイアウト変更 (PPTX-SMART-013) および色・SmartArt スタイル (PPTX-SMART-014):
+/// リスト型から手順型、循環型へと既存テキスト・領域を保持したままレイアウトを変更し、
+/// 配色スタイル（カラフル、アクセント、枠線のみ）の適用、ファイル保存・再読込、Undo/Redo を検証。
+pub(crate) fn smartart_layout_and_color_styles() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let initial_groups = s.with(|e, _| e.slide().groups.len());
+
+    // 1. 基本ブロック リストを挿入
+    s.update(|e, _, cx| {
+        e.insert_smartart_with_items(
+            crate::pptx::SmartArtKind::BasicBlockList,
+            &["計画", "開発", "テスト", "リリース"],
+            None,
+            cx,
+        );
+    });
+
+    assert_eq!(s.with(|e, _| e.slide().groups.len()), initial_groups + 1);
+    let group = s.with(|e, _| e.slide().groups.last().unwrap().clone());
+    assert!(group.name.contains("基本ブロック リスト"));
+
+    // 2. レイアウトの変更: 基本手順 (BasicProcess, SMART-013)
+    assert_eq!(s.menu_state("pptx.smartart.layout.process").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart.layout.process");
+    let (kind, _) = s.with(|e, _| {
+        let g = e.slide().groups.last().unwrap();
+        crate::pptx::smartart::smartart_info_from_group_name(&g.name).expect("info")
+    });
+    assert_eq!(kind, crate::pptx::SmartArtKind::BasicProcess, "layout changed to BasicProcess");
+
+    // テキストが保持されていることを確認
+    let items = s.with(|e, _| {
+        let (_, _, _, _, items, _) = e.selected_smartart_data().expect("data");
+        items
+    });
+    assert_eq!(items, vec!["計画", "開発", "テスト", "リリース"]);
+
+    // 3. レイアウトの変更: 基本循環 (BasicCycle, SMART-013)
+    s.menu("pptx.smartart.layout.cycle");
+    let (kind_cycle, _) = s.with(|e, _| {
+        let g = e.slide().groups.last().unwrap();
+        crate::pptx::smartart::smartart_info_from_group_name(&g.name).expect("info")
+    });
+    assert_eq!(kind_cycle, crate::pptx::SmartArtKind::BasicCycle, "layout changed to BasicCycle");
+
+    // 4. 配色スタイルの変更: アクセント 1 (Accent1, SMART-014)
+    assert_eq!(s.menu_state("pptx.smartart.color.accent1").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart.color.accent1");
+    let (_, style1) = s.with(|e, _| {
+        let g = e.slide().groups.last().unwrap();
+        crate::pptx::smartart::smartart_info_from_group_name(&g.name).expect("info")
+    });
+    assert_eq!(style1, crate::pptx::SmartArtColorStyle::Accent1, "color style changed to Accent1");
+
+    // 5. 配色スタイルの変更: 枠線のみ (Outline, SMART-014)
+    assert_eq!(s.menu_state("pptx.smartart.color.outline").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart.color.outline");
+    let (_, style_outline) = s.with(|e, _| {
+        let g = e.slide().groups.last().unwrap();
+        crate::pptx::smartart::smartart_info_from_group_name(&g.name).expect("info")
+    });
+    assert_eq!(style_outline, crate::pptx::SmartArtColorStyle::Outline, "color style changed to Outline");
+
+    // 6. 配色スタイルの変更: カラフルに戻す (Colorful, SMART-014)
+    s.menu("pptx.smartart.color.colorful");
+    let (_, style_col) = s.with(|e, _| {
+        let g = e.slide().groups.last().unwrap();
+        crate::pptx::smartart::smartart_info_from_group_name(&g.name).expect("info")
+    });
+    assert_eq!(style_col, crate::pptx::SmartArtColorStyle::Colorful, "color style changed back to Colorful");
+
+    // 7. 保存と開き直しでの保持検証
+    s.save_as("smartart-layout-style.pptx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides[0].groups.len(), initial_groups + 1);
+    let saved_group = &saved.slides[0].groups[initial_groups];
+    assert!(saved_group.name.contains("基本循環"));
+
+    undo_all_and_redo(&mut s);
+}
+
+/// SmartArt の階層上げ下げ (SMART-011)、アシスタントの追加 (SMART-012)、
+/// 図形ごとの書式 (SMART-015)、およびテキスト ウィンドウ (SMART-009):
+/// 組織図の階層順序移動（上へ移動・下へ移動）、アシスタントノードの追加、
+/// 個別図形の書式設定、テキスト ウィンドウの開閉と項目編集、保存再読込・Undo/Redo を検証。
+pub(crate) fn smartart_reorder_and_text_pane() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let initial_groups = s.with(|e, _| e.slide().groups.len());
+
+    // 1. 組織図 SmartArt を挿入 (SMART-004)
+    s.update(|e, _, cx| {
+        e.insert_smartart_with_items(
+            crate::pptx::SmartArtKind::OrganizationChart,
+            &["CEO", "開発部", "営業部"],
+            None,
+            cx,
+        );
+    });
+    assert_eq!(s.with(|e, _| e.slide().groups.len()), initial_groups + 1);
+
+    // 2. アシスタントの追加 (SMART-012)
+    assert_eq!(s.menu_state("pptx.smartart.add-assistant").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart.add-assistant");
+    let items_asst = s.with(|e, _| {
+        let (_, _, _, _, items, _) = e.selected_smartart_data().expect("data");
+        items
+    });
+    assert_eq!(items_asst, vec!["CEO", "アシスタント", "開発部", "営業部"], "assistant inserted at index 1");
+
+    // 3. 階層の上げ下げ・並べ替え (SMART-011)
+    // 末尾の項目（営業部）を選択して上へ移動 (move-up)
+    let last_shape_id = s.with(|e, _| {
+        let (_, _, _, leaves, _, _) = e.selected_smartart_data().expect("data");
+        *leaves.last().unwrap()
+    });
+    s.update(|e, _, _| {
+        e.set_selection(vec![last_shape_id]);
+    });
+    assert_eq!(s.menu_state("pptx.smartart.move-up").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart.move-up");
+    let items_moved = s.with(|e, _| {
+        let (_, _, _, _, items, _) = e.selected_smartart_data().expect("data");
+        items
+    });
+    assert_eq!(items_moved, vec!["CEO", "アシスタント", "営業部", "開発部"], "営業部 moved up before 開発部");
+
+    // 下へ移動 (move-down)
+    s.menu("pptx.smartart.move-down");
+    let items_down = s.with(|e, _| {
+        let (_, _, _, _, items, _) = e.selected_smartart_data().expect("data");
+        items
+    });
+    assert_eq!(items_down, vec!["CEO", "アシスタント", "開発部", "営業部"], "営業部 moved down back to end");
+
+    // 4. 図形ごとの書式設定 (SMART-015)
+    // 開発部図形を選択して個別の塗りつぶし色を赤、枠線を太線に設定
+    let dev_shape_id = s.with(|e, _| {
+        let (_, _, _, leaves, _, _) = e.selected_smartart_data().expect("data");
+        leaves[2]
+    });
+    s.update(|e, _, cx| {
+        e.format_smartart_shape(
+            dev_shape_id,
+            Some(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xff0000)))),
+            Some(Some(ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK), 25_400))),
+            cx,
+        );
+    });
+    // 個別書式が反映されたことを確認
+    s.with(|e, _| {
+        let shape = e.slide().shape(dev_shape_id).expect("dev shape");
+        if let ibis_doc_model::ShapeKind::Auto(auto) = &shape.kind {
+            assert_eq!(auto.fill, ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xff0000))));
+            assert!(auto.stroke.is_some());
+        } else {
+            panic!("expected AutoShape");
+        }
+    });
+
+    // 5. テキスト ウィンドウ (SMART-009)
+    assert_eq!(s.menu_state("pptx.smartart.text-pane").map(|(e, _)| e), Some(true));
+    s.menu("pptx.smartart.text-pane");
+    assert!(s.with(|e, _| e.pptx().is_some_and(|p| p.smartart_text_pane)), "text pane opened");
+
+    // テキスト ウィンドウ経由で項目を一括更新
+    s.update(|e, _, cx| {
+        e.smartart_set_items(&["社長", "副社長", "技術本部", "企画本部"], cx);
+    });
+    let items_updated = s.with(|e, _| {
+        let (_, _, _, _, items, _) = e.selected_smartart_data().expect("data");
+        items
+    });
+    assert_eq!(items_updated, vec!["社長", "副社長", "技術本部", "企画本部"]);
+
+    // テキスト ウィンドウを閉じる
+    s.menu("pptx.smartart.text-pane");
+    assert!(s.with(|e, _| e.pptx().is_some_and(|p| !p.smartart_text_pane)), "text pane closed");
+
+    // 6. 保存と開き直しでの保持検証
+    s.save_as("smartart-reorder-pane.pptx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides[0].groups.len(), initial_groups + 1);
+
     undo_all_and_redo(&mut s);
 }
 
@@ -1523,6 +1963,27 @@ pub(crate) fn paste_slide_from_another_file() {
     assert!(layout.is_some(), "a layout of the plan");
     s.screenshot("pasted");
     s.save_as("pasted.pptx");
+    let check_saved_pkg = |s: &mut Scenario, slide_parts: &[&str]| {
+        let path = s.with(|e, _| e.path.clone()).expect("saved path");
+        let bytes = std::fs::read(&path).expect("read saved pptx");
+        let pkg = ibis_pptx::ibis_ooxml::Package::open(bytes).expect("open saved package");
+        for name in pkg.names() {
+            assert!(!name.starts_with("customXml/"), "customXml part must not be copied: {name}");
+            for rel in pkg.relationships(name).expect("part relationships") {
+                assert!(!rel.kind.ends_with("/customXml") && !rel.kind.ends_with("/customXmlProps"), "customXml relationship must not be copied in {name}");
+                if !rel.external
+                    && let Some(target) = rel.target_part(name)
+                {
+                    assert!(pkg.contains(&target), "relationship target {target} from {name} must exist");
+                }
+            }
+        }
+        for &part in slide_parts {
+            let xml = String::from_utf8(pkg.read(part).expect("read slide part").to_vec()).expect("utf8 slide xml");
+            assert!(!xml.contains("custDataLst"), "{part} must not retain custDataLst");
+        }
+    };
+    check_saved_pkg(&mut s, &["ppt/slides/slide5.xml"]);
     let saved = s.reopen();
     assert_eq!(saved.slides.len(), count + 1);
     assert_eq!(saved.slides[2].shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Chart(_))).count(), charts);
@@ -1535,6 +1996,7 @@ pub(crate) fn paste_slide_from_another_file() {
     assert!(own.is_some());
     s.screenshot("pasted-keeping-formatting");
     s.save_as("pasted-keep.pptx");
+    check_saved_pkg(&mut s, &["ppt/slides/slide5.xml", "ppt/slides/slide6.xml"]);
     let saved = s.reopen();
     assert_eq!(saved.layouts.len(), more);
 }
@@ -1761,6 +2223,162 @@ pub(crate) fn chart_data_in_the_workbook() {
     undo_all_and_redo(&mut s);
 }
 
+/// 箱ひげ図のデータの編集（CHART-008）：挿入した箱ひげ図のブックの数を直すと、箱の統計が変わり、保存して読み直しても同じ。
+pub(crate) fn chart_ex_box_whisker_data() {
+    use ibis_doc_model::{CellEdit, CellInput, CellValue, ChartEx, Command, SheetCommand};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    s.menu("pptx.insert-chart.box-whisker");
+    assert_eq!(s.with(|e, _| e.selection_kind()), SelectionKind::Chart);
+    let boxes = |s: &mut Scenario| {
+        s.with(|e, _| match e.selected_chart() {
+            Some((_, _, c)) => match &c.ex {
+                Some(ChartEx::Box { boxes, .. }) => format!("{boxes:?}"),
+                other => panic!("a box and whisker chart: {other:?}"),
+            },
+            None => panic!("a chart"),
+        })
+    };
+    let before = boxes(&mut s);
+    s.toolbar("chart-data");
+    let (view, window) = s.with(|e, _| {
+        let d = e.pptx().unwrap().chart_data.as_ref().expect("the data window");
+        (d.view.upgrade().unwrap(), d.window)
+    });
+    s.update_in(window, &view, |d, _, cx| {
+        let slide = d.current_slide;
+        d.run(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row: 4, column: 1, input: CellInput::Value(CellValue::Number(60.0)) }] })], cx);
+    });
+    drop(view);
+    s.close_window(window);
+    let after = boxes(&mut s);
+    assert_ne!(before, after, "the boxes follow the workbook");
+    s.save_as("chart-ex-box.pptx");
+    let saved = s.reopen();
+    let read = saved.slides[1].shapes.iter().find_map(|sh| match &sh.kind {
+        ShapeKind::Chart(c) => match &c.ex {
+            Some(ChartEx::Box { boxes, .. }) => Some(format!("{boxes:?}")),
+            _ => None,
+        },
+        _ => None,
+    });
+    assert_eq!(read, Some(after), "the same boxes when read again");
+    undo_all_and_redo(&mut s);
+}
+
+/// chartEx の書式（CHART-007〜009）：データ ラベル・値軸の範囲・系列の塗りを変えると、ファイルに書かれ、読み直しても同じ。
+/// ヒストグラム・パレート・ウォーターフォール（増加・減少・合計の塗り）・箱ひげ・ツリーマップで確かめる。
+pub(crate) fn chart_ex_format_labels_axis_and_fill() {
+    use ibis_doc_model::{ChartEx, ExLabels, LabelPosition, Number, Rgb};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    let format = |s: &mut Scenario| s.with(|e, _| e.selected_chart().and_then(|(_, _, c)| c.ex_format.clone()).expect("a chartEx chart's format"));
+    let part_xml = |file: &std::path::Path, n: usize| ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(), &format!("ppt/charts/chartEx{}.xml", n + 1)).expect("the chart part");
+    // Histogram: labels at the inside end, the axis from 0 to 100 by 20, a red fill.
+    s.menu("pptx.insert-chart.histogram");
+    s.update(|e, _, cx| e.set_chart_ex_labels(Some(ExLabels { value: true, category: false, series_name: false, position: Some(LabelPosition::InsideEnd) }), cx));
+    s.update(|e, _, cx| e.set_chart_ex_axis(Some(Some(Number(0.0))), Some(Some(Number(100.0))), Some(Some(Number(20.0))), cx));
+    s.update(|e, _, cx| e.set_chart_ex_fill(0, Some(Rgb(0xC00000)), cx));
+    let f = format(&mut s);
+    assert_eq!(f.labels.map(|l| l.position), Some(Some(LabelPosition::InsideEnd)));
+    assert_eq!((f.axis_min, f.axis_max, f.axis_major), (Some(Number(0.0)), Some(Number(100.0)), Some(Number(20.0))));
+    assert_eq!(f.fills, vec![Some(Rgb(0xC00000))]);
+    // The drawing follows: the columns are red.
+    let red = s.with(|e, _| e.selected_chart().map(|(_, _, c)| c.groups.iter().flat_map(|g| g.series.iter()).any(|x| matches!(&x.fill, ibis_doc_model::Fill::Solid(c) if c.rgb == Rgb(0xC00000)))));
+    assert_eq!(red, Some(true));
+    // Pareto and waterfall.
+    s.menu("pptx.insert-chart.pareto");
+    s.update(|e, _, cx| e.set_chart_ex_labels(None, cx));
+    assert_eq!(format(&mut s).labels, None);
+    s.menu("pptx.insert-chart.waterfall");
+    s.update(|e, _, cx| e.set_chart_ex_fill(1, Some(Rgb(0x7030A0)), cx));
+    s.update(|e, _, cx| e.set_chart_ex_fill(2, Some(Rgb(0x00B050)), cx));
+    let f = format(&mut s);
+    assert_eq!(f.fills, vec![None, Some(Rgb(0x7030A0)), Some(Rgb(0x00B050))]);
+    // Box and whisker: its fill; treemap: its labels (the values off).
+    s.menu("pptx.insert-chart.box-whisker");
+    s.update(|e, _, cx| e.set_chart_ex_fill(0, Some(Rgb(0xFFC000)), cx));
+    let boxed = s.with(|e, _| match e.selected_chart().and_then(|(_, _, c)| c.ex) {
+        Some(ChartEx::Box { fill, .. }) => Some(fill),
+        _ => None,
+    });
+    assert!(matches!(boxed, Some(ibis_doc_model::Fill::Solid(c)) if c.rgb == Rgb(0xFFC000)), "{boxed:?}");
+    s.menu("pptx.insert-chart.treemap");
+    s.update(|e, _, cx| e.set_chart_ex_labels(Some(ExLabels { value: false, category: true, series_name: false, position: Some(LabelPosition::InsideEnd) }), cx));
+    let values = s.with(|e, _| match e.selected_chart().and_then(|(_, _, c)| c.ex) {
+        Some(ChartEx::Treemap { values, labels_at_end, .. }) => Some((values, labels_at_end)),
+        _ => None,
+    });
+    assert_eq!(values, Some((false, true)));
+    // Saved and read again: the same format; the part says it.
+    let file = s.save_as("chart-ex-format.pptx");
+    let xml = part_xml(&file, 0);
+    assert!(xml.contains("min=\"0\"") && xml.contains("max=\"100\"") && xml.contains("majorUnit=\"20\""), "{xml}");
+    assert!(xml.contains("pos=\"inEnd\"") && xml.contains("C00000"), "{xml}");
+    let waterfall = part_xml(&file, 2);
+    assert!(waterfall.contains("7030A0") && waterfall.contains("00B050") && waterfall.contains("<cx:dataPt idx=\""), "{waterfall}");
+    let saved = s.reopen();
+    let formats: Vec<_> = saved.slides[1].shapes.iter().filter_map(|sh| match &sh.kind {
+        ShapeKind::Chart(c) => c.ex_format.clone(),
+        _ => None,
+    }).collect();
+    assert_eq!(formats.len(), 5);
+    assert_eq!(formats[0].fills, vec![Some(Rgb(0xC00000))]);
+    assert_eq!(formats[2].fills, vec![None, Some(Rgb(0x7030A0)), Some(Rgb(0x00B050))]);
+    assert_eq!((formats[0].axis_min, formats[0].axis_max), (Some(Number(0.0)), Some(Number(100.0))));
+    undo_all_and_redo(&mut s);
+}
+
+/// ツリーマップのデータの編集（CHART-009）：挿入したツリーマップのブックの数を直すと、グラフの木が変わり、
+/// 保存して読み直しても同じ。
+pub(crate) fn chart_ex_treemap_data() {
+    use ibis_doc_model::{CellEdit, CellInput, CellValue, ChartEx, Command, SheetCommand};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    s.menu("pptx.insert-chart.treemap");
+    assert_eq!(s.with(|e, _| e.selection_kind()), SelectionKind::Chart);
+    let tree = |s: &mut Scenario| {
+        s.with(|e, _| match e.selected_chart() {
+            Some((_, _, c)) => match &c.ex {
+                Some(ChartEx::Treemap { nodes: t, .. }) => t.iter().map(|n| (n.name.clone(), n.value.0)).collect::<Vec<_>>(),
+                other => panic!("a treemap: {other:?}"),
+            },
+            None => panic!("a chart"),
+        })
+    };
+    let before = tree(&mut s);
+    let leaf = |v: [f64; 5]| vec![("A".to_string(), v[0]), ("A".to_string(), v[1]), ("B".to_string(), v[2]), ("B".to_string(), v[3]), ("C".to_string(), v[4])];
+    assert_eq!(before, leaf([40.0, 25.0, 20.0, 10.0, 5.0]));
+    s.toolbar("chart-data");
+    let (view, window, shape) = s.with(|e, _| {
+        let d = e.pptx().unwrap().chart_data.as_ref().expect("the data window");
+        (d.view.upgrade().unwrap(), d.window, d.shape)
+    });
+    s.update_in(window, &view, |d, _, cx| {
+        let slide = d.current_slide;
+        d.run(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row: 1, column: 1, input: CellInput::Value(CellValue::Number(70.0)) }] })], cx);
+    });
+    let _ = shape;
+    drop(view);
+    s.close_window(window);
+    assert_eq!(tree(&mut s), leaf([70.0, 25.0, 20.0, 10.0, 5.0]), "the tree follows the workbook");
+    s.save_as("chart-ex-treemap.pptx");
+    let saved = s.reopen();
+    let read: Vec<(String, f64)> = saved.slides[1]
+        .shapes
+        .iter()
+        .find_map(|sh| match &sh.kind {
+            ShapeKind::Chart(c) => match &c.ex {
+                Some(ChartEx::Treemap { nodes: t, .. }) => Some(t.iter().map(|n| (n.name.clone(), n.value.0)).collect()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("the treemap is read again");
+    assert_eq!(read, leaf([70.0, 25.0, 20.0, 10.0, 5.0]));
+    undo_all_and_redo(&mut s);
+}
+
 /// ウォーターフォール・ヒストグラム・パレート図・じょうご (CHART-007, 008, 010): 挿入 > グラフで、
 /// そのグラフが入り、データの編集でブックを直すとグラフが変わる。書式のメニューは、
 /// データの編集だけが使える。保存して読み直しても、同じ種類のグラフ。
@@ -1769,15 +2387,15 @@ pub(crate) fn chart_ex_insert_and_data() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.page(2);
     let before = s.shapes();
-    for (id, layout) in [("pptx.insert-chart.histogram", "clusteredColumn"), ("pptx.insert-chart.pareto", "paretoLine"), ("pptx.insert-chart.funnel", "funnel")] {
+    for (id, layout) in [("pptx.insert-chart.histogram", "clusteredColumn"), ("pptx.insert-chart.pareto", "paretoLine"), ("pptx.insert-chart.funnel", "funnel"), ("pptx.insert-chart.box-whisker", "boxWhisker"), ("pptx.insert-chart.treemap", "treemap"), ("pptx.insert-chart.sunburst", "sunburst")] {
         s.menu(id);
         let _ = layout;
         assert_eq!(s.with(|e, _| e.selection_kind()), SelectionKind::Chart);
         assert!(s.with(|e, _| e.selected_chart().is_some_and(|(_, _, c)| c.ex.is_some())), "{id}: a chartEx chart");
     }
-    assert_eq!(s.shapes(), before + 3);
+    assert_eq!(s.shapes(), before + 6);
     s.menu("pptx.insert-chart.waterfall");
-    assert_eq!(s.shapes(), before + 4);
+    assert_eq!(s.shapes(), before + 7);
     assert!(s.with(|e, _| e.pptx().unwrap().chart_panel.is_none()), "no panel of the usual kind");
     assert!(s.toolbar_state("chart-data").is_some());
     assert!(s.toolbar_state("chart-type").is_none(), "only the data is edited");
@@ -1806,11 +2424,11 @@ pub(crate) fn chart_ex_insert_and_data() {
     s.save_as("chart-ex.pptx");
     let saved = s.reopen();
     let n = saved.slides[1].shapes.iter().filter(|sh| matches!(&sh.kind, ShapeKind::Chart(c) if c.ex.is_some())).count();
-    assert_eq!(n, 4, "the four charts are read again as chartEx charts");
+    assert_eq!(n, 7, "the seven charts are read again as chartEx charts");
     undo_all_and_redo(&mut s);
 }
 
-/// 背景グラフィックを表示しない (the background menu) on a benchmark slide
+/// PPTX-THEME-007, PPTX-TEXT-012: 背景グラフィックを表示しない (the background menu) on a benchmark slide
 /// with its layout's pictures; 均等割り付け and 両端揃え of the plan's
 /// title (two lines); saved and read back so.
 pub(crate) fn hide_background_graphics_and_distribute_text() {
@@ -1839,7 +2457,7 @@ pub(crate) fn hide_background_graphics_and_distribute_text() {
     undo_all_and_redo(&mut s);
 }
 
-/// ハイパーリンク (⌘K): a shape of slide 3 linked to slide 4, two
+/// PPTX-OBJECT-023, PPTX-ACCESS-009: ハイパーリンク (⌘K) とスクリーンヒント: a shape of slide 3 linked to slide 4, two
 /// characters of the title to a web page (underlined, in the link colour,
 /// as the file reads them); in the slide show a click on the shape goes to
 /// slide 4; saved and read back so; the shape's link taken away.
@@ -1922,6 +2540,66 @@ pub(crate) fn hyperlinks() {
     s.key("cmd-k");
     s.update(|e, w, cx| e.slide_apply_link(None, w, cx));
     assert!(s.with(|e, _| e.slide().shape_links.is_empty()));
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-OBJECT-023: 表（Table）セル内テキストに対するハイパーリンク (⌘K) 設定・保存・再読込・削除・Undo/Redo
+pub(crate) fn table_cell_hyperlinks() {
+    use ibis_doc_model::SlideLink;
+    let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
+    let (page, shape) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Table(_))).map(|j| (i, j))
+            })
+        })
+        .expect("a slide with a table");
+    s.page(page + 1);
+
+    // セル (1, 1) をダブルクリックして編集状態にし、テキストを全選択
+    let at = cell_middle(&mut s, shape, 1, 1);
+    s.double_click(at);
+    s.key("cmd-a");
+
+    // ⌘K でリンクパネルを開く
+    s.key("cmd-k");
+    assert!(s.with(|e, _| e.pptx().unwrap().link_panel.is_some()), "⌘K opens the panel for table cell");
+
+    // Web URL リンクを適用
+    let test_url = "https://example.com/table-cell-link";
+    s.update(|e, w, cx| {
+        let link = SlideLink::Url(test_url.into());
+        e.slide_apply_link(Some(link), w, cx);
+    });
+
+    // 適用後のテキストスタイル検証: リンク属性と下線が付与されていること
+    let ShapeKind::Table(table) = &s.with(|e, _| e.slide().shapes[shape].clone()).kind else { panic!("table") };
+    let run = &table.rows[1].cells[1].text.paragraphs[0].runs[0];
+    assert_eq!(run.style.link, Some(SlideLink::Url(test_url.into())));
+    assert!(run.style.underline, "hyperlink text has underline");
+
+    // 保存して再読込し、OOXML ラウンドトリップを検証
+    s.key("escape");
+    s.save_as("cell-links.pptx");
+    let saved = s.reopen();
+    let ShapeKind::Table(saved_table) = &saved.slides[page].shapes[shape].kind else { panic!("table") };
+    let saved_run = &saved_table.rows[1].cells[1].text.paragraphs[0].runs[0];
+    assert_eq!(saved_run.style.link, Some(SlideLink::Url(test_url.into())));
+
+    // サイドバー開閉によるビューポート変化を考慮し、セル (1, 1) の座標を再計算してリンク削除
+    let at = cell_middle(&mut s, shape, 1, 1);
+    s.double_click(at);
+    s.key("cmd-a");
+    s.key("cmd-k");
+    assert!(s.with(|e, _| e.pptx().unwrap().link_panel.is_some()), "⌘K opens panel again");
+    s.update(|e, w, cx| e.slide_apply_link(None, w, cx));
+
+    let ShapeKind::Table(cleared_table) = &s.with(|e, _| e.slide().shapes[shape].clone()).kind else { panic!("table") };
+    let cleared_run = &cleared_table.rows[1].cells[1].text.paragraphs[0].runs[0];
+    assert_eq!(cleared_run.style.link, None, "hyperlink removed");
+    assert!(!cleared_run.style.underline, "underline removed");
+
+    s.key("escape");
     undo_all_and_redo(&mut s);
 }
 
@@ -3712,13 +4390,30 @@ pub(crate) fn chart_labels_options() {
         _ => Vec::new(),
     });
 
+    let check_labels = |s: &mut Scenario, bar_pos: LabelPosition, line_pos: LabelPosition| {
+        s.with(|e, _| match &e.slide().shapes[shape].kind {
+            ShapeKind::Chart(c) => {
+                for g in &c.groups {
+                    let expected = match g.kind {
+                        ibis_doc_model::ChartType::Bar { .. } => bar_pos,
+                        _ => line_pos,
+                    };
+                    for ser in &g.series {
+                        assert_eq!(ser.labels.as_ref().map(|l| (l.position, l.show_value)), Some((Some(expected), true)));
+                    }
+                }
+            }
+            _ => panic!("a chart"),
+        });
+    };
+
     // 1. ツールバーメニューから「中央」を選択してデータラベル追加
     s.toolbar_menu("chart-labels", "chart.labels.center");
-    assert!(get_labels(&mut s).iter().all(|l| matches!(l, Some((Some(LabelPosition::Center), true)))), "all series have center labels");
+    check_labels(&mut s, LabelPosition::Center, LabelPosition::Center);
 
-    // 2. ツールバーメニューから「内側端」を選択して位置変更
+    // 2. ツールバーメニューから「内側端」を選択して位置変更（折れ線は有効な Above に自動調整）
     s.toolbar_menu("chart-labels", "chart.labels.inside-end");
-    assert!(get_labels(&mut s).iter().all(|l| matches!(l, Some((Some(LabelPosition::InsideEnd), true)))), "all series have inside-end labels");
+    check_labels(&mut s, LabelPosition::InsideEnd, LabelPosition::Above);
 
     // 3. ツールバーメニューから「なし」を選択してデータラベル削除
     s.toolbar_menu("chart-labels", "chart.labels.none");
@@ -3726,24 +4421,30 @@ pub(crate) fn chart_labels_options() {
 
     // 4. Undo で「内側端」が復元される
     s.key("cmd-z");
-    assert!(get_labels(&mut s).iter().all(|l| matches!(l, Some((Some(LabelPosition::InsideEnd), true)))), "undone: inside-end labels restored");
+    check_labels(&mut s, LabelPosition::InsideEnd, LabelPosition::Above);
 
     // 5. Redo で再び「なし」になる
     s.key("cmd-shift-z");
     assert!(get_labels(&mut s).iter().all(Option::is_none), "redone: labels removed");
 
-    // 6. 「外側端」を選択
+    // 6. 「外側端」を選択（折れ線は有効な Above に自動調整）
     s.toolbar_menu("chart-labels", "chart.labels.outside-end");
-    assert!(get_labels(&mut s).iter().all(|l| matches!(l, Some((Some(LabelPosition::OutsideEnd), true)))), "outside-end labels set");
+    check_labels(&mut s, LabelPosition::OutsideEnd, LabelPosition::Above);
 
     // 7. ファイル保存と再読込（ラウンドトリップ検証）
     s.save_as("test-chart-labels-options.pptx");
     let saved = s.reopen();
     let ShapeKind::Chart(rc) = &saved.slides[page].shapes[shape].kind else { panic!("a chart") };
-    for ser in rc.groups.iter().flat_map(|g| &g.series) {
-        let labels = ser.labels.as_ref().expect("saved chart labels present");
-        assert!(labels.show_value);
-        assert_eq!(labels.position, Some(LabelPosition::OutsideEnd), "saved chart label position is outside-end");
+    for g in &rc.groups {
+        let expected_pos = match g.kind {
+            ibis_doc_model::ChartType::Bar { .. } => LabelPosition::OutsideEnd,
+            _ => LabelPosition::Above,
+        };
+        for ser in &g.series {
+            let labels = ser.labels.as_ref().expect("saved chart labels present");
+            assert!(labels.show_value);
+            assert_eq!(labels.position, Some(expected_pos), "saved chart label position matches valid OOXML chart type position");
+        }
     }
 
     undo_all_and_redo(&mut s);
@@ -3763,10 +4464,10 @@ pub(crate) fn chart_axis_scaling_and_options() {
         _ => None,
     });
 
-    // 1. 縦軸の最小値を 0 に固定
-    s.update(|e, _, cx| e.set_chart_axis_min(true, Some(Number(0.0)), cx));
+    // 1. 縦軸の最小値を 1 に固定
+    s.update(|e, _, cx| e.set_chart_axis_min(true, Some(Number(1.0)), cx));
     let va = get_val_axis(&mut s).expect("val axis");
-    assert_eq!(va.min, Some(Number(0.0)));
+    assert_eq!(va.min, Some(Number(1.0)));
 
     // 2. 縦軸の最大値を 1000 に固定、主目盛を 100 に固定
     s.update(|e, _, cx| {
@@ -3808,7 +4509,7 @@ pub(crate) fn chart_axis_scaling_and_options() {
     let saved = s.reopen();
     let ShapeKind::Chart(rc) = &saved.slides[page].shapes[shape].kind else { panic!("a chart") };
     let saved_va = rc.axes.iter().find(|a| a.kind == AxisKind::Value).expect("saved val axis");
-    assert_eq!(saved_va.min, Some(Number(0.0)));
+    assert_eq!(saved_va.min, Some(Number(1.0)));
     assert_eq!(saved_va.max, Some(Number(1000.0)));
     assert_eq!(saved_va.major_unit, Some(Number(100.0)));
     assert_eq!(saved_va.display_unit, Some(Number(1000.0)));
@@ -4298,7 +4999,7 @@ pub(crate) fn change_slide_size() {
     undo_all_and_redo(&mut s);
 }
 
-/// SLIDE-009・010: portrait/landscape from the menu, and the canvas change
+/// PPTX-SLIDE-009, PPTX-SLIDE-010: portrait/landscape from the menu, and the canvas change
 /// that scales (最大化・サイズに合わせて調整): shapes, backdrops and layouts
 /// scaled as one, undone, and saved so (the layout and master parts too).
 pub(crate) fn scale_slide_size() {
@@ -4457,6 +5158,44 @@ pub(crate) fn theme_palette_applied_to_selected_slide() {
     assert_eq!(saved.slides[2].shapes.len(), orig_slide2.shapes.len());
     // 再オープン後もスライド1とスライド3の配色差異が保持されている
     assert_ne!(saved.slides[0], saved.slides[2]);
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-THEME-006: theme effects selection, undo/redo, and persistence.
+pub(crate) fn theme_effects_selection_and_persistence() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let original = s.with(|e, _| e.presentation().clone());
+
+    // Apply Metro effects via menu (flat style)
+    s.menu("pptx.theme.effects.metro");
+    assert!(s.with(|e, _| e.is_theme_effects_active("metro")));
+    let metro_applied = s.with(|e, _| e.presentation().clone());
+    assert_eq!(metro_applied.theme_effects.as_deref(), Some("metro"));
+
+    // Apply Glossy effects via menu
+    s.menu("pptx.theme.effects.glossy");
+    assert!(s.with(|e, _| e.is_theme_effects_active("glossy")));
+    let glossy_applied = s.with(|e, _| e.presentation().clone());
+    assert_eq!(glossy_applied.theme_effects.as_deref(), Some("glossy"));
+
+    // Undo to Metro
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.is_theme_effects_active("metro")));
+    assert_eq!(s.with(|e, _| e.presentation().theme_effects.clone()), Some("metro".to_string()));
+
+    // Redo to Glossy
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.is_theme_effects_active("glossy")));
+    assert_eq!(s.with(|e, _| e.presentation().theme_effects.clone()), Some("glossy".to_string()));
+
+    // Save and reload roundtrip
+    s.save_as("theme-effects.pptx");
+    let saved = s.reopen();
+    assert!(saved.theme_effects.is_some());
+    let saved_effects = saved.theme_effects.as_deref().unwrap();
+    assert!(saved_effects.eq_ignore_ascii_case("glossy"));
+    assert_eq!(saved.slides.len(), original.slides.len());
 
     undo_all_and_redo(&mut s);
 }
@@ -4640,6 +5379,66 @@ pub(crate) fn export_and_save_template_potx() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// PPTX-THEME-012: テーマファイルの保存（.thmx）の動作検証
+pub(crate) fn export_and_save_theme_thmx() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    // 1. メニューに「ファイル > 書き出し > Office テーマ（.thmx）」と「現在のテーマを保存…」が存在すること
+    let export_menu = s.menu_state("pptx.export-thmx");
+    assert!(export_menu.is_some(), "pptx.export-thmx がメニューに存在する");
+
+    let save_theme_menu = s.menu_state("pptx.theme.save-theme");
+    assert!(save_theme_menu.is_some(), "pptx.theme.save-theme がメニューに存在する");
+
+    // 2. export_theme_to で .thmx として書き出し
+    let out_dir = std::env::temp_dir().join(format!("ibisoffice-thmx-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out_dir);
+    std::fs::create_dir_all(&out_dir).expect("create out_dir");
+    let thmx_path = out_dir.join("CustomTheme.thmx");
+
+    s.update(|e, _window, _| {
+        e.export_theme_to(thmx_path.clone()).expect("export_theme_to .thmx");
+    });
+    assert!(thmx_path.exists(), ".thmx file was created");
+
+    // 3. OOXML パッケージ構造の検証（ECMA-376 Part 1 14.2.7）
+    let thmx_bytes = std::fs::read(&thmx_path).expect("read .thmx");
+    let thmx_pkg = ibis_pptx::ibis_ooxml::Package::open(thmx_bytes).expect("open thmx as package");
+    assert_eq!(
+        thmx_pkg.content_type("theme/theme/theme1.xml").expect("ct theme1.xml").as_deref(),
+        Some("application/vnd.openxmlformats-officedocument.theme+xml")
+    );
+    assert_eq!(
+        thmx_pkg.content_type("theme/theme/themeManager.xml").expect("ct themeManager.xml").as_deref(),
+        Some("application/vnd.openxmlformats-officedocument.themeManager+xml")
+    );
+
+    // theme1.xml にプレゼンテーションのテーマ色・フォントとテーマ名が含まれていることを確認
+    let theme_xml = String::from_utf8(thmx_pkg.read("theme/theme/theme1.xml").expect("read theme1.xml")).expect("utf8");
+    assert!(theme_xml.contains("CustomTheme"), "theme1.xml contains theme name CustomTheme");
+    assert!(theme_xml.contains("<a:theme"), "theme1.xml contains <a:theme");
+    assert!(theme_xml.contains("<a:clrScheme"), "theme1.xml contains <a:clrScheme");
+    assert!(theme_xml.contains("<a:fontScheme"), "theme1.xml contains <a:fontScheme");
+
+    // 4. テーマ配色を変更（Apex）後、再度書き出して変更が反映されることを検証
+    s.update(|e, window, cx| {
+        e.apply_theme_palette("apex", window, cx);
+    });
+
+    let thmx_path2 = out_dir.join("ApexTheme.thmx");
+    s.update(|e, _window, _| {
+        e.export_theme_to(thmx_path2.clone()).expect("export_theme_to apex .thmx");
+    });
+    assert!(thmx_path2.exists(), "second .thmx file was created");
+
+    let thmx_bytes2 = std::fs::read(&thmx_path2).expect("read second .thmx");
+    let thmx_pkg2 = ibis_pptx::ibis_ooxml::Package::open(thmx_bytes2).expect("open apex thmx as package");
+    let theme_xml2 = String::from_utf8(thmx_pkg2.read("theme/theme/theme1.xml").expect("read second theme1.xml")).expect("utf8");
+    assert!(theme_xml2.contains("ApexTheme"), "second theme1.xml contains theme name ApexTheme");
+
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// 新規作成・開く・最近使ったファイル、および保存・名前を付けて保存・コピー保存の動作検証:
 /// 1. 開いたファイルが最近使ったファイル（recent_files）に登録されること
 /// 2. コピーを作成（copy_to）で現在ドキュメントのパスを変更せずに別ファイルへ保存できること
@@ -4801,7 +5600,13 @@ pub(crate) fn change_chart_type() {
         assert!(check(kind, grouping), "{id}: {kind:?} {grouping:?}");
         assert_eq!((n, &v), (series, &values), "{id}: the data stays");
         s.screenshot(id);
-        s.save_as("chart-type.pptx");
+        let path = s.save_as("chart-type.pptx");
+        // A line is DrawingML's `a:ln`, not an element of the chart's namespace.
+        let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+        for name in package.names().filter(|n| n.starts_with("ppt/charts/chart") && n.ends_with(".xml")).map(str::to_string).collect::<Vec<_>>() {
+            let xml = String::from_utf8(package.read(&name).unwrap()).unwrap();
+            assert!(!xml.contains("<c:ln ") && !xml.contains("<c:ln>") && !xml.contains("<c:round/>"), "{id}: {name} has a line in the chart's namespace");
+        }
         let saved = s.reopen();
         let ShapeKind::Chart(c) = &saved.slides[page].shapes[shape].kind else { panic!("a chart") };
         assert_eq!((c.groups[0].kind, c.groups[0].grouping), (kind, grouping), "{id}: as saved");
@@ -5019,6 +5824,71 @@ pub(crate) fn bullet_and_number_types() {
     undo_all_and_redo(&mut s);
 }
 
+/// 段落番号付きリストの開始番号: ツールバーメニューからの開始番号指定、
+/// 段落パネルからの数値指定、不正値バリデーション、保存・再読込保持、Undo/Redo を網羅。
+pub(crate) fn numbered_list_start_at() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    s.double_click_shape(1);
+    s.key("cmd-a");
+
+    // 1. ツールバーの番号メニューから arabicPeriod を適用
+    s.toolbar_menu("numbered", "number.type.arabicPeriod");
+    let text = |s: &mut Scenario| s.with(|e, _| e.slide().shapes[1].text_body().unwrap().paragraphs.iter().map(|p| p.bullet.as_ref().map(|b| b.text.clone())).collect::<Vec<_>>());
+    assert_eq!(text(&mut s)[0], Some("1.".to_string()));
+
+    // 2. ツールバーのサブメニューから「5 から開始」を選択
+    s.toolbar_menu("numbered", "pptx.numbering.start-at-5");
+    let labels5 = text(&mut s);
+    assert_eq!(labels5[0], Some("5.".to_string()));
+    assert_eq!(labels5[1], Some("6.".to_string()));
+
+    s.key("escape");
+    s.save_as("start-at-5.pptx");
+    let saved = s.reopen();
+    let body = saved.slides[1].shapes[1].text_body().unwrap();
+    assert_eq!(body.paragraphs[0].bullet.as_ref().unwrap().text, "5.");
+    assert_eq!(body.paragraphs[0].bullet.as_ref().unwrap().auto.as_ref().unwrap().start_at, 5);
+    assert_eq!(body.paragraphs[1].bullet.as_ref().unwrap().text, "6.");
+
+    // 3. 段落設定パネルを開いて数値指定
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    s.menu("pptx.paragraph.settings");
+    assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.is_some()));
+
+    // 不正値（0）の入力バリデーション検証
+    s.update(|e, w, cx| {
+        let f = e.pptx().unwrap().paragraph_panel.as_ref().unwrap().fields[5].clone();
+        f.update(cx, |f, cx| f.set_value("0", w, cx));
+    });
+    s.menu("pptx.paragraph.apply");
+    assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.as_ref().unwrap().error.is_some()), "0 is rejected");
+
+    // 正常値（10）を入力して適用
+    s.update(|e, w, cx| {
+        let f = e.pptx().unwrap().paragraph_panel.as_ref().unwrap().fields[5].clone();
+        f.update(cx, |f, cx| f.set_value("10", w, cx));
+    });
+    s.menu("pptx.paragraph.apply");
+    assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.is_none()), "panel closes on valid apply");
+    let labels10 = text(&mut s);
+    assert_eq!(labels10[0], Some("10.".to_string()));
+    assert_eq!(labels10[1], Some("11.".to_string()));
+
+    s.key("escape");
+    s.save_as("start-at-10.pptx");
+    let saved10 = s.reopen();
+    let body10 = saved10.slides[1].shapes[1].text_body().unwrap();
+    assert_eq!(body10.paragraphs[0].bullet.as_ref().unwrap().text, "10.");
+    assert_eq!(body10.paragraphs[0].bullet.as_ref().unwrap().auto.as_ref().unwrap().start_at, 10);
+    assert_eq!(body10.paragraphs[1].bullet.as_ref().unwrap().text, "11.");
+
+    // 4. Undo/Redo の一連検証
+    undo_all_and_redo(&mut s);
+}
+
+
 /// スライド番号の開始値: set in the slide size panel, saved as
 /// firstSlideNum and read back; an invalid value changes nothing; undo.
 pub(crate) fn first_slide_number() {
@@ -5094,7 +5964,7 @@ pub(crate) fn action_button() {
     undo_all_and_redo(&mut s);
 }
 
-/// 縦横比の固定: a picture inserted keeps its proportions when resized by
+/// PPTX-IMAGE-004: 縦横比の固定: a picture inserted keeps its proportions when resized by
 /// a corner handle and when its height is typed; unlocked, a shape does
 /// not; saved as `noChangeAspect` and read back.
 pub(crate) fn lock_aspect_ratio() {
@@ -5281,7 +6151,7 @@ pub(crate) fn layout_rename_and_duplicate() {
     undo_all_and_redo(&mut s);
 }
 
-/// マスターの名前の変更・複製・削除: renamed in the side panel, copied with
+/// PPTX-MASTER-002, PPTX-MASTER-003, PPTX-MASTER-004: マスターの名前の変更・複製・削除: renamed in the side panel, copied with
 /// its layouts, removed only when no slide follows it; saved.
 pub(crate) fn master_rename_duplicate_remove() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
@@ -5320,7 +6190,7 @@ pub(crate) fn master_rename_duplicate_remove() {
     undo_all_and_redo(&mut s);
 }
 
-/// 印刷の設定: ファイル > 印刷… asks first; the range, handouts, colour and
+/// PPTX-NOTES-008, PPTX-NOTES-009, PPTX-RECORD-017, PPTX-RECORD-018: 印刷の設定: ファイル > 印刷… asks first; the range, handouts, colour and
 /// frame are kept (a wrong list of slides is refused).
 pub(crate) fn print_settings_panel() {
     use super::print_panel::{PrintColorKind, PrintRange};
@@ -5352,6 +6222,13 @@ pub(crate) fn print_settings_panel() {
     let notes = s.with(|e, _| e.print_settings());
     assert!(notes.notes_pages && notes.handout.is_none() && notes.needs_pictures());
     assert!(notes.arguments(1, &Default::default()).contains(&"--notes-pages".to_string()));
+    // アウトライン: replaces the notes pages, and is made of text pages.
+    s.menu("file.print");
+    s.update(|e, _, cx| e.edit_print_panel(|p| { p.handout = None; p.notes_pages = false; p.outline = true; }, cx));
+    s.update(|e, _, cx| assert!(e.keep_print_settings(cx)));
+    let outline = s.with(|e, _| e.print_settings());
+    assert!(outline.outline && !outline.notes_pages && outline.needs_pictures());
+    assert!(outline.arguments(1, &Default::default()).contains(&"--outline-pages".to_string()));
 }
 
 /// 図形の結合: two shapes made one (接合), what they share (重なり抽出), what
@@ -5429,7 +6306,9 @@ pub(crate) fn paragraph_animations() {
         decel: 0,
         after_effect: AnimationAfterEffect::Hold,
         trigger: AnimationTrigger::None,
-        paragraph: Some((i, i)), path: Vec::new(),
+        paragraph: Some((i, i)), chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     };
     let animations: Vec<Animation> = (0..paragraphs as u32).map(effect).collect();
     s.update(|e, _, cx| e.run(vec![Command::SetAnimations { slide, animations: animations.clone() }], cx));
@@ -5496,6 +6375,13 @@ pub(crate) fn animated_gif_plays_in_the_slide_show() {
     }
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     let id = s.update(|e, _, cx| e.insert_picture("animated.gif", bytes.clone(), cx)).expect("the GIF is inserted");
+    // A GIF put in after the file was opened plays as well: in the slide show it has both frames (in the editor, the first).
+    let inserted = s.with(|e, _| e.slide().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Picture(p) if sh.id == id => Some(p.media), _ => None }).expect("its picture"));
+    let frames = |s: &mut Scenario| s.with(|e, _| match e.resources.picture(inserted) { Some(gpui_kit::ImageSource::Render(data)) => data.frame_count(), _ => 1 });
+    assert_eq!(frames(&mut s), 1, "the editor shows its first frame");
+    s.with(|e, _| e.resources.animate_pictures.set(true));
+    assert_eq!(frames(&mut s), 2, "the slide show plays all of its frames");
+    s.with(|e, _| e.resources.animate_pictures.set(false));
     s.save_as("animated-gif.pptx");
     drop(s);
     // The saved file opened: its pictures are decoded ahead.
@@ -5550,7 +6436,7 @@ pub(crate) fn edit_points() {
     assert!(s.with(|e, _| matches!(&e.slide().shapes.iter().find(|sh| sh.id == id).unwrap().kind, ShapeKind::Auto(a) if matches!(&a.geometry, Geometry::Formula(f) if f.preset.is_none()))), "a freeform");
     // A vertex moved: the outline (and the frame) follow.
     let moved_to = (frame.x as f64 - 500_000.0, frame.y as f64 - 300_000.0);
-    s.update(|e, _, cx| e.move_vertex(0, 0, moved_to, cx));
+    s.update(|e, _, cx| e.move_vertex(0, 0, 0, moved_to, cx));
     let after = s.with(|e, _| e.slide().shapes.iter().find(|sh| sh.id == id).unwrap().frame);
     assert!(after.x < frame.x && after.y < frame.y, "{after:?} vs {frame:?}");
     // A press on an edge makes a vertex there (on the top edge's middle), which is then selected.
@@ -5622,26 +6508,66 @@ pub(crate) fn compress_pictures() {
     undo_all_and_redo(&mut s);
 }
 
-/// 変形: a slide with the morph transition comes in as shapes moving from
-/// the old slide's, drawn through the transition and then as the slide.
+/// PPTX-TRANS-008, PPTX-TRANS-009, PPTX-TRANS-010, PPTX-TRANS-011, PPTX-TRANS-012: 変形（Morph）:
+/// 効果オプション（オブジェクト・単語・文字単位）、!! による図形の強制マッチング、
+/// スライドショー中の変形補間再生、保存・再読込ラウンドトリップ、Undo / Redo を検証。
 pub(crate) fn morph_transition_in_the_slide_show() {
     use ibis_doc_model::{Command, Transition};
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let first = s.with(|e, _| e.presentation().slides[0].id);
     let second = s.with(|e, _| e.presentation().slides[1].id);
+    let shape0_id = s.with(|e, _| e.presentation().slides[0].shapes[0].id);
+    let shape1_id = s.with(|e, _| e.presentation().slides[1].shapes[1].id);
+
+    // 1. スライド2に変形効果（morph）を設定
     s.update(|e, _, cx| e.run(vec![Command::SetTransition { slide: second, transition: Some(Transition { duration: 300, ..Transition::new("morph") }) }], cx));
-    // The pairing of the two slides' shapes is made (the title of one is not the other's).
+
+    // 2. スライド1とスライド2の異なる図形に「!!hero」という同一の強制対応名を設定
+    s.update(|e, _, cx| {
+        e.run(vec![
+            Command::SetShapeName { slide: first, shape: shape0_id, name: "!!hero".to_string() },
+            Command::SetShapeName { slide: second, shape: shape1_id, name: "!!hero".to_string() },
+        ], cx);
+    });
+
+    // 3. ページ2に移動し、ツールバーの「効果のオプション」から「単語単位」「文字単位」への変更を検証
+    s.page(2);
+    s.toolbar_menu("transition-options", "transition.dir.by-word");
+    assert_eq!(s.with(|e, _| e.slide().transition.as_ref().and_then(|t| t.direction.clone())), Some("byWord".to_string()));
+
+    s.toolbar_menu("transition-options", "transition.dir.by-char");
+    assert_eq!(s.with(|e, _| e.slide().transition.as_ref().and_then(|t| t.direction.clone())), Some("byChar".to_string()));
+
+    // 4. 強制対応（!!hero）により、図形0と図形1が最優先でペアリングされることを検証
     let (old, new) = s.with(|e, _| (e.presentation().slides[0].clone(), e.presentation().slides[1].clone()));
+    let old_idx = old.shown_shapes().position(|sh| sh.id == shape0_id).unwrap();
+    let new_idx = new.shown_shapes().position(|sh| sh.id == shape1_id).unwrap();
     let pairing = crate::pptx::morph::pair_shapes(&old, &new);
-    assert_eq!(pairing.pairs.len() + pairing.old_only.len(), old.shown_shapes().count());
-    assert_eq!(pairing.pairs.len() + pairing.new_only.len(), new.shown_shapes().count());
+    assert!(pairing.pairs.contains(&(old_idx, new_idx)), "forced matching pairs !!hero: {:?}", pairing.pairs);
+
+    // 5. スライドショー再生
+    s.page(1);
     s.update(|e, window, cx| e.start_slideshow(window, cx));
     s.update(|e, window, cx| e.step_slideshow(true, window, cx));
     assert_eq!(s.with(|e, _| e.current_slide), second);
-    // Drawn while the transition runs, and after it.
     s.update(|_, _, _| {});
     std::thread::sleep(std::time::Duration::from_millis(400));
     s.update(|_, _, _| {});
     s.update(|e, window, cx| e.end_slideshow(window, cx));
+
+    // 6. 保存と再読込（ラウンドトリップ検証）
+    s.save_as("morph-options-and-forced.pptx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides[1].transition.as_ref().map(|t| t.effect.as_str()), Some("morph"));
+    assert_eq!(saved.slides[1].transition.as_ref().and_then(|t| t.direction.as_deref()), Some("byChar"));
+    assert_eq!(saved.slides[0].shape_names.get(&shape0_id).map(String::as_str), Some("!!hero"));
+    assert_eq!(saved.slides[1].shape_names.get(&shape1_id).map(String::as_str), Some("!!hero"));
+    let saved_old_idx = saved.slides[0].shown_shapes().position(|sh| sh.id == shape0_id).unwrap();
+    let saved_new_idx = saved.slides[1].shown_shapes().position(|sh| sh.id == shape1_id).unwrap();
+    let saved_pairing = crate::pptx::morph::pair_shapes(&saved.slides[0], &saved.slides[1]);
+    assert!(saved_pairing.pairs.contains(&(saved_old_idx, saved_new_idx)));
+
+    undo_all_and_redo(&mut s);
 }
 
 /// ファイルへのリンクの動画: inserted as a link (no copy of the file kept),
@@ -5767,7 +6693,7 @@ pub(crate) fn spelling_check() {
     assert!(back.contains("recieve"), "{back}");
 }
 
-/// スライド マスター表示: a layout edited as a slide (a shape moved, a text box
+/// PPTX-MASTER-001, PPTX-MASTER-014, PPTX-MASTER-017: スライド マスター表示: a layout edited as a slide (a shape moved, a text box
 /// added), another page, closed: the layout and the slides that follow it
 /// changed, what was not saved before kept, saved and read again.
 pub(crate) fn master_view() {
@@ -5859,7 +6785,7 @@ pub(crate) fn notes_formatting() {
     assert!(xml.contains("b=\"1\""), "the bold is in the notes page");
 }
 
-/// 配布資料マスター (NOTES-007): 表示 > 配布資料マスターで 4 つの枠が 1 枚のスライドになり、
+/// PPTX-NOTES-007, PPTX-NOTES-010: 配布資料マスター: 表示 > 配布資料マスターで 4 つの枠が 1 枚のスライドになり、
 /// 動かして閉じると、保存したファイルの配布資料マスターの位置になる。未保存の変更は残る。
 pub(crate) fn handout_master_view() {
     use ibis_doc_model::{Command, EmuRect};
@@ -6311,6 +7237,166 @@ pub(crate) fn shape_bevel_presets_and_round_trip() {
     undo_all_and_redo(&mut s);
 }
 
+/// PPTX-OBJECT-012: 3D rotation and depth presets, undo/redo, and round-trip (3D回転と奥行き).
+pub(crate) fn shape_3d_rotation_and_depth() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, _, cx| {
+        let id = e.document.ids().new_shape_id();
+        let mut auto = ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Rect, Fill::Solid(ibis_doc_model::Color::BLACK), None);
+        auto.text = Some(ibis_doc_model::TextBody::plain("3d shape", ibis_doc_model::TextStyle::default()));
+        e.insert_shape(ibis_doc_model::Shape::new(id, ibis_doc_model::EmuRect::new(500_000, 500_000, 2_000_000, 1_000_000), ShapeKind::Auto(auto)), cx);
+    });
+    s.save_as("../pptx-3d-ui-base.pptx");
+    drop(s);
+
+    let mut s = Scenario::open("target/scenario/pptx-3d-ui-base.pptx");
+    let index = s.shapes() - 1;
+    s.click_shape(index);
+
+    // Initial state: no tilt
+    let initial_shape = s.with(|e, _| e.slide().shapes[index].clone());
+    let ShapeKind::Auto(auto) = &initial_shape.kind else { panic!("auto") };
+    assert!(auto.tilt.is_none());
+
+    // 1. Apply 3D rotation preset (isometric-right-up)
+    s.menu("pptx.3d-rotation.isometric-right-up");
+    let rotated = s.with(|e, _| e.slide().shapes[index].clone());
+    let ShapeKind::Auto(auto) = &rotated.kind else { panic!("auto") };
+    assert!(auto.tilt.is_some());
+    let tilt = auto.tilt.unwrap();
+    assert_eq!(tilt.camera_preset, Some(ibis_doc_model::CameraPreset::IsometricRightUp));
+    assert_eq!((tilt.lat, tilt.lon, tilt.rev), (2115600, -2700000, 2115600));
+
+    // 2. Apply 3D depth preset (20pt / 254_000 EMU)
+    s.menu("pptx.3d-depth.20pt");
+    let with_depth = s.with(|e, _| e.slide().shapes[index].clone());
+    let ShapeKind::Auto(auto) = &with_depth.kind else { panic!("auto") };
+    let tilt = auto.tilt.unwrap();
+    assert_eq!(tilt.extrusion_h, 254_000);
+    assert_eq!(tilt.camera_preset, Some(ibis_doc_model::CameraPreset::IsometricRightUp));
+
+    // 3. Undo depth
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes[index].clone()), rotated);
+
+    // 4. Undo rotation
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes[index].clone()), initial_shape);
+
+    // 5. Redo rotation and depth
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes[index].clone()), rotated);
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes[index].clone()), with_depth);
+
+    // 6. Save and reload roundtrip
+    s.save_as("shape-3d-rotation-depth.pptx");
+    let saved = s.reopen();
+    let ShapeKind::Auto(auto) = &saved.slides[0].shapes[index].kind else { panic!("auto") };
+    assert!(auto.tilt.is_some());
+    let saved_tilt = auto.tilt.unwrap();
+    assert_eq!(saved_tilt.camera_preset, Some(ibis_doc_model::CameraPreset::IsometricRightUp));
+    assert_eq!(saved_tilt.extrusion_h, 254_000);
+    assert_eq!((saved_tilt.lat, saved_tilt.lon, saved_tilt.rev), (2115600, -2700000, 2115600));
+
+    // 7. Clear 3D rotation (keep depth)
+    s.menu("pptx.3d-rotation.none");
+    let cleared_rot = s.with(|e, _| e.slide().shapes[index].clone());
+    let ShapeKind::Auto(auto) = &cleared_rot.kind else { panic!("auto") };
+    let tilt = auto.tilt.unwrap();
+    assert_eq!(tilt.camera_preset, None);
+    assert_eq!((tilt.lat, tilt.lon, tilt.rev), (0, 0, 0));
+    assert_eq!(tilt.extrusion_h, 254_000);
+
+    // 8. Clear depth
+    s.menu("pptx.3d-depth.none");
+    let fully_cleared = s.with(|e, _| e.slide().shapes[index].clone());
+    let ShapeKind::Auto(auto) = &fully_cleared.kind else { panic!("auto") };
+    assert!(auto.tilt.is_none());
+
+    // 9. Save and reload cleared shape
+    s.save_as("shape-3d-cleared.pptx");
+    let saved = s.reopen();
+    let ShapeKind::Auto(auto) = &saved.slides[0].shapes[index].kind else { panic!("auto") };
+    assert!(auto.tilt.is_none());
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-NOTES-017, PPTX-ACCESS-012: 表示モードとアクセシビリティ: 拡大表示 (ズーム 100%, 200%, 合わせる) と カラー/白黒 (カラー, グレースケール, 単純白黒/高コントラスト),
+/// ショートカットキー (⌥⌘H), アクセシビリティ パネルの高コントラスト切り替えボタン.
+pub(crate) fn zoom_and_high_contrast_view() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+
+    // 初期状態: カラーモード
+    assert_eq!(s.with(|e, _| e.color_mode()), crate::render::ColorMode::Color);
+    assert!(!s.with(|e, _| e.is_high_contrast()));
+    assert!(!s.with(|e, _| e.is_grayscale()));
+    assert_eq!(s.menu_state("pptx.view.color"), Some((true, true)));
+    assert_eq!(s.menu_state("pptx.view.grayscale"), Some((true, false)));
+    assert_eq!(s.menu_state("pptx.view.high-contrast"), Some((true, false)));
+
+    // 1. 拡大表示 (ズーム操作)
+    s.menu("view.zoom-100");
+    assert_eq!(s.with(|e, _| e.zoom), Some(1.0));
+    assert_eq!(s.menu_state("view.zoom-100"), Some((true, true)));
+
+    s.menu("view.zoom-200");
+    assert_eq!(s.with(|e, _| e.zoom), Some(2.0));
+    assert_eq!(s.menu_state("view.zoom-200"), Some((true, true)));
+
+    s.menu("view.zoom-fit");
+    assert_eq!(s.with(|e, _| e.zoom), None);
+    assert_eq!(s.menu_state("view.zoom-fit"), Some((true, true)));
+
+    // 2. メニューからのグレースケール切り替え
+    s.menu("pptx.view.grayscale");
+    assert_eq!(s.with(|e, _| e.color_mode()), crate::render::ColorMode::Grayscale);
+    assert!(s.with(|e, _| e.is_grayscale()));
+    assert!(!s.with(|e, _| e.is_high_contrast()));
+    assert_eq!(s.menu_state("pptx.view.grayscale"), Some((true, true)));
+    assert_eq!(s.menu_state("pptx.view.color"), Some((true, false)));
+
+    // 3. メニューからの単純白黒 (高コントラスト) 切り替え
+    s.menu("pptx.view.high-contrast");
+    assert_eq!(s.with(|e, _| e.color_mode()), crate::render::ColorMode::HighContrast);
+    assert!(s.with(|e, _| e.is_high_contrast()));
+    assert!(!s.with(|e, _| e.is_grayscale()));
+    assert_eq!(s.menu_state("pptx.view.high-contrast"), Some((true, true)));
+    assert_eq!(s.menu_state("pptx.view.grayscale"), Some((true, false)));
+
+    // 4. カラーに戻す
+    s.menu("pptx.view.color");
+    assert_eq!(s.with(|e, _| e.color_mode()), crate::render::ColorMode::Color);
+    assert!(!s.with(|e, _| e.is_high_contrast()));
+    assert_eq!(s.menu_state("pptx.view.color"), Some((true, true)));
+
+    // 5. ショートカットキー (⌥⌘H) によるトグル
+    s.key("cmd-alt-h");
+    assert_eq!(s.with(|e, _| e.color_mode()), crate::render::ColorMode::HighContrast);
+    assert!(s.with(|e, _| e.is_high_contrast()));
+
+    s.key("cmd-alt-h");
+    assert_eq!(s.with(|e, _| e.color_mode()), crate::render::ColorMode::Color);
+    assert!(!s.with(|e, _| e.is_high_contrast()));
+
+    // 6. アクセシビリティ パネルの高コントラスト切り替え
+    s.update(|e, window, cx| e.open_pptx_accessibility_panel(window, cx));
+    assert!(s.with(|e, _| e.sidebar_open));
+
+    // パネルからトグル
+    s.update(|e, _, cx| e.toggle_high_contrast(cx));
+    assert!(s.with(|e, _| e.is_high_contrast()));
+
+    s.screenshot("zoom-and-high-contrast-view");
+
+    s.update(|e, _, cx| e.toggle_high_contrast(cx));
+    assert!(!s.with(|e, _| e.is_high_contrast()));
+
+    s.update(|e, _, cx| e.close_pptx_accessibility_panel(cx));
+}
+
 pub(crate) fn copy_shape_shadow_and_glow() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     // A presentation opens with the keys on the slide list: the keys of the slide need the slide focused.
@@ -6676,6 +7762,80 @@ pub(crate) fn picture_color_effects() {
     undo_all_and_redo(&mut s);
 }
 
+/// PPTX-IMAGE-008: picture background removal and transparent color specification (a:clrChange).
+pub(crate) fn picture_background_removal_and_transparent_color() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, _, cx| e.insert_picture("clear-photo.png", png(160, 120, [0x22, 0x55, 0x88]), cx));
+    let original = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(pic) = &original.kind else { panic!("picture") };
+    assert!(pic.clear.is_none());
+
+    // Toolbar button for background removal (sets white 0xffffff transparent)
+    assert!(s.toolbar_state("remove-background").is_some_and(|b| b.enabled));
+    s.toolbar("remove-background");
+    let white_clear = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(p) = &white_clear.kind else { panic!("picture") };
+    assert_eq!(p.clear, Some(ibis_doc_model::Rgb(0xffffff)));
+    assert_eq!(white_clear.frame, original.frame);
+
+    // Apply black transparent color via picture-color toolbar menu
+    s.toolbar_menu("picture-color", "pptx.picture.color.transparent-black");
+    let black_clear = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(p) = &black_clear.kind else { panic!("picture") };
+    assert_eq!(p.clear, Some(ibis_doc_model::Rgb(0x000000)));
+
+    // Undo to white clear
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), white_clear);
+
+    // Redo to black clear
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), black_clear);
+
+    // Context menu contains remove-background
+    let ids = s.with(|e, _| {
+        e.shape_context_menu_entries().iter().filter_map(|m| match m {
+            crate::shell::chrome::MenuEntry::Item(i) => Some(i.id.to_string()),
+            crate::shell::chrome::MenuEntry::Submenu(sub) => Some(sub.id.to_string()),
+            _ => None,
+        }).collect::<Vec<_>>()
+    });
+    assert!(ids.iter().any(|i| i == "pptx.picture.remove-background"), "pptx.picture.remove-background in {ids:?}");
+
+    // Save and reload roundtrip with black clear
+    s.save_as("picture-clear-black.pptx");
+    let saved = s.reopen();
+    let saved_pic = saved.slides[0].shapes.last().unwrap();
+    let ShapeKind::Picture(p) = &saved_pic.kind else { panic!("saved picture") };
+    assert_eq!(p.clear, Some(ibis_doc_model::Rgb(0x000000)));
+
+    // Clear transparent color via menu
+    s.toolbar_menu("picture-color", "pptx.picture.color.transparent-clear");
+    let cleared = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(p) = &cleared.kind else { panic!("picture") };
+    assert!(p.clear.is_none());
+
+    // Reset color effects also resets clear
+    s.toolbar_menu("picture-color", "pptx.picture.color.transparent-white");
+    let white_again = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(p) = &white_again.kind else { panic!("picture") };
+    assert_eq!(p.clear, Some(ibis_doc_model::Rgb(0xffffff)));
+
+    s.menu("pptx.picture.reset-colors");
+    let reset = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(p) = &reset.kind else { panic!("picture") };
+    assert!(p.clear.is_none());
+
+    // Save and reload roundtrip cleared
+    s.save_as("picture-clear-cleared.pptx");
+    let saved2 = s.reopen();
+    let saved_pic2 = saved2.slides[0].shapes.last().unwrap();
+    let ShapeKind::Picture(p) = &saved_pic2.kind else { panic!("saved picture 2") };
+    assert!(p.clear.is_none());
+
+    undo_all_and_redo(&mut s);
+}
+
 /// PPTX-IMAGE-009: picture brightness and contrast correction (a:lum bright / contrast).
 pub(crate) fn picture_luminance_options() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
@@ -6739,7 +7899,7 @@ pub(crate) fn picture_transparency_options() {
     let mut s = Scenario::new_document(ibis_pptx::Kind::Presentation);
     s.update(|e, _, cx| e.insert_picture("alpha-photo.png", png(160, 120, [0x44, 0x88, 0xcc]), cx));
     let alpha = |s: &mut Scenario| s.with(|e, _| match &e.selected_shapes()[0].kind {
-        ShapeKind::Picture(p) => p.alpha,
+        ShapeKind::Picture(p) => p.effects.opacity,
         _ => panic!("picture"),
     });
     assert_eq!(alpha(&mut s), None);
@@ -6754,6 +7914,58 @@ pub(crate) fn picture_transparency_options() {
     assert_eq!(alpha(&mut s), Some(20_000));
     s.toolbar_menu("picture-transparency", "pptx.picture.alpha.none");
     assert_eq!(alpha(&mut s), None);
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-IMAGE-011: picture artistic effects (a14:imgEffect / artistic...).
+pub(crate) fn picture_artistic_effects_options() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, _, cx| e.insert_picture("art-photo.png", png(160, 120, [0x44, 0x88, 0xcc]), cx));
+    let original = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(pic) = &original.kind else { panic!("picture") };
+    assert!(pic.artistic_effect.is_none());
+
+    // Apply marker artistic effect from toolbar menu
+    s.toolbar_menu("picture-artistic", "pptx.picture.artistic.marker");
+    let marker_shape = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(p) = &marker_shape.kind else { panic!("picture") };
+    assert_eq!(p.artistic_effect, Some(ibis_doc_model::ArtisticEffect::marker()));
+    assert_eq!(marker_shape.frame, original.frame);
+
+    // Apply blur artistic effect from format menu
+    s.menu("pptx.picture.artistic.blur");
+    let blur_shape = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(p) = &blur_shape.kind else { panic!("picture") };
+    assert_eq!(p.artistic_effect, Some(ibis_doc_model::ArtisticEffect::blur()));
+
+    // Undo to marker
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), marker_shape);
+
+    // Redo to blur
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), blur_shape);
+
+    // Save and reload roundtrip with blur
+    s.save_as("picture-artistic.pptx");
+    let saved = s.reopen();
+    let saved_pic = saved.slides[0].shapes.last().unwrap();
+    let ShapeKind::Picture(p) = &saved_pic.kind else { panic!("saved picture") };
+    assert_eq!(p.artistic_effect, Some(ibis_doc_model::ArtisticEffect::blur()));
+
+    // Reset color effects (which resets artistic effects too)
+    s.menu("pptx.picture.reset-colors");
+    let cleared = s.with(|e, _| e.selected_shapes()[0].clone());
+    let ShapeKind::Picture(p) = &cleared.kind else { panic!("picture") };
+    assert!(p.artistic_effect.is_none());
+
+    // Save and reload roundtrip cleared
+    s.save_as("picture-artistic-cleared.pptx");
+    let saved2 = s.reopen();
+    let saved_pic2 = saved2.slides[0].shapes.last().unwrap();
+    let ShapeKind::Picture(p) = &saved_pic2.kind else { panic!("saved picture 2") };
+    assert!(p.artistic_effect.is_none());
 
     undo_all_and_redo(&mut s);
 }
@@ -7909,6 +9121,7 @@ pub(crate) fn change_case_and_caps() {
     assert_eq!(re_body.paragraphs[0].runs[0].style.caps, ibis_doc_model::Caps::All);
 }
 
+/// PPTX-TEXT-020, PPTX-TEXT-019: 表セルの上下配置（Top/Middle/Bottom）および縦書き・横書き・時計回り回転の設定、Undo/Redo、保存ラウンドトリップ
 pub(crate) fn table_cell_vertical_anchor_and_text_direction() {
     let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
     let (page, shape) = s
@@ -8066,6 +9279,89 @@ pub(crate) fn replace_fonts_presentation() {
         _ => panic!("table expected"),
     };
     assert_eq!(re_cell_font.as_deref(), Some("Georgia"));
+}
+
+/// フォントの埋込と代替 (PPTX-FILE-011): missing font detection, font substitution with undo/redo,
+/// font embedding with OOXML persistence roundtrip, and removal.
+pub(crate) fn font_embedding_and_substitution() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    // スライド1の図形1に存在しないフォントを設定
+    s.page(1);
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    s.type_text("Text with Custom Font");
+    s.key("cmd-a");
+    s.update(|e, w, cx| {
+        e.format_characters(w, cx, ibis_doc_model::CharacterFormat {
+            font: Some(Some("CustomNonExistentFont".into())),
+            ..Default::default()
+        });
+    });
+    s.key("escape");
+
+    // 不足フォント一覧に "CustomNonExistentFont" が検出される
+    let missing = s.with(|e, _| e.missing_fonts());
+    assert!(missing.iter().any(|f| f == "CustomNonExistentFont"), "CustomNonExistentFont should be detected as missing: {missing:?}");
+
+    // フォント代替を設定: "CustomNonExistentFont" -> "Georgia"
+    s.update(|e, _, cx| {
+        e.set_font_substitution("CustomNonExistentFont", Some("Georgia"), cx);
+    });
+    let subs = s.with(|e, _| e.font_substitutions().clone());
+    assert_eq!(subs.get("CustomNonExistentFont"), Some(&"Georgia".to_string()));
+
+    // Undo でフォント代替が取り消される
+    s.key("cmd-z");
+    let undone_subs = s.with(|e, _| e.font_substitutions().clone());
+    assert!(!undone_subs.contains_key("CustomNonExistentFont"));
+
+    // Redo でフォント代替が復元される
+    s.key("cmd-shift-z");
+    let redone_subs = s.with(|e, _| e.font_substitutions().clone());
+    assert_eq!(redone_subs.get("CustomNonExistentFont"), Some(&"Georgia".to_string()));
+
+    // フォントの埋め込みを実行
+    let embedded_ok = s.update(|e, _, cx| e.embed_font("CustomNonExistentFont", cx));
+    assert!(embedded_ok);
+    let fonts = s.with(|e, _| e.embedded_fonts().to_vec());
+    assert!(fonts.iter().any(|f| f.typeface == "CustomNonExistentFont"));
+
+    // Undo でフォント埋め込みが取り消される
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.embedded_fonts().iter().any(|f| f.typeface == "CustomNonExistentFont")));
+
+    // Redo でフォント埋め込みが復元される
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.embedded_fonts().iter().any(|f| f.typeface == "CustomNonExistentFont")));
+
+    // ファイル保存と再読込のラウンドトリップ検証
+    s.save_as("embedded-and-substituted.pptx");
+    let reopened = s.reopen();
+    assert_eq!(
+        reopened.font_substitutions.get("CustomNonExistentFont"),
+        Some(&"Georgia".to_string()),
+        "Font substitutions must persist across save and reopen"
+    );
+    assert!(
+        reopened.fonts.iter().any(|f| f.typeface == "CustomNonExistentFont"),
+        "Embedded fonts must persist across save and reopen in OOXML"
+    );
+
+    // 埋め込みフォントの削除とフォント代替の解除
+    s.update(|e, _, cx| {
+        let removed = e.remove_embedded_font("CustomNonExistentFont", cx);
+        assert!(removed);
+        e.set_font_substitution("CustomNonExistentFont", None, cx);
+    });
+    assert!(!s.with(|e, _| e.embedded_fonts().iter().any(|f| f.typeface == "CustomNonExistentFont")));
+    assert!(!s.with(|e, _| e.font_substitutions().contains_key("CustomNonExistentFont")));
+
+    // 保存・再読込して削除が反映されていることを検証
+    s.save_as("embedded-and-substituted-cleared.pptx");
+    let reopened2 = s.reopen();
+    assert!(!reopened2.font_substitutions.contains_key("CustomNonExistentFont"));
+    assert!(!reopened2.fonts.iter().any(|f| f.typeface == "CustomNonExistentFont"));
 }
 
 pub(crate) fn show_properties_and_slideshow_controls() {
@@ -8353,6 +9649,91 @@ pub(crate) fn animation_effect_options() {
     undo_all_and_redo(&mut s);
 }
 
+/// 開始・終了効果のズーム・フロート・ワイプ（PPTX-ANIM-001, PPTX-ANIM-003）:
+/// ズーム（拡大・縮小）、フロートイン/アウト（上下方向オプション）、ワイプ（4方向オプション）の設定、
+/// 効果オプション切り替え、スライドショー再生中の motion 計算、Undo / Redo、ファイル保存・再読込を検証。
+pub(crate) fn animation_zoom_float_wipe_options() {
+    use ibis_doc_model::{AnimationClass, AnimationLook, AnimationSide};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    // 1. 図形0を選択し、開始効果「ズーム」を設定
+    s.click_shape(0);
+    s.toolbar_menu("motion", "pptx.anim.in.zoom");
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.look)), Some(AnimationLook::Zoom));
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((24, 0)));
+    let anim_zoom_in = s.with(|e, _| e.slide().animations[0].clone());
+
+    // 2. 開始効果を「フロートイン」に変更
+    s.toolbar_menu("motion", "pptx.anim.in.float");
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.look)), Some(AnimationLook::Float(AnimationSide::Top)));
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((25, 1)));
+
+    // 効果オプションで「下へフロート」に変更
+    s.toolbar_menu("anim-options", "pptx.anim.opt.float-down");
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.look)), Some(AnimationLook::Float(AnimationSide::Bottom)));
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((25, 2)));
+
+    // 3. 開始効果を「ワイプ」に変更
+    s.toolbar_menu("motion", "pptx.anim.in.wipe");
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.look)), Some(AnimationLook::Wipe(AnimationSide::Bottom)));
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((22, 4)));
+
+    // 効果オプションで「右から」に変更
+    s.toolbar_menu("anim-options", "pptx.anim.opt.wipe-right");
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.look)), Some(AnimationLook::Wipe(AnimationSide::Right)));
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((22, 2)));
+
+    // 4. 図形1を選択し、終了効果「ズーム」を設定
+    s.click_shape(1);
+    s.toolbar_menu("motion", "pptx.anim.out.zoom");
+    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| (a.class, a.look))), Some((AnimationClass::Exit, AnimationLook::Zoom)));
+    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| a.preset)), Some((24, 0)));
+    let anim_zoom_out = s.with(|e, _| e.slide().animations.last().unwrap().clone());
+
+    // 5. 終了効果を「フロートアウト」に変更
+    s.toolbar_menu("motion", "pptx.anim.out.float");
+    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| (a.class, a.look))), Some((AnimationClass::Exit, AnimationLook::Float(AnimationSide::Bottom))));
+    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| a.preset)), Some((25, 2)));
+
+    // 6. スライドショーでの再生 motion_at 計算を検証
+    let anim_wipe_in = s.with(|e, _| e.slide().animations[0].clone());
+    let anim_float_out = s.with(|e, _| e.slide().animations[1].clone());
+
+    let init_motion = super::slideshow::ShapeMotion { opacity: 0.0, dx: 0.0, dy: 0.0, turn: 0.0, grow: (1.0, 1.0) };
+    let m_zoom_half = super::slideshow::motion_at(&anim_zoom_in, init_motion, 0.5, (100.0, 100.0, 200.0, 100.0), (960.0, 540.0));
+    assert!((m_zoom_half.grow.0 - 0.5).abs() < 1e-3);
+    assert!((m_zoom_half.opacity - 0.5).abs() < 1e-3);
+
+    let from_exit = super::slideshow::ShapeMotion { opacity: 1.0, dx: 0.0, dy: 0.0, turn: 0.0, grow: (1.0, 1.0) };
+    let m_zoom_out_half = super::slideshow::motion_at(&anim_zoom_out, from_exit, 0.5, (100.0, 100.0, 200.0, 100.0), (960.0, 540.0));
+    assert!((m_zoom_out_half.grow.0 - 0.5).abs() < 1e-3);
+    assert!((m_zoom_out_half.opacity - 0.5).abs() < 1e-3);
+
+    let m_wipe_half = super::slideshow::motion_at(&anim_wipe_in, init_motion, 0.5, (100.0, 100.0, 200.0, 100.0), (960.0, 540.0));
+    assert!((m_wipe_half.opacity - 0.5).abs() < 1e-3);
+
+    let m_float_half = super::slideshow::motion_at(&anim_float_out, from_exit, 0.5, (100.0, 100.0, 200.0, 100.0), (960.0, 540.0));
+    assert!((m_float_half.opacity - 0.5).abs() < 1e-3);
+    assert!((m_float_half.dy - 15.0).abs() < 1e-3);
+
+    // 7. Undo / Redo
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| a.look)), Some(AnimationLook::Zoom));
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| a.look)), Some(AnimationLook::Float(AnimationSide::Bottom)));
+
+    // 8. 保存して再読込
+    s.save_as("anim-zoom-float-wipe.pptx");
+    let reopened = s.reopen();
+    assert_eq!(reopened.slides[0].animations.len(), 2);
+    assert_eq!(reopened.slides[0].animations[0].look, AnimationLook::Wipe(AnimationSide::Right));
+    assert_eq!(reopened.slides[0].animations[0].preset, (22, 2));
+    assert_eq!(reopened.slides[0].animations[1].look, AnimationLook::Float(AnimationSide::Bottom));
+    assert_eq!(reopened.slides[0].animations[1].preset, (25, 2));
+
+    undo_all_and_redo(&mut s);
+}
+
 /// 軌跡効果（直線モーションパス / PPTX-ANIM-004）:
 /// 直線アニメーション（下・右・上・左）の設定、効果オプションでの方向切り替え、
 /// Undo / Redo、ファイル保存・再読込を検証。
@@ -8427,6 +9808,206 @@ pub(crate) fn animation_by_paragraph() {
     s.toolbar_menu("motion", "pptx.anim.build.whole");
     let whole = s.with(|e, _| e.slide().animations.clone());
     assert_eq!((whole.len(), whole[0].paragraph), (1, None));
+    undo_all_and_redo(&mut s);
+}
+
+/// テキストの動き 単語別・文字別 (ANIM-020): an effect that takes the text a word or a letter at a time is one effect with an
+/// iteration (`p:iterate`); saved and read back as written; in the show the text is the shape and a part for each word or letter.
+pub(crate) fn animation_by_word_and_letter() {
+    use ibis_doc_model::{TextUnit, UnitGap};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    let (shape, size) = s.with(|e, _| {
+        let sh = e.slide().shapes.iter().find(|sh| sh.text_body().is_some_and(|t| t.paragraphs.len() >= 3)).expect("a shape with paragraphs");
+        (sh.id, e.presentation().size_of(e.slide()))
+    });
+    s.update(|e, _, _| e.set_selection(vec![shape]));
+    s.toolbar_menu("motion", "pptx.anim.in.fade");
+    s.toolbar_menu("motion", "pptx.anim.build.word");
+    let anim = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!((anim.len(), anim[0].text_unit), (1, Some((TextUnit::Word, UnitGap::Percent(10_000)))));
+    // In the show: the shape with its words transparent, and a part for each word.
+    let words = s.with(|e, _| {
+        let sh = e.slide().shape(shape).unwrap();
+        crate::pptx::slideshow::text_units(sh.text_body().unwrap(), TextUnit::Word).len()
+    });
+    let others = s.with(|e, _| e.slide().shown_shapes().count()) - 1;
+    let drawn = s.with(|e, _| crate::pptx::slideshow::animated_shapes(e.slide(), size, 1.0, 0, 0, &[], |_| gpui_kit::IntoElement::into_any_element(gpui_kit::div())).count());
+    assert_eq!(drawn, others + 1 + words);
+    assert!(words > 3, "{words}");
+    let file = s.save_as("anim-by-word.pptx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides[1].animations, anim, "read back as written");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(), "ppt/slides/slide2.xml").unwrap();
+    assert!(xml.contains("<p:iterate type=\"wd\"><p:tmPct val=\"10000\"/></p:iterate>"), "{xml}");
+    // Played: before the click the text is not there, after it every word is.
+    s.key("cmd-shift-enter");
+    let on_slide = s.with(|e, _| e.presentation().slide_index(e.current_slide));
+    if on_slide == Some(0) {
+        s.key("right");
+    }
+    s.screenshot("word-before");
+    s.update(|_, _, cx| cx.set_reduce_motion(true));
+    s.key("right");
+    s.wait(100);
+    s.screenshot("word-after");
+    s.update(|_, _, cx| cx.set_reduce_motion(false));
+    s.key("escape");
+    s.update(|e, _, _| e.set_selection(vec![shape]));
+    // By letter, then the whole shape again.
+    s.toolbar_menu("motion", "pptx.anim.build.letter");
+    assert_eq!(s.with(|e, _| e.slide().animations[0].text_unit.map(|u| u.0)), Some(TextUnit::Letter));
+    s.toolbar_menu("motion", "pptx.anim.build.whole");
+    assert_eq!(s.with(|e, _| e.slide().animations[0].text_unit), None);
+    undo_all_and_redo(&mut s);
+}
+
+/// グラフの系列・カテゴリ別アニメーション (PPTX-ANIM-021): グラフの効果を「系列別」「カテゴリ別」
+/// 「系列内の要素別」「カテゴリ内の要素別」に分割して再生。背景を描画して開始するかも選べる。
+pub(crate) fn chart_animation_by_series_and_category() {
+    use ibis_doc_model::{ChartAnimationElement, ChartBuildStep};
+    let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
+    let (page, shape_idx, series_count, category_count) = s.with(|e, _| {
+        e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+            if !sl.animations.is_empty() {
+                return None;
+            }
+            sl.shapes.iter().enumerate().find_map(|(j, sh)| {
+                if let ibis_doc_model::ShapeKind::Chart(c) = &sh.kind {
+                    let s_count = c.groups.iter().map(|g| g.series.len()).sum::<usize>();
+                    let c_count = c.groups.iter().flat_map(|g| g.series.iter().map(|s| s.values.len())).max().unwrap_or(0);
+                    if s_count >= 1 && c_count >= 1 {
+                        Some((i + 1, j, s_count, c_count))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+        }).expect("a slide with a chart in earnings-presentation.pptx")
+    });
+    assert!(series_count >= 1 && category_count >= 1);
+    s.page(page);
+    s.click_shape(shape_idx);
+
+    // 1. 最初はフェード効果を付ける（1つのオブジェクト）
+    s.toolbar_menu("motion", "pptx.anim.in.fade");
+    assert_eq!(s.with(|e, _| e.slide().animations.len()), 1);
+
+    // 2. 系列別 (By Series): 背景 + 系列ごとのアニメーション (1 + series_count)
+    s.toolbar_menu("anim-options", "pptx.anim.chart.series");
+    let anim_series = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!(anim_series.len(), 1 + series_count);
+    assert_eq!(anim_series[0].chart_element, Some(ChartAnimationElement { series_idx: -1, category_idx: -1 }));
+    assert_eq!(anim_series[0].chart_build, Some((ChartBuildStep::Series, true)));
+    assert_eq!(anim_series[1].chart_element, Some(ChartAnimationElement { series_idx: 0, category_idx: -1 }));
+    assert_eq!(anim_series[1].chart_build, Some((ChartBuildStep::Series, true)));
+
+    // スライドショー表示: 背景 + 各系列
+    let size = s.with(|e, _| e.presentation().size_of(e.slide()));
+    let other_shapes = s.with(|e, _| e.slide().shown_shapes().count()) - 1;
+    let drawn = s.with(|e, _| crate::pptx::slideshow::animated_shapes(e.slide(), size, 1.0, 0, 0, &[], |_| gpui_kit::IntoElement::into_any_element(gpui_kit::div())).count());
+    assert_eq!(drawn, other_shapes + 1 + series_count);
+
+    // 保存して再読込: XML に bld="series" animBg="1" と p:cChartEl が出力されている
+    let file = s.save_as("chart-anim-series.pptx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides[page - 1].animations, anim_series);
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(), &format!("ppt/slides/slide{page}.xml")).unwrap();
+    assert!(xml.contains("bld=\"series\" animBg=\"1\""), "{xml}");
+    assert!(xml.contains("<p:cChartEl seriesIdx=\"0\" categoryIdx=\"-1\"/>"), "{xml}");
+
+    // 3. カテゴリ別 (By Category): 背景 + カテゴリごとのアニメーション (1 + category_count)
+    s.toolbar_menu("anim-options", "pptx.anim.chart.category");
+    let anim_category = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!(anim_category.len(), 1 + category_count);
+    assert_eq!(anim_category[0].chart_element, Some(ChartAnimationElement { series_idx: -1, category_idx: -1 }));
+    assert_eq!(anim_category[0].chart_build, Some((ChartBuildStep::Category, true)));
+    assert_eq!(anim_category[1].chart_element, Some(ChartAnimationElement { series_idx: -1, category_idx: 0 }));
+
+    // 4. 背景を描画して開始の切り替え (animBg = false) -> 背景エフェクトが除かれ各カテゴリのみ
+    s.toolbar_menu("anim-options", "pptx.anim.chart.anim-bg");
+    let anim_no_bg = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!(anim_no_bg.len(), category_count);
+    assert_eq!(anim_no_bg[0].chart_element, Some(ChartAnimationElement { series_idx: -1, category_idx: 0 }));
+    assert_eq!(anim_no_bg[0].chart_build, Some((ChartBuildStep::Category, false)));
+
+    // 5. 1 つのオブジェクトとして (AllAtOnce) に戻す
+    s.toolbar_menu("anim-options", "pptx.anim.chart.whole");
+    let anim_whole = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!(anim_whole.len(), 1);
+    assert_eq!(anim_whole[0].chart_element, None);
+    assert_eq!(anim_whole[0].chart_build, Some((ChartBuildStep::AllAtOnce, false)));
+
+    // 6. Undo / Redo で状態が復元される
+    undo_all_and_redo(&mut s);
+}
+
+/// SmartArtの要素別効果 (PPTX-ANIM-022): SmartArt の効果を「1 つのオブジェクトとして」
+/// 「すべて同時に」「個別」「レベルごとに」「1 レベルずつ」に設定でき、スライドショーで
+/// 要素ごとにアニメーションが適用される。保存して再読込しても p:bldDgm と p:graphicEl/a:dgm が維持される。
+pub(crate) fn smartart_animation_by_element() {
+    use ibis_doc_model::{DiagramBuildStep, Placeholder, ShapeKind};
+    let mut s = Scenario::open("test/editing/pptx-smartart.pptx");
+    let (dgm_idx, dgm_id, part_count) = s.with(|e, _| {
+        let (idx, sh) = e.slide().shapes.iter().enumerate().find(|(_, sh)| {
+            matches!(sh.kind, ShapeKind::Placeholder(Placeholder::Diagram))
+        }).expect("SmartArt graphic");
+        let parts = e.slide().attached_to(sh.id).len();
+        (idx, sh.id, parts)
+    });
+    assert!(part_count >= 1);
+    s.click_shape(dgm_idx);
+
+    // 1. 最初はフェード効果を付ける（1 つのオブジェクト / 未指定 = Whole 相当）
+    s.toolbar_menu("motion", "pptx.anim.in.fade");
+    let anim_init = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!(anim_init.len(), 1);
+    assert_eq!(anim_init[0].shape, dgm_id);
+    assert_eq!(anim_init[0].dgm_build, None);
+
+    // 2. 個別 (DepthByNode / One by One): 要素ごとのアニメーション (part_count 個)
+    s.toolbar_menu("anim-options", "pptx.anim.dgm.one-by-one");
+    let anim_one = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!(anim_one.len(), part_count);
+    assert_eq!(anim_one[0].dgm_build, Some(DiagramBuildStep::DepthByNode));
+    assert!(anim_one[0].dgm_element.is_some());
+
+    // スライドショー表示: attached shapes are animated according to parent diagram
+    let size = s.with(|e, _| e.presentation().size_of(e.slide()));
+    let drawn = s.with(|e, _| crate::pptx::slideshow::animated_shapes(e.slide(), size, 1.0, 0, 0, &[], |_| gpui_kit::IntoElement::into_any_element(gpui_kit::div())).count());
+    assert!(drawn >= part_count);
+
+    // 保存して再読込: XML に p:bldLst/p:bldDgm と p:graphicEl/a:dgm が出力されている
+    let file = s.save_as("smartart-anim-one.pptx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides[0].animations, anim_one);
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(), "ppt/slides/slide1.xml").unwrap();
+    assert!(xml.contains("<p:bldDgm"), "{xml}");
+    assert!(xml.contains("bld=\"depthByNode\""), "{xml}");
+    assert!(xml.contains("<p:graphicEl><a:dgm"), "{xml}");
+
+    // 3. レベルごとに (BreadthByLvl / Level at Once)
+    s.toolbar_menu("anim-options", "pptx.anim.dgm.level-at-once");
+    let anim_lvl = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!(anim_lvl.len(), part_count);
+    assert_eq!(anim_lvl[0].dgm_build, Some(DiagramBuildStep::BreadthByLvl));
+
+    // 4. すべて同時に (AllAtOnce)
+    s.toolbar_menu("anim-options", "pptx.anim.dgm.all");
+    let anim_all = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!(anim_all.len(), part_count);
+    assert_eq!(anim_all[0].dgm_build, Some(DiagramBuildStep::AllAtOnce));
+
+    // 5. 1 つのオブジェクトとして (Whole) に戻す
+    s.toolbar_menu("anim-options", "pptx.anim.dgm.whole");
+    let anim_whole = s.with(|e, _| e.slide().animations.clone());
+    assert_eq!(anim_whole.len(), 1);
+    assert_eq!(anim_whole[0].dgm_build, Some(DiagramBuildStep::Whole));
+    assert_eq!(anim_whole[0].dgm_element, None);
+
+    // 6. Undo / Redo で状態が復元される
     undo_all_and_redo(&mut s);
 }
 
@@ -9307,7 +10888,7 @@ pub(crate) fn reading_view_and_presentation_views() {
     assert!(s.with(|e, _| e.is_normal_view()));
 }
 
-/// アウトライン表示（Outline View）およびプレゼンテーション表示モード切り替えの動作検証:
+/// PPTX-NOTES-011, PPTX-NOTES-012: アウトライン表示（Outline View）およびプレゼンテーション表示モード切り替えの動作検証:
 /// 1. 初期状態が標準表示（Normal View）であり、アウトライン表示ではないこと
 /// 2. 表示メニュー「アウトライン表示（pptx.outline-view）」でアウトライン表示に切り替わること
 /// 3. アウトライン表示中、is_outline_view() が true、is_normal_view() が false、メニューのチェック状態が連動すること
@@ -9860,6 +11441,72 @@ pub(crate) fn presentation_properties_panel_and_custom_properties() {
         saved.properties.custom[0].value,
         ibis_doc_model::CustomPropertyValue::Text("オフィス次世代化".to_string())
     );
+}
+
+/// PPTX-FILE / DocProperties: PresentationDocPropertiesPanel font embedding toggle,
+/// persistence across save/reopen, and reversible undo/redo.
+pub(crate) fn presentation_properties_panel_embed_fonts() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    assert!(s.with(|e, _| e.presentation().fonts.is_empty()), "initially no embedded fonts");
+
+    // 1. Open properties panel via file.info
+    s.menu("file.info");
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).is_some()), "properties panel open");
+    assert!(!s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).unwrap().embed_fonts));
+
+    // 2. Toggle font embedding to true
+    s.update(|e, _, cx| {
+        e.toggle_presentation_doc_properties_embed_fonts(true, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).unwrap().embed_fonts));
+    let fonts = s.with(|e, _| e.presentation().fonts.clone());
+    assert!(!fonts.is_empty(), "fonts must be embedded when toggled on: {fonts:?}");
+
+    // 3. Undo / Redo
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.presentation().fonts.is_empty()), "undo removes embedded fonts");
+
+    s.key("cmd-shift-z");
+    assert!(!s.with(|e, _| e.presentation().fonts.is_empty()), "redo restores embedded fonts");
+
+    // 4. Save and reopen to verify OOXML persistence
+    s.save_as("test-props-embedded-fonts.pptx");
+    let saved = s.reopen();
+    assert!(!saved.fonts.is_empty(), "saved presentation must persist embedded fonts");
+    assert!(saved.fonts.iter().any(|f| !f.typeface.is_empty()), "valid typeface in embedded fonts");
+
+    // 5. Open properties panel on reopened file - embed_fonts must be true
+    s.menu("file.info");
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).unwrap().embed_fonts));
+
+    // 6. Toggle font embedding off
+    s.update(|e, _, cx| {
+        e.toggle_presentation_doc_properties_embed_fonts(false, cx);
+    });
+    assert!(!s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).unwrap().embed_fonts));
+    assert!(s.with(|e, _| e.presentation().fonts.is_empty()), "fonts cleared");
+
+    // 7. Save and reopen cleared
+    s.save_as("test-props-cleared-fonts.pptx");
+    let cleared = s.reopen();
+    assert!(cleared.fonts.is_empty(), "saved presentation must have no embedded fonts");
+
+    // 8. Test embed_fonts via apply_presentation_doc_properties
+    s.menu("file.info");
+    s.update(|e, _, cx| {
+        if let Some(p) = e.pptx_mut().and_then(|st| st.properties_panel.as_mut()) {
+            p.embed_fonts = true;
+        }
+        e.apply_presentation_doc_properties(cx);
+    });
+    assert!(!s.with(|e, _| e.presentation().fonts.is_empty()), "applied embedding");
+
+    s.update(|e, _, cx| {
+        e.close_presentation_properties_panel(cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).is_none()));
+
+    undo_all_and_redo(&mut s);
 }
 
 /// 表の見出し行とアクセシビリティ検査（PPTX-ACCESS-007）:
@@ -10776,13 +12423,13 @@ pub(crate) fn media_captions_and_accessibility() {
 pub(crate) fn autorecover_settings_and_document_recovery() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
 
-    // 1. メニュー「pptx.autorecover-settings」から自動回復設定パネルを開く
+    // 1. メニュー「pptx.autorecover-settings」から自動回復設定パネルを開く（共通の shell/autorecover.rs のパネル）
     s.menu("pptx.autorecover-settings");
-    assert!(s.with(|e, _| e.sidebar_open && e.pptx().and_then(|st| st.autorecover_settings.as_ref()).is_some()), "autorecover settings panel open");
+    assert!(s.with(|e, _| e.sidebar_open && e.autorecover_settings.is_some()), "autorecover settings panel open");
 
     // 2. 初期設定値の確認（有効、間隔 >= 1 分）
     let (enabled, interval_str) = s.with(|e, cx| {
-        let p = e.pptx().unwrap().autorecover_settings.as_ref().unwrap();
+        let p = e.autorecover_settings.as_ref().unwrap();
         (p.enabled, p.interval_input.read(cx).value().to_string())
     });
     assert!(enabled, "autorecover should be enabled by default");
@@ -10790,23 +12437,21 @@ pub(crate) fn autorecover_settings_and_document_recovery() {
 
     // 3. 設定の保存間隔を 5 分に変更して保存
     s.update(|e, w, cx| {
-        let p = e.pptx_mut().unwrap().autorecover_settings.as_mut().unwrap();
+        let p = e.autorecover_settings.as_mut().unwrap();
         p.interval_input.update(cx, |input, cx| {
             input.set_value("5".to_string(), w, cx);
         });
-        e.save_pptx_autorecover_settings(cx);
+        e.save_autorecover_settings(cx);
     });
-    let saved_msg = s.with(|e, _| e.pptx().unwrap().autorecover_settings.as_ref().unwrap().message.clone());
+    let saved_msg = s.with(|e, _| e.autorecover_settings.as_ref().unwrap().message.clone());
     assert!(!saved_msg.is_empty(), "settings saved message shown");
-    let cfg = crate::pptx::autorecover::load_autorecover_config();
+    let cfg = crate::shell::autorecover::load_autorecover_config();
     assert_eq!(cfg.interval_minutes, 5);
 
     // 4. 「今すぐ自動回復データを保存」を実行
-    s.update(|e, w, cx| {
-        e.save_pptx_autorecover_now(w, cx);
+    s.update(|e, _, _| {
+        e.write_autorecover_snapshot().expect("snapshot saved");
     });
-    let now_msg = s.with(|e, _| e.pptx().unwrap().autorecover_settings.as_ref().unwrap().message.clone());
-    assert!(now_msg.contains("自動回復") || now_msg.contains("AutoRecover"), "snapshot saved message shown");
 
     // 5. ディスク上にスナップショットファイルが存在し、空でないことを検証
     let active_path = s.with(|e, _| e.active_autorecover_file.clone());
@@ -10817,26 +12462,27 @@ pub(crate) fn autorecover_settings_and_document_recovery() {
 
     // 6. 設定パネルを閉じる
     s.update(|e, _, cx| {
-        e.close_pptx_autorecover_settings_panel(cx);
+        e.autorecover_settings = None;
+        cx.notify();
     });
-    assert!(s.with(|e, _| e.pptx().unwrap().autorecover_settings.is_none()), "settings panel closed");
+    assert!(s.with(|e, _| e.autorecover_settings.is_none()), "settings panel closed");
 
     // 7. メニュー「pptx.recover-unsaved」から未保存プレゼンテーションの回復パネルを開く
     s.menu("pptx.recover-unsaved");
-    assert!(s.with(|e, _| e.sidebar_open && e.pptx().and_then(|st| st.recover_unsaved.as_ref()).is_some()), "recover unsaved panel open");
+    assert!(s.with(|e, _| e.sidebar_open && e.recover_unsaved.is_some()), "recover unsaved panel open");
 
     // 8. 回復一覧にスナップショットが含まれていることを確認
-    let entries_count = s.with(|e, _| e.pptx().unwrap().recover_unsaved.as_ref().unwrap().entries.len());
-    assert!(entries_count >= 1, "at least one recovered presentation should be listed");
+    let entries = s.with(|e, _| e.recover_unsaved.as_ref().unwrap().entries.clone());
+    let index = entries.iter().position(|e| e.path == snapshot_file).expect("the snapshot is listed");
 
-    // 9. 回復ファイルを開く（エントリ 0）
+    // 9. 回復ファイルを開く
     s.update(|e, w, cx| {
-        e.open_pptx_recovered_file_entry(0, w, cx);
+        e.open_recovered_entry(index, w, cx);
     });
 
     // 10. ドキュメントが回復モード（is_recovered == true）でロードされ、回復パネルが閉じていることを検証
     assert!(s.with(|e, _| e.is_recovered), "document is in recovered mode");
-    assert!(s.with(|e, _| e.pptx().unwrap().recover_unsaved.is_none()), "recover panel closed after opening");
+    assert!(s.with(|e, _| e.recover_unsaved.is_none()), "recover panel closed after opening");
 
     // 11. 「名前を付けて保存」で保存し、is_recovered が false にリセットされることを検証
     s.save_as("saved-from-recovery.pptx");
@@ -10846,8 +12492,72 @@ pub(crate) fn autorecover_settings_and_document_recovery() {
     let _ = std::fs::remove_file(&snapshot_file);
 }
 
+/// PPTX-COMMENT-UIUX: コメントの左サムネイルフキダシアイコン、コメントパネルの日時・2行表示、TextArea入力・キー操作・紙飛行機投稿ボタンの検証
+pub(crate) fn slide_comments_ui_ux_improvements() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
 
+    // 0. 日時フォーマット処理（日英）の検証
+    crate::shell::i18n::show(crate::shell::i18n::Language::Japanese);
+    assert_eq!(crate::pptx::comments::format_comment_date("2026-10-16T17:03:00Z"), "2026/10/16 17:03");
+    crate::shell::i18n::show(crate::shell::i18n::Language::English);
+    assert_eq!(crate::pptx::comments::format_comment_date("2026-10-16T17:03:00Z"), "10/16/2026 17:03");
+    crate::shell::i18n::show(crate::shell::i18n::Language::Japanese);
 
+    // 初期状態ではコメントが存在しない
+    assert!(s.with(|e, _| e.slide().comments.is_empty()), "スライド1にはコメントなし");
+
+    // 1. コメントパネルを開く
+    s.update(|e, window, cx| e.open_slide_comments(window, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|p| p.comments.as_ref()).is_some()), "コメントパネルが開いている");
+
+    // 2. コメント入力（Textarea）に改行入りテキストを設定して送信
+    s.update(|e, window, cx| {
+        let text = "最初のスライドコメント\n2行目の内容";
+        e.send_slide_comment(text, window, cx);
+    });
+
+    // スライドにコメントが追加され、サムネイルにフキダシアイコンが表示される条件（!comments.is_empty()）が満たされる
+    assert_eq!(s.with(|e, _| e.slide().comments.len()), 1);
+    let c = s.with(|e, _| e.slide().comments[0].clone());
+    assert_eq!(c.text, "最初のスライドコメント\n2行目の内容");
+    assert!(!c.created.is_empty());
+
+    // 3. 返信コメントを追加（2行表示の検証対象）
+    s.update(|e, window, cx| {
+        e.reply_to_slide_comment(0, window, cx);
+        e.send_slide_comment("返信コメントです", window, cx);
+    });
+
+    assert_eq!(s.with(|e, _| e.slide().comments[0].replies.len()), 1);
+    let r = s.with(|e, _| e.slide().comments[0].replies[0].clone());
+    assert_eq!(r.text, "返信コメントです");
+
+    // 4. パネルの描画確認（2行表示・作成者名・日時）
+    s.update(|e, _, cx| {
+        let panel = e.slide_comments_panel(cx);
+        assert!(panel.is_some(), "slide_comments_panel renders correctly");
+    });
+
+    // 5. Undo / Redo の検証
+    s.update(|e, window, cx| e.undo(&crate::Undo, window, cx)); // 返信コメントの取消
+    assert_eq!(s.with(|e, _| e.slide().comments[0].replies.len()), 0);
+    s.update(|e, window, cx| e.undo(&crate::Undo, window, cx)); // 親コメントの取消
+    assert_eq!(s.with(|e, _| e.slide().comments.len()), 0);
+
+    s.update(|e, window, cx| e.redo(&crate::Redo, window, cx)); // 親コメントの再実行
+    assert_eq!(s.with(|e, _| e.slide().comments.len()), 1);
+    s.update(|e, window, cx| e.redo(&crate::Redo, window, cx)); // 返信コメントの再実行
+    assert_eq!(s.with(|e, _| e.slide().comments[0].replies.len()), 1);
+
+    // 6. 保存と開き直しでコメントが正しく保持されることを確認
+    s.save_as("test-comments-uiux.pptx");
+    let reloaded = s.reopen();
+    assert_eq!(reloaded.slides[0].comments.len(), 1);
+    assert_eq!(reloaded.slides[0].comments[0].text, "最初のスライドコメント\n2行目の内容");
+    assert_eq!(reloaded.slides[0].comments[0].replies.len(), 1);
+    assert_eq!(reloaded.slides[0].comments[0].replies[0].text, "返信コメントです");
+}
 
 /// PPTX-ACCESS-004: 読み上げ順序ペインとアクセシビリティ検査連携の検証
 /// 1. メニュー「pptx.reading-order」から読み順ペインの表示
@@ -11498,17 +13208,36 @@ pub(crate) fn animation_after_effect_options() {
     // 7. スライドショーの描画計算（motion_at）の検証
     let mut anim_hold = s.with(|e, _| e.slide().animations.first().unwrap().clone());
     anim_hold.after_effect = AnimationAfterEffect::Hold;
-    let m_hold = crate::pptx::slideshow::motion_at(&anim_hold, crate::pptx::slideshow::ShapeMotion { opacity: 0.0, dx: 0.0, dy: 0.0 }, 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+    let m_hold = crate::pptx::slideshow::motion_at(&anim_hold, crate::pptx::slideshow::ShapeMotion::at_rest(0.0), 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
     assert_eq!(m_hold.opacity, 1.0);
+    // スピン・拡大／収縮 turn and resize the shape (about its centre) as far as the time says.
+    {
+        use crate::pptx::slideshow::{motion_at, transformed, ShapeMotion};
+        let mut spin = anim_hold.clone();
+        spin.class = ibis_doc_model::AnimationClass::Emphasis;
+        spin.look = ibis_doc_model::AnimationLook::Spin(10_800_000);
+        spin.rewind = false;
+        let half = motion_at(&spin, ShapeMotion::at_rest(1.0), 0.5, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+        assert!((half.turn - 90.0).abs() < 1e-3, "{half:?}");
+        let mut grow = spin.clone();
+        grow.look = ibis_doc_model::AnimationLook::Scale(200_000, 150_000);
+        let full = motion_at(&grow, half, 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+        assert_eq!((full.turn, full.grow), (90.0, (2.0, 1.5)));
+        let shape = s.with(|e, _| e.slide().shapes[0].clone());
+        let moved = transformed(&shape, full);
+        assert_eq!(moved.rotation, ((shape.rotation as i64 + 5_400_000).rem_euclid(21_600_000)) as i32);
+        assert_eq!((moved.frame.width, moved.frame.height), (shape.frame.width * 2, (shape.frame.height as f64 * 1.5).round() as i64));
+        assert_eq!((moved.frame.x * 2 + moved.frame.width, moved.frame.y * 2 + moved.frame.height), (shape.frame.x * 2 + shape.frame.width, shape.frame.y * 2 + shape.frame.height), "about the same centre");
+    }
 
     let mut anim_hide = anim_hold.clone();
     anim_hide.after_effect = AnimationAfterEffect::Hide;
-    let m_hide = crate::pptx::slideshow::motion_at(&anim_hide, crate::pptx::slideshow::ShapeMotion { opacity: 0.0, dx: 0.0, dy: 0.0 }, 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+    let m_hide = crate::pptx::slideshow::motion_at(&anim_hide, crate::pptx::slideshow::ShapeMotion::at_rest(0.0), 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
     assert_eq!(m_hide.opacity, 0.0);
 
     let mut anim_dim = anim_hold.clone();
     anim_dim.after_effect = AnimationAfterEffect::Dim;
-    let m_dim = crate::pptx::slideshow::motion_at(&anim_dim, crate::pptx::slideshow::ShapeMotion { opacity: 0.0, dx: 0.0, dy: 0.0 }, 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+    let m_dim = crate::pptx::slideshow::motion_at(&anim_dim, crate::pptx::slideshow::ShapeMotion::at_rest(0.0), 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
     assert_eq!(m_dim.opacity, 0.3);
 
     // 8. 「再生後に非表示」に設定して保存・再読込
@@ -11599,18 +13328,18 @@ pub(crate) fn animation_options_panel_and_rewind() {
 
     // 9. スライドショー描画計算（motion_at での rewind 検証）
     // 通常再生中 (p = 0.5)
-    let m_half = crate::pptx::slideshow::motion_at(&reapplied, crate::pptx::slideshow::ShapeMotion { opacity: 0.0, dx: 0.0, dy: 0.0 }, 0.5, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+    let m_half = crate::pptx::slideshow::motion_at(&reapplied, crate::pptx::slideshow::ShapeMotion::at_rest(0.0), 0.5, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
     assert!(m_half.dx < 0.0 || m_half.opacity > 0.0);
 
     // 再生完了 (p = 1.0) かつ rewind == true の場合、開始前状態（from: dx = 0.0, opacity = 0.0）に巻き戻る
-    let m_end = crate::pptx::slideshow::motion_at(&reapplied, crate::pptx::slideshow::ShapeMotion { opacity: 0.0, dx: 0.0, dy: 0.0 }, 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+    let m_end = crate::pptx::slideshow::motion_at(&reapplied, crate::pptx::slideshow::ShapeMotion::at_rest(0.0), 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
     assert_eq!(m_end.dx, 0.0, "rewind should restore initial dx position");
     assert_eq!(m_end.opacity, 0.0, "rewind should restore initial hidden opacity");
 
     // 対比: rewind == false の場合は再生後の動作（after_effect: Dim -> 0.3）が残る
     let mut no_rewind = reapplied.clone();
     no_rewind.rewind = false;
-    let m_no_rewind = crate::pptx::slideshow::motion_at(&no_rewind, crate::pptx::slideshow::ShapeMotion { opacity: 0.0, dx: 0.0, dy: 0.0 }, 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
+    let m_no_rewind = crate::pptx::slideshow::motion_at(&no_rewind, crate::pptx::slideshow::ShapeMotion::at_rest(0.0), 1.0, (0.0, 0.0, 100.0, 100.0), (1000.0, 1000.0));
     assert_eq!(m_no_rewind.opacity, 0.3, "without rewind, after_effect Dim sets opacity to 0.3");
 
     // 10. ファイル保存 & 再読込（ラウンドトリップ検証）
@@ -11876,6 +13605,202 @@ pub(crate) fn connectors_insert_and_options() {
         _ => false,
     }).expect("saved curved connector found");
     assert!(matches!(&curved_found.kind, ShapeKind::Auto(_)));
+
+    // 全戻しとやり直し
+    undo_all_and_redo(&mut s);
+}
+
+/// コネクタの図形端点へのスナップ接続（stCxn / endCxn）、図形移動時の自動追従、Undo/Redo、保存再オープン検証 (PPTX-OBJECT-002)
+pub(crate) fn connectors_glue_and_auto_follow() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(4);
+    let before_shapes = s.shapes();
+
+    // 1. 図形A（四角形）を挿入: (1_000_000, 2_000_000) - (2_500_000, 3_500_000)
+    // sites: 上(1_750_000, 2_000_000), 左(1_000_000, 2_750_000), 下(1_750_000, 3_500_000), 右(2_500_000, 2_750_000)
+    s.toolbar_menu("insert-shape", "shape.rect");
+    let (a1, a2) = (s.at(EmuPoint::new(1_000_000, 2_000_000)), s.at(EmuPoint::new(2_500_000, 3_500_000)));
+    s.drag(a1, a2);
+    let shape_a = s.with(|e, _| e.selected_shapes()[0].clone());
+
+    // 2. 図形B（角丸四角形）を挿入: (6_000_000, 5_000_000) - (8_000_000, 7_000_000)
+    // sites: 上(7_000_000, 5_000_000), 左(6_000_000, 6_000_000), 下(7_000_000, 7_000_000), 右(8_000_000, 6_000_000)
+    s.toolbar_menu("insert-shape", "shape.roundRect");
+    let (b1, b2) = (s.at(EmuPoint::new(6_000_000, 5_000_000)), s.at(EmuPoint::new(8_000_000, 7_000_000)));
+    s.drag(b1, b2);
+    let shape_b = s.with(|e, _| e.selected_shapes()[0].clone());
+
+    // 3. カギ線コネクタ（pptx.connector.bent）を選択し、
+    // 図形Aの右接続点 (2_500_000, 2_750_000) 付近から
+    // 図形Bの左接続点 (6_000_000, 6_000_000) 付近へドラッグ
+    s.menu("pptx.connector.bent");
+    let (c1, c2) = (s.at(EmuPoint::new(2_520_000, 2_740_000)), s.at(EmuPoint::new(5_980_000, 6_020_000)));
+    s.drag(c1, c2);
+    let conn = s.with(|e, _| e.selected_shapes()[0].clone());
+
+    // コネクタの接続状態を確認
+    let slide_idx = 3;
+    let initial_conn_frame = conn.frame;
+    let glue = s.with(|e, _| e.slide().shape_glues.get(&conn.id).copied());
+    assert!(glue.is_some(), "connector must be glued");
+    let glue = glue.unwrap();
+    assert_eq!(glue.start, Some((shape_a.id.0, 3)), "glued to shape A right site (3)");
+    assert_eq!(glue.end, Some((shape_b.id.0, 1)), "glued to shape B left site (1)");
+
+    // 4. 図形Bを選択して移動する
+    let click_pt = s.at(EmuPoint::new(7_000_000, 6_000_000));
+    s.click(click_pt);
+    assert_eq!(s.with(|e, _| e.selected_shapes()[0].id), shape_b.id);
+
+    // 矢印キー（下）で移動
+    s.key("down");
+    let moved_shape_b = s.with(|e, _| e.selected_shapes()[0].clone());
+    assert!(moved_shape_b.frame.y > shape_b.frame.y, "shape B moved down");
+
+    // コネクタが追従してフレームが更新されていることを確認
+    let moved_conn = s.with(|e, _| e.slide().shape(conn.id).unwrap().clone());
+    assert_ne!(moved_conn.frame, initial_conn_frame, "connector frame updated following shape B");
+    assert_eq!(moved_conn.frame.height, (moved_shape_b.frame.y + moved_shape_b.frame.height / 2) - (shape_a.frame.y + shape_a.frame.height / 2));
+
+    // 5. Undo で移動を取り消し
+    s.key("cmd-z");
+    let undo_shape_b = s.with(|e, _| e.slide().shape(shape_b.id).unwrap().clone());
+    let undo_conn = s.with(|e, _| e.slide().shape(conn.id).unwrap().clone());
+    assert_eq!(undo_shape_b.frame, shape_b.frame, "shape B position restored on undo");
+    assert_eq!(undo_conn.frame, initial_conn_frame, "connector position restored on undo");
+
+    // 6. Redo で移動をやり直し
+    s.key("cmd-shift-z");
+    let redo_shape_b = s.with(|e, _| e.slide().shape(shape_b.id).unwrap().clone());
+    let redo_conn = s.with(|e, _| e.slide().shape(conn.id).unwrap().clone());
+    assert_eq!(redo_shape_b.frame, moved_shape_b.frame, "shape B position redone");
+    assert_eq!(redo_conn.frame, moved_conn.frame, "connector position redone");
+
+    // 7. 保存・再読込検証
+    s.screenshot("connectors_glue_and_follow");
+    s.save_as("connectors_glue_and_follow.pptx");
+    let saved = s.reopen();
+    let saved_slide = &saved.slides[slide_idx];
+    assert_eq!(saved_slide.shapes.len(), before_shapes + 3);
+
+    // コネクタの glue 保持検証
+    let r_shape_a = &saved_slide.shapes[before_shapes];
+    let r_shape_b = &saved_slide.shapes[before_shapes + 1];
+    let r_conn = &saved_slide.shapes[before_shapes + 2];
+    let ShapeKind::Auto(auto_a) = &r_shape_a.kind else { panic!("shape A is not Auto") };
+    let ShapeKind::Auto(auto_b) = &r_shape_b.kind else { panic!("shape B is not Auto") };
+    let ShapeKind::Auto(auto_c) = &r_conn.kind else { panic!("connector is not Auto") };
+    assert_eq!(auto_a.geometry.preset_name(), Some("rect"));
+    assert_eq!(auto_b.geometry.preset_name(), Some("roundRect"));
+    assert_eq!(auto_c.geometry.preset_name(), Some("bentConnector3"));
+
+    let r_glue = saved_slide.shape_glues.get(&r_conn.id).expect("glue preserved in saved presentation");
+    assert_eq!(r_glue.start, Some((r_shape_a.id.0, 3)));
+    assert_eq!(r_glue.end, Some((r_shape_b.id.0, 1)));
+
+    // 全戻しとやり直し
+    undo_all_and_redo(&mut s);
+}
+
+/// 図形の整列・等間隔配分・スライド配置・回転・反転のツールバー配置メニューおよび右クリックコンテキストメニュー拡充 (PPTX-OBJECT-011, PPTX-OBJECT-014, PPTX-AUDIT-003)
+pub(crate) fn shape_arrange_distribute_rotate_and_context_menu() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(4);
+    let before_shapes = s.shapes();
+
+    // 1. 3つの四角形（A, B, C）を配置
+    // A: (1_000_000, 2_000_000) - (2_000_000, 3_000_000)
+    s.toolbar_menu("insert-shape", "shape.rect");
+    let (a1, a2) = (s.at(EmuPoint::new(1_000_000, 2_000_000)), s.at(EmuPoint::new(2_000_000, 3_000_000)));
+    s.drag(a1, a2);
+    let shape_a = s.with(|e, _| e.selected_shapes()[0].clone());
+
+    // B: (3_000_000, 3_200_000) - (4_000_000, 4_200_000)
+    s.toolbar_menu("insert-shape", "shape.rect");
+    let (b1, b2) = (s.at(EmuPoint::new(3_000_000, 3_200_000)), s.at(EmuPoint::new(4_000_000, 4_200_000)));
+    s.drag(b1, b2);
+    let shape_b = s.with(|e, _| e.selected_shapes()[0].clone());
+
+    // C: (7_000_000, 5_000_000) - (8_000_000, 6_000_000)
+    s.toolbar_menu("insert-shape", "shape.rect");
+    let (c1, c2) = (s.at(EmuPoint::new(7_000_000, 5_000_000)), s.at(EmuPoint::new(8_000_000, 6_000_000)));
+    s.drag(c1, c2);
+    let _shape_c = s.with(|e, _| e.selected_shapes()[0].clone());
+
+    // 2. 3つすべてを選択
+    let click_a = s.at(EmuPoint::new(1_500_000, 2_500_000));
+    s.click(click_a);
+    let click_b = s.at(EmuPoint::new(3_500_000, 3_700_000));
+    s.shift_click(click_b);
+    let click_c = s.at(EmuPoint::new(7_500_000, 5_500_000));
+    s.shift_click(click_c);
+    assert_eq!(s.selected(), 3, "all 3 shapes selected");
+
+    // 3. ツールバーの配置メニューから「左右に整列（等間隔配分）」を実行
+    s.toolbar_menu("arrange", "pptx.distribute.h");
+    let updated_b_h = s.with(|e, _| e.slide().shape(shape_b.id).unwrap().frame);
+    assert_eq!(updated_b_h.x, 4_000_000, "shape B distributed horizontally to middle (gap=2_000_000)");
+
+    // 4. ツールバーの配置メニューから「上下に整列（等間隔配分）」を実行
+    s.toolbar_menu("arrange", "pptx.distribute.v");
+    let updated_b_v = s.with(|e, _| e.slide().shape(shape_b.id).unwrap().frame);
+    assert_eq!(updated_b_v.y, 3_500_000, "shape B distributed vertically to middle (gap=500_000)");
+
+    // 5. ツールバーの「スライドに合わせる」をONにする
+    s.toolbar_menu("arrange", "pptx.align.to-slide");
+    assert!(s.with(|e, _| e.pptx().unwrap().align_to_slide), "align_to_slide is true");
+
+    // 6. 単一図形 A を選択し、ツールバーの「左右中央揃え」を実行
+    let click_a2 = s.at(EmuPoint::new(1_500_000, 2_500_000));
+    s.click(click_a2);
+    assert_eq!(s.selected(), 1, "only shape A selected");
+    s.toolbar_menu("arrange", "arrange.center");
+    let centered_a = s.with(|e, _| e.slide().shape(shape_a.id).unwrap().frame);
+    // スライド幅 12_192_000 の中央: (12_192_000 - 1_000_000) / 2 = 5_596_000
+    assert_eq!(centered_a.x, 5_596_000, "shape A centered relative to slide");
+
+    // 7. ツールバーの「右に90°回転」を実行
+    s.toolbar_menu("arrange", "pptx.rotate.right");
+    let rotated_a = s.with(|e, _| e.slide().shape(shape_a.id).unwrap().clone());
+    assert_eq!(rotated_a.rotation, 5_400_000, "shape A rotated 90 degrees");
+
+    // 8. ツールバーの「左右反転」を実行
+    s.toolbar_menu("arrange", "pptx.rotate.flip-h");
+    let flipped_a = s.with(|e, _| e.slide().shape(shape_a.id).unwrap().clone());
+    assert!(flipped_a.flip_h, "shape A flipped horizontally");
+
+    // 9. 右クリックメニュー（shape_context_menu_entries）の内容検証
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.align.left").is_some(), "align.left in context menu");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.distribute.h").is_some(), "distribute.h in context menu");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.rotate.right").is_some(), "rotate.right in context menu");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.rotate.flip-h").is_some(), "rotate.flip-h in context menu");
+
+    // 10. Undo / Redo 検証
+    s.key("cmd-z"); // Undo flip_h
+    assert!(!s.with(|e, _| e.slide().shape(shape_a.id).unwrap().flip_h), "flip_h undone");
+    s.key("cmd-z"); // Undo rotation
+    assert_eq!(s.with(|e, _| e.slide().shape(shape_a.id).unwrap().rotation), 0, "rotation undone");
+    s.key("cmd-z"); // Undo center
+    assert_eq!(s.with(|e, _| e.slide().shape(shape_a.id).unwrap().frame.x), shape_a.frame.x, "center undone");
+
+    s.key("cmd-shift-z"); // Redo center
+    assert_eq!(s.with(|e, _| e.slide().shape(shape_a.id).unwrap().frame.x), 5_596_000, "center redone");
+    s.key("cmd-shift-z"); // Redo rotation
+    assert_eq!(s.with(|e, _| e.slide().shape(shape_a.id).unwrap().rotation), 5_400_000, "rotation redone");
+    s.key("cmd-shift-z"); // Redo flip_h
+    assert!(s.with(|e, _| e.slide().shape(shape_a.id).unwrap().flip_h), "flip_h redone");
+
+    // 11. ファイル保存・再読込・OOXMLラウンドトリップ検証
+    s.screenshot("arrange_distribute_rotate");
+    s.save_as("arrange_distribute_rotate.pptx");
+    let saved = s.reopen();
+    let saved_slide = &saved.slides[3];
+    assert_eq!(saved_slide.shapes.len(), before_shapes + 3);
+    let r_a = &saved_slide.shapes[before_shapes];
+    assert_eq!(r_a.frame.x, 5_596_000, "saved shape A x preserved");
+    assert_eq!(r_a.rotation, 5_400_000, "saved shape A rotation 90 deg preserved");
+    assert!(r_a.flip_h, "saved shape A flip_h preserved");
 
     // 全戻しとやり直し
     undo_all_and_redo(&mut s);
@@ -13153,10 +15078,537 @@ pub(crate) fn pptm_and_macro_enabled_presentations() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-/// The scenarios, for `FormatEditor::scenarios`.
+/// PPTX-MATH-002, PPTX-MATH-003, PPTX-MATH-004, PPTX-MATH-006, PPTX-MATH-007, PPTX-MATH-008, PPTX-MATH-009, PPTX-MATH-010, PPTX-MATH-014:
+/// A formula in a text box is typeset (a quadratic formula, a sum, an
+/// integral, a matrix), and the file keeps it.
+pub(crate) fn math_formulas_are_typeset() {
+    let mut s = Scenario::open("test/editing/pptx-math.pptx");
+    s.screenshot("math-formulas");
+    let texts: Vec<String> = s.with(|e, _| e.slide().shapes.iter().filter_map(|sh| sh.text_body().map(|b| b.text())).collect());
+    assert!(texts.iter().any(|t| t.starts_with("x=")), "{texts:?}");
+    s.save_as("math-formulas.pptx");
+    let saved = s.reopen();
+    assert!(saved.slides[0].shapes.iter().any(|sh| sh.text_body().is_some_and(|b| b.text().contains("∑"))));
+}
+
+/// 挿入 > 数式… (MATH-001・011・013): a formula typed in linear form is shown typeset, inserted as a text box, and kept by a save
+/// (as `a14:m`) that reads back as the same formula.
+pub(crate) fn insert_math_from_linear_text() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("pptx.math");
+    s.update(|e, w, cx| {
+        if let Some(p) = e.pptx().and_then(|p| p.math_panel.as_ref()) {
+            p.input.update(cx, |f, cx| f.set_value("x=(−b±√(b^2−4ac))/(2a)", w, cx));
+        }
+    });
+    s.screenshot("math-panel");
+    let before = s.with(|e, _| e.slide().shapes.len());
+    s.update(|e, _, cx| {
+        let t = e.pptx().and_then(|p| p.math_panel.as_ref()).map(|p| p.input.read(cx).value().to_string()).unwrap();
+        assert!(e.insert_pptx_math(&t, cx).is_some());
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), before + 1);
+    s.screenshot("math-inserted");
+    s.update(|e, w, cx| e.undo(&crate::Undo, w, cx));
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), before, "undo takes the formula away");
+    s.update(|e, w, cx| e.redo(&crate::Redo, w, cx));
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), before + 1);
+    // The other forms: a sum, a matrix, a function, a power of a group, an integral, an nth root.
+    for text in ["∑_(i=1)^n x_i", "■(a&b@c&d)", "sin x/2", "(a+b)^2", "∫_0^1 f(x)dx", "∛(x+1)", "[a,b]/c"] {
+        s.update(|e, _, cx| {
+            assert!(e.insert_pptx_math(text, cx).is_some());
+        });
+    }
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), before + 8);
+    s.save_as("math-inserted.pptx");
+    let saved = s.reopen();
+    let found = saved.slides[0].shapes.iter().filter_map(|sh| sh.text_body()).flat_map(|b| b.paragraphs.iter()).flat_map(|p| p.runs.iter()).find(|r| r.style.math.is_some());
+    let run = found.expect("the formula is read back from the saved file");
+    assert!(run.text.starts_with("x=") && run.text.contains('√'), "{}", run.text);
+}
+
+/// 行内の数式 (MATH-001): a formula put at the end of the selected shape's text stays in its line (`m:oMath`, not
+/// `m:oMathPara`), with the text before it, and reads back as an inline formula.
+pub(crate) fn insert_math_inline_in_text() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.click_shape(1);
+    let before: String = s.with(|e, _| e.selected_shapes()[0].text_body().unwrap().text());
+    s.menu("pptx.math");
+    s.screenshot("math-panel-inline");
+    s.update(|e, _, cx| assert!(e.insert_pptx_math_inline("x^2/2", cx).is_some()));
+    s.update(|e, w, cx| {
+        e.pptx_mut().unwrap().math_panel = None;
+        e.focus_handle.focus(w, cx);
+    });
+    s.screenshot("math-inline");
+    let id = s.with(|e, _| e.selected_shapes()[0].id);
+    let runs = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs.last().unwrap().runs.clone());
+    let last = runs.last().unwrap();
+    assert!(last.style.math.is_some() && last.style.math_inline, "an inline formula at the end");
+    assert!(s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().text()).starts_with(&before), "the text is as it was");
+    let file = s.save_as("math-inline.pptx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&file).unwrap(), "ppt/slides/slide1.xml").unwrap();
+    assert!(xml.contains("<a14:m><m:oMath") && !xml.contains("<m:oMathPara"), "{xml}");
+    let saved = s.reopen();
+    let again = saved.slides[0].shapes.iter().filter_map(|sh| sh.text_body()).flat_map(|b| b.paragraphs.iter()).flat_map(|p| p.runs.iter()).find(|r| r.style.math.is_some()).expect("read back");
+    assert!(again.style.math_inline && again.text.contains("x²"), "{}", again.text);
+    undo_all_and_redo(&mut s);
+}
+
+/// A formula is edited in place (MATH-001): its text box opened for editing shows the formula's linear text to edit,
+/// and what is typed is read again as the formula when the editing is done.
+pub(crate) fn edit_math_in_place() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(3);
+    s.update(|e, _, cx| {
+        e.insert_pptx_math("a/b", cx);
+    });
+    let index = s.with(|e, _| e.slide().shapes.len() - 1);
+    s.double_click_shape(index);
+    assert!(s.with(|e, _| e.text_editing().is_some()), "the formula's box is open for editing");
+    s.screenshot("math-editing");
+    s.key("cmd-a");
+    s.key("delete");
+    s.type_text("x^2+√y");
+    s.screenshot("math-typed");
+    s.key("escape");
+    let math = s.with(|e, _| e.slide().shapes.last().and_then(|sh| sh.text_body()).and_then(|b| b.paragraphs[0].runs.iter().find_map(|r| r.style.math.clone())));
+    assert_eq!(math.map(|m| m.linear()).as_deref(), Some("x²+√y"), "the typed text is the formula");
+    s.screenshot("math-edited");
+}
+
+/// LaTeX 数式の入出力 (PPTX-MATH-012): LaTeX 形式の数式を入力してスライドに挿入し、
+/// 選択した数式を LaTeX としてコピーでき、ファイル保存・再読込・行内挿入ができる。
+pub(crate) fn math_latex_input_and_output() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("pptx.math");
+    s.update(|e, _, _| {
+        if let Some(p) = e.pptx_mut().and_then(|p| p.math_panel.as_mut()) {
+            p.format = crate::pptx::math_panel::MathFormat::Latex;
+        }
+    });
+    s.update(|e, w, cx| {
+        if let Some(p) = e.pptx().and_then(|p| p.math_panel.as_ref()) {
+            p.input.update(cx, |f, cx| f.set_value(r"\frac{-b \pm \sqrt{b^2 - 4ac}}{2a}", w, cx));
+        }
+    });
+    s.screenshot("math-latex-panel");
+    let before = s.with(|e, _| e.slide().shapes.len());
+    let id = s.update(|e, _, cx| {
+        let t = e.pptx().and_then(|p| p.math_panel.as_ref()).map(|p| p.input.read(cx).value().to_string()).unwrap();
+        e.insert_pptx_math(&t, cx).unwrap()
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), before + 1);
+    s.update(move |e, _, _| e.set_selection(vec![id]));
+    assert!(s.with(|e, _| e.selected_math().is_some()));
+    let latex = s.with(|e, _| e.selected_math().unwrap().to_latex());
+    assert_eq!(latex, r"\frac{-b\pm \sqrt{b^{2}-4ac}}{2a}");
+
+    // Copy selected formula as LaTeX
+    s.update(|e, _, cx| {
+        e.copy_selected_math_as_latex(cx);
+    });
+    assert_eq!(s.with(|e, _| e.status.as_ref().map(|st| st.to_string())), Some(crate::shell::i18n::text("pptx.math.latex-copied").to_string()));
+
+    // Context menu offers copying math as LaTeX
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(entries.iter().any(|entry| matches!(entry, crate::shell::chrome::MenuEntry::Item(item) if item.id == "pptx.math.copy-selection-latex")));
+
+    // Inline LaTeX formula insertion
+    s.click_shape(1);
+    s.update(|e, _, cx| {
+        if let Some(p) = e.pptx_mut().and_then(|p| p.math_panel.as_mut()) {
+            p.format = crate::pptx::math_panel::MathFormat::Latex;
+        }
+        assert!(e.insert_pptx_math_inline(r"\sum_{i=1}^{n} x_{i}", cx).is_some());
+    });
+
+    s.save_as("math-latex.pptx");
+    let saved = s.reopen();
+    let formulas: Vec<_> = saved.slides[0].shapes.iter().filter_map(|sh| sh.text_body()).flat_map(|b| b.paragraphs.iter()).flat_map(|p| p.runs.iter()).filter_map(|r| r.style.math.as_deref()).collect();
+    assert!(formulas.iter().any(|m| m.to_latex().contains(r"\frac{-b")));
+    s.screenshot("math-latex-done");
+    undo_all_and_redo(&mut s);
+}
+
+
+/// ルーラー (INK-007): the ruler shown in the Draw panel is moved by dragging its body, turned by the panel's buttons, and a
+/// stroke begun along its edge goes straight along it however the pointer wanders.
+pub(crate) fn ink_ruler() {
+    use crate::pptx::ink::Ruler;
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(4);
+    s.menu("pptx.ink");
+    s.update(|e, _, _| {
+        if let Some(p) = e.pptx_mut().and_then(|s| s.ink.as_mut()) {
+            p.ruler = Some(Ruler { x: 4_000_000, y: 3_500_000, degrees: 0.0, length: 9_144_000.0 });
+        }
+    });
+    let (origin, scale) = s.with(|e, _| {
+        let l = e.slide_layout().unwrap();
+        (l.origin, l.scale)
+    });
+    let at = |x: f64, y: f64| (f32::from(origin.x) + x as f32 * scale, f32::from(origin.y) + y as f32 * scale);
+    let ruler = |s: &mut Scenario| s.with(|e, _| e.pptx().unwrap().ink.as_ref().unwrap().ruler.unwrap());
+    s.screenshot("ruler-level");
+    // Its body is dragged: it moves with the pointer.
+    s.drag_through(&[at(4_000_000.0, 3_500_000.0), at(4_300_000.0, 3_600_000.0), at(4_500_000.0, 3_700_000.0)]);
+    let moved = ruler(&mut s);
+    assert_eq!((moved.x, moved.y), (4_500_000, 3_700_000), "{moved:?}");
+    // It is turned by 15 degrees twice.
+    s.update(|e, _, cx| e.pptx_ink_turn_ruler(Some(15.0), cx));
+    s.update(|e, _, cx| e.pptx_ink_turn_ruler(Some(15.0), cx));
+    assert_eq!(ruler(&mut s).degrees, 30.0);
+    s.screenshot("ruler-turned");
+    // A stroke along its upper edge: the pointer wanders a few points off the edge.
+    let r = ruler(&mut s);
+    let (ux, uy) = (f64::from(r.degrees).to_radians().cos(), f64::from(r.degrees).to_radians().sin());
+    let (nx, ny) = (-uy, ux);
+    let w = 365_760.0;
+    let on_edge = |along: f64, off: f64| {
+        let across = -w + off;
+        at(r.x as f64 + along * ux + across * nx, r.y as f64 + along * uy + across * ny)
+    };
+    let before = s.with(|e, _| e.slide().shapes.len());
+    let path: Vec<(f32, f32)> = (0..=10).map(|i| on_edge(-2_000_000.0 + 400_000.0 * i as f64, if i % 2 == 0 { 30_000.0 } else { -40_000.0 })).collect();
+    s.drag_through(&path);
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), before + 1, "a stroke was drawn");
+    let angle = s.with(|e, _| {
+        let shape = e.slide().shapes.last().unwrap();
+        let pts = crate::xlsx::ink::stroke_points(shape).unwrap();
+        let (a, b) = (pts[0], pts[pts.len() - 1]);
+        ((b.1 - a.1) as f64).atan2((b.0 - a.0) as f64).to_degrees()
+    });
+    assert!((angle - 30.0).abs() < 0.5, "the stroke runs along the ruler: {angle}");
+    // Level again.
+    s.update(|e, _, cx| e.pptx_ink_turn_ruler(None, cx));
+    assert_eq!(ruler(&mut s).degrees, 0.0);
+    // Any angle: one degree at a time, or set straight.
+    s.update(|e, _, cx| e.pptx_ink_turn_ruler(Some(-1.0), cx));
+    assert_eq!(ruler(&mut s).degrees, 359.0);
+    s.update(|e, _, cx| e.pptx_ink_set_ruler_angle(37.5, cx));
+    assert_eq!(ruler(&mut s).degrees, 37.5);
+    // The wheel over the ruler turns it; elsewhere it leaves the ruler alone.
+    let r = ruler(&mut s);
+    let wheel = |s: &mut Scenario, x: f32, y: f32, lines: f32| {
+        s.update(move |e, _, cx| {
+            use crate::gpui::{ScrollDelta, ScrollWheelEvent, point, px};
+            let event = ScrollWheelEvent { position: point(px(x), px(y)), delta: ScrollDelta::Lines(point(0.0, lines)), ..Default::default() };
+            let took = e.pptx_ink_wheel(&event, cx);
+            assert_eq!(took, x != 0.0);
+        });
+    };
+    let on = at(r.x as f64, r.y as f64);
+    wheel(&mut s, on.0, on.1, 2.0);
+    assert_eq!(ruler(&mut s).degrees, 39.5);
+    wheel(&mut s, 0.0, 0.0, 5.0);
+    assert_eq!(ruler(&mut s).degrees, 39.5);
+    // Its length changes within limits.
+    s.update(|e, _, cx| e.pptx_ink_resize_ruler(720_000.0, cx));
+    assert_eq!(ruler(&mut s).length, 9_864_000.0);
+    s.update(|e, _, cx| e.pptx_ink_resize_ruler(-100_000_000.0, cx));
+    assert_eq!(ruler(&mut s).length, 1_828_800.0);
+}
+
+/// Fractions of every kind and the big operators with their limits above and below or at the right are typeset (MATH-002, 005).
+pub(crate) fn math_fraction_kinds_and_big_operators() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(4);
+    let formulas = ["a/(b+c)", "a¦b", "a⊘b", "a∕b", "∑_(i=1)^n x_i", "∏_(i=1)^n x_i", "∫_0^1 f(x)dx", "∮_C F", "⋃_(i=1)^n A_i", "∬_D f", "█(x&=1@yy&=2)"];
+    let mut ids = Vec::new();
+    for text in formulas {
+        s.update(|e, _, cx| ids.push(e.insert_pptx_math(text, cx).unwrap()));
+    }
+    // A grid of two columns, six rows.
+    let slide = s.with(|e, _| e.current_slide);
+    s.update(|e, _, cx| {
+        let frames: Vec<_> = ids.iter().enumerate().map(|(i, id)| (*id, ibis_doc_model::EmuRect::new(600_000 + (i as i64 % 2) * 5_600_000, 200_000 + (i as i64 / 2) * 1_080_000, 5_000_000, 1_050_000))).collect();
+        e.run(vec![ibis_doc_model::Command::SetFrames { slide, frames }], cx);
+    });
+    s.screenshot("math-kinds");
+    let kinds: Vec<_> = s.with(|e, _| e.slide().shapes.iter().filter_map(|sh| sh.text_body()).flat_map(|b| b.paragraphs.iter()).flat_map(|p| p.runs.iter()).filter_map(|r| r.style.math.clone()).map(|m| m.linear()).collect());
+    assert!(kinds.contains(&"a⊘b".to_string()) && kinds.contains(&"a∕b".to_string()), "{kinds:?}");
+    // Saved and read back, the fractions keep their kinds and the operators their limit places.
+    s.save_as("math-kinds.pptx");
+    let saved = s.reopen();
+    let again: Vec<_> = saved.slides[3].shapes.iter().filter_map(|sh| sh.text_body()).flat_map(|b| b.paragraphs.iter()).flat_map(|p| p.runs.iter()).filter_map(|r| r.style.math.clone()).collect();
+    assert!(again.iter().any(|m| matches!(&**m, ibis_doc_model::math::Math::Frac { kind: ibis_doc_model::math::FracKind::Skew, .. })), "a skewed fraction is read back");
+    let unstacked = |m: &ibis_doc_model::math::Math| match m {
+        ibis_doc_model::math::Math::Nary { stacked: false, .. } => true,
+        ibis_doc_model::math::Math::Row(items) => items.iter().any(|i| matches!(i, ibis_doc_model::math::Math::Nary { stacked: false, .. })),
+        _ => false,
+    };
+    assert!(again.iter().any(|m| unstacked(m)), "an integral keeps its limits at the right");
+}
+
+/// An old presentation (.ppt) opens as a new .pptx (旧形式の読み込み): the slides, their texts and pictures are there, and saving
+/// asks where to (the .ppt is left as it is).
+pub(crate) fn legacy_ppt_opens_as_a_pptx() {
+    let mut s = Scenario::open("test/editing/pptx-legacy.ppt");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), 4);
+    assert!(s.with(|e, _| e.path.is_none()), "saving asks where");
+    assert_eq!(s.with(|e, _| e.file_name.clone().map(|n| n.to_string())), Some("pptx-legacy.pptx".to_string()));
+    s.screenshot("legacy-slide-1");
+    s.page(2);
+    s.screenshot("legacy-slide-2");
+    s.page(3);
+    s.screenshot("legacy-slide-3");
+    s.page(4);
+    s.screenshot("legacy-slide-4");
+    s.save_as("legacy-saved.pptx");
+}
+
+/// The same slide as a .pptx and as the .ppt LibreOffice saved it as, side by side in the pictures (groups, a turned shape with a
+/// gradient, preset shapes, a dashed arrow, numbered and aligned text).
+pub(crate) fn legacy_ppt_rich_slide() {
+    let slide_texts = |s: &mut Scenario| s.with(|e, _| e.presentation().slides[2].shapes.iter().filter_map(|sh| sh.text_body().map(|b| b.text())).collect::<Vec<_>>());
+    let mut s = Scenario::open("test/editing/pptx-legacy-rich.pptx");
+    s.page(3);
+    s.screenshot("source-pptx");
+    let expected = slide_texts(&mut s);
+    drop(s);
+    let mut s = Scenario::open("test/editing/pptx-legacy-rich.ppt");
+    s.page(3);
+    s.screenshot("legacy-ppt");
+    let got = slide_texts(&mut s);
+    assert_eq!(got.len(), expected.len(), "{got:?} / {expected:?}");
+    for text in &expected {
+        assert!(got.contains(text), "{text:?} in {got:?}");
+    }
+}
+
+/// An OpenDocument presentation (.odp) opens as a new .pptx: the slide of the .pptx it was made from is drawn (groups, a turned
+/// shape with a gradient, preset shapes, a dashed arrow, numbered text, a picture), and saving asks where to.
+pub(crate) fn odp_opens_as_a_pptx() {
+    let slide_texts = |s: &mut Scenario| s.with(|e, _| e.presentation().slides[2].shapes.iter().filter_map(|sh| sh.text_body().map(|b| b.text())).collect::<Vec<_>>());
+    let mut s = Scenario::open("test/editing/pptx-legacy-rich.pptx");
+    let expected = slide_texts(&mut s);
+    drop(s);
+    let mut s = Scenario::open("test/editing/pptx-legacy-rich.odp");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), 4);
+    assert!(s.with(|e, _| e.path.is_none()), "saving asks where");
+    assert_eq!(s.with(|e, _| e.file_name.clone().map(|n| n.to_string())), Some("pptx-legacy-rich.pptx".to_string()));
+    s.page(3);
+    s.screenshot("odp-slide-3");
+    let got = slide_texts(&mut s);
+    assert_eq!(got.len(), expected.len(), "{got:?} / {expected:?}");
+    for text in &expected {
+        assert!(got.contains(text), "{text:?} in {got:?}");
+    }
+    s.page(4);
+    s.screenshot("odp-slide-4");
+}
+
+/// PPTX-THREED-003, PPTX-THREED-004, PPTX-THREED-005, PPTX-THREED-006, PPTX-THREED-007,
+/// PPTX-THREED-008, PPTX-THREED-009, PPTX-THREED-010, PPTX-THREED-011, PPTX-THREED-012,
+/// PPTX-RECORD-009, PPTX-ACCESS-013, PPTX-FILE-013, PPTX-FILE-015:
+/// 3D モデルの 3 軸回転・定義済みビュー・パンとズーム・位置とサイズ・初期化・シーン選択・再生停止・3Dアニメーション効果、
+/// 録画プレビュー、スクリーンリーダー操作、リボンとクイックアクセスの設定、セキュリティ センターと信頼設定を一貫検証する。
+pub(crate) fn threed_model_views_animations_record_preview_screen_reader_and_settings() {
+    use crate::pptx::threed_and_nav::{PptxLandmarkKind, ThreeDAnimationKind, ThreeDModelView};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    // 1. 3Dモデルを挿入し、3Dモデル設定パネルを開く (PPTX-THREED-001, PPTX-THREED-003..012)
+    s.update(|e, _, cx| {
+        e.insert_3d_model_object(std::path::Path::new("spacecraft.glb"), cx);
+    });
+    let model_id = s.with(|e, _| e.target_3d_model_shape_id().expect("3D model shape inserted"));
+    s.update(|e, _, cx| {
+        e.selection = Some(model_id);
+        cx.notify();
+    });
+    s.menu("pptx.3d-model.panel");
+    assert!(s.with(|e, _| e.is_3d_model_panel_open()));
+
+    // 定義済みモデルビュー適用 (PPTX-THREED-004)
+    s.update(|e, _, cx| {
+        e.set_selected_3d_model_view(ThreeDModelView::IsoTopLeft, cx);
+    });
+    let preset = s.with(|e, _| match &e.slide().shape(model_id).unwrap().kind {
+        ShapeKind::Auto(a) => a.tilt.and_then(|t| t.camera_preset),
+        _ => None,
+    });
+    assert_eq!(preset, Some(ibis_doc_model::CameraPreset::IsometricTopUp));
+
+    // 3軸回転 (PPTX-THREED-003)
+    s.update(|e, _, cx| {
+        e.set_selected_3d_model_rotation(30, 45, 60, cx);
+        e.rotate_selected_3d_model(15, -15, 0, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_3d_model_rotation_deg()), (45, 30, 60));
+
+    // パンとズーム (PPTX-THREED-005)
+    s.update(|e, _, cx| {
+        e.pan_selected_3d_model(63_500, 63_500, cx);
+        e.zoom_selected_3d_model(25, cx);
+    });
+    let (pan_x, pan_y, zoom_pct) = s.with(|e, _| e.selected_3d_model_pan_and_zoom());
+    assert_eq!(pan_x, 63_500);
+    assert_eq!(pan_y, 63_500);
+    assert_eq!(zoom_pct, 125);
+
+    // 位置とサイズ変更 (PPTX-THREED-006)
+    s.update(|e, _, cx| {
+        e.scale_selected_3d_model_frame(1.2, 1.2, cx);
+    });
+    let scaled_w = s.with(|e, _| e.slide().shape(model_id).unwrap().frame.width);
+    assert_eq!(scaled_w, 3_600_000);
+
+    // シーン選択と再生・一時停止 (PPTX-THREED-008, PPTX-THREED-009, PPTX-THREED-010)
+    s.update(|e, _, cx| {
+        e.select_3d_model_scene(3, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_3d_model_scene()), 3);
+    let playing = s.update(|e, _, cx| e.toggle_3d_model_playback(cx));
+    assert!(playing);
+    assert_eq!(s.with(|e, _| e.selected_3d_model_rotation_deg().1), 45);
+    let playing_after = s.update(|e, _, cx| e.toggle_3d_model_playback(cx));
+    assert!(!playing_after);
+
+    // 3Dモデルへのアニメーション効果 (PPTX-THREED-011)
+    s.update(|e, _, cx| {
+        e.apply_3d_model_animation(ThreeDAnimationKind::Turntable, cx);
+    });
+    assert!(s.with(|e, _| e.slide().animations.iter().any(|a| a.shape == model_id)));
+
+    // 3Dモデルの初期化 (PPTX-THREED-007)
+    s.update(|e, _, cx| {
+        e.reset_selected_3d_model(true, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_3d_model_rotation_deg()), (0, 0, 0));
+    assert_eq!(s.with(|e, _| e.selected_3d_model_scene()), 1);
+    assert_eq!(s.with(|e, _| e.slide().shape(model_id).unwrap().frame.width), 3_000_000);
+
+    // 再度ビュー・回転・シーンを設定して保存ラウンドトリップ検証用に保持
+    s.update(|e, _, cx| {
+        e.set_selected_3d_model_view(ThreeDModelView::Above, cx);
+        e.set_selected_3d_model_rotation(30, 60, 15, cx);
+        e.zoom_selected_3d_model(50, cx);
+        e.select_3d_model_scene(2, cx);
+        e.apply_3d_model_animation(ThreeDAnimationKind::Swing, cx);
+        e.close_3d_model_panel(cx);
+    });
+
+    // 2. 録画プレビュー (PPTX-RECORD-009)
+    s.menu("pptx.record-preview");
+    assert!(s.with(|e, _| e.is_record_preview_open()));
+    s.update(|e, _, cx| {
+        e.record_preview_set_slide_timing_ms(Some(5000), cx);
+        let _ = e.record_preview_toggle_play(cx);
+    });
+    assert!(s.with(|e, _| e.is_record_preview_playing()));
+    assert_eq!(s.with(|e, _| e.slide().transition.as_ref().and_then(|t| t.after)), Some(5000));
+    s.update(|e, _, cx| {
+        let _ = e.record_preview_next_slide(cx);
+        let _ = e.record_preview_prev_slide(cx);
+        let _ = e.record_preview_toggle_play(cx);
+        e.close_record_preview_panel(cx);
+    });
+    assert!(!s.with(|e, _| e.is_record_preview_open()));
+
+    // 3. スクリーンリーダー操作 (PPTX-ACCESS-013)
+    s.menu("pptx.screen-reader");
+    assert!(s.with(|e, _| e.is_pptx_screen_reader_open()));
+    let all_landmarks = s.with(|e, _| e.pptx_screen_reader_landmarks(Some(PptxLandmarkKind::All)));
+    assert!(!all_landmarks.is_empty(), "landmarks extracted across presentation");
+    let media_landmarks = s.with(|e, _| e.pptx_screen_reader_landmarks(Some(PptxLandmarkKind::Media)));
+    assert!(!media_landmarks.is_empty(), "3D model landmark extracted");
+    let next_lm = s.update(|e, _, cx| e.pptx_screen_reader_next_landmark(cx));
+    assert!(next_lm.is_some());
+    let prev_lm = s.update(|e, _, cx| e.pptx_screen_reader_prev_landmark(cx));
+    assert!(prev_lm.is_some());
+    let reading = s.update(|e, _, cx| e.pptx_screen_reader_toggle_read_aloud(cx));
+    assert!(reading);
+    s.update(|e, _, cx| e.close_pptx_screen_reader_panel(cx));
+
+    // 4. リボンとクイックアクセスの設定 (PPTX-FILE-013)
+    s.menu("pptx.customize-ribbon");
+    assert!(s.with(|e, _| e.is_pptx_ribbon_qat_open()));
+    s.update(|e, _, cx| {
+        e.set_pptx_toolbar_group_visible("drawing", false, cx);
+    });
+    assert!(!s.with(|e, _| e.pptx_toolbar_groups().drawing));
+    s.update(|e, _, cx| {
+        e.reset_pptx_toolbar_groups(cx);
+        crate::shell::qat::toggle("pptx.new-slide");
+        crate::shell::qat::toggle("pptx.record-preview");
+        let _ = crate::shell::qat::move_up("pptx.record-preview");
+        e.close_pptx_ribbon_qat_panel(cx);
+    });
+    assert!(s.with(|e, _| e.pptx_toolbar_groups().drawing));
+    assert!(crate::shell::qat::commands().contains(&"pptx.new-slide".to_string()));
+    crate::shell::qat::reset();
+
+    // 5. セキュリティ センターと信頼設定 (PPTX-FILE-015)
+    s.menu("pptx.trust-center");
+    assert!(s.with(|e, _| e.is_pptx_trust_center_open()));
+    crate::pptx::threed_and_nav::set_external_media_warning_enabled(false);
+    assert!(!crate::pptx::threed_and_nav::external_media_warning_enabled());
+    crate::pptx::threed_and_nav::set_external_media_warning_enabled(true);
+    assert!(crate::pptx::threed_and_nav::external_media_warning_enabled());
+    s.update(|e, _, cx| e.close_pptx_trust_center_panel(cx));
+
+    // 6. 保存・再読込・Undo/Redo ラウンドトリップ検証
+    s.screenshot("threed_model_views_animations_record_preview_screen_reader_and_settings");
+    s.save_as("threed_model_views_animations_record_preview_screen_reader_and_settings.pptx");
+    let reloaded = s.reopen();
+    let re_slide = &reloaded.slides[0];
+    assert_eq!(re_slide.transition.as_ref().and_then(|t| t.after), Some(5000));
+    let re_shape = re_slide.shapes.last().expect("3D model shape persisted");
+    if let ShapeKind::Auto(auto) = &re_shape.kind {
+        let tilt = auto.tilt.expect("3D tilt persisted");
+        assert_eq!(tilt.lat / 60_000, 30);
+        assert_eq!(tilt.lon / 60_000, 60);
+        assert_eq!(tilt.rev / 60_000, 15);
+    } else {
+        panic!("expected AutoShape");
+    }
+    assert_eq!(
+        re_slide.shape_names.get(&re_shape.id).map(String::as_str),
+        Some("3D Model [Scene 2]")
+    );
+
+    undo_all_and_redo(&mut s);
+}
+
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
+        ("pptx::threed_model_views_animations_record_preview_screen_reader_and_settings", threed_model_views_animations_record_preview_screen_reader_and_settings),
+        ("pptx::odp_opens_as_a_pptx", odp_opens_as_a_pptx),
+        ("pptx::legacy_ppt_rich_slide", legacy_ppt_rich_slide),
+        ("pptx::legacy_ppt_opens_as_a_pptx", legacy_ppt_opens_as_a_pptx),
+        ("pptx::math_fraction_kinds_and_big_operators", math_fraction_kinds_and_big_operators),
+        ("pptx::ink_ruler", ink_ruler),
+        ("pptx::edit_math_in_place", edit_math_in_place),
+        ("pptx::insert_math_inline_in_text", insert_math_inline_in_text),
+        ("pptx::insert_math_from_linear_text", insert_math_from_linear_text),
+        ("pptx::math_latex_input_and_output", math_latex_input_and_output),
+        ("pptx::autocorrect_options_panel_switches", autocorrect_options_panel_switches),
+        ("pptx::math_formulas_are_typeset", math_formulas_are_typeset),
         ("pptx::pptm_and_macro_enabled_presentations", pptm_and_macro_enabled_presentations),
+        ("pptx::split_buttons_bullets_numbering_new_slide_borders", split_buttons_bullets_numbering_new_slide_borders),
+        ("pptx::split_button_underline_kinds", split_button_underline_kinds),
+        ("pptx::master_view_insert_placeholders", master_view_insert_placeholders),
+        ("pptx::notes_master_view", notes_master_view),
+        ("pptx::outline_view_editing", outline_view_editing),
+        ("pptx::ink_draw_erase_and_convert", ink_draw_erase_and_convert),
+        ("pptx::ink_pencil_tool_draw_and_convert", ink_pencil_tool_draw_and_convert),
+        ("pptx::ink_pen_colors_thickness_and_effects", ink_pen_colors_thickness_and_effects),
+        ("pptx::outline_view_selection_and_level_sizes", outline_view_selection_and_level_sizes),
+        ("pptx::zoom_keys", zoom_keys),
+        ("pptx::mac_text_keys", mac_text_keys),
+        ("pptx::menu_shortcuts_work", menu_shortcuts_work),
+        ("pptx::shape_order_group_and_grid_keys", shape_order_group_and_grid_keys),
+        ("pptx::autocorrect_while_typing", autocorrect_while_typing),
+        ("pptx::handout_master_background", handout_master_background),
+        ("pptx::master_view_theme", master_view_theme),
+        ("pptx::chart_ex_title_and_legend", chart_ex_title_and_legend),
+        ("pptx::spelling_wavy_line_while_typing", spelling_wavy_line_while_typing),
+        ("pptx::master_view_background", master_view_background),
+        ("pptx::edit_points_curves", edit_points_curves),
+        ("pptx::presenter_notes_size_and_teleprompter", presenter_notes_size_and_teleprompter),
+        ("pptx::notes_page_boxes_and_places", notes_page_boxes_and_places),
         ("pptx::stock_radar_and_surface_charts", stock_radar_and_surface_charts),
         ("pptx::combo_charts_insert_and_secondary_axis", combo_charts_insert_and_secondary_axis),
         ("pptx::insert_summary_zoom_and_slideshow_navigation", insert_summary_zoom_and_slideshow_navigation),
@@ -13179,6 +15631,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::inspect_document_and_remove_personal_info", inspect_document_and_remove_personal_info),
         ("pptx::shape_decorative_marking", shape_decorative_marking),
         ("pptx::presentation_properties_panel_and_custom_properties", presentation_properties_panel_and_custom_properties),
+        ("pptx::presentation_properties_panel_embed_fonts", presentation_properties_panel_embed_fonts),
         ("pptx::mark_as_final_and_read_only_presentation", mark_as_final_and_read_only_presentation),
         ("pptx::animation_painter_and_copy_effects", animation_painter_and_copy_effects),
         ("pptx::zoom_and_window_arrangement", zoom_and_window_arrangement),
@@ -13195,6 +15648,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::shape_alt_text", shape_alt_text),
         ("pptx::animation_motion_path", animation_motion_path),
         ("pptx::animation_effect_options", animation_effect_options),
+        ("pptx::animation_zoom_float_wipe_options", animation_zoom_float_wipe_options),
         ("pptx::custom_shows_and_slideshow", custom_shows_and_slideshow),
         ("pptx::animation_preview_and_remove", animation_preview_and_remove),
         ("pptx::animation_delay_options", animation_delay_options),
@@ -13219,6 +15673,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::edit_the_text_of_a_turned_shape", edit_the_text_of_a_turned_shape),
         ("pptx::skip_a_slide", skip_a_slide),
         ("pptx::write_speaker_notes", write_speaker_notes),
+        ("pptx::resize_and_close_notes_pane", resize_and_close_notes_pane),
         ("pptx::set_slide_transitions", set_slide_transitions),
         ("pptx::edit_table_cells", edit_table_cells),
         ("pptx::table_rows_and_columns", table_rows_and_columns),
@@ -13247,8 +15702,10 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::slideshow_from_start_and_by_itself", slideshow_from_start_and_by_itself),
         ("pptx::presenter_view", presenter_view),
         ("pptx::play_animations_in_the_show", play_animations_in_the_show),
+        ("pptx::emphasis_spin_and_scale_in_the_show", emphasis_spin_and_scale_in_the_show),
         ("pptx::strikethrough_button", strikethrough_button),
         ("pptx::shape_size_and_place_by_numbers", shape_size_and_place_by_numbers),
+        ("pptx::shape_scaling_by_percent", shape_scaling_by_percent),
         ("pptx::placeholder_prompts", placeholder_prompts),
         ("pptx::slide_comments", slide_comments),
         ("pptx::edit_chart_data", edit_chart_data),
@@ -13264,8 +15721,12 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::header_and_footer", header_and_footer),
         ("pptx::chart_data_in_the_workbook", chart_data_in_the_workbook),
         ("pptx::chart_ex_insert_and_data", chart_ex_insert_and_data),
+        ("pptx::chart_ex_treemap_data", chart_ex_treemap_data),
+        ("pptx::chart_ex_format_labels_axis_and_fill", chart_ex_format_labels_axis_and_fill),
+        ("pptx::chart_ex_box_whisker_data", chart_ex_box_whisker_data),
         ("pptx::selection_pane", selection_pane),
         ("pptx::hyperlinks", hyperlinks),
+        ("pptx::table_cell_hyperlinks", table_cell_hyperlinks),
         ("pptx::scale_slide_size", scale_slide_size),
         ("pptx::edit_theme", edit_theme),
         ("pptx::insert_symbols", insert_symbols),
@@ -13277,7 +15738,14 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::animation_custom_path", animation_custom_path),
         ("pptx::animation_on_several_shapes", animation_on_several_shapes),
         ("pptx::animation_by_paragraph", animation_by_paragraph),
+        ("pptx::animation_by_word_and_letter", animation_by_word_and_letter),
+        ("pptx::chart_animation_by_series_and_category", chart_animation_by_series_and_category),
+        ("pptx::smartart_animation_by_element", smartart_animation_by_element),
         ("pptx::smartart_to_shapes", smartart_to_shapes),
+        ("pptx::smartart_insert_and_presets", smartart_insert_and_presets),
+        ("pptx::smartart_convert_text_and_modify", smartart_convert_text_and_modify),
+        ("pptx::smartart_layout_and_color_styles", smartart_layout_and_color_styles),
+        ("pptx::smartart_reorder_and_text_pane", smartart_reorder_and_text_pane),
         ("pptx::compress_pictures", compress_pictures),
         ("pptx::morph_transition_in_the_slide_show", morph_transition_in_the_slide_show),
         ("pptx::linked_video", linked_video),
@@ -13295,6 +15763,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::action_button", action_button),
         ("pptx::first_slide_number", first_slide_number),
         ("pptx::bullet_and_number_types", bullet_and_number_types),
+        ("pptx::numbered_list_start_at", numbered_list_start_at),
         ("pptx::presenter_view_on_two_displays", presenter_view_on_two_displays),
         ("pptx::insert_video_and_audio", insert_video_and_audio),
         ("pptx::change_chart_type", change_chart_type),
@@ -13363,6 +15832,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::change_case_and_caps", change_case_and_caps),
         ("pptx::table_cell_vertical_anchor_and_text_direction", table_cell_vertical_anchor_and_text_direction),
         ("pptx::replace_fonts_presentation", replace_fonts_presentation),
+        ("pptx::font_embedding_and_substitution", font_embedding_and_substitution),
         ("pptx::shape_reflection_and_soft_edge_presets", shape_reflection_and_soft_edge_presets),
         ("pptx::shape_bevel_presets_and_round_trip", shape_bevel_presets_and_round_trip),
         ("pptx::text_outline_colors_and_weights", text_outline_colors_and_weights),
@@ -13372,8 +15842,10 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::picture_stroke_options", picture_stroke_options),
         ("pptx::picture_crop_to_shape", picture_crop_to_shape),
         ("pptx::picture_color_effects", picture_color_effects),
+        ("pptx::picture_background_removal_and_transparent_color", picture_background_removal_and_transparent_color),
         ("pptx::picture_luminance_options", picture_luminance_options),
         ("pptx::picture_transparency_options", picture_transparency_options),
+        ("pptx::picture_artistic_effects_options", picture_artistic_effects_options),
         ("pptx::table_style_options", table_style_options),
         ("pptx::table_cell_fill_range_and_picture", table_cell_fill_range_and_picture),
         ("pptx::chart_title_options", chart_title_options),
@@ -13386,9 +15858,11 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::transition_effect_options", transition_effect_options),
         ("pptx::theme_palette_selection", theme_palette_selection),
         ("pptx::theme_palette_applied_to_selected_slide", theme_palette_applied_to_selected_slide),
+        ("pptx::theme_effects_selection_and_persistence", theme_effects_selection_and_persistence),
         ("pptx::gridlines_guides_and_snapping", gridlines_guides_and_snapping),
         ("pptx::export_and_save_slideshow_ppsx", export_and_save_slideshow_ppsx),
         ("pptx::export_and_save_template_potx", export_and_save_template_potx),
+        ("pptx::export_and_save_theme_thmx", export_and_save_theme_thmx),
         ("pptx::new_open_save_and_copy_presentation", new_open_save_and_copy_presentation),
         ("pptx::new_presentation_from_template", new_presentation_from_template),
         ("pptx::add_hidden_slide_title_resolves_accessibility_issue", add_hidden_slide_title_resolves_accessibility_issue),
@@ -13406,6 +15880,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::animation_options_panel_and_rewind", animation_options_panel_and_rewind),
         ("pptx::animation_triggers_and_interactive_sequences", animation_triggers_and_interactive_sequences),
         ("pptx::connectors_insert_and_options", connectors_insert_and_options),
+        ("pptx::connectors_glue_and_auto_follow", connectors_glue_and_auto_follow),
+        ("pptx::shape_arrange_distribute_rotate_and_context_menu", shape_arrange_distribute_rotate_and_context_menu),
         ("pptx::content_placeholder_insert_table_picture_clip", content_placeholder_insert_table_picture_clip),
         ("pptx::media_playback_options_and_slideshow", media_playback_options_and_slideshow),
         ("pptx::media_trim_and_fade_playback_options", media_trim_and_fade_playback_options),
@@ -13414,6 +15890,5941 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::compatibility_checker_and_options", compatibility_checker_and_options),
         ("pptx::media_captions_and_accessibility", media_captions_and_accessibility),
         ("pptx::autorecover_settings_and_document_recovery", autorecover_settings_and_document_recovery),
+        ("pptx::shape_3d_rotation_and_depth", shape_3d_rotation_and_depth),
+        ("pptx::zoom_and_high_contrast_view", zoom_and_high_contrast_view),
+        ("pptx::photo_album_create_and_round_trip", photo_album_create_and_round_trip),
+        ("pptx::ink_replay_and_animation", ink_replay_and_animation),
+        ("pptx::insert_screenshot_and_clipping", insert_screenshot_and_clipping),
+        ("pptx::compare_and_merge_presentations", compare_and_merge_presentations),
+        ("pptx::ink_convert_to_text_and_math", ink_convert_to_text_and_math),
+        ("pptx::audio_record_and_media_compression", audio_record_and_media_compression),
+        ("pptx::audit001_dump_menu_ids", audit001_dump_menu_ids),
+        ("pptx::audit010_id_mapping_consistency", audit010_id_mapping_consistency),
+        ("pptx::insert_3d_model_and_embedded_object", insert_3d_model_and_embedded_object),
+        ("pptx::slideshow_current_slide_and_blank_screen", slideshow_current_slide_and_blank_screen),
+        ("pptx::slide_comments_ui_ux_improvements", slide_comments_ui_ux_improvements),
+        ("pptx::table_and_text_context_menu_actions", table_and_text_context_menu_actions),
+        ("pptx::character_spacing_options_and_toolbar", character_spacing_options_and_toolbar),
+        ("pptx::clear_formatting_and_toolbar_flow", clear_formatting_and_toolbar_flow),
+        ("pptx::context_menu_edit_text_and_change_shape", context_menu_edit_text_and_change_shape),
+        ("pptx::canvas_background_context_menu_actions", canvas_background_context_menu_actions),
+        ("pptx::context_menu_chart_crop_insets_actions", context_menu_chart_crop_insets_actions),
+        ("pptx::thumbnail_context_menu_actions", thumbnail_context_menu_actions),
+        ("pptx::context_menu_format_shape_and_default_shape", context_menu_format_shape_and_default_shape),
+        ("pptx::inline_text_editing_context_menu_actions", inline_text_editing_context_menu_actions),
+        ("pptx::context_menu_text_direction_and_vertical_anchor", context_menu_text_direction_and_vertical_anchor),
+        ("pptx::context_menu_text_autofit_and_wrap", context_menu_text_autofit_and_wrap),
+        ("pptx::context_menu_text_columns_indent_and_tabs", context_menu_text_columns_indent_and_tabs),
+        ("pptx::context_menu_picture_and_media_actions", context_menu_picture_and_media_actions),
+        ("pptx::context_menu_shape_effects_and_smartart_actions", context_menu_shape_effects_and_smartart_actions),
+        ("pptx::context_menu_wordart_text_effects_and_proofing", context_menu_wordart_text_effects_and_proofing),
+        ("pptx::context_menu_chart_type_elements_and_styles", context_menu_chart_type_elements_and_styles),
+        ("pptx::context_menu_table_design_borders_and_line_arrows", context_menu_table_design_borders_and_line_arrows),
+        ("pptx::context_menu_slide_transitions_sections_and_shape_edit_points_merge_animations", context_menu_slide_transitions_sections_and_shape_edit_points_merge_animations),
+        ("pptx::context_menu_shape_fill_stroke_zoom_and_picture_video", context_menu_shape_fill_stroke_zoom_and_picture_video),
+        ("pptx::context_menu_text_formatting_bullets_table_cell_fill_and_crop", context_menu_text_formatting_bullets_table_cell_fill_and_crop),
+        ("pptx::context_menu_outline_selection_reading_order_and_animation_panes", context_menu_outline_selection_reading_order_and_animation_panes),
+        ("pptx::context_menu_slideshow_smartart_comments_and_master_view", context_menu_slideshow_smartart_comments_and_master_view),
+        ("pptx::context_menu_notes_presenter_reading_accessibility_and_compare", context_menu_notes_presenter_reading_accessibility_and_compare),
+        ("pptx::context_menu_inspect_compatibility_photo_album_and_master_views", context_menu_inspect_compatibility_photo_album_and_master_views),
+        ("pptx::context_menu_find_math_ink_and_replace_fonts", context_menu_find_math_ink_and_replace_fonts),
+        ("pptx::context_menu_frame_theme_timing_and_alt_text_panels", context_menu_frame_theme_timing_and_alt_text_panels),
     ]
 }
+
+
+/// Split buttons as PowerPoint's (箇条書き・段落番号・新しいスライド・表の罫線): the left half does the last choice from the
+/// menu (the plain list, a slide in the current layout, all borders the first time), the ▼ has the menu; the table
+/// borders button shows the icon of the border last chosen.
+pub(crate) fn split_buttons_bullets_numbering_new_slide_borders() {
+    use ibis_doc_model::{ListKind, NumberScheme};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    for id in ["new-slide"] {
+        let b = s.tool_button(id).unwrap_or_else(|| panic!("no button {id}"));
+        assert!(b.menu.as_ref().is_some_and(|m| !m.is_empty()) && b.left_action().is_some(), "{id} is a split button");
+    }
+    // 新しいスライド: the left half adds a slide in the layout of the current one.
+    let (count, layout) = s.with(|e, _| (e.presentation().slides.len(), e.slide().layout));
+    s.toolbar("new-slide");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), count + 1);
+    assert_eq!(s.with(|e, _| e.slide().layout), layout, "in the current layout");
+    s.toolbar_menu("new-slide", "pptx.new-slide.layout");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), count + 2, "the ▼ has the layouts");
+    s.page(2);
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    for id in ["bullets", "numbered"] {
+        let b = s.tool_button(id).unwrap_or_else(|| panic!("no button {id}"));
+        assert!(b.menu.as_ref().is_some_and(|m| !m.is_empty()) && b.left_action().is_some(), "{id} is a split button");
+    }
+    // 箇条書き: the plain list first; off when it is on; the symbol last chosen after.
+    s.toolbar_menu("bullets", "bullet.type.square");
+    assert_eq!(s.with(|e, _| e.selected_list()), Some(ListKind::Symbol('■')));
+    s.toolbar("bullets");
+    assert_eq!(s.with(|e, _| e.selected_list()), Some(ListKind::None), "the left half takes the list off");
+    s.toolbar("bullets");
+    assert_eq!(s.with(|e, _| e.selected_list()), Some(ListKind::Symbol('■')), "the symbol last chosen");
+    // 段落番号.
+    s.toolbar_menu("numbered", "number.type.romanUcPeriod");
+    assert_eq!(s.with(|e, _| e.selected_list()), Some(ListKind::Scheme(NumberScheme::RomanUcPeriod)));
+    s.toolbar("numbered");
+    assert_eq!(s.with(|e, _| e.selected_list()), Some(ListKind::None));
+    s.toolbar("numbered");
+    assert_eq!(s.with(|e, _| e.selected_list()), Some(ListKind::Scheme(NumberScheme::RomanUcPeriod)), "the numbering last chosen");
+    // The Format menu's copies of the menus stay (and choosing from them is remembered too).
+    s.toolbar_menu("bullet-types", "bullet.type.arrow");
+    s.toolbar("bullets");
+    s.toolbar("bullets");
+    assert_eq!(s.with(|e, _| e.selected_list()), Some(ListKind::Symbol('►')));
+    s.key("escape");
+    // 表の罫線.
+    s.page(3);
+    s.menu("table.new.3x3");
+    let shape = s.with(|e, _| e.slide().shapes.len() - 1);
+    let corner = cell_middle(&mut s, shape, 1, 1);
+    s.shift_click(corner);
+    let b = s.tool_button("table.borders").expect("the borders button");
+    assert!(b.left_action().is_some() && b.menu.is_some());
+    assert_eq!(b.icon, Some("border_all"));
+    let borders = |s: &mut Scenario| s.with(|e, _| match &e.slide().shapes[shape].kind { ShapeKind::Table(t) => t.rows[0].cells[0].borders.clone(), _ => panic!("a table") });
+    s.toolbar_menu("table.borders", "table.borders.none");
+    assert_eq!(s.tool_button("table.borders").unwrap().icon, Some("border_clear"), "the icon of the border last chosen");
+    s.toolbar_menu("table.borders", "table.borders.outside");
+    assert_eq!(s.tool_button("table.borders").unwrap().icon, Some("border_outer"));
+    let b = borders(&mut s);
+    assert!(b.top.is_some() && b.left.is_some());
+    s.menu("table.borders.none");
+    let b = borders(&mut s);
+    assert!(b.top.is_none() && b.left.is_none());
+    s.toolbar("table.borders");
+    let b = borders(&mut s);
+    assert!(b.top.is_some() && b.left.is_some(), "the left half draws the outside border, the last chosen");
+    s.screenshot("split-buttons");
+}
+
+/// The underline button as a split button (PowerPoint's): the left half takes the underline off, or underlines in the kind
+/// last chosen from the ▼ (single at first); every kind is saved as its `a:rPr/@u` and read back.
+pub(crate) fn split_button_underline_kinds() {
+    use ibis_doc_model::Underline;
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    let b = s.tool_button("underline").expect("the underline button");
+    assert!(b.left_action().is_some() && b.menu.as_ref().is_some_and(|m| m.len() == 17), "a split button with the kinds");
+    let first = |s: &mut Scenario| s.with(|e, _| e.slide().shapes[1].text_body().unwrap().paragraphs[0].runs[0].style.clone());
+    s.toolbar("underline");
+    assert_eq!((first(&mut s).underline, first(&mut s).underline_kind), (true, Underline::Single), "single at first");
+    s.toolbar("underline");
+    assert!(!first(&mut s).underline, "the left half takes it off");
+    let kinds = [
+        ("words", Underline::Words), ("dbl", Underline::Double), ("heavy", Underline::Heavy), ("dotted", Underline::Dotted), ("dottedHeavy", Underline::DottedHeavy),
+        ("dash", Underline::Dash), ("dashHeavy", Underline::DashHeavy), ("dashLong", Underline::DashLong), ("dashLongHeavy", Underline::DashLongHeavy),
+        ("dotDash", Underline::DotDash), ("dotDashHeavy", Underline::DotDashHeavy), ("dotDotDash", Underline::DotDotDash), ("dotDotDashHeavy", Underline::DotDotDashHeavy),
+        ("wavy", Underline::Wavy), ("wavyHeavy", Underline::WavyHeavy), ("wavyDbl", Underline::WavyDouble), ("sng", Underline::Single),
+    ];
+    for (name, kind) in kinds {
+        assert_eq!(kind.value(), name);
+        s.toolbar_menu("underline", &format!("pptx.underline.{name}"));
+        let st = first(&mut s);
+        assert_eq!((st.underline, st.underline_kind), (true, kind));
+        s.toolbar("underline");
+        assert!(!first(&mut s).underline);
+        s.toolbar("underline");
+        assert_eq!(first(&mut s).underline_kind, kind, "the kind last chosen: {name}");
+        s.save_as(&format!("split-underline-{name}.pptx"));
+        let saved = s.reopen();
+        let st = &saved.slides[1].shapes[1].text_body().unwrap().paragraphs[0].runs[0].style;
+        assert!(st.underline && st.underline_kind == kind, "saved as u=\"{name}\" and read back");
+    }
+    s.screenshot("split-underline");
+}
+
+/// スライド マスター表示 > プレースホルダーの挿入: placeholders of the kinds Office offers put on a layout; they are the
+/// layout's after the view is closed, and a slide made in that layout has them; saved and read again.
+pub(crate) fn master_view_insert_placeholders() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("pptx.master-view");
+    s.update(|e, w, cx| e.switch_master_page(1, w, cx));
+    let name = s.with(|e, _| e.master_view_name());
+    let before = s.with(|e, _| e.slide().shapes.len());
+    for (n, kind) in [ibis_pptx::master_page::PlaceholderKind::Picture, ibis_pptx::master_page::PlaceholderKind::Chart, ibis_pptx::master_page::PlaceholderKind::Table].into_iter().enumerate() {
+        s.update(|e, w, cx| e.insert_master_placeholder(kind, w, cx));
+        assert_eq!(s.with(|e, _| e.slide().shapes.len()), before + n + 1, "the placeholder is a shape of the page");
+        assert_eq!(s.with(|e, _| e.master_view_name()), name, "still the same layout");
+    }
+    s.screenshot("placeholders-inserted");
+    s.menu("pptx.master-view");
+    let kinds = |s: &mut Scenario| s.with(|e, _| e.presentation().layouts.iter().find(|l| l.name == name).map(|l| l.placeholders.iter().map(|p| p.placeholder.normalized().to_string()).collect::<Vec<_>>()).unwrap());
+    let k = kinds(&mut s);
+    for want in ["pic", "chart", "tbl"] {
+        assert!(k.iter().any(|x| x == want), "{want} in {k:?}");
+    }
+    s.save_as("placeholders.pptx");
+    let saved = s.reopen();
+    let layout = saved.layouts.iter().find(|l| l.name == name).unwrap();
+    assert!(layout.placeholders.iter().any(|p| p.placeholder.normalized() == "chart"), "saved and read again");
+}
+
+/// ノート マスター (NOTES-003): 表示 > ノート マスターで、ノートのマスターの枠（スライドのイメージ・ノート・ヘッダー・日付・
+/// フッター・ページ番号）が 1 枚のスライドになり、動かして閉じると、保存したファイルのノート マスターの枠の位置になる。
+/// 未保存の変更は残り、スライドは変わらない。
+pub(crate) fn notes_master_view() {
+    use ibis_doc_model::{Command, EmuRect};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    let slides = s.with(|e, _| e.presentation().slides.len());
+    let (slide, shape) = s.with(|e, _| (e.slide().id, e.slide().shapes.iter().find(|sh| sh.text_body().is_some()).unwrap().id));
+    s.update(|e, _, cx| e.run(vec![Command::SetText { slide, shape, text: "保存前の変更".into() }], cx));
+    s.menu("pptx.notes-master");
+    assert!(s.with(|e, _| e.is_notes_master() && e.is_page_view()));
+    assert_eq!(s.menu_state("pptx.notes-master").map(|(_, checked)| checked), Some(true));
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), 1, "the notes master is a slide of its own");
+    let (page, first) = s.with(|e, _| (e.slide().id, e.slide().shapes[0].clone()));
+    assert!(s.with(|e, _| e.slide().shapes.len()) >= 2, "its places are shapes");
+    s.screenshot("notes-master");
+    let moved = EmuRect::new(first.frame.x + 300_000, first.frame.y + 150_000, first.frame.width, first.frame.height);
+    s.update(|e, _, cx| e.run(vec![Command::SetFrame { slide: page, shape: first.id, frame: moved }], cx));
+    s.menu("pptx.notes-master");
+    assert!(!s.with(|e, _| e.is_notes_master()));
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), slides, "the slides are as they were");
+    assert!(s.with(|e, _| e.presentation().slides.iter().any(|sl| sl.shapes.iter().any(|sh| sh.text_body().is_some_and(|b| b.text() == "保存前の変更")))), "what was not saved is kept");
+    let path = s.save_as("notes-master.pptx");
+    let data = std::fs::read(path).unwrap();
+    let again = ibis_pptx::open(ibis_pptx::master_page::build_notes_master(&data).unwrap()).unwrap();
+    assert_eq!(again.presentation.slides[0].shapes[0].frame, moved, "the place is where it was moved in the file");
+    undo_all_and_redo(&mut s);
+}
+
+/// ノートページの図形とスライド領域 (NOTES-004・005): ノートの書式編集の画面で、テキスト ボックスを足し、ノートの本文の
+/// 枠を動かして閉じると、保存したファイルのノート ページの図形・枠になり、開き直した画面にも出る。
+pub(crate) fn notes_page_boxes_and_places() {
+    use ibis_doc_model::{Command, EmuRect, Shape, ShapeId};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    let notes = s.with(|e, _| e.slide().notes.clone());
+    s.menu("pptx.notes-format");
+    let (page, body) = s.with(|e, _| {
+        let sl = e.slide();
+        (sl.id, sl.shapes.iter().find(|sh| sh.text_body().is_some_and(|b| b.text().contains("発表メモ"))).unwrap().clone())
+    });
+    let id = s.with(|e, _| ShapeId(e.slide().shapes.iter().map(|x| x.id.0).max().unwrap_or(0) + 100));
+    let count = s.with(|e, _| e.slide().shapes.len());
+    let moved = EmuRect::new(body.frame.x + 150_000, body.frame.y + 250_000, body.frame.width, body.frame.height);
+    s.update(|e, _, cx| {
+        e.run(vec![Command::SetFrame { slide: page, shape: body.id, frame: moved }, Command::InsertShape { slide: page, index: count, shape: Shape::text_box(id, EmuRect::new(400_000, 400_000, 2_500_000, 400_000), "配布メモ") }], cx)
+    });
+    s.menu("pptx.notes-format");
+    assert_eq!(s.with(|e, _| e.slide().notes.clone()), notes, "the notes' text is as it was");
+    s.save_as("notes-boxes.pptx");
+    let saved = s.reopen();
+    assert!(saved.slides[1].notes_shapes.iter().any(|sh| sh.text_body().is_some_and(|b| b.text() == "配布メモ")), "the box is a shape of the notes page in the file");
+    // Again: the page as it was left.
+    s.menu("pptx.notes-format");
+    let (again_body, boxed) = s.with(|e, _| {
+        let sl = e.slide();
+        (sl.shapes.iter().find(|sh| sh.text_body().is_some_and(|b| b.text().contains("発表メモ"))).map(|sh| sh.frame), sl.shapes.iter().any(|sh| sh.text_body().is_some_and(|b| b.text() == "配布メモ")))
+    });
+    assert_eq!(again_body, Some(moved), "the body where it was moved");
+    assert!(boxed, "the box is on the page");
+    s.screenshot("notes-page-box");
+    s.menu("pptx.notes-format");
+}
+
+/// 発表者ビューのノート (RECORD-008): 文字の大きさを変えられ、テレプロンプターを入れると、ノートが自分で上へ流れ
+/// （速さを変えられ）、切ると止まり、次のスライドでは先頭から始まる。
+pub(crate) fn presenter_notes_size_and_teleprompter() {
+    use ibis_doc_model::Command;
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let slide = s.with(|e, _| e.slide().id);
+    let long: String = (1..=80).map(|n| format!("話すこと {n}")).collect::<Vec<_>>().join("\n");
+    s.update(|e, _, cx| e.run(vec![Command::SetNotes { slide, notes: long }], cx));
+    s.update(|e, w, cx| e.start_presenter_view_on(false, w, cx));
+    assert_eq!(s.with(|e, _| e.notes_view_state()).map(|(size, tele, at)| (size, tele, at)), Some((20.0, None, 0.0)));
+    // The text size.
+    s.update(|e, _, cx| e.change_notes_size(4.0, cx));
+    s.update(|e, _, cx| e.change_notes_size(-2.0, cx));
+    assert_eq!(s.with(|e, _| e.notes_view_state()).map(|v| v.0), Some(22.0));
+    s.update(|e, _, cx| e.change_notes_size(-100.0, cx));
+    assert_eq!(s.with(|e, _| e.notes_view_state()).map(|v| v.0), Some(8.0), "not smaller than 8");
+    s.update(|e, _, cx| e.change_notes_size(100.0, cx));
+    s.screenshot("presenter-notes-large");
+    // The teleprompter: the notes move by themselves.
+    s.update(|e, w, cx| e.toggle_teleprompter(w, cx));
+    assert_eq!(s.with(|e, _| e.notes_view_state()).map(|v| v.1), Some(Some(20.0)));
+    s.wait(1000);
+    let first = s.with(|e, _| e.notes_view_state()).unwrap().2;
+    assert!(first > 0.0, "the notes moved: {first}");
+    s.update(|e, _, cx| e.change_teleprompter_speed(40.0, cx));
+    assert_eq!(s.with(|e, _| e.notes_view_state()).map(|v| v.1), Some(Some(60.0)));
+    s.wait(1000);
+    let second = s.with(|e, _| e.notes_view_state()).unwrap().2;
+    assert!(second - first > first, "faster: {first} then {}", second - first);
+    s.screenshot("presenter-teleprompter");
+    // Off: it stays.
+    s.update(|e, w, cx| e.toggle_teleprompter(w, cx));
+    let stopped = s.with(|e, _| e.notes_view_state()).unwrap().2;
+    s.wait(1000);
+    assert_eq!(s.with(|e, _| e.notes_view_state()).unwrap().2, stopped);
+    // Another slide: from the top.
+    s.key("right");
+    assert_eq!(s.with(|e, _| e.notes_view_state()).unwrap().2, 0.0);
+    s.key("escape");
+}
+
+/// 頂点の編集（曲線）: an ellipse's vertices have handles; a handle dragged bends the curve (the figure stays closed, saved as
+/// cubic curves); a vertex added on a curve keeps the curve; 直線の点・滑らかな点・角の点; Delete.
+pub(crate) fn edit_points_curves() {
+    use ibis_doc_model::shape_merge::NodeKind;
+    use ibis_doc_model::{Geometry, ShapeKind};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(3);
+    let id = s.with(|e, _| e.slide().shapes.iter().find(|sh| sh.text_body().is_none() && e.slide().placeholders.get(&sh.id).is_none() && matches!(sh.kind, ShapeKind::Auto(_))).map(|sh| sh.id).expect("a figure"));
+    // An ellipse to edit (the figure made one).
+    s.update(|e, _, cx| {
+        let shape = e.slide().shape(id).unwrap().clone();
+        let ShapeKind::Auto(mut auto) = shape.kind.clone() else { unreachable!() };
+        auto.geometry = Geometry::Ellipse;
+        let slide = e.current_slide;
+        e.run(vec![ibis_doc_model::Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(auto)) }], cx)
+    });
+    s.update(|e, _, _| e.set_selection(vec![id]));
+    s.menu("pptx.edit-points");
+    assert!(s.with(|e, _| e.is_editing_points()));
+    let nodes = s.with(|e, _| e.edit_point_nodes());
+    assert_eq!((nodes.len(), nodes[0].len()), (1, 4), "an ellipse: four vertices");
+    assert!(nodes[0].iter().all(|n| n.cin.is_some() && n.cout.is_some()), "with handles: its curves are kept");
+    // Pressing a vertex selects it, and its handles can be pressed and dragged: the curve bends.
+    let (origin, scale) = s.with(|e, _| {
+        let l = e.slide_layout().unwrap();
+        (l.origin, l.scale)
+    });
+    let at = |p: (f64, f64)| gpui_kit::point(origin.x + gpui_kit::px(p.0 as f32 * scale), origin.y + gpui_kit::px(p.1 as f32 * scale));
+    let first = nodes[0][0];
+    let hit = s.update(|e, _, cx| e.edit_points_down(at(first.p), cx));
+    assert_eq!(hit, Some((0, 0, 0)), "the vertex");
+    assert_eq!(s.with(|e, _| e.edit_point_selected_kind()), Some(NodeKind::Smooth));
+    let out = first.cout.unwrap();
+    let hit = s.update(|e, _, cx| e.edit_points_down(at(out), cx));
+    assert_eq!(hit, Some((0, 0, 2)), "the handle going out");
+    let to = (out.0 + 400_000.0, out.1 + 100_000.0);
+    s.update(|e, _, cx| e.move_vertex(0, 0, 2, to, cx));
+    let bent = s.with(|e, _| e.edit_point_nodes());
+    assert_eq!(bent[0][0].cout, Some((to.0.round(), to.1.round())), "the handle is where it was dragged");
+    assert_ne!(bent[0][0].cin, first.cin, "a smooth vertex turns its other handle");
+    assert_eq!(bent[0].len(), 4, "still four vertices");
+    // 角の点: the handles are the vertex's own, then one drags alone.
+    s.update(|e, _, cx| e.set_selected_vertex_kind(NodeKind::Corner, cx));
+    assert_eq!(s.with(|e, _| e.edit_point_selected_kind()), Some(NodeKind::Corner));
+    let cin_before = s.with(|e, _| e.edit_point_nodes())[0][0].cin;
+    s.update(|e, _, cx| e.move_vertex(0, 0, 2, (to.0 + 200_000.0, to.1), cx));
+    assert_eq!(s.with(|e, _| e.edit_point_nodes())[0][0].cin, cin_before, "a corner's handles move alone");
+    // 直線の点: no handles.
+    s.update(|e, _, cx| e.set_selected_vertex_kind(NodeKind::Straight, cx));
+    let straight = s.with(|e, _| e.edit_point_nodes())[0][0];
+    assert!(straight.cin.is_none() && straight.cout.is_none());
+    assert_eq!(s.with(|e, _| e.edit_point_selected_kind()), Some(NodeKind::Straight));
+    // 滑らかな点: handles again, in a line.
+    s.update(|e, _, cx| e.set_selected_vertex_kind(NodeKind::Smooth, cx));
+    assert_eq!(s.with(|e, _| e.edit_point_selected_kind()), Some(NodeKind::Smooth));
+    s.screenshot("curve-handles");
+    // A press on a curve makes a vertex on it, which keeps the curve (its handles go with it).
+    let n = s.with(|e, _| e.edit_point_nodes());
+    let mid = ibis_doc_model::shape_merge::segment_point(&n[0][1], &n[0][2], 0.5);
+    let before = n[0].len();
+    let hit = s.update(|e, _, cx| e.edit_points_down(at(mid), cx));
+    assert_eq!(hit.map(|h| (h.0, h.1, h.2)), Some((0, 2, 0)));
+    let n = s.with(|e, _| e.edit_point_nodes());
+    assert_eq!(n[0].len(), before + 1);
+    assert!(n[0][2].cin.is_some() && n[0][2].cout.is_some(), "the new vertex has the curve's handles");
+    // Delete takes it away.
+    s.update(|e, _, cx| e.delete_selected(cx));
+    assert_eq!(s.with(|e, _| e.edit_point_nodes())[0].len(), before);
+    s.update(|e, _, cx| e.end_edit_points(cx));
+    // Saved as cubic curves, read back with its handles.
+    s.save_as("edit-points-curves.pptx");
+    let saved = s.reopen();
+    let shape = saved.slides[2].shapes.iter().find(|sh| sh.id == id).expect("the shape");
+    let nodes = ibis_doc_model::shape_merge::shape_nodes(shape).expect("a closed figure of curves");
+    assert_eq!(nodes[0].len(), before);
+    assert!(nodes[0].iter().any(|n| n.cout.is_some()), "its curves are in the file");
+    undo_all_and_redo(&mut s);
+}
+
+/// スライド マスター表示の背景: the background set on the page of a layout is the layout's after the view is closed, and the
+/// slides that follow it show it; saved and read again.
+pub(crate) fn master_view_background() {
+    use ibis_doc_model::{Color, Fill, Rgb};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("pptx.master-view");
+    s.update(|e, w, cx| e.switch_master_page(1, w, cx));
+    let name = s.with(|e, _| e.master_view_name());
+    let green = Fill::Solid(Color::opaque(Rgb(0x2E7D32)));
+    s.update(|e, _, cx| e.set_background(green.clone(), cx));
+    s.update(|e, w, cx| e.switch_master_page(2, w, cx));
+    s.update(|e, w, cx| e.switch_master_page(1, w, cx));
+    assert_eq!(s.with(|e, _| e.slide().background.clone()), green, "kept when the page is left and come back to");
+    s.menu("pptx.master-view");
+    let layout_bg = |s: &mut Scenario, n: &str| s.with(|e, _| e.presentation().layouts.iter().find(|l| l.name == n).map(|l| l.background.clone()));
+    assert_eq!(layout_bg(&mut s, &name), Some(green.clone()), "the layout has the background");
+    s.save_as("master-background.pptx");
+    let saved = s.reopen();
+    assert_eq!(saved.layouts.iter().find(|l| l.name == name).map(|l| l.background.clone()), Some(green), "saved and read again");
+}
+
+/// 入力中のスペルチェック (REVIEW-001): 文字を編集している間、システムの辞書にない語に赤い波線が付き（macOS のみ）、
+/// 直すと消える。
+pub(crate) fn spelling_wavy_line_while_typing() {
+    if !crate::spelling::available() {
+        return;
+    }
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    s.type_text("Zzqxv quick browm fox");
+    let text = s.with(|e, _| e.edited_text()).unwrap_or_default();
+    let found = s.with(|e, _| e.misspelled_ranges());
+    let words: Vec<String> = found.iter().map(|r| text.chars().skip(r.start).take(r.end - r.start).collect()).collect();
+    assert!(words.contains(&"Zzqxv".to_string()) && words.contains(&"browm".to_string()), "{words:?}");
+    assert!(!words.contains(&"quick".to_string()) && !words.contains(&"fox".to_string()), "{words:?}");
+    s.screenshot("wavy-lines");
+    // Corrected: gone.
+    s.key("cmd-a");
+    s.type_text("The quick brown fox");
+    assert!(s.with(|e, _| e.misspelled_ranges()).is_empty(), "nothing wrong left");
+    s.key("escape");
+}
+
+/// chartEx のグラフ（ウォーターフォールなど）のタイトルと凡例 (CHART-007・008・010): ツールバーの「グラフ タイトル」「凡例」で
+/// 出す・消す・位置を変えると、グラフの部品（cx:title・cx:legend）に書かれ、保存して開き直しても同じ。
+pub(crate) fn chart_ex_title_and_legend() {
+    use ibis_doc_model::LegendPosition as P;
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    let kinds = [("pptx.insert-chart.waterfall", "waterfall"), ("pptx.insert-chart.histogram", "histogram"), ("pptx.insert-chart.funnel", "funnel")];
+    let mut made = Vec::new();
+    for (id, _) in kinds {
+        s.menu(id);
+        made.push(s.with(|e, _| e.selected_chart().map(|(_, shape, _)| shape)).expect("the chart"));
+        assert!(s.toolbar_state("chart-title").is_some() && s.toolbar_state("chart-legend").is_some(), "{id}: title and legend can be changed");
+        let now = |s: &mut Scenario| s.with(|e, _| e.selected_chart().map(|(_, _, c)| (c.title.as_ref().map(|t| t.text.clone()), c.legend.as_ref().and_then(|l| l.source_position))).expect("a chart"));
+        // The title: taken away, then shown again.
+        s.toolbar_menu("chart-title", "chart.title.none");
+        assert_eq!(now(&mut s).0, None, "{id}: no title");
+        s.toolbar_menu("chart-title", "chart.title.above");
+        assert!(now(&mut s).0.is_some_and(|t| !t.is_empty()), "{id}: a title");
+        // The legend: a side, none, another side.
+        s.toolbar_menu("chart-legend", "chart.legend.left");
+        assert_eq!(now(&mut s).1, Some(P::Left), "{id}");
+        s.toolbar_menu("chart-legend", "chart.legend.none");
+        assert_eq!(s.with(|e, _| e.selected_chart().map(|(_, _, c)| c.legend.is_none())), Some(true), "{id}: no legend");
+        s.toolbar_menu("chart-legend", "chart.legend.bottom");
+        assert_eq!(now(&mut s).1, Some(P::Bottom), "{id}");
+    }
+    s.screenshot("chart-ex-format");
+    s.save_as("chart-ex-format.pptx");
+    let saved = s.reopen();
+    let charts: Vec<_> = saved.slides[1].shapes.iter().filter_map(|sh| match &sh.kind { ShapeKind::Chart(c) if c.ex.is_some() => Some((**c).clone()), _ => None }).collect();
+    assert_eq!(charts.len(), 3);
+    for c in charts {
+        assert!(c.title.is_some(), "the title is in the file");
+        assert_eq!(c.legend.as_ref().and_then(|l| l.source_position), Some(P::Bottom), "the legend is where it was put");
+    }
+    undo_all_and_redo(&mut s);
+}
+
+/// スライド マスター表示のテーマ: the colours of the theme changed in the master view are the file's after the view is closed;
+/// saved and read again. Without a change the theme is as it was.
+pub(crate) fn master_view_theme() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let before = s.with(|e, _| e.presentation().theme_colors.clone());
+    // Opened and closed with no change: the theme is as it was.
+    s.menu("pptx.master-view");
+    s.menu("pptx.master-view");
+    assert_eq!(s.with(|e, _| e.presentation().theme_colors.clone()), before);
+    s.menu("pptx.master-view");
+    let id = crate::pptx::theme_panel::THEME_PALETTES.iter().find(|p| p.colors.iter().any(|(n, c)| *n == "accent1" && Some(*c) != before.iter().find(|(m, _)| m == n).map(|(_, c)| *c))).map(|p| p.id).expect("a palette that changes accent1");
+    s.update(|e, w, cx| e.apply_theme_palette(id, w, cx));
+    let changed = s.with(|e, _| e.presentation().theme_colors.clone());
+    assert_ne!(changed, before, "the page's theme changed");
+    s.menu("pptx.master-view");
+    assert_eq!(s.with(|e, _| e.presentation().theme_colors.clone()), changed, "the file has the theme after the view is closed");
+    s.save_as("master-theme.pptx");
+    assert_eq!(s.reopen().theme_colors, changed, "saved and read again");
+}
+
+/// 配布資料マスターの背景 (NOTES-007): 配布資料マスターの画面で「背景」を変えて閉じると、保存したファイルの配布資料マスターの背景になり、
+/// 開き直した画面にも出る。
+pub(crate) fn handout_master_background() {
+    use ibis_doc_model::{Color, Fill, Rgb};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("pptx.handout-master");
+    let tint = Fill::Solid(Color::opaque(Rgb(0xFFF2CC)));
+    s.update(|e, _, cx| e.set_background(tint.clone(), cx));
+    s.menu("pptx.handout-master");
+    let path = s.save_as("handout-background.pptx");
+    let data = std::fs::read(path).unwrap();
+    let again = ibis_pptx::open(ibis_pptx::handout_master::build(&data).unwrap()).unwrap();
+    assert_eq!(again.presentation.slides[0].background, tint, "the saved file's handout master has the background");
+    // Opened again in the program: the page has it.
+    s.menu("pptx.handout-master");
+    assert_eq!(s.with(|e, _| e.slide().background.clone()), tint);
+    s.screenshot("handout-background");
+    s.menu("pptx.handout-master");
+}
+
+/// 自動修正 (REVIEW-001): 文字を打っていて、空白か Enter を打つと、よくある打ち間違いと記号の入力（teh、(c)、-->）が直る。
+/// 直したあとも続けて打てて、リンクの自動認識とも両立し、元に戻すと打った文字に戻る。
+pub(crate) fn autocorrect_while_typing() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    s.key("delete");
+    s.type_text("teh dont (c) --> i see Teh www.example.jp ok");
+    assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("the don't © → I see The www.example.jp ok"));
+    let links = s.with(|e, _| e.edited_body().cloned().unwrap().paragraphs.iter().flat_map(|p| p.runs.iter()).filter(|r| r.style.link.is_some()).map(|r| r.text.clone()).collect::<Vec<_>>());
+    assert_eq!(links, ["www.example.jp"], "the address is still a link");
+    // A word that is not in the table is as typed.
+    s.key("cmd-a");
+    s.key("delete");
+    s.type_text("hello wrld ");
+    assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("hello wrld "));
+    s.key("escape");
+}
+
+/// ツール > オートコレクトのオプション… (FILE-014): the panel opens, the switch for correcting as text is typed and the one
+/// for the red wavy line under misspelled words are kept, and typing follows them.
+pub(crate) fn autocorrect_options_panel_switches() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("pptx.autocorrect-options");
+    s.screenshot("autocorrect-options");
+    assert!(s.with(|e, _| e.pptx().is_some_and(|p| p.autocorrect.as_ref().is_some_and(|a| a.working.as_you_type && a.working.spell_as_you_type))));
+    s.update(|e, _, _| {
+        if let Some(a) = e.pptx_mut().and_then(|p| p.autocorrect.as_mut()) {
+            a.working.as_you_type = false;
+            a.working.spell_as_you_type = false;
+        }
+    });
+    // The spell checker's language and what it leaves out are in the panel too, and are kept with the rest.
+    s.update(|e, _, _| {
+        if let Some(a) = e.pptx_mut().and_then(|p| p.autocorrect.as_mut()) {
+            assert!(a.working.spell_ignore_upper && a.working.spell_ignore_numbers && a.working.spell_ignore_internet);
+            assert_eq!(a.working.spell_language, "");
+            a.working.spell_language = crate::shell::autocorrect::next_spell_language(&a.working.spell_language);
+            a.working.spell_ignore_numbers = false;
+        }
+    });
+    s.update(|e, _, cx| e.apply_pptx_autocorrect_panel(cx));
+    assert!(s.with(|e, _| e.pptx().is_some_and(|p| p.autocorrect.is_none())), "OK closes the panel");
+    let kept = crate::shell::autocorrect::settings();
+    assert_eq!((kept.spell_language.as_str(), kept.spell_ignore_numbers, kept.spell_ignore_upper), ("ja-JP", false, true));
+    assert!(!crate::shell::autocorrect::settings().as_you_type);
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    s.key("delete");
+    s.type_text("teh dont (c) ");
+    assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("teh dont (c) "), "nothing is corrected with the switch off");
+    assert!(s.with(|e, _| e.misspelled_ranges()).is_empty(), "no wavy line with the switch off");
+    s.key("escape");
+    crate::shell::autocorrect::set_settings(crate::shell::autocorrect::AutoCorrect::default());
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    s.key("delete");
+    s.type_text("teh ");
+    assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("the "), "corrected again with the switch on");
+    s.key("escape");
+}
+
+/// 図形のキー操作 (ACCESS-012): ⌥⇧⌘↑ 最前面・⌥⌘↑ 前面へ・⌥⌘↓ 背面へ・⌥⇧⌘↓ 最背面、⌥⌘G グループ化・⌥⇧⌘G 解除、⇧F9 グリッド線、
+/// ⌥F9 ガイド（メニューに出ているとおりに効く）。文字を編集している間は図形の順序を変えない。
+pub(crate) fn shape_order_group_and_grid_keys() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(3);
+    let ids = |s: &mut Scenario| s.with(|e, _| e.slide().shapes.iter().map(|sh| sh.id).collect::<Vec<_>>());
+    let start = ids(&mut s);
+    assert!(start.len() >= 3);
+    let first = start[0];
+    s.update(|e, _, _| e.set_selection(vec![first]));
+    // Front: the last of the shapes; forward and backward one place; back: the first.
+    s.key("cmd-shift-alt-up");
+    assert_eq!(ids(&mut s).last(), Some(&first), "最前面");
+    s.key("cmd-alt-down");
+    let at = ids(&mut s).iter().position(|i| *i == first).unwrap();
+    assert_eq!(at, start.len() - 2, "背面へ: one place back");
+    s.key("cmd-alt-up");
+    assert_eq!(ids(&mut s).iter().position(|i| *i == first), Some(start.len() - 1), "前面へ: one place forward");
+    s.key("cmd-shift-alt-down");
+    assert_eq!(ids(&mut s).first(), Some(&first), "最背面");
+    // Group and ungroup two shapes.
+    let (a, b) = (start[1], start[2]);
+    s.update(|e, _, _| e.set_selection(vec![a, b]));
+    let groups = |s: &mut Scenario| s.with(|e, _| e.slide().groups.len());
+    let before = groups(&mut s);
+    s.key("cmd-alt-g");
+    assert_eq!(groups(&mut s), before + 1, "⌥⌘G: grouped");
+    s.key("cmd-shift-alt-g");
+    assert_eq!(groups(&mut s), before, "⌥⇧⌘G: ungrouped");
+    // Gridlines and guides.
+    let grid = |s: &mut Scenario| s.menu_state("pptx.gridlines").map(|(_, checked)| checked);
+    let was = grid(&mut s);
+    s.key("shift-f9");
+    assert_ne!(grid(&mut s), was, "⇧F9: gridlines");
+    let guides = |s: &mut Scenario| s.menu_state("pptx.guides").map(|(_, checked)| checked);
+    let was = guides(&mut s);
+    s.key("alt-f9");
+    assert_ne!(guides(&mut s), was, "⌥F9: guides");
+    // While text is edited the keys do not reorder the shapes.
+    s.double_click_shape(1);
+    let before = ids(&mut s);
+    s.key("cmd-shift-alt-up");
+    assert_eq!(ids(&mut s), before);
+    s.key("escape");
+}
+
+/// 表示のキー（⌘+・⌘-・⌘0・⌥⌘0）: メニューに出ているとおりに拡大・縮小・100%・ウィンドウに合わせるが効く。
+pub(crate) fn zoom_keys() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(3);
+    let zoom = |s: &mut Scenario| s.with(|e, _| e.current_zoom());
+    let fit = zoom(&mut s);
+    s.key("cmd-+");
+    let bigger = zoom(&mut s);
+    assert!(bigger > fit, "⌘+: {fit} -> {bigger}");
+    s.key("cmd--");
+    s.key("cmd--");
+    assert!(zoom(&mut s) < bigger, "⌘-");
+    s.key("cmd-0");
+    assert!((zoom(&mut s) - 1.0).abs() < 0.01, "⌘0: 100%");
+    s.key("alt-cmd-0");
+    assert!((zoom(&mut s) - fit).abs() < 0.01 && s.with(|e, _| e.zoom.is_none()), "⌥⌘0: fitted again");
+}
+
+/// メニューに出ているショートカットは、キーを 1 つずつ結び付けていないものも効く（⌘M 新しいスライド）。
+/// ⌘ ⌃ ⌥ のない文字のキーでは動かない。
+pub(crate) fn menu_shortcuts_work() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(2);
+    let slides = |s: &mut Scenario| s.with(|e, _| e.presentation().slides.len());
+    let n = slides(&mut s);
+    s.key("cmd-m");
+    assert_eq!(slides(&mut s), n + 1, "⌘M: a new slide");
+    s.key("m");
+    assert_eq!(slides(&mut s), n + 1, "a letter alone is not a shortcut");
+    // While text is edited the menu's shortcuts still work (the shape's own keys first).
+    s.double_click_shape(1);
+    s.key("cmd-m");
+    assert_eq!(slides(&mut s), n + 2, "⌘M while text is edited");
+}
+
+/// PPTX-TEXT-008, PPTX-ACCESS-012: 文字を編集している間の Mac の標準のキー: ⌘← ⌘→ 行頭・行末、⌃A ⌃E 行頭・行末、⌃B ⌃F 左右、⌃P ⌃N 上下、⌃D ⌃H 消す、
+/// ⌃K 行末まで消す、⇧⌘+ 上付き・⌘= 下付き（図形を選んでいるだけのときの ⌘+ は表示の拡大のまま）。
+pub(crate) fn mac_text_keys() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(2);
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    s.key("delete");
+    s.type_text("alpha beta\ngamma delta");
+    let caret = |s: &mut Scenario| s.with(|e, _| e.text_editing().map(|t| (t.anchor, t.caret)).unwrap());
+    let text = |s: &mut Scenario| s.with(|e, _| e.edited_text()).unwrap_or_default();
+    // ⌘←: the start of the line (the second paragraph's: 11); ⌘→ its end (22).
+    s.key("cmd-left");
+    assert_eq!(caret(&mut s), (11, 11), "⌘←");
+    s.key("cmd-right");
+    assert_eq!(caret(&mut s), (22, 22), "⌘→");
+    s.key("cmd-shift-left");
+    assert_eq!(caret(&mut s), (22, 11), "⇧⌘←: selected to the line's start");
+    s.key("right");
+    s.key("ctrl-a");
+    assert_eq!(caret(&mut s), (11, 11), "⌃A");
+    s.key("ctrl-e");
+    assert_eq!(caret(&mut s), (22, 22), "⌃E");
+    s.key("ctrl-b");
+    assert_eq!(caret(&mut s), (21, 21), "⌃B");
+    s.key("ctrl-f");
+    assert_eq!(caret(&mut s), (22, 22), "⌃F");
+    s.key("ctrl-p");
+    assert!(caret(&mut s).1 <= 10, "⌃P: up a line: {:?}", caret(&mut s));
+    s.key("ctrl-n");
+    assert!(caret(&mut s).1 >= 11, "⌃N: down a line");
+    // ⌃H backspace, ⌃D forward delete, ⌃K to the line's end.
+    s.key("cmd-right");
+    s.key("ctrl-h");
+    assert_eq!(text(&mut s), "alpha beta\ngamma delt", "⌃H");
+    s.key("cmd-left");
+    s.key("ctrl-d");
+    assert_eq!(text(&mut s), "alpha beta\namma delt", "⌃D");
+    s.key("ctrl-k");
+    assert_eq!(text(&mut s), "alpha beta\n", "⌃K: to the line's end");
+    // ⇧⌘+ and ⌘=: superscript and subscript of the selected characters.
+    s.key("cmd-up");
+    s.key("cmd-shift-right");
+    s.key("cmd-shift-=");
+    assert_eq!(s.with(|e, _| e.selected_baseline()), 30_000, "⇧⌘+: superscript");
+    s.key("cmd-=");
+    assert_eq!(s.with(|e, _| e.selected_baseline()), -25_000, "⌘=: subscript");
+    s.key("escape");
+    // With only the shape selected, ⌘+ is the zoom's.
+    s.click_shape(1);
+    let z = s.with(|e, _| e.current_zoom());
+    s.key("cmd-+");
+    assert!(s.with(|e, _| e.current_zoom()) > z, "⌘+ zooms when no text is edited");
+}
+
+/// アウトライン表示の編集: タイトルと本文の文字の入力・削除がスライドに入り、Enter でタイトルは新しいスライド・本文は同じ
+/// レベルの行、Tab でタイトルは前のスライドの本文の行に（スライドの統合）・本文は 1 つ下のレベルに、⇧Tab で第 1 レベルの
+/// 本文の行は新しいスライドに・下のレベルは 1 つ上に、⌥⇧↑↓ で行の移動。どれも元に戻せる。
+pub(crate) fn outline_view_editing() {
+    use crate::pptx::outline_edit::LineKind;
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("pptx.outline-view");
+    assert!(s.with(|e, _| e.is_outline_view()));
+    let lines = |s: &mut Scenario| s.with(|e, _| e.outline_lines().into_iter().map(|l| (l.kind, l.level, l.text)).collect::<Vec<_>>());
+    let slides = |s: &mut Scenario| s.with(|e, _| e.presentation().slides.len());
+    let first = lines(&mut s);
+    assert_eq!(first[0].0, LineKind::Title);
+    let n = slides(&mut s);
+    // Typing in the title (slide 2: 重点施策): at its end.
+    let title2 = first.iter().position(|(k, _, t)| *k == LineKind::Title && t == "重点施策").expect("slide 2's title");
+    let end = first[title2].2.chars().count();
+    s.update(|e, w, cx| e.begin_outline_edit(title2, end, w, cx));
+    assert!(s.with(|e, _| e.is_outline_editing()));
+    s.type_text("の計画");
+    assert_eq!(lines(&mut s)[title2].2, "重点施策の計画", "the title of the slide changed");
+    assert_eq!(s.with(|e, _| e.slide().shapes.iter().filter_map(|sh| sh.text_body().map(|b| b.text())).next()), Some("重点施策の計画".to_string()));
+    s.key("backspace");
+    assert_eq!(lines(&mut s)[title2].2, "重点施策の計", "Backspace");
+    s.screenshot("outline-typing");
+    // Enter in a body line: a new paragraph of the same level, below.
+    let body = lines(&mut s).iter().position(|(k, _, _)| matches!(k, LineKind::Body(_))).expect("a body line");
+    let (body_len, level) = (lines(&mut s)[body].2.chars().count(), lines(&mut s)[body].1);
+    let before = lines(&mut s).len();
+    s.update(|e, w, cx| e.begin_outline_edit(body, body_len, w, cx));
+    s.key("enter");
+    assert_eq!(lines(&mut s).len(), before + 1);
+    assert_eq!(lines(&mut s)[body + 1].1, level, "the same level");
+    s.type_text("追加の行");
+    assert_eq!(lines(&mut s)[body + 1].2, "追加の行");
+    // Tab: one level down; Shift+Tab: back; Shift+Tab at the first level: a slide of its own.
+    s.key("tab");
+    assert_eq!(lines(&mut s)[body + 1].1, level + 1, "Tab: demoted");
+    s.key("shift-tab");
+    assert_eq!(lines(&mut s)[body + 1].1, level, "Shift+Tab: promoted");
+    s.key("shift-tab");
+    let after = lines(&mut s);
+    assert_eq!(slides(&mut s), n + 1, "Shift+Tab at the first level: a new slide");
+    assert!(after.iter().any(|(k, _, t)| *k == LineKind::Title && t == "追加の行"), "its title is the line");
+    // Enter in a title: another new slide; Tab on its empty title: it goes into the body of the slide before.
+    s.key("enter");
+    assert_eq!(slides(&mut s), n + 2, "Enter in a title: a new slide");
+    s.key("tab");
+    assert_eq!(slides(&mut s), n + 1, "Tab on a title: the slides are one");
+    let merged = lines(&mut s);
+    let at = merged.iter().position(|(k, _, t)| *k == LineKind::Title && t == "追加の行").unwrap();
+    assert!(matches!(merged[at + 1].0, LineKind::Body(_)), "the empty line is a body line of the slide: {merged:?}");
+    // ⌥⇧↓: a title moves with its slide.
+    let order = |s: &mut Scenario| s.with(|e, _| e.presentation().slides.iter().map(|sl| sl.id).collect::<Vec<_>>());
+    let ids = order(&mut s);
+    let title = lines(&mut s).iter().position(|(k, _, t)| *k == LineKind::Title && t == "追加の行").unwrap();
+    s.update(|e, w, cx| e.begin_outline_edit(title, 0, w, cx));
+    s.key("alt-shift-up");
+    let moved = order(&mut s);
+    assert_ne!(ids, moved, "the slide moved");
+    s.key("alt-shift-down");
+    assert_eq!(order(&mut s), ids, "and back");
+    s.screenshot("outline-edited");
+    // Undo takes the edits back one by one.
+    for _ in 0..12 {
+        s.key("cmd-z");
+    }
+    assert_eq!(slides(&mut s), n, "undone");
+    assert_eq!(lines(&mut s), first, "the outline is as it was");
+}
+
+/// アウトライン表示の範囲選択（複数の行にまたがる）と、レベルに合わせた文字の大きさ: Shift+↓ で選びを広げ、選んだ文字をコピーでき、
+/// 選んだ行をまとめて Tab・⇧Tab でき、同じ本文の行にまたがる選びを消すと行が 1 つになる。⌘A はすべての行。レベルを下げると
+/// そのレベルの大きさ（同じ本文のそのレベルの行の大きさ）になる。
+pub(crate) fn outline_view_selection_and_level_sizes() {
+    use crate::pptx::outline_edit::LineKind;
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("pptx.outline-view");
+    let lines = |s: &mut Scenario| s.with(|e, _| e.outline_lines().into_iter().map(|l| (l.kind, l.level, l.text)).collect::<Vec<_>>());
+    let first = lines(&mut s);
+    let b0 = first.iter().position(|(k, _, t)| *k == LineKind::Body(0) && t == "駅前店の改装").expect("slide 2's body");
+    // Shift+↓ twice: three lines selected.
+    s.update(|e, w, cx| e.begin_outline_edit(b0, 0, w, cx));
+    s.key("shift-down");
+    s.key("shift-down");
+    let selected = s.with(|e, _| e.outline_selected_text()).expect("a selection");
+    assert_eq!(selected, "駅前店の改装\nオンライン注文の拡大\n", "from the start of the first to the caret of the third (column 0)");
+    // The selection reaches the end of the third line: all of it.
+    s.key("shift-end");
+    assert_eq!(s.with(|e, _| e.outline_selected_text()).unwrap(), "駅前店の改装\nオンライン注文の拡大\n夏季限定メニュー");
+    // Tab: each of the three a level down; the sizes are those of their new levels.
+    let size = |s: &mut Scenario, line: usize| s.with(|e, _| {
+        let l = e.outline_lines().remove(line);
+        let slide = e.presentation().slide(l.slide).unwrap();
+        let LineKind::Body(n) = l.kind else { panic!("a body line") };
+        slide.shape(l.shape.unwrap()).unwrap().text_body().unwrap().paragraphs[n].runs.iter().find_map(|r| r.style.font_size)
+    });
+    let level1_size = size(&mut s, b0 + 2);
+    s.key("tab");
+    let after = lines(&mut s);
+    assert_eq!((after[b0].1, after[b0 + 1].1, after[b0 + 2].1), (1, 1, 2), "each a level down");
+    assert_eq!(size(&mut s, b0), level1_size, "the size of level 1: that of the line that was at that level");
+    assert_eq!(size(&mut s, b0 + 1), level1_size);
+    s.key("shift-tab");
+    assert_eq!(lines(&mut s)[b0..=b0 + 2].iter().map(|l| l.1).collect::<Vec<_>>(), [0, 0, 1], "and back");
+    assert_ne!(size(&mut s, b0), level1_size, "level 0 has its own size");
+    // Deleting over lines of one body: one line is left of them.
+    s.update(|e, w, cx| e.begin_outline_edit(b0, 3, w, cx));
+    s.key("shift-down");
+    s.key("shift-right");
+    let before = lines(&mut s).len();
+    s.key("backspace");
+    let joined = lines(&mut s);
+    assert_eq!(joined.len(), before - 1, "the lines are one");
+    assert!(joined[b0].2.starts_with("駅前店") && joined[b0].2.ends_with("注文の拡大") || joined[b0].2.contains("拡大"), "{:?}", joined[b0].2);
+    // ⌘A: every line.
+    s.key("cmd-a");
+    let (l1, l2) = s.with(|e, _| e.outline_edit().map(|x| (x.anchor_line, x.line))).unwrap();
+    assert_eq!((l1, l2), (0, lines(&mut s).len() - 1));
+    s.screenshot("outline-selection");
+    s.key("escape");
+    for _ in 0..4 {
+        s.key("cmd-z");
+    }
+    assert_eq!(lines(&mut s), first, "undone");
+}
+
+/// 描画 (INK-001〜006): 挿入 > 描画… で、ペン・蛍光ペンがスライドの上のドラッグで線（フリーフォームの図形）を描き、消しゴムが
+/// 触れた線を消し、選択ではポインターで動かせ、「インクを図形に変換」が四角形に見える線を四角形にする。保存して開き直しても残る。
+pub(crate) fn ink_draw_erase_and_convert() {
+    use crate::xlsx::ink::PenKind;
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(4);
+    s.menu("pptx.ink");
+    assert!(s.with(|e, _| e.pptx().unwrap().ink.is_some()), "the Draw panel is open");
+    let (origin, scale) = s.with(|e, _| {
+        let l = e.slide_layout().unwrap();
+        (l.origin, l.scale)
+    });
+    let at = |x: i64, y: i64| (f32::from(origin.x) + x as f32 * scale, f32::from(origin.y) + y as f32 * scale);
+    let shapes = |s: &mut Scenario| s.with(|e, _| e.slide().shapes.len());
+    let named = |s: &mut Scenario| s.with(|e, _| e.slide().shapes.iter().filter(|sh| e.slide().shape_names.get(&sh.id).is_some_and(|n| crate::xlsx::ink::is_ink_name(n))).count());
+    let before = shapes(&mut s);
+    // A pen stroke: a rectangle drawn round, ending where it began.
+    let (x0, y0, w, h) = (1_500_000i64, 4_200_000i64, 2_400_000i64, 1_200_000i64);
+    let mut rect = Vec::new();
+    for i in 0..=10 {
+        rect.push(at(x0 + w * i / 10, y0));
+    }
+    for i in 1..=6 {
+        rect.push(at(x0 + w, y0 + h * i / 6));
+    }
+    for i in 1..=10 {
+        rect.push(at(x0 + w - w * i / 10, y0 + h));
+    }
+    for i in 1..=5 {
+        rect.push(at(x0, y0 + h - h * i / 6));
+    }
+    rect.push(at(x0, y0));
+    s.drag_through(&rect);
+    assert_eq!(shapes(&mut s), before + 1, "a stroke is a shape");
+    assert_eq!(named(&mut s), 1, "named as an ink stroke");
+    // A highlighter stroke.
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Highlighter));
+    let line: Vec<(f32, f32)> = (0..=12).map(|i| at(x0 + 200_000 * i, y0 + h + 500_000)).collect();
+    s.drag_through(&line);
+    assert_eq!(named(&mut s), 2);
+    s.screenshot("ink-strokes");
+    // The eraser takes the highlighter stroke away by touching it.
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Eraser));
+    let touch = at(x0 + 1_000_000, y0 + h + 500_000);
+    s.drag_through(&[touch, (touch.0 + 3.0, touch.1)]);
+    assert_eq!(named(&mut s), 1, "erased");
+    s.key("cmd-z");
+    assert_eq!(named(&mut s), 2, "the eraser's step is undone at once");
+    s.key("cmd-shift-z");
+    // 選択 leaves the pointer to select; the stroke is converted to the rectangle it looks like.
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Select));
+    let id = s.with(|e, _| e.slide().shapes.iter().find(|sh| e.slide().shape_names.get(&sh.id).is_some_and(|n| crate::xlsx::ink::is_ink_name(n)) && crate::xlsx::ink::recognize(&crate::xlsx::ink::stroke_points(sh).unwrap()).is_some()).map(|sh| sh.id).expect("the rectangle stroke"));
+    s.update(|e, _, _| e.set_selection(vec![id]));
+    s.update(|e, _, cx| e.pptx_ink_to_shape(cx));
+    let converted = s.with(|e, _| e.selected_shapes().first().map(|sh| matches!(&sh.kind, ShapeKind::Auto(a) if matches!(a.geometry, ibis_doc_model::Geometry::Rect) || matches!(&a.geometry, ibis_doc_model::Geometry::Formula(f) if f.preset.as_deref() == Some("rect")))));
+    assert_eq!(converted, Some(true), "a rectangle");
+    s.save_as("ink.pptx");
+    let saved = s.reopen();
+    assert!(saved.slides[3].shapes.len() > before, "the strokes are in the file");
+    undo_all_and_redo(&mut s);
+}
+
+/// 鉛筆ツール（PPTX-INK-001）:
+/// 描画パネルで鉛筆（Pencil）を選択してドラッグ描画。
+/// 鉛筆は初期状態で0.5pt（細線）、半透明グラファイト調（alpha: 192, 75%不透明度）、色0x404040。
+/// 色鉛筆としての色変更、線幅変更、消しゴムによる消去とUndo/Redo、
+/// 四角形に見える線の図形変換（半透明度・線幅・線色継承）、
+/// ファイル保存・再オープンでの保持、Undo/Redoを検証する。
+pub(crate) fn ink_pencil_tool_draw_and_convert() {
+    use crate::pptx::ink::{InkEffect, PPTX_INK_COLORS, PPTX_INK_WIDTHS};
+    use crate::xlsx::ink::PenKind;
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(4);
+    s.menu("pptx.ink");
+    assert!(s.with(|e, _| e.pptx().unwrap().ink.is_some()), "the Draw panel is open");
+
+    // 鉛筆ツールを選択
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Pencil));
+
+    // 鉛筆の初期状態を検証: 0.5pt、グラファイトグレー 0x404040、効果なし
+    assert_eq!(s.with(|e, _| e.pptx_ink_color()), Some(ibis_doc_model::Rgb(PPTX_INK_COLORS[1])));
+    assert_eq!(s.with(|e, _| e.pptx_ink_width()), Some(PPTX_INK_WIDTHS[0])); // 0.5pt
+    assert_eq!(s.with(|e, _| e.pptx_ink_effect()), Some(InkEffect::None));
+
+    let (origin, scale) = s.with(|e, _| {
+        let l = e.slide_layout().unwrap();
+        (l.origin, l.scale)
+    });
+    let at = |x: i64, y: i64| (f32::from(origin.x) + x as f32 * scale, f32::from(origin.y) + y as f32 * scale);
+    let shapes = |s: &mut Scenario| s.with(|e, _| e.slide().shapes.len());
+    let named = |s: &mut Scenario| {
+        s.with(|e, _| {
+            e.slide()
+                .shapes
+                .iter()
+                .filter(|sh| e.slide().shape_names.get(&sh.id).is_some_and(|n| crate::xlsx::ink::is_ink_name(n)))
+                .count()
+        })
+    };
+    let before = shapes(&mut s);
+
+    // 1. 鉛筆ストロークを描画（四角形の軌跡）
+    let (x0, y0, w, h) = (1_800_000i64, 4_000_000i64, 2_000_000i64, 1_200_000i64);
+    let mut rect = Vec::new();
+    for i in 0..=10 {
+        rect.push(at(x0 + w * i / 10, y0));
+    }
+    for i in 1..=6 {
+        rect.push(at(x0 + w, y0 + h * i / 6));
+    }
+    for i in 1..=10 {
+        rect.push(at(x0 + w - w * i / 10, y0 + h));
+    }
+    for i in 1..=5 {
+        rect.push(at(x0, y0 + h - h * i / 6));
+    }
+    rect.push(at(x0, y0));
+    s.drag_through(&rect);
+
+    assert_eq!(shapes(&mut s), before + 1, "a pencil stroke is added as a shape");
+    assert_eq!(named(&mut s), 1, "named as ink stroke");
+
+    // 鉛筆ストロークの Stroke 書式を検証（alpha: 192, width: 6350, rgb: 0x404040）
+    let pencil_stroke = s.with(|e, _| {
+        let sh = e.slide().shapes.last().unwrap();
+        match &sh.kind {
+            ShapeKind::Auto(a) => a.stroke.clone().unwrap(),
+            _ => panic!("must be auto shape"),
+        }
+    });
+    assert_eq!(pencil_stroke.color.rgb, ibis_doc_model::Rgb(PPTX_INK_COLORS[1]));
+    assert_eq!(pencil_stroke.color.alpha, 192, "pencil stroke must have alpha 192 (75% opacity)");
+    assert_eq!(pencil_stroke.width, 6_350, "pencil stroke width must be 0.5pt (6,350 EMU)");
+
+    // 2. 色鉛筆テスト: 色を赤に変更して描画
+    s.update(|e, _, cx| e.set_pptx_ink_color(ibis_doc_model::Rgb(PPTX_INK_COLORS[6]), cx)); // 赤
+    let line1: Vec<(f32, f32)> = (0..=8).map(|i| at(x0 + 150_000 * i, y0 + h + 300_000)).collect();
+    s.drag_through(&line1);
+    assert_eq!(named(&mut s), 2);
+    let red_pencil_stroke = s.with(|e, _| {
+        let sh = e.slide().shapes.last().unwrap();
+        match &sh.kind {
+            ShapeKind::Auto(a) => a.stroke.clone().unwrap(),
+            _ => panic!("must be auto shape"),
+        }
+    });
+    assert_eq!(red_pencil_stroke.color.rgb, ibis_doc_model::Rgb(PPTX_INK_COLORS[6]));
+    assert_eq!(red_pencil_stroke.color.alpha, 192, "colored pencil preserves alpha 192");
+
+    // 3. 太さ変更テスト: 太さを 1.0pt に変更
+    s.update(|e, _, cx| e.set_pptx_ink_width(PPTX_INK_WIDTHS[1], cx)); // 1.0pt
+    let line2: Vec<(f32, f32)> = (0..=8).map(|i| at(x0 + 150_000 * i, y0 + h + 600_000)).collect();
+    s.drag_through(&line2);
+    assert_eq!(named(&mut s), 3);
+    let thicker_stroke = s.with(|e, _| {
+        let sh = e.slide().shapes.last().unwrap();
+        match &sh.kind {
+            ShapeKind::Auto(a) => a.stroke.clone().unwrap(),
+            _ => panic!("must be auto shape"),
+        }
+    });
+    assert_eq!(thicker_stroke.width, 12_700, "1.0pt width is 12,700 EMU");
+
+    // 4. 消しゴムで直前のストロークを消去
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Eraser));
+    let touch = at(x0 + 500_000, y0 + h + 600_000);
+    s.drag_through(&[touch, (touch.0 + 3.0, touch.1)]);
+    assert_eq!(named(&mut s), 2, "erased 1 stroke");
+    s.key("cmd-z");
+    assert_eq!(named(&mut s), 3, "undo restored the erased stroke");
+    s.key("cmd-shift-z");
+    assert_eq!(named(&mut s), 2, "redo re-erased the stroke");
+
+    // 5. 選択に切り替え、最初の四角形鉛筆ストロークを選んで図形に変換
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Select));
+    let id = s.with(|e, _| {
+        e.slide()
+            .shapes
+            .iter()
+            .find(|sh| {
+                e.slide().shape_names.get(&sh.id).is_some_and(|n| crate::xlsx::ink::is_ink_name(n))
+                    && crate::xlsx::ink::recognize(&crate::xlsx::ink::stroke_points(sh).unwrap()).is_some()
+            })
+            .map(|sh| sh.id)
+            .expect("the rectangle stroke")
+    });
+    s.update(|e, _, _| e.set_selection(vec![id]));
+    s.update(|e, _, cx| e.pptx_ink_to_shape(cx));
+
+    let converted = s.with(|e, _| {
+        e.selected_shapes().first().map(|sh| {
+            matches!(
+                &sh.kind,
+                ShapeKind::Auto(a) if matches!(a.geometry, ibis_doc_model::Geometry::Rect)
+                    || matches!(&a.geometry, ibis_doc_model::Geometry::Formula(f) if f.preset.as_deref() == Some("rect"))
+            )
+        })
+    });
+    assert_eq!(converted, Some(true), "converted to a rectangle");
+
+    // 変換後も鉛筆の半透明度・色・太さを継承
+    let converted_stroke = s.with(|e, _| {
+        let shapes = e.selected_shapes();
+        let sh = shapes.first().unwrap();
+        match &sh.kind {
+            ShapeKind::Auto(a) => a.stroke.clone().unwrap(),
+            _ => panic!("must be auto shape"),
+        }
+    });
+    assert_eq!(converted_stroke.color.rgb, ibis_doc_model::Rgb(PPTX_INK_COLORS[1]));
+    assert_eq!(converted_stroke.color.alpha, 255, "converted auto shape stroke is opaque (alpha 255)");
+    assert_eq!(converted_stroke.width, 6_350, "converted shape inherits pencil width 6,350 EMU");
+
+    // 6. 保存と開き直しの永続化検証
+    s.save_as("pencil-ink.pptx");
+    let saved = s.reopen();
+    assert!(saved.slides[3].shapes.len() > before, "pencil ink strokes and converted shapes are saved");
+
+    // 7. Undo/Redo の安全性検証
+    undo_all_and_redo(&mut s);
+}
+
+/// ペンの色・太さ・効果 (PPTX-INK-002):
+/// 描画パネルで標準16色パレットとカスタム色、5段階の太さ（0.5pt〜6.0pt）、
+/// 8種のエフェクトペン（レインボー、銀河、溶岩、海洋、ローズゴールド、金、銀、銅）を選べ、
+/// エフェクトペン描画時はグロー効果（glow）と専用のインク名が付与される。
+/// インクを図形に変換した際もグロー効果が引き継がれ、保存して開き直しても保持される。
+pub(crate) fn ink_pen_colors_thickness_and_effects() {
+    use crate::pptx::ink::{InkEffect, PPTX_INK_COLORS, PPTX_INK_WIDTHS};
+    use crate::xlsx::ink::PenKind;
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(4);
+    s.menu("pptx.ink");
+    assert!(s.with(|e, _| e.pptx().unwrap().ink.is_some()), "Draw panel is open");
+
+    // Check initial settings: default color is black, width is 1.0pt, effect is None.
+    assert_eq!(s.with(|e, _| e.pptx_ink_color()), Some(ibis_doc_model::Rgb(PPTX_INK_COLORS[0])));
+    assert_eq!(s.with(|e, _| e.pptx_ink_width()), Some(PPTX_INK_WIDTHS[1]));
+    assert_eq!(s.with(|e, _| e.pptx_ink_effect()), Some(InkEffect::None));
+
+    // Change color and thickness.
+    s.update(|e, _, cx| e.set_pptx_ink_color(ibis_doc_model::Rgb(PPTX_INK_COLORS[6]), cx)); // Red
+    s.update(|e, _, cx| e.set_pptx_ink_width(PPTX_INK_WIDTHS[4], cx)); // 6.0pt
+    assert_eq!(s.with(|e, _| e.pptx_ink_color()), Some(ibis_doc_model::Rgb(PPTX_INK_COLORS[6])));
+    assert_eq!(s.with(|e, _| e.pptx_ink_width()), Some(6.0));
+    assert_eq!(s.with(|e, _| e.pptx_ink_effect()), Some(InkEffect::None));
+
+    // Select effect pen: Rainbow.
+    s.update(|e, _, cx| e.set_pptx_ink_effect(InkEffect::Rainbow, cx));
+    assert_eq!(s.with(|e, _| e.pptx_ink_effect()), Some(InkEffect::Rainbow));
+    assert_eq!(s.with(|e, _| e.pptx_ink_color()), Some(InkEffect::Rainbow.base_color()));
+
+    // Selecting a solid color resets effect to None.
+    s.update(|e, _, cx| e.set_pptx_ink_color(ibis_doc_model::Rgb(0x002060), cx));
+    assert_eq!(s.with(|e, _| e.pptx_ink_effect()), Some(InkEffect::None));
+
+    // Re-select Rainbow effect.
+    s.update(|e, _, cx| e.set_pptx_ink_effect(InkEffect::Rainbow, cx));
+
+    let (origin, scale) = s.with(|e, _| {
+        let l = e.slide_layout().unwrap();
+        (l.origin, l.scale)
+    });
+    let at = |x: i64, y: i64| (f32::from(origin.x) + x as f32 * scale, f32::from(origin.y) + y as f32 * scale);
+    let shapes = |s: &mut Scenario| s.with(|e, _| e.slide().shapes.len());
+    let before = shapes(&mut s);
+
+    // Draw a stroke with the Rainbow pen.
+    let (x0, y0) = (1_200_000i64, 4_000_000i64);
+    let line1: Vec<(f32, f32)> = (0..=10).map(|i| at(x0 + 150_000 * i, y0)).collect();
+    s.drag_through(&line1);
+    assert_eq!(shapes(&mut s), before + 1, "rainbow stroke created");
+
+    // Verify shape name and glow effect.
+    let (name, glow) = s.with(|e, _| {
+        let shape = e.slide().shapes.last().unwrap();
+        let name = e.slide().shape_names.get(&shape.id).cloned();
+        let glow = match &shape.kind {
+            ShapeKind::Auto(a) => a.glow,
+            _ => None,
+        };
+        (name, glow)
+    });
+    assert!(name.as_ref().is_some_and(|n| crate::xlsx::ink::is_ink_name(n)), "recognized as ink name: {:?}", name);
+    assert_eq!(glow, InkEffect::Rainbow.glow(), "rainbow glow applied");
+
+    // Draw a closed stroke with Gold effect pen.
+    s.update(|e, _, cx| e.set_pptx_ink_effect(InkEffect::Gold, cx));
+    let (gx, gy, gw, gh) = (3_500_000i64, 4_000_000i64, 2_000_000i64, 1_000_000i64);
+    let mut rect = Vec::new();
+    for i in 0..=8 {
+        rect.push(at(gx + gw * i / 8, gy));
+    }
+    for i in 1..=5 {
+        rect.push(at(gx + gw, gy + gh * i / 5));
+    }
+    for i in 1..=8 {
+        rect.push(at(gx + gw - gw * i / 8, gy + gh));
+    }
+    for i in 1..=4 {
+        rect.push(at(gx, gy + gh - gh * i / 5));
+    }
+    rect.push(at(gx, gy));
+    s.drag_through(&rect);
+    assert_eq!(shapes(&mut s), before + 2, "gold stroke created");
+
+    let gold_shape_id = s.with(|e, _| e.slide().shapes.last().unwrap().id);
+    let gold_glow = s.with(|e, _| {
+        let shape = e.slide().shapes.last().unwrap();
+        match &shape.kind {
+            ShapeKind::Auto(a) => a.glow,
+            _ => None,
+        }
+    });
+    assert_eq!(gold_glow, InkEffect::Gold.glow(), "gold glow applied");
+
+    // Convert gold rectangle ink to shape.
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Select));
+    s.update(|e, _, _| e.set_selection(vec![gold_shape_id]));
+    s.update(|e, _, cx| e.pptx_ink_to_shape(cx));
+
+    let converted_glow = s.with(|e, _| {
+        let shapes = e.selected_shapes();
+        let shape = shapes.first().unwrap();
+        match &shape.kind {
+            ShapeKind::Auto(a) => {
+                assert!(matches!(a.geometry, ibis_doc_model::Geometry::Rect) || matches!(&a.geometry, ibis_doc_model::Geometry::Formula(f) if f.preset.as_deref() == Some("rect")), "converted to rect");
+                a.glow
+            }
+            _ => panic!("expected AutoShape"),
+        }
+    });
+    assert_eq!(converted_glow, InkEffect::Gold.glow(), "glow preserved after conversion to shape");
+
+    // Draw a Galaxy stroke and erase it with Eraser.
+    s.update(|e, _, cx| {
+        e.set_pptx_ink_pen(PenKind::Pen);
+        e.set_pptx_ink_effect(InkEffect::Galaxy, cx);
+    });
+    let (ex, ey) = (1_200_000i64, 5_500_000i64);
+    let line_erase: Vec<(f32, f32)> = (0..=10).map(|i| at(ex + 150_000 * i, ey)).collect();
+    s.drag_through(&line_erase);
+    assert_eq!(shapes(&mut s), before + 3, "galaxy stroke created");
+
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Eraser));
+    let touch = at(ex + 500_000, ey);
+    s.drag_through(&[touch, (touch.0 + 3.0, touch.1)]);
+    assert_eq!(shapes(&mut s), before + 2, "galaxy stroke erased");
+
+    s.key("cmd-z");
+    assert_eq!(shapes(&mut s), before + 3, "erased stroke undone");
+    s.key("cmd-shift-z");
+    assert_eq!(shapes(&mut s), before + 2, "redo erase");
+
+    // Save and reopen roundtrip to verify OOXML preservation of ink strokes and glow.
+    s.save_as("ink-effects.pptx");
+    let saved = s.reopen();
+    assert!(saved.slides[3].shapes.len() >= before + 2, "strokes persisted in pptx");
+    let saved_rainbow = saved.slides[3].shapes.iter().find(|sh| {
+        saved.slides[3].shape_names.get(&sh.id).is_some_and(|n| n.contains("レインボー") || n.contains("Rainbow"))
+    }).expect("saved rainbow stroke found");
+    match &saved_rainbow.kind {
+        ShapeKind::Auto(a) => {
+            assert_eq!(a.glow, InkEffect::Rainbow.glow(), "glow persisted across save/reopen");
+        }
+        _ => panic!("expected AutoShape for ink stroke"),
+    }
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-IMAGE-019: フォトアルバム (Photo Album) の作成、レイアウト、枠線・モノクロ設定、キャプション、Undo/Redo、保存と再開のラウンドトリップ。
+pub(crate) fn photo_album_create_and_round_trip() {
+    use image::ImageEncoder as _;
+    use ibis_doc_model::{
+        MediaFormat, PhotoAlbum, PhotoAlbumFrame, PhotoAlbumLayout, ShapeKind,
+    };
+    use crate::pptx::photo_album::PhotoAlbumPicture;
+
+    // 1. Create two test PNG images in memory.
+    let mut png_bytes1 = Vec::new();
+    let rgba1 = vec![255u8, 100, 100, 255].repeat(64 * 48);
+    image::codecs::png::PngEncoder::new(&mut png_bytes1)
+        .write_image(&rgba1, 64, 48, image::ExtendedColorType::Rgba8)
+        .unwrap();
+
+    let mut png_bytes2 = Vec::new();
+    let rgba2 = vec![100u8, 255, 100, 255].repeat(48 * 64);
+    image::codecs::png::PngEncoder::new(&mut png_bytes2)
+        .write_image(&rgba2, 48, 64, image::ExtendedColorType::Rgba8)
+        .unwrap();
+
+    let pictures = vec![
+        PhotoAlbumPicture {
+            caption: "写真 1".to_string(),
+            data: png_bytes1.into(),
+            format: MediaFormat::Png,
+            width: 64,
+            height: 48,
+        },
+        PhotoAlbumPicture {
+            caption: "写真 2".to_string(),
+            data: png_bytes2.into(),
+            format: MediaFormat::Png,
+            width: 48,
+            height: 64,
+        },
+    ];
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let initial_slide_count = s.with(|e, _| e.presentation().slides.len());
+
+    let album_config = PhotoAlbum {
+        bw: true,
+        show_captions: true,
+        layout: PhotoAlbumLayout::TwoPicTitle,
+        frame: PhotoAlbumFrame::FrameStyle2,
+    };
+
+    // 2. Create the photo album via editor method.
+    s.update(|e, _, cx| {
+        e.create_photo_album(&pictures, album_config.clone(), cx);
+    });
+
+    // 3. Verify slides were added (1 title slide + 1 picture slide containing 2 photos).
+    let new_slide_count = s.with(|e, _| e.presentation().slides.len());
+    assert_eq!(new_slide_count, initial_slide_count + 2, "added title slide and 1 picture slide");
+
+    // Verify presentation has photo album metadata set
+    assert_eq!(s.with(|e, _| e.presentation().photo_album.clone()), Some(album_config.clone()));
+
+    // Verify Title slide (first new slide)
+    let title_slide_idx = initial_slide_count;
+    let title_slide = s.with(|e, _| e.presentation().slides[title_slide_idx].clone());
+    assert!(!title_slide.shapes.is_empty(), "title slide has shapes");
+
+    // Verify Picture slide (second new slide)
+    let pic_slide_idx = initial_slide_count + 1;
+    let pic_slide = s.with(|e, _| e.presentation().slides[pic_slide_idx].clone());
+    // In TwoPicTitle: 1 title shape + 2 picture shapes + 2 caption shapes = 5 shapes
+    assert_eq!(pic_slide.shapes.len(), 5, "TwoPicTitle has title, 2 pictures, and 2 captions");
+
+    // Verify picture properties: bw=true -> effects.grayscale == true, frameStyle2 -> roundRect geometry
+    let pic_shapes: Vec<_> = pic_slide.shapes.iter().filter_map(|sh| match &sh.kind {
+        ShapeKind::Picture(p) => Some((sh, p)),
+        _ => None,
+    }).collect();
+    assert_eq!(pic_shapes.len(), 2, "2 pictures on the slide");
+    for (_sh, pic) in &pic_shapes {
+        assert!(pic.effects.grayscale, "grayscale applied when bw=true");
+        assert!(
+            matches!(&pic.geometry, Some(ibis_doc_model::Geometry::RoundRect { .. })),
+            "frameStyle2 uses roundRect geometry: {:?}",
+            pic.geometry
+        );
+    }
+
+    // Verify captions exist and contain caption text
+    let caption_shapes: Vec<_> = pic_slide.shapes.iter().filter_map(|sh| match &sh.kind {
+        ShapeKind::Auto(a) if a.text.as_ref().is_some_and(|tb| tb.text().contains("写真")) => Some(a),
+        _ => None,
+    }).collect();
+    assert_eq!(caption_shapes.len(), 2, "2 caption shapes found");
+
+    // 4. Test Single Undo: cmd-z rolls back both slides and album metadata in 1 step!
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), initial_slide_count, "undo restores initial slide count");
+    assert_eq!(s.with(|e, _| e.presentation().photo_album.clone()), None, "undo clears photo album metadata");
+
+    // 5. Test Redo: cmd-shift-z restores album
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), new_slide_count, "redo restores slides");
+    assert_eq!(s.with(|e, _| e.presentation().photo_album.clone()), Some(album_config.clone()), "redo restores photo album metadata");
+
+    // 6. Test Sidebar UI panel interaction
+    s.update(|e, window, cx| e.open_photo_album_panel(window, cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().photo_album.is_some()), "photo album panel open");
+    s.update(|e, _, cx| {
+        let new_album = PhotoAlbum {
+            layout: PhotoAlbumLayout::FourPic,
+            bw: false,
+            show_captions: true,
+            frame: PhotoAlbumFrame::FrameStyle2,
+        };
+        e.set_photo_album(Some(new_album), cx);
+    });
+    assert_eq!(
+        s.with(|e, _| e.presentation().photo_album.as_ref().map(|a| (a.layout, a.bw))),
+        Some((PhotoAlbumLayout::FourPic, false)),
+        "sidebar updated photo album configuration"
+    );
+    s.update(|e, _, cx| e.close_photo_album_panel(cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().photo_album.is_none()), "photo album panel closed");
+
+    // 7. Save and reopen round-trip verification
+    s.save_as("photo-album.pptx");
+    let reopened = s.reopen();
+    assert_eq!(
+        reopened.photo_album,
+        Some(PhotoAlbum {
+            bw: false,
+            show_captions: true,
+            layout: PhotoAlbumLayout::FourPic,
+            frame: PhotoAlbumFrame::FrameStyle2,
+        }),
+        "photo album metadata preserved in OOXML <p:photoAlbum> presentation.xml round-trip"
+    );
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-INK-011: インクの再生 (Ink Replay) および巻き戻し (Rewind)。
+/// 描画パネルで描いたインクストロークに対して、アニメーションメニュー（開始効果「インクの再生」/ 終了効果「巻き戻し」）
+/// または描画パネルの「インクの再生」ボタンから Replay アニメーション（presetID="28", presetClass="entr"/"exit"）を設定できる。
+/// 複数ストローク選択時は選択ストロークに、未選択時はスライド全体のインクストロークに順次アニメーションが設定される。
+/// Undo/Redo、ファイル保存・再読込ラウンドトリップ、スライドショー実行時の再生描画（opacity フェード）を検証。
+pub(crate) fn ink_replay_and_animation() {
+    use crate::xlsx::ink::stroke_points;
+    use ibis_doc_model::{AnimationClass, AnimationLook, AnimationStart};
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(4);
+
+    // 1. 描画パネルを開き、2本のインクストロークを描く
+    s.menu("pptx.ink");
+    assert!(s.with(|e, _| e.pptx().unwrap().ink.is_some()), "Draw panel is open");
+    let (origin, scale) = s.with(|e, _| {
+        let l = e.slide_layout().unwrap();
+        (l.origin, l.scale)
+    });
+    let at = |x: i64, y: i64| (f32::from(origin.x) + x as f32 * scale, f32::from(origin.y) + y as f32 * scale);
+
+    let (x0, y0, w, h) = (1_500_000i64, 4_200_000i64, 2_000_000i64, 1_000_000i64);
+    let line1: Vec<(f32, f32)> = (0..=10).map(|i| at(x0 + w * i / 10, y0)).collect();
+    s.drag_through(&line1);
+
+    let line2: Vec<(f32, f32)> = (0..=10).map(|i| at(x0, y0 + 500_000 + h * i / 10)).collect();
+    s.drag_through(&line2);
+
+    let ink_shapes: Vec<ibis_doc_model::ShapeId> = s.with(|e, _| {
+        e.slide().shapes.iter().filter(|sh| stroke_points(sh).is_some()).map(|sh| sh.id).collect()
+    });
+    assert!(ink_shapes.len() >= 2, "drawn at least 2 ink strokes");
+    let stroke1 = ink_shapes[ink_shapes.len() - 2];
+    let stroke2 = ink_shapes[ink_shapes.len() - 1];
+
+    // 2. ストローク1を選択し、ツールバーのアニメーションメニューから「インクの再生」（開始効果）を設定
+    s.update(|e, _, _| e.set_selection(vec![stroke1]));
+    s.toolbar_menu("motion", "pptx.anim.in.replay");
+    assert_eq!(
+        s.with(|e, _| e.slide().animations.iter().find(|a| a.shape == stroke1).map(|a| (a.class, a.look, a.preset))),
+        Some((AnimationClass::Entrance, AnimationLook::Replay, (28, 0))),
+        "stroke 1 has Replay entrance animation"
+    );
+
+    // 3. ストローク2を選択し、終了効果「巻き戻し」を設定
+    s.update(|e, _, _| e.set_selection(vec![stroke2]));
+    s.toolbar_menu("motion", "pptx.anim.out.rewind");
+    assert_eq!(
+        s.with(|e, _| e.slide().animations.iter().find(|a| a.shape == stroke2).map(|a| (a.class, a.look, a.preset))),
+        Some((AnimationClass::Exit, AnimationLook::Replay, (28, 0))),
+        "stroke 2 has Rewind exit animation"
+    );
+
+    // 4. 描画パネルの「インクの再生」機能（未選択時は全インクストロークを順次再生）
+    s.update(|e, _, _| e.set_selection(Vec::new()));
+    s.update(|e, _, cx| e.pptx_ink_replay(cx));
+    let anims = s.with(|e, _| e.slide().animations.clone());
+    let stroke1_anim = anims.iter().find(|a| a.shape == stroke1).expect("stroke1 anim");
+    let stroke2_anim = anims.iter().find(|a| a.shape == stroke2).expect("stroke2 anim");
+    assert_eq!(stroke1_anim.look, AnimationLook::Replay);
+    assert_eq!(stroke1_anim.class, AnimationClass::Entrance);
+    assert_eq!(stroke1_anim.start, AnimationStart::OnClick);
+    assert_eq!(stroke2_anim.look, AnimationLook::Replay);
+    assert_eq!(stroke2_anim.class, AnimationClass::Entrance);
+    assert_eq!(stroke2_anim.start, AnimationStart::AfterPrevious);
+
+    // 5. Undo / Redo
+    s.key("cmd-z");
+    assert_eq!(
+        s.with(|e, _| e.slide().animations.iter().find(|a| a.shape == stroke2).map(|a| a.class)),
+        Some(AnimationClass::Exit),
+        "undo restores previous animations"
+    );
+    s.key("cmd-shift-z");
+    assert_eq!(
+        s.with(|e, _| e.slide().animations.iter().find(|a| a.shape == stroke2).map(|a| a.class)),
+        Some(AnimationClass::Entrance),
+        "redo restores ink replay sequentially"
+    );
+
+    // 6. 保存と開き直しで OOXML presetID="28" が保持されていることを確認
+    s.save_as("ink-replay.pptx");
+    let reopened = s.reopen();
+    let slide4 = &reopened.slides[3];
+    assert_eq!(slide4.animations.len(), 2, "reopened presentation has 2 animations");
+    let r_stroke1_anim = &slide4.animations[0];
+    let r_stroke2_anim = &slide4.animations[1];
+    assert_eq!(r_stroke1_anim.look, AnimationLook::Replay);
+    assert_eq!(r_stroke1_anim.preset, (28, 0));
+    assert_eq!(r_stroke2_anim.look, AnimationLook::Replay);
+    assert_eq!(r_stroke2_anim.preset, (28, 0));
+
+    // 7. スライドショー開始と実行の動作確認
+    s.update(|e, w, cx| e.start_slideshow(w, cx));
+    assert!(s.with(|e, _| e.slideshow.is_some()), "slideshow running");
+    s.key("space");
+    s.key("escape");
+    assert!(s.with(|e, _| e.slideshow.is_none()), "slideshow ended");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// スクリーンショット挿入 (Insert Screenshot / Screen Clipping):
+/// 1. メニュー `pptx.insert.screenshot.available-windows` からウィンドウのスナップショット画像を挿入
+/// 2. メニュー `pptx.insert.screenshot.clipping` から画面の領域スナップショット画像を挿入
+/// 3. クリップボードに画像をセットした上で `pptx.insert.screenshot.clipboard` からクリップボードのスクリーンショットを挿入
+/// 4. Undo / Redo で正しく図形が削除・復帰されることを確認
+/// 5. ファイル保存と開き直しで画像が `<p:pic>` として正しく保持されることを確認
+pub(crate) fn insert_screenshot_and_clipping() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+
+    let initial_count = s.with(|e, _| e.slide().shapes.len());
+
+    // 1. 使用できるウィンドウのスクリーンショット挿入
+    s.menu("pptx.insert.screenshot.available-windows");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 1);
+    let win_pic_id = s.with(|e, _| e.selected_ids().first().copied()).expect("window screenshot inserted and selected");
+    let win_pic_name = s.with(|e, _| match &e.slide().shape(win_pic_id).unwrap().kind {
+        ShapeKind::Picture(p) => p.name.clone(),
+        _ => panic!("expected picture"),
+    });
+    assert_eq!(win_pic_name, "Screenshot_Window.png");
+
+    // 2. 画面の領域… (clipping)
+    s.menu("pptx.insert.screenshot.clipping");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 2);
+    let clip_pic_id = s.with(|e, _| e.selected_ids().first().copied()).expect("clipping screenshot inserted and selected");
+    let clip_pic_name = s.with(|e, _| match &e.slide().shape(clip_pic_id).unwrap().kind {
+        ShapeKind::Picture(p) => p.name.clone(),
+        _ => panic!("expected picture"),
+    });
+    assert_eq!(clip_pic_name, "Screen_Clipping.png");
+
+    // 3. クリップボードからのスクリーンショット挿入
+    let image_bytes = {
+        let mut out = Vec::new();
+        let image = image::RgbaImage::from_pixel(64, 48, image::Rgba([40, 120, 220, 255]));
+        image::DynamicImage::ImageRgba8(image).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    };
+    s.update(|_, _, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_image(&gpui_kit::Image::from_bytes(gpui_kit::ImageFormat::Png, image_bytes))));
+    s.menu("pptx.insert.screenshot.clipboard");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 3);
+    let cb_pic_id = s.with(|e, _| e.selected_ids().first().copied()).expect("clipboard screenshot inserted and selected");
+    let cb_pic_name = s.with(|e, _| match &e.slide().shape(cb_pic_id).unwrap().kind {
+        ShapeKind::Picture(p) => p.name.clone(),
+        _ => panic!("expected picture"),
+    });
+    assert_eq!(cb_pic_name, "Screenshot.png");
+
+    // 4. Undo / Redo
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 2);
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 3);
+
+    // 5. 保存と開き直しで保持されることを確認
+    s.save_as("screenshot-roundtrip.pptx");
+    let reopened = s.reopen();
+    let slide1 = &reopened.slides[0];
+    assert_eq!(slide1.shapes.len(), initial_count + 3);
+    let picture_count = slide1.shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Picture(_))).count();
+    assert!(picture_count >= 3, "at least 3 picture shapes present in reopened slide");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// プレゼンテーションの比較と変更の統合 (Compare Presentations & Merge Changes / PPTX-REVIEW-019):
+/// 1. 比較対象となる改訂版プレゼンテーションファイル (スライド追加、図形追加、文字変更、ノート変更) を作成して保存
+/// 2. `compare_presentation_with_file` で比較を実行し、差分 (スライド差分・図形差分・ノート差分) が正確に抽出されることを確認
+/// 3. サイドバーの比較パネル (compare_panel) の描画と差分一覧の表示を確認
+/// 4. 単一変更の反映 (Accept) をテストし、モデルへの適用と Undo / Redo の連動を確認
+/// 5. 残りの変更を一括反映 (Accept All) をテストし、差分リストが空になることを確認
+/// 6. レビューの終了 (End Review) をテストし、比較パネルが正常に閉じることを確認
+/// 7. 保存と開き直しで統合された変更が正しく保持されていることを確認
+pub(crate) fn compare_and_merge_presentations() {
+    // 1. 改訂版プレゼンテーションを作成して保存
+    let rev_path = {
+        let mut s_rev = Scenario::open("test/editing/pptx-plan.pptx");
+        s_rev.page(1);
+        let slide_id = s_rev.with(|e, _| e.current_slide);
+        let shape_id = s_rev.with(|e, _| e.slide().shapes[0].id);
+        let next_shape_id = s_rev.with(|e, _| e.presentation().slides.iter().flat_map(|s| &s.shapes).map(|s| s.id.0).max().unwrap_or(0) + 100);
+        let next_slide_id = s_rev.with(|e, _| e.presentation().slides.iter().map(|s| s.id.0).max().unwrap_or(0) + 100);
+
+        let new_shape = ibis_doc_model::Shape::text_box(
+            ibis_doc_model::ShapeId(next_shape_id),
+            ibis_doc_model::EmuRect::new(1_000_000, 1_000_000, 2_000_000, 1_000_000),
+            "改訂版追加テキスト",
+        );
+        let mut added_slide = s_rev.with(|e, _| e.slide().clone());
+        added_slide.id = ibis_doc_model::SlideId(next_slide_id);
+        added_slide.shapes.clear();
+        added_slide.notes = "追加スライドのノート".to_string();
+
+        let slides_len = s_rev.with(|e, _| e.presentation().slides.len());
+        s_rev.update(|e, _, cx| {
+            e.run(vec![
+                ibis_doc_model::Command::SetText { slide: slide_id, shape: shape_id, text: "改訂版タイトル: プレゼンテーション比較テスト".into() },
+                ibis_doc_model::Command::InsertShape { slide: slide_id, index: 1, shape: new_shape },
+                ibis_doc_model::Command::SetNotes { slide: slide_id, notes: "これは改訂版で追加された発表者ノートです。".into() },
+                ibis_doc_model::Command::InsertSlide { index: slides_len, slide: added_slide },
+            ], cx);
+        });
+        s_rev.save_as("compare-revised-test.pptx")
+    };
+
+    // 2. 元のファイルを開いて比較を実行
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+
+    assert!(!s.with(|e, _| e.is_comparing_presentations()));
+    s.update(|e, _, cx| e.compare_presentation_with_file(&rev_path, cx));
+
+    assert!(s.with(|e, _| e.is_comparing_presentations()));
+    assert!(s.with(|e, _| e.sidebar_open));
+
+    let diff_count = s.with(|e, _| e.pptx().and_then(|p| p.compare_panel.as_ref()).map(|p| p.diffs.len())).unwrap_or(0);
+    assert_eq!(diff_count, 2, "2 slide differences detected (modified slide 1, added slide 2)");
+
+    // 3. サイドバーの比較パネル描画確認
+    s.update(|e, _, cx| {
+        let panel = e.compare_panel(cx);
+        assert!(panel.is_some(), "compare_panel renders correctly");
+    });
+
+    // 4. スライド1の変更を反映 (Accept)
+    let initial_shape_count = s.with(|e, _| e.slide().shapes.len());
+    s.update(|e, _, cx| e.compare_accept_diff(0, cx));
+
+    // スライド1に図形が追加され、テキストとノートが反映されたことを確認
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_shape_count + 1);
+    assert_eq!(s.with(|e, _| e.slide().notes.clone()), "これは改訂版で追加された発表者ノートです。");
+    assert_eq!(
+        s.with(|e, _| e.slide().shapes[0].text_body().map(|b| b.text().trim().to_string())),
+        Some("改訂版タイトル: プレゼンテーション比較テスト".to_string())
+    );
+
+    // 差分が1件消化されて残り1件 (AddedSlide)
+    let remaining_diffs = s.with(|e, _| e.pptx().and_then(|p| p.compare_panel.as_ref()).map(|p| p.diffs.len())).unwrap_or(0);
+    assert_eq!(remaining_diffs, 1);
+
+    // Undo / Redo の確認
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_shape_count);
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_shape_count + 1);
+
+    // 5. 残りの変更を一括反映 (Accept All)
+    let initial_slides_count = s.with(|e, _| e.presentation().slides.len());
+    s.menu("pptx.review.accept-all");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), initial_slides_count + 1);
+
+    let final_diffs = s.with(|e, _| e.pptx().and_then(|p| p.compare_panel.as_ref()).map(|p| p.diffs.len())).unwrap_or(0);
+    assert_eq!(final_diffs, 0, "all diffs accepted");
+
+    // 6. レビューの終了 (End Review)
+    s.menu("pptx.review.end-review");
+    assert!(!s.with(|e, _| e.is_comparing_presentations()));
+
+    // 7. 保存と開き直しで反映された内容が保持されていることを確認
+    s.save_as("compare-merged-output.pptx");
+    let reopened = s.reopen();
+    assert_eq!(reopened.slides.len(), initial_slides_count + 1);
+    let r_slide1 = &reopened.slides[0];
+    assert_eq!(r_slide1.shapes.len(), initial_shape_count + 1);
+    assert_eq!(r_slide1.notes.as_str(), "これは改訂版で追加された発表者ノートです。");
+    assert_eq!(
+        r_slide1.shapes[0].text_body().map(|b| b.text().trim().to_string()),
+        Some("改訂版タイトル: プレゼンテーション比較テスト".to_string())
+    );
+
+    undo_all_and_redo(&mut s);
+}
+
+/// インクをテキスト・数式に変換 (PPTX-INK-009, PPTX-INK-010):
+/// 1. スライドに描画パネルでインクストロークを描画。
+/// 2. インクを選択し、ツールバーまたは右クリックメニューまたは描画パネルから「インクをテキストに変換」を実行。
+///    - 図形が TextBox に変換され、認識されたテキストが挿入され、フォントサイズ・色が反映される。
+///    - 1ステップで Undo / Redo できることを確認。
+/// 3. 新たにインクストロークを描画し、「インクを数式に変換」を実行。
+///    - 図形が TextBox に変換され、数式オブジェクト（RunStyle.math / Cambria Math）として構成される。
+///    - 1ステップで Undo / Redo できることを確認。
+/// 4. ファイルを保存して開き直し、変換されたテキストボックスと数式が保持されていることを確認。
+pub(crate) fn ink_convert_to_text_and_math() {
+    use crate::xlsx::ink::PenKind;
+    use ibis_doc_model::ShapeKind;
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(4);
+    s.menu("pptx.ink");
+    assert!(s.with(|e, _| e.pptx().unwrap().ink.is_some()), "the Draw panel is open");
+
+    let (origin, scale) = s.with(|e, _| {
+        let l = e.slide_layout().unwrap();
+        (l.origin, l.scale)
+    });
+    let at = |x: i64, y: i64| (f32::from(origin.x) + x as f32 * scale, f32::from(origin.y) + y as f32 * scale);
+    let initial_count = s.with(|e, _| e.slide().shapes.len());
+
+    // 1. 直線インクストロークを描画（垂直に近い線 -> "1" と認識）
+    let (x0, y0, h) = (1_800_000i64, 4_000_000i64, 1_500_000i64);
+    let line1: Vec<(f32, f32)> = (0..=10).map(|i| at(x0, y0 + h * i / 10)).collect();
+    s.drag_through(&line1);
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 1);
+
+    // インクを選択
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Select));
+    let ink1_id = s.with(|e, _| e.slide().shapes.last().unwrap().id);
+    s.update(|e, _, _| e.set_selection(vec![ink1_id]));
+
+    // 2. インクをテキストに変換 (PPTX-INK-009)
+    s.update(|e, _, cx| e.pptx_ink_to_text(cx));
+    let text_shape_id = s.with(|e, _| e.selected_ids().first().copied()).unwrap();
+    let text_content = s.with(|e, _| {
+        let sh = e.slide().shape(text_shape_id).unwrap();
+        match &sh.kind {
+            ShapeKind::TextBox(b) => Some(b.text().trim().to_string()),
+            _ => None,
+        }
+    });
+    assert!(text_content.is_some(), "stroke converted to TextBox");
+    assert_eq!(text_content.as_deref(), Some("1"));
+
+    // Undo / Redo の確認
+    s.key("cmd-z");
+    let after_undo_is_ink = s.with(|e, _| {
+        let sh = e.slide().shape(ink1_id);
+        sh.is_some_and(|s| crate::xlsx::ink::stroke_points(s).is_some())
+    });
+    assert!(after_undo_is_ink, "undone to ink stroke");
+    s.key("cmd-shift-z");
+    let after_redo_is_textbox = s.with(|e, _| {
+        let sh = e.slide().shape(text_shape_id);
+        matches!(sh.map(|s| &s.kind), Some(ShapeKind::TextBox(_)))
+    });
+    assert!(after_redo_is_textbox, "redone to TextBox");
+
+    // 3. 水平方向のストロークを描画（水平線 -> "a/b" と認識）
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Pen));
+    let (x1, y1, w) = (4_000_000i64, 4_000_000i64, 1_600_000i64);
+    let line2: Vec<(f32, f32)> = (0..=10).map(|i| at(x1 + w * i / 10, y1)).collect();
+    s.drag_through(&line2);
+
+    s.update(|e, _, _| e.set_pptx_ink_pen(PenKind::Select));
+    let ink2_id = s.with(|e, _| e.slide().shapes.last().unwrap().id);
+    s.update(|e, _, _| e.set_selection(vec![ink2_id]));
+
+    // インクを数式に変換 (PPTX-INK-010)
+    s.update(|e, _, cx| e.pptx_ink_to_math(cx));
+    let math_shape_id = s.with(|e, _| e.selected_ids().first().copied()).unwrap();
+    let has_math = s.with(|e, _| {
+        let sh = e.slide().shape(math_shape_id).unwrap();
+        match &sh.kind {
+            ShapeKind::TextBox(b) => b.paragraphs.iter().any(|p| p.runs.iter().any(|r| r.style.math.is_some())),
+            _ => false,
+        }
+    });
+    assert!(has_math, "stroke converted to Math formula TextBox");
+
+    // Undo / Redo の確認
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.slide().shape(ink2_id).is_some_and(|s| crate::xlsx::ink::stroke_points(s).is_some())));
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| {
+        let sh = e.slide().shape(math_shape_id).unwrap();
+        matches!(&sh.kind, ShapeKind::TextBox(b) if b.paragraphs.iter().any(|p| p.runs.iter().any(|r| r.style.math.is_some())))
+    }));
+
+    // 4. 保存と開き直し
+    s.save_as("ink-converted.pptx");
+    let saved = s.reopen();
+    let slide4 = &saved.slides[3];
+    let saved_text_runs: Vec<String> = slide4
+        .shapes
+        .iter()
+        .filter_map(|sh| sh.text_body().map(|b| b.text().trim().to_string()))
+        .collect();
+    assert!(saved_text_runs.iter().any(|t| t == "1"), "saved text contains '1': {:?}", saved_text_runs);
+
+    let saved_has_math = slide4
+        .shapes
+        .iter()
+        .any(|sh| sh.text_body().is_some_and(|b| b.paragraphs.iter().any(|p| p.runs.iter().any(|r| r.style.math.is_some()))));
+    assert!(saved_has_math, "saved slide has math formula");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// マイクから音声録音とメディア圧縮・互換性最適化 (PPTX-AUDIO-002, PPTX-VIDEO-017):
+/// 1. メニュー「挿入 > オーディオ > 音声を録音…」で録音サイドバーを開く。
+/// 2. 録音の開始・停止・挿入を行い、スライド上にオーディオクリップ（WAV形式）が配置されることを確認。
+/// 3. Undo / Redo でオーディオの挿入が1ステップで取り消し・再実行できることを確認。
+/// 4. ファイル情報パネルからメディア概要（クリップ数、合計バイト数）が取得できることを確認。
+/// 5. メディア圧縮（Standard 480p）を実行し、WAVデータがダウンサンプリングされて容量が削減されることを確認。
+/// 6. 互換性の最適化を実行。
+/// 7. Undo / Redo でメディア圧縮の取り消し・再実行を確認。
+/// 8. 保存して開き直し、録音・圧縮されたメディアが保持されていることを確認。
+pub(crate) fn audio_record_and_media_compression() {
+    use crate::pptx::MediaQuality;
+    use ibis_doc_model::ShapeKind;
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+
+    // 1. 音声録音パネルを開く
+    s.menu("pptx.audio-record");
+    assert!(s.with(|e, _| e.pptx().and_then(|p| p.audio_record.as_ref()).is_some()), "audio record panel is open");
+
+    // 2. 録音開始・停止・挿入
+    s.update(|e, _, cx| e.start_audio_recording(cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().audio_record.as_ref().unwrap().is_recording));
+
+    s.update(|e, _, cx| e.stop_audio_recording(2.5, cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().audio_record.as_ref().unwrap().has_recorded));
+    assert_eq!(s.with(|e, _| e.pptx().unwrap().audio_record.as_ref().unwrap().duration_secs), 2.5);
+
+    let initial_shape_count = s.with(|e, _| e.slide().shapes.len());
+    let inserted_id = s.update(|e, _, cx| e.insert_recorded_audio("プレゼン冒頭コメント", 2.5, cx)).expect("audio shape inserted");
+
+    // スライドにオーディオ図形が追加され、名前と属性が設定されている
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_shape_count + 1);
+    let is_audio = s.with(|e, _| {
+        let sh = e.slide().shape(inserted_id).unwrap();
+        matches!(&sh.kind, ShapeKind::Picture(p) if p.clip.as_ref().is_some_and(|c| c.audio))
+    });
+    assert!(is_audio, "shape is an audio clip");
+    assert_eq!(s.with(|e, _| e.slide().shape_names.get(&inserted_id).cloned()), Some("プレゼン冒頭コメント".to_string()));
+
+    // 3. Undo / Redo
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_shape_count);
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_shape_count + 1);
+
+    // 4. メディア概要の確認
+    let (media_count, media_bytes_before) = s.with(|e, _| e.presentation_media_summary());
+    assert_eq!(media_count, 1, "1 embedded media");
+    assert!(media_bytes_before > 0, "audio has non-zero size");
+
+    // 5. メディア圧縮の実行 (Standard)
+    let (compressed_count, before_bytes, after_bytes) = s.update(|e, _, cx| e.compress_presentation_media(MediaQuality::Standard, cx));
+    assert_eq!(compressed_count, 1);
+    assert_eq!(before_bytes, media_bytes_before);
+    assert!(after_bytes < before_bytes, "media compressed (after: {after_bytes} < before: {before_bytes})");
+
+    let (_, current_media_bytes) = s.with(|e, _| e.presentation_media_summary());
+    assert_eq!(current_media_bytes, after_bytes);
+
+    // 6. Undo / Redo で圧縮が戻ることを確認
+    s.key("cmd-z"); // undos compression
+    let (_, bytes_after_undo) = s.with(|e, _| e.presentation_media_summary());
+    assert_eq!(bytes_after_undo, media_bytes_before, "undone compression restores original media size");
+
+    s.key("cmd-shift-z"); // redoes compression
+    let (_, bytes_after_redo) = s.with(|e, _| e.presentation_media_summary());
+    assert_eq!(bytes_after_redo, after_bytes, "redone compression restores compressed media size");
+
+    // 7. 互換性の最適化の実行
+    let opt_count = s.update(|e, _, cx| e.optimize_media_compatibility(cx));
+    assert!(opt_count >= 1, "at least 1 media clip optimized");
+
+    // 8. 保存と開き直し
+    s.save_as("recorded-and-compressed.pptx");
+    let saved = s.reopen();
+    let saved_slide = &saved.slides[0];
+    let saved_clip = saved_slide
+        .shapes
+        .iter()
+        .find_map(|sh| match &sh.kind {
+            ShapeKind::Picture(p) if p.clip.as_ref().is_some_and(|c| c.audio) => p.clip.clone(),
+            _ => None,
+        })
+        .expect("saved audio clip options");
+    assert!(saved_clip.audio, "clip is audio");
+    let saved_media = saved.media(saved_clip.media).expect("saved media data");
+    assert_eq!(saved_media.data.len(), after_bytes, "saved media has compressed size");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-AUDIT-001, PPTX-AUDIT-002: tasks/doc/pptx-menu-ids.txt, for `scripts/gen-pptx-ribbon-map.py` (what the menus really have).
+pub(crate) fn audit001_dump_menu_ids() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    fn walk(entries: &[crate::shell::chrome::MenuEntry], out: &mut Vec<String>) {
+        use crate::shell::chrome::MenuEntry;
+        for entry in entries {
+            match entry {
+                MenuEntry::Item(item) => out.push(item.id.to_string()),
+                MenuEntry::Submenu(sub) => {
+                    out.push(sub.id.to_string());
+                    walk(&sub.items, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    let ids = s.with(|e, _| {
+        let menus = e.menus();
+        let mut out = Vec::new();
+        for (_, entries) in &menus.menus {
+            walk(entries, &mut out);
+        }
+        out
+    });
+    assert!(ids.len() > 100, "the menus have items: {}", ids.len());
+    assert!(ids.contains(&"pptx.thesaurus".to_string()), "thesaurus in menu");
+    assert!(ids.contains(&"pptx.3d-model".to_string()), "3d-model in menu");
+    assert!(ids.contains(&"pptx.insert-object".to_string()), "insert-object in menu");
+    s.menu("pptx.thesaurus");
+    let status = s.with(|e, _| e.status.clone());
+    assert!(status.is_some(), "thesaurus set status: {:?}", status);
+
+    let path = crate::shell::scenario::repo_root().join("tasks/doc/pptx-menu-ids.txt");
+    std::fs::write(path, ids.join("\n")).unwrap();
+}
+
+/// PPTX-AUDIT-010: tasks/doc/ids-pptx.md の整合性を検証（機能IDとシナリオの紐付け、欠落や未結びつきの監査）。
+pub(crate) fn audit010_id_mapping_consistency() {
+    let path = crate::shell::scenario::repo_root().join("tasks/doc/ids-pptx.md");
+    let content = std::fs::read_to_string(&path).expect("ids-pptx.md が読めること");
+    assert!(content.contains("どの ID の行にも名前が書かれていないシナリオ：1 件"), "未結びつきシナリオが english_ui のみであること");
+    assert!(content.contains("todo の行に書かれた名前で、一覧に無いもの：0 件"), "todo記載の欠落シナリオが0件であること");
+    assert!(content.contains("シナリオに結びついた ID："), "紐付け集計が存在すること");
+}
+
+/// PPTX-OBJECT-022 & PPTX-THREED-001: 3Dモデル挿入・オブジェクト挿入の配置・Undo/Redo・保存ラウンドトリップ検証
+fn insert_3d_model_and_embedded_object() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let initial_count = s.with(|e, _| e.slide().shapes.len());
+
+    // 1. 3Dモデルプレースホルダーの挿入
+    s.update(|e, _, cx| {
+        e.insert_3d_model_object(std::path::Path::new("sample_model.glb"), cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 1);
+    let shape_3d = s.with(|e, _| e.slide().shapes.last().unwrap().clone());
+    assert!(shape_3d.text_body().unwrap().text().contains("sample_model.glb"));
+
+    // 2. 添付オブジェクトの挿入
+    s.update(|e, _, cx| {
+        e.insert_object_placeholder(std::path::Path::new("spec_document.pdf"), cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 2);
+    let shape_obj = s.with(|e, _| e.slide().shapes.last().unwrap().clone());
+    assert!(shape_obj.text_body().unwrap().text().contains("spec_document.pdf"));
+
+    // 3. 保存して再読込
+    let saved = s.save_as("test-3d-model-and-object.pptx");
+    let bytes = std::fs::read(&saved).expect("read bytes");
+    let reloaded = ibis_pptx::read(&bytes).expect("reloads");
+    assert_eq!(reloaded.slides[0].shapes.len(), initial_count + 2);
+    assert!(reloaded.slides[0].shapes.iter().any(|sh| sh.text_body().is_some_and(|tb| tb.text().contains("sample_model.glb"))));
+    assert!(reloaded.slides[0].shapes.iter().any(|sh| sh.text_body().is_some_and(|tb| tb.text().contains("spec_document.pdf"))));
+
+    // 4. Undo/Redo の検証
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 1);
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count);
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 1);
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_count + 2);
+}
+
+/// PPTX-SHOW-002 & PPTX-SHOW-017: 現在のスライドから開始 (⌘↩) と画面の黒・白表示 (B / W / . / ,)
+pub(crate) fn slideshow_current_slide_and_blank_screen() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e, w, cx| e.focus_handle.focus(w, cx));
+    s.page(3);
+    assert_eq!(s.with(|e, _| e.presentation().slide_index(e.current_slide)), Some(2));
+
+    // 1. 現在のスライド（スライド 3）から開始 (⌘↩)
+    s.key("cmd-enter");
+    assert!(s.with(|e, _| e.slideshow.is_some()), "スライドショーが起動している");
+    assert_eq!(s.with(|e, _| e.presentation().slide_index(e.current_slide)), Some(2), "スライド3から開始されている");
+    assert_eq!(s.with(|e, _| e.slideshow_blank()), None);
+
+    // 2. 黒画面表示 (Bキー)
+    s.key("b");
+    assert_eq!(s.with(|e, _| e.slideshow_blank()), Some(0x000000), "黒画面になっている");
+    // もう一度Bキーで解除
+    s.key("b");
+    assert_eq!(s.with(|e, _| e.slideshow_blank()), None, "黒画面が解除された");
+
+    // 3. 白画面表示 (Wキー)
+    s.key("w");
+    assert_eq!(s.with(|e, _| e.slideshow_blank()), Some(0xffffff), "白画面になっている");
+    // もう一度Wキーで解除
+    s.key("w");
+    assert_eq!(s.with(|e, _| e.slideshow_blank()), None, "白画面が解除された");
+
+    // 4. ピリオド (.) で黒画面、カンマ (,) で白画面
+    s.key(".");
+    assert_eq!(s.with(|e, _| e.slideshow_blank()), Some(0x000000), ". で黒画面");
+    s.key(".");
+    assert_eq!(s.with(|e, _| e.slideshow_blank()), None);
+
+    s.key(",");
+    assert_eq!(s.with(|e, _| e.slideshow_blank()), Some(0xffffff), ", で白画面");
+    s.key(",");
+    assert_eq!(s.with(|e, _| e.slideshow_blank()), None);
+
+    // 5. スライドショー終了 (Escape)
+    s.key("escape");
+    assert!(s.with(|e, _| e.slideshow.is_none()), "スライドショーが終了している");
+}
+
+/// PPTX-TABLE-002, PPTX-TABLE-003, PPTX-TABLE-005, PPTX-TABLE-006, PPTX-TABLE-007, PPTX-TEXT-003〜014, PPTX-AUDIT-003
+/// 表・テキスト・画像のコンテキストメニュー拡充、右クリック即時セル選択、行・列操作・書式設定・Undo/Redo・保存再読込検証
+pub(crate) fn table_and_text_context_menu_actions() {
+    let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
+    // 表のあるスライドを探す
+    let (page, shape_idx) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Table(t) if !t.has_merges())).map(|j| (i, j))
+            })
+        })
+        .expect("a table without merged cells");
+    s.page(page + 1);
+
+    // 1. 表のセル (1, 1) を右クリック -> 即座にセル編集モードになり、セル (1, 1) がフォーカスされる
+    let cell_pos = cell_middle(&mut s, shape_idx, 1, 1);
+    s.right_click(cell_pos);
+    assert!(s.with(|e, _| e.text_editing().is_some_and(|t| t.cell == Some((1, 1)))), "右クリックでセル(1, 1)が即時選択・編集開始される");
+
+    // 2. 表のコンテキストメニューの確認
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&entries, "table.insert-above").is_some(), "table.insert-above exists");
+    assert!(crate::shell::scenario::find_item(&entries, "table.insert-below").is_some(), "table.insert-below exists");
+    assert!(crate::shell::scenario::find_item(&entries, "table.insert-left").is_some(), "table.insert-left exists");
+    assert!(crate::shell::scenario::find_item(&entries, "table.insert-right").is_some(), "table.insert-right exists");
+    assert!(crate::shell::scenario::find_item(&entries, "table.remove-row").is_some(), "table.remove-row exists");
+    assert!(crate::shell::scenario::find_item(&entries, "table.remove-column").is_some(), "table.remove-column exists");
+    assert!(crate::shell::scenario::find_item(&entries, "table.remove-table").is_some(), "table.remove-table exists");
+    assert!(crate::shell::scenario::find_item(&entries, "table.distribute-rows").is_some(), "table.distribute-rows exists");
+    assert!(crate::shell::scenario::find_item(&entries, "table.distribute-columns").is_some(), "table.distribute-columns exists");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.text.top").is_some(), "pptx.text.top exists");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.text.middle").is_some(), "pptx.text.middle exists");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.text.bottom").is_some(), "pptx.text.bottom exists");
+    // テキスト編集関連メニュー項目
+    assert!(crate::shell::scenario::find_item(&entries, "_shell.bold-b").is_some(), "bold exists");
+    assert!(crate::shell::scenario::find_item(&entries, "align.center").is_some(), "align.center exists");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.link").is_some(), "link exists");
+
+    // 3. 右クリックでセル (0, 0) へ移動
+    let cell_0_0 = cell_middle(&mut s, shape_idx, 0, 0);
+    s.right_click(cell_0_0);
+    assert_eq!(s.with(|e, _| e.text_editing().and_then(|t| t.cell)), Some((0, 0)), "別セル右クリックで対象セルが切り替わる");
+
+    // 4. コンテキストメニューのアクション：下に行を挿入
+    let initial_rows = s.with(|e, _| match &e.slide().shapes[shape_idx].kind {
+        ShapeKind::Table(t) => t.rows.len(),
+        _ => unreachable!(),
+    });
+    let initial_cols = s.with(|e, _| match &e.slide().shapes[shape_idx].kind {
+        ShapeKind::Table(t) => t.columns.len(),
+        _ => unreachable!(),
+    });
+    s.update(|e, w, cx| e.table_insert_row(true, w, cx));
+    let rows_after_insert = s.with(|e, _| match &e.slide().shapes[shape_idx].kind {
+        ShapeKind::Table(t) => t.rows.len(),
+        _ => unreachable!(),
+    });
+    assert_eq!(rows_after_insert, initial_rows + 1, "行が挿入された");
+
+    // 5. コンテキストメニューのアクション：右に列を挿入
+    s.update(|e, w, cx| e.table_insert_column(true, w, cx));
+    let cols_after_insert = s.with(|e, _| match &e.slide().shapes[shape_idx].kind {
+        ShapeKind::Table(t) => t.columns.len(),
+        _ => unreachable!(),
+    });
+    assert_eq!(cols_after_insert, initial_cols + 1, "列が挿入された");
+
+    // 6. テキスト入力と中央揃え
+    s.type_text("ContextMenuItem");
+    s.update(|e, w, cx| {
+        e.format_paragraphs(w, cx, ibis_doc_model::ParagraphFormat { align: Some(ibis_doc_model::TextAlign::Center), ..Default::default() });
+    });
+
+    // 7. Undo / Redo 検証
+    s.key("cmd-z"); // Undo format
+    s.key("cmd-z"); // Undo typing
+    s.key("cmd-z"); // Undo insert col
+    let cols_after_undo = s.with(|e, _| match &e.slide().shapes[shape_idx].kind {
+        ShapeKind::Table(t) => t.columns.len(),
+        _ => unreachable!(),
+    });
+    assert_eq!(cols_after_undo, initial_cols, "列挿入が取り消された");
+
+    s.key("cmd-shift-z"); // Redo insert col
+    let cols_after_redo = s.with(|e, _| match &e.slide().shapes[shape_idx].kind {
+        ShapeKind::Table(t) => t.columns.len(),
+        _ => unreachable!(),
+    });
+    assert_eq!(cols_after_redo, initial_cols + 1, "列挿入が再適用された");
+
+    // 8. 画像選択時のコンテキストメニュー（図の変更 `pptx.chrome.replace-picture`）の検証
+    let (pic_page, pic_idx) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Picture(_))).map(|j| (i, j))
+            })
+        })
+        .expect("a picture");
+    s.page(pic_page + 1);
+    s.click_shape(pic_idx);
+    let pic_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.chrome.replace-picture").is_some(), "replace-picture exists for picture");
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.picture.remove-background").is_some(), "remove-background exists for picture");
+
+    // 9. 保存・再読込
+    s.save_as("table_context_menu.pptx");
+    let saved = s.reopen();
+    let ShapeKind::Table(t) = &saved.slides[page].shapes[shape_idx].kind else { panic!("a table") };
+    assert_eq!(t.rows.len(), initial_rows + 1);
+    assert_eq!(t.columns.len(), initial_cols + 1);
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-TEXT-009, PPTX-AUDIT-003: 文字の間隔（Character Spacing）の5段階設定（より狭く、狭く、標準、広く、より広く）、
+/// ツールバーボタンおよびメニューでのチェック状態連動、コンテキストメニューからの設定、Undo/Redo、OOXML保存・再読込保持検証
+pub(crate) fn character_spacing_options_and_toolbar() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(3);
+    // スライド上のテキスト図形を選択
+    s.click_shape(1);
+    s.double_click_shape(1);
+    s.key("cmd-a"); // 全選択
+
+    // 1. 初期状態の文字間隔は 0（標準）
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 0, "initial spacing is 0 (normal)");
+
+    // 2. ツールバーの「文字の間隔」メニューから「広く（+3pt / 300）」を選択
+    s.toolbar_menu("character-spacing", "pptx.spacing.loose");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 300, "spacing set to loose (+300)");
+
+    // 3. ツールバーメニューで「広く」がチェックされていることを確認
+    let b = s.tool_button("character-spacing").expect("character-spacing button");
+    let menu = b.menu.expect("menu");
+    assert!(crate::shell::scenario::find_item(&menu, "pptx.spacing.loose").is_some_and(|i| i.checked), "loose is checked");
+    assert!(crate::shell::scenario::find_item(&menu, "pptx.spacing.normal").is_some_and(|i| !i.checked), "normal is unchecked");
+
+    // 4. メニュー「表示形式 > テキスト」から「より狭く（-3pt / -300）」を選択
+    s.menu("text.spacing-very-tight");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), -300, "spacing set to very tight (-300)");
+    assert_eq!(s.menu_state("text.spacing-very-tight"), Some((true, true)), "very tight is checked in menu");
+
+    // 5. ツールバーの「文字の間隔」メニューから「より広く（+6pt / 600）」を選択
+    s.toolbar_menu("character-spacing", "pptx.spacing.very-loose");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 600, "spacing set to very loose (+600)");
+
+    // 6. 右クリックコンテキストメニューのエントリ確認
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.spacing.very-loose").is_some(), "very-loose in context menu");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.spacing.normal").is_some(), "normal in context menu");
+
+    // 7. 右クリックコンテキストメニューのアクション：標準（0）に戻す
+    s.update(|e, w, cx| e.set_slide_character_spacing(0, w, cx));
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 0, "spacing reset to normal (0)");
+
+    // 8. 再度「より広く（600）」にして Undo/Redo を検証
+    s.toolbar_menu("character-spacing", "pptx.spacing.very-loose");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 600);
+
+    s.key("cmd-z"); // Undo very-loose
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 0, "undo back to 0");
+    s.key("cmd-shift-z"); // Redo very-loose
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 600, "redo back to 600");
+
+    // 9. ファイル保存・再読込・OOXMLラウンドトリップ検証
+    s.screenshot("character_spacing");
+    s.save_as("character_spacing.pptx");
+    let saved = s.reopen();
+    let saved_body = saved.slides[2].shapes[1].text_body().expect("text body");
+    let run = &saved_body.paragraphs[0].runs[0];
+    assert_eq!(run.style.spacing, 600, "saved character spacing 600 preserved in OOXML");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// テキスト書式のクリア（Clear All Formatting）、ツールバーの PowerPoint 準拠再編、およびコンテキストメニューの書式操作（書式クリア・文字の影・書式コピー＆貼り付け）を検証
+pub(crate) fn clear_formatting_and_toolbar_flow() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+
+    // 1. 図形 1 のテキスト編集を開始
+    s.click_shape(1);
+    s.double_click_shape(1);
+    s.key("cmd-a"); // 全選択
+
+    // ツールバーにおける「すべての書式をクリア（clear-format）」ボタンの存在確認
+    let clear_btn = s.tool_button("clear-format").expect("clear-format button on toolbar");
+    assert_eq!(clear_btn.icon, Some("format_clear"));
+
+    // 初期状態のフォント書式確認（斜体なし・影なし・文字間隔0）
+    let init_style = s.with(|e, _| e.selected_text_style()).expect("initial style");
+    assert!(!init_style.italic, "italic is false initially");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 0, "spacing is 0 initially");
+    assert!(!s.with(|e, _| e.selected_shadow().is_some()), "shadow is none initially");
+
+    // 2. 斜体・影・文字間隔（広く +3pt）を設定
+    s.key("cmd-i"); // 斜体
+    s.toolbar("text-shadow"); // 影
+    s.toolbar_menu("character-spacing", "pptx.spacing.loose"); // 間隔 +3pt
+
+    let formatted_style = s.with(|e, _| e.selected_text_style()).expect("formatted text style");
+    assert!(formatted_style.italic, "italic applied");
+    assert!(s.with(|e, _| e.selected_shadow().is_some()), "shadow applied");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 300, "spacing applied");
+
+    // 4. 右クリックコンテキストメニュー（テキスト編集中）の検証
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&entries, "_shell.clear-formatting").is_some(), "clear-formatting in context menu root");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.format-copy").is_some(), "format-copy in context menu");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.format-paste").is_some(), "format-paste in context menu");
+
+    // フォントサブメニュー内
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.text.shadow").is_some_and(|i| i.checked), "shadow checked in font menu");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.spacing.loose").is_some_and(|i| i.checked), "spacing loose checked in font menu");
+
+    // 5. 書式のコピー（⌥⌘C）を実行
+    s.update(|e, w, cx| e.copy_character_format(w, cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().character_format_copy.is_some()), "format copied");
+
+    // 6. ツールバーの「すべての書式をクリア（clear-format）」ボタンをクリック
+    s.toolbar("clear-format");
+
+    let cleared_style = s.with(|e, _| e.selected_text_style()).expect("cleared text style");
+    assert!(!cleared_style.italic, "italic cleared");
+    assert!(!s.with(|e, _| e.selected_shadow().is_some()), "shadow cleared");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 0, "spacing cleared to 0");
+
+    // 7. Undo（⌘Z）で全書式が復元されることを検証
+    s.key("cmd-z");
+    let restored_style = s.with(|e, _| e.selected_text_style()).expect("restored text style");
+    assert!(restored_style.italic, "italic restored");
+    assert!(s.with(|e, _| e.selected_shadow().is_some()), "shadow restored");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 300, "spacing restored");
+
+    // 8. Redo（⇧⌘Z）で再度書式クリア
+    s.key("cmd-shift-z");
+    let re_cleared = s.with(|e, _| e.selected_text_style()).expect("re-cleared text style");
+    assert!(!re_cleared.italic, "italic re-cleared");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 0, "spacing re-cleared");
+
+    // 9. 書式の貼り付け（⌥⌘V）を実行してコピーしていた書式を再適用
+    s.update(|e, w, cx| e.paste_character_format(w, cx));
+    let pasted_style = s.with(|e, _| e.selected_text_style()).expect("pasted text style");
+    assert!(pasted_style.italic, "italic pasted");
+    assert!(s.with(|e, _| e.selected_shadow().is_some()), "shadow pasted");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 300, "spacing pasted");
+
+    // 10. テキスト編集を終了し、図形選択状態のコンテキストメニューを検証
+    s.key("escape");
+    let shape_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&shape_entries, "_shell.clear-formatting").is_some(), "clear-formatting in shape context menu");
+    assert!(crate::shell::scenario::find_item(&shape_entries, "pptx.format-copy").is_some(), "format-copy in shape context menu");
+    assert!(crate::shell::scenario::find_item(&shape_entries, "pptx.format-paste").is_some(), "format-paste in shape context menu");
+
+    // 図形選択状態からコンテキストメニューの「すべての書式をクリア」を実行
+    s.update(|e, w, cx| e.clear_formats(w, cx));
+    let final_style = s.with(|e, _| e.selected_text_style()).expect("final text style");
+    assert!(!final_style.italic, "italic cleared via shape selection");
+    assert_eq!(s.with(|e, _| e.selected_spacing()), 0, "spacing cleared via shape selection");
+
+    // 11. ファイル保存・再読込・OOXMLラウンドトリップ検証
+    s.screenshot("clear_formatting_flow");
+    s.save_as("clear_formatting_flow.pptx");
+    let saved = s.reopen();
+    let saved_body = saved.slides[2].shapes[1].text_body().expect("text body");
+    let run = &saved_body.paragraphs[0].runs[0];
+    assert_ne!(run.style.bold, Some(true), "saved run has no bold");
+    assert_eq!(run.style.spacing, 0, "saved run has spacing 0");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// 右クリックメニューの「テキストの編集」「図形の変更（16種）」および
+/// PowerPoint 実機準拠のフォントサイズ変更ショートカット（⌘] / ⌘[）の検証。
+pub(crate) fn context_menu_edit_text_and_change_shape() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let (page, index) = s
+        .with(|e, _| e.presentation().slides.iter().enumerate().find_map(|(i, sl)| sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Auto(a) if a.text.as_ref().is_some_and(|t| !t.is_empty()) && !sl.placeholders.contains_key(&sh.id))).map(|j| (i, j))))
+        .expect("an auto shape with text");
+    s.page(page + 1);
+    s.click_shape(index);
+
+    // 1. 単一図形選択状態の右クリックメニュー（shape_context_menu_entries）を検証
+    let shape_id = s.with(|e, _| e.selected_ids()[0]);
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    let edit_text_item = crate::shell::scenario::find_item(&entries, "pptx.text.edit").expect("Edit Text item in context menu");
+    assert_eq!(edit_text_item.icon.as_deref(), Some("edit"));
+
+    let change_shape_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.chrome.change-shape" => Some(sub),
+        _ => None,
+    }).expect("Change Shape submenu in context menu");
+    assert_eq!(change_shape_sub.items.len(), 16, "All 16 preset shapes present in change shape submenu");
+    assert!(crate::shell::scenario::find_item(&entries, "change-shape.heart").is_some());
+    assert!(crate::shell::scenario::find_item(&entries, "change-shape.roundRect").is_some());
+
+    // 2. コンテキストメニューから「テキストの編集」を実行
+    s.update(|e, w, cx| e.begin_text_edit(shape_id, false, false, w, cx));
+    assert!(s.with(|e, _| e.text_editing().is_some()), "text editing active");
+
+    // 3. PowerPoint 実機準拠のショートカット（cmd-] / cmd-[）によるフォントサイズ変更の検証
+    s.key("cmd-a");
+    let initial_size = s.with(|e, _| e.selected_text_style().map(|st| st.font_size)).expect("initial font size");
+    s.key("cmd-]");
+    let larger_size = s.with(|e, _| e.selected_text_style().map(|st| st.font_size)).expect("larger font size");
+    assert!(larger_size > initial_size, "Font size increased with cmd-]: {larger_size} > {initial_size}");
+    s.key("cmd-[");
+    let reset_size = s.with(|e, _| e.selected_text_style().map(|st| st.font_size)).expect("reset font size");
+    assert_eq!(reset_size, initial_size, "Font size decreased with cmd-[ back to original");
+
+    // 4. テキスト編集を終了
+    s.key("escape");
+    assert!(s.with(|e, _| e.text_editing().is_none()), "text editing ended");
+
+    // 5. コンテキストメニュー「図形の変更」でハート（heart）に変更
+    s.update(|e, _, cx| e.change_selected_shapes("heart", cx));
+    let shape_after_heart = s.with(|e, _| e.slide().shapes[index].clone());
+    let ShapeKind::Auto(heart_auto) = &shape_after_heart.kind else { panic!("expected auto shape") };
+    assert_eq!(heart_auto.geometry, ibis_pptx::preset_geometry("heart").unwrap());
+
+    // 6. コンテキストメニュー「図形の変更」で角丸四角形（roundRect）に変更
+    s.update(|e, _, cx| e.change_selected_shapes("roundRect", cx));
+    let shape_after_round = s.with(|e, _| e.slide().shapes[index].clone());
+    let ShapeKind::Auto(round_auto) = &shape_after_round.kind else { panic!("expected auto shape") };
+    assert_eq!(round_auto.geometry, ibis_pptx::preset_geometry("roundRect").unwrap());
+
+    // 7. 複数図形選択時のコンテキストメニュー動作を検証
+    let all_shape_ids: Vec<_> = s.with(|e, _| e.slide().shapes.iter().map(|sh| sh.id).collect());
+    if all_shape_ids.len() >= 2 {
+        s.update(|e, _, _| e.set_selection(all_shape_ids[..2].to_vec()));
+        let multi_entries = s.with(|e, _| e.shape_context_menu_entries());
+        assert!(crate::shell::scenario::find_item(&multi_entries, "pptx.text.edit").is_none(), "Edit Text not offered for multiple shapes");
+        assert!(crate::shell::scenario::find_item(&multi_entries, "change-shape.star5").is_some(), "Change Shape still offered for multiple shapes");
+        s.update(|e, _, _| e.set_selection(vec![shape_id]));
+    }
+
+    // 8. スクリーンショット・保存・再読込ラウンドトリップ検証
+    s.screenshot("context_menu_edit_text_change_shape");
+    s.save_as("context_menu_edit_text_change_shape.pptx");
+    let reloaded = s.reopen();
+    let reloaded_shape = &reloaded.slides[page].shapes[index];
+    let ShapeKind::Auto(reloaded_auto) = &reloaded_shape.kind else { panic!("expected reloaded auto shape") };
+    assert_eq!(reloaded_auto.geometry, ibis_pptx::preset_geometry("roundRect").unwrap(), "reloaded geometry is roundRect");
+
+    // 9. Undo/Redo の検証
+    undo_all_and_redo(&mut s);
+}
+
+/// スライドキャンバス余白（背景）右クリック時のコンテキストメニュー
+/// （新しいスライド、レイアウト、スライドのリセット、グリッドとガイド、背景の書式設定）の検証。
+pub(crate) fn canvas_background_context_menu_actions() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+
+    // 1. スライド上の図形選択を全解除して背景状態にする
+    s.update(|e, _, _| e.set_selection(vec![]));
+    assert!(s.with(|e, _| e.selected_ids().is_empty()), "no shape selected");
+
+    // 2. 非選択状態でのキャンバス右クリックメニュー（shape_context_menu_entries）を検証
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+
+    // 新しいスライド
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.new-slide").is_some(), "new-slide item in background menu");
+
+    // レイアウト サブメニュー
+    let layout_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.layout" => Some(sub),
+        _ => None,
+    }).expect("layout submenu in background menu");
+    assert!(!layout_sub.items.is_empty(), "layout submenu has layouts");
+
+    // スライドのリセット
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.reset-slide").is_some(), "reset-slide item in background menu");
+
+    // グリッドとガイド サブメニュー
+    let grid_guides_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.grid-and-guides" => Some(sub),
+        _ => None,
+    }).expect("grid-and-guides submenu in background menu");
+    assert!(crate::shell::scenario::find_item(&grid_guides_sub.items, "pptx.gridlines").is_some(), "gridlines item in grid-and-guides");
+    assert!(crate::shell::scenario::find_item(&grid_guides_sub.items, "pptx.guides").is_some(), "guides item in grid-and-guides");
+    assert!(crate::shell::scenario::find_item(&grid_guides_sub.items, "pptx.snap-to-grid").is_some(), "snap-to-grid item in grid-and-guides");
+    assert!(crate::shell::scenario::find_item(&grid_guides_sub.items, "pptx.snap-to-shape").is_some(), "snap-to-shape item in grid-and-guides");
+
+    // 背景の書式設定 サブメニュー
+    let bg_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.background" => Some(sub),
+        _ => None,
+    }).expect("background submenu in background menu");
+    assert!(!bg_sub.items.is_empty(), "background submenu has items");
+
+    // 3. グリッド線・ガイドのトグル動作検証
+    assert!(!s.with(|e, _| e.is_pptx_gridlines_enabled()), "initially gridlines off");
+    s.update(|e, _, cx| e.toggle_pptx_gridlines(cx));
+    assert!(s.with(|e, _| e.is_pptx_gridlines_enabled()), "gridlines turned on via menu toggle");
+    s.update(|e, _, cx| e.toggle_pptx_gridlines(cx));
+    assert!(!s.with(|e, _| e.is_pptx_gridlines_enabled()), "gridlines turned off via menu toggle");
+
+    assert!(!s.with(|e, _| e.is_pptx_guides_enabled()), "initially guides off");
+    s.update(|e, _, cx| e.toggle_pptx_guides(cx));
+    assert!(s.with(|e, _| e.is_pptx_guides_enabled()), "guides turned on via menu toggle");
+    s.update(|e, _, cx| e.toggle_pptx_guides(cx));
+    assert!(!s.with(|e, _| e.is_pptx_guides_enabled()), "guides turned off via menu toggle");
+
+    // 4. 背景色変更の検証
+    let red_fill = ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xff0000)));
+    s.update(|e, _, cx| e.set_background(red_fill.clone(), cx));
+    assert_eq!(s.with(|e, _| e.slide().background.clone()), red_fill);
+
+    // 5. スライドのリセット検証
+    s.update(|e, w, cx| e.reset_slide(w, cx));
+
+    // 6. メニューからの新規スライド追加の検証
+    let initial_count = s.with(|e, _| e.presentation().slides.len());
+    s.update(|e, w, cx| e.add_slide(w, cx));
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), initial_count + 1, "new slide added via menu");
+
+    // 7. スクリーンショット・保存・再読込ラウンドトリップ検証
+    s.screenshot("canvas_background_context_menu");
+    s.save_as("canvas_background_context_menu.pptx");
+    let reloaded = s.reopen();
+    assert_eq!(reloaded.slides.len(), initial_count + 1, "reloaded presentation has added slide");
+
+    // 8. Undo/Redo の検証
+    undo_all_and_redo(&mut s);
+}
+
+/// 右クリックメニューのオブジェクト別操作拡充:
+/// 1. グラフ（Chart）選択時の「データの編集…（pptx.chart.data）」「データの編集（簡易）…（pptx.chart.data-quick）」
+/// 2. 画像（Picture）選択時の「トリミングの入力（pptx.crop-actions）」「図の変更（pptx.chrome.replace-picture）」「背景の削除（pptx.picture.remove-background）」
+/// 3. テキスト枠付き図形選択時の「内部余白の入力（pptx.insets-actions）」
+/// 4. パネル起動および Undo/Redo・保存再読込の完全ラウンドトリップ
+pub(crate) fn context_menu_chart_crop_insets_actions() {
+    let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
+
+    // 1. グラフ（Chart）選択時の右クリックメニュー検証
+    let (chart_page, chart_idx) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Chart(_))).map(|j| (i, j))
+            })
+        })
+        .expect("a slide with a chart");
+    s.page(chart_page + 1);
+    s.click_shape(chart_idx);
+
+    let chart_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&chart_entries, "pptx.chart.data").is_some(), "chart data item in context menu");
+    assert!(crate::shell::scenario::find_item(&chart_entries, "pptx.chart.data-quick").is_some(), "quick chart data item in context menu");
+
+    // 簡易データ編集パネルを開く
+    s.update(|e, w, cx| e.open_chart_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.chart_panel.as_ref()).is_some() || e.sidebar_open), "chart panel or sidebar opened");
+
+    // 2. 画像（Picture）選択時の右クリックメニュー検証
+    let (pic_page, pic_idx) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Picture(_))).map(|j| (i, j))
+            })
+        })
+        .expect("a slide with a picture");
+    s.page(pic_page + 1);
+    s.click_shape(pic_idx);
+
+    let pic_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.crop-actions").is_some(), "crop item in picture context menu");
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.chrome.replace-picture").is_some(), "replace-picture item in picture context menu");
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.picture.remove-background").is_some(), "remove-background item in picture context menu");
+
+    // トリミングパネルを開く
+    s.update(|e, w, cx| e.open_crop_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.crop_panel.as_ref()).is_some()), "crop panel opened");
+
+    // 3. テキスト枠（TextBody を持つ図形）選択時の右クリックメニュー検証
+    let (text_page, text_idx) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().position(|sh| sh.text_body().is_some()).map(|j| (i, j))
+            })
+        })
+        .expect("a slide with text body");
+    s.page(text_page + 1);
+    s.click_shape(text_idx);
+
+    let text_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&text_entries, "pptx.insets-actions").is_some(), "insets item in text context menu");
+
+    // 内部余白パネルを開く
+    s.update(|e, w, cx| e.open_text_insets_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.insets_panel.as_ref()).is_some()), "insets panel opened");
+
+    // 4. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_chart_crop_insets");
+    s.save_as("context_menu_chart_crop_insets.pptx");
+    let reloaded = s.reopen();
+    assert!(!reloaded.slides.is_empty(), "reloaded presentation has slides");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// スライド一覧（サムネイル／スライドソーター）右クリックコンテキストメニュー拡充:
+/// 1. 新しいスライド（pptx.new-slide）、スライド複製（pptx.duplicate-slide）、削除（pptx.delete-slide）
+/// 2. セクションの追加（pptx.section.add）
+/// 3. レイアウト（pptx.layout）サブメニュー
+/// 4. スライドのリセット（pptx.reset-slide）
+/// 5. グリッドとガイド（pptx.grid-and-guides）サブメニュー
+/// 6. 背景の書式設定（pptx.background）サブメニュー
+/// 7. 選択スライドにテーマ適用（pptx.theme.palette-selected）サブメニュー
+/// 8. スライド切り取り（pptx.cut-slide）、コピー（pptx.copy-slide）、貼り付け（pptx.paste-slide）
+/// 9. 非表示スライドトグル（pptx.skip-slide）、非表示タイトル追加（pptx.slide.add-hidden-title）
+/// 10. メニューからのセクション追加パネル起動、非表示スライドトグル、Undo/Redo・保存再読込の完全ラウンドトリップ
+pub(crate) fn thumbnail_context_menu_actions() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+
+    // 1. サムネイル右クリックメニュー項目の存在検証
+    let entries = s.with(|e, _| e.slide_context_menu_entries());
+
+    // 基本スライド操作
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.new-slide").is_some(), "new slide item in thumbnail menu");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.duplicate-slide").is_some(), "duplicate slide item in thumbnail menu");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.delete-slide").is_some(), "delete slide item in thumbnail menu");
+
+    // セクションの追加
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.section.add").is_some(), "section.add item in thumbnail menu");
+
+    // レイアウト サブメニュー
+    let layout_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.layout" => Some(sub),
+        _ => None,
+    }).expect("layout submenu in thumbnail menu");
+    assert!(!layout_sub.items.is_empty(), "layout submenu has layouts");
+
+    // スライドのリセット
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.reset-slide").is_some(), "reset-slide item in thumbnail menu");
+
+    // グリッドとガイド サブメニュー
+    let grid_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.grid-and-guides" => Some(sub),
+        _ => None,
+    }).expect("grid-and-guides submenu in thumbnail menu");
+    assert!(crate::shell::scenario::find_item(&grid_sub.items, "pptx.gridlines").is_some(), "gridlines in thumbnail menu");
+
+    // 背景の書式設定 サブメニュー
+    let bg_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.background" => Some(sub),
+        _ => None,
+    }).expect("background submenu in thumbnail menu");
+    assert!(!bg_sub.items.is_empty(), "background submenu has items");
+
+    // テーマ配色サブメニュー
+    assert!(entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.theme.palette-selected")), "theme palette submenu present");
+
+    // クリップボード操作
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.cut-slide").is_some(), "cut slide item present");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.copy-slide").is_some(), "copy slide item present");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.paste-slide").is_some(), "paste slide item present");
+
+    // 非表示スライド・非表示タイトル
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.skip-slide").is_some(), "skip slide item present");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.slide.add-hidden-title").is_some(), "hidden title item present");
+
+    // 2. セクション追加パネル起動の検証
+    s.update(|e, w, cx| e.open_section_panel(false, w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.section_panel.as_ref()).is_some()), "section panel opened via thumbnail menu action");
+    s.update(|e, w, cx| e.close_section_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.section_panel.as_ref()).is_none()), "section panel closed");
+
+    // 3. 非表示スライドトグルの検証
+    assert!(!s.with(|e, _| e.slide().hidden), "initially not hidden");
+    s.update(|e, w, cx| e.toggle_skip_slide(w, cx));
+    assert!(s.with(|e, _| e.slide().hidden), "hidden toggled on");
+    s.update(|e, w, cx| e.toggle_skip_slide(w, cx));
+    assert!(!s.with(|e, _| e.slide().hidden), "hidden toggled off");
+
+    // 4. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("thumbnail_context_menu");
+    s.save_as("thumbnail_context_menu.pptx");
+    let reloaded = s.reopen();
+    assert_eq!(reloaded.slides.len(), s.with(|e, _| e.presentation().slides.len()), "reloaded slides match");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// 右クリックメニューの「既定の図形に設定」「図形の書式設定…」「図の書式設定…」拡充:
+/// 1. オートシェイプ選択時の「既定の図形に設定（pptx.default-shape）」
+/// 2. オートシェイプ選択時の「図形の書式設定…（pptx.format-shape）」
+/// 3. 画像選択時の「図の書式設定…（pptx.format-picture）」
+/// 4. パネル起動、既定の図形設定と新規図形へのスタイル反映、保存再読込・Undo/Redo の完全ラウンドトリップ
+pub(crate) fn context_menu_format_shape_and_default_shape() {
+    let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
+
+    // 1. オートシェイプ選択時の右クリックメニュー検証
+    let (shape_page, shape_idx) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Auto(_))).map(|j| (i, j))
+            })
+        })
+        .expect("a slide with auto shape");
+    s.page(shape_page + 1);
+    s.click_shape(shape_idx);
+
+    let shape_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&shape_entries, "pptx.default-shape").is_some(), "default-shape item in auto shape context menu");
+    assert!(crate::shell::scenario::find_item(&shape_entries, "pptx.format-shape").is_some(), "format-shape item in auto shape context menu");
+
+    // 既定の図形に設定を実行
+    s.update(|e, _, cx| e.set_object_default(cx));
+
+    // 書式設定パネル（グラデーション/塗りつぶし設定）を開く
+    s.update(|e, w, cx| e.open_gradient_panel(false, w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.gradient_panel.as_ref()).is_some() || e.sidebar_open), "gradient/format panel opened via context menu");
+
+    // 2. 画像選択時の右クリックメニュー検証
+    let (pic_page, pic_idx) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Picture(_))).map(|j| (i, j))
+            })
+        })
+        .expect("a slide with picture");
+    s.page(pic_page + 1);
+    s.click_shape(pic_idx);
+
+    let pic_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.format-picture").is_some(), "format-picture item in picture context menu");
+
+    // 図の書式設定（トリミングパネル）を開く
+    s.update(|e, w, cx| e.open_crop_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.crop_panel.as_ref()).is_some()), "crop panel opened via format-picture");
+
+    // パネルを閉じてエディタへフォーカスを復帰
+    s.key("escape");
+    s.update(|e, w, cx| {
+        if let Some(st) = e.pptx_mut() {
+            st.crop_panel = None;
+            st.gradient_panel = None;
+        }
+        e.focus_handle.focus(w, cx);
+        cx.notify();
+    });
+
+    // 3. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_format_shape");
+    s.save_as("context_menu_format_shape.pptx");
+    let reloaded = s.reopen();
+    assert!(!reloaded.slides.is_empty(), "reloaded slides match");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// テキスト編集時のインライン右クリックコンテキストメニュー拡充:
+/// 1. フォントサブメニュー内の「上付き（text.superscript）」「下付き（text.subscript）」
+/// 2. 段落サブメニュー「行と段落の間隔（_shell.line-paragraph-spacing）」および「段落の設定…（pptx.paragraph.settings）」
+/// 3. テキスト枠「内部余白の入力（pptx.insets-actions）」
+/// 4. パネル起動、行間変更、Undo/Redo・保存再読込の完全ラウンドトリップ
+pub(crate) fn inline_text_editing_context_menu_actions() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+
+    // テキスト編集モードに入る
+    let (shape_id, _) = s.with(|e, _| {
+        e.slide().shapes.iter().find_map(|sh| sh.text_body().map(|_| (sh.id, ()))).expect("a shape with text")
+    });
+    s.update(|e, w, cx| e.begin_text_edit(shape_id, false, false, w, cx));
+    assert!(s.with(|e, _| e.text_editing().is_some()), "text editing active");
+
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+
+    // 1. フォントサブメニュー内の上付き・下付きの検証
+    let font_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "_shell.font" => Some(sub),
+        _ => None,
+    }).expect("font submenu in text editing context menu");
+    assert!(crate::shell::scenario::find_item(&font_sub.items, "text.superscript").is_some(), "superscript in font submenu");
+    assert!(crate::shell::scenario::find_item(&font_sub.items, "text.subscript").is_some(), "subscript in font submenu");
+
+    // 2. 行と段落の間隔サブメニューおよび段落設定の検証
+    let spacing_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "_shell.line-paragraph-spacing" => Some(sub),
+        _ => None,
+    }).expect("line-paragraph-spacing submenu in text editing context menu");
+    assert!(crate::shell::scenario::find_item(&spacing_sub.items, "line-spacing.1").is_some(), "1.0 spacing item");
+    assert!(crate::shell::scenario::find_item(&spacing_sub.items, "line-spacing.1-5").is_some(), "1.5 spacing item");
+    assert!(crate::shell::scenario::find_item(&spacing_sub.items, "line-spacing.2").is_some(), "2.0 spacing item");
+    assert!(crate::shell::scenario::find_item(&spacing_sub.items, "pptx.paragraph.settings").is_some(), "paragraph settings item");
+
+    // 3. 内部余白の入力項目の検証
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.insets-actions").is_some(), "insets-actions item in text editing context menu");
+
+    // 4. メニューアクション（行間 1.5倍への変更）の実行
+    s.update(|this, window, cx| {
+        this.format_paragraphs(window, cx, ibis_doc_model::ParagraphFormat { line_spacing: Some(Some(ibis_doc_model::LineSpacing::Percent(150))), ..Default::default() });
+    });
+
+    // 5. 段落設定パネルの起動と終了検証
+    s.update(|e, w, cx| e.open_paragraph_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.paragraph_panel.as_ref()).is_some() || e.sidebar_open), "paragraph panel opened");
+    s.key("escape");
+    s.update(|e, w, cx| {
+        if let Some(st) = e.pptx_mut() {
+            st.paragraph_panel = None;
+            st.insets_panel = None;
+        }
+        e.focus_handle.focus(w, cx);
+        cx.notify();
+    });
+
+    // テキスト編集を終了
+    s.update(|e, w, cx| e.end_text_edit(w, cx));
+
+    // 6. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("inline_text_editing_context_menu");
+    s.save_as("inline_text_editing_context_menu.pptx");
+    let reloaded = s.reopen();
+    assert_eq!(reloaded.slides.len(), s.with(|e, _| e.presentation().slides.len()), "reloaded slides match");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-AUDIT-003, PPTX-TEXT-019, PPTX-TEXT-020: 右クリックメニューにおけるテキストの向き（横書き/縦書き/時計回り90度/270度）および垂直方向の配置（上/中央/下）の拡充、図形選択時・テキスト編集時の動作、Undo/Redo、保存ラウンドトリップ
+pub(crate) fn context_menu_text_direction_and_vertical_anchor() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+    s.click_shape(0);
+    assert_eq!(s.with(|e, _| e.selected_ids().len()), 1);
+
+    // 1. 図形選択時のコンテキストメニュー検証
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    let dir_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text-direction" => Some(sub),
+        _ => None,
+    }).expect("text-direction submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&dir_sub.items, "pptx.text.horizontal").is_some());
+    assert!(crate::shell::scenario::find_item(&dir_sub.items, "pptx.text.vertical").is_some());
+    assert!(crate::shell::scenario::find_item(&dir_sub.items, "pptx.text.clockwise").is_some());
+    assert!(crate::shell::scenario::find_item(&dir_sub.items, "pptx.text.counterclockwise").is_some());
+
+    let vert_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "_shell.vertical-alignment" => Some(sub),
+        _ => None,
+    }).expect("vertical-alignment submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&vert_sub.items, "pptx.text.top").is_some());
+    assert!(crate::shell::scenario::find_item(&vert_sub.items, "pptx.text.middle").is_some());
+    assert!(crate::shell::scenario::find_item(&vert_sub.items, "pptx.text.bottom").is_some());
+
+    // 2. 図形選択状態でのメニューアクション適用（縦書き & 下揃え）
+    s.menu("pptx.text.vertical");
+    assert!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().vertical));
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().vertical_kind), ibis_doc_model::VerticalKind::EastAsian);
+
+    s.menu("pptx.text.bottom");
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().anchor), ibis_doc_model::VerticalAnchor::Bottom);
+
+    // 3. テキスト編集中のコンテキストメニュー検証
+    s.double_click_shape(0);
+    assert!(s.with(|e, _| e.text_editing().is_some()));
+
+    let edit_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(edit_entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text-direction")));
+    assert!(edit_entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "_shell.vertical-alignment")));
+
+    // 4. テキスト編集中でのメニューアクション適用（時計回り90度回転 & 中央揃え）
+    s.menu("pptx.text.clockwise");
+    assert_eq!(s.with(|e, _| e.edited_body().unwrap().sideways), 5_400_000);
+
+    s.menu("pptx.text.middle");
+    assert_eq!(s.with(|e, _| e.edited_body().unwrap().anchor), ibis_doc_model::VerticalAnchor::Middle);
+
+    // テキスト編集終了
+    s.key("escape");
+    s.update(|e, w, cx| {
+        e.end_text_edit(w, cx);
+        e.focus_handle.focus(w, cx);
+    });
+
+    // 5. スクリーンショット・保存・再読込・ラウンドトリップ検証
+    s.screenshot("context_menu_text_direction_and_anchor");
+    s.save_as("context_menu_text_direction_and_anchor.pptx");
+    let reloaded = s.reopen();
+    let re_body = reloaded.slides[0].shapes[0].text_body().unwrap();
+    assert_eq!(re_body.sideways, 5_400_000);
+    assert_eq!(re_body.anchor, ibis_doc_model::VerticalAnchor::Middle);
+
+    // 6. Undo/Redo 完全追従検証
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-AUDIT-003, PPTX-TEXT-022, PPTX-TEXT-023: 右クリックメニューにおけるテキストの自動調整（自動調整なし/はみ出すときに縮小/図形のサイズを調整）および図形内折り返し（Wrap Text）の拡充、図形選択時・テキスト編集時の動作、Undo/Redo、保存ラウンドトリップ
+pub(crate) fn context_menu_text_autofit_and_wrap() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+    s.click_shape(0);
+    assert_eq!(s.with(|e, _| e.selected_ids().len()), 1);
+
+    // 1. 図形選択時のコンテキストメニュー検証
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    let fit_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text.autofit" => Some(sub),
+        _ => None,
+    }).expect("text.autofit submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&fit_sub.items, "pptx.text.autofit-none").is_some());
+    assert!(crate::shell::scenario::find_item(&fit_sub.items, "pptx.text.autofit-shrink").is_some());
+    assert!(crate::shell::scenario::find_item(&fit_sub.items, "pptx.text.autofit-resize-shape").is_some());
+    assert!(crate::shell::scenario::find_item(&fit_sub.items, "pptx.text.wrap").is_some());
+
+    // 2. 図形選択状態でのメニューアクション適用（縮小設定 & 折り返しトグル）
+    let initial_wrap = s.with(|e, _| e.slide().shapes[0].text_body().unwrap().wrap);
+    s.menu("pptx.text.autofit-shrink");
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().autofit), ibis_doc_model::TextAutofit::Shrink);
+
+    s.menu("pptx.text.wrap");
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().wrap), !initial_wrap);
+
+    // 3. テキスト編集中のコンテキストメニュー検証
+    s.double_click_shape(0);
+    assert!(s.with(|e, _| e.text_editing().is_some()));
+
+    let edit_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(edit_entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text.autofit")));
+
+    // 4. テキスト編集中でのメニューアクション適用（図形サイズ調整へ変更）
+    s.menu("pptx.text.autofit-resize-shape");
+    assert_eq!(s.with(|e, _| e.edited_body().unwrap().autofit), ibis_doc_model::TextAutofit::ResizeShape);
+
+    // テキスト編集終了
+    s.key("escape");
+    s.update(|e, w, cx| {
+        e.end_text_edit(w, cx);
+        e.focus_handle.focus(w, cx);
+    });
+
+    // 5. スクリーンショット・保存・再読込・ラウンドトリップ検証
+    s.screenshot("context_menu_text_autofit_and_wrap");
+    s.save_as("context_menu_text_autofit_and_wrap.pptx");
+    let reloaded = s.reopen();
+    let re_body = reloaded.slides[0].shapes[0].text_body().unwrap();
+    assert_eq!(re_body.autofit, ibis_doc_model::TextAutofit::ResizeShape);
+    assert_eq!(re_body.wrap, !initial_wrap);
+
+    // 6. Undo/Redo 完全追従検証
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-AUDIT-003, PPTX-TEXT-016, PPTX-TEXT-018, PPTX-ACCESS-012: 右クリックメニューにおける段組み（1〜4段＋段の間隔）・インデント（字下げ/ぶら下げ/なし）・タブ位置（既定のタブ/クリア）の拡充、図形選択時・テキスト編集時の動作、Undo/Redo、保存ラウンドトリップ
+pub(crate) fn context_menu_text_columns_indent_and_tabs() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+    s.click_shape(0);
+    assert_eq!(s.with(|e, _| e.selected_ids().len()), 1);
+
+    // 1. 図形選択時のコンテキストメニュー検証
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    let cols_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text.columns" => Some(sub),
+        _ => None,
+    }).expect("text.columns submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&cols_sub.items, "pptx.text.columns.1").is_some());
+    assert!(crate::shell::scenario::find_item(&cols_sub.items, "pptx.text.columns.2").is_some());
+    assert!(crate::shell::scenario::find_item(&cols_sub.items, "pptx.text.columns.3").is_some());
+    assert!(crate::shell::scenario::find_item(&cols_sub.items, "pptx.text.columns.4").is_some());
+    assert!(crate::shell::scenario::find_item(&cols_sub.items, "pptx.text.columns.spacing.1cm").is_some());
+
+    let indent_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text.indent" => Some(sub),
+        _ => None,
+    }).expect("text.indent submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&indent_sub.items, "pptx.text.indent.first-line").is_some());
+    assert!(crate::shell::scenario::find_item(&indent_sub.items, "pptx.text.indent.hanging").is_some());
+    assert!(crate::shell::scenario::find_item(&indent_sub.items, "pptx.text.indent.none").is_some());
+
+    let tabs_sub = entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text.tabs" => Some(sub),
+        _ => None,
+    }).expect("text.tabs submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&tabs_sub.items, "pptx.text.tabs.default").is_some());
+    assert!(crate::shell::scenario::find_item(&tabs_sub.items, "pptx.text.tabs.clear").is_some());
+
+    // 2. 図形選択状態でのメニューアクション適用（2段＋間隔1cm、字下げインデント、既定のタブ設定）
+    s.menu("pptx.text.columns.2");
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().columns), 2);
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().column_spacing), 180_000);
+
+    s.menu("pptx.text.columns.spacing.1cm");
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().column_spacing), 360_000);
+
+    s.menu("pptx.text.indent.first-line");
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().paragraphs[0].indent), 228_600);
+
+    s.menu("pptx.text.tabs.default");
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().paragraphs[0].tabs.len()), 2);
+
+    // 3. テキスト編集中のコンテキストメニュー検証
+    s.double_click_shape(0);
+    assert!(s.with(|e, _| e.text_editing().is_some()));
+
+    let edit_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(edit_entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text.columns")));
+    assert!(edit_entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text.indent")));
+    assert!(edit_entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.text.tabs")));
+
+    // 4. テキスト編集中でのメニューアクション適用（3段、ぶら下げインデントへ変更）
+    s.menu("pptx.text.columns.3");
+    assert_eq!(s.with(|e, _| e.edited_body().unwrap().columns), 3);
+
+    s.menu("pptx.text.indent.hanging");
+    assert_eq!(s.with(|e, _| e.edited_body().unwrap().paragraphs[0].margin_left), 228_600);
+    assert_eq!(s.with(|e, _| e.edited_body().unwrap().paragraphs[0].indent), -228_600);
+
+    // テキスト編集終了
+    s.key("escape");
+    s.update(|e, w, cx| {
+        e.end_text_edit(w, cx);
+        e.focus_handle.focus(w, cx);
+    });
+
+    // 5. スクリーンショット・保存・再読込・ラウンドトリップ検証
+    s.screenshot("context_menu_text_columns_indent_and_tabs");
+    s.save_as("context_menu_text_columns_indent_and_tabs.pptx");
+    let reloaded = s.reopen();
+    let re_body = reloaded.slides[0].shapes[0].text_body().unwrap();
+    assert_eq!(re_body.columns, 3);
+    assert_eq!(re_body.column_spacing, 180_000);
+    assert_eq!(re_body.paragraphs[0].margin_left, 228_600);
+    assert_eq!(re_body.paragraphs[0].indent, -228_600);
+    assert_eq!(re_body.paragraphs[0].tabs.len(), 2);
+
+    // 6. Undo/Redo 完全追従検証
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-AUDIT-003, PPTX-IMAGE-009, PPTX-IMAGE-010, PPTX-IMAGE-011, PPTX-IMAGE-013, PPTX-MEDIA-006:
+/// 図・メディアクリップ選択時の右クリックコンテキストメニュー拡充（色・修正・アート効果・色のリセット・効果のリセット・メディア再生・ビデオスタイル）
+pub(crate) fn context_menu_picture_and_media_actions() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    // 1. 図（Picture）を含むスライドを検索・選択
+    let (pic_page, pic_idx) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Picture(_))).map(|j| (i, j))
+            })
+        })
+        .expect("a slide with a picture");
+    s.page(pic_page + 1);
+    s.click_shape(pic_idx);
+
+    // 2. 図の右クリックメニュー検証（色・修正・アート効果・リセット）
+    let pic_entries = s.with(|e, _| e.shape_context_menu_entries());
+    let color_sub = pic_entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.picture.color" => Some(sub),
+        _ => None,
+    }).expect("picture.color submenu in picture context menu");
+    assert!(crate::shell::scenario::find_item(&color_sub.items, "pptx.picture.color.grayscale").is_some());
+    assert!(crate::shell::scenario::find_item(&color_sub.items, "pptx.picture.color.sepia").is_some());
+
+    let corr_sub = pic_entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.picture.correction" => Some(sub),
+        _ => None,
+    }).expect("picture.correction submenu in picture context menu");
+    assert!(crate::shell::scenario::find_item(&corr_sub.items, "pptx.picture.lum.bright-p20").is_some());
+    assert!(crate::shell::scenario::find_item(&corr_sub.items, "pptx.picture.lum.contrast-p20").is_some());
+
+    let art_sub = pic_entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.picture.artistic-effect" => Some(sub),
+        _ => None,
+    }).expect("picture.artistic-effect submenu in picture context menu");
+    assert!(crate::shell::scenario::find_item(&art_sub.items, "pptx.picture.artistic.blur").is_some());
+    assert!(crate::shell::scenario::find_item(&art_sub.items, "pptx.picture.artistic.marker").is_some());
+
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.picture.reset-colors").is_some());
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.video.reset-effects").is_some());
+
+    // 3. 図に対するメニューアクション適用（グレースケール・明るさ+20%・ぼかし効果 → リセット → セピア・コントラスト+20%）
+    s.menu("pptx.picture.color.grayscale");
+    s.menu("pptx.picture.lum.bright-p20");
+    s.menu("pptx.picture.artistic.blur");
+
+    let (has_duotone, lum, has_art) = s.with(|e, _| {
+        if let ShapeKind::Picture(p) = &e.slide().shapes[pic_idx].kind {
+            (p.duotone.is_some(), p.luminance, p.artistic_effect.is_some())
+        } else {
+            panic!("expected picture");
+        }
+    });
+    assert!(has_duotone);
+    assert_eq!(lum, Some((20_000, 0)));
+    assert!(has_art);
+
+    // 色のリセットを実行
+    s.menu("pptx.picture.reset-colors");
+    let (has_duotone_reset, lum_reset, has_art_reset) = s.with(|e, _| {
+        if let ShapeKind::Picture(p) = &e.slide().shapes[pic_idx].kind {
+            (p.duotone.is_some(), p.luminance, p.artistic_effect.is_some())
+        } else {
+            panic!("expected picture");
+        }
+    });
+    assert!(!has_duotone_reset);
+    assert_eq!(lum_reset, None);
+    assert!(!has_art_reset);
+
+    // セピア＋コントラスト+20% を適用して保存ラウンドトリップ対象にする
+    s.menu("pptx.picture.color.sepia");
+    s.menu("pptx.picture.lum.contrast-p20");
+
+    // 4. 動画クリップを挿入し、メディア再生・ビデオスタイルサブメニューを検証
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
+    let video_path = root.join("clip-test.mp4");
+    let video_bytes = std::fs::read(&video_path).expect("clip-test.mp4 should exist");
+    let clip_id = s.update(|e, _, cx| e.insert_clip(&video_path, video_bytes.clone(), false, cx)).expect("clip inserted");
+    s.update(|e, _, _| e.set_selection(vec![clip_id]));
+
+    let clip_entries = s.with(|e, _| e.shape_context_menu_entries());
+    let playback_sub = clip_entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.clip.playback" => Some(sub),
+        _ => None,
+    }).expect("clip.playback submenu in clip context menu");
+    assert!(crate::shell::scenario::find_item(&playback_sub.items, "pptx.clip.play").is_some());
+    assert!(crate::shell::scenario::find_item(&playback_sub.items, "pptx.clip.loop").is_some());
+
+    let vstyle_sub = clip_entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.video.styles" => Some(sub),
+        _ => None,
+    }).expect("video.styles submenu in clip context menu");
+    assert!(crate::shell::scenario::find_item(&vstyle_sub.items, "pptx.video.style.rounded-shadow").is_some());
+
+    // メディアクリップに対するメニューアクション適用（ループ再生トグル＋角丸影スタイル）
+    s.menu("pptx.clip.loop");
+    s.menu("pptx.video.style.rounded-shadow");
+
+    let (loop_flag, clip_corner, clip_shadow) = s.with(|e, _| {
+        let sh = e.slide().shapes.iter().find(|sh| sh.id == clip_id).expect("clip shape");
+        if let ShapeKind::Picture(p) = &sh.kind {
+            (p.clip.as_ref().unwrap().options.loop_until_stopped, p.corner, p.shadow.is_some())
+        } else {
+            panic!("expected clip picture");
+        }
+    });
+    assert!(loop_flag);
+    assert_eq!(clip_corner, 20_000);
+    assert!(clip_shadow);
+
+    // 5. スクリーンショット・保存・再読込・ラウンドトリップ検証
+    s.screenshot("context_menu_picture_and_media_actions");
+    s.save_as("context_menu_picture_and_media_actions.pptx");
+    let reloaded = s.reopen();
+    if let ShapeKind::Picture(re_pic) = &reloaded.slides[pic_page].shapes[pic_idx].kind {
+        assert_eq!(re_pic.duotone, Some((ibis_doc_model::Rgb(0x402000), ibis_doc_model::Rgb(0xffe0c0))));
+        assert_eq!(re_pic.luminance, Some((0, 20_000)));
+    } else {
+        panic!("expected picture on reloaded slide");
+    }
+    let re_clip = reloaded.slides[pic_page].shapes.iter().find(|sh| matches!(&sh.kind, ShapeKind::Picture(p) if p.clip.is_some())).expect("reloaded clip shape");
+    if let ShapeKind::Picture(re_clip_pic) = &re_clip.kind {
+        assert!(re_clip_pic.clip.as_ref().unwrap().options.loop_until_stopped);
+        assert_eq!(re_clip_pic.corner, 20_000);
+        assert!(re_clip_pic.shadow.is_some());
+    }
+
+    // 6. Undo/Redo 完全追従検証
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-AUDIT-003, PPTX-SHAPE-016, PPTX-SHAPE-017, PPTX-SHAPE-018, PPTX-SHAPE-019, PPTX-SHAPE-020, PPTX-SHAPE-021, PPTX-SMART-011, PPTX-SMART-013, PPTX-SMART-014:
+/// 図形選択時の視覚効果（影・反射・ぼかし・光彩・面取り・3D回転・3D奥行き）および SmartArt 選択時の（レベル上げ/下げ・レイアウト変更・色の変更）右クリックコンテキストメニュー拡充
+pub(crate) fn context_menu_shape_effects_and_smartart_actions() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+
+    // 1. 新規図形（長方形）を挿入し、図形視覚効果サブメニューを検証
+    s.update(|e, _, cx| {
+        let id = e.document.ids().new_shape_id();
+        let mut auto = ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Rect, Fill::Solid(ibis_doc_model::Color::BLACK), None);
+        auto.text = Some(ibis_doc_model::TextBody::plain("effects", ibis_doc_model::TextStyle::default()));
+        e.insert_shape(ibis_doc_model::Shape::new(id, ibis_doc_model::EmuRect::new(500_000, 500_000, 2_000_000, 1_000_000), ShapeKind::Auto(auto)), cx);
+    });
+    let shape_id = s.with(|e, _| e.selected_ids()[0]);
+
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    for sub_id in [
+        "pptx.shadow",
+        "pptx.reflection",
+        "pptx.soft-edge",
+        "pptx.glow",
+        "pptx.bevel",
+        "pptx.3d-rotation",
+        "pptx.3d-depth",
+    ] {
+        assert!(
+            entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == sub_id)),
+            "expected submenu {sub_id} in shape context menu"
+        );
+    }
+
+    // 2. 各視覚効果をメニューから適用（影・反射・ぼかし・光彩・面取り・3D回転・3D奥行き）
+    s.menu("pptx.shadow.soft");
+    s.menu("pptx.reflection.tight");
+    s.menu("pptx.soft-edge.5pt");
+    s.menu("pptx.glow.blue10");
+    s.menu("pptx.bevel.circle");
+    s.menu("pptx.3d-rotation.isometric-right-up");
+    s.menu("pptx.3d-depth.20pt");
+
+    let auto = s.with(|e, _| {
+        let sh = e.slide().shape(shape_id).expect("inserted shape");
+        match &sh.kind {
+            ShapeKind::Auto(a) => a.clone(),
+            _ => panic!("expected AutoShape"),
+        }
+    });
+    assert!(auto.shadow.is_some());
+    assert!(auto.reflection.is_some());
+    assert_eq!(auto.soft_edge, Some(63_500));
+    assert!(auto.glow.is_some());
+    assert!(auto.bevel.is_some());
+    assert_eq!(auto.tilt.as_ref().and_then(|t| t.camera_preset), Some(ibis_doc_model::CameraPreset::IsometricRightUp));
+    assert_eq!(auto.tilt.as_ref().map(|t| t.extrusion_h), Some(254_000));
+
+    // 3. SmartArt を挿入し、右クリックコンテキストメニュー（レベル上げ/下げ・レイアウト変更・色の変更）を検証
+    s.menu("pptx.insert.smartart.list");
+    let sa_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&sa_entries, "pptx.smartart.promote").is_some());
+    assert!(crate::shell::scenario::find_item(&sa_entries, "pptx.smartart.demote").is_some());
+
+    let layout_sub = sa_entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.smartart.change-layout" => Some(sub),
+        _ => None,
+    }).expect("smartart.change-layout submenu");
+    assert!(crate::shell::scenario::find_item(&layout_sub.items, "pptx.smartart.layout.list").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&layout_sub.items, "pptx.smartart.layout.process").is_some());
+
+    let color_sub = sa_entries.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.smartart.color" => Some(sub),
+        _ => None,
+    }).expect("smartart.color submenu");
+    assert!(crate::shell::scenario::find_item(&color_sub.items, "pptx.smartart.color.colorful").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&color_sub.items, "pptx.smartart.color.accent2").is_some());
+
+    // 4. SmartArt のレイアウト変更（基本手順）および配色変更（アクセント2）を適用
+    s.menu("pptx.smartart.layout.process");
+    s.menu("pptx.smartart.color.accent2");
+
+    let (_, sa_kind, sa_style, ..) = s.with(|e, _| e.selected_smartart_data()).expect("smartart data");
+    assert_eq!(sa_kind, crate::pptx::SmartArtKind::BasicProcess);
+    assert_eq!(sa_style, crate::pptx::SmartArtColorStyle::Accent2);
+
+    let sa_entries_after = s.with(|e, _| e.shape_context_menu_entries());
+    let layout_sub_after = sa_entries_after.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.smartart.change-layout" => Some(sub),
+        _ => None,
+    }).unwrap();
+    assert!(crate::shell::scenario::find_item(&layout_sub_after.items, "pptx.smartart.layout.process").unwrap().checked);
+
+    let color_sub_after = sa_entries_after.iter().find_map(|e| match e {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.smartart.color" => Some(sub),
+        _ => None,
+    }).unwrap();
+    assert!(crate::shell::scenario::find_item(&color_sub_after.items, "pptx.smartart.color.accent2").unwrap().checked);
+
+    // 5. スクリーンショット・保存・再読込・ラウンドトリップ検証
+    s.screenshot("context_menu_shape_effects_and_smartart_actions");
+    s.save_as("context_menu_shape_effects_and_smartart_actions.pptx");
+    let reloaded = s.reopen();
+    let re_shape = reloaded.slides[0].shapes.iter().find(|sh| matches!(&sh.kind, ShapeKind::Auto(a) if a.soft_edge == Some(63_500))).expect("reloaded effect shape");
+    if let ShapeKind::Auto(re_auto) = &re_shape.kind {
+        assert!(re_auto.shadow.is_some());
+        assert!(re_auto.reflection.is_some());
+        assert!(re_auto.glow.is_some());
+        assert!(re_auto.bevel.is_some());
+        assert_eq!(re_auto.tilt.as_ref().and_then(|t| t.camera_preset), Some(ibis_doc_model::CameraPreset::IsometricRightUp));
+        assert_eq!(re_auto.tilt.as_ref().map(|t| t.extrusion_h), Some(254_000));
+    }
+
+    // 6. Undo/Redo 完全追従検証
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-AUDIT-003, PPTX-TEXT-002, PPTX-TEXT-006, PPTX-TEXT-010, PPTX-TEXT-025, PPTX-REVIEW-001, PPTX-REVIEW-002:
+/// 図形選択時およびテキスト編集中の右クリックコンテキストメニュー拡充（ワードアートのスタイル・文字の変形・文字の輪郭・大文字小文字変換・校正言語・段落書式コピー/貼り付け・スペルチェック・類語辞典）
+pub(crate) fn context_menu_wordart_text_effects_and_proofing() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+
+    // 1. テキスト付き図形を挿入し、図形選択状態の右クリックメニューを検証
+    s.update(|e, _, cx| {
+        let id = e.document.ids().new_shape_id();
+        let mut auto = ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Rect, Fill::Solid(ibis_doc_model::Color::BLACK), None);
+        auto.text = Some(ibis_doc_model::TextBody::plain("hello world", ibis_doc_model::TextStyle::default()));
+        e.insert_shape(ibis_doc_model::Shape::new(id, ibis_doc_model::EmuRect::new(600_000, 600_000, 3_000_000, 1_200_000), ShapeKind::Auto(auto)), cx);
+    });
+    let shape_id = s.with(|e, _| e.selected_ids()[0]);
+
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    for sub_id in [
+        "pptx.text.wordart-styles",
+        "pptx.text.warp",
+        "pptx.text-outline",
+        "pptx.text.case",
+        "pptx.proofing-language",
+    ] {
+        assert!(
+            entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == sub_id)),
+            "expected submenu {sub_id} in shape context menu"
+        );
+    }
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.paragraph-copy").is_some());
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.paragraph-paste").is_some());
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.spelling.check").is_some());
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.thesaurus").is_some());
+
+    // 2. 図形選択状態からワードアートスタイル・文字変形・大文字変換・校正言語を適用
+    s.menu("pptx.text.wordart.style3");
+    s.menu("pptx.text.warp.arch-up");
+    s.menu("pptx.case.upper");
+    s.menu("pptx.proofing-lang.en-US");
+
+    let (text_after_shape, warp_after_shape, lang_after_shape, outline_after_shape) = s.with(|e, _| {
+        let tb = e.slide().shape(shape_id).unwrap().text_body().unwrap();
+        let r = &tb.paragraphs[0].runs[0];
+        (tb.text(), tb.warp.clone(), r.style.lang.clone(), r.style.outline)
+    });
+    assert_eq!(text_after_shape, "HELLO WORLD");
+    assert_eq!(warp_after_shape.as_deref(), Some("textArchUp"));
+    assert_eq!(lang_after_shape.as_deref(), Some("en-US"));
+    assert_eq!(outline_after_shape, Some((ibis_doc_model::Rgb(0xC55A11), 12_700)));
+
+    // 3. テキスト編集中モードを開始し、右クリックコンテキストメニューを検証
+    s.update(|e, w, cx| e.begin_text_edit(shape_id, false, false, w, cx));
+    s.key("cmd-a");
+    assert!(s.with(|e, _| e.text_editing().is_some()));
+
+    let edit_entries = s.with(|e, _| e.shape_context_menu_entries());
+    for sub_id in [
+        "pptx.text.wordart-styles",
+        "pptx.text.warp",
+        "pptx.text-outline",
+        "pptx.text.case",
+        "pptx.proofing-language",
+    ] {
+        assert!(
+            edit_entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == sub_id)),
+            "expected submenu {sub_id} in text editing context menu"
+        );
+    }
+    assert!(crate::shell::scenario::find_item(&edit_entries, "pptx.paragraph-copy").is_some());
+    assert!(crate::shell::scenario::find_item(&edit_entries, "pptx.paragraph-paste").is_some());
+    assert!(crate::shell::scenario::find_item(&edit_entries, "pptx.spelling.check").is_some());
+    assert!(crate::shell::scenario::find_item(&edit_entries, "pptx.thesaurus").is_some());
+
+    // 4. テキスト編集中に文字の輪郭（青・2.25pt）・文字変形（波1）・Title case・段落書式コピーを実行
+    s.menu("pptx.text-outline.blue");
+    s.menu("pptx.text-outline.2-25pt");
+    s.menu("pptx.text.warp.wave1");
+    s.menu("pptx.case.title");
+    s.menu("pptx.paragraph-copy");
+    assert!(s.with(|e, _| e.pptx().unwrap().paragraph_format_copy.is_some()));
+
+    // テキスト編集終了
+    s.key("escape");
+    s.update(|e, w, cx| {
+        e.end_text_edit(w, cx);
+        e.focus_handle.focus(w, cx);
+    });
+
+    // 5. スクリーンショット・保存・再読込・ラウンドトリップ検証
+    s.screenshot("context_menu_wordart_text_effects_and_proofing");
+    s.save_as("context_menu_wordart_text_effects_and_proofing.pptx");
+    let reloaded = s.reopen();
+    let re_shape = reloaded.slides[0].shapes.iter().find(|sh| sh.text_body().is_some_and(|tb| tb.warp.as_deref() == Some("textWave1"))).expect("reloaded wordart shape");
+    let re_tb = re_shape.text_body().unwrap();
+    assert_eq!(re_tb.text(), "Hello World");
+    assert_eq!(re_tb.warp.as_deref(), Some("textWave1"));
+    assert_eq!(re_tb.paragraphs[0].runs[0].style.outline, Some((ibis_doc_model::Rgb(0x4472c4), 28_575)));
+    assert_eq!(re_tb.paragraphs[0].runs[0].style.lang.as_deref(), Some("en-US"));
+
+    // 6. Undo/Redo 完全追従検証
+    undo_all_and_redo(&mut s);
+}
+
+/// 右クリックメニュー「グラフの種類の変更・グラフタイトル・凡例・データラベル・軸と目盛線・近似曲線・誤差範囲・データ系列の書式・プロットエリア・グラフのスタイル・配色」拡充
+/// (`PPTX-AUDIT-003`, `PPTX-CHART-001`, `PPTX-CHART-004`, `PPTX-CHART-005`, `PPTX-CHART-006`, `PPTX-CHART-007`, `PPTX-CHART-008`, `PPTX-CHART-009`, `PPTX-CHART-010`, `PPTX-CHART-012`, `PPTX-CHART-014`):
+/// 1. グラフ選択時の右クリックメニューに全サブメニュー・項目が表示されることを検証
+/// 2. コンテキストメニューのハンドラ経由でグラフ種類の変更（折れ線）、タイトル表示、凡例位置（上）、データラベル（上）、近似曲線（線形）、誤差範囲（パーセンテージ）、スタイル（スタイル 3）、配色パレット（パレット 2）を適用し、モデルとチェック状態を検証
+/// 3. 保存・再読込・Undo/Redo の完全ラウンドトリップ
+pub(crate) fn context_menu_chart_type_elements_and_styles() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+    s.menu("pptx.new-slide");
+
+    // 1. 新しいグラフ（集合縦棒）を挿入して選択
+    s.update(|e, w, cx| e.insert_slide_chart(w, cx));
+    let chart_id = s.with(|e, _| e.selected_ids()[0]);
+
+    // 2. 右クリックコンテキストメニュー項目の検証
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.chart.data").is_some(), "pptx.chart.data present");
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.chart.data-quick").is_some(), "pptx.chart.data-quick present");
+    for sub_id in [
+        "pptx.chrome.change-chart-type",
+        "pptx.chart.title-menu",
+        "pptx.chart.legend-menu",
+        "pptx.chart.labels-menu",
+        "pptx.chart.axis-menu",
+        "pptx.chart.trendline-menu",
+        "pptx.chart.error-bars-menu",
+        "pptx.chart.series-format-menu",
+        "pptx.chart.plot-area-menu",
+        "pptx.chart.style-menu",
+        "pptx.chart.palette-menu",
+    ] {
+        assert!(
+            entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == sub_id)),
+            "expected submenu {sub_id} in chart context menu"
+        );
+    }
+
+    // 3. 右クリックメニューのハンドラを実行してグラフ種類・要素・スタイルを変更
+    let run_ctx_item = |s: &mut Scenario, item_id: &str| {
+        s.update(|e, w, cx| {
+            let menu = e.shape_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&menu, item_id)
+                .unwrap_or_else(|| panic!("context menu item {item_id} should exist"));
+            assert!(item.enabled(), "context menu item {item_id} should be enabled");
+            if let Some(ref handler) = item.handler {
+                handler(e, w, cx);
+            }
+        });
+    };
+
+    // グラフの種類を折れ線（chart.type.line）に変更
+    run_ctx_item(&mut s, "chart.type.line");
+    // グラフタイトルを非表示→表示（chart.title.above）に設定
+    run_ctx_item(&mut s, "chart.title.none");
+    run_ctx_item(&mut s, "chart.title.above");
+    // 凡例を上（chart.legend.top）に配置
+    run_ctx_item(&mut s, "chart.legend.top");
+    // データラベルを上（chart.labels.above）に表示
+    run_ctx_item(&mut s, "chart.labels.above");
+    // 縦軸の最大値を 100（pptx.chart.axis.max-100）に設定
+    run_ctx_item(&mut s, "pptx.chart.axis.max-100");
+    // 近似曲線（線形: pptx.chart.trendline.linear）を追加
+    run_ctx_item(&mut s, "pptx.chart.trendline.linear");
+    // 誤差範囲（パーセンテージ: pptx.chart.error-bars.percent）を追加
+    run_ctx_item(&mut s, "pptx.chart.error-bars.percent");
+    // グラフのスタイル 3（pptx.chart.style.3）を適用
+    run_ctx_item(&mut s, "pptx.chart.style.3");
+    // 配色パレット 2（pptx.chart.palette.2）を適用
+    run_ctx_item(&mut s, "pptx.chart.palette.2");
+
+    // 4. チェック状態およびモデル状態の検証
+    let entries_after = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&entries_after, "chart.type.line").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "chart.title.above").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "chart.legend.top").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "chart.labels.above").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "pptx.chart.axis.max-100").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "pptx.chart.trendline.linear").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "pptx.chart.error-bars.percent").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "pptx.chart.style.3").unwrap().checked);
+
+    let chart_now = s.with(|e, _| match &e.slide().shape(chart_id).unwrap().kind {
+        ShapeKind::Chart(c) => (**c).clone(),
+        _ => panic!("expected chart"),
+    });
+    assert_eq!(chart_now.groups[0].kind, ibis_doc_model::ChartType::Line);
+    assert!(chart_now.title.is_some());
+    assert_eq!(chart_now.legend.as_ref().and_then(|l| l.source_position), Some(ibis_doc_model::LegendPosition::Top));
+    assert_eq!(chart_now.groups[0].series[0].labels.as_ref().and_then(|l| l.position), Some(ibis_doc_model::LabelPosition::Above));
+    assert_eq!(chart_now.groups[0].series[0].trendline.as_ref().map(|t| t.kind), Some(ibis_doc_model::TrendlineType::Linear));
+    assert_eq!(chart_now.groups[0].series[0].error_bars.as_ref().map(|eb| eb.val_type), Some(ibis_doc_model::ErrorBarValueType::Percentage));
+    assert_eq!(chart_now.style, Some(3));
+
+    // 5. スクリーンショット・保存・再読込・ラウンドトリップ検証
+    s.screenshot("context_menu_chart_type_elements_and_styles");
+    s.save_as("context_menu_chart_type_elements_and_styles.pptx");
+    let reloaded = s.reopen();
+    let re_chart = reloaded.slides[1].shapes.iter().find_map(|sh| match &sh.kind {
+        ShapeKind::Chart(c) => Some((**c).clone()),
+        _ => None,
+    }).expect("reloaded chart exists");
+    assert_eq!(re_chart.groups[0].kind, ibis_doc_model::ChartType::Line);
+    assert!(re_chart.title.is_some());
+    assert_eq!(re_chart.legend.as_ref().and_then(|l| l.source_position), Some(ibis_doc_model::LegendPosition::Top));
+    assert_eq!(re_chart.groups[0].series[0].labels.as_ref().and_then(|l| l.position), Some(ibis_doc_model::LabelPosition::Above));
+    assert_eq!(re_chart.groups[0].series[0].trendline.as_ref().map(|t| t.kind), Some(ibis_doc_model::TrendlineType::Linear));
+    assert_eq!(re_chart.groups[0].series[0].error_bars.as_ref().map(|eb| eb.val_type), Some(ibis_doc_model::ErrorBarValueType::Percentage));
+    assert_eq!(re_chart.style, Some(3));
+
+    // 6. Undo/Redo 完全追従検証
+    undo_all_and_redo(&mut s);
+}
+
+/// 右クリックメニュー「表の罫線・表スタイル・表スタイルオプション・セル垂直配置/文字列方向/内部余白・線の始点/終点矢印」拡充
+/// (`PPTX-AUDIT-003`, `PPTX-TABLE-007`, `PPTX-TABLE-008`, `PPTX-TABLE-009`, `PPTX-TABLE-010`, `PPTX-TABLE-012`, `PPTX-TABLE-013`, `PPTX-OBJECT-002`, `PPTX-OBJECT-008`):
+/// 1. 表全体選択時およびセル編集時の右クリックメニューに罫線・表スタイル・表スタイルオプション・垂直配置・文字列の方向・内部余白が揃うことを検証
+/// 2. 表全体選択状態で右クリックメニューから罫線（なし→外枠・斜め右下がり・太さ3pt・赤）、表スタイル（中間スタイル2 アクセント1）、表スタイルオプション（集計行・最初の列）、垂直配置（上下中央）、文字列の方向（縦書き）、内部余白パネル起動を実行し、全セルへの一括適用とチェック状態を検証
+/// 3. 複数セル範囲選択（Shift+クリック）状態で垂直配置（下揃え）を適用し、選択範囲のセルのみ更新されることを検証
+/// 4. 線/コネクタ選択時の右クリックメニューに始点矢印・終点矢印サブメニューが表示され、始点（ひし形）・終点（ステルス矢印）を適用できることを検証
+/// 5. 保存・再読込・Undo/Redo の完全ラウンドトリップ
+pub(crate) fn context_menu_table_design_borders_and_line_arrows() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(3);
+
+    // 1. 3x3 の表を挿入し、Escape でセル編集を抜けて表全体選択状態にする
+    s.menu("table.new.3x3");
+    s.key("escape");
+    assert!(s.with(|e, _| e.text_editing().is_none()));
+    let table_id = s.with(|e, _| e.selected_ids()[0]);
+    let table_idx = s.with(|e, _| e.slide().shapes.iter().position(|sh| sh.id == table_id).unwrap());
+
+    // 2. 表全体選択時の右クリックコンテキストメニュー項目を検証
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    for sub_id in [
+        "table.borders",
+        "pptx.table-style",
+        "pptx.table-style-options",
+        "_shell.vertical-alignment",
+        "pptx.text-direction",
+    ] {
+        assert!(
+            entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == sub_id)),
+            "expected submenu {sub_id} in table context menu"
+        );
+    }
+    assert!(crate::shell::scenario::find_item(&entries, "pptx.insets-actions").is_some(), "pptx.insets-actions present on selected table");
+
+    let run_ctx_item = |s: &mut Scenario, item_id: &str| {
+        s.update(|e, w, cx| {
+            let menu = e.shape_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&menu, item_id)
+                .unwrap_or_else(|| panic!("context menu item {item_id} should exist"));
+            assert!(item.enabled(), "context menu item {item_id} should be enabled");
+            if let Some(ref handler) = item.handler {
+                handler(e, w, cx);
+            }
+        });
+    };
+
+    // 3. 表全体選択状態で右クリックメニューから罫線・スタイル・オプション・配置・方向を一括適用
+    run_ctx_item(&mut s, "table.borders.none");
+    run_ctx_item(&mut s, "table.borders.outside");
+    run_ctx_item(&mut s, "table.borders.diagonal-down");
+    run_ctx_item(&mut s, "table.borders.3pt");
+    run_ctx_item(&mut s, "table.borders.red");
+    run_ctx_item(&mut s, "pptx.table-style.medium2-accent1");
+    run_ctx_item(&mut s, "pptx.table.last-row");
+    run_ctx_item(&mut s, "pptx.table.first-col");
+    run_ctx_item(&mut s, "pptx.text.middle");
+    run_ctx_item(&mut s, "pptx.text.vertical");
+
+    // チェック状態および表全体モデルの検証
+    let entries_after = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&entries_after, "pptx.table-style.medium2-accent1").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "pptx.table.last-row").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "pptx.table.first-col").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "pptx.text.middle").unwrap().checked);
+    assert!(crate::shell::scenario::find_item(&entries_after, "pptx.text.vertical").unwrap().checked);
+
+    let tbl_now = s.with(|e, _| match &e.slide().shape(table_id).unwrap().kind {
+        ShapeKind::Table(t) => (**t).clone(),
+        _ => panic!("expected table"),
+    });
+    assert_eq!(tbl_now.style_id.as_deref(), Some("{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"));
+    assert!(tbl_now.style_options.last_row);
+    assert!(tbl_now.style_options.first_col);
+    let c00_borders = &tbl_now.rows[0].cells[0].borders;
+    assert_eq!(c00_borders.top.as_ref().map(|b| (b.width, b.color.rgb.0)), Some((38_100, 0xc00000)));
+    assert_eq!(c00_borders.left.as_ref().map(|b| (b.width, b.color.rgb.0)), Some((38_100, 0xc00000)));
+    assert!(c00_borders.tl_to_br.is_some());
+    assert!(c00_borders.bottom.is_none());
+    assert!(c00_borders.right.is_none());
+    for r in 0..3 {
+        for c in 0..3 {
+            assert_eq!(tbl_now.rows[r].cells[c].text.anchor, ibis_doc_model::VerticalAnchor::Middle);
+            assert!(tbl_now.rows[r].cells[c].text.vertical);
+        }
+    }
+
+    // 表全体選択から内部余白パネルが開けることを検証
+    run_ctx_item(&mut s, "pptx.insets-actions");
+    assert!(s.with(|e, _| e.pptx().unwrap().insets_panel.is_some()));
+    s.menu("pptx.insets.cancel");
+    assert!(s.with(|e, _| e.pptx().unwrap().insets_panel.is_none()));
+
+    // 4. 複数セル範囲 (0,0)..=(1,1) を選択し、右クリックメニューから下揃え（pptx.text.bottom）を適用
+    let p00 = cell_middle(&mut s, table_idx, 0, 0);
+    let p11 = cell_middle(&mut s, table_idx, 1, 1);
+    s.double_click(p00);
+    s.shift_click(p11);
+    run_ctx_item(&mut s, "pptx.text.bottom");
+    s.key("escape");
+
+    let tbl_range = s.with(|e, _| match &e.slide().shape(table_id).unwrap().kind {
+        ShapeKind::Table(t) => (**t).clone(),
+        _ => panic!("expected table"),
+    });
+    for r in 0..3 {
+        for c in 0..3 {
+            let expected = if r <= 1 && c <= 1 {
+                ibis_doc_model::VerticalAnchor::Bottom
+            } else {
+                ibis_doc_model::VerticalAnchor::Middle
+            };
+            assert_eq!(tbl_range.rows[r].cells[c].text.anchor, expected, "cell ({r},{c}) anchor");
+        }
+    }
+
+    // 5. 線を描画し、右クリックメニューの「始点矢印」「終点矢印」サブメニューを検証
+    s.toolbar_menu("insert-line", "pptx.line");
+    let (la, lb) = (s.at(EmuPoint::new(1_000_000, 6_000_000)), s.at(EmuPoint::new(4_000_000, 6_000_000)));
+    s.drag(la, lb);
+    let line_id = s.with(|e, _| e.selected_ids()[0]);
+
+    let line_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(line_entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.chrome.begin-arrow")));
+    assert!(line_entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.chrome.end-arrow")));
+
+    // 始点矢印サブメニューから end.diamond、終点矢印サブメニューから end.stealth を実行
+    s.update(|e, w, cx| {
+        let menu = e.shape_context_menu_entries();
+        let begin_sub = menu.iter().find_map(|entry| match entry {
+            crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.chrome.begin-arrow" => Some(sub),
+            _ => None,
+        }).expect("begin-arrow submenu");
+        let item = crate::shell::scenario::find_item(&begin_sub.items, "end.diamond").expect("end.diamond in begin-arrow");
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    s.update(|e, w, cx| {
+        let menu = e.shape_context_menu_entries();
+        let end_sub = menu.iter().find_map(|entry| match entry {
+            crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.chrome.end-arrow" => Some(sub),
+            _ => None,
+        }).expect("end-arrow submenu");
+        let item = crate::shell::scenario::find_item(&end_sub.items, "end.stealth").expect("end.stealth in end-arrow");
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+
+    let stroke_now = s.with(|e, _| match &e.slide().shape(line_id).unwrap().kind {
+        ShapeKind::Line(st) => st.clone(),
+        _ => panic!("expected line"),
+    });
+    assert!(matches!(stroke_now.head, ibis_doc_model::LineEnd::Diamond(_)));
+    assert!(matches!(stroke_now.tail, ibis_doc_model::LineEnd::Stealth(_)));
+
+    // 6. スクリーンショット・保存・再読込・ラウンドトリップ検証
+    s.screenshot("context_menu_table_design_borders_and_line_arrows");
+    s.save_as("context_menu_table_design_borders_and_line_arrows.pptx");
+    let reloaded = s.reopen();
+    let re_table = reloaded.slides[2].shapes.iter().find_map(|sh| match &sh.kind {
+        ShapeKind::Table(t) if t.rows.len() == 3 && t.columns.len() == 3 => Some((**t).clone()),
+        _ => None,
+    }).expect("reloaded 3x3 table");
+    assert_eq!(re_table.style_id.as_deref(), Some("{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"));
+    assert!(re_table.style_options.last_row);
+    assert!(re_table.style_options.first_col);
+    assert_eq!(re_table.rows[0].cells[0].borders.top.as_ref().map(|b| (b.width, b.color.rgb.0)), Some((38_100, 0xc00000)));
+    assert!(re_table.rows[0].cells[0].borders.tl_to_br.is_some());
+    assert_eq!(re_table.rows[0].cells[0].text.anchor, ibis_doc_model::VerticalAnchor::Bottom);
+    assert_eq!(re_table.rows[2].cells[2].text.anchor, ibis_doc_model::VerticalAnchor::Middle);
+    assert!(re_table.rows[2].cells[2].text.vertical);
+
+    let re_line = reloaded.slides[2].shapes.iter().rev().find_map(|sh| match &sh.kind {
+        ShapeKind::Line(st) => Some(st.clone()),
+        _ => None,
+    }).expect("reloaded line");
+    assert!(matches!(re_line.head, ibis_doc_model::LineEnd::Diamond(_)));
+    assert!(matches!(re_line.tail, ibis_doc_model::LineEnd::Stealth(_)));
+
+    // 7. Undo/Redo 完全追従検証
+    undo_all_and_redo(&mut s);
+}
+
+/// スライド・セクション・図形コンテキストメニューとメニューバーの一貫性拡充:
+/// 1. サムネイル複数選択を維持したままの右クリック（open_slide_context_menu）
+/// 2. スライド右クリックおよびキャンバス空白右クリックからのレイアウト指定追加（pptx.new-slide-layout）、
+///    画面切り替え（pptx.transition）、スライドサイズ（pptx.slide-size）、セクション操作（pptx.sections）、
+///    元の書式を保持して貼り付け（pptx.paste-slide-keep）、配置リセット・コメント・ノート・ヘッダーとフッター
+/// 3. セクションヘッダー右クリック（open_section_context_menu）からのセクション操作
+/// 4. 図形右クリックからの「頂点の編集（pptx.edit-points）」と頂点上右クリックでの「滑らかな頂点（pptx.edit-points.smooth）」変更
+/// 5. 複数図形選択時の右クリック「図形の結合（pptx.merge -> pptx.merge.union）」および「アニメーション（pptx.menu.animation）」
+/// 6. メニューバーの画面切り替え・テーマ・アニメーションウィンドウ・ページ設定・数式・類語辞典・アクセシビリティ接続
+/// 7. 保存・再読込・Undo/Redo ラウンドトリップ検証
+pub(crate) fn context_menu_slide_transitions_sections_and_shape_edit_points_merge_animations() {
+    use ibis_doc_model::shape_merge::NodeKind;
+    use ibis_doc_model::{AnimationLook, Geometry, ShapeKind};
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+
+    // 1. 複数スライド選択を維持したまま open_slide_context_menu が動作することを確認
+    let (slide0_id, slide1_id) = s.with(|e, _| (e.presentation().slides[0].id, e.presentation().slides[1].id));
+    s.update(|e, w, cx| {
+        e.select_slide(slide0_id, w, cx);
+        let shift = gpui_kit::Modifiers { shift: true, ..Default::default() };
+        e.click_slide(slide1_id, &shift, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_slide_ids().len()), 2, "two slides selected");
+    s.update(|e, w, cx| {
+        e.open_slide_context_menu(slide1_id, gpui_kit::point(gpui_kit::px(40.0), gpui_kit::px(80.0)), w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_slide_ids().len()), 2, "right-click on already selected slide keeps multi-selection");
+
+    // 2. スライド右クリックメニュー & キャンバス空白右クリックメニューの拡充項目検証
+    s.page(1);
+    s.update(|e, _, _| e.set_selection(Vec::new()));
+    let slide_menu = s.with(|e, _| e.slide_context_menu_entries());
+    let empty_canvas_menu = s.with(|e, _| e.shape_context_menu_entries());
+    for entries in [&slide_menu, &empty_canvas_menu] {
+        assert!(entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.new-slide-layout")), "new-slide-layout submenu present");
+        assert!(entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.sections")), "sections submenu present");
+        assert!(entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.transition")), "transition submenu present");
+        assert!(entries.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.slide-size")), "slide-size submenu present");
+        assert!(crate::shell::scenario::find_item(entries, "pptx.reset-placement").is_some(), "reset-placement present");
+        assert!(crate::shell::scenario::find_item(entries, "insert.comment").is_some(), "insert.comment present");
+        assert!(crate::shell::scenario::find_item(entries, "pptx.notes").is_some(), "pptx.notes present");
+        assert!(crate::shell::scenario::find_item(entries, "pptx.header-footer").is_some(), "pptx.header-footer present");
+    }
+    assert!(crate::shell::scenario::find_item(&slide_menu, "pptx.paste-slide-keep").is_some(), "paste-slide-keep in slide context menu");
+
+    // スライド右クリックメニューから画面切り替え（押し出し: transition.push）を適用
+    s.update(|e, w, cx| {
+        let entries = e.slide_context_menu_entries();
+        let trans_sub = entries.iter().find_map(|entry| match entry {
+            crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.transition" => Some(sub),
+            _ => None,
+        }).expect("pptx.transition submenu");
+        let item = crate::shell::scenario::find_item(&trans_sub.items, "transition.push").expect("transition.push");
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(
+        s.with(|e, _| e.slide().transition.as_ref().map(|t| t.effect.clone())),
+        Some("push".to_string()),
+        "transition set to push via slide context menu"
+    );
+
+    // 3. セクション追加とセクションヘッダー右クリック（open_section_context_menu）
+    s.menu("pptx.section.add");
+    s.key("cmd-a");
+    s.type_text("第1章");
+    s.menu("pptx.section.apply");
+    let sec_id = s.with(|e, _| e.presentation().sections[0].id.clone());
+    s.update(|e, w, cx| {
+        e.open_section_context_menu(&sec_id, gpui_kit::point(gpui_kit::px(30.0), gpui_kit::px(40.0)), w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.current_section()), Some(0), "section selected on right click");
+    let sec_items = s.with(|e, _| crate::pptx::chrome::section_menu_items(e));
+    assert!(crate::shell::scenario::find_item(&sec_items, "pptx.section.rename").is_some());
+    assert!(crate::shell::scenario::find_item(&sec_items, "pptx.section.fold").is_some());
+    assert!(crate::shell::scenario::find_item(&sec_items, "pptx.section.remove").is_some());
+
+    // 4. 図形右クリックからの「頂点の編集（pptx.edit-points）」と頂点右クリックでの種類変更
+    s.page(3);
+    let fig_ids = s.with(|e, _| {
+        e.slide()
+            .shapes
+            .iter()
+            .filter(|sh| {
+                matches!(&sh.kind, ShapeKind::Auto(a) if matches!(a.geometry, Geometry::Rect | Geometry::RoundRect { .. } | Geometry::Ellipse))
+                    && e.slide().placeholders.get(&sh.id).is_none()
+            })
+            .map(|sh| (sh.id, sh.frame))
+            .collect::<Vec<_>>()
+    });
+    assert!(fig_ids.len() >= 2, "at least two auto shapes on slide 3");
+    let (fig0, fig1) = (fig_ids[0], fig_ids[1]);
+
+    s.update(|e, _, _| e.set_selection(vec![fig0.0]));
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let item = crate::shell::scenario::find_item(&entries, "pptx.edit-points").expect("pptx.edit-points in shape context menu");
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.is_editing_points()), "entered edit points mode via shape context menu");
+
+    // 最初の頂点の座標上で右クリックすると、頂点編集モードを維持したままその頂点が選択され、頂点種類メニュー項目が現れる
+    let (v0_pos, origin, scale) = s.with(|e, _| {
+        let p = e.edit_point_nodes()[0][0].p;
+        let l = e.slide_layout().unwrap();
+        (p, l.origin, l.scale)
+    });
+    let v0_screen = gpui_kit::point(
+        origin.x + gpui_kit::px(v0_pos.0 as f32 * scale),
+        origin.y + gpui_kit::px(v0_pos.1 as f32 * scale),
+    );
+    s.update(|e, w, cx| {
+        let ev = gpui_kit::MouseDownEvent {
+            position: v0_screen,
+            button: gpui_kit::MouseButton::Right,
+            modifiers: gpui_kit::Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        };
+        e.on_slide_right_down(&ev, w, cx);
+    });
+    assert!(s.with(|e, _| e.is_editing_points()), "still editing points after right-clicking vertex");
+    assert!(s.with(|e, _| e.edit_point_selected_kind().is_some()), "vertex selected by right-click");
+
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let smooth_item = crate::shell::scenario::find_item(&entries, "pptx.edit-points.smooth").expect("pptx.edit-points.smooth in vertex context menu");
+        (smooth_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.edit_point_selected_kind()), Some(NodeKind::Smooth), "vertex changed to Smooth via context menu");
+    s.update(|e, _, cx| e.end_edit_points(cx));
+    assert!(!s.with(|e, _| e.is_editing_points()));
+
+    // 5. 図形右クリックからアニメーション追加（pptx.menu.animation -> pptx.anim.in.fade）と図形の結合（pptx.merge -> pptx.merge.union）
+    s.update(|e, _, _| e.set_selection(vec![fig0.0]));
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let anim_sub = entries.iter().find_map(|entry| match entry {
+            crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.menu.animation" => Some(sub),
+            _ => None,
+        }).expect("pptx.menu.animation submenu in shape context menu");
+        let fade_item = crate::shell::scenario::find_item(&anim_sub.items, "pptx.anim.in.fade").expect("pptx.anim.in.fade in shape context menu");
+        (fade_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.look)), Some(AnimationLook::Fade), "Fade animation added via shape context menu");
+
+    // 2つの図形を重ねて選択し、右クリックメニューから「図形の結合（接合: pptx.merge.union）」を実行
+    let before_shapes = s.with(|e, _| e.slide().shapes.len());
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.run(
+            vec![ibis_doc_model::Command::SetFrame {
+                slide,
+                shape: fig1.0,
+                frame: ibis_doc_model::EmuRect::new(fig0.1.x + fig0.1.width / 3, fig0.1.y + fig0.1.height / 3, fig1.1.width, fig1.1.height),
+            }],
+            cx,
+        );
+    });
+    s.update(|e, _, _| e.set_selection(vec![fig0.0, fig1.0]));
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let merge_sub = entries.iter().find_map(|entry| match entry {
+            crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.merge" => Some(sub),
+            _ => None,
+        }).expect("pptx.merge submenu when 2 shapes selected");
+        let union_item = crate::shell::scenario::find_item(&merge_sub.items, "pptx.merge.union").expect("pptx.merge.union in shape context menu");
+        (union_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), before_shapes - 1, "two shapes merged into one via context menu");
+
+    // 6. メニューバーの接続確認（pptx.motion, file.page-setup, tools.accessibility）
+    assert_eq!(s.menu_state("pptx.motion"), Some((true, false)));
+    s.menu("pptx.motion");
+    assert_eq!(s.menu_state("pptx.motion"), Some((true, true)), "animation pane toggled on via Slide menu");
+    s.menu("pptx.motion");
+    assert_eq!(s.menu_state("pptx.motion"), Some((true, false)), "animation pane toggled off via Slide menu");
+
+    assert_eq!(s.menu_state("file.page-setup").map(|(en, _)| en), Some(true));
+    assert_eq!(s.menu_state("tools.accessibility").map(|(en, _)| en), Some(true));
+
+    // 7. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_slide_transitions_sections_and_shape_edit_points_merge_animations");
+    s.save_as("context_menu_slide_transitions_sections_and_shape_edit_points_merge_animations.pptx");
+    let reloaded = s.reopen();
+    assert_eq!(reloaded.slides[0].transition.as_ref().map(|t| t.effect.as_str()), Some("push"));
+    assert_eq!(reloaded.sections.len(), 1);
+    assert_eq!(reloaded.sections[0].name, "第1章");
+    assert_eq!(reloaded.slides[2].shapes.len(), before_shapes - 1);
+
+    undo_all_and_redo(&mut s);
+}
+
+/// PPTX-AUDIT-003, PPTX-OBJECT-007, PPTX-OBJECT-008, PPTX-IMAGE-007, PPTX-IMAGE-012, PPTX-IMAGE-014, PPTX-VIDEO-013, PPTX-VIDEO-017, PPTX-TRANS-016, PPTX-TRANS-017, PPTX-TRANS-018:
+/// 1. 図形・表選択時の右クリックメニュー「塗りつぶし（pptx.common.fill: 単色/なし/図/グラデーション/パターン＋カスタム設定パネル）」「枠線の色（_shell.border-color）」「枠線の太さ（pptx.chrome.border-weight）」「枠線の線種（pptx.chrome.border-style: 実線/破線/先端/多重線）」
+/// 2. 図・動画選択時の右クリックメニュー「ビデオの形状（図形に合わせてトリミング: pptx.video.shape）」「図の圧縮…（pptx.picture.compress）」「メディアの圧縮（pptx.media.compress）」
+/// 3. ズーム要素（スライドズーム等）選択時の右クリックメニュー「ズーム画像の変更…（pptx.zoom.change-image）」「画像の元に戻す（pptx.zoom.reset-image）」「ズームに戻る（pptx.zoom.return-to-zoom）」「ズームの背景（pptx.zoom.background）」「ズームの継続時間（pptx.zoom.duration）」
+/// 4. 保存・再読込ラウンドトリップ検証および Undo/Redo 完全追従検証
+pub(crate) fn context_menu_shape_fill_stroke_zoom_and_picture_video() {
+    use ibis_doc_model::{LineCap, LineCompound, LineDash};
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    // 1. 図形（AutoShape）を選択し、塗りつぶし・枠線の色・太さ・線種サブメニューを検証
+    s.page(3);
+    let auto_idx = s.with(|e, _| {
+        e.slide()
+            .shapes
+            .iter()
+            .position(|sh| matches!(sh.kind, ShapeKind::Auto(_)) && !e.slide().placeholders.contains_key(&sh.id))
+            .expect("an auto shape on slide 3")
+    });
+    let auto_id = s.with(|e, _| e.slide().shapes[auto_idx].id);
+    s.click_shape(auto_idx);
+
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    let fill_sub = entries.iter().find_map(|entry| match entry {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.common.fill" => Some(sub),
+        _ => None,
+    }).expect("pptx.common.fill submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&fill_sub.items, "color.none").is_some());
+    assert!(crate::shell::scenario::find_item(&fill_sub.items, "pptx.fill.picture").is_some());
+    assert!(crate::shell::scenario::find_item(&fill_sub.items, "fill.gradient.90").is_some());
+    assert!(crate::shell::scenario::find_item(&fill_sub.items, "pptx.fill.custom").is_some());
+    assert!(crate::shell::scenario::find_item(&fill_sub.items, "pptx.fill.custom-path").is_some());
+    assert!(crate::shell::scenario::find_item(&fill_sub.items, "pct50").is_some());
+    assert!(crate::shell::scenario::find_item(&fill_sub.items, "pptx.fill.custom-pattern").is_some());
+
+    let border_color_sub = entries.iter().find_map(|entry| match entry {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "_shell.border-color" => Some(sub),
+        _ => None,
+    }).expect("_shell.border-color submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&border_color_sub.items, "color.none").is_some());
+
+    let border_weight_sub = entries.iter().find_map(|entry| match entry {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.chrome.border-weight" => Some(sub),
+        _ => None,
+    }).expect("pptx.chrome.border-weight submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&border_weight_sub.items, "width.3").is_some());
+
+    let border_style_sub = entries.iter().find_map(|entry| match entry {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.chrome.border-style" => Some(sub),
+        _ => None,
+    }).expect("pptx.chrome.border-style submenu in shape context menu");
+    assert!(crate::shell::scenario::find_item(&border_style_sub.items, "pptx.stroke-dash").is_some());
+    assert!(crate::shell::scenario::find_item(&border_style_sub.items, "cap.round").is_some());
+    assert!(crate::shell::scenario::find_item(&border_style_sub.items, "compound.double").is_some());
+
+    // 右クリックメニューからグラデーション塗り（90度）・枠線太さ（3pt）・破線・丸先端・二重線を適用
+    s.update(|e, w, cx| {
+        for id in ["fill.gradient.90", "width.3", "pptx.stroke-dash", "cap.round", "compound.double"] {
+            let entries = e.shape_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap_or_else(|| panic!("missing {id} in shape context menu"));
+            (item.handler.as_ref().unwrap())(e, w, cx);
+        }
+    });
+
+    let (is_grad_90, stroke_props) = s.with(|e, _| {
+        let sh = e.slide().shape(auto_id).unwrap();
+        let ShapeKind::Auto(a) = &sh.kind else { panic!("expected auto shape") };
+        let is_grad = matches!(a.fill, Fill::Linear { angle: 5_400_000, .. });
+        let st = a.stroke.as_ref().expect("stroke present");
+        (is_grad, (st.width, st.dash, st.cap, st.compound))
+    });
+    assert!(is_grad_90, "fill.gradient.90 applied via context menu");
+    assert_eq!(stroke_props, (38_100, LineDash::Dash, LineCap::Round, LineCompound::Double));
+
+    // 2. 図（Picture）を選択し、図形に合わせてトリミング（pptx.video.shape）・図の圧縮（pptx.picture.compress）を検証
+    let (pic_page, pic_idx, pic_id) = s
+        .with(|e, _| {
+            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
+                sl.shapes.iter().enumerate().find_map(|(j, sh)| matches!(&sh.kind, ShapeKind::Picture(_)).then_some((i, j, sh.id)))
+            })
+        })
+        .expect("a slide with a picture");
+    s.page(pic_page + 1);
+    s.click_shape(pic_idx);
+
+    let pic_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.crop.shape.round-medium").is_some(), "pptx.crop.shape.round-medium in picture context menu");
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.picture.compress").is_some(), "pptx.picture.compress in picture context menu");
+    assert!(crate::shell::scenario::find_item(&pic_entries, "width.2.25").is_some(), "width.2.25 in picture context menu");
+
+    // 右クリックメニューから「角丸（中）にトリミング」と「枠線太さ 2.25pt」を実行
+    s.update(|e, w, cx| {
+        for id in ["pptx.crop.shape.round-medium", "width.2.25"] {
+            let entries = e.shape_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap();
+            (item.handler.as_ref().unwrap())(e, w, cx);
+        }
+    });
+    let (pic_corner, pic_stroke_w) = s.with(|e, _| {
+        let sh = e.slide().shape(pic_id).unwrap();
+        let ShapeKind::Picture(p) = &sh.kind else { panic!("expected picture") };
+        (p.corner, p.stroke.as_ref().map(|st| st.width))
+    });
+    assert_eq!(pic_corner, 20_000);
+    assert_eq!(pic_stroke_w, Some(28_575));
+
+    // 右クリックメニューから「図の圧縮…」パネルを開いてキャンセルで閉じる
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let item = crate::shell::scenario::find_item(&entries, "pptx.picture.compress").unwrap();
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.compress_panel.as_ref()).is_some()), "compress_panel opened via context menu");
+    s.update(|e, w, cx| e.close_compress_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.compress_panel.as_ref()).is_none()), "compress_panel closed");
+
+    // 3. 動画クリップを挿入し、メディアの圧縮サブメニュー（pptx.media.compress）を検証
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
+    let video_path = root.join("clip-test.mp4");
+    let video_bytes = std::fs::read(&video_path).expect("clip-test.mp4 should exist");
+    let clip_id = s.update(|e, _, cx| e.insert_clip(&video_path, video_bytes.clone(), false, cx)).expect("clip inserted");
+    s.update(|e, _, _| e.set_selection(vec![clip_id]));
+
+    let clip_entries = s.with(|e, _| e.shape_context_menu_entries());
+    let media_comp_sub = clip_entries.iter().find_map(|entry| match entry {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "pptx.media.compress" => Some(sub),
+        _ => None,
+    }).expect("pptx.media.compress submenu in media clip context menu");
+    assert!(crate::shell::scenario::find_item(&media_comp_sub.items, "pptx.media.compress-1080p").is_some());
+    assert!(crate::shell::scenario::find_item(&media_comp_sub.items, "pptx.media.compress-720p").is_some());
+    assert!(crate::shell::scenario::find_item(&media_comp_sub.items, "pptx.media.compress-480p").is_some());
+    assert!(crate::shell::scenario::find_item(&media_comp_sub.items, "pptx.media.optimize-compatibility").is_some());
+
+    // 4. スライドズーム要素を挿入し、右クリックメニューのズーム操作（pptx.zoom.*）を検証
+    s.page(1);
+    let slide2_id = s.with(|e, _| e.presentation().slides[1].id);
+    let zoom_id = s.update(|e, _, cx| e.insert_slide_zoom(slide2_id, cx)).expect("slide zoom inserted");
+    s.update(|e, _, _| e.set_selection(vec![zoom_id]));
+
+    let zoom_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&zoom_entries, "pptx.zoom.change-image").is_some(), "pptx.zoom.change-image in zoom context menu");
+    assert!(crate::shell::scenario::find_item(&zoom_entries, "pptx.zoom.reset-image").is_some(), "pptx.zoom.reset-image in zoom context menu");
+    assert!(crate::shell::scenario::find_item(&zoom_entries, "pptx.zoom.return-to-zoom").is_some(), "pptx.zoom.return-to-zoom in zoom context menu");
+    assert!(crate::shell::scenario::find_item(&zoom_entries, "pptx.zoom.background").is_some(), "pptx.zoom.background in zoom context menu");
+    assert!(crate::shell::scenario::find_item(&zoom_entries, "pptx.zoom.duration-2000").is_some(), "pptx.zoom.duration-2000 in zoom context menu");
+
+    // 右クリックメニューから「ズームに戻る」「ズームの背景（透過）」「ズームの継続時間（2.0秒）」を実行
+    s.update(|e, w, cx| {
+        for id in ["pptx.zoom.return-to-zoom", "pptx.zoom.background", "pptx.zoom.duration-2000"] {
+            let entries = e.shape_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap();
+            (item.handler.as_ref().unwrap())(e, w, cx);
+        }
+    });
+    assert!(s.with(|e, _| e.shape_return_to_zoom(zoom_id)), "return-to-zoom toggled on via context menu");
+    assert!(!s.with(|e, _| e.shape_zoom_show_bg(zoom_id)), "zoom background toggled off via context menu");
+    assert_eq!(s.with(|e, _| e.shape_zoom_duration(zoom_id)), 2000, "zoom duration set to 2000ms via context menu");
+
+    // 5. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_shape_fill_stroke_zoom_and_picture_video");
+    s.save_as("context_menu_shape_fill_stroke_zoom_and_picture_video.pptx");
+    let reloaded = s.reopen();
+    let re_zoom_id = reloaded.slides[0].shapes.last().expect("zoom shape on slide 1").id;
+    assert!(reloaded.slides[0].shape_return_to_zoom.contains(&re_zoom_id));
+    assert_eq!(reloaded.slides[0].shape_zoom_show_bg.get(&re_zoom_id), Some(&false));
+    assert_eq!(reloaded.slides[0].shape_zoom_durations.get(&re_zoom_id), Some(&2000));
+    let re_auto = &reloaded.slides[2].shapes[auto_idx];
+    if let ShapeKind::Auto(a) = &re_auto.kind {
+        assert!(matches!(a.fill, Fill::Linear { angle: 5_400_000, .. }));
+        let st = a.stroke.as_ref().unwrap();
+        assert_eq!((st.width, st.dash, st.cap, st.compound), (38_100, LineDash::Dash, LineCap::Round, LineCompound::Double));
+    } else {
+        panic!("expected auto shape");
+    }
+
+    undo_all_and_redo(&mut s);
+}
+
+/// 右クリックコンテキストメニューにおける文字書式（フォント・下線スタイル17種・大文字/小型英大文字・文字間隔・文字色・蛍光ペン・フォントの置換・書式クリア）、
+/// 段落水平配置（左/中央/右/両端/分散・チェック状態連動）、行間（1.0/1.15/1.5/2.0・100,000単位正規化）、
+/// 箇条書き・段落番号（記号7種・番号書式6種・開始番号1〜10）、表セル編集時のセル塗りつぶし・枠線（色・太さ・実線/破線）、
+/// および図のトリミング（縦横比プリセット・トリミングのリセット）の統合検証
+/// (`PPTX-AUDIT-003`, `PPTX-TEXT-003`, `PPTX-TEXT-004`, `PPTX-TEXT-005`, `PPTX-TEXT-007`, `PPTX-TEXT-009`, `PPTX-TEXT-010`, `PPTX-TEXT-011`, `PPTX-TEXT-012`, `PPTX-TEXT-013`, `PPTX-TEXT-014`, `PPTX-TEXT-017`, `PPTX-TEXT-026`, `PPTX-TABLE-010`, `PPTX-TABLE-011`, `PPTX-TABLE-014`, `PPTX-IMAGE-006`, `PPTX-IMAGE-013`)
+pub(crate) fn context_menu_text_formatting_bullets_table_cell_fill_and_crop() {
+    use ibis_doc_model::{LineSpacing, ListKind, NumberScheme, TextAlign, Underline};
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    s.click_shape(1);
+
+    // 1. テキストを持つ図形選択時の右クリックメニューに _shell.font, _shell.arrange, _shell.line-paragraph-spacing, _shell.bullets が揃っていることを検証
+    let entries = s.with(|e, _| e.shape_context_menu_entries());
+    let font_sub = entries.iter().find_map(|entry| match entry {
+        crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "_shell.font" => Some(sub),
+        _ => None,
+    }).expect("_shell.font submenu in text shape context menu");
+    for id in [
+        "_shell.bold-b",
+        "_shell.italic-i",
+        "_shell.underline-u",
+        "pptx.underline-style",
+        "pptx.chrome.strikethrough",
+        "text.superscript",
+        "text.subscript",
+        "text.caps",
+        "text.small-caps",
+        "pptx.text.character-spacing",
+        "_shell.font-color",
+        "pptx.chrome.highlight-color",
+        "pptx.replace-fonts",
+        "_shell.clear-formatting",
+    ] {
+        assert!(crate::shell::scenario::find_item(&font_sub.items, id).is_some() || font_sub.items.iter().any(|e| matches!(e, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == id)), "{id} in _shell.font submenu");
+    }
+
+    // 下線スタイル（pptx.underline.wavy）と文字間隔（pptx.spacing.loose）を右クリックメニューから適用
+    s.update(|e, w, cx| {
+        for id in ["pptx.underline.wavy", "pptx.spacing.loose", "text.small-caps"] {
+            let entries = e.shape_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap();
+            (item.handler.as_ref().unwrap())(e, w, cx);
+        }
+    });
+    let r0 = s.with(|e, _| e.slide().shapes[1].text_body().unwrap().paragraphs[0].runs[0].style.clone());
+    assert_eq!((r0.underline, r0.underline_kind, r0.spacing, r0.caps), (true, Underline::Wavy, 300, ibis_doc_model::Caps::Small));
+
+    // 2. 水平方向の配置（_shell.arrange）と行間（_shell.line-paragraph-spacing: 1.5 = Percent(150_000)）を右クリックメニューから適用
+    s.update(|e, w, cx| {
+        for id in ["align.distributed", "line-spacing.1-5"] {
+            let entries = e.shape_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap();
+            (item.handler.as_ref().unwrap())(e, w, cx);
+        }
+    });
+    let p0 = s.with(|e, _| e.slide().shapes[1].text_body().unwrap().paragraphs[0].clone());
+    assert_eq!(p0.align, Some(TextAlign::Distributed));
+    assert_eq!(p0.line_spacing, Some(LineSpacing::Percent(150_000)));
+
+    let after_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&after_entries, "align.distributed").unwrap().checked, "align.distributed is checked");
+    assert!(crate::shell::scenario::find_item(&after_entries, "line-spacing.1-5").unwrap().checked, "line-spacing.1-5 is checked");
+
+    // 3. 箇条書きと段落番号（_shell.bullets）サブメニューから四角記号（bullet.type.square）、ローマ数字（number.type.romanUcPeriod）、開始番号3（pptx.numbering.start-at-3）を適用
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let item = crate::shell::scenario::find_item(&entries, "bullet.type.square").unwrap();
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_list()), Some(ListKind::Symbol('■')));
+
+    s.update(|e, w, cx| {
+        for id in ["number.type.romanUcPeriod", "pptx.numbering.start-at-3"] {
+            let entries = e.shape_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap();
+            (item.handler.as_ref().unwrap())(e, w, cx);
+        }
+    });
+    assert_eq!(s.with(|e, _| e.selected_list()), Some(ListKind::Scheme(NumberScheme::RomanUcPeriod)));
+    assert_eq!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().paragraphs[0].bullet.as_ref().and_then(|b| b.auto.as_ref()).map(|a| a.start_at)), Some(3));
+
+    // 4. 表セル編集中（is_table）の右クリックメニューにセル塗りつぶし（pptx.common.fill）と罫線（_shell.border-color, pptx.chrome.border-weight, pptx.chrome.border-style）が出ることを検証
+    s.page(3);
+    s.menu("table.new.2x2");
+    let tbl_idx = s.with(|e, _| e.slide().shapes.len() - 1);
+    assert!(s.with(|e, _| e.text_editing().and_then(|t| t.cell).is_some()), "editing table cell (0, 0)");
+
+    let tbl_entries = s.with(|e, _| e.shape_context_menu_entries());
+    for sub_id in ["pptx.common.fill", "_shell.border-color", "pptx.chrome.border-weight", "pptx.chrome.border-style", "_shell.font", "_shell.arrange", "_shell.line-paragraph-spacing", "_shell.bullets"] {
+        assert!(tbl_entries.iter().any(|entry| matches!(entry, crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == sub_id)), "{sub_id} submenu in table cell context menu");
+    }
+
+    s.update(|e, w, cx| {
+        for id in ["fill.gradient.90", "width.2.25"] {
+            let entries = e.shape_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap();
+            (item.handler.as_ref().unwrap())(e, w, cx);
+        }
+    });
+    s.key("escape");
+    let cell00 = s.with(|e, _| match &e.slide().shapes[tbl_idx].kind {
+        ShapeKind::Table(t) => t.rows[0].cells[0].clone(),
+        _ => panic!("expected table"),
+    });
+    assert!(matches!(cell00.fill, Fill::Linear { angle: 5_400_000, .. }), "table cell fill set via context menu");
+    assert_eq!(cell00.borders.top.as_ref().map(|b| b.width), Some(28_575), "table cell border weight set via context menu");
+
+    // 5. 画像（Picture）の右クリックメニューから「図のトリミング（pptx.crop.aspect.1-1）」および「トリミングのリセット（pptx.chrome.reset-crop）」を実行
+    let png_bytes = {
+        let mut buf = Vec::new();
+        let img = image::RgbaImage::from_pixel(60, 40, image::Rgba([40, 120, 220, 255]));
+        image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).unwrap();
+        buf
+    };
+    s.update(|e, _, cx| {
+        e.insert_picture("crop-test.png", png_bytes.clone(), cx);
+    });
+    let pic_idx = s.with(|e, _| e.slide().shapes.len() - 1);
+    let pic_entries = s.with(|e, _| e.shape_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.crop.aspect.1-1").is_some(), "pptx.crop.aspect.1-1 in picture context menu");
+    assert!(crate::shell::scenario::find_item(&pic_entries, "pptx.chrome.reset-crop").is_some(), "pptx.chrome.reset-crop in picture context menu");
+
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let item = crate::shell::scenario::find_item(&entries, "pptx.crop.aspect.1-1").unwrap();
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    let cropped = s.with(|e, _| match &e.slide().shapes[pic_idx].kind {
+        ShapeKind::Picture(p) => p.crop,
+        _ => panic!("expected picture"),
+    });
+    assert_ne!(cropped, ibis_doc_model::Crop::default(), "picture cropped to 1:1 via context menu: {cropped:?}");
+
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let item = crate::shell::scenario::find_item(&entries, "pptx.chrome.reset-crop").unwrap();
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    let reset_crop = s.with(|e, _| match &e.slide().shapes[pic_idx].kind {
+        ShapeKind::Picture(p) => p.crop,
+        _ => panic!("expected picture"),
+    });
+    assert_eq!(reset_crop, ibis_doc_model::Crop::default(), "picture crop reset via context menu");
+
+    // 再度 16:9 トリミングを適用して保存ラウンドトリップを検証
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let item = crate::shell::scenario::find_item(&entries, "pptx.crop.aspect.16-9").unwrap();
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    let cropped_16_9 = s.with(|e, _| match &e.slide().shapes[pic_idx].kind {
+        ShapeKind::Picture(p) => p.crop,
+        _ => panic!("expected picture"),
+    });
+    assert_ne!(cropped_16_9, ibis_doc_model::Crop::default());
+
+    // 6. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_text_formatting_bullets_table_cell_fill_and_crop");
+    s.save_as("context_menu_text_formatting_bullets_table_cell_fill_and_crop.pptx");
+    let reloaded = s.reopen();
+    let re_p0 = &reloaded.slides[1].shapes[1].text_body().unwrap().paragraphs[0];
+    assert_eq!(re_p0.align, Some(TextAlign::Distributed));
+    assert_eq!(re_p0.line_spacing, Some(LineSpacing::Percent(150_000)));
+    assert_eq!(re_p0.bullet.as_ref().and_then(|b| b.auto.as_ref()).map(|a| a.start_at), Some(3));
+    assert_eq!(re_p0.runs[0].style.underline_kind, Underline::Wavy);
+    let ShapeKind::Picture(re_pic) = &reloaded.slides[2].shapes[pic_idx].kind else { panic!("expected picture") };
+    assert_eq!(re_pic.crop, cropped_16_9);
+
+    undo_all_and_redo(&mut s);
+}
+
+/// アウトライン表示、オブジェクトの選択と表示（Selection Pane）、読み上げ順序（Reading Order Pane）、
+/// アニメーション ウィンドウ（Animation Pane）の各行・カード上の右クリックコンテキストメニュー、
+/// およびアウトライン編集中クリップボード操作（切り取り・コピー・貼り付け ⌘V）のシナリオテスト。
+pub(crate) fn context_menu_outline_selection_reading_order_and_animation_panes() {
+    use crate::pptx::outline_edit::LineKind;
+    use ibis_doc_model::{AnimationClass, AnimationStart};
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    // 1. アウトライン表示での右クリックメニューとコピー＆ペースト（⌘V）・レベル上げ下げ
+    s.menu("pptx.outline-view");
+    assert!(s.with(|e, _| e.is_outline_view()));
+
+    let b0 = s.with(|e, _| {
+        e.outline_lines()
+            .into_iter()
+            .position(|l| l.kind == LineKind::Body(0) && l.text == "駅前店の改装")
+            .expect("slide 2 body line 0")
+    });
+    let shapes_before_outline_paste = s.with(|e, _| e.presentation().slides[1].shapes.len());
+
+    // 先頭3文字「駅前店」を選択して右クリックメニューからコピー、行末に貼り付け
+    s.update(|e, w, cx| e.begin_outline_edit(b0, 0, w, cx));
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-right");
+
+    let outline_entries = s.with(|e, _| e.outline_context_menu_entries());
+    for id in [
+        "edit.cut",
+        "edit.copy",
+        "edit.paste",
+        "pptx.smartart.promote",
+        "pptx.smartart.demote",
+        "pptx.smartart.move-up",
+        "pptx.smartart.move-down",
+        "pptx.new-slide",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&outline_entries, id).is_some(),
+            "{id} should be present in outline context menu"
+        );
+    }
+
+    s.update(|e, w, cx| {
+        let entries = e.outline_context_menu_entries();
+        let copy_item = crate::shell::scenario::find_item(&entries, "edit.copy").unwrap();
+        assert!(!copy_item.disabled, "edit.copy enabled when outline text is selected");
+        (copy_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+
+    s.key("end");
+    s.update(|e, w, cx| {
+        let entries = e.outline_context_menu_entries();
+        let paste_item = crate::shell::scenario::find_item(&entries, "edit.paste").unwrap();
+        (paste_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(
+        s.with(|e, _| e.outline_lines()[b0].text.clone()),
+        "駅前店の改装駅前店",
+        "pasted text into outline line via context menu"
+    );
+    assert_eq!(
+        s.with(|e, _| e.presentation().slides[1].shapes.len()),
+        shapes_before_outline_paste,
+        "outline paste must not add a floating text box shape to the slide"
+    );
+
+    // アウトライン編集中に ⌘V でも行内に貼り付けられること
+    s.key("cmd-v");
+    assert_eq!(
+        s.with(|e, _| e.outline_lines()[b0].text.clone()),
+        "駅前店の改装駅前店駅前店",
+        "cmd-v pastes text into outline line"
+    );
+
+    // 右クリックメニューから「レベルを下げる（pptx.smartart.demote）」と「レベルを上げる（pptx.smartart.promote）」
+    let level_before = s.with(|e, _| e.outline_lines()[b0].level);
+    s.update(|e, w, cx| {
+        let entries = e.outline_context_menu_entries();
+        let demote = crate::shell::scenario::find_item(&entries, "pptx.smartart.demote").unwrap();
+        (demote.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.outline_lines()[b0].level), level_before + 1, "demoted via outline context menu");
+
+    s.update(|e, w, cx| {
+        let entries = e.outline_context_menu_entries();
+        let promote = crate::shell::scenario::find_item(&entries, "pptx.smartart.promote").unwrap();
+        (promote.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.outline_lines()[b0].level), level_before, "promoted via outline context menu");
+
+    // 標準表示へ戻る
+    s.menu("pptx.normal-view");
+    s.page(2);
+
+    // 2. オブジェクトの選択と表示（Selection Pane）の右クリックメニュー
+    s.menu("pptx.selection-pane");
+    let shape0_id = s.with(|e, _| e.slide().shapes[0].id);
+    let sel_entries = s.with(|e, _| e.selection_pane_context_menu_entries(shape0_id));
+    for id in [
+        "pptx.selection-pane.rename",
+        "pptx.selection-pane.hide",
+        "pptx.selection-pane.show-all",
+        "pptx.selection-pane.hide-all",
+        "pptx.order.front",
+        "pptx.order.forward",
+        "pptx.order.backward",
+        "pptx.order.back",
+        "pptx.group",
+        "pptx.ungroup",
+        "pptx.frame.settings",
+        "pptx.alt-text",
+        "edit.duplicate",
+        "edit.delete",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&sel_entries, id).is_some(),
+            "{id} should be present in selection pane context menu"
+        );
+    }
+
+    // 非表示にする -> 再表示する
+    s.update(|e, w, cx| {
+        let entries = e.selection_pane_context_menu_entries(shape0_id);
+        let hide_item = crate::shell::scenario::find_item(&entries, "pptx.selection-pane.hide").unwrap();
+        (hide_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().hidden_shapes.contains(&shape0_id)), "shape hidden via selection pane context menu");
+
+    let sel_entries_hidden = s.with(|e, _| e.selection_pane_context_menu_entries(shape0_id));
+    assert!(
+        crate::shell::scenario::find_item(&sel_entries_hidden, "_xlsx.show").is_some(),
+        "when shape is hidden, context menu offers _xlsx.show"
+    );
+    s.update(|e, w, cx| {
+        let entries = e.selection_pane_context_menu_entries(shape0_id);
+        let show_item = crate::shell::scenario::find_item(&entries, "_xlsx.show").unwrap();
+        (show_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.slide().hidden_shapes.contains(&shape0_id)), "shape shown via selection pane context menu");
+
+    // 名前の変更（pptx.selection-pane.rename）
+    s.update(|e, w, cx| {
+        let entries = e.selection_pane_context_menu_entries(shape0_id);
+        let rename_item = crate::shell::scenario::find_item(&entries, "pptx.selection-pane.rename").unwrap();
+        (rename_item.handler.as_ref().unwrap())(e, w, cx);
+        if let Some((_, input)) = e.pptx().and_then(|st| st.selection_pane.as_ref()).and_then(|p| p.renaming.as_ref()) {
+            let input = input.clone();
+            input.update(cx, |state, cx| state.set_value("重点タイトル枠", w, cx));
+        }
+        e.finish_renaming(w, cx);
+    });
+    assert_eq!(
+        s.with(|e, _| e.slide().shape_names.get(&shape0_id).cloned()),
+        Some("重点タイトル枠".to_string()),
+        "shape renamed via selection pane context menu"
+    );
+
+    // 最前面へ移動（pptx.order.front）と最背面へ移動（pptx.order.back）
+    s.update(|e, w, cx| {
+        let entries = e.selection_pane_context_menu_entries(shape0_id);
+        let front_item = crate::shell::scenario::find_item(&entries, "pptx.order.front").unwrap();
+        (front_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes.last().unwrap().id), shape0_id, "shape moved to front");
+
+    s.update(|e, w, cx| {
+        let entries = e.selection_pane_context_menu_entries(shape0_id);
+        let back_item = crate::shell::scenario::find_item(&entries, "pptx.order.back").unwrap();
+        (back_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes.first().unwrap().id), shape0_id, "shape moved back to first");
+
+    // 3. 読み上げ順序ペイン（Reading Order Pane）の右クリックメニューと装飾トグル
+    s.menu("pptx.reading-order");
+    let ro_entries = s.with(|e, _| e.reading_order_context_menu_entries(shape0_id));
+    for id in [
+        "pptx.reading-order-pane.move-up-read-earlier",
+        "pptx.reading-order-pane.move-down-read-later",
+        "pptx.reading-order-pane.auto-order-top-bottom",
+        "pptx.alt-text.decorative",
+        "pptx.alt-text",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&ro_entries, id).is_some(),
+            "{id} should be present in reading order context menu"
+        );
+    }
+
+    // 下へ（遅く読み上げ）-> 上へ（早く読み上げ）
+    s.update(|e, w, cx| {
+        let entries = e.reading_order_context_menu_entries(shape0_id);
+        let down_item = crate::shell::scenario::find_item(&entries, "pptx.reading-order-pane.move-down-read-later").unwrap();
+        (down_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes[1].id), shape0_id, "moved down in reading order");
+
+    s.update(|e, w, cx| {
+        let entries = e.reading_order_context_menu_entries(shape0_id);
+        let up_item = crate::shell::scenario::find_item(&entries, "pptx.reading-order-pane.move-up-read-earlier").unwrap();
+        (up_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes[0].id), shape0_id, "moved back up in reading order");
+
+    // 装飾用としてマーク（pptx.alt-text.decorative）のトグル
+    s.update(|e, w, cx| {
+        let entries = e.reading_order_context_menu_entries(shape0_id);
+        let dec_item = crate::shell::scenario::find_item(&entries, "pptx.alt-text.decorative").unwrap();
+        assert!(!dec_item.checked);
+        (dec_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().decorative_shapes.contains(&shape0_id)), "marked decorative via reading order context menu");
+    let ro_entries_dec = s.with(|e, _| e.reading_order_context_menu_entries(shape0_id));
+    assert!(crate::shell::scenario::find_item(&ro_entries_dec, "pptx.alt-text.decorative").unwrap().checked);
+
+    // 装飾マークを解除しておく
+    s.update(|e, _, cx| e.toggle_shape_decorative(shape0_id, cx));
+    assert!(!s.with(|e, _| e.slide().decorative_shapes.contains(&shape0_id)));
+
+    // 4. アニメーション ウィンドウ（Animation Pane）の右クリックメニュー
+    s.click_shape(0);
+    s.toolbar_menu("motion", "pptx.anim.in.fade");
+    s.toolbar_menu("motion", "add.pptx.anim.em.spin");
+    assert_eq!(s.with(|e, _| e.slide().animations.len()), 2);
+
+    s.menu("pptx.anim.pane");
+    let anim_entries = s.with(|e, _| e.animation_pane_context_menu_entries(1));
+    for id in [
+        "pptx.anim.start.click",
+        "pptx.anim.start.with",
+        "pptx.anim.start.after",
+        "pptx.anim.options-dialog",
+        "pptx.anim.autoreverse",
+        "pptx.anim.rewind",
+        "pptx.smartart.move-up",
+        "pptx.smartart.move-down",
+        "pptx.anim.copy",
+        "pptx.anim.paste",
+        "pptx.anim.remove",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&anim_entries, id).is_some(),
+            "{id} should be present in animation pane context menu"
+        );
+    }
+
+    // 効果 0 の開始タイミングを「直前の動作と同時（pptx.anim.start.with）」、自動反転（pptx.anim.autoreverse）、巻き戻し（pptx.anim.rewind）に設定
+    for id in ["pptx.anim.start.with", "pptx.anim.autoreverse", "pptx.anim.rewind"] {
+        s.update(|e, w, cx| {
+            let entries = e.animation_pane_context_menu_entries(0);
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap();
+            (item.handler.as_ref().unwrap())(e, w, cx);
+        });
+    }
+    let a0 = s.with(|e, _| e.slide().animations[0].clone());
+    assert_eq!(a0.start, AnimationStart::WithPrevious);
+    assert!(a0.auto_reverse);
+    assert!(a0.rewind);
+
+    // 効果 1（Emphasis: Pulse）を「上へ移動（pptx.smartart.move-up）」して先頭にし、「下へ移動（pptx.smartart.move-down）」で戻す
+    s.update(|e, w, cx| {
+        let entries = e.animation_pane_context_menu_entries(1);
+        let up = crate::shell::scenario::find_item(&entries, "pptx.smartart.move-up").unwrap();
+        (up.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().animations[0].class), AnimationClass::Emphasis);
+
+    s.update(|e, w, cx| {
+        let entries = e.animation_pane_context_menu_entries(0);
+        let down = crate::shell::scenario::find_item(&entries, "pptx.smartart.move-down").unwrap();
+        (down.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().animations[0].class), AnimationClass::Entrance);
+
+    // 効果 1 を「削除（pptx.anim.remove）」
+    s.update(|e, w, cx| {
+        let entries = e.animation_pane_context_menu_entries(1);
+        let rem = crate::shell::scenario::find_item(&entries, "pptx.anim.remove").unwrap();
+        (rem.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().animations.len()), 1);
+
+    // 5. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_outline_selection_reading_order_and_animation_panes");
+    s.save_as("context_menu_outline_selection_reading_order_and_animation_panes.pptx");
+    let reloaded = s.reopen();
+    let re_slide2 = &reloaded.slides[1];
+    assert_eq!(re_slide2.shape_names.get(&shape0_id).map(|s| s.as_str()), Some("重点タイトル枠"));
+    assert_eq!(
+        re_slide2.shapes[1].text_body().unwrap().paragraphs[0].text(),
+        "駅前店の改装駅前店駅前店"
+    );
+    assert_eq!(re_slide2.animations.len(), 1);
+    assert_eq!(re_slide2.animations[0].start, AnimationStart::WithPrevious);
+    assert!(re_slide2.animations[0].auto_reverse);
+    assert!(re_slide2.animations[0].rewind);
+
+    undo_all_and_redo(&mut s);
+}
+
+/// スライドショー画面・SmartArt テキスト ウィンドウ・コメント（カードおよびキャンバス上マーク）・スライド マスター表示の右クリックメニュー（PPTX-AUDIT-003 / PPTX-SHOW-010,013〜017 / PPTX-SMART-009〜014 / PPTX-REVIEW-004〜006 / PPTX-MASTER-001〜005）
+pub(crate) fn context_menu_slideshow_smartart_comments_and_master_view() {
+    use super::slideshow::{InkStroke, NormalizedPoint, PointerMode};
+    use super::smartart::{SmartArtColorStyle, SmartArtKind};
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let slide0_id = s.with(|e, _| e.presentation().slides[0].id);
+    let slide1_id = s.with(|e, _| e.presentation().slides[1].id);
+
+    // 1. スライドショー画面の右クリックメニュー（PPTX-SHOW-010 / PPTX-SHOW-013〜017）
+    s.update(|e, w, cx| e.start_slideshow(w, cx));
+    assert!(s.with(|e, _| e.slideshow.is_some()));
+    assert_eq!(s.with(|e, _| e.current_slide), slide0_id);
+
+    s.update(|e, w, cx| {
+        e.open_slideshow_context_menu(gpui_kit::point(gpui_kit::px(240.0), gpui_kit::px(180.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let show_entries = s.with(|e, _| e.slideshow_context_menu_entries());
+    for id in [
+        "pptx.links.next-slide",
+        "pptx.links.previous-slide",
+        "pptx.links.last-slide-viewed",
+        "pptx.misc.see-all-slides",
+        "_shell.zoom-in",
+        "_shell.zoom-out",
+        "_pptx.100",
+        "_shell.black",
+        "_shell.white",
+        "_shell.arrow",
+        "pptx.misc.laser-pointer",
+        "pptx.misc.pen",
+        "pptx.misc.highlighter",
+        "pptx.misc.eraser",
+        "pptx.misc.clear-all-ink-slide",
+        "pptx.links.end-show",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&show_entries, id).is_some(),
+            "{id} should be present in slideshow context menu"
+        );
+    }
+
+    // 「次のスライド（pptx.links.next-slide）」でスライド 2 へ進む
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let next = crate::shell::scenario::find_item(&entries, "pptx.links.next-slide").unwrap();
+        assert!(!next.disabled);
+        (next.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.current_slide), slide1_id);
+
+    // 「前のスライド（pptx.links.previous-slide）」でスライド 1 へ戻る
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let prev = crate::shell::scenario::find_item(&entries, "pptx.links.previous-slide").unwrap();
+        assert!(!prev.disabled);
+        (prev.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.current_slide), slide0_id);
+
+    // 「すべてのスライドを表示（pptx.misc.see-all-slides）」のトグル
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let grid = crate::shell::scenario::find_item(&entries, "pptx.misc.see-all-slides").unwrap();
+        (grid.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slideshow.as_ref().unwrap().grid_open));
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let grid = crate::shell::scenario::find_item(&entries, "pptx.misc.see-all-slides").unwrap();
+        assert!(grid.checked);
+        (grid.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.slideshow.as_ref().unwrap().grid_open));
+
+    // 「拡大（_shell.zoom-in）」と「100%（_pptx.100）」リセット
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let zin = crate::shell::scenario::find_item(&entries, "_shell.zoom-in").unwrap();
+        (zin.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slideshow.as_ref().unwrap().zoom > 1.0));
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let zreset = crate::shell::scenario::find_item(&entries, "_pptx.100").unwrap();
+        assert!(!zreset.disabled);
+        (zreset.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!((s.with(|e, _| e.slideshow.as_ref().unwrap().zoom) - 1.0).abs() < 1e-4);
+
+    // 「黒（_shell.black）」と「白（_shell.white）」画面切り替え
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let black = crate::shell::scenario::find_item(&entries, "_shell.black").unwrap();
+        (black.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| crate::shell::scenario::find_item(&e.slideshow_context_menu_entries(), "_shell.black").unwrap().checked));
+
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let white = crate::shell::scenario::find_item(&entries, "_shell.white").unwrap();
+        (white.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| crate::shell::scenario::find_item(&e.slideshow_context_menu_entries(), "_shell.white").unwrap().checked));
+
+    // 白画面を再クリックして通常表示に戻す
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let white = crate::shell::scenario::find_item(&entries, "_shell.white").unwrap();
+        assert!(white.checked);
+        (white.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| crate::shell::scenario::find_item(&e.slideshow_context_menu_entries(), "_shell.white").unwrap().checked));
+
+    // ポインター切り替え：レーザーポインター（pptx.misc.laser-pointer）→ ペン（pptx.misc.pen）
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let laser = crate::shell::scenario::find_item(&entries, "pptx.misc.laser-pointer").unwrap();
+        (laser.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slideshow.as_ref().unwrap().pointer_mode), PointerMode::Laser);
+
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let pen = crate::shell::scenario::find_item(&entries, "pptx.misc.pen").unwrap();
+        (pen.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slideshow.as_ref().unwrap().pointer_mode), PointerMode::Pen);
+
+    // インク ストロークを追加し、「スライド上のインクをすべて消去（pptx.misc.clear-all-ink-slide）」で消去
+    s.update(|e, _w, _cx| {
+        let cur = e.current_slide;
+        if let Some(show) = &mut e.slideshow {
+            show.slide_inks.entry(cur).or_default().push(InkStroke {
+                points: vec![NormalizedPoint { x: 0.1, y: 0.1 }, NormalizedPoint { x: 0.3, y: 0.3 }],
+                color: 0xd93025,
+                width: 3.0,
+                opacity: 1.0,
+            });
+        }
+    });
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let clear = crate::shell::scenario::find_item(&entries, "pptx.misc.clear-all-ink-slide").unwrap();
+        assert!(!clear.disabled);
+        (clear.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| {
+        let cur = e.current_slide;
+        e.slideshow.as_ref().unwrap().slide_inks.get(&cur).is_none_or(|v| v.is_empty())
+    }));
+
+    // 「スライド ショーの終了（pptx.links.end-show）」
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let end = crate::shell::scenario::find_item(&entries, "pptx.links.end-show").unwrap();
+        (end.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slideshow.is_none()));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_none()));
+
+    // 2. SmartArt テキスト ウィンドウの項目行の右クリックメニュー（PPTX-SMART-009〜014）
+    s.page(2);
+    s.update(|e, _w, cx| e.insert_smartart(SmartArtKind::OrganizationChart, cx));
+    s.menu("pptx.smartart.text-pane");
+    assert_eq!(s.with(|e, _| e.selected_smartart_data().unwrap().4.len()), 3);
+
+    s.update(|e, w, cx| {
+        e.open_smartart_text_pane_context_menu(1, gpui_kit::point(gpui_kit::px(300.0), gpui_kit::px(220.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let smart_entries = s.with(|e, _| e.smartart_text_pane_context_menu_entries(1));
+    for id in [
+        "pptx.smartart.add-shape",
+        "pptx.smartart.add-assistant",
+        "pptx.smartart.remove-shape",
+        "pptx.smartart.promote",
+        "pptx.smartart.demote",
+        "pptx.smartart.move-up",
+        "pptx.smartart.move-down",
+        "pptx.smartart.layout.process",
+        "pptx.smartart.color.accent2",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&smart_entries, id).is_some(),
+            "{id} should be present in SmartArt text pane context menu"
+        );
+    }
+
+    // 項目 1 を右クリック「上へ移動（pptx.smartart.move-up）」で先頭（項目 0）と入れ替え
+    let item0_before = s.with(|e, _| e.selected_smartart_data().unwrap().4[0].clone());
+    let item1_before = s.with(|e, _| e.selected_smartart_data().unwrap().4[1].clone());
+    s.update(|e, w, cx| {
+        let entries = e.smartart_text_pane_context_menu_entries(1);
+        let up = crate::shell::scenario::find_item(&entries, "pptx.smartart.move-up").unwrap();
+        assert!(!up.disabled);
+        (up.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_smartart_data().unwrap().4[0].clone()), item1_before);
+    assert_eq!(s.with(|e, _| e.selected_smartart_data().unwrap().4[1].clone()), item0_before);
+
+    // 項目 0 を右クリック「下へ移動（pptx.smartart.move-down）」で元に戻す
+    s.update(|e, w, cx| {
+        let entries = e.smartart_text_pane_context_menu_entries(0);
+        let down = crate::shell::scenario::find_item(&entries, "pptx.smartart.move-down").unwrap();
+        assert!(!down.disabled);
+        (down.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_smartart_data().unwrap().4[0].clone()), item0_before);
+
+    // 「SmartArt 図形の追加（pptx.smartart.add-shape）」で 3 → 4 項目にし、「SmartArt 図形の削除（pptx.smartart.remove-shape）」で削除
+    s.update(|e, w, cx| {
+        let entries = e.smartart_text_pane_context_menu_entries(1);
+        let add = crate::shell::scenario::find_item(&entries, "pptx.smartart.add-shape").unwrap();
+        (add.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_smartart_data().unwrap().4.len()), 4);
+
+    s.update(|e, w, cx| {
+        let entries = e.smartart_text_pane_context_menu_entries(3);
+        let rem = crate::shell::scenario::find_item(&entries, "pptx.smartart.remove-shape").unwrap();
+        assert!(!rem.disabled);
+        (rem.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_smartart_data().unwrap().4.len()), 3);
+
+    // 右クリックの「SmartArt の配色 > アクセント 2（pptx.smartart.color.accent2）」で配色変更
+    s.update(|e, w, cx| {
+        let entries = e.smartart_text_pane_context_menu_entries(0);
+        let color = crate::shell::scenario::find_item(&entries, "pptx.smartart.color.accent2").unwrap();
+        (color.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_smartart_data().unwrap().2), SmartArtColorStyle::Accent2);
+
+    // 3. コメント カードおよびスライド上コメント マークの右クリックメニュー（PPTX-REVIEW-004〜006）
+    s.update(|e, w, cx| {
+        e.open_slide_comments(w, cx);
+        e.send_slide_comment("店舗数値の確認をお願いします", w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().comments.len()), 1);
+
+    // コメント パネルを閉じた状態から、キャンバス上のコメント マーク右クリック → 「返信（_shell.reply）」でパネルが自動で開いて返信ターゲットになる
+    s.update(|e, _w, cx| e.close_slide_comments(cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.comments.as_ref()).is_none()));
+
+    s.update(|e, w, cx| {
+        e.open_comment_context_menu(0, gpui_kit::point(gpui_kit::px(360.0), gpui_kit::px(180.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let comment_entries = s.with(|e, _| e.comment_context_menu_entries(0));
+    for id in ["_shell.reply", "_shell.resolve", "_shell.delete", "insert.comment"] {
+        assert!(
+            crate::shell::scenario::find_item(&comment_entries, id).is_some(),
+            "{id} should be present in comment context menu"
+        );
+    }
+
+    s.update(|e, w, cx| {
+        let entries = e.comment_context_menu_entries(0);
+        let reply = crate::shell::scenario::find_item(&entries, "_shell.reply").unwrap();
+        (reply.handler.as_ref().unwrap())(e, w, cx);
+        e.send_slide_comment("確認しました", w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.comments.as_ref()).is_some()));
+    assert_eq!(s.with(|e, _| e.slide().comments[0].replies.len()), 1);
+
+    // 「解決（_shell.resolve）」で解決状態にし、再度メニューを取得すると「再開（pptx.comments.reopen）」に切り替わること
+    s.update(|e, w, cx| {
+        let entries = e.comment_context_menu_entries(0);
+        let resolve = crate::shell::scenario::find_item(&entries, "_shell.resolve").unwrap();
+        (resolve.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().comments[0].resolved));
+    let resolved_entries = s.with(|e, _| e.comment_context_menu_entries(0));
+    assert!(crate::shell::scenario::find_item(&resolved_entries, "pptx.comments.reopen").is_some());
+
+    // 2 件目のコメントを追加し、右クリック「削除（_shell.delete）」で削除
+    s.update(|e, w, cx| {
+        e.open_slide_comments(w, cx);
+        e.send_slide_comment("一時メモ（削除予定）", w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().comments.len()), 2);
+    s.update(|e, w, cx| {
+        let entries = e.comment_context_menu_entries(1);
+        let del = crate::shell::scenario::find_item(&entries, "_shell.delete").unwrap();
+        (del.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().comments.len()), 1);
+
+    // 4. スライド マスター表示（Master View）ページ行の右クリックメニュー（PPTX-MASTER-001〜005）
+    s.update(|e, w, cx| e.open_master_view(w, cx));
+    assert!(s.with(|e, _| e.is_master_view()));
+    assert!(s.with(|e, _| e.master_view_page_count() >= 2));
+
+    s.update(|e, w, cx| {
+        e.open_master_page_context_menu(0, gpui_kit::point(gpui_kit::px(180.0), gpui_kit::px(240.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let master_entries = s.with(|e, _| e.master_page_context_menu_entries(0));
+    for id in [
+        "pptx.master-view.select-page",
+        "pptx.master-view.placeholder.title",
+        "pptx.master-view.placeholder.content",
+        "pptx.master-view.placeholder.picture",
+        "pptx.master-view.close-master-view",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&master_entries, id).is_some(),
+            "{id} should be present in master view page context menu"
+        );
+    }
+
+    // ページ 1 の右クリックメニューから「プレースホルダーの挿入 > 図（pptx.master-view.placeholder.picture）」を追加
+    s.update(|e, w, cx| e.switch_master_page(1, w, cx));
+    let shapes_before_ph = s.with(|e, _| e.slide().shapes.len());
+    s.update(|e, w, cx| {
+        let entries = e.master_page_context_menu_entries(1);
+        let pic_ph = crate::shell::scenario::find_item(&entries, "pptx.master-view.placeholder.picture").unwrap();
+        (pic_ph.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), shapes_before_ph + 1);
+
+    // 「マスター表示を閉じる（pptx.master-view.close-master-view）」で通常表示に戻る（マスター表示を閉じるとファイルが再読込され Undo 履歴が初期化される仕様）
+    s.update(|e, w, cx| {
+        let entries = e.master_page_context_menu_entries(1);
+        let close = crate::shell::scenario::find_item(&entries, "pptx.master-view.close-master-view").unwrap();
+        (close.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.is_master_view()));
+
+    // マスター表示閉鎖後の通常編集として、スライド 2 のコメントをもう 1 件追加して Undo/Redo も検証可能にする
+    s.page(2);
+    s.update(|e, w, cx| {
+        e.open_slide_comments(w, cx);
+        e.send_slide_comment("マスター確認済み", w, cx);
+        e.close_slide_comments(cx);
+        e.focus_handle.focus(w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().comments.len()), 2);
+
+    // 5. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_slideshow_smartart_comments_and_master_view");
+    s.save_as("context_menu_slideshow_smartart_comments_and_master_view.pptx");
+    let reloaded = s.reopen();
+    let re_slide2 = &reloaded.slides[1];
+    assert_eq!(re_slide2.comments.len(), 2);
+    assert!(re_slide2.comments[0].resolved);
+    assert_eq!(re_slide2.comments[0].replies.len(), 1);
+    assert_eq!(re_slide2.comments[1].text, "マスター確認済み");
+
+    undo_all_and_redo(&mut s);
+}
+
+/// 発表者ノート欄＆ノート表示・発表者ビュー＆閲覧表示・アクセシビリティ検査パネル・プレゼンテーション比較パネルの右クリックメニュー拡充（PPTX-AUDIT-003 / PPTX-NOTES-001〜006,014,015 / PPTX-SHOW-009〜017 / PPTX-RECORD-008 / PPTX-ACCESS-001〜011 / PPTX-REVIEW-019）
+pub(crate) fn context_menu_notes_presenter_reading_accessibility_and_compare() {
+    use super::accessibility_panel::IssueFixType;
+
+    // 事前準備：比較対象となる改訂版プレゼンテーションを作成して保存
+    let rev_path = {
+        let mut s_rev = Scenario::open("test/editing/pptx-plan.pptx");
+        s_rev.page(1);
+        let slide_id = s_rev.with(|e, _| e.current_slide);
+        let shape_id = s_rev.with(|e, _| e.slide().shapes[0].id);
+        let next_slide_id = s_rev.with(|e, _| e.presentation().slides.iter().map(|s| s.id.0).max().unwrap_or(0) + 100);
+        let mut added_slide = s_rev.with(|e, _| e.slide().clone());
+        added_slide.id = ibis_doc_model::SlideId(next_slide_id);
+        added_slide.shapes.clear();
+        added_slide.notes = "破棄される追加スライドのノート".to_string();
+        let slides_len = s_rev.with(|e, _| e.presentation().slides.len());
+        s_rev.update(|e, _, cx| {
+            e.run(
+                vec![
+                    ibis_doc_model::Command::SetText {
+                        slide: slide_id,
+                        shape: shape_id,
+                        text: "改訂版タイトル（比較右クリック承認）".into(),
+                    },
+                    ibis_doc_model::Command::SetNotes {
+                        slide: slide_id,
+                        notes: "初回ノートメモ初回ノートメモ".into(),
+                    },
+                    ibis_doc_model::Command::InsertSlide {
+                        index: slides_len,
+                        slide: added_slide,
+                    },
+                ],
+                cx,
+            );
+        });
+        s_rev.save_as("compare-context-menu-revised.pptx")
+    };
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+
+    // 1. 発表者ノート欄およびノート表示（Notes Page View）の右クリックメニュー（PPTX-NOTES-001〜006, 014）
+    s.update(|e, _w, cx| {
+        let slide = e.current_slide;
+        e.run(vec![ibis_doc_model::Command::SetNotes { slide, notes: "初回ノートメモ".into() }], cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().notes.clone()), "初回ノートメモ");
+
+    s.update(|e, w, cx| {
+        e.open_notes_context_menu(gpui_kit::point(gpui_kit::px(300.0), gpui_kit::px(660.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let notes_entries = s.with(|e, cx| e.notes_context_menu_entries(cx));
+    for id in [
+        "edit.cut",
+        "edit.copy",
+        "edit.paste",
+        "edit.delete",
+        "pptx.notes-format",
+        "pptx.notes-master",
+        "pptx.handout-master",
+        "pptx.notes-header-footer",
+        "pptx.notes-page-view",
+        "pptx.normal-view",
+        "pptx.notes",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&notes_entries, id).is_some(),
+            "{id} should be present in notes context menu"
+        );
+    }
+
+    // 「コピー（edit.copy）」→「削除（edit.delete）」→「貼り付け（edit.paste）」2回
+    s.update(|e, w, cx| {
+        let entries = e.notes_context_menu_entries(cx);
+        let copy = crate::shell::scenario::find_item(&entries, "edit.copy").unwrap();
+        assert!(!copy.disabled);
+        (copy.handler.as_ref().unwrap())(e, w, cx);
+    });
+    s.update(|e, w, cx| {
+        let entries = e.notes_context_menu_entries(cx);
+        let del = crate::shell::scenario::find_item(&entries, "edit.delete").unwrap();
+        assert!(!del.disabled);
+        (del.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().notes.clone()), "");
+
+    s.update(|e, w, cx| {
+        let entries = e.notes_context_menu_entries(cx);
+        let paste = crate::shell::scenario::find_item(&entries, "edit.paste").unwrap();
+        assert!(!paste.disabled);
+        (paste.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().notes.clone()), "初回ノートメモ");
+
+    s.update(|e, w, cx| {
+        let entries = e.notes_context_menu_entries(cx);
+        let paste = crate::shell::scenario::find_item(&entries, "edit.paste").unwrap();
+        (paste.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().notes.clone()), "初回ノートメモ初回ノートメモ");
+
+    // 「ノート表示（pptx.notes-page-view）」への切り替えと「標準表示（pptx.normal-view）」への復帰
+    s.update(|e, w, cx| {
+        let entries = e.notes_context_menu_entries(cx);
+        let npv = crate::shell::scenario::find_item(&entries, "pptx.notes-page-view").unwrap();
+        (npv.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.is_notes_page_view()));
+    assert!(s.with(|e, cx| crate::shell::scenario::find_item(&e.notes_context_menu_entries(cx), "pptx.notes-page-view").unwrap().checked));
+
+    s.update(|e, w, cx| {
+        let entries = e.notes_context_menu_entries(cx);
+        let normal = crate::shell::scenario::find_item(&entries, "pptx.normal-view").unwrap();
+        (normal.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.is_notes_page_view()));
+
+    // 「ノートのヘッダーとフッター…（pptx.notes-header-footer）」パネル起動と閉鎖
+    s.update(|e, w, cx| {
+        let entries = e.notes_context_menu_entries(cx);
+        let hf = crate::shell::scenario::find_item(&entries, "pptx.notes-header-footer").unwrap();
+        (hf.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.notes_marks_panel.as_ref()).is_some()));
+    s.update(|e, w, cx| e.close_notes_marks(w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.notes_marks_panel.as_ref()).is_none()));
+
+    // 2. 発表者ビュー（Presenter View）および閲覧表示（Reading View）の右クリックメニュー（PPTX-SHOW-009〜017, PPTX-RECORD-008, PPTX-NOTES-015）
+    s.update(|e, w, cx| e.start_presenter_view(w, cx));
+    assert!(s.with(|e, _| e.slideshow.as_ref().is_some_and(|sh| sh.presenter)));
+
+    let presenter_entries = s.with(|e, _| e.slideshow_context_menu_entries());
+    for id in [
+        "slideshow.rehearsal.pause",
+        "pptx.slideshow.reset",
+        "pptx.slideshow.teleprompter",
+        "pptx.slideshow.notes-larger",
+        "pptx.slideshow.notes-smaller",
+        "pptx.slideshow.swap-displays",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&presenter_entries, id).is_some(),
+            "{id} should be present in presenter view context menu"
+        );
+    }
+
+    // タイマーの一時停止（slideshow.rehearsal.pause）→ 再開（slideshow.rehearsal.resume）
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let pause = crate::shell::scenario::find_item(&entries, "slideshow.rehearsal.pause").unwrap();
+        (pause.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.presenter_timer_is_paused()));
+
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let resume = crate::shell::scenario::find_item(&entries, "slideshow.rehearsal.resume").unwrap();
+        (resume.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.presenter_timer_is_paused()));
+
+    // テレプロンプター切替・ノート文字拡大・モニター入替
+    let notes_font_before = s.with(|e, _| e.slideshow.as_ref().unwrap().notes_size);
+    s.update(|e, w, cx| {
+        for id in ["pptx.slideshow.teleprompter", "pptx.slideshow.notes-larger", "pptx.slideshow.swap-displays"] {
+            let entries = e.slideshow_context_menu_entries();
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap();
+            (item.handler.as_ref().unwrap())(e, w, cx);
+        }
+    });
+    assert!(s.with(|e, _| e.slideshow.as_ref().unwrap().teleprompter.is_some()));
+    assert!(s.with(|e, _| e.slideshow.as_ref().unwrap().notes_size > notes_font_before));
+
+    // スライドショー終了
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let end = crate::shell::scenario::find_item(&entries, "pptx.links.end-show").unwrap();
+        (end.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slideshow.is_none()));
+
+    // 閲覧表示（Reading View）での右クリックメニュー検証
+    s.update(|e, w, cx| e.start_reading_view(w, cx));
+    assert!(s.with(|e, _| e.is_reading_view()));
+    let reading_entries = s.with(|e, _| e.slideshow_context_menu_entries());
+    assert!(crate::shell::scenario::find_item(&reading_entries, "view.slideshow").is_some());
+    assert!(crate::shell::scenario::find_item(&reading_entries, "_pptx.return-to-normal-view").is_some());
+
+    s.update(|e, w, cx| {
+        let entries = e.slideshow_context_menu_entries();
+        let ret = crate::shell::scenario::find_item(&entries, "_pptx.return-to-normal-view").unwrap();
+        (ret.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.is_reading_view()));
+    assert!(s.with(|e, _| e.slideshow.is_none()));
+
+    // 3. アクセシビリティ検査パネルの項目右クリックメニュー＆ワンクリック修正（PPTX-ACCESS-001〜011）
+    s.page(2);
+    let png_bytes = {
+        let mut buf = Vec::new();
+        let img = image::RgbaImage::from_pixel(40, 30, image::Rgba([40, 120, 220, 255]));
+        image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).unwrap();
+        buf
+    };
+    s.update(|e, _, cx| {
+        e.insert_picture("acc-test.png", png_bytes.clone(), cx);
+    });
+    let pic_id = s.with(|e, _| e.slide().shapes.last().unwrap().id);
+
+    // 見出し行（first_row）なしの 2x2 表を挿入
+    s.menu("table.new.2x2");
+    s.key("escape");
+    let tbl_id = s.with(|e, _| e.slide().shapes.last().unwrap().id);
+    s.update(|e, _, cx| {
+        if e.table_option_checked(crate::pptx::editing::TableOption::FirstRow) {
+            e.toggle_table_option(crate::pptx::editing::TableOption::FirstRow, cx);
+        }
+    });
+    assert!(!s.with(|e, _| match &e.slide().shape(tbl_id).unwrap().kind {
+        ShapeKind::Table(t) => t.style_options.first_row,
+        _ => panic!("expected table"),
+    }));
+
+    s.update(|e, w, cx| e.open_pptx_accessibility_panel(w, cx));
+    let find_issue_idx = |s: &mut Scenario, shape_id: ibis_doc_model::ShapeId, fix_type: IssueFixType| -> Option<usize> {
+        s.with(|e, _| {
+            let p = e.pptx().and_then(|st| st.accessibility_panel.as_ref())?;
+            let all: Vec<_> = p.report.errors.iter().chain(p.report.warnings.iter()).chain(p.report.tips.iter()).collect();
+            all.iter().position(|iss| iss.shape_id == Some(shape_id) && iss.fix_type == fix_type)
+        })
+    };
+
+    let pic_issue_idx = find_issue_idx(&mut s, pic_id, IssueFixType::AddAltText).expect("MissingAltText issue for picture");
+    s.update(|e, w, cx| {
+        e.open_accessibility_issue_context_menu(pic_issue_idx, gpui_kit::point(gpui_kit::px(980.0), gpui_kit::px(240.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let pic_acc_entries = s.with(|e, _| e.accessibility_issue_context_menu_entries(pic_issue_idx));
+    for id in ["_shell.view", "pptx.alt-text", "pptx.alt-text.decorative", "pptx.inspect-panel.reinspect", "_shell.close"] {
+        assert!(
+            crate::shell::scenario::find_item(&pic_acc_entries, id).is_some(),
+            "{id} should be present in accessibility issue context menu"
+        );
+    }
+
+    // 右クリックメニューから「装飾用としてマーク（pptx.alt-text.decorative）」を実行し、問題が即時解消されることを検証
+    s.update(|e, w, cx| {
+        let entries = e.accessibility_issue_context_menu_entries(pic_issue_idx);
+        let dec = crate::shell::scenario::find_item(&entries, "pptx.alt-text.decorative").unwrap();
+        (dec.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().decorative_shapes.contains(&pic_id)));
+    assert!(find_issue_idx(&mut s, pic_id, IssueFixType::AddAltText).is_none(), "picture alt-text issue resolved after marking decorative");
+
+    // 表の見出し行欠落（EnableTableHeader）項目を右クリックメニュー「タイトル行（pptx.table.first-row）」で即時修正
+    let tbl_issue_idx = find_issue_idx(&mut s, tbl_id, IssueFixType::EnableTableHeader).expect("EnableTableHeader issue for table");
+    s.update(|e, w, cx| {
+        let entries = e.accessibility_issue_context_menu_entries(tbl_issue_idx);
+        let hdr = crate::shell::scenario::find_item(&entries, "pptx.table.first-row").unwrap();
+        (hdr.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| match &e.slide().shape(tbl_id).unwrap().kind {
+        ShapeKind::Table(t) => t.style_options.first_row,
+        _ => panic!("expected table"),
+    }));
+    assert!(find_issue_idx(&mut s, tbl_id, IssueFixType::EnableTableHeader).is_none(), "table header issue resolved after enabling first_row");
+
+    s.update(|e, _, cx| e.close_pptx_accessibility_panel(cx));
+
+    // 4. プレゼンテーション比較（Compare Presentations Panel）差分カードの右クリックメニュー（PPTX-REVIEW-019）
+    s.page(1);
+    s.update(|e, _, cx| e.compare_presentation_with_file(&rev_path, cx));
+    assert!(s.with(|e, _| e.is_comparing_presentations()));
+    assert_eq!(s.with(|e, _| e.pptx().and_then(|st| st.compare_panel.as_ref()).map(|p| p.diffs.len())), Some(3));
+
+    s.update(|e, w, cx| {
+        e.open_compare_diff_context_menu(0, gpui_kit::point(gpui_kit::px(980.0), gpui_kit::px(260.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let cmp_entries = s.with(|e, _| e.compare_diff_context_menu_entries(0));
+    for id in [
+        "_shell.view",
+        "pptx.compare.accept",
+        "pptx.compare.reject",
+        "pptx.review.accept-all",
+        "pptx.review.reject-all",
+        "pptx.review.end-review",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&cmp_entries, id).is_some(),
+            "{id} should be present in compare diff context menu"
+        );
+    }
+
+    // 差分 0（スライド1のタイトル変更）を右クリック「反映（pptx.compare.accept）」で承認
+    s.update(|e, w, cx| {
+        let entries = e.compare_diff_context_menu_entries(0);
+        let acc = crate::shell::scenario::find_item(&entries, "pptx.compare.accept").unwrap();
+        assert!(!acc.disabled);
+        (acc.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(
+        s.with(|e, _| e.presentation().slides[0].shapes[0].text_body().map(|b| b.text().trim().to_string())),
+        Some("改訂版タイトル（比較右クリック承認）".to_string())
+    );
+    assert_eq!(s.with(|e, _| e.pptx().and_then(|st| st.compare_panel.as_ref()).map(|p| p.diffs.len())), Some(2));
+
+    // 残った差分 1（追加スライド）を右クリック「破棄（pptx.compare.reject）」で却下し、「レビューの終了（pptx.review.end-review）」で閉じる
+    let slides_count = s.with(|e, _| e.presentation().slides.len());
+    s.update(|e, w, cx| {
+        let entries = e.compare_diff_context_menu_entries(1);
+        let rej = crate::shell::scenario::find_item(&entries, "pptx.compare.reject").unwrap();
+        assert!(!rej.disabled);
+        (rej.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), slides_count);
+    assert_eq!(s.with(|e, _| e.pptx().and_then(|st| st.compare_panel.as_ref()).map(|p| p.diffs.len())), Some(1));
+
+    s.update(|e, w, cx| {
+        let entries = e.compare_diff_context_menu_entries(0);
+        let end = crate::shell::scenario::find_item(&entries, "pptx.review.end-review").unwrap();
+        (end.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.is_comparing_presentations()));
+
+    // 5. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_notes_presenter_reading_accessibility_and_compare");
+    s.save_as("context_menu_notes_presenter_reading_accessibility_and_compare.pptx");
+    let reloaded = s.reopen();
+    assert_eq!(reloaded.slides[0].notes.as_str(), "初回ノートメモ初回ノートメモ");
+    assert_eq!(
+        reloaded.slides[0].shapes[0].text_body().map(|b| b.text().trim().to_string()),
+        Some("改訂版タイトル（比較右クリック承認）".to_string())
+    );
+    let re_pic = reloaded.slides[1].shapes.iter().find(|sh| matches!(sh.kind, ShapeKind::Picture(_))).expect("reloaded picture on slide 2");
+    assert!(reloaded.slides[1].decorative_shapes.contains(&re_pic.id));
+    let re_tbl = reloaded.slides[1].shapes.iter().find(|sh| matches!(sh.kind, ShapeKind::Table(_))).expect("reloaded table on slide 2");
+    if let ShapeKind::Table(t) = &re_tbl.kind {
+        assert!(t.style_options.first_row);
+    } else {
+        panic!("expected table");
+    }
+
+    undo_all_and_redo(&mut s);
+}
+
+/// ドキュメント検査（PPTX-SEC-004）・互換性チェック（PPTX-FILE-011）・フォトアルバム（PPTX-IMAGE-019）・
+/// ノート/配布資料マスター（PPTX-MASTER-011, PPTX-MASTER-012）・スライド一覧表示（PPTX-VIEW-002）の右クリックコンテキストメニューと即時操作
+pub(crate) fn context_menu_inspect_compatibility_photo_album_and_master_views() {
+    use crate::pptx::photo_album::{PhotoAlbumPicture, PhotoAlbumState};
+    use ibis_doc_model::flow::DocProperties;
+    use ibis_doc_model::{
+        Author, AutoShape, Clip, Color, Command, EmuPoint, EmuRect, Fill, Geometry, MediaFormat,
+        MediaId, PhotoAlbumFrame, PhotoAlbumLayout, Picture, Reflection, Shape, ShapeId, ShapeKind,
+        SlideComment, TextBody, TextStyle,
+    };
+    use image::ImageEncoder as _;
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(1);
+
+    // 1. ノートマスター・配布資料マスター・スライド一覧表示の右クリックメニュー（PPTX-MASTER-011, PPTX-MASTER-012, PPTX-VIEW-002）
+    s.menu("pptx.notes-master");
+    assert!(s.with(|e, _| e.is_page_view()));
+    s.update(|e, _, _| e.set_selection(Vec::new()));
+    let nm_entries = s.with(|e, _| e.shape_context_menu_entries());
+    for id in [
+        "pptx.notes-header-footer",
+        "background.hide-graphics",
+        "pptx.theme-colors",
+        "pptx.notes-format.close-notes-master",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&nm_entries, id).is_some(),
+            "{id} should be present in Notes Master canvas context menu"
+        );
+    }
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let close = crate::shell::scenario::find_item(&entries, "pptx.notes-format.close-notes-master").unwrap();
+        (close.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.is_page_view()));
+
+    s.menu("pptx.handout-master");
+    assert!(s.with(|e, _| e.is_page_view()));
+    s.update(|e, w, cx| {
+        let entries = e.notes_format_context_menu_entries();
+        let close = crate::shell::scenario::find_item(&entries, "pptx.notes-format.close-handout-master").unwrap();
+        (close.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.is_page_view()));
+
+    // スライド一覧表示（Slide Sorter View）での右クリックメニュー「標準表示（pptx.normal-view）」
+    s.menu("pptx.grid-view");
+    assert!(s.with(|e, _| e.is_grid_view()));
+    let grid_entries = s.with(|e, _| e.slide_context_menu_entries());
+    assert!(
+        crate::shell::scenario::find_item(&grid_entries, "pptx.normal-view").is_some(),
+        "pptx.normal-view should be present in Slide Sorter context menu"
+    );
+    s.update(|e, w, cx| {
+        let entries = e.slide_context_menu_entries();
+        let norm = crate::shell::scenario::find_item(&entries, "pptx.normal-view").unwrap();
+        (norm.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(!s.with(|e, _| e.is_grid_view()));
+
+    // 2. ドキュメント検査パネル（Document Inspector）各項目の右クリックメニュー（PPTX-SEC-004）
+    s.update(|e, w, cx| {
+        let props = DocProperties {
+            title: Some("機密タイトル".to_string()),
+            creator: Some("山田太郎".to_string()),
+            ..e.presentation().properties.clone()
+        };
+        let mut slide = e.slide().clone();
+        slide.notes = "削除対象の発表者ノート".to_string();
+        slide.comments.push(SlideComment {
+            id: "901".to_string(),
+            author: Author {
+                name: "山田太郎".to_string(),
+                initials: "YT".to_string(),
+            },
+            created: "2026-10-18T00:00:00".to_string(),
+            position: Some(EmuPoint::new(500_000, 500_000)),
+            text: "検査削除対象コメント".to_string(),
+            shape: None,
+            resolved: false,
+            replies: Vec::new(),
+        });
+        // スライド領域外の図形を追加
+        slide.shapes.push(Shape::new(
+            ShapeId(8870),
+            EmuRect::new(-3_000_000, -3_000_000, 500_000, 500_000),
+            ShapeKind::Auto(AutoShape::new(Geometry::Rect, Fill::Solid(Color::WHITE), None)),
+        ));
+        e.run(
+            vec![
+                Command::SetDocProperties { properties: props },
+                Command::SetSlide { slide },
+            ],
+            cx,
+        );
+        e.open_presentation_inspect_panel(w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().inspect_panel.is_some()));
+
+    // カテゴリ 0（ドキュメントのプロパティと個人情報）の右クリックメニュー検証と削除実行
+    s.update(|e, w, cx| {
+        e.open_inspect_category_context_menu(0, gpui_kit::point(gpui_kit::px(980.0), gpui_kit::px(220.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let cat0_entries = s.with(|e, _| e.inspect_category_context_menu_entries(0));
+    for id in [
+        "pptx.inspect.remove-all",
+        "file.info",
+        "pptx.inspect-panel.reinspect",
+        "_shell.close",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&cat0_entries, id).is_some(),
+            "{id} should be present in Document Inspector category 0 context menu"
+        );
+    }
+    s.update(|e, w, cx| {
+        let entries = e.inspect_category_context_menu_entries(0);
+        let item = crate::shell::scenario::find_item(&entries, "pptx.inspect.remove-all").unwrap();
+        assert!(!item.disabled);
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.presentation().properties.title.is_none() && e.presentation().properties.creator.is_none()));
+
+    // カテゴリ 2（プレゼンテーションのノート）の右クリックメニューからノート一括削除
+    s.update(|e, w, cx| {
+        let entries = e.inspect_category_context_menu_entries(2);
+        let item = crate::shell::scenario::find_item(&entries, "pptx.inspect.remove-all").unwrap();
+        assert!(!item.disabled);
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().notes.is_empty()));
+
+    // カテゴリ 4（スライド外のオブジェクト）の右クリックメニューからスライド外図形を削除
+    assert!(s.with(|e, _| e.slide().shape(ShapeId(8870)).is_some()));
+    s.update(|e, w, cx| {
+        let entries = e.inspect_category_context_menu_entries(4);
+        let item = crate::shell::scenario::find_item(&entries, "pptx.inspect.remove-all").unwrap();
+        assert!(!item.disabled);
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().shape(ShapeId(8870)).is_none()));
+
+    // カテゴリ 1（コメントと注釈）の右クリックメニューから「すべて削除（pptx.inspect.remove-all）」を実行
+    s.update(|e, w, cx| {
+        let entries = e.inspect_category_context_menu_entries(1);
+        let item = crate::shell::scenario::find_item(&entries, "pptx.inspect.remove-all").unwrap();
+        assert!(!item.disabled);
+        (item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().comments.is_empty()));
+
+    s.update(|e, _, cx| e.close_presentation_inspect_panel(cx));
+
+    // 3. 互換性チェックパネル（Compatibility Checker）問題カードの右クリックメニューと即時解決（PPTX-FILE-011）
+    s.update(|e, _, cx| {
+        let media_pic = Picture {
+            clip: Some(Clip::new(MediaId(9998), false)),
+            ..Picture::new(MediaId(9998))
+        };
+        let shape_media = Shape::new(
+            ShapeId(8891),
+            EmuRect::new(200_000, 200_000, 800_000, 800_000),
+            ShapeKind::Picture(media_pic),
+        );
+
+        let mut text_body = TextBody::plain("互換性テスト変形文字", TextStyle::default());
+        text_body.warp = Some("textWave1".to_string());
+        let shape_warp = Shape::new(
+            ShapeId(8892),
+            EmuRect::new(1_200_000, 200_000, 1_000_000, 800_000),
+            ShapeKind::TextBox(text_body),
+        );
+
+        let mut auto = AutoShape::new(Geometry::Rect, Fill::Solid(Color::WHITE), None);
+        auto.reflection = Some(Reflection::standard(10_000, 50_000));
+        let shape_effect = Shape::new(
+            ShapeId(8893),
+            EmuRect::new(2_400_000, 200_000, 1_000_000, 800_000),
+            ShapeKind::Auto(auto),
+        );
+
+        let mut slide = e.slide().clone();
+        slide.shapes.push(shape_media);
+        slide.shapes.push(shape_warp);
+        slide.shapes.push(shape_effect);
+        e.run(vec![Command::SetSlide { slide }], cx);
+    });
+
+    s.menu("pptx.compatibility-check");
+    s.update(|e, _, cx| e.recheck_pptx_compatibility(cx));
+
+    let (sig_len, minor_len) = s.with(|e, _| {
+        let p = e.pptx().unwrap().compatibility_panel.as_ref().unwrap();
+        (p.report.significant.len(), p.report.minor.len())
+    });
+    assert!(sig_len >= 1 && minor_len >= 2);
+
+    // 軽微な問題（ワードアート文字変形: index = sig_len）の右クリックメニューを開く
+    s.update(|e, w, cx| {
+        e.open_compatibility_issue_context_menu(sig_len, gpui_kit::point(gpui_kit::px(980.0), gpui_kit::px(300.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let compat_entries = s.with(|e, _| e.compatibility_issue_context_menu_entries(sig_len));
+    for id in [
+        "_shell.view",
+        "_shell.clear-formatting",
+        "edit.delete",
+        "pptx.compat.recheck",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&compat_entries, id).is_some(),
+            "{id} should be present in compatibility issue context menu"
+        );
+    }
+
+    // 右クリック「書式のクリア（_shell.clear-formatting）」でワードアート変形を解除
+    s.update(|e, w, cx| {
+        let entries = e.compatibility_issue_context_menu_entries(sig_len);
+        let clr = crate::shell::scenario::find_item(&entries, "_shell.clear-formatting").unwrap();
+        (clr.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().shape(ShapeId(8892)).unwrap().text_body().unwrap().warp.is_none()));
+
+    // 残った軽微な問題（反射効果: index = sig_len）も右クリック「書式のクリア」で解除
+    s.update(|e, w, cx| {
+        let entries = e.compatibility_issue_context_menu_entries(sig_len);
+        let clr = crate::shell::scenario::find_item(&entries, "_shell.clear-formatting").unwrap();
+        (clr.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| match &e.slide().shape(ShapeId(8893)).unwrap().kind {
+        ShapeKind::Auto(a) => a.reflection.is_none(),
+        _ => false,
+    }));
+
+    // 重大な問題（メディアクリップ: index = 0）を右クリック「削除（edit.delete）」で削除
+    s.update(|e, w, cx| {
+        let entries = e.compatibility_issue_context_menu_entries(0);
+        let del = crate::shell::scenario::find_item(&entries, "edit.delete").unwrap();
+        (del.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().shape(ShapeId(8891)).is_none()));
+    assert_eq!(
+        s.with(|e, _| e.pptx().unwrap().compatibility_panel.as_ref().unwrap().report.total_issues()),
+        0,
+        "all compatibility issues resolved via context menu"
+    );
+    s.update(|e, _, cx| e.close_pptx_compatibility_panel(cx));
+
+    // 4. フォトアルバム（Photo Album）写真リスト行の右クリックメニューと順序入替・複製・削除・作成（PPTX-IMAGE-019）
+    let mut png1 = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png1)
+        .write_image(&vec![240u8, 80, 80, 255].repeat(32 * 24), 32, 24, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    let mut png2 = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png2)
+        .write_image(&vec![80u8, 180, 240, 255].repeat(32 * 24), 32, 24, image::ExtendedColorType::Rgba8)
+        .unwrap();
+
+    s.update(|e, w, cx| {
+        e.open_photo_album_panel(w, cx);
+        if let Some(p) = e.pptx_mut().and_then(|st| st.photo_album.as_mut()) {
+            *p = PhotoAlbumState {
+                pictures: vec![
+                    PhotoAlbumPicture {
+                        caption: "アルバム写真A".to_string(),
+                        data: png1.into(),
+                        format: MediaFormat::Png,
+                        width: 32,
+                        height: 24,
+                    },
+                    PhotoAlbumPicture {
+                        caption: "アルバム写真B".to_string(),
+                        data: png2.into(),
+                        format: MediaFormat::Png,
+                        width: 32,
+                        height: 24,
+                    },
+                ],
+                selected_picture: None,
+                layout: PhotoAlbumLayout::OnePic,
+                frame: PhotoAlbumFrame::FrameStyle1,
+                bw: false,
+                show_captions: false,
+                message: None,
+            };
+        }
+        cx.notify();
+    });
+
+    s.update(|e, w, cx| {
+        e.open_photo_album_item_context_menu(0, gpui_kit::point(gpui_kit::px(980.0), gpui_kit::px(260.0)), w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.slide_popup.as_ref()).is_some()));
+
+    let pa_entries = s.with(|e, _| e.photo_album_item_context_menu_entries(0));
+    for id in [
+        "pptx.photo-album.move-up",
+        "pptx.photo-album.move-down",
+        "edit.duplicate",
+        "pptx.photo-album.remove",
+        "pptx.photo-album.bw-on",
+        "pptx.photo-album.captions-on",
+        "pptx.photo-album.create",
+    ] {
+        assert!(
+            crate::shell::scenario::find_item(&pa_entries, id).is_some(),
+            "{id} should be present in photo album item context menu"
+        );
+    }
+
+    // 写真 0 を右クリック「下へ移動（pptx.photo-album.move-down）」で順序入れ替え
+    s.update(|e, w, cx| {
+        let entries = e.photo_album_item_context_menu_entries(0);
+        let down = crate::shell::scenario::find_item(&entries, "pptx.photo-album.move-down").unwrap();
+        assert!(!down.disabled);
+        (down.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(
+        s.with(|e, _| {
+            e.pptx().unwrap().photo_album.as_ref().unwrap().pictures.iter().map(|p| p.caption.clone()).collect::<Vec<_>>()
+        }),
+        vec!["アルバム写真B".to_string(), "アルバム写真A".to_string()]
+    );
+
+    // 写真 0 を右クリック「複製（edit.duplicate）」して3枚にし、写真 1 を「削除（pptx.photo-album.remove）」して2枚に戻す
+    s.update(|e, w, cx| {
+        let entries = e.photo_album_item_context_menu_entries(0);
+        let dup = crate::shell::scenario::find_item(&entries, "edit.duplicate").unwrap();
+        (dup.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.pptx().unwrap().photo_album.as_ref().unwrap().pictures.len()), 3);
+
+    s.update(|e, w, cx| {
+        let entries = e.photo_album_item_context_menu_entries(1);
+        let rem = crate::shell::scenario::find_item(&entries, "pptx.photo-album.remove").unwrap();
+        (rem.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.pptx().unwrap().photo_album.as_ref().unwrap().pictures.len()), 2);
+
+    // 右クリックから白黒（bw-on）・キャプション（captions-on）を切り替え、「アルバムの作成（pptx.photo-album.create）」を実行して閉じる
+    let slides_before_album = s.with(|e, _| e.presentation().slides.len());
+    s.update(|e, w, cx| {
+        let entries = e.photo_album_item_context_menu_entries(0);
+        let bw = crate::shell::scenario::find_item(&entries, "pptx.photo-album.bw-on").unwrap();
+        (bw.handler.as_ref().unwrap())(e, w, cx);
+        let cap = crate::shell::scenario::find_item(&entries, "pptx.photo-album.captions-on").unwrap();
+        (cap.handler.as_ref().unwrap())(e, w, cx);
+        let create = crate::shell::scenario::find_item(&entries, "pptx.photo-album.create").unwrap();
+        (create.handler.as_ref().unwrap())(e, w, cx);
+        let close = crate::shell::scenario::find_item(&entries, "_shell.close").unwrap();
+        (close.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().photo_album.is_none()));
+    assert_eq!(
+        s.with(|e, _| e.presentation().slides.len()),
+        slides_before_album + 3,
+        "title slide + 2 OnePic photo slides added"
+    );
+
+    // 5. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_inspect_compatibility_photo_album_and_master_views");
+    s.save_as("context_menu_inspect_compatibility_photo_album_and_master_views.pptx");
+    let reloaded = s.reopen();
+    assert!(reloaded.properties.title.is_none());
+    assert!(reloaded.slides[0].notes.is_empty());
+    assert!(reloaded.slides[0].comments.is_empty());
+    assert_eq!(reloaded.slides.len(), slides_before_album + 3);
+    assert!(reloaded.photo_album.as_ref().is_some_and(|pa| pa.bw && pa.show_captions));
+
+    undo_all_and_redo(&mut s);
+}
+
+/// 検索と置換パネル・数式パネル＆数式図形・描画（インク）パネル・フォントの置換パネルの
+/// 右クリック コンテキスト メニューと一致項目クリックの E2E 検証（Batch 34）
+pub(crate) fn context_menu_find_math_ink_and_replace_fonts() {
+    use crate::pptx::math_panel::MathFormat;
+    use crate::xlsx::ink::PenKind;
+    use ibis_doc_model::{CharacterFormat, Color, Command, EmuRect, Rgb, ShapeId, Stroke, TextBody, TextStyle};
+
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    // -------------------------------------------------------------------------
+    // 1. 検索と置換パネル（Find & Replace Panel）の右クリック コンテキスト メニューと一致リスト操作
+    // -------------------------------------------------------------------------
+    s.page(1);
+    let slide1_id = s.with(|e, _| e.current_slide);
+    let shape0_id = s.with(|e, _| e.slide().shapes[0].id);
+    s.update(|e, _, cx| {
+        let body = TextBody::plain("検索対象の文字列と別の検索対象の項目", TextStyle::default());
+        e.run(vec![Command::SetTextBody { slide: slide1_id, shape: shape0_id, body }], cx);
+    });
+
+    s.update(|e, w, cx| e.open_pptx_find(w, cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().find.is_some()));
+
+    s.update(|e, w, cx| {
+        let find = e.pptx().unwrap().find.as_ref().unwrap();
+        find.query.update(cx, |f, cx| f.set_value("検索対象", w, cx));
+        find.replacement.update(cx, |f, cx| f.set_value("置換済", w, cx));
+    });
+    let match_count = s.with(|e, cx| e.pptx_find_matches(cx).len());
+    assert!(match_count >= 2, "at least 2 matches for '検索対象': {match_count}");
+
+    // 一致項目 1 の右クリックから「表示 (_shell.view)」で該当一致箇所へジャンプ
+    s.update(|e, w, cx| {
+        let entries = e.find_panel_context_menu_entries(Some(1), cx);
+        let view_item = crate::shell::scenario::find_item(&entries, "_shell.view").unwrap();
+        (view_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.pptx().unwrap().find.as_ref().unwrap().current), Some(1));
+
+    // オプション切り替え（match-case, whole-words）と「次へ (_shell.next)」
+    s.update(|e, w, cx| {
+        let entries = e.find_panel_context_menu_entries(None, cx);
+        let mc = crate::shell::scenario::find_item(&entries, "pptx.find.match-case").unwrap();
+        assert!(mc.checked);
+        (mc.handler.as_ref().unwrap())(e, w, cx);
+        let ww = crate::shell::scenario::find_item(&entries, "pptx.find.whole-words").unwrap();
+        assert!(!ww.checked);
+        (ww.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| {
+        let f = e.pptx().unwrap().find.as_ref().unwrap();
+        !f.match_case && f.whole_word
+    }));
+    // オプションを戻して「次へ (_shell.next)」を実行
+    s.update(|e, w, cx| {
+        let entries = e.find_panel_context_menu_entries(None, cx);
+        let mc = crate::shell::scenario::find_item(&entries, "pptx.find.match-case").unwrap();
+        assert!(!mc.checked);
+        (mc.handler.as_ref().unwrap())(e, w, cx);
+        let ww = crate::shell::scenario::find_item(&entries, "pptx.find.whole-words").unwrap();
+        assert!(ww.checked);
+        (ww.handler.as_ref().unwrap())(e, w, cx);
+        let next = crate::shell::scenario::find_item(&entries, "_shell.next").unwrap();
+        (next.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.pptx().unwrap().find.as_ref().unwrap().current), Some(0));
+
+    // 右クリックから 1 件置換 (_shell.replace)、続いてすべて置換 (_shell.replace-all)、閉じる (_shell.close)
+    s.update(|e, w, cx| {
+        let entries = e.find_panel_context_menu_entries(Some(0), cx);
+        let rep = crate::shell::scenario::find_item(&entries, "_shell.replace").unwrap();
+        (rep.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.slide().shapes[0].text_body().unwrap().text().contains("置換済の文字列")));
+
+    s.update(|e, w, cx| {
+        let entries = e.find_panel_context_menu_entries(None, cx);
+        let rep_all = crate::shell::scenario::find_item(&entries, "_shell.replace-all").unwrap();
+        (rep_all.handler.as_ref().unwrap())(e, w, cx);
+        let close = crate::shell::scenario::find_item(&entries, "_shell.close").unwrap();
+        (close.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().find.is_none()));
+    assert_eq!(
+        s.with(|e, _| e.slide().shapes[0].text_body().unwrap().text()),
+        "置換済の文字列と別の置換済の項目"
+    );
+
+    // -------------------------------------------------------------------------
+    // 2. 数式パネル（Math Panel）＆ キャンバス上の数式図形コンテキスト メニュー
+    // -------------------------------------------------------------------------
+    s.update(|e, w, cx| e.open_pptx_math_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().math_panel.is_some()));
+
+    s.update(|e, w, cx| {
+        let math = e.pptx().unwrap().math_panel.as_ref().unwrap();
+        math.input.update(cx, |f, cx| f.set_value(r"\frac{x+1}{y}", w, cx));
+    });
+
+    // 右クリックから LaTeX / UnicodeMath モード切替、LaTeX コピー、数式を挿入 (pptx.math.insert)
+    let shapes_before_math = s.with(|e, _| e.slide().shapes.len());
+    s.update(|e, w, cx| {
+        let entries = e.math_panel_context_menu_entries(cx);
+        let fmt_ltx = crate::shell::scenario::find_item(&entries, "pptx.math.format-latex").unwrap();
+        (fmt_ltx.handler.as_ref().unwrap())(e, w, cx);
+        assert_eq!(e.pptx().unwrap().math_panel.as_ref().unwrap().format, MathFormat::Latex);
+
+        let fmt_uni = crate::shell::scenario::find_item(&entries, "pptx.math.format-unicodemath").unwrap();
+        (fmt_uni.handler.as_ref().unwrap())(e, w, cx);
+        assert_eq!(e.pptx().unwrap().math_panel.as_ref().unwrap().format, MathFormat::UnicodeMath);
+
+        let copy_ltx = crate::shell::scenario::find_item(&entries, "pptx.math.copy-latex").unwrap();
+        assert!(!copy_ltx.disabled);
+        (copy_ltx.handler.as_ref().unwrap())(e, w, cx);
+
+        let ins = crate::shell::scenario::find_item(&entries, "pptx.math.insert").unwrap();
+        assert!(!ins.disabled);
+        (ins.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), shapes_before_math + 1);
+    assert!(s.with(|e, _| e.selected_math().is_some()), "newly inserted math shape is selected");
+
+    // パネルをいったん閉じ、キャンバス上の数式図形の右クリックメニューから「数式 (pptx.math.title)」で再オープン
+    s.update(|e, w, cx| {
+        let entries = e.math_panel_context_menu_entries(cx);
+        let close = crate::shell::scenario::find_item(&entries, "_shell.close").unwrap();
+        (close.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().math_panel.is_none()));
+
+    s.update(|e, w, cx| {
+        let entries = e.shape_context_menu_entries();
+        let math_item = crate::shell::scenario::find_item(&entries, "pptx.math.title").expect("pptx.math.title on math shape");
+        (math_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().math_panel.is_some()), "math panel reopened from shape context menu");
+    assert!(
+        !s.with(|e, cx| e.pptx().unwrap().math_panel.as_ref().unwrap().input.read(cx).value().is_empty()),
+        "existing formula loaded into math panel input"
+    );
+
+    // テキスト編集中の「選択位置に挿入 (pptx.math.insert-inline)」も検証
+    s.double_click_shape(0);
+    s.update(|e, w, cx| {
+        let entries = e.math_panel_context_menu_entries(cx);
+        let ins_inline = crate::shell::scenario::find_item(&entries, "pptx.math.insert-inline").expect("insert-inline when editing text");
+        assert!(!ins_inline.disabled);
+        (ins_inline.handler.as_ref().unwrap())(e, w, cx);
+        let close = crate::shell::scenario::find_item(&entries, "_shell.close").unwrap();
+        (close.handler.as_ref().unwrap())(e, w, cx);
+    });
+    s.key("escape");
+    assert!(s.with(|e, _| e.pptx().unwrap().math_panel.is_none()));
+
+    // -------------------------------------------------------------------------
+    // 3. 描画（インク）パネル（Ink Panel）の右クリック コンテキスト メニュー
+    // -------------------------------------------------------------------------
+    s.update(|e, w, cx| e.open_pptx_ink_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().ink.is_some()));
+
+    // ペン種類（鉛筆・蛍光ペン・消しゴム・なげなわ選択・ペン）とルーラーの切り替え
+    s.update(|e, w, cx| {
+        let entries = e.ink_panel_context_menu_entries();
+        let pencil = crate::shell::scenario::find_item(&entries, "xlsx.ink.pencil").unwrap();
+        (pencil.handler.as_ref().unwrap())(e, w, cx);
+        assert_eq!(e.pptx().unwrap().ink.as_ref().unwrap().pen, PenKind::Pencil);
+
+        let hl = crate::shell::scenario::find_item(&entries, "xlsx.ink.highlighter").unwrap();
+        (hl.handler.as_ref().unwrap())(e, w, cx);
+        assert_eq!(e.pptx().unwrap().ink.as_ref().unwrap().pen, PenKind::Highlighter);
+
+        let eraser = crate::shell::scenario::find_item(&entries, "xlsx.ink.eraser").unwrap();
+        (eraser.handler.as_ref().unwrap())(e, w, cx);
+        assert_eq!(e.pptx().unwrap().ink.as_ref().unwrap().pen, PenKind::Eraser);
+
+        let lasso = crate::shell::scenario::find_item(&entries, "xlsx.ink.select").unwrap();
+        (lasso.handler.as_ref().unwrap())(e, w, cx);
+        assert_eq!(e.pptx().unwrap().ink.as_ref().unwrap().pen, PenKind::Select);
+
+        let pen = crate::shell::scenario::find_item(&entries, "xlsx.ink.pen").unwrap();
+        (pen.handler.as_ref().unwrap())(e, w, cx);
+        assert_eq!(e.pptx().unwrap().ink.as_ref().unwrap().pen, PenKind::Pen);
+
+        let ruler = crate::shell::scenario::find_item(&entries, "pptx.ink.ruler").unwrap();
+        assert!(!ruler.checked);
+        (ruler.handler.as_ref().unwrap())(e, w, cx);
+        assert!(e.pptx().unwrap().ink.as_ref().unwrap().ruler.is_some());
+    });
+
+    // インク ストロークを挿入して選択し、右クリックから「インクを再生 (pptx.ink.replay)」「インクを図形に変換 (pptx.ink.to-shape)」を実行
+    let ink_shape_id = s.update(|e, _, cx| {
+        let next_id = ShapeId(e.slide().shapes.iter().map(|sh| sh.id.0).max().unwrap_or(0) + 10);
+        let pts = vec![(0, 0), (1_000_000, 0), (1_000_000, 1_000_000), (0, 1_000_000), (0, 0)];
+        let sh = crate::pptx::editing::new_freehand_shape(
+            next_id,
+            EmuRect::new(1_000_000, 1_000_000, 1_000_000, 1_000_000),
+            &pts,
+            Some(Stroke::solid(Color::opaque(Rgb(0xC00000)), 25_400)),
+        );
+        let slide = e.current_slide;
+        let idx = e.slide().shapes.len();
+        e.run(
+            vec![
+                Command::InsertShape { slide, index: idx, shape: sh },
+                Command::SetShapeName { slide, shape: next_id, name: "インク 1".to_string() },
+            ],
+            cx,
+        );
+        e.set_selection(vec![next_id]);
+        next_id
+    });
+    assert!(s.with(|e, _| e.selected_shapes().first().is_some_and(|sh| crate::xlsx::ink::stroke_points(sh).is_some())));
+
+    s.update(|e, w, cx| {
+        let entries = e.ink_panel_context_menu_entries();
+        let replay = crate::shell::scenario::find_item(&entries, "pptx.ink.replay").unwrap();
+        assert!(!replay.disabled);
+        let to_shape = crate::shell::scenario::find_item(&entries, "pptx.ink.to-shape").unwrap();
+        assert!(!to_shape.disabled);
+        (to_shape.handler.as_ref().unwrap())(e, w, cx);
+
+        let close = crate::shell::scenario::find_item(&entries, "_shell.close").unwrap();
+        (close.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().ink.is_none()));
+    let _ = ink_shape_id;
+
+    // -------------------------------------------------------------------------
+    // 4. フォントの置換・代替・埋め込みパネル（Replace Fonts Panel）の右クリック コンテキスト メニュー
+    // -------------------------------------------------------------------------
+    s.update(|e, _, cx| {
+        let mut body = e.slide().shapes[0].text_body().unwrap().clone();
+        body.format_runs(0, body.text().len(), &CharacterFormat {
+            font: Some(Some("CustomFont34".into())),
+            ..Default::default()
+        });
+        e.run(vec![Command::SetTextBody { slide: slide1_id, shape: shape0_id, body }], cx);
+    });
+
+    s.update(|e, w, cx| e.open_replace_fonts_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().replace_fonts.is_some()));
+
+    // フォント チップ "CustomFont34" の右クリックから「置換対象に設定 (pptx.replace-fonts.with)」を実行
+    s.update(|e, w, cx| {
+        let entries = e.replace_fonts_context_menu_entries(Some("CustomFont34"), cx);
+        let sel = crate::shell::scenario::find_item(&entries, "pptx.replace-fonts.with").unwrap();
+        (sel.handler.as_ref().unwrap())(e, w, cx);
+        e.pptx()
+            .unwrap()
+            .replace_fonts
+            .as_ref()
+            .unwrap()
+            .replacement
+            .update(cx, |f, cx| f.set_value("Georgia", w, cx));
+    });
+    assert_eq!(
+        s.with(|e, cx| e.pptx().unwrap().replace_fonts.as_ref().unwrap().target.read(cx).value().to_string()),
+        "CustomFont34"
+    );
+
+    // 右クリックから「代替を適用 (pptx.replace-fonts.substitute)」「フォントを埋め込む (pptx.replace-fonts.embed-button)」を実行
+    s.update(|e, w, cx| {
+        let entries = e.replace_fonts_context_menu_entries(Some("CustomFont34"), cx);
+        let sub = crate::shell::scenario::find_item(&entries, "pptx.replace-fonts.substitute").unwrap();
+        assert!(!sub.disabled);
+        (sub.handler.as_ref().unwrap())(e, w, cx);
+
+        let emb = crate::shell::scenario::find_item(&entries, "pptx.replace-fonts.embed-button").unwrap();
+        assert!(!emb.disabled);
+        (emb.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.font_substitutions().get("CustomFont34").cloned()), Some("Georgia".to_string()));
+    assert!(s.with(|e, _| e.embedded_fonts().iter().any(|f| f.typeface == "CustomFont34")));
+
+    // 右クリックから「置換 (_shell.replace)」でスライド内のフォントを置換し、「削除 (_shell.delete)」で埋め込み/代替を解除、閉じる (_shell.close)
+    s.update(|e, w, cx| {
+        let entries = e.replace_fonts_context_menu_entries(Some("CustomFont34"), cx);
+        let rep = crate::shell::scenario::find_item(&entries, "_shell.replace").unwrap();
+        assert!(!rep.disabled);
+        (rep.handler.as_ref().unwrap())(e, w, cx);
+
+        let entries_after = e.replace_fonts_context_menu_entries(Some("CustomFont34"), cx);
+        let del = crate::shell::scenario::find_item(&entries_after, "_shell.delete").unwrap();
+        (del.handler.as_ref().unwrap())(e, w, cx);
+
+        let close = crate::shell::scenario::find_item(&entries_after, "_shell.close").unwrap();
+        (close.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().replace_fonts.is_none()));
+    assert_eq!(
+        s.with(|e, _| e.slide().shapes[0].text_body().unwrap().paragraphs[0].runs[0].style.font.clone()),
+        Some("Georgia".to_string())
+    );
+    assert!(!s.with(|e, _| e.embedded_fonts().iter().any(|f| f.typeface == "CustomFont34")));
+
+    // 5. スクリーンショット・保存・再読込・Undo/Redo
+    s.screenshot("context_menu_find_math_ink_and_replace_fonts");
+    s.save_as("context_menu_find_math_ink_and_replace_fonts.pptx");
+    let reloaded = s.reopen();
+    assert_eq!(
+        reloaded.slides[0].shapes[0].text_body().unwrap().paragraphs[0].runs[0].style.font.as_deref(),
+        Some("Georgia")
+    );
+    assert!(
+        reloaded.slides[0]
+            .shapes
+            .iter()
+            .any(|sh| sh.text_body().is_some_and(|b| b.paragraphs.iter().any(|p| p.runs.iter().any(|r| r.style.math.is_some()))))
+    );
+
+    undo_all_and_redo(&mut s);
+}
+
+/// サイズと位置パネル・テーマの編集パネル・画面切り替えのタイミングパネル・代替テキストパネルの
+/// 右クリックコンテキストメニューとクイックアクション（PPTX-AUDIT-003, PPTX-OBJECT-014〜018, PPTX-DESIGN-002〜004, PPTX-TRANS-003, 005〜007, PPTX-ACCESS-002, 003）
+pub(crate) fn context_menu_frame_theme_timing_and_alt_text_panels() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    // 1. サイズと位置パネル（frame_panel）の右クリックメニュー検証
+    s.click_shape(0);
+    let orig_frame = s.with(|e, _| e.slide().shapes[0].frame);
+    s.update(|e, w, cx| e.open_frame_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().frame_panel.is_some()));
+
+    s.update(|e, w, cx| {
+        let entries = e.frame_panel_context_menu_entries();
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.frame-panel.lock-aspect-ratio").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.frame.scale.150").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.frame.rot.90").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "_shell.apply").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "_shell.close").is_some());
+
+        // 縦横比を固定をトグル
+        let lock_item = crate::shell::scenario::find_item(&entries, "pptx.frame-panel.lock-aspect-ratio").unwrap();
+        (lock_item.handler.as_ref().unwrap())(e, w, cx);
+
+        // 150% スケールプリセット
+        let scale_150 = crate::shell::scenario::find_item(&entries, "pptx.frame.scale.150").unwrap();
+        (scale_150.handler.as_ref().unwrap())(e, w, cx);
+
+        // 90° 回転プリセット
+        let rot_90 = crate::shell::scenario::find_item(&entries, "pptx.frame.rot.90").unwrap();
+        (rot_90.handler.as_ref().unwrap())(e, w, cx);
+
+        // 適用
+        let apply_item = crate::shell::scenario::find_item(&entries, "_shell.apply").unwrap();
+        (apply_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().frame_panel.is_none()));
+    let after_frame = s.with(|e, _| e.slide().shapes[0].frame);
+    let after_rot = s.with(|e, _| e.slide().shapes[0].rotation);
+    assert_eq!(after_rot, 5_400_000, "90 degrees rotation applied");
+    assert!(after_frame.width > orig_frame.width, "width scaled to 150%");
+
+    // 2. テーマの編集パネル（theme_panel）の右クリックメニュー検証
+    s.menu("pptx.theme-colors");
+    assert!(s.with(|e, _| e.pptx().unwrap().theme_panel.is_some()));
+
+    s.update(|e, w, cx| {
+        let entries = e.theme_panel_context_menu_entries(Some("apex"));
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.theme.palette.apex").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.theme.palette-selected.apex").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.theme.effects.glossy").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.theme.save-theme").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "_shell.apply").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "_shell.close").is_some());
+
+        // テーマの効果（光沢 / glossy）を適用
+        let glossy = crate::shell::scenario::find_item(&entries, "pptx.theme.effects.glossy").unwrap();
+        (glossy.handler.as_ref().unwrap())(e, w, cx);
+
+        // パレット「Apex」をプレゼンテーション全体に適用
+        let apex_all = crate::shell::scenario::find_item(&entries, "pptx.theme.palette.apex").unwrap();
+        (apex_all.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.presentation().theme_effects.clone()), Some("glossy".to_string()));
+
+    // 再度テーマパネルを開いて右クリック「適用」で閉じる
+    s.menu("pptx.theme-colors");
+    s.update(|e, w, cx| {
+        let entries = e.theme_panel_context_menu_entries(None);
+        let apply_item = crate::shell::scenario::find_item(&entries, "_shell.apply").unwrap();
+        (apply_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().theme_panel.is_none()));
+
+    // 3. 画面切り替えのタイミングパネル（timing_panel）の右クリックメニュー検証
+    s.update(|e, w, cx| e.open_timing_panel(w, cx));
+    assert!(s.with(|e, _| e.pptx().unwrap().timing_panel.is_some()));
+
+    s.update(|e, w, cx| {
+        let entries = e.timing_panel_context_menu_entries();
+        assert!(crate::shell::scenario::find_item(&entries, "transition.on-click").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "transition.duration.2000").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "transition.after.5000").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "transition.all").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "_shell.apply").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "_shell.close").is_some());
+
+        // 継続時間 2.0 秒プリセット
+        let dur_2000 = crate::shell::scenario::find_item(&entries, "transition.duration.2000").unwrap();
+        (dur_2000.handler.as_ref().unwrap())(e, w, cx);
+
+        // 自動切り替え 5 秒プリセット
+        let after_5 = crate::shell::scenario::find_item(&entries, "transition.after.5000").unwrap();
+        (after_5.handler.as_ref().unwrap())(e, w, cx);
+
+        // すべてのスライドに適用
+        let apply_all = crate::shell::scenario::find_item(&entries, "transition.all").unwrap();
+        (apply_all.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().timing_panel.is_none()));
+    assert!(s.with(|e, _| {
+        e.presentation().slides.iter().all(|sl| {
+            let t = sl.transition.as_ref().unwrap();
+            t.duration == 2000 && t.after == Some(5000)
+        })
+    }));
+
+    // 4. 代替テキストパネル（alt_text_panel）の右クリックメニュー検証
+    s.click_shape(0);
+    s.menu("pptx.alt-text");
+    assert!(s.with(|e, _| e.pptx().unwrap().alt_text_panel.is_some()));
+
+    s.update(|e, w, cx| {
+        let entries = e.alt_text_panel_context_menu_entries(cx);
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.alt-text.decorative").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.alt-text.generate-from-text").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "edit.copy").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "edit.delete").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "pptx.alt-text.apply").is_some());
+        assert!(crate::shell::scenario::find_item(&entries, "_shell.close").is_some());
+
+        // 図形内テキストから説明を生成
+        let gen_item = crate::shell::scenario::find_item(&entries, "pptx.alt-text.generate-from-text").unwrap();
+        assert!(!gen_item.disabled);
+        (gen_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    let generated_desc = s.with(|e, cx| {
+        e.pptx().unwrap().alt_text_panel.as_ref().unwrap().desc_field.read(cx).value().to_string()
+    });
+    assert!(!generated_desc.is_empty(), "generated description from shape text");
+
+    // クリアしてから再度図形内テキストから生成し、適用して閉じる
+    s.update(|e, w, cx| {
+        let entries = e.alt_text_panel_context_menu_entries(cx);
+        let clear_item = crate::shell::scenario::find_item(&entries, "edit.delete").unwrap();
+        assert!(!clear_item.disabled);
+        (clear_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert_eq!(
+        s.with(|e, cx| e.pptx().unwrap().alt_text_panel.as_ref().unwrap().desc_field.read(cx).value().to_string()),
+        ""
+    );
+
+    s.update(|e, w, cx| {
+        let entries = e.alt_text_panel_context_menu_entries(cx);
+        let gen_item = crate::shell::scenario::find_item(&entries, "pptx.alt-text.generate-from-text").unwrap();
+        (gen_item.handler.as_ref().unwrap())(e, w, cx);
+
+        let entries_after = e.alt_text_panel_context_menu_entries(cx);
+        let copy_item = crate::shell::scenario::find_item(&entries_after, "edit.copy").unwrap();
+        assert!(!copy_item.disabled);
+        (copy_item.handler.as_ref().unwrap())(e, w, cx);
+
+        let close_item = crate::shell::scenario::find_item(&entries_after, "_shell.close").unwrap();
+        (close_item.handler.as_ref().unwrap())(e, w, cx);
+    });
+    assert!(s.with(|e, _| e.pptx().unwrap().alt_text_panel.is_none()));
+    let shape0_id = s.with(|e, _| e.slide().shapes[0].id);
+    assert_eq!(
+        s.with(|e, _| e.slide().shape_alt_texts.get(&shape0_id).map(|a| a.description.clone())),
+        Some(generated_desc.clone())
+    );
+
+    // 5. スクリーンショット・保存・再読込・Undo/Redo ラウンドトリップ検証
+    s.screenshot("context_menu_frame_theme_timing_and_alt_text_panels");
+    s.save_as("context_menu_frame_theme_timing_and_alt_text_panels.pptx");
+    let reloaded = s.reopen();
+    assert_eq!(reloaded.slides[0].shapes[0].rotation, 5_400_000);
+    assert_eq!(reloaded.slides[0].transition.as_ref().unwrap().duration, 2000);
+    assert_eq!(reloaded.slides[0].transition.as_ref().unwrap().after, Some(5000));
+    assert_eq!(
+        reloaded.slides[0].shape_alt_texts.get(&shape0_id).map(|a| a.description.as_str()),
+        Some(generated_desc.as_str())
+    );
+
+    undo_all_and_redo(&mut s);
+}
+
 

@@ -391,7 +391,7 @@ pub(crate) fn apply_pivot_style(sheet: &mut Sheet, index: usize, rows: &[ibis_do
                     *g = None;
                 }
             }
-            K::Grand => {}
+            K::Grand | K::Blank => {}
         }
     }
     for (i, kind) in rows.iter().enumerate() {
@@ -467,7 +467,7 @@ mod tests {
         let theme_doc = roxmltree::Document::parse(THEME).unwrap();
         let theme = Theme::read(theme_doc.root_element());
         let colors = SheetColors::new(&theme, None);
-        let mut sheet = Sheet { cells: vec![cell(0, 0), cell(0, 1), cell(1, 0), cell(2, 0)], styles: vec![CellStyle::default()], ..Default::default() };
+        let mut sheet = Sheet { cells: vec![cell(0, 0), cell(0, 1), cell(1, 0), cell(2, 0)].into(), styles: vec![CellStyle::default()], ..Default::default() };
         let table = r#"<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ref="A1:B3">
             <tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/></table>"#;
         apply_table_styles(&mut sheet, &[table], None, &colors);

@@ -11,13 +11,15 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
+use crate::pptx::MediaQuality;
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
-use crate::shell::i18n::text;
+use crate::shell::i18n::{format, text};
 
 /// Document properties panel for PowerPoint presentation in the sidebar.
 pub(crate) struct PresentationDocPropertiesPanel {
@@ -32,6 +34,7 @@ pub(crate) struct PresentationDocPropertiesPanel {
     pub(crate) custom_properties: Vec<ibis_doc_model::CustomProperty>,
     pub(crate) new_custom_name: Entity<InputState>,
     pub(crate) new_custom_val: Entity<InputState>,
+    pub(crate) embed_fonts: bool,
     pub(crate) created: String,
     pub(crate) modified: String,
     pub(crate) last_printed: String,
@@ -73,6 +76,7 @@ impl SlideEditor {
         let new_custom_name = cx.new(|cx| InputState::new(window, cx));
         let new_custom_val = cx.new(|cx| InputState::new(window, cx));
         let custom_properties = props.custom.clone();
+        let embed_fonts = !self.presentation().fonts.is_empty();
 
         let panel = PresentationDocPropertiesPanel {
             title,
@@ -86,6 +90,7 @@ impl SlideEditor {
             custom_properties,
             new_custom_name,
             new_custom_val,
+            embed_fonts,
             created,
             modified,
             last_printed,
@@ -153,9 +158,61 @@ impl SlideEditor {
         }
     }
 
+    /// Embed or clear embedded fonts for the entire presentation.
+    pub(crate) fn set_embed_presentation_fonts(&mut self, embed: bool, cx: &mut Context<Self>) {
+        if embed {
+            let mut used = super::replace_fonts::presentation_used_fonts(self.presentation());
+            if used.is_empty() {
+                if let Some(tf) = &self.presentation().theme_fonts {
+                    let mut add_font_set = |fs: &ibis_doc_model::FontSet| {
+                        for opt in [&fs.latin, &fs.east_asian, &fs.complex] {
+                            if let Some(f) = opt {
+                                let trimmed = f.trim();
+                                if !trimmed.is_empty() && !used.iter().any(|s| s.eq_ignore_ascii_case(trimmed)) {
+                                    used.push(trimmed.to_string());
+                                }
+                            }
+                        }
+                    };
+                    add_font_set(&tf.major);
+                    add_font_set(&tf.minor);
+                }
+                if used.is_empty() {
+                    used.push("Calibri".to_string());
+                }
+            }
+            let mut fonts = self.presentation().fonts.clone();
+            for typeface in used {
+                if !fonts.iter().any(|f| f.typeface.eq_ignore_ascii_case(&typeface)) {
+                    let bytes = super::replace_fonts::create_embedded_font_data(&typeface);
+                    fonts.push(ibis_doc_model::EmbeddedFont {
+                        typeface,
+                        bold: false,
+                        italic: false,
+                        data: bytes.into(),
+                    });
+                }
+            }
+            if fonts != self.presentation().fonts {
+                self.run(vec![ibis_doc_model::Command::SetEmbeddedFonts { fonts }], cx);
+            }
+        } else if !self.presentation().fonts.is_empty() {
+            self.run(vec![ibis_doc_model::Command::SetEmbeddedFonts { fonts: Vec::new() }], cx);
+        }
+    }
+
+    /// Toggle font embedding in the Document Properties panel.
+    pub(crate) fn toggle_presentation_doc_properties_embed_fonts(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(p) = self.pptx_mut().and_then(|s| s.properties_panel.as_mut()) {
+            p.embed_fonts = enabled;
+        }
+        self.set_embed_presentation_fonts(enabled, cx);
+        cx.notify();
+    }
+
     /// Apply the entered document properties via `Command::SetDocProperties`.
     pub(crate) fn apply_presentation_doc_properties(&mut self, cx: &mut Context<Self>) {
-        let (title, creator, subject, keywords, description, category, manager, company, custom) = {
+        let (title, creator, subject, keywords, description, category, manager, company, custom, embed_fonts) = {
             let Some(p) = self.pptx().and_then(|s| s.properties_panel.as_ref()) else { return };
             (
                 p.title.read(cx).text().to_string().trim().to_string(),
@@ -167,6 +224,7 @@ impl SlideEditor {
                 p.manager.read(cx).text().to_string().trim().to_string(),
                 p.company.read(cx).text().to_string().trim().to_string(),
                 p.custom_properties.clone(),
+                p.embed_fonts,
             )
         };
 
@@ -185,6 +243,12 @@ impl SlideEditor {
 
         let command = ibis_doc_model::Command::SetDocProperties { properties: new_props };
         self.run(vec![command], cx);
+
+        let current_embedded = !self.presentation().fonts.is_empty();
+        if embed_fonts != current_embedded {
+            self.set_embed_presentation_fonts(embed_fonts, cx);
+        }
+
         if let Some(p) = self.pptx_mut().and_then(|s| s.properties_panel.as_mut()) {
             p.message = text("docx.properties-panel.document-properties-updated").to_string();
         }
@@ -334,6 +398,96 @@ impl SlideEditor {
             );
         custom_section = custom_section.child(add_row);
         body = body.child(custom_section);
+
+        // フォントの埋め込み (PPTX-FILE / DocProperties)
+        let font_embed_section = v_flex()
+            .gap_1()
+            .py(px(4.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme.foreground)
+                    .child(text("pptx.properties-panel.fonts-section"))
+            )
+            .child(
+                mark(
+                    "embed_fonts",
+                    Checkbox::new("pptx-doc-props-embed-fonts")
+                        .label(text("pptx.properties-panel.embed-fonts"))
+                        .checked(p.embed_fonts)
+                        .on_click(cx.listener(|this, on: &bool, _, cx| {
+                            this.toggle_presentation_doc_properties_embed_fonts(*on, cx);
+                        }))
+                        .into_any_element(),
+                )
+            );
+        body = body.child(font_embed_section);
+
+        // メディアの圧縮と互換性 (PPTX-VIDEO-017)
+        let (media_count, media_bytes) = self.presentation_media_summary();
+        if media_count > 0 {
+            let media_mb = media_bytes as f64 / 1_048_576.0;
+            let summary_text = format!("{} ({:.1} MB)", format("pptx.media.media-count", &[("count", &media_count)]), media_mb);
+            let media_section = v_flex()
+                .gap_1()
+                .py(px(4.))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme.foreground)
+                        .child(text("pptx.media.section-title")),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(summary_text)),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .flex_wrap()
+                        .child(
+                            Button::new("compress-1080p")
+                                .small()
+                                .ghost()
+                                .label(text("pptx.media.compress-1080p"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.compress_presentation_media(MediaQuality::FullHd, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("compress-720p")
+                                .small()
+                                .ghost()
+                                .label(text("pptx.media.compress-720p"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.compress_presentation_media(MediaQuality::Hd, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("compress-480p")
+                                .small()
+                                .ghost()
+                                .label(text("pptx.media.compress-480p"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.compress_presentation_media(MediaQuality::Standard, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("optimize-compatibility")
+                                .small()
+                                .ghost()
+                                .label(text("pptx.media.optimize-compatibility"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.optimize_media_compatibility(cx);
+                                })),
+                        ),
+                );
+            body = body.child(media_section);
+        }
 
         if !p.message.is_empty() {
             body = body.child(

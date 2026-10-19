@@ -26,6 +26,10 @@ pub(crate) fn effect(shape: ShapeId, class: C, look: L) -> Animation {
         L::Appear => ((1, 0), 1),
         L::Fade => ((10, 0), 500),
         L::Fly(s) => ((2, side(s)), 500),
+        L::Zoom => ((24, 0), 500),
+        L::Float(s) => ((25, if s == AnimationSide::Bottom { 2 } else { 1 }), 1000),
+        L::Wipe(s) => ((22, side(s)), 500),
+        L::Replay => ((28, 0), 2000),
         L::Spin(_) => ((8, 0), 2000),
         L::Scale(..) => ((6, 0), 2000),
         L::Motion(x, y) => {
@@ -59,7 +63,9 @@ pub(crate) fn effect(shape: ShapeId, class: C, look: L) -> Animation {
         decel: 0,
         after_effect: AnimationAfterEffect::Hold,
         trigger: AnimationTrigger::None,
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     }
 }
 
@@ -145,6 +151,15 @@ pub(crate) fn compute_timeline(animations: &[Animation]) -> (Vec<TimelineItem>, 
 
     let total_ms = max_end_overall.max(1000);
     (items, total_ms)
+}
+
+/// What an effect on text takes at a time (テキストの動き).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextBuild {
+    Whole,
+    Paragraph,
+    Word,
+    Letter,
 }
 
 impl SlideEditor {
@@ -397,6 +412,7 @@ impl SlideEditor {
     }
 
     /// トリガー条件を設定 (特定のインデックスの効果).
+    #[allow(dead_code)]
     pub(crate) fn set_effect_trigger_at(&mut self, index: usize, trigger: AnimationTrigger, cx: &mut Context<Self>) {
         let slide = self.current_slide;
         let mut all = self.slide().animations.clone();
@@ -594,6 +610,24 @@ impl SlideEditor {
         cx.notify();
     }
 
+    pub(crate) fn set_panel_float_side(&mut self, side: AnimationSide, cx: &mut Context<Self>) {
+        if let Some(p) = self.pptx_mut().and_then(|s| s.animation_options_panel.as_mut()) {
+            if matches!(p.look, L::Float(_)) {
+                p.look = L::Float(side);
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_panel_wipe_side(&mut self, side: AnimationSide, cx: &mut Context<Self>) {
+        if let Some(p) = self.pptx_mut().and_then(|s| s.animation_options_panel.as_mut()) {
+            if matches!(p.look, L::Wipe(_)) {
+                p.look = L::Wipe(side);
+            }
+        }
+        cx.notify();
+    }
+
     pub(crate) fn set_panel_motion_dir(&mut self, x: i32, y: i32, cx: &mut Context<Self>) {
         if let Some(p) = self.pptx_mut().and_then(|s| s.animation_options_panel.as_mut()) {
             if matches!(p.look, L::Motion(..)) {
@@ -601,6 +635,87 @@ impl SlideEditor {
             }
         }
         cx.notify();
+    }
+
+    /// Context menu entries for an effect card at `index` in the Animation Pane.
+    pub(crate) fn animation_pane_context_menu_entries(&self, index: usize) -> Vec<MenuEntry> {
+        let Some(a) = self.slide().animations.get(index) else { return Vec::new() };
+        let count = self.slide().animations.len();
+        let start = a.start;
+        let auto_rev = a.auto_reverse;
+        let rewind = a.rewind;
+        vec![
+            MenuItem::tr("pptx.anim.start.click")
+                .icon("mouse")
+                .checked(start == AnimationStart::OnClick)
+                .on(move |e, _, cx| e.set_effect_start_at(index, AnimationStart::OnClick, cx))
+                .into(),
+            MenuItem::tr("pptx.anim.start.with")
+                .icon("play_arrow")
+                .checked(start == AnimationStart::WithPrevious)
+                .on(move |e, _, cx| e.set_effect_start_at(index, AnimationStart::WithPrevious, cx))
+                .into(),
+            MenuItem::tr("pptx.anim.start.after")
+                .icon("schedule")
+                .checked(start == AnimationStart::AfterPrevious)
+                .on(move |e, _, cx| e.set_effect_start_at(index, AnimationStart::AfterPrevious, cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.anim.options-dialog")
+                .icon("tune")
+                .on(move |e, _, cx| e.open_animation_options_panel(index, cx))
+                .into(),
+            MenuItem::tr("pptx.anim.autoreverse")
+                .checked(auto_rev)
+                .on(move |e, _, cx| e.toggle_effect_autoreverse_at(index, cx))
+                .into(),
+            MenuItem::tr("pptx.anim.rewind")
+                .checked(rewind)
+                .on(move |e, _, cx| e.toggle_effect_rewind_at(index, cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.smartart.move-up")
+                .icon("arrow_upward")
+                .disabled(index == 0)
+                .on(move |e, _, cx| e.move_effect(index, true, cx))
+                .into(),
+            MenuItem::tr("pptx.smartart.move-down")
+                .icon("arrow_downward")
+                .disabled(index + 1 >= count)
+                .on(move |e, _, cx| e.move_effect(index, false, cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.anim.copy")
+                .icon("content_copy")
+                .shortcut("⌥⇧⌘C")
+                .disabled(!self.can_copy_animations())
+                .on(|e, _, cx| e.copy_shape_animations(cx))
+                .into(),
+            MenuItem::tr("pptx.anim.paste")
+                .icon("content_paste")
+                .shortcut("⌥⇧⌘V")
+                .disabled(!self.can_paste_animations())
+                .on(|e, _, cx| e.paste_shape_animations(cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.anim.remove")
+                .icon("delete")
+                .on(move |e, _, cx| e.remove_effect(index, cx))
+                .into(),
+        ]
+    }
+
+    /// Open context menu for animation effect `index` in the Animation Pane at pointer `position`.
+    pub(crate) fn open_animation_pane_context_menu(&mut self, index: usize, position: gpui_kit::Point<gpui_kit::Pixels>, window: &mut gpui_kit::Window, cx: &mut Context<Self>) {
+        if let Some(a) = self.slide().animations.get(index) {
+            let shape_id = a.shape;
+            if !self.selected_ids().contains(&shape_id) {
+                self.set_selection(vec![shape_id]);
+                cx.notify();
+            }
+        }
+        let entries = self.animation_pane_context_menu_entries(index);
+        self.open_popup_entries(entries, position, window, cx);
     }
 
     /// アニメーション ウィンドウ: shown or hidden.
@@ -703,12 +818,17 @@ impl SlideEditor {
 
             let shape_id = a.shape;
             let mut card = v_flex()
+                .id(("anim-card", i))
                 .gap_1()
                 .p_2()
                 .rounded_md()
                 .border_1()
                 .border_color(if is_selected_shape { rgb(0x1976d2) } else { rgb(0xe0e0e0) })
-                .bg(if is_selected_shape { rgb(0xf0f7ff) } else { rgb(0xffffff) });
+                .bg(if is_selected_shape { rgb(0xf0f7ff) } else { rgb(0xffffff) })
+                .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    e.open_animation_pane_context_menu(i, event.position, window, cx);
+                }));
 
             let trigger_badge = match &a.trigger {
                 AnimationTrigger::None => None,
@@ -1009,6 +1129,50 @@ impl SlideEditor {
             effect_sec = effect_sec.child(dir_row);
         }
 
+        // 方向（Float の場合）
+        if let L::Float(current_side) = p.look {
+            let sides = [
+                (AnimationSide::Top, crate::shell::i18n::text("pptx.anim.opt.float-up")),
+                (AnimationSide::Bottom, crate::shell::i18n::text("pptx.anim.opt.float-down")),
+            ];
+            let mut dir_row = h_flex().items_center().gap_1().flex_wrap();
+            dir_row = dir_row.child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
+            for (s, label) in sides {
+                let is_cur = current_side == s;
+                dir_row = dir_row.child(
+                    Button::new(("anim-float-side", s as usize))
+                        .small()
+                        .ghost()
+                        .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
+                        .on_click(cx.listener(move |e, _, _, cx| e.set_panel_float_side(s, cx))),
+                );
+            }
+            effect_sec = effect_sec.child(dir_row);
+        }
+
+        // 方向（Wipe の場合）
+        if let L::Wipe(current_side) = p.look {
+            let sides = [
+                (AnimationSide::Bottom, crate::shell::i18n::text("pptx.anim.opt.wipe-bottom")),
+                (AnimationSide::Left, crate::shell::i18n::text("pptx.anim.opt.wipe-left")),
+                (AnimationSide::Right, crate::shell::i18n::text("pptx.anim.opt.wipe-right")),
+                (AnimationSide::Top, crate::shell::i18n::text("pptx.anim.opt.wipe-top")),
+            ];
+            let mut dir_row = h_flex().items_center().gap_1().flex_wrap();
+            dir_row = dir_row.child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
+            for (s, label) in sides {
+                let is_cur = current_side == s;
+                dir_row = dir_row.child(
+                    Button::new(("anim-wipe-side", s as usize))
+                        .small()
+                        .ghost()
+                        .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
+                        .on_click(cx.listener(move |e, _, _, cx| e.set_panel_wipe_side(s, cx))),
+                );
+            }
+            effect_sec = effect_sec.child(dir_row);
+        }
+
         // 方向（Motion の場合）
         if let L::Motion(cur_x, cur_y) = p.look {
             let dirs = [
@@ -1282,6 +1446,7 @@ impl SlideEditor {
     }
 
     /// 再生終了後に巻き戻す (rewind) of the selected shapes' effects.
+    #[allow(dead_code)]
     pub(crate) fn set_effect_rewind(&mut self, rewind: bool, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
             for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
@@ -1367,6 +1532,18 @@ impl SlideEditor {
                         a.look = L::Fly(side);
                         a.preset.1 = side_subtype(side);
                     }
+                    (L::Float(_), L::Float(side)) => {
+                        a.look = L::Float(side);
+                        a.preset = (25, if side == AnimationSide::Bottom { 2 } else { 1 });
+                    }
+                    (L::Wipe(_), L::Wipe(side)) => {
+                        a.look = L::Wipe(side);
+                        a.preset = (22, side_subtype(side));
+                    }
+                    (L::Zoom, L::Zoom) => {
+                        a.look = L::Zoom;
+                        a.preset = (24, 0);
+                    }
                     (L::Spin(_), L::Spin(by)) => {
                         a.look = L::Spin(by);
                         a.preset = (8, 0);
@@ -1396,14 +1573,14 @@ impl SlideEditor {
         });
     }
 
-    /// テキストの動き: the selected shapes' effects on the shape as a whole
-    /// (`by_paragraph` false) or one for each paragraph of its text (each
-    /// started by a click, the first as the effect was).
-    pub(crate) fn set_effect_text_build(&mut self, by_paragraph: bool, cx: &mut Context<Self>) {
+    /// テキストの動き: the selected shapes' effects on the shape as a whole (`Whole`), one for each paragraph of its text (each
+    /// started by a click, the first as the effect was), or on the text a word or a letter at a time (`Word`, `Letter`: one effect,
+    /// each next word or letter begins a tenth of the effect's time after the one before).
+    pub(crate) fn set_effect_text_build(&mut self, build: TextBuild, cx: &mut Context<Self>) {
         let counts: std::collections::HashMap<ShapeId, usize> = self.selected_shapes().into_iter().filter_map(|s| Some((s.id, s.text_body()?.paragraphs.len()))).collect();
         self.change_animations(cx, |all, selected| {
             for &shape in selected {
-                if by_paragraph {
+                if build == TextBuild::Paragraph {
                     let n = counts.get(&shape).copied().unwrap_or(0);
                     if n < 2 {
                         continue;
@@ -1414,6 +1591,7 @@ impl SlideEditor {
                             for k in 0..n {
                                 let mut each = a.clone();
                                 each.paragraph = Some((k as u32, k as u32));
+                                each.text_unit = None;
                                 if k > 0 {
                                     each.start = AnimationStart::OnClick;
                                     each.delay = 0;
@@ -1426,6 +1604,7 @@ impl SlideEditor {
                     }
                     *all = out;
                 } else {
+                    // The shape as a whole again: the paragraphs' effects are one.
                     let mut seen = false;
                     all.retain_mut(|a| {
                         if a.shape != shape || a.paragraph.is_none() {
@@ -1436,7 +1615,300 @@ impl SlideEditor {
                         a.paragraph = None;
                         keep
                     });
+                    let unit = match build {
+                        TextBuild::Word => Some((ibis_doc_model::TextUnit::Word, ibis_doc_model::UnitGap::Percent(10_000))),
+                        TextBuild::Letter => Some((ibis_doc_model::TextUnit::Letter, ibis_doc_model::UnitGap::Percent(10_000))),
+                        _ => None,
+                    };
+                    for a in all.iter_mut().filter(|a| a.shape == shape && a.paragraph.is_none() && a.chars.is_none()) {
+                        a.text_unit = unit;
+                    }
                 }
+            }
+        });
+    }
+
+    /// グラフの系列・カテゴリ別アニメーション: build the selected chart shapes' effects by series, category, or element.
+    pub(crate) fn set_effect_chart_build(&mut self, build: ibis_doc_model::ChartBuildStep, anim_bg: bool, cx: &mut Context<Self>) {
+        let chart_info: std::collections::HashMap<ShapeId, (usize, usize)> = self.selected_shapes().into_iter().filter_map(|s| {
+            if let ibis_doc_model::ShapeKind::Chart(c) = &s.kind {
+                let series_count = c.groups.iter().map(|g| g.series.len()).sum::<usize>().max(1);
+                let category_count = c.groups.iter().flat_map(|g| g.series.iter().map(|s| s.values.len())).max().unwrap_or(1);
+                Some((s.id, (series_count, category_count)))
+            } else {
+                None
+            }
+        }).collect();
+
+        self.change_animations(cx, |all, selected| {
+            for &shape in selected {
+                let Some(&(series_count, category_count)) = chart_info.get(&shape) else { continue };
+
+                // Find the first effect on this shape to use as base, or make a default appear entrance effect
+                let base = all.iter().find(|a| a.shape == shape).cloned().unwrap_or_else(|| effect(shape, C::Entrance, L::Appear));
+
+                let mut out = Vec::with_capacity(all.len() + series_count * category_count + 1);
+                let mut replaced = false;
+
+                let build_step_anims = {
+                    let mut anims = Vec::new();
+                    match build {
+                        ibis_doc_model::ChartBuildStep::AllAtOnce => {
+                            let mut a = base.clone();
+                            a.chart_element = None;
+                            a.chart_build = Some((ibis_doc_model::ChartBuildStep::AllAtOnce, anim_bg));
+                            anims.push(a);
+                        }
+                        ibis_doc_model::ChartBuildStep::Series => {
+                            if anim_bg {
+                                let mut bg = base.clone();
+                                bg.chart_element = Some(ibis_doc_model::ChartAnimationElement { series_idx: -1, category_idx: -1 });
+                                bg.chart_build = Some((ibis_doc_model::ChartBuildStep::Series, anim_bg));
+                                anims.push(bg);
+                            }
+                            for s in 0..series_count {
+                                let mut a = base.clone();
+                                if !anim_bg && s == 0 {
+                                    // keep base start
+                                } else {
+                                    a.start = AnimationStart::OnClick;
+                                    a.delay = 0;
+                                }
+                                a.chart_element = Some(ibis_doc_model::ChartAnimationElement { series_idx: s as i32, category_idx: -1 });
+                                a.chart_build = Some((ibis_doc_model::ChartBuildStep::Series, anim_bg));
+                                anims.push(a);
+                            }
+                        }
+                        ibis_doc_model::ChartBuildStep::Category => {
+                            if anim_bg {
+                                let mut bg = base.clone();
+                                bg.chart_element = Some(ibis_doc_model::ChartAnimationElement { series_idx: -1, category_idx: -1 });
+                                bg.chart_build = Some((ibis_doc_model::ChartBuildStep::Category, anim_bg));
+                                anims.push(bg);
+                            }
+                            for c in 0..category_count {
+                                let mut a = base.clone();
+                                if !anim_bg && c == 0 {
+                                    // keep base start
+                                } else {
+                                    a.start = AnimationStart::OnClick;
+                                    a.delay = 0;
+                                }
+                                a.chart_element = Some(ibis_doc_model::ChartAnimationElement { series_idx: -1, category_idx: c as i32 });
+                                a.chart_build = Some((ibis_doc_model::ChartBuildStep::Category, anim_bg));
+                                anims.push(a);
+                            }
+                        }
+                        ibis_doc_model::ChartBuildStep::SeriesEl => {
+                            if anim_bg {
+                                let mut bg = base.clone();
+                                bg.chart_element = Some(ibis_doc_model::ChartAnimationElement { series_idx: -1, category_idx: -1 });
+                                bg.chart_build = Some((ibis_doc_model::ChartBuildStep::SeriesEl, anim_bg));
+                                anims.push(bg);
+                            }
+                            let mut first = true;
+                            for s in 0..series_count {
+                                for c in 0..category_count {
+                                    let mut a = base.clone();
+                                    if !anim_bg && first {
+                                        // keep base start
+                                    } else {
+                                        a.start = AnimationStart::OnClick;
+                                        a.delay = 0;
+                                    }
+                                    first = false;
+                                    a.chart_element = Some(ibis_doc_model::ChartAnimationElement { series_idx: s as i32, category_idx: c as i32 });
+                                    a.chart_build = Some((ibis_doc_model::ChartBuildStep::SeriesEl, anim_bg));
+                                    anims.push(a);
+                                }
+                            }
+                        }
+                        ibis_doc_model::ChartBuildStep::CategoryEl => {
+                            if anim_bg {
+                                let mut bg = base.clone();
+                                bg.chart_element = Some(ibis_doc_model::ChartAnimationElement { series_idx: -1, category_idx: -1 });
+                                bg.chart_build = Some((ibis_doc_model::ChartBuildStep::CategoryEl, anim_bg));
+                                anims.push(bg);
+                            }
+                            let mut first = true;
+                            for c in 0..category_count {
+                                for s in 0..series_count {
+                                    let mut a = base.clone();
+                                    if !anim_bg && first {
+                                        // keep base start
+                                    } else {
+                                        a.start = AnimationStart::OnClick;
+                                        a.delay = 0;
+                                    }
+                                    first = false;
+                                    a.chart_element = Some(ibis_doc_model::ChartAnimationElement { series_idx: s as i32, category_idx: c as i32 });
+                                    a.chart_build = Some((ibis_doc_model::ChartBuildStep::CategoryEl, anim_bg));
+                                    anims.push(a);
+                                }
+                            }
+                        }
+                    }
+                    anims
+                };
+
+                for a in all.drain(..) {
+                    if a.shape == shape {
+                        if !replaced {
+                            out.extend(build_step_anims.clone());
+                            replaced = true;
+                        }
+                    } else {
+                        out.push(a);
+                    }
+                }
+                if !replaced {
+                    out.extend(build_step_anims);
+                }
+                *all = out;
+            }
+        });
+    }
+
+    /// スマートアートの要素別アニメーション: build the selected SmartArt diagram shapes' effects by element.
+    pub(crate) fn set_effect_diagram_build(&mut self, build: ibis_doc_model::DiagramBuildStep, cx: &mut Context<Self>) {
+        let slide = self.slide();
+        let dgm_info: std::collections::HashMap<ShapeId, Vec<ShapeId>> = self.selected_shapes().into_iter().filter_map(|s| {
+            if matches!(s.kind, ibis_doc_model::ShapeKind::Placeholder(ibis_doc_model::Placeholder::Diagram)) {
+                let attached = slide.attached_to(s.id);
+                Some((s.id, attached))
+            } else {
+                None
+            }
+        }).collect();
+
+        self.change_animations(cx, |all, selected| {
+            for &shape in selected {
+                let Some(attached) = dgm_info.get(&shape) else { continue };
+
+                // Find the first effect on this shape to use as base, or make a default appear entrance effect
+                let base = all.iter().find(|a| a.shape == shape).cloned().unwrap_or_else(|| effect(shape, C::Entrance, L::Appear));
+
+                let mut out = Vec::with_capacity(all.len() + attached.len() + 1);
+                let mut replaced = false;
+
+                let build_step_anims = {
+                    let mut anims = Vec::new();
+                    match build {
+                        ibis_doc_model::DiagramBuildStep::Whole => {
+                            let mut a = base.clone();
+                            a.dgm_element = None;
+                            a.dgm_build = Some(ibis_doc_model::DiagramBuildStep::Whole);
+                            anims.push(a);
+                        }
+                        ibis_doc_model::DiagramBuildStep::AllAtOnce => {
+                            if attached.is_empty() {
+                                let mut a = base.clone();
+                                a.dgm_element = None;
+                                a.dgm_build = Some(ibis_doc_model::DiagramBuildStep::AllAtOnce);
+                                anims.push(a);
+                            } else {
+                                for (i, &child_id) in attached.iter().enumerate() {
+                                    let mut a = base.clone();
+                                    if i > 0 {
+                                        a.start = AnimationStart::WithPrevious;
+                                        a.delay = 0;
+                                    }
+                                    a.dgm_element = Some(ibis_doc_model::DiagramAnimationElement {
+                                        id: child_id.0.to_string(),
+                                        bld_step: "sp".to_string(),
+                                    });
+                                    a.dgm_build = Some(ibis_doc_model::DiagramBuildStep::AllAtOnce);
+                                    anims.push(a);
+                                }
+                            }
+                        }
+                        ibis_doc_model::DiagramBuildStep::DepthByNode | ibis_doc_model::DiagramBuildStep::BreadthByNode => {
+                            // 1つずつ (One by One)
+                            if attached.is_empty() {
+                                let mut a = base.clone();
+                                a.dgm_element = None;
+                                a.dgm_build = Some(build);
+                                anims.push(a);
+                            } else {
+                                for (i, &child_id) in attached.iter().enumerate() {
+                                    let mut a = base.clone();
+                                    if i > 0 {
+                                        a.start = AnimationStart::OnClick;
+                                        a.delay = 0;
+                                    }
+                                    a.dgm_element = Some(ibis_doc_model::DiagramAnimationElement {
+                                        id: child_id.0.to_string(),
+                                        bld_step: "sp".to_string(),
+                                    });
+                                    a.dgm_build = Some(build);
+                                    anims.push(a);
+                                }
+                            }
+                        }
+                        ibis_doc_model::DiagramBuildStep::BreadthByLvl => {
+                            // レベルごと (Level at once)
+                            if attached.is_empty() {
+                                let mut a = base.clone();
+                                a.dgm_element = None;
+                                a.dgm_build = Some(build);
+                                anims.push(a);
+                            } else {
+                                for (i, &child_id) in attached.iter().enumerate() {
+                                    let mut a = base.clone();
+                                    if i > 0 {
+                                        a.start = AnimationStart::OnClick;
+                                        a.delay = 0;
+                                    }
+                                    a.dgm_element = Some(ibis_doc_model::DiagramAnimationElement {
+                                        id: child_id.0.to_string(),
+                                        bld_step: "sp".to_string(),
+                                    });
+                                    a.dgm_build = Some(build);
+                                    anims.push(a);
+                                }
+                            }
+                        }
+                        ibis_doc_model::DiagramBuildStep::DepthByBranch | ibis_doc_model::DiagramBuildStep::Cust => {
+                            // レベルで1つずつ (Level one by one / By branch)
+                            if attached.is_empty() {
+                                let mut a = base.clone();
+                                a.dgm_element = None;
+                                a.dgm_build = Some(build);
+                                anims.push(a);
+                            } else {
+                                for (i, &child_id) in attached.iter().enumerate() {
+                                    let mut a = base.clone();
+                                    if i > 0 {
+                                        a.start = AnimationStart::OnClick;
+                                        a.delay = 0;
+                                    }
+                                    a.dgm_element = Some(ibis_doc_model::DiagramAnimationElement {
+                                        id: child_id.0.to_string(),
+                                        bld_step: "sp".to_string(),
+                                    });
+                                    a.dgm_build = Some(build);
+                                    anims.push(a);
+                                }
+                            }
+                        }
+                    }
+                    anims
+                };
+
+                for a in all.drain(..) {
+                    if a.shape == shape {
+                        if !replaced {
+                            out.extend(build_step_anims.clone());
+                            replaced = true;
+                        }
+                    } else {
+                        out.push(a);
+                    }
+                }
+                if !replaced {
+                    out.extend(build_step_anims);
+                }
+                *all = out;
             }
         });
     }
@@ -1508,12 +1980,30 @@ fn look_id(class: C, look: L) -> &'static str {
         (C::Entrance, L::Fly(AnimationSide::Left)) => "pptx.anim.in.fly-left",
         (C::Entrance, L::Fly(AnimationSide::Right)) => "pptx.anim.in.fly-right",
         (C::Entrance, L::Fly(AnimationSide::Top)) => "pptx.anim.in.fly-top",
+        (C::Entrance, L::Float(AnimationSide::Top)) => "pptx.anim.in.float",
+        (C::Entrance, L::Float(AnimationSide::Bottom)) => "pptx.anim.in.float-down",
+        (C::Entrance, L::Float(_)) => "pptx.anim.in.float",
+        (C::Entrance, L::Wipe(AnimationSide::Bottom)) => "pptx.anim.in.wipe-bottom",
+        (C::Entrance, L::Wipe(AnimationSide::Left)) => "pptx.anim.in.wipe-left",
+        (C::Entrance, L::Wipe(AnimationSide::Right)) => "pptx.anim.in.wipe-right",
+        (C::Entrance, L::Wipe(AnimationSide::Top)) => "pptx.anim.in.wipe-top",
+        (C::Entrance, L::Zoom) => "pptx.anim.in.zoom",
+        (C::Entrance, L::Replay) => "pptx.anim.in.replay",
         (C::Exit, L::Appear) => "pptx.anim.out.disappear",
         (C::Exit, L::Fade) => "pptx.anim.out.fade",
         (C::Exit, L::Fly(AnimationSide::Bottom)) => "pptx.anim.out.fly-bottom",
         (C::Exit, L::Fly(AnimationSide::Left)) => "pptx.anim.out.fly-left",
         (C::Exit, L::Fly(AnimationSide::Right)) => "pptx.anim.out.fly-right",
         (C::Exit, L::Fly(AnimationSide::Top)) => "pptx.anim.out.fly-top",
+        (C::Exit, L::Float(AnimationSide::Bottom)) => "pptx.anim.out.float",
+        (C::Exit, L::Float(AnimationSide::Top)) => "pptx.anim.out.float-up",
+        (C::Exit, L::Float(_)) => "pptx.anim.out.float",
+        (C::Exit, L::Wipe(AnimationSide::Bottom)) => "pptx.anim.out.wipe-bottom",
+        (C::Exit, L::Wipe(AnimationSide::Left)) => "pptx.anim.out.wipe-left",
+        (C::Exit, L::Wipe(AnimationSide::Right)) => "pptx.anim.out.wipe-right",
+        (C::Exit, L::Wipe(AnimationSide::Top)) => "pptx.anim.out.wipe-top",
+        (C::Exit, L::Zoom) => "pptx.anim.out.zoom",
+        (C::Exit, L::Replay) => "pptx.anim.out.rewind",
         (C::Emphasis, L::Spin(_)) => "pptx.anim.em.spin",
         (C::Emphasis, L::Scale(..)) => "pptx.anim.em.grow",
         (C::Path, L::Motion(x, y)) if x == 0 && y > 0 => "pptx.anim.path.down",
@@ -1545,6 +2035,20 @@ pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
                 MenuItem::tr("pptx.anim.opt.fly-top").checked(current_side == AnimationSide::Top).on(|e, _, cx| e.set_shape_effect_option(L::Fly(AnimationSide::Top), cx)).into(),
             ]
         }
+        Some(L::Float(current_side)) => {
+            vec![
+                MenuItem::tr("pptx.anim.opt.float-up").checked(current_side == AnimationSide::Top).on(|e, _, cx| e.set_shape_effect_option(L::Float(AnimationSide::Top), cx)).into(),
+                MenuItem::tr("pptx.anim.opt.float-down").checked(current_side == AnimationSide::Bottom).on(|e, _, cx| e.set_shape_effect_option(L::Float(AnimationSide::Bottom), cx)).into(),
+            ]
+        }
+        Some(L::Wipe(current_side)) => {
+            vec![
+                MenuItem::tr("pptx.anim.opt.wipe-bottom").checked(current_side == AnimationSide::Bottom).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Bottom), cx)).into(),
+                MenuItem::tr("pptx.anim.opt.wipe-left").checked(current_side == AnimationSide::Left).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Left), cx)).into(),
+                MenuItem::tr("pptx.anim.opt.wipe-right").checked(current_side == AnimationSide::Right).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Right), cx)).into(),
+                MenuItem::tr("pptx.anim.opt.wipe-top").checked(current_side == AnimationSide::Top).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Top), cx)).into(),
+            ]
+        }
         Some(L::Spin(current_by)) => {
             vec![
                 MenuItem::tr("pptx.anim.opt.spin-360-cw").checked(current_by == 21_600_000).on(|e, _, cx| e.set_shape_effect_option(L::Spin(21_600_000), cx)).into(),
@@ -1571,6 +2075,35 @@ pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         }
         _ => Vec::new(),
     };
+    let is_chart = editor.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Chart(_)));
+    if is_chart && !mine.is_empty() {
+        if !items.is_empty() {
+            items.push(MenuEntry::Separator);
+        }
+        let current_chart_build = mine.iter().find_map(|a| a.chart_build).unwrap_or((ibis_doc_model::ChartBuildStep::AllAtOnce, true));
+        let (chart_step, chart_anim_bg) = current_chart_build;
+        items.push(MenuItem::tr("pptx.anim.chart.whole").checked(chart_step == ibis_doc_model::ChartBuildStep::AllAtOnce).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::AllAtOnce, chart_anim_bg, cx)).into());
+        items.push(MenuItem::tr("pptx.anim.chart.series").checked(chart_step == ibis_doc_model::ChartBuildStep::Series).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Series, chart_anim_bg, cx)).into());
+        items.push(MenuItem::tr("pptx.anim.chart.category").checked(chart_step == ibis_doc_model::ChartBuildStep::Category).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Category, chart_anim_bg, cx)).into());
+        items.push(MenuItem::tr("pptx.anim.chart.series-el").checked(chart_step == ibis_doc_model::ChartBuildStep::SeriesEl).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::SeriesEl, chart_anim_bg, cx)).into());
+        items.push(MenuItem::tr("pptx.anim.chart.category-el").checked(chart_step == ibis_doc_model::ChartBuildStep::CategoryEl).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::CategoryEl, chart_anim_bg, cx)).into());
+        if chart_step != ibis_doc_model::ChartBuildStep::AllAtOnce {
+            items.push(MenuEntry::Separator);
+            items.push(MenuItem::tr("pptx.anim.chart.anim-bg").checked(chart_anim_bg).on(move |e, _, cx| e.set_effect_chart_build(chart_step, !chart_anim_bg, cx)).into());
+        }
+    }
+    let is_diagram = editor.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Placeholder(ibis_doc_model::Placeholder::Diagram)));
+    if is_diagram && !mine.is_empty() {
+        if !items.is_empty() {
+            items.push(MenuEntry::Separator);
+        }
+        let current_dgm_build = mine.iter().find_map(|a| a.dgm_build).unwrap_or(ibis_doc_model::DiagramBuildStep::Whole);
+        items.push(MenuItem::tr("pptx.anim.dgm.whole").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::Whole).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::Whole, cx)).into());
+        items.push(MenuItem::tr("pptx.anim.dgm.all").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::AllAtOnce).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::AllAtOnce, cx)).into());
+        items.push(MenuItem::tr("pptx.anim.dgm.one-by-one").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByNode).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByNode, cx)).into());
+        items.push(MenuItem::tr("pptx.anim.dgm.level-at-once").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::BreadthByLvl).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::BreadthByLvl, cx)).into());
+        items.push(MenuItem::tr("pptx.anim.dgm.level-one-by-one").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByBranch).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByBranch, cx)).into());
+    }
     if !mine.is_empty() {
         if !items.is_empty() {
             items.push(MenuEntry::Separator);
@@ -1597,23 +2130,34 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         let on = mine.len() == selected.len() && mine.iter().all(|a| a.class == class && a.look == look);
         MenuItem::tr(id).checked(on).on(move |e, _, cx| e.set_shape_effect(class, look, cx)).into()
     };
-    let entrance = vec![
+    let mut entrance = vec![
         effect_item("pptx.anim.in.appear", C::Entrance, L::Appear),
         effect_item("pptx.anim.in.fade", C::Entrance, L::Fade),
         effect_item("pptx.anim.in.fly-bottom", C::Entrance, L::Fly(AnimationSide::Bottom)),
         effect_item("pptx.anim.in.fly-left", C::Entrance, L::Fly(AnimationSide::Left)),
         effect_item("pptx.anim.in.fly-right", C::Entrance, L::Fly(AnimationSide::Right)),
         effect_item("pptx.anim.in.fly-top", C::Entrance, L::Fly(AnimationSide::Top)),
+        effect_item("pptx.anim.in.float", C::Entrance, L::Float(AnimationSide::Top)),
+        effect_item("pptx.anim.in.wipe", C::Entrance, L::Wipe(AnimationSide::Bottom)),
+        effect_item("pptx.anim.in.zoom", C::Entrance, L::Zoom),
     ];
     let emphasis = vec![effect_item("pptx.anim.em.spin", C::Emphasis, L::Spin(21_600_000)), effect_item("pptx.anim.em.grow", C::Emphasis, L::Scale(150_000, 150_000))];
-    let exit = vec![
+    let mut exit = vec![
         effect_item("pptx.anim.out.disappear", C::Exit, L::Appear),
         effect_item("pptx.anim.out.fade", C::Exit, L::Fade),
         effect_item("pptx.anim.out.fly-bottom", C::Exit, L::Fly(AnimationSide::Bottom)),
         effect_item("pptx.anim.out.fly-left", C::Exit, L::Fly(AnimationSide::Left)),
         effect_item("pptx.anim.out.fly-right", C::Exit, L::Fly(AnimationSide::Right)),
         effect_item("pptx.anim.out.fly-top", C::Exit, L::Fly(AnimationSide::Top)),
+        effect_item("pptx.anim.out.float", C::Exit, L::Float(AnimationSide::Bottom)),
+        effect_item("pptx.anim.out.wipe", C::Exit, L::Wipe(AnimationSide::Bottom)),
+        effect_item("pptx.anim.out.zoom", C::Exit, L::Zoom),
     ];
+    let is_ink = editor.selected_shapes().iter().any(|s| crate::xlsx::ink::stroke_points(s).is_some());
+    if is_ink {
+        entrance.push(effect_item("pptx.anim.in.replay", C::Entrance, L::Replay));
+        exit.push(effect_item("pptx.anim.out.rewind", C::Exit, L::Replay));
+    }
     let path = vec![
         effect_item("pptx.anim.path.down", C::Path, L::Motion(0, 25_000)),
         effect_item("pptx.anim.path.left", C::Path, L::Motion(-25_000, 0)),
@@ -1668,11 +2212,86 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     .collect();
     let by_paragraph = has && mine.iter().all(|a| a.paragraph.is_some());
     let builds = vec![
-        MenuItem::tr("pptx.anim.build.whole").disabled(!has).checked(has && mine.iter().all(|a| a.paragraph.is_none())).on(|e, _, cx| e.set_effect_text_build(false, cx)).into(),
+        MenuItem::tr("pptx.anim.build.whole").disabled(!has).checked(has && mine.iter().all(|a| a.paragraph.is_none() && a.text_unit.is_none())).on(|e, _, cx| e.set_effect_text_build(TextBuild::Whole, cx)).into(),
         MenuItem::tr("pptx.anim.build.paragraph")
             .disabled(!has || !editor.selected_shapes().iter().any(|s| s.text_body().is_some_and(|b| b.paragraphs.len() > 1)))
             .checked(by_paragraph)
-            .on(|e, _, cx| e.set_effect_text_build(true, cx))
+            .on(|e, _, cx| e.set_effect_text_build(TextBuild::Paragraph, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.build.word")
+            .disabled(!has || !editor.selected_shapes().iter().any(|s| s.text_body().is_some()))
+            .checked(has && mine.iter().all(|a| a.text_unit.is_some_and(|(u, _)| u == ibis_doc_model::TextUnit::Word)))
+            .on(|e, _, cx| e.set_effect_text_build(TextBuild::Word, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.build.letter")
+            .disabled(!has || !editor.selected_shapes().iter().any(|s| s.text_body().is_some()))
+            .checked(has && mine.iter().all(|a| a.text_unit.is_some_and(|(u, _)| u == ibis_doc_model::TextUnit::Letter)))
+            .on(|e, _, cx| e.set_effect_text_build(TextBuild::Letter, cx))
+            .into(),
+    ];
+    let is_chart = editor.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Chart(_)));
+    let current_chart_build = mine.iter().find_map(|a| a.chart_build).unwrap_or((ibis_doc_model::ChartBuildStep::AllAtOnce, true));
+    let (chart_step, chart_anim_bg) = current_chart_build;
+    let chart_builds = vec![
+        MenuItem::tr("pptx.anim.chart.whole")
+            .disabled(!has || !is_chart)
+            .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::AllAtOnce)
+            .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::AllAtOnce, chart_anim_bg, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.chart.series")
+            .disabled(!has || !is_chart)
+            .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::Series)
+            .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Series, chart_anim_bg, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.chart.category")
+            .disabled(!has || !is_chart)
+            .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::Category)
+            .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Category, chart_anim_bg, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.chart.series-el")
+            .disabled(!has || !is_chart)
+            .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::SeriesEl)
+            .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::SeriesEl, chart_anim_bg, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.chart.category-el")
+            .disabled(!has || !is_chart)
+            .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::CategoryEl)
+            .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::CategoryEl, chart_anim_bg, cx))
+            .into(),
+        MenuEntry::Separator,
+        MenuItem::tr("pptx.anim.chart.anim-bg")
+            .disabled(!has || !is_chart || chart_step == ibis_doc_model::ChartBuildStep::AllAtOnce)
+            .checked(is_chart && chart_anim_bg)
+            .on(move |e, _, cx| e.set_effect_chart_build(chart_step, !chart_anim_bg, cx))
+            .into(),
+    ];
+    let is_diagram = editor.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Placeholder(ibis_doc_model::Placeholder::Diagram)));
+    let current_dgm_build = mine.iter().find_map(|a| a.dgm_build).unwrap_or(ibis_doc_model::DiagramBuildStep::Whole);
+    let dgm_builds = vec![
+        MenuItem::tr("pptx.anim.dgm.whole")
+            .disabled(!has || !is_diagram)
+            .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::Whole)
+            .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::Whole, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.dgm.all")
+            .disabled(!has || !is_diagram)
+            .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::AllAtOnce)
+            .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::AllAtOnce, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.dgm.one-by-one")
+            .disabled(!has || !is_diagram)
+            .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByNode)
+            .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByNode, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.dgm.level-at-once")
+            .disabled(!has || !is_diagram)
+            .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::BreadthByLvl)
+            .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::BreadthByLvl, cx))
+            .into(),
+        MenuItem::tr("pptx.anim.dgm.level-one-by-one")
+            .disabled(!has || !is_diagram)
+            .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByBranch)
+            .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByBranch, cx))
             .into(),
     ];
     let after_effect = mine.first().map(|a| a.after_effect);
@@ -1692,20 +2311,30 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     })
     .collect();
     let add_item = |id: &'static str, class: C, look: L| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(&id["add.".len()..])).on(move |e, _, cx| e.add_shape_effect(class, look, cx)).into() };
-    let add = vec![
+    let mut add = vec![
         add_item("add.pptx.anim.in.appear", C::Entrance, L::Appear),
         add_item("add.pptx.anim.in.fade", C::Entrance, L::Fade),
         add_item("add.pptx.anim.in.fly-bottom", C::Entrance, L::Fly(AnimationSide::Bottom)),
+        add_item("add.pptx.anim.in.float", C::Entrance, L::Float(AnimationSide::Top)),
+        add_item("add.pptx.anim.in.wipe", C::Entrance, L::Wipe(AnimationSide::Bottom)),
+        add_item("add.pptx.anim.in.zoom", C::Entrance, L::Zoom),
         add_item("add.pptx.anim.em.spin", C::Emphasis, L::Spin(21_600_000)),
         add_item("add.pptx.anim.em.grow", C::Emphasis, L::Scale(150_000, 150_000)),
         add_item("add.pptx.anim.out.disappear", C::Exit, L::Appear),
         add_item("add.pptx.anim.out.fade", C::Exit, L::Fade),
         add_item("add.pptx.anim.out.fly-bottom", C::Exit, L::Fly(AnimationSide::Bottom)),
+        add_item("add.pptx.anim.out.float", C::Exit, L::Float(AnimationSide::Bottom)),
+        add_item("add.pptx.anim.out.wipe", C::Exit, L::Wipe(AnimationSide::Bottom)),
+        add_item("add.pptx.anim.out.zoom", C::Exit, L::Zoom),
         add_item("add.pptx.anim.path.down", C::Path, L::Motion(0, 25_000)),
         add_item("add.pptx.anim.path.left", C::Path, L::Motion(-25_000, 0)),
         add_item("add.pptx.anim.path.right", C::Path, L::Motion(25_000, 0)),
         add_item("add.pptx.anim.path.up", C::Path, L::Motion(0, -25_000)),
     ];
+    if is_ink {
+        add.insert(6, add_item("add.pptx.anim.in.replay", C::Entrance, L::Replay));
+        add.push(add_item("add.pptx.anim.out.rewind", C::Exit, L::Replay));
+    }
     vec![
         MenuItem::tr("pptx.anim.preview").disabled(editor.slide().animations.is_empty()).on(|e, w, cx| e.start_slideshow(w, cx)).into(),
         MenuEntry::Separator,
@@ -1724,6 +2353,8 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         Submenu::tr("pptx.anim.smooth", "water", smooths).into(),
         Submenu::tr("pptx.anim.after", "visibility_off", after_effects).into(),
         Submenu::tr("pptx.anim.build", "format_list_bulleted", builds).into(),
+        Submenu::tr("pptx.anim.chart-build", "bar_chart", chart_builds).into(),
+        Submenu::tr("pptx.anim.dgm-build", "account_tree", dgm_builds).into(),
         Submenu::tr("pptx.anim.trigger", "touch_app", {
             let slide = editor.slide();
             let mut shape_click_items = Vec::new();

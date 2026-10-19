@@ -76,6 +76,52 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// ページ レイアウト > 拡大縮小印刷 > 横 (`xlsx.scale-width-*`):
+    /// `pages == 0` は自動、1 以上はそのページ数に合わせて横幅を縮小する.
+    pub(crate) fn set_print_fit_width(&mut self, pages: u32, cx: &mut Context<Self>) {
+        self.set_print(
+            move |p| {
+                p.fit_to = match (pages, p.fit_to) {
+                    (0, Some((_, 0)) | None) => None,
+                    (w, Some((_, h))) => Some((w, h)),
+                    (w, None) => Some((w, 0)),
+                };
+            },
+            None,
+            cx,
+        );
+    }
+
+    /// ページ レイアウト > 拡大縮小印刷 > 縦 (`xlsx.scale-height-*`):
+    /// `pages == 0` は自動、1 以上はそのページ数に合わせて縦幅を縮小する.
+    pub(crate) fn set_print_fit_height(&mut self, pages: u32, cx: &mut Context<Self>) {
+        self.set_print(
+            move |p| {
+                p.fit_to = match (pages, p.fit_to) {
+                    (0, Some((0, _)) | None) => None,
+                    (h, Some((w, _))) => Some((w, h)),
+                    (h, None) => Some((0, h)),
+                };
+            },
+            None,
+            cx,
+        );
+    }
+
+    /// ページ レイアウト > 拡大縮小印刷 > 拡大/縮小 (`xlsx.scale-*`):
+    /// ページ数指定 (`fit_to`) を解除し、指定の倍率 (%) を設定する.
+    pub(crate) fn set_print_scale_percent(&mut self, scale: u32, cx: &mut Context<Self>) {
+        let clamped = scale.clamp(10, 400);
+        self.set_print(
+            move |p| {
+                p.fit_to = None;
+                p.scale = clamped;
+            },
+            None,
+            cx,
+        );
+    }
+
     /// A page break before the selected row (or taken off if there is one).
     pub(crate) fn toggle_row_break(&mut self, cx: &mut Context<Self>) {
         let Some((_, row)) = self.current_cell() else { return };
@@ -94,6 +140,33 @@ impl SlideEditor {
             None,
             cx,
         );
+    }
+
+    /// 印刷範囲の設定: the selected range as the sheet's print area.
+    pub(crate) fn set_print_area_from_selection(&mut self, cx: &mut Context<Self>) {
+        let range = self.selected_range();
+        self.set_print(|_| {}, Some(range), cx);
+    }
+
+    /// 印刷範囲に追加: expand the sheet's print area to include the selected range.
+    pub(crate) fn add_to_print_area_from_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(range) = self.selected_range() else { return };
+        let existing = self.current_sheet().and_then(|(_, s)| s.print_area);
+        let new_area = match existing {
+            Some(old) => ibis_doc_model::CellRange {
+                first_column: old.first_column.min(range.first_column),
+                last_column: old.last_column.max(range.last_column),
+                first_row: old.first_row.min(range.first_row),
+                last_row: old.last_row.max(range.last_row),
+            },
+            None => range,
+        };
+        self.set_print(|_| {}, Some(Some(new_area)), cx);
+    }
+
+    /// 印刷範囲のクリア: clear the sheet's print area.
+    pub(crate) fn clear_print_area(&mut self, cx: &mut Context<Self>) {
+        self.set_print(|_| {}, Some(None), cx);
     }
 
     /// The sheet's print titles name: its rows (from 0), if any.
@@ -210,11 +283,12 @@ impl SlideEditor {
             )
             .child(
                 row("_xlsx.scale")
-                    .child(choice("scale-100".into(), "100%", print.fit_to.is_none() && print.scale == 100, Box::new(|this, cx| this.set_print(|p| {
-                        p.fit_to = None;
-                        p.scale = 100;
-                    }, None, cx))))
-                    .child(choice("fit-one".into(), "_xlsx.fit-to-1-page", print.fit_to == Some((1, 1)), Box::new(|this, cx| this.set_print(|p| p.fit_to = Some((1, 1)), None, cx)))),
+                    .child(choice("scale-100".into(), "100%", print.fit_to.is_none() && print.scale == 100, Box::new(|this, cx| this.set_print_scale_percent(100, cx))))
+                    .child(choice("scale-80".into(), "80%", print.fit_to.is_none() && print.scale == 80, Box::new(|this, cx| this.set_print_scale_percent(80, cx))))
+                    .child(choice("scale-50".into(), "50%", print.fit_to.is_none() && print.scale == 50, Box::new(|this, cx| this.set_print_scale_percent(50, cx))))
+                    .child(choice("fit-one".into(), "_xlsx.fit-to-1-page", print.fit_to == Some((1, 1)), Box::new(|this, cx| this.set_print(|p| p.fit_to = Some((1, 1)), None, cx))))
+                    .child(choice("fit-width-1".into(), "xlsx.scale-width-1", print.fit_to.map(|(w, _)| w) == Some(1), Box::new(|this, cx| this.set_print_fit_width(1, cx))))
+                    .child(choice("fit-height-1".into(), "xlsx.scale-height-1", print.fit_to.map(|(_, h)| h) == Some(1), Box::new(|this, cx| this.set_print_fit_height(1, cx)))),
             )
             .child(
                 row("xlsx.print-what")

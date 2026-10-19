@@ -476,3 +476,8 @@ fix.update.failed.detail	Please download and install it again from the download 
 fix.update.setting	Check for updates at startup
 fix.update.setting.note	If there is a newer version, ibisOffice downloads it and asks whether to update.
 fix.update.log-path	Update log: {log}
+fix.formula-bar.expand	Expand Formula Bar
+fix.formula-bar.collapse	Collapse Formula Bar
+xlsx.chart-type	Chart Type
+fix.validation.continue	Continue?
+fix.validation.cancel	Cancel

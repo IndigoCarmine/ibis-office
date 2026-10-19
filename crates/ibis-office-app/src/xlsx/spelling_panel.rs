@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 
 use gpui_kit::*;
-use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, Sheet, SheetCommand};
+use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, Sheet, SheetCommand, ShapeId, Slide};
 
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
@@ -29,6 +29,8 @@ pub(crate) struct SpellPanel {
 pub(crate) struct Issue {
     pub(crate) row: u32,
     pub(crate) column: u32,
+    /// The shape whose text the word is in (`row` and `column` are 0 then).
+    pub(crate) shape: Option<ShapeId>,
     /// Character offsets in the cell's text.
     pub(crate) start: usize,
     pub(crate) end: usize,
@@ -55,9 +57,9 @@ pub(crate) fn scan(sheet: &Sheet, range: Option<CellRange>, from: (u32, u32), ig
     let mut found = Vec::new();
     for c in cells {
         let Some(text) = checked_text(c) else { continue };
-        for m in crate::spelling::check(text, None) {
+        for m in crate::spelling::check_by_settings(text, None) {
             if !ignored.contains(&m.word) {
-                found.push(Issue { row: c.row, column: c.column, start: m.start, end: m.end, word: m.word });
+                found.push(Issue { row: c.row, column: c.column, shape: None, start: m.start, end: m.end, word: m.word });
             }
         }
     }
@@ -68,14 +70,35 @@ pub(crate) fn scan(sheet: &Sheet, range: Option<CellRange>, from: (u32, u32), ig
     found
 }
 
+/// The cells' words, and (a check of the whole sheet) after them the words in
+/// the text of the sheet's shapes (text boxes, shapes), back to front as drawn.
+pub(crate) fn scan_all(slide: &Slide, sheet: &Sheet, range: Option<CellRange>, from: (u32, u32), ignored: &HashSet<String>) -> Vec<Issue> {
+    let mut found = scan(sheet, range, from, ignored);
+    if range.is_none() {
+        for shape in slide.shown_shapes() {
+            let Some(body) = shape.text_body() else { continue };
+            for m in crate::spelling::check_by_settings(&body.text(), None) {
+                if !ignored.contains(&m.word) {
+                    found.push(Issue { row: 0, column: 0, shape: Some(shape.id), start: m.start, end: m.end, word: m.word });
+                }
+            }
+        }
+    }
+    found
+}
+
 impl SlideEditor {
+    fn spelling_scan(&self, range: Option<CellRange>, from: (u32, u32), ignored: &HashSet<String>) -> Vec<Issue> {
+        self.current_sheet().map(|(_, sheet)| scan_all(self.slide(), sheet, range, from, ignored)).unwrap_or_default()
+    }
+
     /// ツール > スペル > スペルチェック…: the panel, at the first word.
     pub(crate) fn open_sheet_spelling(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let Some((column, row)) = self.current_cell() else { return };
         let range = self.selected_range().filter(|r| r.first_row != r.last_row || r.first_column != r.last_column);
         let ignored = HashSet::new();
-        let issues = self.current_sheet().map(|(_, sheet)| scan(sheet, range, (row, column), &ignored)).unwrap_or_default();
+        let issues = self.spelling_scan(range, (row, column), &ignored);
         if let Some(s) = self.sheet_state_mut() {
             s.find = None;
             s.names = None;
@@ -114,15 +137,24 @@ impl SlideEditor {
             }
             return cx.notify();
         };
-        let suggestions = self
-            .current_sheet()
-            .and_then(|(_, sheet)| sheet.cell(issue.row, issue.column).and_then(checked_text).map(|t| crate::spelling::suggestions(t, issue.start, issue.end, None)))
-            .unwrap_or_default();
         let slide = self.current_slide;
-        self.selection = None;
-        let s = self.wb_mut();
-        s.cells.insert(slide, (issue.column, issue.row));
-        s.cell_ends.remove(&slide);
+        let suggestions = match issue.shape {
+            Some(id) => self.slide().shape(id).and_then(|s| s.text_body()).map(|b| crate::spelling::suggestions(&b.text(), issue.start, issue.end, None)).unwrap_or_default(),
+            None => self
+                .current_sheet()
+                .and_then(|(_, sheet)| sheet.cell(issue.row, issue.column).and_then(checked_text).map(|t| crate::spelling::suggestions(t, issue.start, issue.end, None)))
+                .unwrap_or_default(),
+        };
+        match issue.shape {
+            // A shape's word: the shape selected.
+            Some(id) => self.set_selection(vec![id]),
+            None => {
+                self.set_selection(Vec::new());
+                let s = self.wb_mut();
+                s.cells.insert(slide, (issue.column, issue.row));
+                s.cell_ends.remove(&slide);
+            }
+        }
         if let Some(p) = self.sheet_state_mut().and_then(|s| s.spelling.as_mut()) {
             p.current = index;
             p.suggestions = suggestions;
@@ -143,12 +175,18 @@ impl SlideEditor {
     /// The checks made again (after a change), at the word number `near`.
     fn sheet_spelling_rescan(&mut self, near: usize, cx: &mut Context<Self>) {
         let Some((ignored, range, from)) = self.sheet_state().and_then(|s| s.spelling.as_ref()).map(|p| (p.ignored.clone(), p.range, p.from)) else { return };
-        let issues = self.current_sheet().map(|(_, sheet)| scan(sheet, range, from, &ignored)).unwrap_or_default();
+        let issues = self.spelling_scan(range, from, &ignored);
         let index = near.min(issues.len().saturating_sub(1));
         if let Some(p) = self.sheet_state_mut().and_then(|s| s.spelling.as_mut()) {
             p.issues = issues;
         }
         self.sheet_spelling_goto(index, cx);
+    }
+
+    /// After an undo or redo: the panel's list checked again, at the word shown.
+    pub(crate) fn sheet_spelling_refresh(&mut self, cx: &mut Context<Self>) {
+        let Some(at) = self.sheet_state().and_then(|s| s.spelling.as_ref()).map(|p| p.current) else { return };
+        self.sheet_spelling_rescan(at, cx);
     }
 
     /// 変更 (or すべて変更: the same word everywhere): the word replaced by `text`, in one step.
@@ -161,6 +199,19 @@ impl SlideEditor {
         hits.sort_by_key(|i| (i.row, i.column, std::cmp::Reverse(i.start)));
         let mut edits: Vec<CellEdit> = Vec::new();
         let mut stale = false;
+        let mut commands: Vec<Command> = Vec::new();
+        // The words in shapes' texts (back to front inside a text).
+        for hit in hits.iter().filter(|h| h.shape.is_some()) {
+            let id = hit.shape.expect("a shape");
+            let body_text = self.slide().shape(id).and_then(|s| s.text_body()).map(|b| b.text());
+            let ok = body_text.is_some_and(|t| t.chars().skip(hit.start).take(hit.end - hit.start).collect::<String>() == hit.word);
+            if !ok {
+                stale = true;
+                break;
+            }
+            commands.push(Command::ReplaceText { slide: self.current_slide, shape: id, at: hit.start, remove: hit.end - hit.start, insert: text.into() });
+        }
+        hits.retain(|h| h.shape.is_none());
         if let Some((_, sheet)) = self.current_sheet() {
             let mut current: Option<(u32, u32, Vec<char>)> = None;
             for hit in &hits {
@@ -185,9 +236,12 @@ impl SlideEditor {
                 edits.push(CellEdit { row, column, input: CellInput::Value(CellValue::Text(chars.into_iter().collect())) });
             }
         }
-        if !stale && !edits.is_empty() {
+        if !stale && (!edits.is_empty() || !commands.is_empty()) {
             let slide = self.current_slide;
-            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })]) {
+            if !edits.is_empty() {
+                commands.insert(0, Command::Sheet(SheetCommand::SetCells { slide, edits }));
+            }
+            if let Err(err) = self.document.execute(commands) {
                 log::warn!("spelling change rejected: {err}");
             }
         }

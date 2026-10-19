@@ -230,10 +230,11 @@ impl Preload {
 
     /// Whether `id` refers to a media format that can be drawn as an image.
     pub(crate) fn is_image_supported(&self, id: MediaId) -> bool {
-        self.shared.media.iter().find(|m| m.id == id).is_some_and(|m| image_format(m.format).is_some() || m.format == MediaFormat::Emf)
+        self.shared.media.iter().find(|m| m.id == id).is_some_and(|m| image_format(m.format).is_some() || matches!(m.format, MediaFormat::Emf | MediaFormat::Wmf))
     }
 
     /// The pictures made from the media, waiting until all are.
+    #[allow(dead_code)]
     pub(crate) fn prepared(&self) -> HashMap<MediaId, Prepared> {
         let mut state = self.lock();
         while state.prepared_count < self.shared.media.len() {
@@ -450,20 +451,32 @@ fn prepare(media: &Media) -> Option<Prepared> {
 }
 
 /// A picture GPUI can draw, as its encoding and bytes. Metafiles give the
-/// bitmap they carry.
+/// bitmap they carry when they draw nothing.
 fn decode(media: &Media) -> Option<(ImageFormat, Vec<u8>)> {
-    if media.format == MediaFormat::Emf {
-        let (format, bytes) = ibis_emf::extract_image(&media.data)?;
-        let format = match format {
-            ibis_emf::ImageFormat::Png => ImageFormat::Png,
-            ibis_emf::ImageFormat::Jpeg => ImageFormat::Jpeg,
-            ibis_emf::ImageFormat::Gif => ImageFormat::Gif,
-            ibis_emf::ImageFormat::Bmp => ImageFormat::Bmp,
-            ibis_emf::ImageFormat::Tiff => ImageFormat::Tiff,
-        };
-        return Some((format, bytes));
+    match media.format {
+        MediaFormat::Emf => {
+            // The bitmap when that is all the metafile holds, else what it draws as SVG, else a bitmap it carries.
+            match ibis_emf::emf_picture(&media.data) {
+                Some(ibis_emf::Picture::Svg(svg)) => return Some((ImageFormat::Svg, svg.into_bytes())),
+                Some(ibis_emf::Picture::Image(format, bytes)) => return Some((metafile_image_format(format), bytes)),
+                None => {}
+            }
+            let (format, bytes) = ibis_emf::extract_image(&media.data)?;
+            Some((metafile_image_format(format), bytes))
+        }
+        MediaFormat::Wmf => ibis_emf::wmf_to_svg(&media.data).map(|svg| (ImageFormat::Svg, svg.into_bytes())),
+        _ => Some((image_format(media.format)?, media.data.to_vec())),
     }
-    Some((image_format(media.format)?, media.data.to_vec()))
+}
+
+fn metafile_image_format(format: ibis_emf::ImageFormat) -> ImageFormat {
+    match format {
+        ibis_emf::ImageFormat::Png => ImageFormat::Png,
+        ibis_emf::ImageFormat::Jpeg => ImageFormat::Jpeg,
+        ibis_emf::ImageFormat::Gif => ImageFormat::Gif,
+        ibis_emf::ImageFormat::Bmp => ImageFormat::Bmp,
+        ibis_emf::ImageFormat::Tiff => ImageFormat::Tiff,
+    }
 }
 
 fn image_format(format: MediaFormat) -> Option<ImageFormat> {

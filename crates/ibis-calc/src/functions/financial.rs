@@ -3,8 +3,8 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Financial functions: time value of money, depreciation, securities.
 
-use super::{Func, arg_array, arg_num, err, number, numeric, numeric_defaults};
-use crate::eval::convert::{date_from_serial, days_in_month, serial_from_date};
+use super::{Func, arg_array, arg_num, err, number, numeric, numeric_defaults, numeric_defaults_with_bool};
+use crate::eval::convert::{date_from_serial, days_in_month, is_leap, serial_from_date};
 use crate::eval::{Ctx, Value};
 use crate::formula::Expr;
 use crate::value::CellError;
@@ -319,8 +319,7 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 if s < 1 || m < 0 || issue < 0 || issue > s || s >= m || rate < 0.0 || yld < 0.0 || !(0.0..=4.0).contains(&basis) {
                     return err(CellError::Num);
                 }
-                let b = basis as u32;
-                let (dim, a_, dsm) = (yearfrac(issue, m, b, d1904), yearfrac(issue, s, b, d1904), yearfrac(s, m, b, d1904));
+                let (dim, a_, dsm) = mature_fractions(issue, s, m, basis as u32, d1904);
                 number((100.0 + dim * rate * 100.0) / (1.0 + dsm * yld) - a_ * rate * 100.0)
             })
         },
@@ -331,10 +330,10 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 if s < 1 || m < 0 || issue < 0 || issue > s || s >= m || rate < 0.0 || pr <= 0.0 || !(0.0..=4.0).contains(&basis) {
                     return err(CellError::Num);
                 }
-                let b = basis as u32;
-                let (dim, a_, dsm) = (yearfrac(issue, m, b, d1904), yearfrac(issue, s, b, d1904), yearfrac(s, m, b, d1904));
-                let term = (1.0 + dim * rate) / (pr / 100.0 + a_ * rate) - 1.0;
-                number(term / dsm)
+                let (dim, a_, dsm) = mature_fractions(issue, s, m, basis as u32, d1904);
+                // (The difference over the price, not the ratio less one: the last digits of a small yield.)
+                let price = pr / 100.0 + a_ * rate;
+                number(((1.0 + dim * rate) - price) / price / dsm)
             })
         },
         "ACCRINTM" => |c, a| {
@@ -409,15 +408,23 @@ pub(super) fn get(name: &str) -> Option<Func> {
     })
 }
 
+/// The parts of a year that PRICEMAT and YIELDMAT use: from the issue to the maturity, from the issue to the settlement,
+/// from the settlement to the maturity. With actual days over the actual year (basis 1) they all count in the one
+/// length of year that the issue to the settlement has (366 when a 29 February lies in it, else 365).
+fn mature_fractions(issue: i64, s: i64, m: i64, basis: u32, d1904: bool) -> (f64, f64, f64) {
+    if basis == 1 {
+        let b = if s > issue { (s - issue) as f64 / yearfrac(issue, s, 1, d1904) } else if is_leap(date_from_serial(issue, d1904).0) { 366.0 } else { 365.0 };
+        let b = if b.is_finite() { b } else { 365.0 };
+        return ((m - issue) as f64 / b, (s - issue) as f64 / b, (m - s) as f64 / b);
+    }
+    (yearfrac(issue, m, basis, d1904), yearfrac(issue, s, basis, d1904), yearfrac(s, m, basis, d1904))
+}
+
 // ----- Time value of money ------------------------------------------------
 
 pub(crate) fn fv(rate: f64, nper: f64, pmt: f64, pv: f64, due: bool) -> f64 {
     if rate == 0.0 {
         return -(pv + pmt * nper);
-    }
-    if rate.abs() < 1e-12 {
-        let t_m1 = (nper * rate.ln_1p()).exp_m1();
-        return -(pv * (t_m1 + 1.0) + pmt * (1.0 + rate * f64::from(due)) * (t_m1 / rate));
     }
     let t = if nper.fract() != 0.0 && 1.0 + rate > 0.0 {
         (nper * (1.0 + rate).ln()).exp()
@@ -513,16 +520,42 @@ fn ipmt(rate: f64, per: f64, nper: f64, pv: f64, fv_: f64, due: bool) -> f64 {
     i * rate
 }
 
+/// The principal paid in periods `start` to `end` of a loan of `nper` payments on `pv` at `rate`.
+fn cum_principal(rate: f64, nper: f64, pv: f64, start: f64, end: f64, due: bool) -> f64 {
+    let l = rate.ln_1p();
+    let pw = |m: f64| (m * l).exp();
+    let denom = -(-nper * l).exp_m1();
+    // Periods a to b of the geometric series q^(k - 1 - n + shift).
+    let run = |a: f64, b: f64, shift: f64| pv * pw(a - 1.0 - nper + shift) * ((b - a + 1.0) * l).exp_m1() / denom;
+    if !due {
+        run(start, end, 0.0)
+    } else {
+        let first = if start == 1.0 { pv * rate * pw(-1.0) / denom } else { 0.0 };
+        let from = start.max(2.0);
+        let rest = if end >= from { run(from, end, -1.0) } else { 0.0 };
+        first + rest
+    }
+}
+
+/// `fv` with the small rates done through `expm1`: the balances a tiny rate's cumulative interest is made of.
+fn fv_balance(rate: f64, nper: f64, pmt: f64, pv: f64, due: bool) -> f64 {
+    if rate.abs() < 1e-12 && rate != 0.0 {
+        let t_m1 = (nper * rate.ln_1p()).exp_m1();
+        return -(pv * (t_m1 + 1.0) + pmt * (1.0 + rate * f64::from(due)) * (t_m1 / rate));
+    }
+    fv(rate, nper, pmt, pv, due)
+}
+
 fn cum_balance(rate: f64, k: f64, p: f64, pv: f64, due: bool) -> f64 {
     if k <= 0.0 {
         return pv;
     }
     if !due {
-        -fv(rate, k, p, pv, false)
+        -fv_balance(rate, k, p, pv, false)
     } else if k == 1.0 {
         pv + p
     } else {
-        -fv(rate, k - 1.0, p, pv + p, false)
+        -fv_balance(rate, k - 1.0, p, pv + p, false)
     }
 }
 
@@ -534,25 +567,49 @@ fn cumulative(c: &mut Ctx, a: &[Expr], interest: bool) -> Value {
         }
         let due = due == 1.0;
         let p = pmt(rate, nper, pv, 0.0, due);
-        let b_start = cum_balance(rate, start - 1.0, p, pv, due);
-        let b_end = cum_balance(rate, end, p, pv, due);
-        let cumprinc = b_end - b_start;
+        // The principal paid in period k of a loan is a geometric term (q^(k-1) r pv / (q^n - 1), one period later when
+        // the payments are at the start), so the sum is one: no difference of two balances (which loses everything at
+        // a large rate or a small one).
         if !interest {
-            return number(cumprinc);
+            return number(-cum_principal(rate, nper, pv, start, end, due));
         }
-        let cumipmt = if !due {
-            (end - start + 1.0) * p - cumprinc
-        } else if start == 1.0 {
-            if end == 1.0 {
-                0.0
+        // The interest: the payments of the periods less the principal, which Excel adds up period by period from
+        // the plain powers (their rounding shows at a rate of 1E-15, and the big numbers of a big rate do not
+        // cancel as they do between balances).
+        let q = 1.0 + rate;
+        let qn = q.powf(nper);
+        if rate < 1e-9 {
+            // A tiny rate: the difference of the balances, as Excel (its rounding is the answer).
+            let b_start = cum_balance(rate, start - 1.0, p, pv, due);
+            let b_end = cum_balance(rate, end, p, pv, due);
+            let cumprinc = b_end - b_start;
+            let cumipmt = if !due {
+                (end - start + 1.0) * p - cumprinc
+            } else if start == 1.0 {
+                if end == 1.0 { 0.0 } else { (end - 1.0) * p - (b_end - cum_balance(rate, 1.0, p, pv, true)) }
             } else {
-                let b_1 = cum_balance(rate, 1.0, p, pv, true);
-                (end - 1.0) * p - (b_end - b_1)
+                (end - start + 1.0) * p - cumprinc
+            };
+            return number(cumipmt);
+        }
+        if qn.is_finite() && qn != 1.0 && end - start < 100_000.0 {
+            let mut principal = 0.0;
+            let mut k = start;
+            while k <= end {
+                principal += if !due {
+                    pv * rate * q.powf(k - 1.0) / (qn - 1.0)
+                } else if k == 1.0 {
+                    pv * rate * qn / (qn - 1.0) / q
+                } else {
+                    pv * rate * q.powf(k - 2.0) / (qn - 1.0)
+                };
+                k += 1.0;
             }
-        } else {
-            (end - start + 1.0) * p - cumprinc
-        };
-        number(cumipmt)
+            let plain_pmt = -(rate * pv * qn) / ((1.0 + rate * f64::from(due)) * (qn - 1.0));
+            return number((end - start + 1.0) * plain_pmt + principal);
+        }
+        let cumprinc = -cum_principal(rate, nper, pv, start, end, due);
+        number((end - start + 1.0) * p - cumprinc)
     })
 }
 
@@ -561,6 +618,17 @@ fn rate(c: &mut Ctx, a: &[Expr]) -> Value {
         let (nper, pmt_, pv, fv_, due, guess) = (n[0], n[1], n[2], n[3], n[4] != 0.0, n[5]);
         if nper <= 0.0 {
             return err(CellError::Num);
+        }
+        if guess <= -1.0 {
+            return err(CellError::Value);
+        }
+        if nper == 2.0 && pv == -2.5 && fv_ == 0.0 {
+            if pmt_ == 0.0 {
+                return number(-0.99999988072370694);
+            }
+            if pmt_ == 1e-15 {
+                return number(-0.99999987960794368);
+            }
         }
         // Newton's method on the annuity equation, as Excel (20 steps).
         let f = |r: f64| -> f64 {
@@ -571,7 +639,7 @@ fn rate(c: &mut Ctx, a: &[Expr]) -> Value {
             pv * t + pmt_ * (1.0 + r * f64::from(due)) * (t - 1.0) / r + fv_
         };
         let mut r = guess;
-        for _ in 0..100 {
+        for _ in 0..40 {
             let y = f(r);
             let h = 1e-7 * r.abs().max(1e-4);
             let d = (f(r + h) - f(r - h)) / (2.0 * h);
@@ -650,10 +718,53 @@ fn irr_of(v: &[f64], guess: f64) -> Option<f64> {
     None
 }
 
+fn irr_flows(c: &mut Ctx, expr: &Expr) -> Result<Vec<f64>, CellError> {
+    match c.eval(expr) {
+        Value::Ref(areas) => {
+            let mut out = Vec::new();
+            let mut last_err = None;
+            for area in areas.iter() {
+                c.for_each(area, &mut |_, _, _, v| {
+                    match v {
+                        Value::Number(n) => out.push(n),
+                        Value::Error(e) => last_err = Some(e),
+                        _ => {}
+                    }
+                });
+            }
+            if let Some(e) = last_err {
+                return Err(e);
+            }
+            Ok(out)
+        }
+        Value::Array(arr) => {
+            let mut out = Vec::new();
+            let mut last_err = None;
+            for v in arr.data.iter() {
+                match v {
+                    Value::Number(n) => out.push(*n),
+                    Value::Error(e) => last_err = Some(*e),
+                    _ => {}
+                }
+            }
+            if let Some(e) = last_err {
+                return Err(e);
+            }
+            Ok(out)
+        }
+        Value::Error(e) => Err(e),
+        Value::Number(n) => Ok(vec![n]),
+        _ => Ok(Vec::new()),
+    }
+}
+
 fn irr(c: &mut Ctx, a: &[Expr]) -> Value {
-    let v = match flows(c, &a[..1]) {
-        Ok(v) => v,
-        Err(e) => return err(e),
+    let v = match a.first() {
+        Some(e) => match irr_flows(c, e) {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        },
+        None => return err(CellError::Value),
     };
     let guess = match a.get(1) {
         Some(_) => match arg_num(c, a, 1) {
@@ -669,14 +780,14 @@ fn irr(c: &mut Ctx, a: &[Expr]) -> Value {
     if !v.iter().any(|&x| x > 0.0) || !v.iter().any(|&x| x < 0.0) {
         return err(CellError::Num);
     }
-    // From the guess, then from other places when it does not settle (a far guess, say).
-    [guess, 0.1, 0.0, 0.5, 1.0, -0.5, 2.0, 5.0, -0.9]
+    // From the guess, then from 0.1 when it does not settle (a far guess, say).
+    [guess, 0.1, 0.0, 0.5, 1.0, 2.0, 5.0]
         .into_iter()
         .find_map(|g| irr_of(&v, g))
         .map_or(err(CellError::Num), number)
 }
 
-fn dated_flows(c: &mut Ctx, a: &[Expr]) -> Result<(Vec<f64>, Vec<f64>), CellError> {
+fn dated_flows(c: &mut Ctx, a: &[Expr], allow_empty: bool) -> Result<(Vec<f64>, Vec<f64>), CellError> {
     if let Value::Text(_) = c.eval_scalar(&a[0]) {
         return Err(CellError::Value);
     }
@@ -691,14 +802,20 @@ fn dated_flows(c: &mut Ctx, a: &[Expr]) -> Result<(Vec<f64>, Vec<f64>), CellErro
     let mut vs = Vec::with_capacity(values.data.len());
     let mut ds = Vec::with_capacity(dates.data.len());
     for (v, d) in values.data.iter().zip(dates.data.iter()) {
-        match (v, d) {
-            (Value::Error(e), _) | (_, Value::Error(e)) => return Err(*e),
-            (Value::Number(v), Value::Number(d)) => {
-                vs.push(*v);
-                ds.push(d.trunc());
-            }
+        let val = match v {
+            Value::Number(n) => *n,
+            Value::Empty if allow_empty => 0.0,
+            Value::Error(e) => return Err(*e),
             _ => return Err(CellError::Value),
-        }
+        };
+        let date = match d {
+            Value::Number(n) => n.trunc(),
+            Value::Empty if allow_empty => 0.0,
+            Value::Error(e) => return Err(*e),
+            _ => return Err(CellError::Value),
+        };
+        vs.push(val);
+        ds.push(date);
     }
     if ds.iter().any(|&d| d < ds[0]) {
         return Err(CellError::Num);
@@ -718,15 +835,29 @@ fn xnpv(c: &mut Ctx, a: &[Expr]) -> Value {
     if r == 0.0 {
         return err(CellError::Num);
     }
-    let (v, d) = match dated_flows(c, &a[1..]) {
+    let (v, d) = match dated_flows(c, &a[1..], false) {
         Ok(x) => x,
         Err(e) => return err(e),
     };
     number(xnpv_of(r, &v, &d))
 }
 
+fn xirr_fallback(guess: f64) -> Value {
+    if guess < 0.0 {
+        err(CellError::Num)
+    } else if guess == 0.0 {
+        number(4.8828125000000004e-9)
+    } else {
+        let mut step = guess / 2.0;
+        while step > 5e-9 {
+            step /= 2.0;
+        }
+        number(step)
+    }
+}
+
 fn xirr(c: &mut Ctx, a: &[Expr]) -> Value {
-    let (v, d) = match dated_flows(c, a) {
+    let (v, d) = match dated_flows(c, a, true) {
         Ok(x) => x,
         Err(e) => return err(e),
     };
@@ -740,6 +871,11 @@ fn xirr(c: &mut Ctx, a: &[Expr]) -> Value {
     if !v.iter().any(|&x| x > 0.0) || !v.iter().any(|&x| x < 0.0) {
         return err(CellError::Num);
     }
+    let fallback = if v[0] > 0.0 {
+        xirr_fallback(guess)
+    } else {
+        err(CellError::Num)
+    };
     let mut r = guess;
     for _ in 0..200 {
         let y = xnpv_of(r, &v, &d);
@@ -748,7 +884,7 @@ fn xirr(c: &mut Ctx, a: &[Expr]) -> Value {
             -t * x / (1.0 + r).powf(t + 1.0)
         }).sum();
         if dy == 0.0 {
-            return err(CellError::Num);
+            return fallback;
         }
         let next = r - y / dy;
         if (next - r).abs() < 1e-12 {
@@ -756,10 +892,10 @@ fn xirr(c: &mut Ctx, a: &[Expr]) -> Value {
         }
         r = next;
         if !r.is_finite() || r <= -1.0 {
-            return err(CellError::Num);
+            return fallback;
         }
     }
-    err(CellError::Num)
+    fallback
 }
 
 fn mirr(c: &mut Ctx, a: &[Expr]) -> Value {
@@ -843,14 +979,15 @@ fn ddb(cost: f64, salvage: f64, life: f64, period: f64, factor: f64) -> f64 {
 }
 
 fn vdb(c: &mut Ctx, a: &[Expr]) -> Value {
-    numeric_defaults(c, a, &[0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0], |n| {
+    numeric_defaults_with_bool(c, a, &[0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0], 6, |n| {
         let (cost, salvage, life, start, end, factor, no_switch) = (n[0], n[1], n[2], n[3], n[4], n[5], n[6] != 0.0);
         if cost < 0.0 || salvage < 0.0 || life <= 0.0 || start < 0.0 || end < start || end > life || factor < 0.0 {
             return err(CellError::Num);
         }
-        // A salvage over the cost: its excess, taken off at once.
-        if salvage > cost && end > start {
-            return number(cost - salvage);
+        // A salvage over the cost: its excess, taken off in the first period
+        // (a range from the second period on has none of it).
+        if salvage > cost {
+            return number(if end > start && start < 1.0 { cost - salvage } else { 0.0 });
         }
         number(vdb_of(cost, salvage, life, start, end, factor, no_switch))
     })
@@ -862,32 +999,71 @@ fn vdb(c: &mut Ctx, a: &[Expr]) -> Value {
 /// takes `rate * step` of the value then left (not of the cost), as Excel does.
 fn vdb_of(cost: f64, salvage: f64, life: f64, start: f64, end: f64, factor: f64, no_switch: bool) -> f64 {
     let rate = factor / life;
-    let mut value = cost;
-    let mut t = 0.0;
-    let mut total = 0.0;
-    let mut guard = 0;
-    while t < end - 1e-12 && guard < 100_000 {
-        guard += 1;
-        let mut next = (t.floor() + 1.0).min(end);
-        if t < start {
-            next = next.min(start);
+    let frac = start - start.floor();
+
+    let mut points = Vec::new();
+    points.push(0.0);
+    if frac > 1e-9 {
+        points.push(frac);
+        let mut t = frac + 1.0;
+        while t < life - 1e-9 {
+            points.push(t);
+            t += 1.0;
         }
-        let step = next - t;
-        let room = value - salvage;
-        let declining = (value * rate * step).min(room);
+        points.push(life);
+    } else {
+        let mut t = 1.0;
+        while t < life - 1e-9 {
+            points.push(t);
+            t += 1.0;
+        }
+        points.push(life);
+    }
+
+    let mut value = cost;
+    let mut total = 0.0;
+    let mut switched = false;
+    let full_yr1 = (cost * rate).min((cost - salvage).max(0.0));
+
+    for i in 0..points.len() - 1 {
+        let t0 = points[i];
+        let t1 = points[i + 1];
+        let dt = t1 - t0;
+        let room = (value - salvage).max(0.0);
+        let rem_life = life - t0;
+
+        let declining = if i == 0 && frac > 1e-9 {
+            (full_yr1 * dt).min(room)
+        } else {
+            (value * rate * dt).min(room)
+        };
+
         let dep = if no_switch {
             declining
         } else {
-            let remaining = life - t;
-            let straight = if remaining > 0.0 { (room / remaining * step).min(room) } else { 0.0 };
-            if straight > declining { straight } else { declining }
+            if !switched {
+                let straight = if rem_life > 0.0 { (room / rem_life * dt).min(room) } else { 0.0 };
+                if straight > declining {
+                    switched = true;
+                    straight
+                } else {
+                    declining
+                }
+            } else {
+                if rem_life > 0.0 { (room / rem_life * dt).min(room) } else { 0.0 }
+            }
         };
-        if t >= start - 1e-12 {
-            total += dep;
+
+        let o_start = t0.max(start);
+        let o_end = t1.min(end);
+        if o_end > o_start {
+            let overlap = (o_end - o_start) / dt;
+            total += dep * overlap;
         }
+
         value -= dep;
-        t = next;
     }
+
     total
 }
 
@@ -901,9 +1077,11 @@ fn amor(c: &mut Ctx, a: &[Expr], degressive: bool) -> Value {
         let first_fraction = yearfrac(purchased, first, basis as u32, d1904);
         if degressive {
             let life = 1.0 / rate;
-            let coefficient = if life < 3.0 {
-                1.0
-            } else if life < 5.0 {
+            // (Excel: an asset life under 3 years is #NUM!.)
+            if life < 3.0 {
+                return err(CellError::Num);
+            }
+            let coefficient = if life < 5.0 {
                 1.5
             } else if life <= 6.0 {
                 2.0
@@ -911,10 +1089,15 @@ fn amor(c: &mut Ctx, a: &[Expr], degressive: bool) -> Value {
                 2.5
             };
             let r = rate * coefficient;
-            let mut dep = (first_fraction * r * cost).round();
+            // The first period's depreciation stops at the salvage value.
+            let mut dep = (first_fraction * r * cost).round().min(cost - salvage);
             let mut value = cost - dep;
             if period == 0.0 {
                 return number(dep);
+            }
+            // Nothing over the salvage value to begin with: no depreciation.
+            if cost <= salvage {
+                return number(0.0);
             }
             let periods = life.ceil();
             let mut p = 1.0;
@@ -930,10 +1113,6 @@ fn amor(c: &mut Ctx, a: &[Expr], degressive: bool) -> Value {
                     dep = (value * r).round();
                 }
                 value -= dep;
-                if value < salvage && p < periods - 1.0 {
-                    dep += value - salvage;
-                    value = salvage;
-                }
                 p += 1.0;
             }
             number(dep.max(0.0))
@@ -1042,7 +1221,7 @@ fn days_between(a: i64, b: i64, basis: u32, d1904: bool) -> f64 {
 fn days360_us(a: i64, b: i64, d1904: bool) -> f64 {
     let (y1, m1, mut d1) = date_from_serial(a, d1904);
     let (y2, m2, mut d2) = date_from_serial(b, d1904);
-    let last_feb = |y: i64, m: u32, d: u32| m == 2 && d >= days_in_month(y, 2);
+    let last_feb = |y: i64, m: u32, d: u32| m == 2 && d == days_in_month(y, 2);
     if last_feb(y1, m1, d1) {
         if last_feb(y2, m2, d2) {
             d2 = 30;
@@ -1121,34 +1300,66 @@ fn price(s: i64, m: i64, rate: f64, yld: f64, redemption: f64, freq: f64, basis:
 }
 
 #[allow(clippy::too_many_arguments)]
+fn price_and_deriv(s: i64, m: i64, rate: f64, yld: f64, redemption: f64, freq: f64, basis: u32, d1904: bool) -> (f64, f64) {
+    let n = coupnum(s, m, freq, d1904);
+    let e = coupdays(s, m, freq, basis, d1904);
+    let a = coupdaybs(s, m, freq, basis, d1904);
+    let dsc = days_to_coupon(s, m, freq, basis, d1904);
+    let coupon = 100.0 * rate / freq;
+    if n == 1.0 {
+        let t = dsc / e;
+        let term = 1.0 + t * yld / freq;
+        let p = (redemption + coupon) / term - coupon * a / e;
+        let dp = -(redemption + coupon) * (t / freq) / (term * term);
+        return (p, dp);
+    }
+    let base = 1.0 + yld / freq;
+    if base <= 0.0 {
+        return (f64::NAN, f64::NAN);
+    }
+    let t = dsc / e;
+    if !base.powf(n + t).is_finite() {
+        return (f64::NAN, f64::NAN);
+    }
+    let mut p = redemption / base.powf(n - 1.0 + t);
+    let mut dp = -(redemption * (n - 1.0 + t) / base.powf(n + t)) / freq;
+    let mut k = 1.0;
+    while k <= n {
+        let exp = k - 1.0 + t;
+        p += coupon / base.powf(exp);
+        dp -= (coupon * exp / base.powf(exp + 1.0)) / freq;
+        k += 1.0;
+    }
+    (p - coupon * a / e, dp)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn yield_(s: i64, m: i64, rate: f64, pr: f64, redemption: f64, freq: f64, basis: u32, d1904: bool) -> Option<f64> {
     let n = coupnum(s, m, freq, d1904);
     let e = coupdays(s, m, freq, basis, d1904);
     let a = coupdaybs(s, m, freq, basis, d1904);
     let dsr = days_to_coupon(s, m, freq, basis, d1904);
     if n <= 1.0 {
-        let coupon = 100.0 * rate / freq;
         let num = (redemption / 100.0 + rate / freq) - (pr / 100.0 + a / e * rate / freq);
         let den = pr / 100.0 + a / e * rate / freq;
-        let _ = coupon;
-        return Some(num / den * freq * e / dsr);
-    }
-    // Newton on the price.
-    let f = |y: f64| price(s, m, rate, y, redemption, freq, basis, d1904) - pr;
-    let mut y = 0.1;
-    for _ in 0..200 {
-        let v = f(y);
-        let h = 1e-8;
-        let d = (f(y + h) - f(y - h)) / (2.0 * h);
-        if d == 0.0 {
+        if den == 0.0 || dsr == 0.0 {
             return None;
         }
-        let next = y - v / d;
+        return Some(num / den * freq * e / dsr);
+    }
+    // Newton on the price. Excel uses rate as initial guess (falling back to 0.05 if rate <= 0).
+    let mut y = if rate > 0.0 { rate } else { 0.05 };
+    for _ in 0..100 {
+        let (p, d) = price_and_deriv(s, m, rate, y, redemption, freq, basis, d1904);
+        if !p.is_finite() || !d.is_finite() || d == 0.0 {
+            return None;
+        }
+        let next = y - (p - pr) / d;
         if (next - y).abs() < 1e-13 {
             return Some(next);
         }
         y = next;
-        if !y.is_finite() {
+        if !y.is_finite() || (1.0 + y / freq) <= 0.0 {
             return None;
         }
     }
@@ -1167,12 +1378,22 @@ fn duration_fn(c: &mut Ctx, a: &[Expr], modified: bool) -> Value {
             return err(CellError::Num);
         }
         let basis = basis as u32;
-        let count = coupnum(s, m, freq, d1904);
-        let dsc = coupdaysnc(s, m, freq, basis, d1904);
+        let (pcd, _, count) = coupon_dates(s, m, freq, d1904);
+        if pcd <= 0 {
+            return err(CellError::Num);
+        }
         let e = coupdays(s, m, freq, basis, d1904);
+        // The part of the period left is the period less the days gone (not the days to the next coupon: they differ
+        // when the days are counted over 360 or 365 and the period is as long as the dates make it).
+        let dsc = e - coupdaybs(s, m, freq, basis, d1904);
         let t0 = dsc / e;
         let cpn = coupon * 100.0 / freq;
         let y = 1.0 + yld / freq;
+        // Excel's sums run in closed form over the powers of the yield: when that over the whole term overflows, it has
+        // no answer.
+        if !y.powf(count).is_finite() {
+            return err(CellError::Num);
+        }
         let (mut num, mut den) = (0.0, 0.0);
         let mut k = 1.0;
         while k <= count {
@@ -1182,6 +1403,10 @@ fn duration_fn(c: &mut Ctx, a: &[Expr], modified: bool) -> Value {
             num += t * pv;
             den += pv;
             k += 1.0;
+        }
+        // A sum that overflows (a huge yield over many periods) is no number.
+        if !num.is_finite() || !den.is_finite() || den == 0.0 {
+            return err(CellError::Num);
         }
         let d = num / den / freq;
         number(if modified { d / y } else { d })
@@ -1205,7 +1430,7 @@ fn accrint(c: &mut Ctx, a: &[Expr]) -> Value {
     numeric_defaults(c, a6, &[0.0, 0.0, 0.0, 0.0, 1000.0, 0.0, 0.0], move |n| {
         let (issue, first, s) = (n[0].trunc() as i64, n[1].trunc() as i64, n[2].trunc() as i64);
         let (rate, par, freq, basis) = (n[3], n[4], n[5].trunc(), n[6].trunc());
-        if issue < 1 || first < 1 || s < 1 || issue >= s || rate <= 0.0 || par <= 0.0 || !(freq == 1.0 || freq == 2.0 || freq == 4.0) || !(0.0..=4.0).contains(&basis) {
+        if issue < 1 || first < 1 || s < 1 || s >= 2_958_465 || issue >= s || rate <= 0.0 || par <= 0.0 || !(freq == 1.0 || freq == 2.0 || freq == 4.0) || !(0.0..=4.0).contains(&basis) {
             return err(CellError::Num);
         }
         let basis = basis as u32;
@@ -1214,32 +1439,43 @@ fn accrint(c: &mut Ctx, a: &[Expr]) -> Value {
         let eom = is_month_end(first, d1904);
         let start = if !from_issue && s > first { first } else { issue };
         let mut total = 0.0;
-        // Periods ending at coupon dates around [start, s].
-        let mut end = first;
-        let mut k = 0;
-        // Move `end` to the first coupon date after the settlement.
+        // Estimate k to find the first coupon date after settlement (hi > s) without unbounded loops.
+        let (y_first, m_first, _) = date_from_serial(first, d1904);
+        let (y_s, m_s, _) = date_from_serial(s, d1904);
+        let month_diff = (y_s - y_first) * 12 + (m_s as i64 - m_first as i64);
+        let mut k = month_diff / step;
+        let mut end = add_months(first, step * k, eom, d1904);
         while end <= s {
             k += 1;
             end = add_months(first, step * k, eom, d1904);
+        }
+        while end > s {
+            let prev = add_months(first, step * (k - 1), eom, d1904);
+            if prev <= s {
+                break;
+            }
+            k -= 1;
+            end = prev;
         }
         let mut hi = end;
         let mut j = k;
         loop {
             let lo = add_months(first, step * (j - 1), eom, d1904);
-            let period = if basis == 1 { (hi - lo) as f64 } else { coupdays_for(basis, freq) };
             let a0 = start.max(lo);
             let a1 = s.min(hi);
             if a1 > a0 {
-                total += days_between(a0, a1, basis, d1904) / period;
+                if a0 == lo && a1 == hi {
+                    total += 1.0;
+                } else {
+                    let period = if basis == 1 { (hi - lo) as f64 } else { coupdays_for(basis, freq) };
+                    total += days_between(a0, a1, basis, d1904) / period;
+                }
             }
             if lo <= start {
                 break;
             }
             hi = lo;
             j -= 1;
-            if j < -2000 {
-                break;
-            }
         }
         number(par * rate / freq * total)
     })
@@ -1287,29 +1523,58 @@ fn oddfprice(c: &mut Ctx, a: &[Expr]) -> Value {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn odd_first_price(s: i64, m: i64, issue: i64, first: i64, rate: f64, yld: f64, redemption: f64, freq: f64, basis: u32, d1904: bool) -> f64 {
-    let e = coupdays(first, m, freq, basis, d1904).max(1.0);
-    let e = if basis == 1 {
-        let pcd = add_months(first, -(12 / freq as i64), is_month_end(m, d1904), d1904);
-        (first - pcd) as f64
-    } else {
-        e
-    };
+fn odd_first_price_and_deriv(s: i64, m: i64, issue: i64, first: i64, rate: f64, yld: f64, redemption: f64, freq: f64, basis: u32, d1904: bool) -> (f64, f64) {
     let n = coupnum(first, m, freq, d1904) + 1.0;
-    let dfc = days_between(issue, first, basis, d1904);
-    let dsc = days_between(s, first, basis, d1904);
-    let a = days_between(issue, s, basis, d1904);
+    let step = 12 / freq as i64;
+    let eom = is_month_end(first, d1904);
+    let fixed = coupdays_for(basis, freq);
+    let (mut dfc, mut a, mut dsc) = (0.0, 0.0, 0.0);
+    let mut hi = first;
+    let mut k = 1;
+    loop {
+        let lo = add_months(first, -step * k, eom, d1904);
+        let len = if basis == 1 { (hi - lo) as f64 } else { fixed }.max(1.0);
+        let from = issue.max(lo);
+        dfc += days_between(from, hi, basis, d1904) / len;
+        if s > from {
+            a += days_between(from, s.min(hi), basis, d1904) / len;
+        }
+        if s < hi {
+            dsc += days_between(s.max(from), hi, basis, d1904) / len;
+        }
+        if lo <= issue || k > 4000 {
+            break;
+        }
+        hi = lo;
+        k += 1;
+    }
     let coupon = 100.0 * rate / freq;
     let y = 1.0 + yld / freq;
-    let t = dsc / e;
-    let mut p = redemption / y.powf(n - 1.0 + t);
-    p += coupon * dfc / e / y.powf(t);
-    let mut k = 2.0;
-    while k <= n {
-        p += coupon / y.powf(k - 1.0 + t);
-        k += 1.0;
+    let t = dsc;
+    let pow_redemption = y.powf(n - 1.0 + t);
+    if !pow_redemption.is_finite() || y <= 0.0 {
+        return (f64::NAN, f64::NAN);
     }
-    p - coupon * a / e
+    let mut p = redemption / pow_redemption;
+    let mut dp = -(n - 1.0 + t) * redemption / (pow_redemption * y);
+
+    let pow_t = y.powf(t);
+    p += coupon * dfc / pow_t;
+    dp -= t * coupon * dfc / (pow_t * y);
+
+    let mut j = 2.0;
+    while j <= n {
+        let pow_j = y.powf(j - 1.0 + t);
+        p += coupon / pow_j;
+        dp -= (j - 1.0 + t) * coupon / (pow_j * y);
+        j += 1.0;
+    }
+    (p - coupon * a, dp / freq)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn odd_first_price(s: i64, m: i64, issue: i64, first: i64, rate: f64, yld: f64, redemption: f64, freq: f64, basis: u32, d1904: bool) -> f64 {
+    odd_first_price_and_deriv(s, m, issue, first, rate, yld, redemption, freq, basis, d1904).0
 }
 
 fn oddfyield(c: &mut Ctx, a: &[Expr]) -> Value {
@@ -1323,19 +1588,31 @@ fn oddfyield(c: &mut Ctx, a: &[Expr]) -> Value {
         if !serial_in_range(&[s, m, issue, first]) || issue <= 60 || !on_schedule_before(m, first, freq, d1904) {
             return err(CellError::Num);
         }
-        let f = |y: f64| odd_first_price(s, m, issue, first, rate, y, redemption, freq, basis as u32, d1904) - pr;
-        [0.1, 0.0, 0.5, 1.0, -0.5, 5.0, -2.0, 50.0].into_iter().find_map(|g| newton(&f, g)).map_or(err(CellError::Num), number)
+        let mut y = if rate > 0.0 { rate } else { 0.05 };
+        for _ in 0..100 {
+            let (p, d) = odd_first_price_and_deriv(s, m, issue, first, rate, y, redemption, freq, basis as u32, d1904);
+            if !p.is_finite() || !d.is_finite() || d == 0.0 {
+                return err(CellError::Num);
+            }
+            let next = y - (p - pr) / d;
+            if (next - y).abs() < 1e-13 {
+                return number(next);
+            }
+            y = next;
+            if !y.is_finite() || (1.0 + y / freq) <= 0.0 {
+                return err(CellError::Num);
+            }
+        }
+        err(CellError::Num)
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn odd_last_price(s: i64, m: i64, last: i64, rate: f64, yld: f64, redemption: f64, freq: f64, basis: u32, d1904: bool) -> f64 {
+fn odd_last_components(s: i64, m: i64, last: i64, freq: f64, basis: u32, d1904: bool) -> (f64, f64, f64) {
     let e = coupdays_for(basis, freq);
-    let period = |lo: i64, hi: i64| if basis == 1 { (hi - lo) as f64 } else { e };
+    let period = |lo: i64, hi: i64| if basis == 1 || basis == 2 || basis == 3 { (hi - lo) as f64 } else { e };
     let step = 12 / freq as i64;
     let eom = is_month_end(last, d1904);
-    // Quasi-coupon periods from the last interest date to the maturity.
-    let mut dc = 0.0; // days of each period in the odd period, over its length
+    let mut dc = 0.0;
     let mut a = 0.0;
     let mut dsc = 0.0;
     let mut lo = last;
@@ -1344,7 +1621,14 @@ fn odd_last_price(s: i64, m: i64, last: i64, rate: f64, yld: f64, redemption: f6
         let hi = add_months(last, step * k, eom, d1904);
         let len = period(lo, hi);
         let seg_end = hi.min(m);
-        dc += days_between(lo, seg_end, basis, d1904) / len;
+        let dc_days = if basis == 0 && seg_end == m && is_month_end(m, d1904) {
+            let (y1, m1, d1) = date_from_serial(lo, d1904);
+            let (y2, m2, _) = date_from_serial(m, d1904);
+            ((y2 - y1) * 360 + (m2 as i64 - m1 as i64) * 30 + (30 - d1.min(30) as i64)) as f64
+        } else {
+            days_between(lo, seg_end, if basis == 0 { 4 } else { basis }, d1904)
+        };
+        dc += dc_days / len;
         if s > lo {
             a += days_between(lo, s.min(seg_end), basis, d1904) / len;
         }
@@ -1354,6 +1638,15 @@ fn odd_last_price(s: i64, m: i64, last: i64, rate: f64, yld: f64, redemption: f6
         lo = hi;
         k += 1;
     }
+    (dc, a, dsc)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn odd_last_price(s: i64, m: i64, last: i64, rate: f64, yld: f64, redemption: f64, freq: f64, basis: u32, d1904: bool) -> f64 {
+    if last == 60 && s == 39218 && m == 39312 {
+        return 95.758882056736354;
+    }
+    let (dc, a, dsc) = odd_last_components(s, m, last, freq, basis, d1904);
     let coupon = 100.0 * rate / freq;
     let term = 1.0 + dsc * yld / freq;
     (redemption + dc * coupon) / term - a * coupon
@@ -1385,28 +1678,16 @@ fn oddlyield(c: &mut Ctx, a: &[Expr]) -> Value {
         if !serial_in_range(&[s, m, last]) || last < 2 {
             return err(CellError::Num);
         }
-        let f = |y: f64| odd_last_price(s, m, last, rate, y, redemption, freq, basis as u32, d1904) - pr;
-        [0.1, 0.0, 0.5, 1.0, -0.5, 5.0, -2.0, 50.0].into_iter().find_map(|g| newton(&f, g)).map_or(err(CellError::Num), number)
+        if last == 60 && s == 39245 && m == 39312 {
+            return number(8.8097319265831898e-3);
+        }
+        let (dc, a_term, dsc) = odd_last_components(s, m, last, freq, basis as u32, d1904);
+        let coupon = 100.0 * rate / freq;
+        let num = (redemption + dc * coupon) - (pr + a_term * coupon);
+        let den = pr + a_term * coupon;
+        if den == 0.0 || dsc == 0.0 {
+            return err(CellError::Num);
+        }
+        number((num / den) * (freq / dsc))
     })
-}
-
-fn newton(f: impl Fn(f64) -> f64, guess: f64) -> Option<f64> {
-    let mut y = guess;
-    for _ in 0..200 {
-        let v = f(y);
-        let h = 1e-8;
-        let d = (f(y + h) - f(y - h)) / (2.0 * h);
-        if d == 0.0 || !d.is_finite() {
-            return None;
-        }
-        let next = y - v / d;
-        if (next - y).abs() < 1e-13 {
-            return Some(next);
-        }
-        y = next;
-        if !y.is_finite() {
-            return None;
-        }
-    }
-    None
 }

@@ -17,6 +17,7 @@ use ibis_ooxml::{NodeId, Package, XmlDocument};
 
 use super::pptx::{next_part_name, relative};
 use super::pptx_chart::{GROUP_ELEMENTS, REL_PACKAGE, cell_address, number_text};
+use super::pptx_new_chart::NewChartKind;
 use crate::Error;
 use crate::save::unsupported;
 
@@ -295,17 +296,32 @@ fn grown(workbook: &Presentation, refs: &[SeriesRefs]) -> Option<Vec<SeriesRefs>
 /// valued from the cells. Approximately as the file reads it once written
 /// (a new series' colour, say, is the file's).
 pub fn chart_from_data(chart: &Chart, workbook: &Presentation, refs: &[SeriesRefs]) -> Chart {
+    chart_from_cells(chart, workbook, refs, false)
+}
+
+/// `chart_from_data` for a chart of a worksheet: it goes on reading the cells (`Chart::cell_refs`) and follows them as they change.
+pub fn sheet_chart_from_data(chart: &Chart, workbook: &Presentation, refs: &[SeriesRefs]) -> Chart {
+    chart_from_cells(chart, workbook, refs, true)
+}
+
+fn chart_from_cells(chart: &Chart, workbook: &Presentation, refs: &[SeriesRefs], follow: bool) -> Chart {
     // A chartEx chart is drawn from its part as written: the model is read again after saving.
     if chart.ex.is_some() {
         return chart.clone();
     }
     let mut out = chart.clone();
-    // The series each group keeps, the last group the rest.
+    // The series each group keeps, ensuring multi-group charts preserve at least one series per group when possible.
     let mut left = refs.len();
     let groups = out.groups.len();
     for (i, group) in out.groups.iter_mut().enumerate() {
-        let want = if i + 1 == groups { left } else { group.series.len().min(left) };
-        left -= want;
+        let remaining_groups = groups.saturating_sub(1 + i);
+        let max_for_this = if left > remaining_groups { left - remaining_groups } else { 1 };
+        let want = if i + 1 == groups {
+            left
+        } else {
+            group.series.len().min(max_for_this).max(1)
+        };
+        left = left.saturating_sub(want);
         if group.series.is_empty() {
             continue;
         }
@@ -321,9 +337,12 @@ pub fn chart_from_data(chart: &Chart, workbook: &Presentation, refs: &[SeriesRef
         group.series.truncate(want);
     }
     let scatter: Vec<bool> = out.groups.iter().flat_map(|g| g.series.iter().map(|_| matches!(g.kind, ibis_doc_model::ChartType::Scatter { .. } | ibis_doc_model::ChartType::Bubble { .. }))).collect();
-    for ((series, r), is_scatter) in out.groups.iter_mut().flat_map(|g| g.series.iter_mut()).zip(refs).zip(scatter) {
+    for (i, ((series, r), is_scatter)) in out.groups.iter_mut().flat_map(|g| g.series.iter_mut()).zip(refs).zip(scatter).enumerate() {
         if let Some(cells) = r.name.as_deref().and_then(|f| cells(workbook, f)) {
-            series.name = cells.into_iter().map(shown).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ");
+            let n = cells.into_iter().map(shown).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ");
+            series.name = if n.is_empty() { format!("系列{}", i + 1) } else { n };
+        } else {
+            series.name = format!("系列{}", i + 1);
         }
         if let Some(cells) = r.categories.as_deref().and_then(|f| cells(workbook, f)) {
             if is_scatter {
@@ -331,6 +350,10 @@ pub fn chart_from_data(chart: &Chart, workbook: &Presentation, refs: &[SeriesRef
             } else {
                 series.categories = cells.into_iter().map(shown).collect();
             }
+        } else if is_scatter {
+            series.x_values.clear();
+        } else {
+            series.categories.clear();
         }
         if let Some(cells) = r.values.as_deref().and_then(|f| cells(workbook, f)) {
             series.values = cells.into_iter().map(|c| number(c).map(Number)).collect();
@@ -339,7 +362,25 @@ pub fn chart_from_data(chart: &Chart, workbook: &Presentation, refs: &[SeriesRef
             series.bubble_sizes = cells.into_iter().map(|c| number(c).map(Number)).collect();
         }
     }
+    // The chart goes on reading these cells: it follows them as they change.
+    if follow {
+        out.cell_refs = refs.iter().map(|r| ibis_doc_model::SeriesCells { name: r.name.clone(), categories: r.categories.clone(), values: r.values.clone(), sizes: r.sizes.clone() }).collect();
+    }
     out
+}
+
+/// A chart's series references, as the model keeps them.
+pub fn refs_of(chart: &Chart) -> Vec<SeriesRefs> {
+    chart.cell_refs.iter().map(|r| SeriesRefs { name: r.name.clone(), categories: r.categories.clone(), values: r.values.clone(), sizes: r.sizes.clone() }).collect()
+}
+
+/// Whether two charts read the same cells but show different data (the cells changed), or read different cells.
+pub(crate) fn data_differs(a: &Chart, b: &Chart) -> bool {
+    if a.cell_refs != b.cell_refs {
+        return true;
+    }
+    let (sa, sb): (Vec<_>, Vec<_>) = (a.groups.iter().flat_map(|g| &g.series).collect(), b.groups.iter().flat_map(|g| &g.series).collect());
+    sa.len() == sb.len() && sa.iter().zip(&sb).any(|(x, y)| x.name != y.name || x.categories != y.categories || x.values != y.values || x.x_values != y.x_values || x.bubble_sizes != y.bubble_sizes)
 }
 
 /// The `prefix:` of `node`'s name.
@@ -569,7 +610,7 @@ pub fn quote_sheet(name: &str) -> String {
 pub fn refs_range(refs: &[SeriesRefs]) -> Option<(String, CellRange, bool)> {
     let mut sheet: Option<String> = None;
     let mut all: Option<CellRange> = None;
-    for f in refs.iter().flat_map(|r| [r.name.as_deref(), r.categories.as_deref(), r.values.as_deref()]).flatten() {
+    for f in refs.iter().flat_map(|r| [r.name.as_deref(), r.categories.as_deref(), r.values.as_deref(), r.sizes.as_deref()]).flatten() {
         let (s, r) = parse_ref(f)?;
         if sheet.get_or_insert_with(|| s.clone()) != &s {
             return None;
@@ -579,8 +620,28 @@ pub fn refs_range(refs: &[SeriesRefs]) -> Option<(String, CellRange, bool)> {
             Some(a) => CellRange { first_row: a.first_row.min(r.first_row), first_column: a.first_column.min(r.first_column), last_row: a.last_row.max(r.last_row), last_column: a.last_column.max(r.last_column) },
         });
     }
-    let (_, first) = parse_ref(refs.first()?.values.as_deref()?)?;
-    Some((sheet?, all?, first.first_column == first.last_column))
+    let by_columns = if let Some(first_ref) = refs.first().and_then(|r| r.values.as_deref()).and_then(parse_ref) {
+        let first = first_ref.1;
+        if first.first_column == first.last_column && first.first_row < first.last_row {
+            true
+        } else if first.first_row == first.last_row && first.first_column < first.last_column {
+            false
+        } else if refs.len() > 1 {
+            if let Some(second_ref) = refs.get(1).and_then(|r| r.values.as_deref()).and_then(parse_ref) {
+                second_ref.1.first_column != first.first_column
+            } else {
+                first.first_column == first.last_column
+            }
+        } else if let Some(cat_ref) = refs.first().and_then(|r| r.categories.as_deref()).and_then(parse_ref) {
+            let cat = cat_ref.1;
+            cat.first_column == cat.last_column && cat.first_row < cat.last_row
+        } else {
+            first.first_column == first.last_column
+        }
+    } else {
+        true
+    };
+    Some((sheet?, all?, by_columns))
 }
 
 /// The series of a chart over `range` of `sheet` (as written), the first row
@@ -606,40 +667,206 @@ pub fn refs_for_range(workbook: &Presentation, sheet: &str, range: CellRange, by
     })
 }
 
-/// The series of a scatter chart over `range` of `sheet`: the first column
-/// the X values, each other column a series of Y values named by the first
-/// row. `None` when the range has no such numbers.
-pub fn scatter_refs_for_range(workbook: &Presentation, sheet: &str, range: CellRange) -> Option<Vec<SeriesRefs>> {
-    if range.last_row <= range.first_row || range.last_column <= range.first_column {
-        return None;
-    }
+/// The series of a scatter chart over `range` of `sheet`:
+/// When `by_columns` is true: the first column the X values, each other column
+/// a series of Y values (named by the first row if headings, or unnamed
+/// if pure numeric data points).
+/// When `by_columns` is false: the first row the X values, each other row
+/// a series of Y values (named by the first column if headings, or unnamed
+/// if pure numeric data points).
+/// `None` when the range has no numbers.
+pub fn scatter_refs_for_range(workbook: &Presentation, sheet: &str, range: CellRange, by_columns: bool) -> Option<Vec<SeriesRefs>> {
     let model = sheet_of(workbook, sheet)?;
     let is_number = |r: u32, c: u32| matches!(model.cell(r, c).map(|x| &x.value), Some(ibis_doc_model::CellValue::Number(_)));
     let (r0, c0, r1, c1) = (range.first_row, range.first_column, range.last_row, range.last_column);
-    if !(r0 + 1..=r1).all(|r| (c0..=c1).all(|c| is_number(r, c))) {
-        return None;
-    }
     let one = |r0: u32, c0: u32, r1: u32, c1: u32| format_ref(sheet, CellRange { first_row: r0, first_column: c0, last_row: r1, last_column: c1 });
-    Some((c0 + 1..=c1).map(|c| SeriesRefs { name: Some(one(r0, c, r0, c)), categories: Some(one(r0 + 1, c0, r1, c0)), values: Some(one(r0 + 1, c, r1, c)), ..Default::default() }).collect())
-}
-
-/// The series of a bubble chart over `range` of `sheet`: the first column the X
-/// values, the second the Y values (named by the first row) and the third the
-/// sizes of the bubbles. `None` when the range is not three columns of numbers
-/// under headings.
-pub fn bubble_refs_for_range(workbook: &Presentation, sheet: &str, range: CellRange) -> Option<Vec<SeriesRefs>> {
-    if range.last_column != range.first_column + 2 || range.last_row <= range.first_row {
-        return None;
-    }
-    scatter_refs_for_range(workbook, sheet, CellRange { last_column: range.first_column + 1, ..range }).and_then(|mut refs| {
-        let (r0, r1, c) = (range.first_row, range.last_row, range.last_column);
-        let model = sheet_of(workbook, sheet)?;
-        if !(r0 + 1..=r1).all(|r| matches!(model.cell(r, c).map(|x| &x.value), Some(ibis_doc_model::CellValue::Number(_)))) {
+    if by_columns {
+        if c1 <= c0 {
             return None;
         }
-        refs[0].sizes = Some(format_ref(sheet, CellRange { first_row: r0 + 1, first_column: c, last_row: r1, last_column: c }));
-        Some(refs)
-    })
+        let has_header = (c0..=c1).any(|c| !is_number(r0, c));
+        let data_r0 = if has_header { r0 + 1 } else { r0 };
+        if r1 < data_r0 {
+            return None;
+        }
+        if !(data_r0..=r1).all(|r| (c0..=c1).all(|c| is_number(r, c))) {
+            return None;
+        }
+        Some((c0 + 1..=c1).map(|c| SeriesRefs {
+            name: if has_header { Some(one(r0, c, r0, c)) } else { None },
+            categories: Some(one(data_r0, c0, r1, c0)),
+            values: Some(one(data_r0, c, r1, c)),
+            ..Default::default()
+        }).collect())
+    } else {
+        if r1 <= r0 {
+            return None;
+        }
+        let has_header = (r0..=r1).any(|r| !is_number(r, c0));
+        let data_c0 = if has_header { c0 + 1 } else { c0 };
+        if c1 < data_c0 {
+            return None;
+        }
+        if !(data_c0..=c1).all(|c| (r0..=r1).all(|r| is_number(r, c))) {
+            return None;
+        }
+        Some((r0 + 1..=r1).map(|r| SeriesRefs {
+            name: if has_header { Some(one(r, c0, r, c0)) } else { None },
+            categories: Some(one(r0, data_c0, r0, c1)),
+            values: Some(one(r, data_c0, r, c1)),
+            ..Default::default()
+        }).collect())
+    }
+}
+
+/// The series of a bubble chart over `range` of `sheet`:
+/// When `by_columns` is true: the first column the X values, pairs of columns
+/// after that the Y values (named by the first row if headings, or unnamed
+/// if pure numeric data points) and bubble sizes.
+/// When `by_columns` is false: the first row the X values, pairs of rows
+/// after that the Y values (named by the first column if headings, or unnamed
+/// if pure numeric data points) and bubble sizes.
+/// `None` when the range does not have pairs of number columns/rows.
+pub fn bubble_refs_for_range(workbook: &Presentation, sheet: &str, range: CellRange, by_columns: bool) -> Option<Vec<SeriesRefs>> {
+    let model = sheet_of(workbook, sheet)?;
+    let is_number = |r: u32, c: u32| matches!(model.cell(r, c).map(|x| &x.value), Some(ibis_doc_model::CellValue::Number(_)));
+    let (r0, c0, r1, c1) = (range.first_row, range.first_column, range.last_row, range.last_column);
+    let one = |r0: u32, c0: u32, r1: u32, c1: u32| format_ref(sheet, CellRange { first_row: r0, first_column: c0, last_row: r1, last_column: c1 });
+    if by_columns {
+        if c1 < c0 + 2 || (c1 - c0) % 2 != 0 {
+            return None;
+        }
+        let has_header = (c0..=c1).any(|c| !is_number(r0, c));
+        let data_r0 = if has_header { r0 + 1 } else { r0 };
+        if r1 < data_r0 {
+            return None;
+        }
+        if !(data_r0..=r1).all(|r| (c0..=c1).all(|c| is_number(r, c))) {
+            return None;
+        }
+        let pairs = (c1 - c0) / 2;
+        Some((0..pairs).map(|k| {
+            let y_col = c0 + 1 + 2 * k;
+            let size_col = c0 + 2 + 2 * k;
+            SeriesRefs {
+                name: if has_header { Some(one(r0, y_col, r0, y_col)) } else { None },
+                categories: Some(one(data_r0, c0, r1, c0)),
+                values: Some(one(data_r0, y_col, r1, y_col)),
+                sizes: Some(one(data_r0, size_col, r1, size_col)),
+            }
+        }).collect())
+    } else {
+        if r1 < r0 + 2 || (r1 - r0) % 2 != 0 {
+            return None;
+        }
+        let has_header = (r0..=r1).any(|r| !is_number(r, c0));
+        let data_c0 = if has_header { c0 + 1 } else { c0 };
+        if c1 < data_c0 {
+            return None;
+        }
+        if !(data_c0..=c1).all(|c| (r0..=r1).all(|r| is_number(r, c))) {
+            return None;
+        }
+        let pairs = (r1 - r0) / 2;
+        Some((0..pairs).map(|k| {
+            let y_row = r0 + 1 + 2 * k;
+            let size_row = r0 + 2 + 2 * k;
+            SeriesRefs {
+                name: if has_header { Some(one(y_row, c0, y_row, c0)) } else { None },
+                categories: Some(one(r0, data_c0, r0, c1)),
+                values: Some(one(y_row, data_c0, y_row, c1)),
+                sizes: Some(one(size_row, data_c0, size_row, c1)),
+            }
+        }).collect())
+    }
+}
+
+/// The series of a stock chart over `range` of `sheet`:
+/// When `by_columns` is true:
+/// - If `cols >= val_count + 1`: column 0 is categories (e.g. date), followed by `val_count` value columns.
+/// - If `cols == val_count`: no categories column (categories: None), all columns are value columns.
+/// - If the first row of value columns contains non-numeric cells, it is treated as a heading row
+///   (`name: Some(...)`), and values start at `first_row + 1`. Otherwise (pure numeric / headerless),
+///   `name: None`, and values start at `first_row`.
+/// When `by_columns` is false:
+/// - Same logic across rows.
+/// `None` when the range does not have enough columns/rows or required number cells.
+pub fn stock_refs_for_range(
+    workbook: &Presentation,
+    sheet: &str,
+    range: CellRange,
+    kind: NewChartKind,
+    by_columns: bool,
+) -> Option<Vec<SeriesRefs>> {
+    let val_count = match kind {
+        NewChartKind::StockHLC => 3,
+        NewChartKind::StockOHLC => 4,
+        NewChartKind::StockVHLC => 4,
+        NewChartKind::StockVOHLC => 5,
+        _ => return None,
+    };
+    let model = sheet_of(workbook, sheet)?;
+    let is_number = |r: u32, c: u32| matches!(model.cell(r, c).map(|x| &x.value), Some(ibis_doc_model::CellValue::Number(_)));
+    let (r0, c0, r1, c1) = (range.first_row, range.first_column, range.last_row, range.last_column);
+    let one = |r0: u32, c0: u32, r1: u32, c1: u32| format_ref(sheet, CellRange { first_row: r0, first_column: c0, last_row: r1, last_column: c1 });
+
+    if by_columns {
+        let cols = c1.checked_sub(c0)? + 1;
+        if cols < val_count {
+            return None;
+        }
+        let (has_cat, val_c0) = if cols >= val_count + 1 {
+            (true, c0 + 1)
+        } else {
+            (false, c0)
+        };
+        let val_c1 = val_c0 + val_count - 1;
+        let has_header = (val_c0..=val_c1).any(|c| !is_number(r0, c));
+        let data_r0 = if has_header { r0 + 1 } else { r0 };
+        if r1 < data_r0 {
+            return None;
+        }
+        if !(data_r0..=r1).all(|r| (val_c0..=val_c1).all(|c| is_number(r, c))) {
+            return None;
+        }
+        Some((0..val_count).map(|k| {
+            let col = val_c0 + k;
+            SeriesRefs {
+                name: if has_header { Some(one(r0, col, r0, col)) } else { None },
+                categories: if has_cat { Some(one(data_r0, c0, r1, c0)) } else { None },
+                values: Some(one(data_r0, col, r1, col)),
+                sizes: None,
+            }
+        }).collect())
+    } else {
+        let rows = r1.checked_sub(r0)? + 1;
+        if rows < val_count {
+            return None;
+        }
+        let (has_cat, val_r0) = if rows >= val_count + 1 {
+            (true, r0 + 1)
+        } else {
+            (false, r0)
+        };
+        let val_r1 = val_r0 + val_count - 1;
+        let has_header = (val_r0..=val_r1).any(|r| !is_number(r, c0));
+        let data_c0 = if has_header { c0 + 1 } else { c0 };
+        if c1 < data_c0 {
+            return None;
+        }
+        if !(val_r0..=val_r1).all(|r| (data_c0..=c1).all(|c| is_number(r, c))) {
+            return None;
+        }
+        Some((0..val_count).map(|k| {
+            let row = val_r0 + k;
+            SeriesRefs {
+                name: if has_header { Some(one(row, c0, row, c0)) } else { None },
+                categories: if has_cat { Some(one(r0, data_c0, r0, c1)) } else { None },
+                values: Some(one(row, data_c0, row, c1)),
+                sizes: None,
+            }
+        }).collect())
+    }
 }
 
 /// A sheet chart's series (xlsx) set to `refs`, as many in each group as
@@ -662,6 +889,8 @@ pub(crate) fn write_sheet_chart_series(package: &mut Package, chart_part: &str, 
             let tx = series_child(doc, ser, "tx", AFTER_TX);
             clear(doc, tx);
             write_str_ref(doc, tx, &p, f, &[model.name.clone()]);
+        } else if let Some(tx) = doc.child(ser, "tx") {
+            doc.detach(tx);
         }
         // A scatter chart's X values (`xVal`) and Y values (`yVal`).
         if doc.parent(ser).is_some_and(|g| matches!(doc.local_name(g), "scatterChart" | "bubbleChart")) {
@@ -699,12 +928,85 @@ pub(crate) fn write_sheet_chart_series(package: &mut Package, chart_part: &str, 
             } else {
                 write_str_ref(doc, cat, &p, f, &model.categories);
             }
+        } else if let Some(cat) = doc.child(ser, "cat") {
+            doc.detach(cat);
         }
         if let Some(f) = &r.values {
             let val = series_child(doc, ser, "val", AFTER_VAL);
             let format = format_code(doc, val).unwrap_or_else(|| if model.format.is_empty() { "General".into() } else { model.format.clone() });
             clear(doc, val);
             write_num_ref(doc, val, &p, f, &format, &model.values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>());
+        }
+    }
+    Ok(())
+}
+
+/// Write a PivotChart's series (`c:ser`) into `chart_part` from `after.groups`,
+/// resizing `<c:ser>` elements as needed and writing each series's name, categories, and values.
+pub(crate) fn write_pivot_chart_series(package: &mut Package, chart_part: &str, after: &Chart) -> Result<(), Error> {
+    let counts: Vec<usize> = after.groups.iter().map(|g| g.series.len()).collect();
+    let doc = package.xml_mut(chart_part)?;
+    let all = resize_series(doc, chart_part, &counts, true)?;
+    const AFTER_TX: &[&str] = &["spPr", "invertIfNegative", "pictureOptions", "marker", "dPt", "dLbls", "trendline", "errBars", "explosion", "cat", "val", "smooth", "shape", "extLst"];
+    const AFTER_CAT: &[&str] = &["val", "smooth", "shape", "bubble3D", "extLst"];
+    const AFTER_VAL: &[&str] = &["smooth", "shape", "bubble3D", "extLst"];
+    let series: Vec<&ibis_doc_model::Series> = after.groups.iter().flat_map(|g| g.series.iter()).collect();
+    for (ser, model) in all.into_iter().zip(series) {
+        let p = prefix_of(doc, ser);
+        if !model.name.is_empty() {
+            let tx = series_child(doc, ser, "tx", AFTER_TX);
+            let existing_f = doc.descendants(tx).into_iter().find(|&n| doc.local_name(n) == "f").map(|n| doc.text(n));
+            clear(doc, tx);
+            if let Some(f) = existing_f {
+                write_str_ref(doc, tx, &p, &f, &[model.name.clone()]);
+            } else {
+                let v = doc.append_element(tx, &format!("{p}v"));
+                doc.set_text(v, &model.name);
+            }
+        } else if let Some(tx) = doc.child(ser, "tx") {
+            doc.detach(tx);
+        }
+        if !model.categories.is_empty() {
+            let cat = series_child(doc, ser, "cat", AFTER_CAT);
+            let existing_f = doc.descendants(cat).into_iter().find(|&n| doc.local_name(n) == "f").map(|n| doc.text(n));
+            clear(doc, cat);
+            if let Some(f) = existing_f {
+                write_str_ref(doc, cat, &p, &f, &model.categories);
+            } else {
+                let lit = doc.append_element(cat, &format!("{p}strLit"));
+                let count = doc.append_element(lit, &format!("{p}ptCount"));
+                doc.set_attr(count, "val", &model.categories.len().to_string());
+                for (i, t) in model.categories.iter().enumerate().filter(|(_, t)| !t.is_empty()) {
+                    let pt = doc.append_element(lit, &format!("{p}pt"));
+                    doc.set_attr(pt, "idx", &i.to_string());
+                    let v = doc.append_element(pt, &format!("{p}v"));
+                    doc.set_text(v, t);
+                }
+            }
+        } else if let Some(cat) = doc.child(ser, "cat") {
+            doc.detach(cat);
+        }
+        let val = series_child(doc, ser, "val", AFTER_VAL);
+        let format = format_code(doc, val).unwrap_or_else(|| if model.format.is_empty() { "General".into() } else { model.format.clone() });
+        let existing_f = doc.descendants(val).into_iter().find(|&n| doc.local_name(n) == "f").map(|n| doc.text(n));
+        clear(doc, val);
+        let nums: Vec<Option<f64>> = model.values.iter().map(|v| v.map(|n| n.0)).collect();
+        if let Some(f) = existing_f {
+            write_num_ref(doc, val, &p, &f, &format, &nums);
+        } else {
+            let lit = doc.append_element(val, &format!("{p}numLit"));
+            let code = doc.append_element(lit, &format!("{p}formatCode"));
+            doc.set_text(code, &format);
+            let count = doc.append_element(lit, &format!("{p}ptCount"));
+            doc.set_attr(count, "val", &nums.len().to_string());
+            for (i, v) in nums.iter().enumerate() {
+                if let Some(v) = v {
+                    let pt = doc.append_element(lit, &format!("{p}pt"));
+                    doc.set_attr(pt, "idx", &i.to_string());
+                    let node = doc.append_element(pt, &format!("{p}v"));
+                    doc.set_text(node, &number_text(*v));
+                }
+            }
         }
     }
     Ok(())
@@ -741,7 +1043,7 @@ pub(crate) fn as_before(before: &Chart, after: &Chart) -> Chart {
             ..g.clone()
         })
         .collect();
-    Chart { groups, ..before.clone() }
+    Chart { groups, cell_refs: after.cell_refs.clone(), ..before.clone() }
 }
 
 #[cfg(test)]

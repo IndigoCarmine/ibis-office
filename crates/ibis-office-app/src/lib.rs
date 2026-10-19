@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
+#![recursion_limit = "256"]
+#![cfg_attr(not(feature = "scenarios"), allow(dead_code))]
 //! ibisOffice presentation editor front end.
 //!
 //! The same code runs as a native window (`src/main.rs`) and in the browser as
 //! wasm (`run`, exported through wasm-bindgen).
+
 
 // The editor window and what all formats share (shell/), drawing the
 // model (render/), and each format's own editing and views: presentations
@@ -13,10 +16,14 @@
 pub(crate) mod clock;
 pub(crate) use clock::debug_timing;
 mod docx;
+mod linux_desktop;
 mod media_player;
+#[cfg(windows)]
+mod open_with;
 mod pptx;
 mod render;
 mod spelling;
+mod grammar;
 mod shell;
 mod xlsx;
 #[cfg(headless_export)]
@@ -33,7 +40,7 @@ mod ui_snapshot;
 pub use shell::editor::SlideEditor;
 
 /// Run the scenario tests (`tests/scenarios.rs`; see `shell/scenario.rs`).
-#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub fn run_scenarios(filter: &[String]) -> i32 {
     shell::scenario::run(filter)
 }
@@ -61,6 +68,8 @@ actions!(
         OpenFile,
         /// Make a new, empty Word document (ファイル > 新規作成 > ドキュメント).
         NewDocument,
+        /// Open the start window (ファイル > スタートウィンドウ).
+        OpenStartWindow,
         /// Make a new presentation from a template (ファイル > 新規 > テンプレートから新規作成…).
         NewFromTemplate,
         /// Close the open file and show the start screen (スタート画面).
@@ -151,6 +160,11 @@ actions!(
         ResetSlideshowZoom,
         /// Start rehearsing slide show timings.
         RehearseTimings,
+        /// 表示 > 拡大・縮小・100%・ウィンドウに合わせる（⌘+・⌘-・⌘0・⌥⌘0）.
+        ZoomInView,
+        ZoomOutView,
+        ZoomActualView,
+        ZoomFitView,
         /// Toggle the slide sorter grid view in the presentation editor.
         ToggleSlideGridView,
         /// Start or exit reading view in the presentation editor.
@@ -183,6 +197,10 @@ actions!(
 /// Register components, theme and key bindings. Call once, before opening a window.
 pub fn init(cx: &mut App) {
     gpui_kit::init(cx);
+    // Questions drawn as ibisOffice's dialogs where the system has none (Linux).
+    linux_desktop::install_prompts(cx);
+    // The metafile pictures put their text by the metrics of the fonts.
+    render::metafile_fonts::install(cx);
     // Slides are white paper; the editor chrome follows it in light mode.
     Theme::change(ThemeMode::Light, None, cx);
     // Scrollbars stay hidden until the view scrolls or the pointer is over
@@ -205,6 +223,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("delete", DeleteSelection, context),
         KeyBinding::new("backspace", DeleteSelection, context),
         KeyBinding::new("escape", CancelTool, context),
+        // 表示の拡大・縮小（メニューの表示どおり。⌘= は ⌘+ のシフトなし）.
+        KeyBinding::new(&secondary("+"), ZoomInView, context),
+        KeyBinding::new(&secondary("="), ZoomInView, context),
+        KeyBinding::new(&secondary("-"), ZoomOutView, context),
+        KeyBinding::new(&secondary("0"), ZoomActualView, context),
+        KeyBinding::new(&secondary("alt-0"), ZoomFitView, context),
         KeyBinding::new("ctrl-alt-1", ToggleSlideGridView, context),
         KeyBinding::new("ctrl-alt-2", ToggleOutlineView, context),
         KeyBinding::new("ctrl-alt-3", ToggleNotesPageView, context),
@@ -316,11 +340,13 @@ pub fn init(cx: &mut App) {
         // Slides, as in PowerPoint: Home and End go to the first and last.
         KeyBinding::new("tab", pptx::slide_view::NextTableCell, Some(pptx::slide_view::CONTEXT)),
         KeyBinding::new("shift-tab", pptx::slide_view::PreviousTableCell, Some(pptx::slide_view::CONTEXT)),
-        // フォント サイズ（PowerPoint: ⌘⇧> で大きく、⌘⇧< で小さく）.
+        // フォント サイズ（PowerPoint: ⌘⇧> で大きく、⌘⇧< で小さく、⌘] で大きく、⌘[ で小さく）.
         KeyBinding::new("cmd-shift->", pptx::slide_view::IncreaseFontSize, Some(pptx::slide_view::CONTEXT)),
         KeyBinding::new("cmd-shift-.", pptx::slide_view::IncreaseFontSize, Some(pptx::slide_view::CONTEXT)),
         KeyBinding::new("cmd-shift-<", pptx::slide_view::DecreaseFontSize, Some(pptx::slide_view::CONTEXT)),
         KeyBinding::new("cmd-shift-,", pptx::slide_view::DecreaseFontSize, Some(pptx::slide_view::CONTEXT)),
+        KeyBinding::new(&secondary("]"), pptx::slide_view::IncreaseFontSize, Some(pptx::slide_view::CONTEXT)),
+        KeyBinding::new(&secondary("["), pptx::slide_view::DecreaseFontSize, Some(pptx::slide_view::CONTEXT)),
         // 配置（PowerPoint: ⌘L 左・⌘E 中央・⌘R 右・⌘J 両端）、書式のコピー・貼り付け（⌥⌘C・⌥⌘V）.
         KeyBinding::new("cmd-l", pptx::slide_view::AlignTextLeft, Some(pptx::slide_view::CONTEXT)),
         KeyBinding::new("cmd-e", pptx::slide_view::AlignTextCenter, Some(pptx::slide_view::CONTEXT)),
@@ -360,6 +386,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &OpenSettings, cx| crate::shell::settings_window::open(cx));
     cx.on_action(|_: &OpenAbout, cx| crate::shell::about_window::open(cx));
+    cx.on_action(|_: &OpenStartWindow, cx| crate::open_editor(None, None, cx));
     set_app_menus(cx);
 }
 
@@ -370,6 +397,8 @@ pub(crate) fn set_app_menus(cx: &mut App) {
     cx.set_menus([
         Menu::new("ibisOffice").items([MenuItem::action(text("help.about"), OpenAbout), MenuItem::separator(), MenuItem::action(text("app.settings"), OpenSettings), MenuItem::separator(), MenuItem::action(text("app.quit"), Quit)]),
         Menu::new(text("menu.file")).items([
+            MenuItem::action(text("file.start-window"), OpenStartWindow),
+            MenuItem::separator(),
             MenuItem::action(text("app.file.new"), NewDocument),
             MenuItem::action(text("app.file.open"), OpenFile),
             MenuItem::action(text("app.file.save"), Save),
@@ -401,7 +430,9 @@ fn is_mac() -> bool {
 /// Open the editor window on `document` (a presentation and its file name),
 /// showing slide number `slide` (1-based), or on the start view without one.
 pub fn open_editor(document: Option<(ibis_doc_model::Presentation, SharedString)>, slide: Option<usize>, cx: &mut App) {
-    open_window_with(cx, move |editor, window, cx| {
+    // A start window is as wide as its view (shell/start_view.rs).
+    let width = if document.is_none() { shell::start_view::START_WINDOW_WIDTH } else { 1280. };
+    open_window_sized(width, cx, move |editor, window, cx| {
         if let Some((presentation, name)) = document {
             editor.load(presentation, name, window, cx);
         }
@@ -413,14 +444,24 @@ pub fn open_editor(document: Option<(ibis_doc_model::Presentation, SharedString)
 
 /// A new editor window, its editor set up by `setup`.
 pub(crate) fn open_window_with(cx: &mut App, setup: impl FnOnce(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) {
-    let options = WindowOptions {
+    open_window_sized(1280., cx, setup);
+}
+
+/// A new editor window `width` pixels wide, its editor set up by `setup`.
+fn open_window_sized(width: f32, cx: &mut App, setup: impl FnOnce(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) {
+    let mut options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(1280.), px(800.)),
+            size(px(width), px(800.)),
             cx,
         ))),
+        titlebar: Some(TitlebarOptions {
+            appears_transparent: true,
+            ..Default::default()
+        }),
         ..Default::default()
     };
+    linux_desktop::identify(&mut options);
     cx.open_window(options, |window, cx| {
         let view = cx.new(|cx| {
             let mut editor = SlideEditor::new(ibis_doc_model::Presentation::new(), window, cx);
@@ -474,6 +515,8 @@ struct Args {
     print_backgrounds: bool,
     /// 印刷オプション: 隠し文字を印刷する (DOCX-OPTIONS-010).
     print_hidden_text: bool,
+    /// 印刷オプション: 変更履歴とコメントを印刷する (DOCX-SEC-014).
+    no_print_markup: bool,
     /// 印刷の設定 (PPTX-RECORD-017): `gray` or `bw`.
     print_color: Option<String>,
     /// 配布資料: slides to a page (PPTX-RECORD-016).
@@ -483,6 +526,7 @@ struct Args {
     /// 配布資料: a landscape page, and what it carries (header, date, footer, page numbers).
     handout_landscape: bool,
     notes_pages: bool,
+    outline_pages: bool,
     handout_header: Option<String>,
     handout_date: Option<String>,
     handout_footer: Option<String>,
@@ -492,6 +536,8 @@ struct Args {
     timing: bool,
     /// `--quit-after-first-frame`: quit once the window has been drawn.
     quit_after_first_frame: bool,
+    /// `--read-only`: open document in read-only viewing mode.
+    read_only: bool,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -502,6 +548,7 @@ fn parse_args() -> Result<Args, String> {
         let arg = arg.to_string_lossy().into_owned();
         let mut value = || iter.next().map(|v| v.to_string_lossy().into_owned()).ok_or_else(|| format!("{arg} needs a value"));
         match arg.as_str() {
+            "--read-only" => args.read_only = true,
             "--slide" => args.slide = Some(value()?.parse().map_err(|_| "--slide needs a slide number".to_string())?),
             "--export" => args.export = Some(value()?),
             "--out-dir" => args.out_dir = Some(value()?.into()),
@@ -510,11 +557,13 @@ fn parse_args() -> Result<Args, String> {
             "--layout" => args.layout = true,
             "--print-backgrounds" => args.print_backgrounds = true,
             "--print-hidden-text" => args.print_hidden_text = true,
+            "--no-print-markup" => args.no_print_markup = true,
             "--print-color" => args.print_color = Some(value()?),
-            "--handout" => args.handout = Some(value()?.parse().ok().filter(|n| matches!(n, 1 | 2 | 3 | 4 | 6 | 9)).ok_or_else(|| "--handout needs one of 1, 2, 3, 4, 6 or 9".to_string())?),
+            "--handout" => args.handout = Some(value()?.parse().ok().filter(|n| matches!(n, 1 | 2 | 3 | 4 | 6 | 8 | 9 | 16)).ok_or_else(|| "--handout needs one of 1, 2, 3, 4, 6, 8, 9 or 16".to_string())?),
             "--print-frame" => args.print_frame = true,
             "--handout-landscape" => args.handout_landscape = true,
             "--notes-pages" => args.notes_pages = true,
+            "--outline-pages" => args.outline_pages = true,
             "--handout-header" => args.handout_header = Some(value()?),
             "--handout-date" => args.handout_date = Some(value()?),
             "--handout-footer" => args.handout_footer = Some(value()?),
@@ -574,6 +623,7 @@ fn run_export(args: &Args, format: &str) -> Result<(), String> {
             file_name,
             print_backgrounds: args.print_backgrounds,
             print_hidden_text: args.print_hidden_text,
+            print_markup: !args.no_print_markup,
             color: match args.print_color.as_deref() {
                 None | Some("color") => export_print::PrintColor::Color,
                 Some("gray") => export_print::PrintColor::Gray,
@@ -584,6 +634,7 @@ fn run_export(args: &Args, format: &str) -> Result<(), String> {
             frame: args.print_frame,
             handout_landscape: args.handout_landscape,
             notes_pages: args.notes_pages,
+            outline_pages: args.outline_pages,
             notes_source: args.notes_pages.then(|| data.clone()),
             handout_marks: export_print::HandoutMarks { header: args.handout_header.clone(), date: args.handout_date.clone(), footer: args.handout_footer.clone(), number: args.handout_number, layout: ibis_pptx::handout_master::layout(&data).ok() },
         };
@@ -603,6 +654,7 @@ pub(crate) struct Loaded {
     pub(crate) source: std::sync::Arc<ibis_pptx::Source>,
     /// The password a protected file was opened with: saving protects it again.
     pub(crate) password: Option<String>,
+    pub(crate) csv_stream: Option<std::sync::mpsc::Receiver<ibis_pptx::CsvProgressiveChunk>>,
 }
 
 /// What `read_file` says when the file is protected and needs its password.
@@ -620,7 +672,10 @@ pub(crate) fn read_file(path: &std::path::Path) -> Result<Loaded, String> {
 /// As `read_file`; `password` opens a protected file (パスワードを使用して暗号化).
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn read_file_with(path: &std::path::Path, password: Option<&str>) -> Result<Loaded, String> {
+    timing::mark_read_start();
+    let read_t0 = crate::clock::Instant::now();
     let mut data = std::fs::read(path).map_err(|e| e.to_string())?;
+    let read_fs_ms = read_t0.elapsed().as_secs_f64() * 1000.0;
     timing::mark("read");
     let mut used = None;
     if ibis_pptx::is_encrypted(&data) {
@@ -628,14 +683,20 @@ pub(crate) fn read_file_with(path: &std::path::Path, password: Option<&str>) -> 
         data = ibis_pptx::decrypt(&data, password).map_err(|e| if e == ibis_pptx::DecryptError::WrongPassword { WRONG_PASSWORD.to_string() } else { e.to_string() })?;
         used = Some(password.to_string());
     }
-    let opened = ibis_pptx::open(data).map_err(|e| {
+    let open_t0 = crate::clock::Instant::now();
+    let (opened, csv_stream) = ibis_pptx::open_progressive(data, 100_000).map_err(|e| {
         xlsx::repair::note_open_failed(path);
+        docx::repair::note_open_failed(path);
         e.to_string()
     })?;
     xlsx::repair::note_opened(path);
+    docx::repair::note_opened(path);
+    let open_ms = open_t0.elapsed().as_secs_f64() * 1000.0;
     timing::mark("parsed");
+    let total_file_ms = read_t0.elapsed().as_secs_f64() * 1000.0;
+    eprintln!("ibisOffice timing: read_file total: {total_file_ms:.1} ms (fs::read: {read_fs_ms:.1} ms, open: {open_ms:.1} ms)");
     render::preload::Preload::start_for_next(&opened.presentation);
-    Ok(Loaded { presentation: opened.presentation, source: std::sync::Arc::new(opened.source), password: used })
+    Ok(Loaded { presentation: opened.presentation, source: std::sync::Arc::new(opened.source), password: used, csv_stream })
 }
 
 /// The file at `path`, read and parsed, with its name.
@@ -711,6 +772,13 @@ mod timing {
     }
 
     static QUIT_AFTER_DOCUMENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static FILE_READ_START: OnceLock<SystemTime> = OnceLock::new();
+
+    /// Mark the start of reading the file.
+    pub(crate) fn mark_read_start() {
+        FILE_READ_START.get_or_init(crate::clock::system_now);
+        mark("read-start");
+    }
 
     /// Quit once the document opened at launch has been drawn twice.
     pub(crate) fn quit_after_document(on: bool) {
@@ -721,8 +789,16 @@ mod timing {
     /// the document drawn, and quit then if asked to.
     pub(crate) fn document_loaded(window: &mut gpui_kit::Window) {
         mark("loaded");
+        if let (Some(Some(_)), Some(read_start)) = (START.get(), FILE_READ_START.get()) {
+            let ms = crate::clock::system_now().duration_since(*read_start).unwrap_or(Duration::ZERO).as_secs_f64() * 1000.0;
+            eprintln!("ibisOffice timing: read-start to loaded: {ms:.1} ms ({:.3} s)", ms / 1000.0);
+        }
         window.on_next_frame(|window, _| {
             mark("document-frame");
+            if let (Some(Some(_)), Some(read_start)) = (START.get(), FILE_READ_START.get()) {
+                let ms = crate::clock::system_now().duration_since(*read_start).unwrap_or(Duration::ZERO).as_secs_f64() * 1000.0;
+                eprintln!("ibisOffice timing: read-start to document-frame (render complete): {ms:.1} ms ({:.3} s)", ms / 1000.0);
+            }
             window.on_next_frame(|_, cx| {
                 mark("document-second-frame");
                 if QUIT_AFTER_DOCUMENT.swap(false, std::sync::atomic::Ordering::Relaxed) {
@@ -797,6 +873,9 @@ pub fn run_native() {
         // shaped lines for a large workbook) are not freed one by one.
         std::process::exit(0);
     }
+    // Explorer's "Open with" list gets ibisOffice for csv and tsv (Windows).
+    #[cfg(windows)]
+    open_with::register();
     timing::enable(args.timing);
     timing::mark("main");
     // The file named is read and parsed while the application starts.
@@ -855,18 +934,22 @@ pub fn run_native() {
                 (None, None) => (None, Vec::new()),
             };
             let opens_file = first.is_some();
+            let read_only = args.read_only;
             match first {
                 Some((path, receiver)) => open_window_with(cx, move |editor, window, cx| {
+                    editor.read_only = read_only;
                     let read = move || receiver.recv().unwrap_or_else(|_| Err(crate::shell::i18n::text("shell.read-stopped").to_string()));
                     editor.open_read(path, read, slide, window, cx)
                 }),
-                None => open_editor(None, slide, cx),
+                None => open_window_with(cx, move |editor, _, _| editor.read_only = read_only),
             }
             rest.into_iter().for_each(|p| open_path_in_app(p, cx));
             timing::mark("window");
             // Look for a newer version in the background (not in the timing runs).
             if !quit_after_first_frame {
                 crate::shell::update::start(cx);
+                // Offer to put the AppImage in the desktop's list of apps (Linux).
+                linux_desktop::start(cx);
             }
             // The frame after the one scheduled now: the window drawn once.
             if let Some(window) = cx.windows().first().copied() {
@@ -945,6 +1028,7 @@ mod web {
         let http_client = Arc::new(platform.fetch_http_client());
         // The art page borders' pictures are fetched from the same place.
         crate::docx::art_border::set_web_source(asset_base.clone().unwrap_or_default(), http_client.clone());
+        crate::render::web_image::set_http_client(http_client.clone());
         let app = Application::with_platform(platform)
             .with_http_client(http_client)
             .with_assets(crate::shell::icons::Assets::new(

@@ -471,6 +471,9 @@ pub struct Workbook {
     /// The external workbooks the formulas refer to (`externalReferences`),
     /// in order: `[1]` in a file's formula is the first.
     pub external_books: Vec<ExternalBook>,
+    /// The queries of the クエリ エディター (`xl/ibisQueries.txt`) and the parameters they use.
+    pub queries: Vec<crate::query::Query>,
+    pub query_parameters: Vec<crate::query::Parameter>,
 }
 
 /// An external workbook (`externalLink/externalBook`): its file's name as
@@ -528,6 +531,8 @@ impl Default for Workbook {
             custom_views: Vec::new(),
             window_hidden: false,
             external_books: Vec::new(),
+            queries: Vec::new(),
+            query_parameters: Vec::new(),
         }
     }
 }
@@ -660,14 +665,91 @@ pub struct CellRange {
     pub last_column: u32,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+fn next_sheet_content_id() -> usize {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A sheet's cells, shared between copies of the sheet until one of them changes a cell: a copy of a sheet (the one the screen's layout holds, the one undo keeps) costs nothing while its cells are the same, and changing a column's width does not copy a million rows. Reads as a `Vec`; changing it copies the cells first if another copy holds them.
+#[derive(Clone, Debug)]
+pub struct Cells(std::sync::Arc<Vec<SheetCell>>, usize);
+
+impl Default for Cells {
+    fn default() -> Self {
+        Self(std::sync::Arc::default(), next_sheet_content_id())
+    }
+}
+
+impl PartialEq for Cells {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for Cells {}
+
+impl std::ops::Deref for Cells {
+    type Target = Vec<SheetCell>;
+    fn deref(&self) -> &Vec<SheetCell> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Cells {
+    fn deref_mut(&mut self) -> &mut Vec<SheetCell> {
+        self.1 = next_sheet_content_id();
+        std::sync::Arc::make_mut(&mut self.0)
+    }
+}
+
+impl Cells {
+    /// The cells as a `Vec` (copied if another copy of the sheet holds them).
+    pub fn into_vec(self) -> Vec<SheetCell> {
+        std::sync::Arc::try_unwrap(self.0).unwrap_or_else(|shared| (*shared).clone())
+    }
+
+    /// Stable identifier for this sheet's cell/layout content across view-only zoom changes.
+    pub fn content_id(&self) -> usize {
+        self.1
+    }
+
+    /// Assign a fresh content identifier when the sheet's visual content or layout changes.
+    pub fn bump_content_id(&mut self) {
+        self.1 = next_sheet_content_id();
+    }
+}
+
+impl From<Vec<SheetCell>> for Cells {
+    fn from(cells: Vec<SheetCell>) -> Self {
+        Cells(std::sync::Arc::new(cells), next_sheet_content_id())
+    }
+}
+
+impl<'a> IntoIterator for &'a Cells {
+    type Item = &'a SheetCell;
+    type IntoIter = std::slice::Iter<'a, SheetCell>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Cells {
+    type Item = &'a mut SheetCell;
+    type IntoIter = std::slice::IterMut<'a, SheetCell>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.1 = next_sheet_content_id();
+        std::sync::Arc::make_mut(&mut self.0).iter_mut()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sheet {
     /// Column widths, in EMU (0 for a hidden column).
     pub columns: Vec<Emu>,
     /// Row heights, in EMU (0 for a hidden row).
     pub rows: Vec<Emu>,
     /// Cells with a value or a visible format, in row-major order.
-    pub cells: Vec<SheetCell>,
+    pub cells: Cells,
     pub styles: Vec<CellStyle>,
     pub merges: Vec<CellRange>,
     /// Whether to draw the grid lines between cells.
@@ -681,6 +763,9 @@ pub struct Sheet {
     /// Frozen panes: the columns and rows (counts from the top left) that
     /// stay in view while the rest scrolls.
     pub frozen: Option<(u32, u32)>,
+    /// Split panes: the columns and rows (counts from the top left) where
+    /// the window is split into scrollable panes (`pane/@state="split"`).
+    pub split: Option<(u32, u32)>,
     /// シートの保護 (`sheetProtection`), when the sheet is protected.
     pub protection: Option<SheetProtection>,
     /// 範囲の編集の許可 (`protectedRanges`), allowing specific ranges to be
@@ -692,6 +777,8 @@ pub struct Sheet {
     /// Shown in page layout view (`sheetView/@view="pageLayout"`): the
     /// pages' paper, margins and numbers drawn over the cells.
     pub page_layout: bool,
+    /// Whether to show the ruler in page layout view (`sheetView/@showRuler`).
+    pub show_ruler: bool,
     /// The zoom the sheet is shown at in percent (`sheetView/@zoomScale`),
     /// if not 100%.
     pub zoom: Option<u16>,
@@ -713,6 +800,9 @@ pub struct Sheet {
     pub spills: std::collections::BTreeMap<(u32, u32), CellRange>,
     /// Conditional formats (`conditionalFormatting`), in the file's order.
     pub conditional: Vec<ConditionalFormat>,
+    /// Rules only Excel 2010 has (`x14:cfRule` in the sheet's `extLst` that no rule of 2007 names: the icon sets
+    /// 3Stars, 3Triangles and 5Boxes): drawn like the others, never written back (the file keeps them as they are).
+    pub conditional_x14: Vec<ConditionalFormat>,
     /// Data validation (`dataValidations`), in the file's order.
     pub validations: Vec<Validation>,
     /// Hyperlinks (`hyperlinks`), in the file's order.
@@ -755,6 +845,70 @@ pub struct Sheet {
     /// workbook's rich value relationships (`richValueRel.xml`) is its file.
     /// The picture is drawn as a shape over the cell.
     pub cell_images: Vec<CellImage>,
+    /// The pictures IMAGE shows from an address, by cell (row, column): what the calculation of the formula asked for
+    /// (the address read as any reference is, other sheets, names and other workbooks too). Not in the file.
+    pub web_images: std::collections::BTreeMap<(u32, u32), ibis_calc::eval::ImageSpec>,
+    /// 数式の表示 (`sheetView/@showFormulas`).
+    pub show_formulas: bool,
+    /// ゼロ値の表示 (`sheetView/@showZeros`, 既定 true).
+    pub show_zeros: bool,
+    /// インクの非表示.
+    pub hide_ink: bool,
+}
+
+impl Default for Sheet {
+    fn default() -> Self {
+        Self {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            cells: Cells::default(),
+            styles: Vec::new(),
+            merges: Vec::new(),
+            grid_lines: false,
+            headings: false,
+            print_area: None,
+            tab_color: None,
+            frozen: None,
+            split: None,
+            protection: None,
+            protected_ranges: Vec::new(),
+            page_break_preview: false,
+            page_layout: false,
+            show_ruler: false,
+            zoom: None,
+            print: SheetPrint::default(),
+            default_row: 0,
+            default_column: 0,
+            hidden_rows: std::collections::BTreeMap::new(),
+            hidden_columns: std::collections::BTreeMap::new(),
+            spills: std::collections::BTreeMap::new(),
+            conditional: Vec::new(),
+            conditional_x14: Vec::new(),
+            validations: Vec::new(),
+            hyperlinks: Vec::new(),
+            comments: Vec::new(),
+            outline_rows: std::collections::BTreeMap::new(),
+            outline_columns: std::collections::BTreeMap::new(),
+            auto_filter: None,
+            filtered_rows: std::collections::BTreeSet::new(),
+            tables: Vec::new(),
+            sparklines: Vec::new(),
+            threads: Vec::new(),
+            pivots: Vec::new(),
+            data_tables: Vec::new(),
+            data_consolidate: None,
+            scenarios: None,
+            custom_views: Vec::new(),
+            show_phonetic: false,
+            phonetic_pr: None,
+            ignored_errors: Vec::new(),
+            cell_images: Vec::new(),
+            web_images: std::collections::BTreeMap::new(),
+            show_formulas: false,
+            show_zeros: true,
+            hide_ink: false,
+        }
+    }
 }
 
 /// A picture in a cell (see [`Sheet::cell_images`]).
@@ -831,6 +985,7 @@ impl PhoneticAlignment {
 /// ふりがなのプロパティ (`<phoneticPr>`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PhoneticProperties {
+    pub font_id: u32,
     pub phonetic_type: PhoneticType,
     pub alignment: PhoneticAlignment,
 }
@@ -851,7 +1006,7 @@ pub struct CustomWorkbookView {
 }
 
 /// ユーザー設定のシート ビュー (`<customSheetView>`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomSheetView {
     /// 紐づく CustomWorkbookView の GUID.
     pub guid: String,
@@ -863,10 +1018,14 @@ pub struct CustomSheetView {
     pub grid_lines: bool,
     /// 行番号・列記号（見出し）の表示 (`showRowCol`).
     pub headings: bool,
+    /// ルーラーの表示 (`showRuler`).
+    pub show_ruler: bool,
     /// 改ページ プレビュー (`view="pageBreakPreview"`).
     pub page_break_preview: bool,
     /// ウィンドウ枠の固定 (`<pane>`).
     pub frozen: Option<(u32, u32)>,
+    /// ウィンドウの分割 (`<pane state="split">`).
+    pub split: Option<(u32, u32)>,
     /// アクティブ セル (`<selection activeCell="...">`).
     pub active_cell: Option<(u32, u32)>,
     /// 選択範囲 (`<selection sqref="...">`).
@@ -881,6 +1040,35 @@ pub struct CustomSheetView {
     pub auto_filter: Option<Option<AutoFilter>>,
     /// フィルター除外行 (`includeHidden` が true の場合にスナップショット保存).
     pub filtered_rows: Option<std::collections::BTreeSet<u32>>,
+    /// 数式の表示 (`showFormulas`).
+    pub show_formulas: bool,
+    /// ゼロ値の表示 (`showZeros`, 既定 true).
+    pub show_zeros: bool,
+}
+
+impl Default for CustomSheetView {
+    fn default() -> Self {
+        Self {
+            guid: String::new(),
+            name: String::new(),
+            zoom: None,
+            grid_lines: false,
+            headings: false,
+            show_ruler: false,
+            page_break_preview: false,
+            frozen: None,
+            split: None,
+            active_cell: None,
+            selection_range: None,
+            print: None,
+            hidden_rows: None,
+            hidden_columns: None,
+            auto_filter: None,
+            filtered_rows: None,
+            show_formulas: false,
+            show_zeros: true,
+        }
+    }
 }
 
 /// データ テーブル (`<f t="dataTable">`): `range` is the block of results; the
@@ -1374,6 +1562,12 @@ pub enum CfKind {
         axis_position: Option<DataBarAxisPosition>,
         min_length: Option<u32>,
         max_length: Option<u32>,
+        /// The bar's border colour (`x14:borderColor`; `border="1"`): `None` for no border.
+        border_color: Option<crate::drawing::Rgb>,
+        /// The border of a negative bar (`x14:negativeBorderColor`); the positive one's when `None`.
+        negative_border_color: Option<crate::drawing::Rgb>,
+        /// Which way the bars grow (`x14:dataBar/@direction`).
+        direction: DataBarDirection,
     },
     IconSet {
         set: String,
@@ -1425,6 +1619,16 @@ pub enum DataBarAxisPosition {
     None,
 }
 
+/// Which way a data bar grows (`x14:dataBar/@direction`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DataBarDirection {
+    /// With the text (left to right in the languages here).
+    #[default]
+    Context,
+    LeftToRight,
+    RightToLeft,
+}
+
 impl CfKind {
     /// Create a standard data bar rule with default settings.
     pub fn data_bar(min: CfValue, max: CfValue, color: crate::drawing::Rgb, gradient: bool) -> Self {
@@ -1438,6 +1642,9 @@ impl CfKind {
             axis_position: None,
             min_length: None,
             max_length: None,
+            border_color: None,
+            negative_border_color: None,
+            direction: DataBarDirection::Context,
         }
     }
 
@@ -1619,6 +1826,13 @@ impl Default for SheetPrint {
 }
 
 impl Sheet {
+    /// The formula of the cell at (`row`, `column`) as Excel's bar and an edit
+    /// show it: a this-row reference of the table the cell is in is `[@Qty]`.
+    pub fn formula_shown(&self, row: u32, column: u32, formula: &str) -> String {
+        let table = self.tables.iter().find(|t| t.range.first_row <= row && row <= t.range.last_row && t.range.first_column <= column && column <= t.range.last_column).map(|t| t.name.as_str());
+        ibis_calc::formula::this_row_to_display(formula, table)
+    }
+
     /// The cell at a row and column, if it holds a value or a format.
     pub fn cell(&self, row: u32, column: u32) -> Option<&SheetCell> {
         self.cells.binary_search_by_key(&(row, column), |c| (c.row, c.column)).ok().map(|i| &self.cells[i])
@@ -1649,13 +1863,29 @@ impl Sheet {
 
     /// The column and row at a point (EMU from the sheet's top-left).
     pub fn cell_at(&self, x: Emu, y: Emu) -> Option<(u32, u32)> {
-        let find = |offsets: Vec<Emu>, v: Emu| -> Option<u32> {
-            if v < 0 || v >= *offsets.last()? {
-                return None;
-            }
-            Some(offsets.partition_point(|o| *o <= v).saturating_sub(1) as u32)
+        if x < 0 || y < 0 {
+            return None;
+        }
+        let col_offsets = self.column_offsets();
+        let last_x = *col_offsets.last().unwrap_or(&0);
+        let col = if x < last_x {
+            col_offsets.partition_point(|o| *o <= x).saturating_sub(1) as u32
+        } else {
+            let def = self.default_column.max(1);
+            let extra = (x - last_x) / def;
+            ((col_offsets.len().saturating_sub(1)) as u64 + extra as u64).min(16_383) as u32
         };
-        Some((find(self.column_offsets(), x)?, find(self.row_offsets(), y)?))
+
+        let row_offsets = self.row_offsets();
+        let last_y = *row_offsets.last().unwrap_or(&0);
+        let row = if y < last_y {
+            row_offsets.partition_point(|o| *o <= y).saturating_sub(1) as u32
+        } else {
+            let def = self.default_row.max(1);
+            let extra = (y - last_y) / def;
+            ((row_offsets.len().saturating_sub(1)) as u64 + extra as u64).min(1_048_575) as u32
+        };
+        Some((col, row))
     }
 
     /// Offsets of the columns' left edges, with the total width at the end.
@@ -1676,6 +1906,40 @@ impl Sheet {
     /// Whether the column is hidden (width is 0 or recorded in hidden_columns).
     pub fn is_col_hidden(&self, col: u32) -> bool {
         self.columns.get(col as usize) == Some(&0) || self.hidden_columns.contains_key(&col)
+    }
+
+    /// The EMU bounds of cell `(column, row)`.
+    pub fn cell_bounds_emu(&self, column: u32, row: u32) -> crate::geometry::EmuRect {
+        let xs = self.column_offsets();
+        let ys = self.row_offsets();
+        let col = column as usize;
+        let r = row as usize;
+        let x_at = |idx: usize| -> Emu {
+            if idx < xs.len() {
+                xs[idx]
+            } else {
+                let last = xs.last().copied().unwrap_or(0);
+                last + (idx - xs.len().saturating_sub(1)) as i64 * self.default_column
+            }
+        };
+        let y_at = |idx: usize| -> Emu {
+            if idx < ys.len() {
+                ys[idx]
+            } else {
+                let last = ys.last().copied().unwrap_or(0);
+                last + (idx - ys.len().saturating_sub(1)) as i64 * self.default_row
+            }
+        };
+        let x0 = x_at(col);
+        let x1 = x_at(col + 1);
+        let y0 = y_at(r);
+        let y1 = y_at(r + 1);
+        crate::geometry::EmuRect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1))
+    }
+
+    /// The picture in cell `(column, row)`, if any.
+    pub fn cell_image_at(&self, row: u32, column: u32) -> Option<&CellImage> {
+        self.cell_images.iter().find(|i| i.row == row && i.column == column)
     }
 }
 

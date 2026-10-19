@@ -35,6 +35,8 @@ fn reads_test_asset_pptx() {
                 ShapeKind::Sheet(_) => "sheet",
                 ShapeKind::Page { .. } => "page",
                 ShapeKind::Slicer(_) => "slicer",
+                ShapeKind::Control(_) => "control",
+                ShapeKind::Timeline(_) => "timeline",
             };
             *counts.entry(kind).or_default() += 1;
         }

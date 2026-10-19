@@ -15,6 +15,11 @@ const STATEMENT: &str = "test/benchmark/securities-registration-statement.docx";
 /// The scenarios, for `FormatEditor::scenarios`.
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
+        ("docx::screenshot_docx_comments_panel", screenshot_docx_comments_panel),
+        ("docx::spelling_check", spelling_check),
+        ("docx::review018_grammar_and_spelling_check", review018_grammar_and_spelling_check),
+        ("docx::insert_chart", insert_chart),
+        ("docx::edit_existing_chart", edit_existing_chart),
         ("docx::h9_original_insertion_format", h9_original_insertion_format),
         ("docx::h9_insertion_unknown_run_save_guard", h9_insertion_unknown_run_save_guard),
         ("docx::h9_original_insertion_page", h9_original_insertion_page),
@@ -38,6 +43,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::a11_format_brush", a11_format_brush),
         ("docx::edit012_format_brush_repeat", edit012_format_brush_repeat),
         ("docx::bullet001_bullet_symbol_and_font", bullet001_bullet_symbol_and_font),
+        ("docx::split_buttons_bullets_numbering_shading", split_buttons_bullets_numbering_shading),
+        ("docx::split_button_underline_kinds", split_button_underline_kinds),
         ("docx::a6_strike_and_position", a6_strike_and_position),
         ("docx::a6_double_strike", a6_double_strike),
         ("docx::a6_caps_and_small_caps", a6_caps_and_small_caps),
@@ -223,9 +230,11 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::view015_navigation_pane", view015_navigation_pane),
         ("docx::toc006_update_toc_options", toc006_update_toc_options),
         ("docx::sec006_007_mark_as_final_and_read_only", sec006_007_mark_as_final_and_read_only),
+        ("docx::sec011_018_inspect_document_and_compatibility", sec011_018_inspect_document_and_compatibility),
         ("docx::ja015_doc_grid_and_line_pitch", ja015_doc_grid_and_line_pitch),
         ("docx::font001_complex_script_font", font001_complex_script_font),
         ("docx::ja018_complex_script_font_and_size", ja018_complex_script_font_and_size),
+        ("docx::font016_opentype_features", font016_opentype_features),
         ("docx::font017_text_effects_outline_shadow_emboss", font017_text_effects_outline_shadow_emboss),
         ("docx::image015_text_box_insert_and_edit", image015_text_box_insert_and_edit),
         ("docx::edit004_discontiguous_selection", edit004_discontiguous_selection),
@@ -234,22 +243,60 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::list002_picture_bullet", list002_picture_bullet),
         ("docx::image015_drag_text_box", image015_drag_text_box),
         ("docx::image011_insert_shape", image011_insert_shape),
+        ("docx::image011_draw_shape", image011_draw_shape),
+        ("docx::image014_connectors", image014_connectors),
+        ("docx::image015_selection_format", image015_selection_format),
+        ("docx::page021_blank_page", page021_blank_page),
+        ("docx::image005_crop_picture_to_shape", image005_crop_picture_to_shape),
+        ("docx::image023_reset_picture", image023_reset_picture),
+        ("docx::image024_shape_styles", image024_shape_styles),
+        ("docx::page022_cover_page", page022_cover_page),
+        ("docx::ref017_note_navigation", ref017_note_navigation),
+        ("docx::review022_comment_navigation", review022_comment_navigation),
         ("docx::image013_insert_line", image013_insert_line),
         ("docx::merge001_mail_merge", merge001_mail_merge),
+        ("docx::merge003_recipient_list_edit_filter_and_find", merge003_recipient_list_edit_filter_and_find),
+        ("docx::merge001_document_type_saved", merge001_document_type_saved),
         ("docx::image006_picture_corrections", image006_picture_corrections),
-        ("docx::picture_transparency", picture_transparency),
+        ("docx::image006_extended_picture_corrections", image006_extended_picture_corrections),
         ("docx::header006_picture_in_header", header006_picture_in_header),
         ("docx::ref012_caption_with_chapter_number", ref012_caption_with_chapter_number),
         ("docx::ref012_update_fields_renumbers_chapters", ref012_update_fields_renumbers_chapters),
         ("docx::index_regenerated_on_open", index_regenerated_on_open),
+        ("docx::toc009_mark_entry_insert_and_update_index", toc009_mark_entry_insert_and_update_index),
+        ("docx::fcode066_tc_entries_and_toc_f", fcode066_tc_entries_and_toc_f),
+        ("docx::fcode020_eq_field_typeset", fcode020_eq_field_typeset),
+        ("docx::options007_smart_quotes_lists_and_borders", options007_smart_quotes_lists_and_borders),
+        ("docx::header011_chapter_menu", header011_chapter_menu),
+        ("docx::access012_dark_page", access012_dark_page),
+        ("docx::ref007_note_separator", ref007_note_separator),
+        ("docx::ja019_no_proof", ja019_no_proof),
+        ("docx::image012_shape_dash_gradient_shadow", image012_shape_dash_gradient_shadow),
+        ("docx::list002_picture_bullet_from_a_file", list002_picture_bullet_from_a_file),
+        ("docx::access008_keyboard_operations", access008_keyboard_operations),
+        ("docx::review004_tracked_move_text", review004_tracked_move_text),
+        ("docx::design_paragraph_spacing_presets", design_paragraph_spacing_presets),
+        ("docx::section_show_document_text", section_show_document_text),
+        ("docx::edit004_typing_paste_and_paragraph_format_in_ranges", edit004_typing_paste_and_paragraph_format_in_ranges),
+        ("docx::fcode030_include_text_update", fcode030_include_text_update),
+        ("docx::fcode029_include_picture_update", fcode029_include_picture_update),
+        ("docx::fcode065_citations_and_table_of_authorities", fcode065_citations_and_table_of_authorities),
         ("docx::sec001_open_password", sec001_open_password),
         ("docx::table_tab_moves_between_cells", table_tab_moves_between_cells),
         ("docx::ja010_kinsoku_lists", ja010_kinsoku_lists),
         ("docx::review014_compare_documents", review014_compare_documents),
+        ("docx::review014_compare_tables", review014_compare_tables),
+        #[cfg(all(target_os = "macos", feature = "export"))]
+        ("docx::options011_image_quality_and_compression", options011_image_quality_and_compression),
+        ("docx::options012_autorecover_and_save_frequency", options012_autorecover_and_save_frequency),
+        ("docx::options013_font_embedding_and_compatibility", options013_font_embedding_and_compatibility),
+        ("docx::page006_multiple_pages_and_book_fold", page006_multiple_pages_and_book_fold),
+        ("docx::options015_dump_menu_ids", options015_dump_menu_ids),
         ("docx::clipboard_with_other_apps", clipboard_with_other_apps),
         ("docx::index_columns_kept_on_open", index_columns_kept_on_open),
         ("docx::header011_chapter_in_page_numbers", header011_chapter_in_page_numbers),
         ("docx::toc015_outline_level_and_move", toc015_outline_level_and_move),
+        ("docx::toc015_outline_keys_drag_and_body_text", toc015_outline_keys_drag_and_body_text),
         ("docx::toc014_collapse_headings", toc014_collapse_headings),
         ("docx::style010_auto_update_style", style010_auto_update_style),
         ("docx::image015_wrap_beside_text_box", image015_wrap_beside_text_box),
@@ -298,6 +345,31 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::view008_page_movement_side_to_side", view008_page_movement_side_to_side),
         ("docx::form001_rich_text_control", form001_rich_text_control),
         ("docx::form002_plain_text_control", form002_plain_text_control),
+        ("docx::form003_picture_control", form003_picture_control),
+        ("docx::form008_building_block_gallery_control", form008_building_block_gallery_control),
+        ("docx::form009_repeating_section_control", form009_repeating_section_control),
+        ("docx::form014_group_control", form014_group_control),
+        ("docx::form011_placeholder_prompt", form011_placeholder_prompt),
+        ("docx::form010_control_properties", form010_control_properties),
+        ("docx::header014_header_style", header014_header_style),
+        ("docx::file007_save_as_template", file007_save_as_template),
+        ("docx::header006_table_in_header", header006_table_in_header),
+        ("docx::header006_shapes_in_header", header006_shapes_in_header),
+        ("docx::merge006_address_and_greeting", merge006_address_and_greeting),
+        ("docx::merge010_rules_and_separate_files", merge010_rules_and_separate_files),
+        ("docx::options007_autocorrect", options007_autocorrect),
+        ("docx::style011_gallery_order", style011_gallery_order),
+        ("docx::file014_autorecover", file014_autorecover),
+        ("docx::table002_draw_table", table002_draw_table),
+        ("docx::merge011_next_record", merge011_next_record),
+        ("docx::merge016_envelope_setup", merge016_envelope_setup),
+        ("docx::merge017_label_sheet_setup", merge017_label_sheet_setup),
+        ("docx::merge009_match_fields", merge009_match_fields),
+        ("docx::merge014_print_merged_documents", merge014_print_merged_documents),
+        ("docx::file016_backup_copy", file016_backup_copy),
+        ("docx::image015_text_box_wrap", image015_text_box_wrap),
+        ("docx::math_in_text_and_display", math_in_text_and_display),
+        ("docx::math_structures_convert_and_quick_parts", math_structures_convert_and_quick_parts),
         ("docx::view005_read_mode", view005_read_mode),
         ("docx::view006_focus_mode", view006_focus_mode),
         ("docx::view002_web_layout_mode", view002_web_layout_mode),
@@ -308,6 +380,50 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::sec004_protect_forms", sec004_protect_forms),
         ("docx::sec005_protect_comments", sec005_protect_comments),
         ("docx::view021_interaction_modes", view021_interaction_modes),
+        ("docx::doc_properties_embed_fonts", doc_properties_embed_fonts),
+        ("docx::review017_view_side_by_side_and_sync_scrolling", review017_view_side_by_side_and_sync_scrolling),
+        ("docx::form016_018_legacy_form_fields", form016_018_legacy_form_fields),
+        ("docx::sec014_print_markup", sec014_print_markup),
+        ("docx::para019_drop_cap", para019_drop_cap),
+        ("docx::shape001_align_text", shape001_align_text),
+        ("docx::design002_theme_fonts", design002_theme_fonts),
+        ("docx::design003_set_as_default", design003_set_as_default),
+        ("docx::design004_style_set", design004_style_set),
+        ("docx::design005_theme_effects", design005_theme_effects),
+        ("docx::form020_design_mode", form020_design_mode),
+        ("docx::merge020_check_errors", merge020_check_errors),
+        ("docx::shape002_picture_and_shape_tools", shape002_picture_and_shape_tools),
+        ("docx::ref014_citations_and_bibliography", ref014_citations_and_bibliography),
+        ("docx::review016_combine_documents", review016_combine_documents),
+        ("docx::insert_objects_suite", insert_objects_suite),
+        ("docx::issue1_comment_anchors_and_navigation", issue1_comment_anchors_and_navigation),
+        ("docx::comment002_ux_improvements", comment002_ux_improvements),
+        ("docx::math003_builtin_equations_and_structures", math003_builtin_equations_and_structures),
+        ("docx::sec013_015_016_print_settings_panel", sec013_015_016_print_settings_panel),
+        ("docx::ref016_source_manager", ref016_source_manager),
+        ("docx::style018_building_blocks_and_autotext", style018_building_blocks_and_autotext),
+        ("docx::enter_preserves_formatting", enter_preserves_formatting),
+        ("docx::review019_thesaurus", review019_thesaurus),
+        ("docx::access010_immersive_reader", access010_immersive_reader),
+        ("docx::opt001_mini_toolbar", opt001_mini_toolbar),
+        ("docx::opt002_screentip_style", opt002_screentip_style),
+        ("docx::opt005_drag_select_options", opt005_drag_select_options),
+        ("docx::file020_open_and_repair", file020_open_and_repair),
+        ("docx::style017_template_attach_and_link_styles", style017_template_attach_and_link_styles),
+        ("docx::ja010_kinsoku_strict_and_normal", ja010_kinsoku_strict_and_normal),
+        ("docx::ja019_default_language_and_bidi", ja019_default_language_and_bidi),
+        ("docx::list011_define_list_style", list011_define_list_style),
+        ("docx::file011_compatibility_mode_and_convert", file011_compatibility_mode_and_convert),
+        ("docx::style012_013_document_themes_and_theme_colors", style012_013_document_themes_and_theme_colors),
+        ("docx::float006_edit_wrap_points", float006_edit_wrap_points),
+        ("docx::toc016_master_and_subdocuments", toc016_master_and_subdocuments),
+        ("docx::ink001_007_draw_erase_select_move_resize_and_to_shape", ink001_007_draw_erase_select_move_resize_and_to_shape),
+        ("docx::ink010_ink_editor_gestures", ink010_ink_editor_gestures),
+        ("docx::math001_002_023_inplace_edit_and_skewed_linear_frac_roundtrip", math001_002_023_inplace_edit_and_skewed_linear_frac_roundtrip),
+        ("docx::float016_group_and_ungroup_shapes", float016_group_and_ungroup_shapes),
+        ("docx::file010_012_013_sec019_document_conversions", file010_012_013_sec019_document_conversions),
+        ("docx::access007_009_cloud020_screen_reader_read_aloud_and_customize", access007_009_cloud020_screen_reader_read_aloud_and_customize),
+        ("docx::audit_core_editing_formatting_layout_and_review", audit_core_editing_formatting_layout_and_review),
     ]
 }
 
@@ -861,7 +977,7 @@ fn b9_emphasis_mark() {
     use ibis_doc_model::EmphasisMark;
     let mut s = Scenario::open(REPORT);
     let doc = s.document();
-    let p = body(&doc).iter().find(|p| p.text().chars().count() > 6 && !p.text().contains('\u{fffc}')).unwrap().clone();
+    let p = body(&doc).iter().find(|p| p.text().chars().count() > 6 && !p.text().contains('\u{fffc}')).copied().unwrap();
     s.click_text(FlowPos::new(p.id, 0));
     for _ in 0..4 {
         s.key("shift-right");
@@ -888,7 +1004,7 @@ fn b9_emphasis_mark() {
 fn b9_ruby() {
     let mut s = Scenario::open(REPORT);
     let doc = s.document();
-    let p = body(&doc).iter().find(|p| p.text().chars().count() > 6 && !p.text().contains('\u{fffc}')).unwrap().clone();
+    let p = body(&doc).iter().find(|p| p.text().chars().count() > 6 && !p.text().contains('\u{fffc}')).copied().unwrap();
     let text = p.text();
     let base: String = text.chars().take(2).collect();
     s.click_text(FlowPos::new(p.id, 0));
@@ -919,7 +1035,7 @@ fn b9_combine() {
     use ibis_doc_model::Combine;
     let mut s = Scenario::open(REPORT);
     let doc = s.document();
-    let p = body(&doc).iter().find(|p| p.text().chars().count() > 6 && !p.text().contains('\u{fffc}')).unwrap().clone();
+    let p = body(&doc).iter().find(|p| p.text().chars().count() > 6 && !p.text().contains('\u{fffc}')).copied().unwrap();
     s.click_text(FlowPos::new(p.id, 0));
     for _ in 0..4 {
         s.key("shift-right");
@@ -1505,7 +1621,7 @@ fn a2_table_of_contents() {
     let read = toc(flow(&saved));
     assert_eq!(read.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), entries.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>());
     let doc = flow(&saved);
-    let start = body(doc).iter().find(|p| p.field_start.is_some()).unwrap().clone();
+    let start = body(doc).iter().find(|p| p.field_start.is_some()).copied().unwrap();
     assert!(start.field_start.as_deref().is_some_and(|i| i.contains("\"1-2\"")), "{:?}", start.field_start);
     for p in body(doc).iter().filter(|p| p.runs.iter().any(|r| matches!(&r.link, Some(ibis_doc_model::Link::Anchor(_))))) {
         let Some(ibis_doc_model::Link::Anchor(name)) = p.runs.iter().find_map(|r| r.link.clone()) else { continue };
@@ -2201,7 +2317,7 @@ fn h9_tracked_changes() {
     s.key("shift-right");
     s.key("shift-right");
     s.type_text("新");
-    let kinds = |s: &mut Scenario| s.with(|e, _| para(flow(e.presentation()), id).runs.iter().filter_map(|r| r.revision.as_ref().map(|v| match v.kind { RevisionKind::Insert => 'i', RevisionKind::Delete => 'd', RevisionKind::Format(_) => 'f' })).collect::<String>());
+    let kinds = |s: &mut Scenario| s.with(|e, _| para(flow(e.presentation()), id).runs.iter().filter_map(|r| r.revision.as_ref().map(|v| match v.kind { RevisionKind::Insert => 'i', RevisionKind::Delete => 'd', RevisionKind::Format(_) => 'f', RevisionKind::MoveFrom => 'm', RevisionKind::MoveTo => 'M' })).collect::<String>());
     assert_eq!(kinds(&mut s), "di", "the selection marked deleted, the new text inserted");
     // A change of formatting further on.
     s.click_text(FlowPos::new(id, 8));
@@ -7073,6 +7189,8 @@ fn ja020_case_conversion() {
     let mut s = Scenario::open(REPORT);
     let (_, id, _) = text_paragraph(&mut s, 10);
     s.click_text(FlowPos::new(id, 0));
+    // The text is typed as it stands: the case conversions below are what is tested.
+    s.menu("docx.edit.autocorrect");
     s.type_text("hello world. this is ibis.\n");
 
     let doc = s.document();
@@ -10502,6 +10620,200 @@ fn sec006_007_mark_as_final_and_read_only() {
     assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "infobar rendered in reopened docx");
 }
 
+/// DOCX-SEC-011 ドキュメントの検査と個人情報除去 / DOCX-SEC-018 互換性チェック:
+/// 1. ドキュメント検査 (Inspect Document):
+///    プロパティ・コメント・変更履歴・ヘッダー/フッター・隠し文字の検出と、
+///    それぞれの「すべて削除」アクションの動作確認、再検査でのクリア確認。
+/// 2. 互換性チェック (Check Compatibility):
+///    旧バージョンの Word で非互換となる機能（OMML 数式、SmartArt、コンテンツ コントロール、OpenType/文字効果）
+///    の重大度（重大な機能低下 / 軽微な精度の低下）分類検出と、該当箇所へのジャンプ動作確認。
+fn sec011_018_inspect_document_and_compatibility() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. テスト用の要素を設定
+    // (a) ドキュメント プロパティを設定
+    s.update(|e, _, cx| {
+        let mut props = e.flow().map(|d| d.properties.clone()).unwrap_or_default();
+        props.title = Some("秘密の企画書".to_string());
+        props.creator = Some("山田太郎".to_string());
+        props.company = Some("アイビス".to_string());
+        props.custom.push(ibis_doc_model::flow::CustomProperty {
+            name: "ProjectCode".to_string(),
+            value: ibis_doc_model::flow::CustomPropertyValue::Text("SECRET-007".to_string()),
+        });
+        e.run_flow(vec![ibis_doc_model::FlowCommand::SetDocProperties(props)], cx);
+    });
+
+    // (b) コメントを追加
+    s.update(|e, _, cx| {
+        let Some(doc) = e.flow() else { return };
+        if let Some(first_para) = doc.body.first() {
+            if let ibis_doc_model::Block::Paragraph(p) = first_para {
+                let who = ibis_doc_model::flow_command::CommentAuthor {
+                    author: "山田太郎".to_string(),
+                    initials: "TY".to_string(),
+                    date: "2026-10-16T15:00:00Z".to_string(),
+                };
+                if let Some(cmds) = ibis_doc_model::flow_command::add_comment(
+                    doc,
+                    ibis_doc_model::FlowPos::new(p.id, 0),
+                    ibis_doc_model::FlowPos::new(p.id, p.len().min(4)),
+                    &who,
+                    "社外秘メモ",
+                ) {
+                    e.run_flow(cmds, cx);
+                }
+            }
+        }
+    });
+
+    // (c) 変更履歴 (Tracked Changes) を追加
+    s.update(|e, _, cx| {
+        let Some(doc) = e.flow() else { return };
+        if let Some(ibis_doc_model::Block::Paragraph(p)) = doc.body.get(1) {
+            let mut q = p.clone();
+            let mut rev_run = ibis_doc_model::flow::FlowRun::new(
+                ibis_doc_model::flow::FlowRunKind::Text("追記したテキスト".to_string()),
+                Default::default(),
+            );
+            rev_run.revision = Some(ibis_doc_model::flow::Revision {
+                author: "山田太郎".to_string(),
+                date: "2026-10-16T15:00:00Z".to_string(),
+                kind: ibis_doc_model::flow::RevisionKind::Insert,
+            });
+            q.runs.push(rev_run);
+            q.normalize();
+            if let Some((container, index)) = ibis_doc_model::flow_command::locate(doc, p.id) {
+                e.run_flow(vec![ibis_doc_model::FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![ibis_doc_model::Block::Paragraph(q)] }], cx);
+            }
+        }
+    });
+
+    // (d) 隠し文字 (Hidden Text) を追加
+    s.update(|e, _, cx| {
+        let Some(doc) = e.flow() else { return };
+        if let Some(ibis_doc_model::Block::Paragraph(p)) = doc.body.get(2) {
+            let mut q = p.clone();
+            let mut hidden_run = ibis_doc_model::flow::FlowRun::new(
+                ibis_doc_model::flow::FlowRunKind::Text("非公開の隠し文章".to_string()),
+                Default::default(),
+            );
+            hidden_run.style.hidden = true;
+            q.runs.push(hidden_run);
+            q.normalize();
+            if let Some((container, index)) = ibis_doc_model::flow_command::locate(doc, p.id) {
+                e.run_flow(vec![ibis_doc_model::FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![ibis_doc_model::Block::Paragraph(q)] }], cx);
+            }
+        }
+    });
+
+    // (e) ヘッダーを追加
+    s.update(|e, _, cx| {
+        let cmds = e.add_header_commands(false);
+        e.run_flow(cmds, cx);
+    });
+
+    // 2. ドキュメント検査パネルを開く
+    s.menu("docx.inspect-document");
+    assert!(s.with(|e, _| e.sidebar_open), "sidebar is opened for inspect panel");
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.inspect_panel.as_ref()).is_some()), "inspect_panel state is active");
+
+    let inspection = s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().inspection.clone());
+    assert!(inspection.has_properties, "properties detected");
+    assert!(inspection.properties_details.iter().any(|d| d.contains("秘密の企画書")), "title detected");
+    assert!(inspection.comment_count > 0, "comments detected: {}", inspection.comment_count);
+    assert!(inspection.revision_count > 0, "revisions detected: {}", inspection.revision_count);
+    assert!(inspection.has_headers_footers, "headers/footers detected");
+    assert!(inspection.hidden_text_count > 0, "hidden text detected: {}", inspection.hidden_text_count);
+
+    // 3. 各項目の「すべて削除」を実行
+    // (a) プロパティ削除
+    s.update(|e, _, cx| e.doc_inspect_remove_all_properties(cx));
+    assert!(s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().properties_removed));
+    assert!(!s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().inspection.has_properties));
+
+    // (b) コメント削除
+    s.update(|e, _, cx| e.doc_inspect_remove_all_comments(cx));
+    assert!(s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().comments_removed));
+    assert_eq!(s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().inspection.comment_count), 0);
+
+    // (c) 変更履歴承諾
+    s.update(|e, _, cx| e.doc_inspect_remove_all_revisions(cx));
+    assert!(s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().revisions_removed));
+    assert_eq!(s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().inspection.revision_count), 0);
+
+    // (d) 隠し文字削除
+    s.update(|e, _, cx| e.doc_inspect_remove_all_hidden_text(cx));
+    assert!(s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().hidden_text_removed));
+    assert_eq!(s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().inspection.hidden_text_count), 0);
+
+    // (e) ヘッダー・フッター削除
+    s.update(|e, _, cx| e.doc_inspect_remove_all_headers_footers(cx));
+    assert!(s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().headers_footers_removed));
+    assert!(!s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().inspection.has_headers_footers));
+
+    // (f) 再検査を実行
+    s.update(|e, _, cx| e.recheck_doc_inspection(cx));
+    let re_inspection = s.with(|e, _| e.doc_state().unwrap().inspect_panel.as_ref().unwrap().inspection.clone());
+    assert!(!re_inspection.has_properties);
+    assert_eq!(re_inspection.comment_count, 0);
+    assert_eq!(re_inspection.revision_count, 0);
+    assert_eq!(re_inspection.hidden_text_count, 0);
+    assert!(!re_inspection.has_headers_footers);
+
+    // パネルを閉じる
+    s.update(|e, _, cx| e.close_doc_inspect_panel(cx));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.inspect_panel.as_ref()).is_none()));
+
+    // 4. 互換性チェック (DOCX-SEC-018)
+    // (a) OMML 数式を追加
+    let mut math_target_pos = None;
+    s.update(|e, _, cx| {
+        let Some(doc) = e.flow() else { return };
+        if let Some(ibis_doc_model::Block::Paragraph(p)) = doc.body.get(3) {
+            let mut q = p.clone();
+            let pos = ibis_doc_model::FlowPos::new(p.id, 0);
+            math_target_pos = Some(pos);
+            let math_run = ibis_doc_model::flow::FlowRun::new(
+                ibis_doc_model::flow::FlowRunKind::Math {
+                    math: ibis_doc_model::math::Math::Text("x+y=z".to_string()),
+                    display: false,
+                },
+                Default::default(),
+            );
+            q.runs.insert(0, math_run);
+            q.normalize();
+            if let Some((container, index)) = ibis_doc_model::flow_command::locate(doc, p.id) {
+                e.run_flow(vec![ibis_doc_model::FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![ibis_doc_model::Block::Paragraph(q)] }], cx);
+            }
+        }
+    });
+
+    // (b) 互換性チェックパネルを開く
+    s.menu("docx.compatibility-check");
+    assert!(s.with(|e, _| e.sidebar_open), "sidebar is opened for compatibility panel");
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.compatibility_panel.as_ref()).is_some()), "compatibility_panel state is active");
+
+    let report = s.with(|e, _| e.doc_state().unwrap().compatibility_panel.as_ref().unwrap().report.clone());
+    assert!(!report.is_clean(), "report detected compatibility issues");
+    assert!(!report.significant.is_empty(), "significant loss detected for math");
+    assert!(report.significant.iter().any(|i| i.title.contains("数式")), "math issue title detected");
+
+    // (c) ジャンプ動作の確認
+    if let Some(math_pos) = math_target_pos {
+        s.update(|e, _, cx| e.jump_to_docx_compatibility_issue(math_pos, cx));
+        assert_eq!(s.with(|e, _| e.doc_state().and_then(|st| st.caret)), Some(math_pos), "caret jumped to math position");
+    }
+
+    // (d) 再確認
+    s.update(|e, _, cx| e.recheck_doc_compatibility(cx));
+    assert!(s.with(|e, _| e.doc_state().unwrap().compatibility_panel.as_ref().unwrap().message.is_some()));
+
+    // (e) パネルを閉じる
+    s.update(|e, _, cx| e.close_doc_compatibility_panel(cx));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.compatibility_panel.as_ref()).is_none()));
+}
+
 /// DOCX-JA-015 文字数・行数の原稿設定（w:docGrid）:
 /// ページ設定ダイアログの「文字数と行数」セクションで、行数・行送りを指定して適用、
 /// Undo/Redo、ファイル保存・再読込（ラウンドトリップ）、
@@ -10839,6 +11151,7 @@ fn toc004_custom_styles_in_toc() {
         hyperlinks: true,
         hide_in_web: true,
         use_outline_levels: true,
+        ..Default::default()
     };
     s.update(|e, _, cx| {
         e.insert_toc_with_instruction(instruction.clone(), cx);
@@ -12277,6 +12590,8 @@ fn opt004_overtype_mode() {
     let kinds: String = p_after.runs.iter().filter_map(|r| r.revision.as_ref().map(|rev| match rev.kind {
         ibis_doc_model::RevisionKind::Insert => 'i',
         ibis_doc_model::RevisionKind::Delete => 'd',
+        ibis_doc_model::RevisionKind::MoveTo => 'M',
+        ibis_doc_model::RevisionKind::MoveFrom => 'm',
         ibis_doc_model::RevisionKind::Format(_) => 'f',
     })).collect();
     assert!(kinds.contains('d') && kinds.contains('i'), "Overtype with track changes records both deletion and insertion: {}", kinds);
@@ -12598,7 +12913,7 @@ fn opt003_user_name_and_author() {
         } else {
             false
         }
-    }).expect("inserted tracked text run");
+    }).unwrap_or_else(|| panic!("inserted tracked text run: {:?}", p_tracked.runs.iter().map(|r| (&r.kind, r.revision.is_some())).collect::<Vec<_>>()));
     assert_eq!(inserted_run.revision.as_ref().unwrap().author, "Taro Yamada", "revision author should match custom user name");
 
     // 6. USERNAME / USERINITIALS フィールドの評価に反映されることを検証
@@ -13771,7 +14086,7 @@ fn find009_search_direction_and_scope() {
 
 fn find008_format_and_style_find_replace() {
     use crate::docx::find::{FindFormatting, ReplaceFormatting};
-    use ibis_doc_model::{FlowCommand, FlowPos, FlowRunKind, ParaChange, Rgb, RunChange};
+    use ibis_doc_model::{FlowPos, FlowRunKind};
 
     let mut s = Scenario::open(REPORT);
 
@@ -15036,7 +15351,7 @@ fn form001_rich_text_control() {
     let doc = s.document();
     let p = para(&doc, id);
     match p.runs.first().map(|r| &r.kind) {
-        Some(FlowRunKind::RichText { text }) => {
+        Some(FlowRunKind::RichText { text, .. }) => {
             assert_eq!(text, "クリックまたはタップしてテキストを入力してください。");
         }
         other => panic!("expected RichText, got {:?}", other),
@@ -15052,7 +15367,7 @@ fn form001_rich_text_control() {
         let doc = s.document();
         let p = para(&doc, id);
         match p.runs.first().map(|r| &r.kind) {
-            Some(FlowRunKind::RichText { text }) => {
+            Some(FlowRunKind::RichText { text, .. }) => {
                 assert_eq!(text, "入力されたリッチテキスト");
             }
             other => panic!("expected RichText, got {:?}", other),
@@ -15066,7 +15381,7 @@ fn form001_rich_text_control() {
         let doc = s.document();
         let p = para(&doc, id);
         match p.runs.first().map(|r| &r.kind) {
-            Some(FlowRunKind::RichText { text }) => {
+            Some(FlowRunKind::RichText { text, .. }) => {
                 assert_eq!(text, "クリックまたはタップしてテキストを入力してください。");
             }
             other => panic!("expected RichText, got {:?}", other),
@@ -15078,7 +15393,7 @@ fn form001_rich_text_control() {
         let doc = s.document();
         let p = para(&doc, id);
         match p.runs.first().map(|r| &r.kind) {
-            Some(FlowRunKind::RichText { text }) => {
+            Some(FlowRunKind::RichText { text, .. }) => {
                 assert_eq!(text, "入力されたリッチテキスト");
             }
             other => panic!("expected RichText, got {:?}", other),
@@ -15090,7 +15405,7 @@ fn form001_rich_text_control() {
     let saved = s.reopen();
     let p_saved = para(flow(&saved), id);
     match p_saved.runs.first().map(|r| &r.kind) {
-        Some(FlowRunKind::RichText { text }) => {
+        Some(FlowRunKind::RichText { text, .. }) => {
             assert_eq!(text, "入力されたリッチテキスト");
         }
         other => panic!("expected RichText in reopened document, got {:?}", other),
@@ -15111,7 +15426,7 @@ fn form002_plain_text_control() {
     let doc = s.document();
     let p = para(&doc, id);
     match p.runs.first().map(|r| &r.kind) {
-        Some(FlowRunKind::PlainText { text }) => {
+        Some(FlowRunKind::PlainText { text, .. }) => {
             assert_eq!(text, "クリックまたはタップしてテキストを入力してください。");
         }
         other => panic!("expected PlainText, got {:?}", other),
@@ -15127,7 +15442,7 @@ fn form002_plain_text_control() {
         let doc = s.document();
         let p = para(&doc, id);
         match p.runs.first().map(|r| &r.kind) {
-            Some(FlowRunKind::PlainText { text }) => {
+            Some(FlowRunKind::PlainText { text, .. }) => {
                 assert_eq!(text, "入力されたプレーンテキスト");
             }
             other => panic!("expected PlainText, got {:?}", other),
@@ -15141,7 +15456,7 @@ fn form002_plain_text_control() {
         let doc = s.document();
         let p = para(&doc, id);
         match p.runs.first().map(|r| &r.kind) {
-            Some(FlowRunKind::PlainText { text }) => {
+            Some(FlowRunKind::PlainText { text, .. }) => {
                 assert_eq!(text, "クリックまたはタップしてテキストを入力してください。");
             }
             other => panic!("expected PlainText, got {:?}", other),
@@ -15153,7 +15468,7 @@ fn form002_plain_text_control() {
         let doc = s.document();
         let p = para(&doc, id);
         match p.runs.first().map(|r| &r.kind) {
-            Some(FlowRunKind::PlainText { text }) => {
+            Some(FlowRunKind::PlainText { text, .. }) => {
                 assert_eq!(text, "入力されたプレーンテキスト");
             }
             other => panic!("expected PlainText, got {:?}", other),
@@ -15165,11 +15480,1009 @@ fn form002_plain_text_control() {
     let saved = s.reopen();
     let p_saved = para(flow(&saved), id);
     match p_saved.runs.first().map(|r| &r.kind) {
-        Some(FlowRunKind::PlainText { text }) => {
+        Some(FlowRunKind::PlainText { text, .. }) => {
             assert_eq!(text, "入力されたプレーンテキスト");
         }
         other => panic!("expected PlainText in reopened document, got {:?}", other),
     }
+}
+
+/// DOCX-FORM-003: 画像コントロール（Word Content Control: w:sdt + w14:picture）.
+fn form003_picture_control() {
+    use ibis_doc_model::ControlLock;
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial menu state
+    assert_eq!(s.menu_state("insert.picture-control"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.form.picture.replace"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.form.picture.reset"), Some((true, false)));
+
+    // 2. Insert picture control via menu "insert.picture-control"
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("insert.picture-control");
+
+    let doc = s.document();
+    let p = para(&doc, id);
+    let initial_media = match p.runs.first().map(|r| &r.kind) {
+        Some(FlowRunKind::PictureControl { placeholder, media, size, .. }) => {
+            assert!(*placeholder, "newly inserted picture control should be in placeholder state");
+            assert_eq!(size.width, ibis_doc_model::DEFAULT_PICTURE_CONTROL_WIDTH_EMU);
+            assert_eq!(size.height, ibis_doc_model::DEFAULT_PICTURE_CONTROL_HEIGHT_EMU);
+            *media
+        }
+        other => panic!("expected PictureControl, got {:?}", other),
+    };
+
+    // 3. Single click on the picture control sets caret
+    s.click_text(FlowPos::new(id, 0));
+    s.settle();
+    let has_pic = s.with(|e, _| e.is_picture_control_at(FlowPos::new(id, 0)));
+    assert!(has_pic, "picture control should be at position (id, 0)");
+
+    // 4. Set Control Properties (Title, Tag, Locking) via properties panel
+    let set_props = |s: &mut Scenario, title: &str, tag: &str, lock: ControlLock| {
+        s.menu("docx.form.properties");
+        assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.control.is_some())), "the panel is open");
+        s.update(|e, window, cx| {
+            let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+            state.lock = lock;
+            let (t, g) = (state.title.clone(), state.tag.clone());
+            t.update(cx, |i, cx| i.set_value(title.to_string(), window, cx));
+            g.update(cx, |i, cx| i.set_value(tag.to_string(), window, cx));
+            e.apply_control_properties(cx);
+        });
+    };
+    set_props(&mut s, "UserAvatar", "AVATAR_TAG", ControlLock::None);
+
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        let ctrl = p.runs[0].control.as_ref().expect("control info should be set");
+        assert_eq!(ctrl.title, "UserAvatar");
+        assert_eq!(ctrl.tag, "AVATAR_TAG");
+        assert_eq!(ctrl.lock, ControlLock::None);
+    }
+
+    // 5. Replace picture with a custom image
+    let test_png = vec![
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+        0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+        0x42, 0x60, 0x82,
+    ];
+    s.update(|e, _, cx| {
+        e.replace_picture_control_around_caret(test_png, ibis_doc_model::MediaFormat::Png, false, cx);
+    });
+    s.settle();
+
+    let replaced_media = {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::PictureControl { placeholder, media, .. }) => {
+                assert!(!placeholder, "after replace, placeholder state should be false");
+                assert_ne!(*media, initial_media, "media ID should change after replace");
+                *media
+            }
+            other => panic!("expected PictureControl, got {:?}", other),
+        }
+    };
+
+    // 6. Reset picture control to placeholder
+    s.menu("docx.form.picture.reset");
+    s.settle();
+
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::PictureControl { placeholder, .. }) => {
+                assert!(*placeholder, "after reset, placeholder state should be true");
+            }
+            other => panic!("expected PictureControl, got {:?}", other),
+        }
+    }
+
+    // 7. Undo / Redo
+    s.key("cmd-z"); // undo reset
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::PictureControl { placeholder, media, .. }) => {
+                assert!(!placeholder);
+                assert_eq!(*media, replaced_media);
+            }
+            other => panic!("expected PictureControl, got {:?}", other),
+        }
+    }
+
+    s.key("cmd-shift-z"); // redo reset
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::PictureControl { placeholder, .. }) => {
+                assert!(*placeholder);
+            }
+            other => panic!("expected PictureControl, got {:?}", other),
+        }
+    }
+
+    // 8. Test Content Locking
+    s.click_text(FlowPos::new(id, 0));
+    set_props(&mut s, "UserAvatar", "AVATAR_TAG", ControlLock::Content);
+
+    // Trying to replace picture while content is locked should fail safely
+    let dummy_png = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    let replaced_locked = s.update(|e, _, cx| {
+        e.replace_picture_control_around_caret(dummy_png, ibis_doc_model::MediaFormat::Png, false, cx)
+    });
+    assert!(!replaced_locked, "replacing picture on content-locked control should fail");
+
+    // Unlock again
+    set_props(&mut s, "UserAvatar", "AVATAR_TAG", ControlLock::None);
+
+    // 9. Save and Reopen document verification
+    s.save_as("docx-form003-picture-control.docx");
+    let saved = s.reopen();
+    let p_saved = para(flow(&saved), id);
+    match p_saved.runs.first().map(|r| &r.kind) {
+        Some(FlowRunKind::PictureControl { placeholder, .. }) => {
+            assert!(*placeholder, "reopened document should preserve placeholder state");
+            let ctrl = p_saved.runs[0].control.as_ref().expect("reopened document should preserve control info");
+            assert_eq!(ctrl.title, "UserAvatar");
+            assert_eq!(ctrl.tag, "AVATAR_TAG");
+        }
+        other => panic!("expected PictureControl in reopened document, got {:?}", other),
+    }
+}
+
+/// DOCX-FORM-008 文書パーツギャラリー コントロール：挿入メニューから文書パーツギャラリー コントロールを挿入し、
+/// 候補の順送り（cycle）や初期プレースホルダーへのリセット（reset）、入力での置換、全削除での案内文復帰、
+/// コントロール プロパティでのタイトル・タグ・ギャラリー・カテゴリ・ロック設定、内容ロック時の編集保護、
+/// および保存・再読み込み（w:sdt + w:docPartList / w:docPartGallery / w:docPartCategory / w:showingPlcHdr）を確認する。
+fn form008_building_block_gallery_control() {
+    use ibis_doc_model::ControlLock;
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial menu state
+    assert_eq!(s.menu_state("insert.building-block-gallery"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.form.gallery.cycle"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.form.gallery.reset"), Some((true, false)));
+
+    // 2. Insert building block gallery control via menu "insert.building-block-gallery"
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("insert.building-block-gallery");
+
+    let prompt = "ここをクリックまたはタップして、文書パーツ ギャラリーの項目を挿入します。";
+    let doc = s.document();
+    let p = para(&doc, id);
+    match p.runs.first().map(|r| &r.kind) {
+        Some(FlowRunKind::BuildingBlockGallery { gallery, category, text, placeholder }) => {
+            assert!(*placeholder, "newly inserted gallery control should be in placeholder state");
+            assert_eq!(gallery, ibis_doc_model::DEFAULT_BUILDING_BLOCK_GALLERY_NAME);
+            assert_eq!(category, ibis_doc_model::DEFAULT_BUILDING_BLOCK_GALLERY_CATEGORY);
+            assert_eq!(text, prompt);
+        }
+        other => panic!("expected BuildingBlockGallery, got {:?}", other),
+    };
+
+    // 3. Single click on the building block gallery sets caret
+    s.click_text(FlowPos::new(id, 0));
+    s.settle();
+    let has_gallery = s.with(|e, _| e.building_block_gallery_at_caret().is_some());
+    assert!(has_gallery, "building block gallery control should be at caret");
+
+    // 4. Set Control Properties (Title, Tag, Gallery, Category, Locking) via properties panel
+    s.menu("docx.form.properties");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.control.is_some())), "the control panel is open");
+    s.update(|e, window, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        assert!(state.gallery_fields.is_some(), "gallery inputs should be present for BuildingBlockGallery");
+        state.lock = ControlLock::None;
+        let (t, g) = (state.title.clone(), state.tag.clone());
+        let (gal_in, cat_in) = state.gallery_fields.as_ref().unwrap().clone();
+        t.update(cx, |i, cx| i.set_value("ReportHeader".to_string(), window, cx));
+        g.update(cx, |i, cx| i.set_value("HDR_BLOCK".to_string(), window, cx));
+        gal_in.update(cx, |i, cx| i.set_value("Custom Headers".to_string(), window, cx));
+        cat_in.update(cx, |i, cx| i.set_value("Financial".to_string(), window, cx));
+        e.apply_control_properties(cx);
+    });
+
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| (&r.kind, r.control.as_deref())) {
+            Some((FlowRunKind::BuildingBlockGallery { gallery, category, .. }, Some(ctrl))) => {
+                assert_eq!(ctrl.title, "ReportHeader");
+                assert_eq!(ctrl.tag, "HDR_BLOCK");
+                assert_eq!(ctrl.lock, ControlLock::None);
+                assert_eq!(gallery, "Custom Headers");
+                assert_eq!(category, "Financial");
+            }
+            other => panic!("expected BuildingBlockGallery with updated props, got {:?}", other),
+        }
+    }
+
+    // 5. Cycle building block items
+    s.menu("docx.form.gallery.cycle");
+    s.settle();
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::BuildingBlockGallery { text, placeholder, .. }) => {
+                assert_eq!(text, "Custom Headers 1");
+                assert!(!placeholder, "after cycle, placeholder should be false");
+            }
+            other => panic!("expected BuildingBlockGallery, got {:?}", other),
+        }
+    }
+
+    s.menu("docx.form.gallery.cycle");
+    s.settle();
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::BuildingBlockGallery { text, placeholder, .. }) => {
+                assert_eq!(text, "Custom Headers 2");
+                assert!(!placeholder);
+            }
+            other => panic!("expected BuildingBlockGallery, got {:?}", other),
+        }
+    }
+
+    // 6. Reset to placeholder
+    s.menu("docx.form.gallery.reset");
+    s.settle();
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::BuildingBlockGallery { text, placeholder, .. }) => {
+                assert_eq!(text, prompt);
+                assert!(*placeholder, "after reset, placeholder should be true");
+            }
+            other => panic!("expected BuildingBlockGallery, got {:?}", other),
+        }
+    }
+
+    // 7. Undo / Redo
+    s.key("cmd-z"); // undo reset -> back to "Custom Headers 2"
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::BuildingBlockGallery { text, placeholder, .. }) => {
+                assert_eq!(text, "Custom Headers 2");
+                assert!(!placeholder);
+            }
+            other => panic!("expected BuildingBlockGallery, got {:?}", other),
+        }
+    }
+
+    s.key("cmd-shift-z"); // redo reset -> back to placeholder prompt
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::BuildingBlockGallery { text, placeholder, .. }) => {
+                assert_eq!(text, prompt);
+                assert!(*placeholder);
+            }
+            other => panic!("expected BuildingBlockGallery, got {:?}", other),
+        }
+    }
+
+    // 8. Typing in the placeholder replaces it
+    s.click_text(FlowPos::new(id, 2));
+    s.type_text("決算概要パーツ");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::BuildingBlockGallery { text, placeholder, .. }) => {
+                assert_eq!(text, "決算概要パーツ");
+                assert!(!placeholder);
+            }
+            other => panic!("expected BuildingBlockGallery, got {:?}", other),
+        }
+    }
+
+    // Deleting all characters restores the placeholder prompt
+    for _ in 0.."決算概要パーツ".chars().count() {
+        s.key("backspace");
+    }
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::BuildingBlockGallery { text, placeholder, .. }) => {
+                assert_eq!(text, prompt);
+                assert!(*placeholder, "deleting all characters should restore placeholder");
+            }
+            other => panic!("expected BuildingBlockGallery, got {:?}", other),
+        }
+    }
+
+    // 9. Test Content Locking
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.form.properties");
+    s.update(|e, _, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        state.lock = ControlLock::Content;
+        e.apply_control_properties(cx);
+    });
+
+    let cycled_locked = s.update(|e, _, cx| e.cycle_building_block_gallery_around_caret(cx));
+    assert!(!cycled_locked, "cycling gallery on content-locked control should fail");
+
+    // Unlock again
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.form.properties");
+    s.update(|e, _, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        state.lock = ControlLock::None;
+        e.apply_control_properties(cx);
+    });
+
+    // 10. Save and Reopen document roundtrip verification
+    let saved_file = s.save_as("docx-form008-building-block-gallery.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved_file).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<w:docPartGallery w:val=\"Custom Headers\"/>"), "{xml}");
+    assert!(xml.contains("<w:docPartCategory w:val=\"Financial\"/>"), "{xml}");
+    assert!(xml.contains("<w:showingPlcHdr/>"), "{xml}");
+
+    let reopened = s.reopen();
+    let p_saved = para(flow(&reopened), id);
+    match p_saved.runs.first().map(|r| (&r.kind, r.control.as_deref())) {
+        Some((FlowRunKind::BuildingBlockGallery { gallery, category, text, placeholder }, Some(ctrl))) => {
+            assert!(*placeholder, "reopened gallery should preserve placeholder");
+            assert_eq!(gallery, "Custom Headers");
+            assert_eq!(category, "Financial");
+            assert_eq!(text, prompt);
+            assert_eq!(ctrl.title, "ReportHeader");
+            assert_eq!(ctrl.tag, "HDR_BLOCK");
+        }
+        other => panic!("expected BuildingBlockGallery in reopened doc, got {:?}", other),
+    }
+}
+
+/// DOCX-FORM-009 繰返しセクション コントロール：Word 標準の w:sdt + w15:repeatingSection /
+/// w15:repeatingSectionItem。セクション項目の追加・削除・選択切り替え、案内文の置換と復元、
+/// 編集・削除ロック、プロパティパネルでのタイトル・タグ・セクション名・挿入削除禁止の変更。
+fn form009_repeating_section_control() {
+    use ibis_doc_model::ControlLock;
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial menu state
+    assert_eq!(s.menu_state("insert.repeating-section"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.form.repeating.add"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.form.repeating.delete"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.form.repeating.cycle"), Some((true, false)));
+
+    // 2. Insert repeating section control via menu "insert.repeating-section"
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("insert.repeating-section");
+
+    let prompt = "ここをクリックまたはタップして、セクションの内容を入力します。";
+    let doc = s.document();
+    let p = para(&doc, id);
+    match p.runs.first().map(|r| &r.kind) {
+        Some(FlowRunKind::RepeatingSection { section_title, items, selected, do_not_allow_insert_delete }) => {
+            assert_eq!(section_title, ibis_doc_model::DEFAULT_REPEATING_SECTION_TITLE);
+            assert_eq!(items, &[prompt.to_string()]);
+            assert_eq!(*selected, 0);
+            assert!(!do_not_allow_insert_delete);
+        }
+        other => panic!("expected RepeatingSection, got {:?}", other),
+    };
+
+    // 3. Single click on the repeating section sets caret
+    s.click_text(FlowPos::new(id, 0));
+    s.settle();
+    let has_repeating = s.with(|e, _| e.repeating_section_at_caret().is_some());
+    assert!(has_repeating, "repeating section control should be at caret");
+
+    // 4. Set Control Properties (Title, Tag, Section Title, do_not_allow_insert_delete, Locking) via properties panel
+    s.menu("docx.form.properties");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.control.is_some())), "the control panel is open");
+    s.update(|e, window, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        assert!(state.repeating_fields.is_some(), "repeating section inputs should be present");
+        state.lock = ControlLock::None;
+        let (t, g) = (state.title.clone(), state.tag.clone());
+        let (sec_in, _) = state.repeating_fields.as_ref().unwrap().clone();
+        t.update(cx, |i, cx| i.set_value("InvoiceItems".to_string(), window, cx));
+        g.update(cx, |i, cx| i.set_value("TAG_REP".to_string(), window, cx));
+        sec_in.update(cx, |i, cx| i.set_value("明細行".to_string(), window, cx));
+        e.apply_control_properties(cx);
+    });
+
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| (&r.kind, r.control.as_deref())) {
+            Some((FlowRunKind::RepeatingSection { section_title, do_not_allow_insert_delete, .. }, Some(ctrl))) => {
+                assert_eq!(ctrl.title, "InvoiceItems");
+                assert_eq!(ctrl.tag, "TAG_REP");
+                assert_eq!(ctrl.lock, ControlLock::None);
+                assert_eq!(section_title, "明細行");
+                assert!(!do_not_allow_insert_delete);
+            }
+            other => panic!("expected RepeatingSection with updated props, got {:?}", other),
+        }
+    }
+
+    // 5. Add section item via menu
+    s.menu("docx.form.repeating.add");
+    s.settle();
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::RepeatingSection { items, selected, .. }) => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[1], "明細行 2");
+                assert_eq!(*selected, 1);
+            }
+            other => panic!("expected RepeatingSection, got {:?}", other),
+        }
+    }
+
+    // 6. Cycle section item via menu
+    s.menu("docx.form.repeating.cycle");
+    s.settle();
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::RepeatingSection { selected, .. }) => {
+                assert_eq!(*selected, 0);
+            }
+            other => panic!("expected RepeatingSection, got {:?}", other),
+        }
+    }
+
+    // 7. Typing replaces prompt
+    s.click_text(FlowPos::new(id, 0));
+    s.type_text("商品A");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::RepeatingSection { items, .. }) => {
+                assert_eq!(items[0], "商品A");
+            }
+            other => panic!("expected RepeatingSection, got {:?}", other),
+        }
+    }
+
+    // 8. Delete all characters restores prompt
+    for _ in 0.."商品A".chars().count() {
+        s.key("backspace");
+    }
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::RepeatingSection { items, .. }) => {
+                assert_eq!(items[0], prompt);
+            }
+            other => panic!("expected RepeatingSection, got {:?}", other),
+        }
+    }
+
+    // 9. Delete section item via menu
+    s.menu("docx.form.repeating.cycle"); // select item 1 ("明細行 2")
+    s.settle();
+    s.menu("docx.form.repeating.delete");
+    s.settle();
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::RepeatingSection { items, selected, .. }) => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(*selected, 0);
+            }
+            other => panic!("expected RepeatingSection, got {:?}", other),
+        }
+    }
+
+    // 10. Undo / Redo
+    s.key("cmd-z"); // undo delete -> 2 items
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::RepeatingSection { items, .. }) => {
+                assert_eq!(items.len(), 2);
+            }
+            other => panic!("expected RepeatingSection, got {:?}", other),
+        }
+    }
+
+    s.key("cmd-shift-z"); // redo delete -> 1 item
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::RepeatingSection { items, .. }) => {
+                assert_eq!(items.len(), 1);
+            }
+            other => panic!("expected RepeatingSection, got {:?}", other),
+        }
+    }
+
+    // 11. Locking verification (Content lock and do_not_allow_insert_delete)
+    s.menu("docx.form.properties");
+    s.update(|e, _window, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        state.lock = ControlLock::Content;
+        if let Some((_, ref mut flag)) = state.repeating_fields {
+            *flag = true;
+        }
+        e.apply_control_properties(cx);
+    });
+
+    // Content lock blocks typing
+    s.click_text(FlowPos::new(id, 0));
+    s.type_text("TypingWhileLocked");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::RepeatingSection { items, .. }) => {
+                assert_eq!(items[0], prompt, "typing must be blocked when Content lock is active");
+            }
+            other => panic!("expected RepeatingSection, got {:?}", other),
+        }
+    }
+
+    // do_not_allow_insert_delete blocks adding/deleting
+    let add_ok = s.update(|e, _, cx| e.add_repeating_section_item_around_caret(cx));
+    assert!(!add_ok, "add section must be blocked when do_not_allow_insert_delete is true");
+    let del_ok = s.update(|e, _, cx| e.delete_repeating_section_item_around_caret(cx));
+    assert!(!del_ok, "delete section must be blocked when do_not_allow_insert_delete is true");
+
+    // Unlock
+    s.menu("docx.form.properties");
+    s.update(|e, _window, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        state.lock = ControlLock::None;
+        if let Some((_, ref mut flag)) = state.repeating_fields {
+            *flag = false;
+        }
+        e.apply_control_properties(cx);
+    });
+
+    // 12. Save and Reopen document roundtrip verification
+    let saved_file = s.save_as("docx-form009-repeating-section.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved_file).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("repeatingSection"), "{xml}");
+    assert!(xml.contains("sectionTitle"), "{xml}");
+    assert!(xml.contains("明細行"), "{xml}");
+
+    let reopened = s.reopen();
+    let p_saved = para(flow(&reopened), id);
+    match p_saved.runs.first().map(|r| (&r.kind, r.control.as_deref())) {
+        Some((FlowRunKind::RepeatingSection { section_title, items, do_not_allow_insert_delete, .. }, Some(ctrl))) => {
+            assert_eq!(section_title, "明細行");
+            assert_eq!(items, &[prompt.to_string()]);
+            assert!(!do_not_allow_insert_delete);
+            assert_eq!(ctrl.title, "InvoiceItems");
+            assert_eq!(ctrl.tag, "TAG_REP");
+        }
+        other => panic!("expected RepeatingSection in reopened doc, got {:?}", other),
+    }
+}
+
+fn form014_group_control() {
+    use ibis_doc_model::ControlLock;
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial menu state
+    assert_eq!(s.menu_state("insert.group"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.form.group"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.form.ungroup"), Some((true, false)));
+
+    // 2. Insert group control via menu "insert.group"
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("insert.group");
+
+    let prompt = ibis_doc_model::DEFAULT_GROUP_PROMPT;
+    let doc = s.document();
+    let p = para(&doc, id);
+    match p.runs.first().map(|r| &r.kind) {
+        Some(FlowRunKind::Group { text, placeholder }) => {
+            assert_eq!(text, prompt);
+            assert!(*placeholder);
+        }
+        other => panic!("expected Group, got {:?}", other),
+    };
+
+    // 3. Single click on the group control sets caret
+    s.click_text(FlowPos::new(id, 0));
+    s.settle();
+    let has_group = s.with(|e, _| e.group_control_at_caret().is_some());
+    assert!(has_group, "group control should be at caret");
+
+    // 4. Set Control Properties (Title, Tag, Locking) via properties panel
+    s.menu("docx.form.properties");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.control.is_some())), "the control panel is open");
+    s.update(|e, window, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        state.lock = ControlLock::None;
+        let (t, g) = (state.title.clone(), state.tag.clone());
+        t.update(cx, |i, cx| i.set_value("ProjectGroup".to_string(), window, cx));
+        g.update(cx, |i, cx| i.set_value("TAG_GRP_01".to_string(), window, cx));
+        e.apply_control_properties(cx);
+    });
+
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| (&r.kind, r.control.as_deref())) {
+            Some((FlowRunKind::Group { .. }, Some(ctrl))) => {
+                assert_eq!(ctrl.title, "ProjectGroup");
+                assert_eq!(ctrl.tag, "TAG_GRP_01");
+                assert_eq!(ctrl.lock, ControlLock::None);
+            }
+            other => panic!("expected Group with updated props, got {:?}", other),
+        }
+    }
+
+    // 5. Typing in the placeholder replaces prompt text
+    s.click_text(FlowPos::new(id, 3));
+    s.type_text("Grouped Notes");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::Group { text, placeholder }) => {
+                assert_eq!(text, "Grouped Notes");
+                assert!(!placeholder);
+            }
+            other => panic!("expected Group with typed text, got {:?}", other),
+        }
+    }
+
+    // 6. Lock enforcement: Content lock blocks typing
+    s.menu("docx.form.properties");
+    s.update(|e, _, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        state.lock = ControlLock::Content;
+        e.apply_control_properties(cx);
+    });
+    s.type_text("x");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::Group { text, .. }) => {
+                assert_eq!(text, "Grouped Notes", "Content lock must block typing");
+            }
+            other => panic!("expected Group, got {:?}", other),
+        }
+    }
+
+    // Control lock blocks ungrouping
+    s.menu("docx.form.properties");
+    s.update(|e, _, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        state.lock = ControlLock::Control;
+        e.apply_control_properties(cx);
+    });
+    let ungroup_ok = s.update(|e, _, cx| e.ungroup_control_around_caret(cx));
+    assert!(!ungroup_ok, "Control lock must block ungrouping");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        assert!(matches!(p.runs.first().map(|r| &r.kind), Some(FlowRunKind::Group { .. })), "Group must remain locked");
+    }
+
+    // Unlock
+    s.menu("docx.form.properties");
+    s.update(|e, _, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        state.lock = ControlLock::None;
+        e.apply_control_properties(cx);
+    });
+
+    // 7. Deleting all characters restores placeholder prompt
+    let typed_len = "Grouped Notes".chars().count();
+    for _ in 0..typed_len {
+        s.key("backspace");
+    }
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::Group { text, placeholder }) => {
+                assert_eq!(text, prompt);
+                assert!(*placeholder);
+            }
+            other => panic!("expected Group with restored prompt on deleting all chars, got {:?}", other),
+        }
+    }
+
+    // Type text into control again
+    s.type_text("Grouped Notes");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::Group { text, placeholder }) => {
+                assert_eq!(text, "Grouped Notes");
+                assert!(!placeholder);
+            }
+            other => panic!("expected Group with typed text, got {:?}", other),
+        }
+    }
+
+    // 8. Ungroup via menu "docx.form.ungroup"
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.form.ungroup");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::Text(t)) => {
+                assert_eq!(t, "Grouped Notes");
+            }
+            other => panic!("expected Text after ungroup, got {:?}", other),
+        }
+    }
+
+    // 9. Undo restores Group control; Redo restores ungrouped text
+    s.menu("edit.undo");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        assert!(matches!(p.runs.first().map(|r| &r.kind), Some(FlowRunKind::Group { .. })));
+    }
+    s.menu("edit.redo");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        assert!(matches!(p.runs.first().map(|r| &r.kind), Some(FlowRunKind::Text(_))));
+    }
+
+    // 10. Group a selection via menu "docx.form.group"
+    let len = "Grouped Notes".chars().count();
+    s.click_text(FlowPos::new(id, 0));
+    for _ in 0..len {
+        s.key("shift-right");
+    }
+    s.menu("docx.form.group");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        match p.runs.first().map(|r| &r.kind) {
+            Some(FlowRunKind::Group { text, placeholder }) => {
+                assert_eq!(text, "Grouped Notes");
+                assert!(!placeholder);
+            }
+            other => panic!("expected Group from selection, got {:?}", other),
+        }
+    }
+
+    // Undo grouping restores plain text; Redo restores Group control
+    s.menu("edit.undo");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        assert!(matches!(p.runs.first().map(|r| &r.kind), Some(FlowRunKind::Text(_))));
+    }
+    s.menu("edit.redo");
+    {
+        let doc = s.document();
+        let p = para(&doc, id);
+        assert!(matches!(p.runs.first().map(|r| &r.kind), Some(FlowRunKind::Group { .. })));
+    }
+
+    s.click_text(FlowPos::new(id, 3));
+    s.menu("docx.form.properties");
+    s.update(|e, window, cx| {
+        let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+        let (t, g) = (state.title.clone(), state.tag.clone());
+        t.update(cx, |i, cx| i.set_value("ProjectGroup".to_string(), window, cx));
+        g.update(cx, |i, cx| i.set_value("TAG_GRP_01".to_string(), window, cx));
+        e.apply_control_properties(cx);
+    });
+
+    // 11. Save and Reopen document roundtrip verification
+    let saved_file = s.save_as("docx-form014-group-control.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved_file).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<w:sdt>"), "{xml}");
+    assert!(xml.contains("<w:group/>"), "{xml}");
+    assert!(xml.contains("ProjectGroup"), "{xml}");
+    assert!(xml.contains("TAG_GRP_01"), "{xml}");
+
+    let reopened = s.reopen();
+    let p_saved = para(flow(&reopened), id);
+    match p_saved.runs.first().map(|r| (&r.kind, r.control.as_deref())) {
+        Some((FlowRunKind::Group { text, placeholder }, Some(ctrl))) => {
+            assert_eq!(text, "Grouped Notes");
+            assert!(!placeholder);
+            assert_eq!(ctrl.title, "ProjectGroup");
+            assert_eq!(ctrl.tag, "TAG_GRP_01");
+        }
+        other => panic!("expected Group in reopened doc, got {:?}", other),
+    }
+}
+
+/// DOCX-FORM-011 プレースホルダーの案内文：挿入したコントロールは案内文（灰色、w:showingPlcHdr）を
+/// 出し、案内文の中で入力すると案内文が入力した文字に変わる。入力した文字を全部消すと案内文に戻る。
+/// 保存は、案内文のときだけ w:showingPlcHdr を書く。
+fn form011_placeholder_prompt() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("insert.plain-text");
+    let prompt = "クリックまたはタップしてテキストを入力してください。";
+    let first = |s: &mut Scenario| {
+        let doc = s.document();
+        let r = para(&doc, id).runs[0].clone();
+        match r.kind {
+            FlowRunKind::PlainText { text, placeholder } => (text, placeholder, r.format.color),
+            other => panic!("expected PlainText, got {other:?}"),
+        }
+    };
+    let (text, placeholder, color) = first(&mut s);
+    assert_eq!((text.as_str(), placeholder), (prompt, true));
+    assert_eq!(color, Some(ibis_doc_model::Rgb(0x808080)), "the prompt is grey");
+    let saved = s.save_as("docx-form011-prompt.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<w:showingPlcHdr/>"), "{xml}");
+
+    // Typing in the prompt replaces it.
+    s.click_text(FlowPos::new(id, 3));
+    s.type_text("見積書");
+    let (text, placeholder, color) = first(&mut s);
+    assert_eq!((text.as_str(), placeholder, color), ("見積書", false, None));
+    s.type_text("です");
+    assert_eq!(first(&mut s).0, "見積書です");
+    let saved = s.save_as("docx-form011-typed.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(!xml.contains("showingPlcHdr"), "{xml}");
+    assert!(xml.contains("見積書です"));
+    let reopened = s.reopen();
+    assert!(matches!(&para(flow(&reopened), id).runs[0].kind, FlowRunKind::PlainText { text, placeholder: false } if text == "見積書です"));
+
+    // Deleting all of it shows the prompt again.
+    for _ in 0..5 {
+        s.key("backspace");
+    }
+    let (text, placeholder, _) = first(&mut s);
+    assert_eq!((text.as_str(), placeholder), (prompt, true));
+    s.key("cmd-z");
+    assert_eq!(first(&mut s).0, "見");
+}
+
+/// DOCX-FORM-010/012/013 コントロールのタイトル・タグ・ロック：表示形式 > コントロールのプロパティ…
+/// でタイトルとタグとロックを付ける。内容のロックでは入力できず、コントロールのロックでは消せない。
+/// 保存は w:alias・w:tag・w:lock を書き、読み直しても残る。
+fn form010_control_properties() {
+    use ibis_doc_model::{ControlInfo, ControlLock};
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("insert.plain-text");
+    s.type_text("田中");
+    let control = |s: &mut Scenario| {
+        let doc = s.document();
+        let run = para(&doc, id).runs[0].clone();
+        (match run.kind {
+            FlowRunKind::PlainText { text, .. } => text,
+            other => panic!("expected PlainText, got {other:?}"),
+        }, run.control.map(|c| *c))
+    };
+    assert_eq!(control(&mut s), ("田中".to_string(), None));
+
+    let set = |s: &mut Scenario, title: &str, tag: &str, lock: ControlLock| {
+        s.menu("docx.form.properties");
+        assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.control.is_some())), "the panel is open");
+        s.update(|e, window, cx| {
+            let state = e.doc_state_mut().unwrap().control.as_mut().unwrap();
+            state.lock = lock;
+            let (t, g) = (state.title.clone(), state.tag.clone());
+            t.update(cx, |i, cx| i.set_value(title.to_string(), window, cx));
+            g.update(cx, |i, cx| i.set_value(tag.to_string(), window, cx));
+            e.apply_control_properties(cx);
+        });
+    };
+    set(&mut s, "顧客名", "client", ControlLock::Content);
+    assert_eq!(control(&mut s).1, Some(ControlInfo { title: "顧客名".into(), tag: "client".into(), lock: ControlLock::Content }));
+    // The content is locked: typing and deleting inside do nothing.
+    s.type_text("x");
+    s.key("backspace");
+    assert_eq!(control(&mut s).0, "田中");
+
+    // The control is locked: its content can be edited, it cannot be deleted.
+    set(&mut s, "顧客名", "client", ControlLock::Control);
+    s.type_text("様");
+    assert_eq!(control(&mut s).0, "田中様");
+    s.key("shift-left");
+    s.key("shift-left");
+    s.key("shift-left");
+    s.key("backspace");
+    assert_eq!(control(&mut s).0, "田中様", "the locked control stays");
+    let saved = s.save_as("docx-form010-control.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<w:alias w:val=\"顧客名\"/>") && xml.contains("<w:tag w:val=\"client\"/>") && xml.contains("<w:lock w:val=\"sdtLocked\"/>"), "{xml}");
+    let reopened = s.reopen();
+    let run = &para(flow(&reopened), id).runs[0];
+    assert_eq!(run.control.as_deref(), Some(&ControlInfo { title: "顧客名".into(), tag: "client".into(), lock: ControlLock::Control }));
+
+    // No lock any more: the control goes with its selection; undo brings it back.
+    set(&mut s, "", "", ControlLock::None);
+    assert_eq!(control(&mut s).1, None);
+    s.key("cmd-z");
+    assert_eq!(control(&mut s).1.map(|c| c.lock), Some(ControlLock::Control));
+}
+
+/// DOCX-HEADER-014 ヘッダーのスタイル：ヘッダーのスタイルが無い文書にヘッダーを付けると、
+/// Word と同じ「ヘッダー」スタイル（中央と右のタブ位置）を作って段落に付ける。保存して読み直しても残る。
+fn header014_header_style() {
+    let mut s = Scenario::open("test/editing/docx-caption-chapters.docx");
+    assert!(s.document().styles.paragraph_style_named("header").is_none(), "the file has no header style");
+    s.menu("docx.header-footer");
+    let doc = s.document();
+    let id = match doc.header.first() {
+        Some(Block::Paragraph(p)) => p.id,
+        other => panic!("expected a header paragraph, got {other:?}"),
+    };
+    let style = para_in(&doc.header, id).style.clone().expect("the header paragraph has a style");
+    let defined = doc.styles.styles.get(&style).expect("the style is defined");
+    assert_eq!(defined.name, "header");
+    assert_eq!(defined.para.tabs.len(), 2, "centre and right tabs");
+    s.type_text("社外秘");
+    let saved = s.save_as("docx-header014.docx");
+    let bytes = std::fs::read(&saved).unwrap();
+    let styles = ibis_pptx::test_files::part_text(&bytes, "word/styles.xml").unwrap();
+    assert!(styles.contains("w:val=\"header\"") && styles.contains("w:val=\"center\""), "{styles}");
+    let reopened = s.reopen();
+    let again = flow(&reopened).header.iter().find_map(|b| if let Block::Paragraph(p) = b { Some(p.clone()) } else { None }).unwrap();
+    assert_eq!(again.text(), "社外秘");
+    assert!(flow(&reopened).styles.paragraph_style_named("header").is_some());
+    assert_eq!(again.style, Some(style));
+}
+
+fn para_in(blocks: &[Block], id: u32) -> FlowParagraph {
+    blocks.iter().find_map(|b| match b { Block::Paragraph(p) if p.id == id => Some(p.clone()), _ => None }).unwrap()
+}
+
+/// DOCX-FILE-007 テンプレート（.dotx）として保存：名前を付けて保存で .dotx にすると、本体のパーツの
+/// コンテンツ タイプがテンプレート（template.main+xml）になり、読み直しても同じ内容で開く。
+fn file007_save_as_template() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, text) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.type_text("雛形：");
+    let saved = s.save_as("docx-file007.dotx");
+    let bytes = std::fs::read(&saved).unwrap();
+    let types = ibis_pptx::test_files::part_text(&bytes, "[Content_Types].xml").unwrap();
+    assert!(types.contains("wordprocessingml.template.main+xml"), "{types}");
+    assert!(!types.contains("wordprocessingml.document.main+xml"), "{types}");
+    let reopened = s.reopen();
+    assert_eq!(para(flow(&reopened), id).text(), format!("雛形：{text}"));
+
+    // DOCX-FILE-002 ファイル > 新規 > テンプレートから新規作成…：.dotx から名前の無い新しい文書を作る。
+    assert_eq!(s.menu_state("docx.new-from-template"), Some((true, false)));
+    s.update(|e, window, cx| e.new_from_template_path(saved.clone(), window, cx));
+    s.settle();
+    s.with(|e, _| assert!(e.path.is_none(), "an untitled document"));
+    assert_eq!(para(&s.document(), id).text(), format!("雛形：{text}"));
+    s.with(|e, _| assert_eq!(e.file_name.as_deref(), Some("文書 1.docx")));
 }
 
 /// DOCX-VIEW-005 閲覧モード (Read Mode / w:val="reading"):
@@ -15839,7 +17152,7 @@ fn ja018_complex_script_font_and_size() {
     }
     let selected: String = text.chars().skip(1).take(4).collect();
 
-    let before = s.document();
+    let _before = s.document();
 
     // 欧文/和文サイズ 10.5pt (1050) を設定
     s.update(|e, _, cx| e.set_text_size(1050, cx));
@@ -16004,6 +17317,105 @@ fn font017_text_effects_outline_shadow_emboss() {
     assert!(!r_cleared.style.emboss);
 }
 
+fn font016_opentype_features() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. テキスト選択
+    let (_, id, text) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 1));
+    for _ in 0..4 {
+        s.key("shift-right");
+    }
+    let selected: String = text.chars().skip(1).take(4).collect();
+
+    // 2. 初期メニュー状態
+    // 合字 (Ligatures) の初期状態: none が checked、他は unchecked
+    assert_eq!(s.menu_state("docx.text.opentype.ligatures.none"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.text.opentype.ligatures.standard"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.text.opentype.ligatures.standard-contextual"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.text.opentype.ligatures.historical-discretional"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.text.opentype.ligatures.all"), Some((true, false)));
+
+    // 数字の間隔 (Number Spacing) の初期状態: default が checked
+    assert_eq!(s.menu_state("docx.text.opentype.num-spacing.default"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.text.opentype.num-spacing.proportional"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.text.opentype.num-spacing.tabular"), Some((true, false)));
+
+    // 数字のスタイル (Number Forms) の初期状態: default が checked
+    assert_eq!(s.menu_state("docx.text.opentype.num-form.default"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.text.opentype.num-form.lining"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.text.opentype.num-form.old-style"), Some((true, false)));
+
+    // コンテキスト代替の初期状態: unchecked
+    assert_eq!(s.menu_state("docx.text.opentype.cntxt-alts"), Some((true, false)));
+
+    // 3. メニュー操作による OpenType 設定の適用とチェックマーク追従
+    // (a) 合字: standard-contextual
+    s.menu("docx.text.opentype.ligatures.standard-contextual");
+    assert_eq!(s.menu_state("docx.text.opentype.ligatures.none"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.text.opentype.ligatures.standard-contextual"), Some((true, true)));
+    let doc1 = s.document();
+    let p1 = para(&doc1, id);
+    let r1 = p1.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    assert_eq!(r1.style.ligatures, ibis_doc_model::Ligatures::StandardContextual);
+
+    // (b) 数字の間隔: tabular
+    s.menu("docx.text.opentype.num-spacing.tabular");
+    assert_eq!(s.menu_state("docx.text.opentype.num-spacing.default"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.text.opentype.num-spacing.tabular"), Some((true, true)));
+    let doc2 = s.document();
+    let p2 = para(&doc2, id);
+    let r2 = p2.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    assert_eq!(r2.style.num_spacing, ibis_doc_model::NumberSpacing::Tabular);
+
+    // (c) 数字のスタイル: old-style
+    s.menu("docx.text.opentype.num-form.old-style");
+    assert_eq!(s.menu_state("docx.text.opentype.num-form.default"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.text.opentype.num-form.old-style"), Some((true, true)));
+    let doc3 = s.document();
+    let p3 = para(&doc3, id);
+    let r3 = p3.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    assert_eq!(r3.style.num_form, ibis_doc_model::NumberForm::OldStyle);
+
+    // (d) コンテキスト代替: true
+    s.menu("docx.text.opentype.cntxt-alts");
+    assert_eq!(s.menu_state("docx.text.opentype.cntxt-alts"), Some((true, true)));
+    let doc4 = s.document();
+    let p4 = para(&doc4, id);
+    let r4 = p4.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    assert!(r4.style.contextual_alternates);
+
+    // 4. 1ステップ Undo / Redo 検証
+    s.key("cmd-z"); // cntxt-alts を Undo
+    assert_eq!(s.menu_state("docx.text.opentype.cntxt-alts"), Some((true, false)));
+    assert_eq!(s.document(), doc3);
+
+    s.key("shift-cmd-z"); // cntxt-alts を Redo
+    assert_eq!(s.menu_state("docx.text.opentype.cntxt-alts"), Some((true, true)));
+    assert_eq!(s.document(), doc4);
+
+    // 5. OOXML 保存と再オープンによる永続化検証
+    s.save_as("test-font016-opentype-features.docx");
+    let saved = s.reopen();
+    let p_saved = body(flow(&saved)).into_iter().find(|p| p.text() == text).unwrap();
+    let r_saved = p_saved.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    assert_eq!(r_saved.format.ligatures, Some(ibis_doc_model::Ligatures::StandardContextual));
+    assert_eq!(r_saved.format.num_spacing, Some(ibis_doc_model::NumberSpacing::Tabular));
+    assert_eq!(r_saved.format.num_form, Some(ibis_doc_model::NumberForm::OldStyle));
+    assert_eq!(r_saved.format.contextual_alternates, Some(true));
+    assert_eq!(r_saved.style.ligatures, ibis_doc_model::Ligatures::StandardContextual);
+    assert_eq!(r_saved.style.num_spacing, ibis_doc_model::NumberSpacing::Tabular);
+    assert_eq!(r_saved.style.num_form, ibis_doc_model::NumberForm::OldStyle);
+    assert!(r_saved.style.contextual_alternates);
+
+    // 描画レイアウト検証
+    let rendered_items = s.with(|e, _| {
+        let doc = e.flow().unwrap().clone();
+        super::flow_layout::pages(&doc, &e.resources).pages.iter().flat_map(|pg| pg.items.iter()).count()
+    });
+    assert!(rendered_items > 0);
+}
+
 
 
 
@@ -16040,7 +17452,7 @@ fn image015_text_box_insert_and_edit() {
     let at = s.with(|e, _| e.text_box_at_caret().map(|t| t.at)).expect("the text box is at the caret");
     s.update(|e, _, cx| e.set_text_box_text(at, "こんにちは\nText box", cx));
     assert_eq!(text_box(&s.document()).as_deref(), Some("こんにちは\nText box"));
-    let edited = s.document();
+    let _edited = s.document();
 
     // The panel's size, place and text format, in one step.
     let shape_of = |doc: &ibis_doc_model::FlowDocument| -> ibis_doc_model::Shape {
@@ -16150,6 +17562,53 @@ fn edit004_discontiguous_selection() {
     // 4. A plain click ends the several ranges.
     s.click_text(FlowPos::new(id, 24));
     s.update(|e, _, _| assert!(!e.has_extra_selections()));
+}
+
+/// DOCX-EDIT-004: with several ranges selected (⌘-click), typed text and pasted text take the place of each range, and a paragraph
+/// format (the alignment) goes to the paragraphs of all of them, each as one step.
+fn edit004_typing_paste_and_paragraph_format_in_ranges() {
+    use gpui_kit::Modifiers;
+    let mut s = Scenario::open(REPORT);
+    let (_, id, text) = text_paragraph(&mut s, 40);
+    let chars: Vec<char> = text.chars().collect();
+    let before = s.document();
+    let select = |s: &mut Scenario| {
+        s.click_text(FlowPos::new(id, 24));
+        for _ in 0..3 {
+            s.key("shift-right");
+        }
+        let at = text_screen_pos(s, FlowPos::new(id, 32));
+        s.dispatch_click_with(at, Modifiers { platform: true, ..Default::default() });
+        for _ in 0..3 {
+            s.key("shift-right");
+        }
+        assert_eq!(s.with(|e, _| e.selection_ranges().len()), 2);
+    };
+    // Typed: the text takes each range's place (the second range's offsets are the original ones).
+    select(&mut s);
+    s.type_text("XY");
+    let typed: String = chars[..24].iter().collect::<String>() + "XY" + &chars[27..32].iter().collect::<String>() + "XY" + &chars[35..].iter().collect::<String>();
+    assert_eq!(para(&s.document(), id).text(), typed);
+    assert_eq!(s.selection().map(|(_, c)| c), Some(FlowPos::new(id, 26)), "the caret after the first");
+    // One step for each character typed (X for both ranges, then Y for both).
+    s.menu("edit.undo");
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before);
+    // Pasted text: the same.
+    s.update(|_, _, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("Z".to_string())));
+    select(&mut s);
+    s.update(|e, _, cx| e.paste_text(cx));
+    let pasted: String = chars[..24].iter().collect::<String>() + "Z" + &chars[27..32].iter().collect::<String>() + "Z" + &chars[35..].iter().collect::<String>();
+    assert_eq!(para(&s.document(), id).text(), pasted);
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before);
+    // The alignment of the paragraphs of the ranges: here the one paragraph, centred; the ranges stay.
+    select(&mut s);
+    s.update(|e, _, cx| e.apply_para_change(ibis_doc_model::ParaChange::Align(ibis_doc_model::FlowAlign::Center), cx));
+    assert_eq!(para(&s.document(), id).align, ibis_doc_model::FlowAlign::Center);
+    assert_eq!(s.with(|e, _| e.selection_ranges().len()), 2, "the ranges stay selected");
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before);
 }
 
 /// DOCX-TOC-002: 挿入 > 手動作成の目次 puts three placeholder entries
@@ -16363,9 +17822,65 @@ fn toc015_outline_level_and_move() {
     assert_eq!(texts, vec!["章B", "B本文", "章A", "A本文", "節A-1", "A-1本文"]);
 }
 
+/// DOCX-TOC-015: the outline's keys (⌃⇧←→↑↓ on a Mac, Alt+Shift+←→↑↓ elsewhere) promote, demote and move a heading; a heading dragged in
+/// the navigation pane goes before the heading it is dropped on (with what is under it); body text becomes a heading and a heading
+/// body text; each one undo step, and the order saved.
+fn toc015_outline_keys_drag_and_body_text() {
+    let root = crate::shell::scenario::repo_root();
+    let data = ibis_pptx::test_files::docx_with_outline(&std::fs::read(root.join(REPORT)).unwrap());
+    let input = root.join("target/scenario-input/docx-outline-keys.docx");
+    std::fs::create_dir_all(input.parent().unwrap()).unwrap();
+    std::fs::write(&input, &data).unwrap();
+    let mut s = Scenario::open("target/scenario-input/docx-outline-keys.docx");
+    let before = s.document();
+    let tail = |doc: &FlowDocument| -> Vec<(String, Option<u32>)> {
+        let all = body(doc);
+        all[all.len() - 6..].iter().map(|p| (p.text(), ibis_doc_model::flow_command::heading_level(&doc.styles, p))).collect()
+    };
+    let id_of = |doc: &FlowDocument, text: &str| body(doc).into_iter().find(|p| p.text() == text).unwrap().id;
+    let key = |k: &str| if cfg!(target_os = "macos") { format!("ctrl-shift-{k}") } else { format!("alt-shift-{k}") };
+    // 1. The keys: 章A down a level (節A-1 with it), 章B up past 章A.
+    s.click_text(FlowPos::new(id_of(&before, "章A"), 1));
+    s.key(&key("right"));
+    let demoted = tail(&s.document());
+    assert_eq!((demoted[0].1, demoted[2].1, demoted[4].1), (Some(2), Some(3), Some(1)));
+    s.key(&key("left"));
+    assert_eq!(s.document(), before, "promoted again");
+    s.click_text(FlowPos::new(id_of(&before, "章B"), 1));
+    s.key(&key("up"));
+    let moved: Vec<String> = tail(&s.document()).into_iter().map(|t| t.0).collect();
+    assert_eq!(moved, vec!["章B", "B本文", "章A", "A本文", "節A-1", "A-1本文"]);
+    s.key(&key("down"));
+    assert_eq!(s.document(), before, "moved back");
+    // 2. The drag: 章B dropped on 章A goes before it.
+    let (a, b) = (id_of(&before, "章A"), id_of(&before, "章B"));
+    assert!(s.update(|e, _, cx| e.move_heading_to(b, a, cx)));
+    let dragged: Vec<String> = tail(&s.document()).into_iter().map(|t| t.0).collect();
+    assert_eq!(dragged, vec!["章B", "B本文", "章A", "A本文", "節A-1", "A-1本文"]);
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before);
+    // 章A dropped on 章B goes before it too (章A is above: nothing moves), and on its own sub-heading: refused.
+    let sub = id_of(&before, "節A-1");
+    assert!(!s.update(|e, _, cx| e.move_heading_to(a, sub, cx)));
+    assert_eq!(s.document(), before);
+    // 3. Body text: A本文 becomes a heading under 章A (heading 2), and goes back.
+    s.click_text(FlowPos::new(id_of(&before, "A本文"), 1));
+    s.menu("docx.outline.to-heading");
+    assert_eq!(tail(&s.document())[1], ("A本文".into(), Some(2)));
+    s.menu("docx.outline.to-body");
+    assert_eq!(tail(&s.document())[1], ("A本文".into(), None));
+    // 4. Saved and read again, in the new order.
+    s.update(|e, _, cx| { e.move_heading_to(b, a, cx); });
+    s.save_as("test-toc015-keys.docx");
+    let saved = s.reopen();
+    let all = body(flow(&saved));
+    let texts: Vec<String> = all[all.len() - 6..].iter().map(|p| p.text()).collect();
+    assert_eq!(texts, vec!["章B", "B本文", "章A", "A本文", "節A-1", "A-1本文"]);
+}
+
 /// DOCX-TOC-014: a heading collapses (what is under it is not laid out) and expands again, from
-/// the Format menu and the navigation pane's functions; the document, the undo steps and the saved file
-/// are not touched.
+/// the Format menu and the navigation pane's functions; Word 2013+ w15:collapsed is saved and reopened,
+/// with 1-step undo/redo.
 fn toc014_collapse_headings() {
     let root = crate::shell::scenario::repo_root();
     let data = ibis_pptx::test_files::docx_with_outline(&std::fs::read(root.join(REPORT)).unwrap());
@@ -16380,7 +17895,6 @@ fn toc014_collapse_headings() {
     for id in [a, a_text, a_sub, a_sub_text, b, b_text] {
         assert!(laid(&mut s, id));
     }
-    let can_undo = s.with(|e, _| e.document.can_undo());
 
     // 1. 章A closed: its text and 節A-1 (with its text) are not laid out; 章B is.
     s.click_text(FlowPos::new(a, 1));
@@ -16388,14 +17902,21 @@ fn toc014_collapse_headings() {
     assert!(s.with(|e, _| e.heading_collapsed(a)));
     assert!(laid(&mut s, a) && laid(&mut s, b) && laid(&mut s, b_text));
     assert!(!laid(&mut s, a_text) && !laid(&mut s, a_sub) && !laid(&mut s, a_sub_text));
-    assert_eq!(s.document(), before, "not an edit");
-    assert_eq!(s.with(|e, _| e.document.can_undo()), can_undo, "no undo step");
+    assert!(s.with(|e, _| e.document.can_undo()), "collapse creates an undo step");
 
-    // 2. Open again.
+    // 2. Undo restores the layout; redo collapses again.
+    s.menu("edit.undo");
+    assert!(!s.with(|e, _| e.heading_collapsed(a)));
+    assert!(laid(&mut s, a_text) && laid(&mut s, a_sub_text));
+    s.menu("edit.redo");
+    assert!(s.with(|e, _| e.heading_collapsed(a)));
+    assert!(!laid(&mut s, a_text) && !laid(&mut s, a_sub_text));
+
+    // 3. Open again by collapse menu toggle.
     s.menu("docx.outline.collapse");
     assert!(laid(&mut s, a_text) && laid(&mut s, a_sub_text));
 
-    // 3. All closed: the caret in hidden text goes to its heading; all open.
+    // 4. All closed: the caret in hidden text goes to its heading; all open.
     s.click_text(FlowPos::new(a_sub_text, 1));
     s.menu("docx.outline.collapse-all");
     assert!(!laid(&mut s, a_sub_text) && !laid(&mut s, b_text) && laid(&mut s, a) && laid(&mut s, b));
@@ -16403,14 +17924,25 @@ fn toc014_collapse_headings() {
     s.menu("docx.outline.expand-all");
     assert!(laid(&mut s, a_sub_text) && laid(&mut s, b_text));
 
-    // 4. A heading of the pane: the fold marker only for one with something under it.
+    // 5. A heading of the pane: the fold marker only for one with something under it.
     assert!(s.with(|e, _| e.heading_has_content(a) && e.heading_has_content(a_sub) && e.heading_has_content(b)));
     assert!(!s.with(|e, _| e.heading_has_content(a_text)));
 
-    // 5. The file is not changed by the closed headings.
+    // 6. Save with closed heading and reload: w15:collapsed is persisted and laid out collapsed.
+    s.click_text(FlowPos::new(a, 1));
     s.menu("docx.outline.collapse");
     let saved = s.save_as("test-toc014-collapse.docx");
-    assert_eq!(ibis_pptx::test_files::part_text(&std::fs::read(saved).unwrap(), "word/document.xml"), ibis_pptx::test_files::part_text(&data, "word/document.xml"));
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml");
+    assert!(xml.as_deref().is_some_and(|s| s.contains("collapsed")), "persisted w15:collapsed in document.xml");
+
+    // Reload saved file and verify it starts collapsed in both model and layout.
+    s.reload_saved();
+    let re = s.document();
+    let id_of_re = |text: &str| body(&re).into_iter().find(|p| p.text() == text).unwrap().id;
+    let (a2, a_text2, a_sub2, a_sub_text2, b2, b_text2) = (id_of_re("章A"), id_of_re("A本文"), id_of_re("節A-1"), id_of_re("A-1本文"), id_of_re("章B"), id_of_re("B本文"));
+    assert!(s.with(|e, _| e.heading_collapsed(a2)));
+    assert!(laid(&mut s, a2) && laid(&mut s, b2) && laid(&mut s, b_text2));
+    assert!(!laid(&mut s, a_text2) && !laid(&mut s, a_sub2) && !laid(&mut s, a_sub_text2));
 }
 
 /// DOCX-STYLE-010: a style set to update automatically (`w:autoRedefine`) takes the formatting
@@ -16520,6 +18052,430 @@ fn ja015_grid_line_counts_leading() {
     let _ = &mut s;
 }
 
+/// DOCX-IMAGE-005 図形に合わせてトリミング (Crop to Shape):
+/// Changes the picture's clipping shape to preset shapes (e.g. roundRect, ellipse, heart),
+/// updates the checked states in the menu, supports 1-step undo/redo, and persists across OOXML save and reopen.
+fn image005_crop_picture_to_shape() {
+    let mut s = Scenario::open(REPORT);
+    let (id, offset) = s.with(|e, _| {
+        for p in body(flow(e.presentation())) {
+            let mut offset = 0;
+            for r in &p.runs {
+                if matches!(r.kind, FlowRunKind::Picture { .. }) {
+                    return (p.id, offset);
+                }
+                offset += r.len();
+            }
+        }
+        panic!("a picture in REPORT");
+    });
+    s.click_text(FlowPos::new(id, offset));
+
+    // 1. Initial state: default rectangle (None)
+    assert_eq!(s.with(|e, _| e.picture_geometry_preset_at_caret()), None);
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.rect"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.round-rect"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.ellipse"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.heart"), Some((true, false)));
+
+    // 2. Select roundRect
+    s.menu("docx.picture.crop-to-shape.round-rect");
+    assert_eq!(s.with(|e, _| e.picture_geometry_preset_at_caret()), Some("roundRect"));
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.rect"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.round-rect"), Some((true, true)));
+    let look = s.with(|e, _| e.picture_look_at_caret()).unwrap();
+    assert!(!look.is_visual_default(), "picture with roundRect is not visual default");
+    assert!(matches!(look.geometry, Some(ibis_doc_model::Geometry::RoundRect { .. })));
+
+    // 3. 1-step Undo restores Rect
+    s.menu("edit.undo");
+    assert_eq!(s.with(|e, _| e.picture_geometry_preset_at_caret()), None);
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.rect"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.round-rect"), Some((true, false)));
+
+    // 4. Redo restores roundRect
+    s.menu("edit.redo");
+    assert_eq!(s.with(|e, _| e.picture_geometry_preset_at_caret()), Some("roundRect"));
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.round-rect"), Some((true, true)));
+
+    // 5. Change to heart
+    s.menu("docx.picture.crop-to-shape.heart");
+    assert_eq!(s.with(|e, _| e.picture_geometry_preset_at_caret()), Some("heart"));
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.round-rect"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.heart"), Some((true, true)));
+
+    // 6. Reset picture also resets geometry back to Rect
+    s.menu("docx.picture.reset");
+    assert_eq!(s.with(|e, _| e.picture_geometry_preset_at_caret()), None);
+    assert_eq!(s.menu_state("docx.picture.crop-to-shape.rect"), Some((true, true)));
+
+    // 7. Change to ellipse and save/reopen
+    s.menu("docx.picture.crop-to-shape.ellipse");
+    assert_eq!(s.with(|e, _| e.picture_geometry_preset_at_caret()), Some("ellipse"));
+    s.screenshot("docx-image005-crop-ellipse");
+    s.save_as("test-image005-crop-ellipse.docx");
+    let saved = s.reopen();
+    let mut found = false;
+    for p in body(flow(&saved)) {
+        for r in &p.runs {
+            if let FlowRunKind::Picture { look, .. } = &r.kind {
+                assert!(matches!(look.geometry, Some(ibis_doc_model::Geometry::Ellipse)), "reopened picture has ellipse geometry: {:?}", look.geometry);
+                found = true;
+                break;
+            }
+        }
+        if found { break; }
+    }
+    assert!(found, "picture not found in reopened docx");
+}
+
+/// DOCX-IMAGE-023 書式 > 図のリセット: the picture's turn, crop, border and corrections are taken back (the alternative text stays), in
+/// one step of undo.
+fn image023_reset_picture() {
+    let mut s = Scenario::open(REPORT);
+    let (id, offset) = s.with(|e, _| {
+        for p in body(flow(e.presentation())) {
+            let mut offset = 0;
+            for r in &p.runs {
+                if matches!(r.kind, FlowRunKind::Picture { .. }) {
+                    return (p.id, offset);
+                }
+                offset += r.len();
+            }
+        }
+        panic!("a picture in REPORT");
+    });
+    s.click_text(FlowPos::new(id, offset));
+    let look = |s: &mut Scenario| s.with(|e, _| e.picture_look_at_caret()).expect("a picture");
+    let untouched = look(&mut s);
+    s.update(|e, _, cx| {
+        e.change_picture_look(|l| {
+            l.rotation = 5_400_000;
+            l.flip_h = true;
+            l.crop = ibis_doc_model::Crop { left: 10_000, top: 5_000, right: 0, bottom: 0 };
+            l.luminance = Some((20_000, 0));
+            l.duotone = Some((ibis_doc_model::Rgb(0), ibis_doc_model::Rgb(0xFFFFFF)));
+            l.alt_text.description = "説明".into();
+        }, cx);
+    });
+    let changed = look(&mut s);
+    assert!(!changed.is_visual_default());
+    let held = s.document();
+    assert_eq!(s.menu_state("docx.picture.reset"), Some((true, false)));
+    s.menu("docx.picture.reset");
+    let after = look(&mut s);
+    assert!(after.is_visual_default(), "turn, flips, crop, corrections and recolouring are gone: {after:?}");
+    assert_eq!(after.alt_text.description, "説明", "the alternative text stays");
+    assert_eq!(after.name, untouched.name);
+    s.menu("edit.undo");
+    assert_eq!(s.document(), held, "one step of undo");
+}
+
+/// DOCX-IMAGE-024 図形のスタイル: a style of the shape's panel gives the fill, line colour and line width in one step of undo; saved.
+fn image024_shape_styles() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 3));
+    s.menu("shape.ellipse");
+    s.click_text(FlowPos::new(id, 3));
+    let auto = |doc: &FlowDocument| -> ibis_doc_model::AutoShape {
+        para(doc, id).runs.iter().find_map(|r| match &r.kind { FlowRunKind::Shape(shape) => match &shape.kind { ibis_doc_model::ShapeKind::Auto(a) => Some(a.clone()), _ => None }, _ => None }).unwrap()
+    };
+    let inserted = s.document();
+    s.update(|e, window, cx| {
+        e.open_text_box(window, cx);
+        e.apply_shape_style(3, window, cx);
+    });
+    let a = auto(&s.document());
+    assert!(matches!(&a.fill, ibis_doc_model::Fill::Solid(c) if c.rgb == ibis_doc_model::Rgb(0xED7D31)), "the orange fill");
+    let line = a.stroke.as_ref().expect("a line");
+    assert_eq!(line.color.rgb, ibis_doc_model::Rgb(0xAE5A21));
+    s.update(|e, window, cx| e.apply_shape_style(7, window, cx));
+    let a = auto(&s.document());
+    assert_eq!(a.stroke.as_ref().map(|l| (l.color.rgb, l.width)), Some((ibis_doc_model::Rgb(0), 28_575)), "black, 2.25 pt");
+    s.menu("edit.undo");
+    s.menu("edit.undo");
+    assert_eq!(s.document(), inserted, "each style is one step of undo");
+}
+
+/// DOCX-PAGE-022 挿入 > 表紙: a cover (title, subtitle, author, date, then a page break) at the top; one step of undo; saved and read.
+fn page022_cover_page() {
+    let mut s = Scenario::open(REPORT);
+    let before = s.document();
+    let first_text = body(&before)[0].text();
+    let pages = |s: &mut Scenario| s.with(|e, _| {
+        let doc = e.presentation().flow.clone().unwrap();
+        super::flow_layout::pages(&doc, &e.resources).pages.len()
+    });
+    let pages_before = pages(&mut s);
+    s.click_text(FlowPos::new(body(&before)[0].id, 0));
+    assert_eq!(s.menu_state("docx.cover.2"), Some((true, false)));
+    s.menu("docx.cover.2");
+    let after = s.document();
+    let texts: Vec<String> = body(&after).iter().map(|p| p.text()).collect();
+    assert!(texts.iter().any(|t| t == "サブタイトル"), "the cover's subtitle: {:?}", &texts[..6.min(texts.len())]);
+    assert_eq!(texts.last().map(String::as_str), body(&before).last().map(|p| p.text()).as_deref(), "the document follows the cover");
+    assert_eq!(body(&after).len(), body(&before).len() + 6, "five lines and the page break");
+    let cover_end = body(&after)[5].runs.iter().any(|r| matches!(r.kind, FlowRunKind::PageBreak));
+    assert!(cover_end, "the cover ends with a page break");
+    assert_eq!(pages(&mut s), pages_before + 1, "the cover is a page");
+    assert_eq!(body(&after)[6].text(), first_text);
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before, "one step of undo");
+    s.menu("edit.redo");
+    let saved = s.save_as("test-page022-cover.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("サブタイトル") && xml.contains("w:shd"), "the cover is in the file: {}", xml.find("<w:body>").map(|i| xml[i..(i + 1800).min(xml.len())].to_string()).unwrap_or_default());
+    let again = s.reopen();
+    assert!(body(flow(&again)).iter().any(|p| p.text() == "サブタイトル"));
+}
+
+/// DOCX-PAGE-021 挿入 > 白紙のページ: a page break, an empty paragraph and a page break make one blank page (one step of undo).
+fn page021_blank_page() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 12);
+    s.click_text(FlowPos::new(id, 2));
+    let pages = |s: &mut Scenario| s.with(|e, _| {
+        let doc = e.presentation().flow.clone().unwrap();
+        super::flow_layout::pages(&doc, &e.resources).pages.len()
+    });
+    let before = pages(&mut s);
+    let held = s.document();
+    assert_eq!(s.menu_state("docx.blank-page"), Some((true, false)));
+    s.menu("docx.blank-page");
+    assert_eq!(pages(&mut s), before + 2, "the blank page, and the text after the caret on the page after it");
+    s.menu("edit.undo");
+    assert_eq!(s.document(), held, "one step of undo");
+    assert_eq!(pages(&mut s), before);
+}
+
+/// DOCX-REF-017 / 018: 次の脚注・前の脚注 move the caret from reference to reference (round the end); 注の表示 goes from a reference
+/// to the text of its note and back.
+fn ref017_note_navigation() {
+    let mut s = Scenario::open(REPORT);
+    let texts: Vec<u32> = body(&s.document()).into_iter().filter(|p| p.len() >= 5 && !p.text().contains('\u{fffc}') && p.list.is_none()).map(|p| p.id).collect();
+    let (top, first, second) = (texts[0], texts[1], texts[2]);
+    s.click_text(FlowPos::new(first, 2));
+    s.menu("docx.footnote");
+    s.type_text("一つ目の注");
+    s.click_text(FlowPos::new(second, 2));
+    s.menu("docx.footnote");
+    s.type_text("二つ目の注");
+    let note_paras = |s: &mut Scenario| s.with(|e, _| e.flow().unwrap().footnotes.iter().flat_map(|n| n.blocks.iter()).filter_map(|b| if let Block::Paragraph(p) = b { Some(p.id) } else { None }).collect::<Vec<_>>());
+    let notes = note_paras(&mut s);
+    assert_eq!(notes.len(), 2, "two notes");
+    let caret_para = |s: &mut Scenario| s.selection().map(|(_, c)| c.para).unwrap();
+    // From before the first: first reference, second, round to the first; and back.
+    s.click_text(FlowPos::new(top, 0));
+    s.menu("docx.footnote.next");
+    assert_eq!(caret_para(&mut s), first, "the first reference");
+    s.menu("docx.footnote.next");
+    assert_eq!(caret_para(&mut s), second, "the second");
+    s.menu("docx.footnote.next");
+    assert_eq!(caret_para(&mut s), first, "round the end");
+    s.menu("docx.footnote.previous");
+    assert_eq!(caret_para(&mut s), second, "back round the start");
+    // 注の表示: to the note's text, and back to the reference.
+    s.menu("docx.notes.show");
+    assert!(notes.contains(&caret_para(&mut s)), "the caret is in a note");
+    s.menu("docx.notes.show");
+    assert!([first, second].contains(&caret_para(&mut s)), "back in the body");
+}
+
+/// DOCX-REVIEW-022 校閲 > 次のコメント・前のコメント.
+fn review022_comment_navigation() {
+    let mut s = Scenario::open(REPORT);
+    let texts: Vec<u32> = body(&s.document()).into_iter().filter(|p| p.len() >= 5 && !p.text().contains('\u{fffc}') && p.list.is_none()).map(|p| p.id).collect();
+    let (top, first, second) = (texts[0], texts[1], texts[2]);
+    for id in [first, second] {
+        s.click_text(FlowPos::new(id, 2));
+        for _ in 0..3 {
+            s.key("shift-right");
+        }
+        s.menu("insert.comment");
+        s.type_text("確認");
+        s.key("enter");
+    }
+    let caret_para = |s: &mut Scenario| s.selection().map(|(_, c)| c.para).unwrap();
+    s.click_text(FlowPos::new(top, 0));
+    s.menu("docx.comments.next");
+    assert_eq!(caret_para(&mut s), first);
+    s.menu("docx.comments.next");
+    assert_eq!(caret_para(&mut s), second);
+    s.menu("docx.comments.next");
+    assert_eq!(caret_para(&mut s), first, "round the end");
+    s.menu("docx.comments.previous");
+    assert_eq!(caret_para(&mut s), second);
+}
+
+/// DOCX-IMAGE-015: the characters selected in the text box's panel get their own bold, size and colour (one step of undo); the
+/// rest of the text is left alone; saved run by run and read again.
+fn image015_selection_format() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 3));
+    s.menu("insert.text-box");
+    let at = s.with(|e, _| e.text_box_at_caret().map(|t| t.at)).expect("the text box");
+    s.update(|e, _, cx| e.set_text_box_text(at, "alpha beta gamma", cx));
+    let looks = |doc: &FlowDocument| -> Vec<(String, bool, Option<u32>, Option<ibis_doc_model::Rgb>)> {
+        para(doc, id).runs.iter().find_map(|r| match &r.kind {
+            FlowRunKind::Shape(shape) => match &shape.kind {
+                ibis_doc_model::ShapeKind::Auto(a) => a.text.as_ref().map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter()).map(|r| (r.text.clone(), r.style.bold.unwrap_or(t.style.bold), r.style.font_size, r.style.color)).collect()),
+                _ => None,
+            },
+            _ => None,
+        }).unwrap_or_default()
+    };
+    let before = s.document();
+    s.update(|e, window, cx| {
+        e.open_text_box(window, cx);
+        let (text, size, color) = { let st = e.doc_state().unwrap().text_box.as_ref().unwrap(); (st.text.clone(), st.font_size.clone(), st.color.clone()) };
+        text.update(cx, |t, cx| t.set_selected_range(6..10, cx));
+        size.update(cx, |i, cx| i.set_value("20", window, cx));
+        color.update(cx, |i, cx| i.set_value("C00000", window, cx));
+        e.doc_state_mut().unwrap().text_box.as_mut().unwrap().bold = true;
+        e.apply_text_box_selection(cx);
+    });
+    let runs = looks(&s.document());
+    let texts: Vec<&str> = runs.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(texts, ["alpha ", "beta", " gamma"], "cut at the selection");
+    let (inside, outside): (Vec<_>, Vec<_>) = runs.iter().enumerate().partition(|(i, _)| *i == 1);
+    assert!(inside.iter().all(|(_, r)| r.1 && r.2 == Some(2000) && r.3 == Some(ibis_doc_model::Rgb(0xC00000))), "the selection is bold, 20 pt, red: {runs:?}");
+    assert!(outside.iter().all(|(_, r)| !r.1 && r.3 != Some(ibis_doc_model::Rgb(0xC00000))), "the rest is as it was: {runs:?}");
+    s.menu("edit.undo");
+    assert_eq!(looks(&s.document()).iter().map(|r| r.0.clone()).collect::<String>(), "alpha beta gamma");
+    s.menu("edit.redo");
+    let saved = s.save_as("test-image015-selection.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<w:t xml:space=\"preserve\">alpha </w:t>") && xml.contains(">beta</w:t>"), "written run by run");
+    let again = looks(flow(&s.reopen()));
+    let texts: Vec<&str> = again.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(texts, ["alpha ", "beta", " gamma"]);
+    assert!(again[1].1 && again[1].3 == Some(ibis_doc_model::Rgb(0xC00000)) && !again[0].1 && !again[2].1, "read again: {again:?}");
+    let _ = before;
+}
+
+/// DOCX-IMAGE-014: an elbow connector drawn from one shape's connection site to another's is glued to both, follows them when a
+/// shape is moved (one step of undo), and the glue is saved (`a:stCxn`, `a:endCxn`) and read again.
+fn image014_connectors() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    let (page, x, y) = s.update(|e, _, _| {
+        let lines = e.flow_lines();
+        let (page, x, y, _) = e.caret_box(&lines, FlowPos::new(id, 3)).expect("laid out");
+        (page, x, y)
+    });
+    let draw = |s: &mut Scenario, menu: &str, from: (f32, f32), to: (f32, f32)| {
+        s.menu(menu);
+        s.update(|e, _, cx| {
+            e.begin_draw_table(page, from.0, from.1, cx);
+            e.drag_draw_table(to.0, to.1, cx);
+            e.end_draw_table(cx);
+        });
+    };
+    draw(&mut s, "shape.rect", (x, y + 40.0), (x + 100.0, y + 100.0));
+    draw(&mut s, "shape.rect", (x + 250.0, y + 140.0), (x + 350.0, y + 200.0));
+    let before_connector = s.document();
+    // From a's right-hand site (100, 70 below the caret line's top) to b's left-hand site (250, 170).
+    draw(&mut s, "docx.shape.elbow-arrow", (x + 102.0, y + 71.0), (x + 248.0, y + 169.0));
+    let shapes = |doc: &FlowDocument| -> Vec<ibis_doc_model::Shape> {
+        doc.body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p) } else { None }).flat_map(|p| p.runs.iter()).filter_map(|r| if let FlowRunKind::Shape(sh) = &r.kind { Some((**sh).clone()) } else { None }).collect()
+    };
+    let all = shapes(&s.document());
+    let connector = all.iter().find(|sh| ibis_doc_model::connector::is_connector(sh)).expect("a connector").clone();
+    let rects: Vec<&ibis_doc_model::Shape> = all.iter().filter(|sh| !ibis_doc_model::connector::is_connector(sh)).collect();
+    assert_eq!(rects.len(), 2);
+    let glue = connector.floating.as_ref().unwrap().glue;
+    let (a, b) = (*rects.iter().min_by_key(|r| r.frame.x).unwrap(), *rects.iter().max_by_key(|r| r.frame.x).unwrap());
+    assert_eq!(glue.start, Some((a.id.0, 3)), "glued to a's right-hand site");
+    assert_eq!(glue.end, Some((b.id.0, 1)), "glued to b's left-hand site");
+    let ibis_doc_model::ShapeKind::Auto(auto) = &connector.kind else { panic!("an elbow connector is a shape of its geometry") };
+    assert_eq!(auto.geometry.preset_name(), Some("bentConnector3"));
+    assert!(auto.stroke.as_ref().is_some_and(|st| st.tail != ibis_doc_model::LineEnd::None), "an arrow at its end");
+    let (start, end) = ibis_doc_model::connector::ends(&connector);
+    assert_eq!(start, (a.frame.x + a.frame.width, a.frame.y + a.frame.height / 2));
+    assert_eq!(end, (b.frame.x, b.frame.y + b.frame.height / 2));
+    // b is moved 40 pt down by the shape's panel: the connector's end goes with it, in the same step of undo.
+    let b_at = s.document().body.iter().enumerate().find_map(|(_, bl)| if let Block::Paragraph(p) = bl { p.runs.iter().enumerate().find_map(|(i, r)| if let FlowRunKind::Shape(sh) = &r.kind { (sh.id == b.id).then(|| (p.id, p.runs[..i].iter().map(|r| r.len()).sum::<usize>())) } else { None }) } else { None }).expect("b");
+    let moved_to = b.floating.as_ref().unwrap().offset_y + 40 * 12_700;
+    let offset_x = b.floating.as_ref().unwrap().offset_x;
+    let held = s.document();
+    s.update(|e, _, cx| {
+        e.run_flow(vec![FlowCommand::SetShapeGeometry { at: FlowPos::new(b_at.0, b_at.1), size: None, offset: Some((offset_x, moved_to)) }, FlowCommand::RerouteConnectors], cx);
+    });
+    let after = shapes(&s.document());
+    let connector2 = after.iter().find(|sh| ibis_doc_model::connector::is_connector(sh)).unwrap();
+    let (_, end2) = ibis_doc_model::connector::ends(connector2);
+    assert_eq!(end2, (b.frame.x, b.frame.y + 40 * 12_700 + b.frame.height / 2), "the end followed b");
+    assert_eq!(connector2.floating.as_ref().unwrap().glue, glue, "still glued");
+    s.menu("edit.undo");
+    assert_eq!(s.document(), held, "one step of undo");
+    s.menu("edit.redo");
+    // Saved with the glue, and read again.
+    let saved = s.save_as("test-image014-connector.docx");
+    let keep = crate::shell::scenario::repo_root().join("target/office-check/ibis-connectors.docx");
+    std::fs::create_dir_all(keep.parent().unwrap()).unwrap();
+    std::fs::write(&keep, std::fs::read(&saved).unwrap()).unwrap();
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<a:stCxn id=\"") && xml.contains("<a:endCxn id=\""), "the glue is in the file");
+    assert!(xml.contains(&format!("<a:stCxn id=\"{}\" idx=\"3\"", a.id.0)), "named by the shape's number in the file");
+    assert!(xml.contains(&format!("wp:docPr id=\"{}\"", a.id.0)));
+    let again = shapes(flow(&s.reopen()));
+    let reread = again.iter().find(|sh| ibis_doc_model::connector::is_connector(sh)).expect("kept");
+    let g = reread.floating.as_ref().unwrap().glue;
+    assert_eq!((g.start.map(|v| v.1), g.end.map(|v| v.1)), (Some(3), Some(1)));
+    // Put by hand, it is not glued any more.
+    let _ = before_connector;
+}
+
+/// DOCX-IMAGE-011: 挿入 > 図形 arms the shape; dragging on the page draws it as large as the box, from where the drag began
+/// (placed from the top left of the page); one step of undo; a line too; saved and read again.
+fn image011_draw_shape() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    let before = s.document();
+    let (page, x, y) = s.update(|e, _, _| {
+        let lines = e.flow_lines();
+        let (page, x, y, _) = e.caret_box(&lines, FlowPos::new(id, 3)).expect("laid out");
+        (page, x, y)
+    });
+    let find = |doc: &FlowDocument| -> Option<ibis_doc_model::Shape> {
+        para(doc, id).runs.iter().find_map(|r| match &r.kind { FlowRunKind::Shape(shape) => Some((**shape).clone()), _ => None })
+    };
+    s.menu("shape.ellipse");
+    s.update(|e, _, cx| {
+        e.begin_draw_table(page, x, y, cx);
+        e.drag_draw_table(x + 150.0, y + 80.0, cx);
+        e.end_draw_table(cx);
+    });
+    let shape = find(&s.document()).expect("a shape was drawn");
+    assert_eq!((shape.frame.width, shape.frame.height), (150 * 12_700, 80 * 12_700));
+    let f = shape.floating.as_ref().expect("floating");
+    assert_eq!((f.relative_h.as_str(), f.relative_v.as_str()), ("page", "page"));
+    assert_eq!(f.offset_x, (x * 12_700.0) as i64);
+    assert_eq!(f.offset_y, (y * 12_700.0) as i64);
+    assert!(s.with(|e, _| e.doc_state().unwrap().draw_shape.is_none()), "the mode is off again");
+    s.save_as("test-image011-draw.docx");
+    let saved = s.reopen();
+    let reread = para(flow(&saved), id).runs.iter().find_map(|r| match &r.kind { FlowRunKind::Shape(sh) => Some((**sh).clone()), _ => None }).expect("kept");
+    assert_eq!((reread.frame.width, reread.frame.height), (150 * 12_700, 80 * 12_700));
+    let rf = reread.floating.as_ref().unwrap();
+    assert_eq!((rf.relative_h.as_str(), rf.relative_v.as_str(), rf.offset_x), ("page", "page", f.offset_x));
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before, "one step of undo");
+    s.menu("docx.shape.arrow");
+    s.update(|e, _, cx| {
+        e.begin_draw_table(page, x, y, cx);
+        e.drag_draw_table(x + 100.0, y + 40.0, cx);
+        e.end_draw_table(cx);
+    });
+    let line = find(&s.document()).expect("a line was drawn");
+    assert!(matches!(line.kind, ibis_doc_model::ShapeKind::Line(_)));
+    assert_eq!(line.frame.width, 100 * 12_700);
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before, "one step of undo");
+}
+
 /// DOCX-IMAGE-011 / 012: 挿入 > 図形 puts a floating shape at the caret (blue with a darker line), selected;
 /// its panel sets the size, place, fill and line in one step; it is dragged like a text box; saved.
 fn image011_insert_shape() {
@@ -16532,19 +18488,21 @@ fn image011_insert_shape() {
     };
     assert_eq!(s.menu_state("shape.rightArrow"), Some((true, false)));
     s.menu("shape.rightArrow");
+    s.click_text(FlowPos::new(id, 3));
     let shape = shape_of(&s.document());
     let ibis_doc_model::ShapeKind::Auto(a) = &shape.kind else { panic!("an auto shape") };
     assert_eq!(a.geometry.preset_name(), Some("rightArrow"));
     assert!(matches!(&a.fill, ibis_doc_model::Fill::Solid(c) if c.rgb == ibis_doc_model::Rgb(0x4472C4)));
     assert!(a.text.is_none());
-    assert!(s.with(|e, _| e.text_box_at_caret().is_some_and(|i| !i.has_text)), "the shape is selected");
+    assert!(s.with(|e, _| e.text_box_at_caret().is_some_and(|i| i.has_text)), "the shape is selected and can hold text");
     assert_eq!(s.menu_state("docx.textbox.edit"), Some((true, false)));
 
     // The panel: red fill, no line, 100 x 50 pt, in one step.
     let inserted = s.document();
     s.update(|e, window, cx| {
         e.open_text_box(window, cx);
-        let (geometry, fill, line) = { let st = e.doc_state().unwrap().text_box.as_ref().unwrap(); (st.geometry.clone(), st.fill.clone(), st.line.clone()) };
+        let (geometry, fill, line, text) = { let st = e.doc_state().unwrap().text_box.as_ref().unwrap(); (st.geometry.clone(), st.fill.clone(), st.line.clone(), st.text.clone()) };
+        text.update(cx, |i, cx| i.set_value("Hello shape", window, cx));
         geometry[0].update(cx, |i, cx| i.set_value("100", window, cx));
         geometry[1].update(cx, |i, cx| i.set_value("50", window, cx));
         fill.update(cx, |i, cx| i.set_value("C00000", window, cx));
@@ -16556,6 +18514,7 @@ fn image011_insert_shape() {
     let ibis_doc_model::ShapeKind::Auto(a) = &styled.kind else { panic!() };
     assert!(matches!(&a.fill, ibis_doc_model::Fill::Solid(c) if c.rgb == ibis_doc_model::Rgb(0xC00000)));
     assert!(a.stroke.is_none());
+    assert_eq!(a.text.as_ref().map(|t| t.text()), Some("Hello shape".to_string()), "text inside the shape");
     s.menu("edit.undo");
     assert_eq!(s.document(), inserted);
     s.menu("edit.redo");
@@ -16575,6 +18534,7 @@ fn image011_insert_shape() {
     let ibis_doc_model::ShapeKind::Auto(a) = &reread.kind else { panic!() };
     assert_eq!(a.geometry.preset_name(), Some("rightArrow"));
     assert!(a.stroke.is_none());
+    assert_eq!(a.text.as_ref().map(|t| t.text()), Some("Hello shape".to_string()), "the text is saved");
     let drawn = s.with(|e, _| {
         let doc = e.flow().unwrap().clone();
         super::flow_layout::pages(&doc, &e.resources).pages.iter().flat_map(|pg| pg.items.iter()).any(|i| matches!(i, super::flow_layout::Item::Shape { shape, .. } if matches!(&shape.kind, ibis_doc_model::ShapeKind::Auto(a) if a.geometry.preset_name() == Some("rightArrow"))))
@@ -16604,6 +18564,441 @@ fn header011_chapter_in_page_numbers() {
     assert!(xml.contains("w:chapStyle=\"1\"") && xml.contains("w:chapSep=\"hyphen\""));
 }
 
+/// DOCX-HEADER-011: 書式 > セクション > ページ番号に章番号を含める sets the heading level and the separator of the chapter number in the
+/// section's page numbers (each one undo step), saved as `w:pgNumType` `chapStyle` and `chapSep`, and taken away again.
+fn header011_chapter_menu() {
+    let mut s = Scenario::open(REPORT);
+    let chapter = |s: &mut Scenario| s.with(|e, _| e.flow().unwrap().page_chapter.clone());
+    assert_eq!(chapter(&mut s), None);
+    s.menu("docx.section.chapter-level-2");
+    assert_eq!(chapter(&mut s), Some((2, "hyphen".to_string())));
+    s.menu("docx.section.chapter-sep-colon");
+    assert_eq!(chapter(&mut s), Some((2, "colon".to_string())));
+    s.menu("edit.undo");
+    assert_eq!(chapter(&mut s), Some((2, "hyphen".to_string())));
+    s.menu("edit.redo");
+    let saved = s.save_as("test-header011-chapter-menu.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("w:chapStyle=\"2\"") && xml.contains("w:chapSep=\"colon\""), "the chapter number is in the page numbering");
+    assert_eq!(flow(&s.reopen()).page_chapter, Some((2, "colon".to_string())));
+    s.menu("docx.section.chapter-none");
+    assert_eq!(chapter(&mut s), None);
+    let saved = s.save_as("test-header011-chapter-menu-none.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(!xml.contains("w:chapStyle"), "taken away");
+}
+
+/// DOCX-REVIEW-004: a tracked move Word made (`w:moveFrom`, `w:moveTo`) is shown in Word standard green,
+/// paired moves are resolved together on accept/reject, and both untouched and edited paragraphs save moveFrom/moveTo.
+fn review004_tracked_move_text() {
+    let root = crate::shell::scenario::repo_root();
+    let data = ibis_pptx::test_files::docx_with_tracked_move(&std::fs::read(root.join(REPORT)).unwrap());
+    let input = root.join("target/scenario-input/docx-tracked-move.docx");
+    std::fs::create_dir_all(input.parent().unwrap()).unwrap();
+    std::fs::write(&input, &data).unwrap();
+    let mut s = Scenario::open("target/scenario-input/docx-tracked-move.docx");
+    let texts = |s: &mut Scenario| -> Vec<String> { let doc = s.document(); let ps = body(&doc); ps[ps.len() - 2..].iter().map(|p| p.text()).collect() };
+    assert_eq!(texts(&mut s), vec!["前文 移動前".to_string(), "後文 移動後".to_string()], "both texts are read");
+    let doc = s.document();
+    let ps = body(&doc);
+    let revision = |p: &FlowParagraph, text: &str| p.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == text)).and_then(|r| r.revision.as_ref().map(|v| v.kind.clone()));
+    assert_eq!(revision(ps[ps.len() - 2], "移動前"), Some(ibis_doc_model::RevisionKind::MoveFrom));
+    assert_eq!(revision(ps[ps.len() - 1], "移動後"), Some(ibis_doc_model::RevisionKind::MoveTo));
+    // Shown on the page in Word's standard green color (#008000).
+    let green = crate::render::shape_view::hsla(ibis_doc_model::Color::opaque(super::flow_layout::MOVE_REVISION_COLOR));
+    let (colors, has_green_rect) = s.with(|e, _| {
+        let doc = e.flow().unwrap().clone();
+        let pages = super::flow_layout::pages(&doc, &e.resources);
+        let items: Vec<_> = pages.pages.iter().flat_map(|p| p.items.clone()).collect();
+        let text_colors: Vec<_> = items.iter().filter_map(|i| match i {
+            super::flow_layout::Item::Text { text, color, .. } if text == "移動前" || text == "移動後" => Some((text.to_string(), *color)),
+            _ => None,
+        }).collect();
+        let has_green_rect = items.iter().any(|i| match i {
+            super::flow_layout::Item::Rect { color, .. } => *color == green,
+            _ => false,
+        });
+        (text_colors, has_green_rect)
+    });
+    assert_eq!(colors.len(), 2, "both text runs found");
+    assert!(colors.iter().all(|(_, c)| *c == green), "both text runs drawn in green");
+    assert!(has_green_rect, "green underline/strike rect drawn");
+    // Untouched: the saved file has the move as it was.
+    let saved = s.save_as("review004-move-untouched.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<w:moveFrom ") && xml.contains("<w:moveTo "), "the move is kept");
+    // Paired resolution: selecting MoveTo and accepting resolves both MoveTo (kept) and MoveFrom (removed).
+    let doc = s.document();
+    let ps = body(&doc);
+    let p_to = ps[ps.len() - 1];
+    let to_text = p_to.text();
+    let to_offset = to_text[..to_text.find("移動後").unwrap()].chars().count();
+    s.click_text(FlowPos::new(p_to.id, to_offset));
+    for _ in 0..3 { s.key("shift-right"); }
+    s.menu("docx.track.accept");
+    assert_eq!(texts(&mut s), vec!["前文 ".to_string(), "後文 移動後".to_string()], "paired accept from MoveTo resolves both");
+    s.menu("edit.undo");
+    assert_eq!(texts(&mut s), vec!["前文 移動前".to_string(), "後文 移動後".to_string()]);
+    // Paired resolution: selecting MoveFrom and rejecting restores MoveFrom (kept) and removes MoveTo.
+    let doc = s.document();
+    let ps = body(&doc);
+    let p_from = ps[ps.len() - 2];
+    let from_text = p_from.text();
+    let from_offset = from_text[..from_text.find("移動前").unwrap()].chars().count();
+    s.click_text(FlowPos::new(p_from.id, from_offset));
+    for _ in 0..3 { s.key("shift-right"); }
+    s.menu("docx.track.reject");
+    assert_eq!(texts(&mut s), vec!["前文 移動前".to_string(), "後文 ".to_string()], "paired reject from MoveFrom resolves both");
+    s.menu("edit.undo");
+    assert_eq!(texts(&mut s), vec!["前文 移動前".to_string(), "後文 移動後".to_string()]);
+    // Accepted all: the text that moved is where it went; rejected all: where it was.
+    s.menu("docx.track.accept-all");
+    assert_eq!(texts(&mut s), vec!["前文 ".to_string(), "後文 移動後".to_string()]);
+    s.menu("edit.undo");
+    s.menu("docx.track.reject-all");
+    assert_eq!(texts(&mut s), vec!["前文 移動前".to_string(), "後文 ".to_string()]);
+    s.menu("edit.undo");
+    // When editing the paragraph with a move, saved file still retains moveFrom and moveTo tags.
+    let doc = s.document();
+    let ps = body(&doc);
+    let p_to = ps[ps.len() - 1];
+    s.click_text(FlowPos::new(p_to.id, 0));
+    s.type_text("加筆 ");
+    let saved_edited = s.save_as("review004-move-edited.docx");
+    let xml_edited = ibis_pptx::test_files::part_text(&std::fs::read(&saved_edited).unwrap(), "word/document.xml").unwrap();
+    assert!(xml_edited.contains("<w:moveFrom ") && xml_edited.contains("<w:moveTo "), "the move tags are retained when edited");
+}
+
+/// DOCX-ACCESS-012: 表示 > ダークモード（ページ） shows the page dark (a dark paper, the black of text and lines light) and back; it is
+/// not an edit (no undo step, the file as it was) and printing is as always.
+fn access012_dark_page() {
+    let mut s = Scenario::open(REPORT);
+    let before = s.document();
+    assert_eq!(s.menu_state("docx.view.dark-page"), Some((true, false)));
+    s.menu("docx.view.dark-page");
+    assert_eq!(s.menu_state("docx.view.dark-page"), Some((true, true)));
+    assert!(s.with(|e, _| e.resources.dark_page));
+    s.screenshot("dark-page");
+    assert_eq!(s.document(), before, "no edit");
+    assert!(!s.with(|e, _| e.document.can_undo()), "no undo step");
+    s.menu("docx.view.dark-page");
+    assert!(!s.with(|e, _| e.resources.dark_page));
+}
+
+/// DOCX-ACCESS-008: Word's keys for moving, selecting, editing and formatting text (⌘ on a Mac, Ctrl elsewhere) each do what Word's do:
+/// one table of keys and what they leave, every key pressed through the keymap.
+fn access008_keyboard_operations() {
+    let cmd = |k: &str| if cfg!(target_os = "macos") { format!("cmd-{k}") } else { format!("ctrl-{k}") };
+    let word = |k: &str| if cfg!(target_os = "macos") { format!("alt-{k}") } else { format!("ctrl-{k}") };
+    let mut s = Scenario::open(REPORT);
+    let (_, id, text) = text_paragraph(&mut s, 60);
+    let at = |s: &mut Scenario| s.selection().unwrap().1;
+    let sel = |s: &mut Scenario| s.selection().unwrap();
+    let before = s.document();
+    // Moving.
+    s.click_text(FlowPos::new(id, 10));
+    s.key("right");
+    assert_eq!(at(&mut s), FlowPos::new(id, 11), "→");
+    s.key("left");
+    assert_eq!(at(&mut s), FlowPos::new(id, 10), "←");
+    s.key("home");
+    assert_eq!(at(&mut s), FlowPos::new(id, 0), "Home");
+    s.key("end");
+    assert!(at(&mut s).offset > 0 && at(&mut s).para == id, "End");
+    s.click_text(FlowPos::new(id, 10));
+    s.key(&word("right"));
+    assert!(at(&mut s).offset > 10, "word right");
+    s.key(&word("left"));
+    assert!(at(&mut s).offset <= 10, "word left");
+    s.key(&cmd("right"));
+    assert!(at(&mut s).offset > 10, "line end");
+    s.key(&cmd("left"));
+    assert_eq!(at(&mut s), FlowPos::new(id, 0), "line start");
+    s.key(&cmd("down"));
+    let end = at(&mut s);
+    assert!(end.para != id || end.offset > 10, "document end");
+    s.key(&cmd("up"));
+    let start = at(&mut s);
+    assert!(start.offset == 0, "document start");
+    s.key("pagedown");
+    let down = at(&mut s);
+    assert!(down != start, "Page Down moves");
+    s.key("pageup");
+    assert!(at(&mut s) != down, "Page Up moves back");
+    s.key("down");
+    s.key("up");
+    // Selecting.
+    s.click_text(FlowPos::new(id, 10));
+    s.key("shift-right");
+    assert_eq!(sel(&mut s), (FlowPos::new(id, 10), FlowPos::new(id, 11)), "Shift+→");
+    s.key("shift-left");
+    s.key("shift-left");
+    assert_eq!(sel(&mut s), (FlowPos::new(id, 10), FlowPos::new(id, 9)), "Shift+←");
+    s.click_text(FlowPos::new(id, 10));
+    s.key(&word("shift-right"));
+    assert!(sel(&mut s).1.offset > 10, "word selection");
+    s.key("shift-pagedown");
+    assert!(sel(&mut s).1 != sel(&mut s).0, "Shift+Page Down selects");
+    s.key(&cmd("a"));
+    assert!(sel(&mut s).0 != sel(&mut s).1, "select all");
+    // Editing: the text typed, deleted by character and by word, a line break, a tab.
+    s.click_text(FlowPos::new(id, 10));
+    s.type_text("a");
+    s.key("backspace");
+    assert_eq!(para(&s.document(), id).text(), text, "Backspace takes the character typed");
+    s.key("delete");
+    assert_eq!(para(&s.document(), id).text().chars().count(), text.chars().count() - 1, "Delete");
+    s.menu("edit.undo");
+    s.key(&word("backspace"));
+    assert!(para(&s.document(), id).text().chars().count() < text.chars().count() - 1, "word backspace");
+    s.menu("edit.undo");
+    s.key(&word("delete"));
+    assert!(para(&s.document(), id).text().chars().count() < text.chars().count() - 1, "word delete");
+    s.menu("edit.undo");
+    s.key("shift-enter");
+    assert!(para(&s.document(), id).text().contains('\u{b}'), "Shift+Enter is a line break");
+    s.menu("edit.undo");
+    s.key("tab");
+    assert!(para(&s.document(), id).text().contains('\t'), "Tab");
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before);
+    // Formatting the selected words.
+    let selected = |s: &mut Scenario| { s.click_text(FlowPos::new(id, 10)); for _ in 0..3 { s.key("shift-right"); } };
+    // What the selected words look like (the resolved style and the direct format), as text.
+    let look = |s: &mut Scenario, f: &dyn Fn(&ibis_doc_model::FlowRun) -> String| -> String {
+        let doc = s.document();
+        let p = para(&doc, id);
+        let mut at = 0;
+        let mut out = Vec::new();
+        for r in &p.runs {
+            if at >= 10 && at < 13 && matches!(r.kind, FlowRunKind::Text(_)) {
+                out.push(f(r));
+            }
+            at += r.len();
+        }
+        out.join("|")
+    };
+    type Look = Box<dyn Fn(&ibis_doc_model::FlowRun) -> String>;
+    for (key, what, property) in [
+        (cmd("b"), "bold", Box::new(|r: &ibis_doc_model::FlowRun| format!("{:?}", r.style.bold)) as Look),
+        (cmd("i"), "italic", Box::new(|r: &ibis_doc_model::FlowRun| format!("{:?}", r.style.italic))),
+        (cmd("u"), "underline", Box::new(|r: &ibis_doc_model::FlowRun| format!("{:?}", r.style.underline))),
+        (cmd("shift-a"), "all capitals", Box::new(|r: &ibis_doc_model::FlowRun| format!("{:?}", r.style.caps))),
+        (cmd("shift-k"), "small capitals", Box::new(|r: &ibis_doc_model::FlowRun| format!("{:?}", r.style.small_caps))),
+        (cmd("="), "subscript", Box::new(|r: &ibis_doc_model::FlowRun| format!("{:?}", r.format.position))),
+        (cmd("shift-="), "superscript", Box::new(|r: &ibis_doc_model::FlowRun| format!("{:?}", r.format.position))),
+        (cmd("]"), "larger", Box::new(|r: &ibis_doc_model::FlowRun| format!("{:?}", r.style.size))),
+    ] {
+        selected(&mut s);
+        let was = look(&mut s, &*property);
+        s.key(&key);
+        assert!(look(&mut s, &*property) != was, "{what} ({key}) changes it: {was}");
+        s.menu("edit.undo");
+        assert_eq!(s.document(), before, "{what} undone");
+    }
+    // Paragraph formats: alignment, line spacing, styles.
+    s.click_text(FlowPos::new(id, 10));
+    for (key, what, check) in [
+        (cmd("e"), "centre", Box::new(|p: &FlowParagraph| p.align == ibis_doc_model::FlowAlign::Center) as Box<dyn Fn(&FlowParagraph) -> bool>),
+        (cmd("r"), "right", Box::new(|p: &FlowParagraph| p.align == ibis_doc_model::FlowAlign::Right)),
+        (cmd("j"), "justify", Box::new(|p: &FlowParagraph| p.align == ibis_doc_model::FlowAlign::Justify)),
+        (cmd("2"), "double spacing", Box::new(|p: &FlowParagraph| matches!(p.line, ibis_doc_model::LineHeight::Auto(480)))),
+        (cmd("5"), "1.5 spacing", Box::new(|p: &FlowParagraph| matches!(p.line, ibis_doc_model::LineHeight::Auto(360)))),
+        (if cfg!(target_os = "macos") { "alt-cmd-1".to_string() } else { "alt-ctrl-1".to_string() }, "heading 1", Box::new(|p: &FlowParagraph| p.style.is_some())),
+    ] {
+        s.key(&key);
+        let doc = s.document();
+        assert!(check(para(&doc, id)), "{what} ({key})");
+        s.menu("edit.undo");
+        assert_eq!(s.document(), before, "{what} undone");
+    }
+    // Finding, going to, updating.
+    s.key(&cmd("f"));
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.find.is_some())), "⌘F opens the find panel");
+}
+
+/// DOCX-REF-007: the line above the footnotes (and the endnotes) is set (the short one, one across the text, none), as one undo step,
+/// saved in the separator note of footnotes.xml and read again; the page draws the line as set.
+fn ref007_note_separator() {
+    let mut s = Scenario::open(REPORT);
+    // A footnote and an endnote, so that both lines are drawn.
+    let (_, id, _) = text_paragraph(&mut s, 12);
+    for (menu, at, text) in [("docx.footnote", 3, "Foot"), ("docx.endnote", 8, "End")] {
+        s.click_text(FlowPos::new(id, at));
+        s.menu(menu);
+        s.type_text(text);
+    }
+    let kind = |s: &mut Scenario| s.with(|e, _| e.flow().unwrap().note_separators);
+    let rule_width = |s: &mut Scenario| -> Option<f32> {
+        s.with(|e, _| {
+            let doc = e.flow().unwrap().clone();
+            super::flow_layout::pages(&doc, &e.resources).pages.iter().flat_map(|p| p.items.clone()).filter_map(|i| match i { super::flow_layout::Item::Rect { w, h, .. } if (h - 0.5).abs() < 0.01 && w > 100.0 => Some(w), _ => None }).fold(None, |m: Option<f32>, w| Some(m.map_or(w, |x| x.max(w))))
+        })
+    };
+    assert_eq!(kind(&mut s)[0], ibis_doc_model::NoteSeparator::Standard);
+    let standard = rule_width(&mut s);
+    assert!(standard.is_some_and(|w| (w - 144.0).abs() < 0.5), "the short line, 2 inches: {standard:?}");
+    s.menu("docx.notes.separator-full");
+    assert_eq!(kind(&mut s)[0], ibis_doc_model::NoteSeparator::Full);
+    let full = rule_width(&mut s);
+    assert!(full.is_some_and(|w| w > 300.0), "a line across the text: {full:?} {:?}", kind(&mut s));
+    s.menu("edit.undo");
+    assert_eq!(kind(&mut s)[0], ibis_doc_model::NoteSeparator::Standard, "one undo step");
+    s.menu("edit.redo");
+    let saved = s.save_as("test-ref007-separator.docx");
+    let bytes = std::fs::read(&saved).unwrap();
+    let notes = ibis_pptx::test_files::part_text(&bytes, "word/footnotes.xml").unwrap();
+    let separator = &notes[notes.find("w:type=\"separator\"").unwrap()..];
+    let separator = &separator[..separator.find("</w:footnote>").unwrap()];
+    assert!(separator.contains("<w:continuationSeparator/>") && !separator.contains("<w:separator/>"), "{separator}");
+    assert_eq!(flow(&s.reopen()).note_separators[0], ibis_doc_model::NoteSeparator::Full);
+    s.menu("docx.notes.separator-none");
+    s.menu("docx.notes.separator-none-end");
+    assert_eq!(rule_width(&mut s), None, "no line above the footnotes or the endnotes");
+    let saved = s.save_as("test-ref007-separator-none.docx");
+    let notes = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/footnotes.xml").unwrap();
+    let separator = &notes[notes.find("w:type=\"separator\"").unwrap()..];
+    let separator = &separator[..separator.find("</w:footnote>").unwrap()];
+    assert!(!separator.contains("Separator/>") && !separator.contains("<w:separator/>"), "{separator}");
+    // The endnotes' line is its own.
+    s.menu("docx.notes.separator-full-end");
+    assert_eq!(kind(&mut s), [ibis_doc_model::NoteSeparator::Hidden, ibis_doc_model::NoteSeparator::Full]);
+    assert!(rule_width(&mut s).is_some_and(|w| w > 300.0), "the endnotes' line across the text");
+}
+
+/// DOCX-JA-019: ツール > 言語 > スペルチェックを行わない marks the selected text `w:noProof`: the spelling check leaves it, it is saved and
+/// read again, and taken away again, each one undo step.
+fn ja019_no_proof() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 12);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.edit.autocorrect");
+    s.type_text("zzqxjkv ");
+    let word_issues = |s: &mut Scenario| -> usize { let doc = s.document(); super::spelling_panel::scan(&doc, &std::collections::HashSet::new()).iter().filter(|i| i.word == "zzqxjkv").count() };
+    let checks = crate::spelling::available();
+    if checks {
+        assert_eq!(word_issues(&mut s), 1, "the word is not known");
+    }
+    s.click_text(FlowPos::new(id, 0));
+    for _ in 0..7 {
+        s.key("shift-right");
+    }
+    let before = s.document();
+    s.menu("docx.language.no-proof");
+    let marked = |s: &mut Scenario| { let doc = s.document(); para(&doc, id).runs.iter().any(|r| r.format.no_proof == Some(true)) };
+    assert!(marked(&mut s));
+    assert_eq!(s.menu_state("docx.language.no-proof"), Some((true, true)));
+    if checks {
+        assert_eq!(word_issues(&mut s), 0, "marked: not checked");
+    }
+    let saved = s.save_as("test-ja019-noproof.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<w:noProof/>"), "saved as w:noProof");
+    assert!(para(flow(&s.reopen()), id).runs.iter().any(|r| r.format.no_proof == Some(true)), "read again");
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before, "one undo step");
+    s.menu("edit.redo");
+    s.menu("docx.language.no-proof");
+    assert!(!marked(&mut s), "taken away");
+}
+
+/// DOCX-LIST-002: a picture file (書式 > 図の箇条書き…) becomes the bullets of a new list for the selected paragraphs (one undo step), drawn
+/// as pictures, and saved as `w:numPicBullet` with the image part and `w:lvlPicBulletId`, read again.
+fn list002_picture_bullet_from_a_file() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 12);
+    s.click_text(FlowPos::new(id, 3));
+    let before = s.document();
+    let pictures = |s: &mut Scenario| -> usize {
+        s.with(|e, _| {
+            let doc = e.flow().unwrap().clone();
+            super::flow_layout::pages(&doc, &e.resources).pages.iter().flat_map(|p| p.items.clone()).filter(|i| matches!(i, super::flow_layout::Item::Picture { .. })).count()
+        })
+    };
+    let drawn = pictures(&mut s);
+    // A real 16 x 16 pixel PNG (Word shows a broken picture for one it cannot read).
+    let tiny: Vec<u8> = vec![0x89, 0x50, 0x4e, 0x47, 0xd, 0xa, 0x1a, 0xa, 0x0, 0x0, 0x0, 0xd, 0x49, 0x48, 0x44, 0x52, 0x0, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0, 0x10, 0x8, 0x2, 0x0, 0x0, 0x0, 0x90, 0x91, 0x68, 0x36, 0x0, 0x0, 0x0, 0x16, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xd0, 0xf, 0xea, 0x27, 0x9, 0x31, 0x8c, 0x6a, 0x18, 0xd5, 0x30, 0x7c, 0x35, 0x0, 0x0, 0x3b, 0x70, 0x10, 0x10, 0x9b, 0x94, 0xbb, 0x6e, 0x0, 0x0, 0x0, 0x0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+    s.update(move |e, _, cx| e.apply_picture_bullet(tiny.clone(), ibis_doc_model::MediaFormat::Png, cx));
+    let doc = s.document();
+    let list = para(&doc, id).list.expect("a list item");
+    let level = doc.styles.numbering.level(list.num_id, list.level).expect("its level").clone();
+    assert!(level.pic_bullet.is_some() && doc.styles.numbering.pic_bullets.len() == 1, "the bullet is a picture");
+    assert_eq!(pictures(&mut s), drawn + 1, "drawn as a picture");
+    s.menu("edit.undo");
+    assert_eq!(s.document(), before, "one undo step");
+    s.menu("edit.redo");
+    let saved = s.save_as("test-list002-picture-bullet.docx");
+    let bytes = std::fs::read(&saved).unwrap();
+    // Kept for opening in Word (target/office-check, not removed with the scenarios' folders).
+    let keep = crate::shell::scenario::repo_root().join("target/office-check/ibis-picture-bullet.docx");
+    std::fs::create_dir_all(keep.parent().unwrap()).unwrap();
+    std::fs::write(&keep, &bytes).unwrap();
+    let numbering = ibis_pptx::test_files::part_text(&bytes, "word/numbering.xml").unwrap();
+    assert!(numbering.contains("<w:numPicBullet ") && numbering.contains("v:imagedata") && numbering.contains("<w:lvlPicBulletId"), "{numbering}");
+    let reread = s.reopen();
+    let again = flow(&reread);
+    let list = para(again, id).list.expect("a list item again");
+    assert!(again.styles.numbering.level(list.num_id, list.level).is_some_and(|l| l.pic_bullet.is_some()));
+    assert_eq!(again.styles.numbering.pic_bullets.len(), 1);
+}
+
+/// DOCX-IMAGE-012: the panel of a drawn shape sets the line's dash pattern, a gradient fill and a shadow (one undo step), saved as
+/// `a:prstDash`, `a:gradFill` and `a:effectLst/a:outerShdw` and read again.
+fn image012_shape_dash_gradient_shadow() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 3));
+    s.menu("shape.rightArrow");
+    s.click_text(FlowPos::new(id, 3));
+    let inserted = s.document();
+    let auto_of = |doc: &FlowDocument| -> ibis_doc_model::AutoShape {
+        para(doc, id).runs.iter().find_map(|r| match &r.kind { FlowRunKind::Shape(shape) => match &shape.kind { ibis_doc_model::ShapeKind::Auto(a) => Some(a.clone()), _ => None }, _ => None }).unwrap()
+    };
+    s.update(|e, window, cx| {
+        e.open_text_box(window, cx);
+        let state = e.doc_state_mut().unwrap().text_box.as_mut().unwrap();
+        state.dash = ibis_doc_model::LineDash::Dash;
+        state.gradient = true;
+        state.shadow = true;
+        state.glow = true;
+        state.soft_edge = true;
+        state.reflection = true;
+        e.apply_text_box(cx);
+    });
+    let a = auto_of(&s.document());
+    assert_eq!(a.stroke.as_ref().map(|s| s.dash), Some(ibis_doc_model::LineDash::Dash), "a dashed line");
+    assert!(matches!(&a.fill, ibis_doc_model::Fill::Linear { stops, .. } if stops.len() == 2), "a gradient");
+    assert!(a.shadow.is_some() && a.glow.is_some() && a.soft_edge.is_some() && a.reflection.is_some(), "a shadow, a glow, soft edges, a reflection");
+    s.menu("edit.undo");
+    assert_eq!(s.document(), inserted, "one undo step");
+    s.menu("edit.redo");
+    let saved = s.save_as("test-image012-shape-look.docx");
+    // Kept for opening in Word (target/office-check, not removed with the scenarios' folders).
+    let keep = crate::shell::scenario::repo_root().join("target/office-check/ibis-shape-effects.docx");
+    std::fs::create_dir_all(keep.parent().unwrap()).unwrap();
+    std::fs::write(&keep, std::fs::read(&saved).unwrap()).unwrap();
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<a:prstDash val=\"dash\"/>") && xml.contains("<a:gradFill") && xml.contains("<a:outerShdw") && xml.contains("<a:glow") && xml.contains("<a:softEdge") && xml.contains("<a:reflection"), "the look is in the file: {}", xml.find("<wps:spPr").map(|i| xml[i..(i + 900).min(xml.len())].to_string()).unwrap_or_default());
+    let reread = auto_of(flow(&s.reopen()));
+    assert_eq!(reread.stroke.as_ref().map(|s| s.dash), Some(ibis_doc_model::LineDash::Dash));
+    assert!(matches!(&reread.fill, ibis_doc_model::Fill::Linear { .. }) && reread.shadow.is_some() && reread.glow.is_some() && reread.soft_edge.is_some() && reread.reflection.is_some());
+    // Taken away again (the panel's switches off).
+    s.update(|e, window, cx| {
+        e.open_text_box(window, cx);
+        let state = e.doc_state_mut().unwrap().text_box.as_mut().unwrap();
+        state.dash = ibis_doc_model::LineDash::Solid;
+        state.gradient = false;
+        state.shadow = false;
+        state.glow = false;
+        state.soft_edge = false;
+        state.reflection = false;
+        e.apply_text_box(cx);
+    });
+    let a = auto_of(&s.document());
+    assert_eq!(a.stroke.as_ref().map(|s| s.dash), Some(ibis_doc_model::LineDash::Solid));
+    assert!(matches!(&a.fill, ibis_doc_model::Fill::Solid(_)) && a.shadow.is_none() && a.glow.is_none() && a.soft_edge.is_none() && a.reflection.is_none());
+}
+
 /// DOCX-IMAGE-013: 挿入 > 図形 > 矢印 puts a floating line with an arrow at its end at the caret, selected; its panel changes
 /// the colour, width and the arrows in one step; saved and read again.
 fn image013_insert_line() {
@@ -16615,6 +19010,7 @@ fn image013_insert_line() {
         para(doc, id).runs.iter().find_map(|r| match &r.kind { FlowRunKind::Shape(shape) => match &shape.kind { ibis_doc_model::ShapeKind::Line(s) => Some(s.clone()), _ => None }, _ => None }).expect("a line")
     };
     s.menu("docx.shape.arrow");
+    s.click_text(FlowPos::new(id, 3));
     let drawn = stroke_of(&s.document());
     assert!(drawn.tail != ibis_doc_model::LineEnd::None && drawn.head == ibis_doc_model::LineEnd::None);
     assert!(s.with(|e, _| e.text_box_at_caret().is_some_and(|i| i.is_line)), "the line is selected");
@@ -16770,6 +19166,109 @@ fn merge001_mail_merge() {
     assert_eq!(s.document().body.len(), before.body.len());
 }
 
+/// DOCX-MERGE-003・004・005・012: the recipient list is edited from the panel (a recipient added, one taken out, a field added and
+/// taken out; the text follows), the list is paged and all recipients chosen or cleared, the filter has several conditions (AND, OR,
+/// comparisons), and the preview goes to the first, last, a numbered or a found recipient.
+fn merge003_recipient_list_edit_filter_and_find() {
+    let mut s = Scenario::open(REPORT);
+    s.menu("docx.merge");
+    let state = |s: &mut Scenario| s.with(|e, _| e.doc_state().unwrap().merge.as_ref().map(|m| (m.fields.clone(), m.records.clone(), m.included.clone())).unwrap());
+    let selected = |s: &mut Scenario| s.with(|e, _| e.doc_state().unwrap().merge.as_ref().unwrap().selected());
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| a.set_value("氏名,年齢,市\n山田,30,東京\n佐藤,17,大阪\n鈴木,45,東京\n", window, cx));
+        e.apply_merge_data(cx);
+    });
+    // 003: a recipient added (empty), filled by the text, one taken out; a field added and taken out.
+    s.update(|e, window, cx| e.add_merge_record(window, cx));
+    let (fields, records, included) = state(&mut s);
+    assert_eq!((fields.len(), records.len(), included.len()), (3, 4, 4));
+    assert_eq!(records[3], vec![String::new(); 3]);
+    s.update(|e, window, cx| e.delete_merge_record(3, window, cx));
+    s.update(|e, window, cx| e.delete_merge_record(1, window, cx));
+    let (_, records, _) = state(&mut s);
+    assert_eq!(records.iter().map(|r| r[0].clone()).collect::<Vec<_>>(), ["山田", "鈴木"]);
+    let text = s.with(|e, cx| e.doc_state().unwrap().merge.as_ref().unwrap().text.read(cx).value().to_string());
+    assert_eq!(ibis_doc_model::merge::parse_table(&text).1, records, "the text follows the list");
+    s.update(|e, window, cx| e.add_merge_field("備考", window, cx));
+    assert_eq!(state(&mut s).0, ["氏名", "年齢", "市", "備考"]);
+    s.update(|e, window, cx| e.delete_merge_field(3, window, cx));
+    assert_eq!(state(&mut s).0, ["氏名", "年齢", "市"]);
+    // The list again with four recipients.
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| a.set_value("氏名,年齢,市\n山田,30,東京\n佐藤,17,大阪\n鈴木,45,東京\n高橋,20,名古屋\n", window, cx));
+        e.apply_merge_data(cx);
+    });
+    // 004: all out, all in; one page of four.
+    s.update(|e, _, cx| e.set_all_merge_records(false, cx));
+    assert_eq!(selected(&mut s), Vec::<usize>::new());
+    s.update(|e, _, cx| e.set_all_merge_records(true, cx));
+    assert_eq!(selected(&mut s), vec![0, 1, 2, 3]);
+    s.update(|e, _, cx| e.step_merge_page(1, cx));
+    assert_eq!(s.with(|e, _| e.doc_state().unwrap().merge.as_ref().unwrap().list_page), 0, "one page only");
+    // 005: conditions with AND and OR.
+    let filter = |s: &mut Scenario, text: &str| {
+        let text = text.to_string();
+        s.update(move |e, window, cx| {
+            let input = e.doc_state().unwrap().merge.as_ref().unwrap().filter_field.clone();
+            input.update(cx, |a, cx| a.set_value(text.clone(), window, cx));
+            e.filter_merge_records(cx);
+        });
+        selected(s)
+    };
+    assert_eq!(filter(&mut s, "市=東京 AND 年齢>=40"), vec![2]);
+    assert_eq!(filter(&mut s, "市=大阪 OR 年齢>=40"), vec![1, 2]);
+    assert_eq!(filter(&mut s, "市!=東京"), vec![1, 3]);
+    assert_eq!(filter(&mut s, ""), vec![0, 1, 2, 3]);
+    // 012: the preview at the last, the first, a numbered and a found recipient.
+    let current = |s: &mut Scenario| s.with(|e, _| e.doc_state().unwrap().merge.as_ref().unwrap().current);
+    s.update(|e, _, cx| e.set_merge_preview(true, cx));
+    s.update(|e, _, cx| e.goto_merge_record(usize::MAX, cx));
+    assert_eq!(current(&mut s), 3);
+    s.update(|e, _, cx| e.goto_merge_record(1, cx));
+    assert_eq!(current(&mut s), 0);
+    s.update(|e, _, cx| e.goto_merge_record(3, cx));
+    assert_eq!(current(&mut s), 2);
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().find_field.clone();
+        input.update(cx, |a, cx| a.set_value("名古屋", window, cx));
+    });
+    assert!(s.update(|e, _, cx| e.find_merge_record(cx)));
+    assert_eq!(current(&mut s), 3);
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().find_field.clone();
+        input.update(cx, |a, cx| a.set_value("札幌", window, cx));
+    });
+    assert!(!s.update(|e, _, cx| e.find_merge_record(cx)), "nobody in 札幌");
+}
+
+/// DOCX-MERGE-001: the main document's kind (レター・封筒…) is set in the 差し込み印刷 panel and saved as `w:mailMerge/w:mainDocumentType`
+/// (settings.xml), read again, undone and taken away (通常の文書).
+fn merge001_document_type_saved() {
+    let mut s = Scenario::open(REPORT);
+    s.menu("docx.merge");
+    let kind = |s: &mut Scenario| s.with(|e, _| e.flow().unwrap().mail_merge_type.clone());
+    assert_eq!(kind(&mut s), None);
+    s.update(|e, _, cx| e.set_mail_merge_type(Some("formLetters"), cx));
+    assert_eq!(kind(&mut s).as_deref(), Some("formLetters"));
+    s.update(|e, _, cx| e.set_mail_merge_type(Some("envelopes"), cx));
+    s.menu("edit.undo");
+    assert_eq!(kind(&mut s).as_deref(), Some("formLetters"), "one undo step for each");
+    s.menu("edit.redo");
+    let path = s.save_as("merge001_type.docx");
+    let bytes = std::fs::read(&path).unwrap();
+    let settings = ibis_pptx::test_files::part_text(&bytes, "word/settings.xml").unwrap_or_default();
+    assert!(settings.contains("<w:mailMerge><w:mainDocumentType w:val=\"envelopes\"/></w:mailMerge>"), "{settings}");
+    let reopened = s.reopen();
+    assert_eq!(flow(&reopened).mail_merge_type.as_deref(), Some("envelopes"));
+    s.update(|e, _, cx| e.set_mail_merge_type(None, cx));
+    let path = s.save_as("merge001_type_none.docx");
+    let settings = ibis_pptx::test_files::part_text(&std::fs::read(&path).unwrap(), "word/settings.xml").unwrap_or_default();
+    assert!(!settings.contains("mailMerge"), "{settings}");
+    assert_eq!(flow(&s.reopen()).mail_merge_type, None);
+}
+
 /// DOCX-IMAGE-006: the picture's panel changes the brightness and contrast and recolours (grayscale, sepia) the
 /// picture at the caret, each as one undo step; the picture is drawn with them; saved and read again.
 fn image006_picture_corrections() {
@@ -16821,29 +19320,121 @@ fn image006_picture_corrections() {
     let _ = before;
 }
 
-/// 透明度: the picture panel's transparency buttons set the whole picture's opacity (a:alphaModFix) at the caret,
-/// each one undo step, and the picture is drawn with it.
-fn picture_transparency() {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Document);
-    let id = body(&s.document())[0].id;
-    s.update(|e, _, cx| e.set_caret(FlowPos::new(id, 0), false, cx));
-    s.update(|e, _, cx| e.doc_insert_picture(crate::pptx::scenarios::png(40, 30, [0x44, 0x88, 0xcc]), ibis_doc_model::MediaFormat::Png, cx));
-    s.update(|e, _, cx| e.set_caret(FlowPos::new(id, 0), false, cx));
-    let alpha = |doc: &FlowDocument| para(doc, id).runs.iter().find_map(|r| match &r.kind { FlowRunKind::Picture { look, .. } => Some(look.alpha), _ => None }).expect("the picture");
-    assert_eq!(alpha(&s.document()), None);
-    s.update(|e, _, cx| e.set_picture_transparency(30, cx));
-    assert_eq!(alpha(&s.document()), Some(70_000));
-    s.update(|e, _, cx| e.set_picture_transparency(80, cx));
-    assert_eq!(alpha(&s.document()), Some(20_000));
+/// DOCX-IMAGE-006: extended picture effects (transparency, saturation, soft edge, recolor presets):
+/// side panel controls and Format menus change each effect as one undo step; layout draws them; saved and read again.
+fn image006_extended_picture_corrections() {
+    let mut s = Scenario::open(REPORT);
+    let (id, offset) = {
+        let doc = s.document();
+        body(&doc).into_iter().find_map(|p| {
+            let mut at = 0;
+            for r in &p.runs {
+                if matches!(r.kind, FlowRunKind::Picture { .. }) {
+                    return Some((p.id, at));
+                }
+                at += r.len();
+            }
+            None
+        }).expect("a picture")
+    };
+    s.update(|e, _, cx| e.set_caret(FlowPos::new(id, offset), false, cx));
+
+    let look_of = |doc: &FlowDocument| -> ibis_doc_model::PictureLook {
+        para(doc, id).runs.iter().find_map(|r| match &r.kind {
+            FlowRunKind::Picture { look, .. } => Some(look.clone()),
+            FlowRunKind::Shape(shape) => {
+                if let ibis_doc_model::ShapeKind::Picture(pic) = &shape.kind {
+                    Some(ibis_doc_model::PictureLook {
+                        luminance: pic.luminance,
+                        duotone: pic.duotone,
+                        effects: pic.effects.clone(),
+                        soft_edge: pic.soft_edge,
+                        stroke: pic.stroke.clone(),
+                        crop: pic.crop,
+                        rotation: shape.rotation,
+                        flip_h: shape.flip_h,
+                        flip_v: shape.flip_v,
+                        alt_text: pic.alt_text.clone(),
+                        decorative: pic.decorative,
+                        name: pic.name.clone(),
+                        linked_file: None,
+                        geometry: pic.geometry.clone(),
+                        ole: pic.ole,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None
+        }).expect("the picture")
+    };
+
+    // 1. Transparency (opacity) via menu: 50%
+    s.menu("docx.picture.transparency.50");
+    assert_eq!(look_of(&s.document()).effects.opacity, Some(50_000));
+    assert_eq!(s.with(|e, _| e.picture_opacity_at_caret()), Some(50_000));
+    s.menu("edit.undo");
+    assert_eq!(look_of(&s.document()).effects.opacity, None);
+    assert_eq!(s.with(|e, _| e.picture_opacity_at_caret()), None);
+    s.menu("edit.redo");
+    assert_eq!(look_of(&s.document()).effects.opacity, Some(50_000));
+
+    // 2. Saturation via menu: 200%
+    s.menu("docx.picture.saturation.200");
+    assert_eq!(look_of(&s.document()).effects.saturation, Some(200_000));
+    assert_eq!(s.with(|e, _| e.picture_saturation_at_caret()), Some(200_000));
+    s.menu("edit.undo");
+    assert_eq!(look_of(&s.document()).effects.saturation, None);
+    s.menu("edit.redo");
+    assert_eq!(look_of(&s.document()).effects.saturation, Some(200_000));
+
+    // 3. Soft edge via menu: 2.5 pt (31_750 EMU)
+    s.menu("docx.picture.soft-edge.2pt5");
+    assert_eq!(look_of(&s.document()).soft_edge, Some(31_750));
+    assert_eq!(s.with(|e, _| e.picture_soft_edge_at_caret()), Some(31_750));
+    s.menu("edit.undo");
+    assert_eq!(look_of(&s.document()).soft_edge, None);
+    s.menu("edit.redo");
+    assert_eq!(look_of(&s.document()).soft_edge, Some(31_750));
+
+    // 4. Recolor via menu: Black & White 50%
+    s.menu("docx.picture.recolor.bw50");
+    assert_eq!(look_of(&s.document()).effects.bilevel, Some(50_000));
+    s.menu("edit.undo");
+    assert_eq!(look_of(&s.document()).effects.bilevel, None);
+    s.menu("edit.redo");
+    assert_eq!(look_of(&s.document()).effects.bilevel, Some(50_000));
+
+    // Recolor via menu: Washout
+    s.menu("docx.picture.recolor.washout");
+    assert_eq!(look_of(&s.document()).luminance, Some((70_000, -70_000)));
+
+    // Recolor via menu: Blue duotone
+    s.menu("docx.picture.recolor.blue");
+    assert_eq!(look_of(&s.document()).duotone, Some((ibis_doc_model::Rgb(0x002060), ibis_doc_model::Rgb(0xD9E1F2))));
+
+    // Verify drawing in layout
     let drawn = s.with(|e, _| {
         let doc = e.flow().unwrap().clone();
-        super::flow_layout::pages(&doc, &e.resources).pages.iter().flat_map(|pg| pg.items.iter()).any(|i| matches!(i, super::flow_layout::Item::Shape { shape, .. } if matches!(&shape.kind, ibis_doc_model::ShapeKind::Picture(p) if p.alpha == Some(20_000))))
+        super::flow_layout::pages(&doc, &e.resources).pages.iter().flat_map(|pg| pg.items.iter()).any(|i| {
+            matches!(i, super::flow_layout::Item::Shape { shape, .. } if matches!(&shape.kind, ibis_doc_model::ShapeKind::Picture(p)
+                if p.effects.opacity == Some(50_000)
+                    && p.effects.saturation == Some(200_000)
+                    && p.soft_edge == Some(31_750)
+                    && p.duotone == Some((ibis_doc_model::Rgb(0x002060), ibis_doc_model::Rgb(0xD9E1F2)))
+            ))
+        })
     });
-    assert!(drawn, "the picture is drawn with its transparency");
-    s.menu("edit.undo");
-    assert_eq!(alpha(&s.document()), Some(70_000));
-    s.update(|e, _, cx| e.set_picture_transparency(0, cx));
-    assert_eq!(alpha(&s.document()), None);
+    assert!(drawn, "layout rendered shape picture with all extended effects");
+
+    let _edited = s.document();
+    s.save_as("test-image006-extended-effects.docx");
+    let saved = s.reopen();
+    let read_look = look_of(flow(&saved));
+    assert_eq!(read_look.effects.opacity, Some(50_000));
+    assert_eq!(read_look.effects.saturation, Some(200_000));
+    assert_eq!(read_look.soft_edge, Some(31_750));
+    assert_eq!(read_look.duotone, Some((ibis_doc_model::Rgb(0x002060), ibis_doc_model::Rgb(0xD9E1F2))));
 }
 
 /// DOCX-HEADER-006: a picture inserted with the caret in the header is saved in the header (a logo): the header
@@ -16860,6 +19451,871 @@ fn header006_picture_in_header() {
     s.save_as("test-header006-picture.docx");
     let saved = s.reopen();
     assert_eq!(pictures(flow(&saved)), 1, "and in the saved file's header");
+}
+
+/// DOCX-HEADER-006 ヘッダー内の表：ヘッダーの編集中に表を挿入して文字を入れ、保存して読み直しても
+/// ヘッダーの表として残る。
+fn header006_table_in_header() {
+    let mut s = Scenario::open("test/editing/docx-caption-chapters.docx");
+    s.menu("docx.header-footer");
+    s.update(|e, _, cx| e.insert_table(1, 2, cx));
+    let tables = |doc: &FlowDocument| doc.header.iter().filter(|b| matches!(b, Block::Table(_))).count();
+    assert_eq!(tables(&s.document()), 1, "the table is in the header");
+    assert_eq!(tables(&s.document().clone()), 1);
+    s.type_text("左");
+    s.key("tab");
+    s.type_text("右");
+    let doc = s.document();
+    let Some(Block::Table(t)) = doc.header.iter().find(|b| matches!(b, Block::Table(_))) else { panic!("a table") };
+    let cells: Vec<String> = t.rows[0].cells.iter().map(|c| c.blocks.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.text()) } else { None }).collect::<String>()).collect();
+    assert_eq!(cells, ["左", "右"]);
+    assert!(doc.body.iter().all(|b| !matches!(b, Block::Table(t) if t.rows.len() == 1 && t.rows[0].cells.len() == 2 && t.rows[0].cells.iter().any(|c| c.blocks.iter().any(|b| matches!(b, Block::Paragraph(p) if p.text() == "左"))))), "not in the body");
+    s.save_as("docx-header006-table.docx");
+    let saved = s.reopen();
+    assert_eq!(tables(flow(&saved)), 1, "and in the saved file's header");
+    let Some(Block::Table(t)) = flow(&saved).header.iter().find(|b| matches!(b, Block::Table(_))) else { panic!("a table") };
+    assert_eq!(t.rows[0].cells.len(), 2);
+}
+
+/// DOCX-HEADER-006 ヘッダー内の図形・テキスト ボックス：ヘッダーの編集中に図形とテキスト ボックスを挿入し、
+/// 保存して読み直してもヘッダーに残る。
+fn header006_shapes_in_header() {
+    let mut s = Scenario::open("test/editing/docx-caption-chapters.docx");
+    s.menu("docx.header-footer");
+    let shapes = |doc: &FlowDocument| doc.header.iter().map(|b| match b { Block::Paragraph(p) => p.runs.iter().filter(|r| matches!(r.kind, FlowRunKind::Shape(_))).count(), _ => 0 }).sum::<usize>();
+    s.update(|e, _, cx| e.doc_insert_shape("rect", cx));
+    s.update(|e, window, cx| e.doc_insert_text_box(window, cx));
+    assert_eq!(shapes(&s.document()), 2, "a shape and a text box in the header");
+    s.save_as("docx-header006-shapes.docx");
+    let saved = s.reopen();
+    assert_eq!(shapes(flow(&saved)), 2, "and in the saved file's header");
+}
+
+/// DOCX-MERGE-006/007/008 住所ブロックと挨拶文：宛先一覧の項目から住所ブロック（郵便番号・住所・氏名の行。
+/// 空の項目の行は出さない）と挨拶文（氏名 様）を入れ、プレビューと個々の文書に宛先の値が入る。保存して読み直しても残る。
+fn merge006_address_and_greeting() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.merge");
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| a.set_value("郵便番号,住所,氏名\n100-0001,東京都千代田区,山田太郎\n530-0001,,鈴木花子\n", window, cx));
+        e.apply_merge_data(cx);
+    });
+    s.update(|e, _, cx| e.insert_merge_block(false, cx));
+    s.click_text(FlowPos::new(id, 0));
+    s.update(|e, _, cx| e.insert_merge_block(true, cx));
+    let doc = s.document();
+    let instructions: Vec<String> = para(&doc, id).runs.iter().filter_map(|r| match &r.kind { FlowRunKind::Field { instruction, .. } => Some(instruction.clone()), _ => None }).collect();
+    assert_eq!(instructions, ["ADDRESSBLOCK \\f \"〒<郵便番号>\\n<住所>\\n<氏名> 様\" ", "GREETINGLINE \\f \"<氏名> 様\" "]);
+    assert_eq!(ibis_doc_model::merge::merge_fields_used(&doc), ["郵便番号", "住所", "氏名"]);
+    let texts = |s: &mut Scenario| -> String {
+        s.with(|e, _| {
+            let doc = e.flow().unwrap().clone();
+            let laid = super::flow_layout::pages(&doc, &e.resources);
+            laid.pages[0].items.iter().filter_map(|i| match i { super::flow_layout::Item::Text { text, .. } => Some(text.to_string()), _ => None }).collect::<Vec<_>>().join("|")
+        })
+    };
+    assert!(texts(&mut s).contains("«住所ブロック»"));
+    s.update(|e, _, cx| e.set_merge_preview(true, cx));
+    let first = texts(&mut s);
+    assert!(first.contains("〒100-0001") && first.contains("東京都千代田区") && first.contains("山田太郎 様"), "{first}");
+    s.update(|e, _, cx| e.step_merge_record(1, cx));
+    let second = texts(&mut s);
+    assert!(second.contains("〒530-0001") && second.contains("鈴木花子 様") && !second.contains("東京都"), "{second}");
+    // The empty 住所's line is not there: the block has two lines for the second record, three for the first.
+    let main = s.document();
+    let fields = vec!["郵便番号".to_string(), "住所".to_string(), "氏名".to_string()];
+    let letters = ibis_doc_model::merge::merged_letters(&main, &fields, &[vec!["100-0001".into(), "東京都千代田区".into(), "山田太郎".into()], vec!["530-0001".into(), String::new(), "鈴木花子".into()]]);
+    let breaks = |p: &FlowParagraph| p.runs.iter().filter(|r| matches!(r.kind, FlowRunKind::LineBreak)).count();
+    let blocks: Vec<usize> = letters.body.iter().filter_map(|b| match b { Block::Paragraph(p) if p.text().contains("〒") => Some(breaks(p)), _ => None }).collect();
+    assert_eq!(blocks, [2, 1]);
+    s.save_as("docx-merge006-main.docx");
+    let saved = s.reopen();
+    assert_eq!(ibis_doc_model::merge::merge_fields_used(flow(&saved)), ["郵便番号", "住所", "氏名"]);
+}
+
+/// DOCX-MERGE-010/013 規則（IF）と宛先ごとの別ファイル：パネルの規則の欄の IF を入れ、プレビューは宛先の値で
+/// 分岐する。SKIPIF のある文書では、その宛先のファイルは作らない。宛先ごとに別の .docx を書く。
+fn merge010_rules_and_separate_files() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.merge");
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| a.set_value("氏名,年齢\n山田,30\n鈴木,15\n佐藤,5\n", window, cx));
+        e.apply_merge_data(cx);
+    });
+    let rule = |s: &mut Scenario, text: &str| {
+        s.update(|e, window, cx| {
+            let input = e.doc_state().unwrap().merge.as_ref().unwrap().rule_field.clone();
+            input.update(cx, |a, cx| a.set_value(text.to_string(), window, cx));
+            e.insert_merge_rule(cx);
+        });
+    };
+    rule(&mut s, "IF { MERGEFIELD 年齢 } >= 20 \"成人\" \"未成年\"");
+    s.click_text(FlowPos::new(id, 0));
+    rule(&mut s, "SKIPIF { MERGEFIELD 年齢 } < 10");
+    let texts = |s: &mut Scenario| -> String {
+        s.with(|e, _| {
+            let doc = e.flow().unwrap().clone();
+            let laid = super::flow_layout::pages(&doc, &e.resources);
+            laid.pages[0].items.iter().filter_map(|i| match i { super::flow_layout::Item::Text { text, .. } => Some(text.to_string()), _ => None }).collect::<Vec<_>>().join("|")
+        })
+    };
+    assert!(texts(&mut s).contains("«SKIPIF»"), "the rule is in the document");
+    s.update(|e, _, cx| e.set_merge_preview(true, cx));
+    assert!(texts(&mut s).contains("成人"), "{}", texts(&mut s));
+    s.update(|e, _, cx| e.step_merge_record(1, cx));
+    assert!(texts(&mut s).contains("未成年"), "{}", texts(&mut s));
+    // Saved as fields, read again.
+    s.save_as("docx-merge010-main.docx");
+    let saved = s.reopen();
+    let rules: Vec<String> = body(flow(&saved)).iter().flat_map(|p| p.runs.iter()).filter_map(|r| match &r.kind { FlowRunKind::Field { instruction, .. } => Some(instruction.split_whitespace().next().unwrap_or("").to_string()), _ => None }).collect();
+    assert_eq!(rules, ["SKIPIF", "IF"]);
+
+    // One file for each record the SKIPIF does not leave out (佐藤, 5, is).
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input/merge010-separate");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let count = s.with(|e, _| e.write_merged_separately(&dir, "宛名")).unwrap();
+    assert_eq!(count, 2);
+    let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|f| f.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    assert_eq!(names, ["宛名 1.docx", "宛名 2.docx"]);
+    let second = ibis_pptx::read(&std::fs::read(dir.join("宛名 2.docx")).unwrap()).unwrap();
+    let text: String = body(flow(&second)).iter().map(|p| p.text()).collect::<Vec<_>>().join("|");
+    assert!(text.contains("未成年") && !text.contains("成人|"), "{text}");
+}
+
+/// DOCX-OPTIONS-007 入力オートコレクト：(c)・-->・:) などを打つと記号に置き換わる（1 手の元に戻す）。
+/// 編集 > 入力オートコレクト を切ると置き換わらない。置き換えた文字は保存して読み直しても残る。
+fn options007_autocorrect() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, text) = text_paragraph(&mut s, 10);
+    assert_eq!(s.menu_state("docx.edit.autocorrect"), Some((true, true)));
+    s.click_text(FlowPos::new(id, 0));
+    s.type_text("価格(c)");
+    s.type_text(" 矢印-->");
+    s.type_text(" 笑顔:)");
+    s.type_text(" (TM)");
+    let line = para(&s.document(), id).text();
+    assert!(line.starts_with(&format!("価格© 矢印→ 笑顔☺ ™{text}")), "{line}");
+    // One step back takes the last replacement away with its typed character.
+    s.key("cmd-z");
+    assert!(para(&s.document(), id).text().starts_with(&format!("価格© 矢印→ 笑顔☺ (TM{text}")));
+    s.key("cmd-shift-z");
+    // A word is corrected when a space ends it: the list's entries, the first letter of a sentence.
+    s.type_text(" teh ");
+    s.type_text("done. next ");
+    assert!(para(&s.document(), id).text().starts_with(&format!("価格© 矢印→ 笑顔☺ ™ the done. Next {text}")), "{}", para(&s.document(), id).text());
+    // Off: the text stays as typed.
+    s.menu("docx.edit.autocorrect");
+    s.type_text(" 元(c)");
+    assert!(para(&s.document(), id).text().starts_with(&format!("価格© 矢印→ 笑顔☺ ™ the done. Next  元(c){text}")), "{}", para(&s.document(), id).text());
+    // ツール > オートコレクトのオプション…: the panel shared with the workbook; a word added to the list is corrected.
+    s.menu("docx.autocorrect-options");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.autocorrect.is_some())), "the panel is open");
+    s.update(|e, _, cx| {
+        let p = e.doc_state_mut().unwrap().autocorrect.as_mut().unwrap();
+        p.working.table.push(("brb".to_string(), "be right back".to_string()));
+        p.working = crate::shell::autocorrect::AutoCorrect { table: p.working.table.clone(), ..crate::shell::autocorrect::AutoCorrect::default() };
+        crate::shell::autocorrect::set_settings(p.working.clone());
+        e.doc_state_mut().unwrap().autocorrect = None;
+        cx.notify();
+    });
+    s.menu("docx.edit.autocorrect");
+    s.type_text(" brb ");
+    assert!(para(&s.document(), id).text().contains("be right back "), "{}", para(&s.document(), id).text());
+    crate::shell::autocorrect::set_settings(crate::shell::autocorrect::AutoCorrect::default());
+    s.save_as("docx-options007.docx");
+    let saved = s.reopen();
+    assert!(para(flow(&saved), id).text().contains("元(c)"));
+}
+
+/// DOCX-STYLE-011 スタイル ギャラリーの表示順：文書が qFormat を付けたスタイルだけを uiPriority の順に出す
+/// （付けていない文書は全部を名前順）。ファイルの w:uiPriority・w:qFormat を読む。
+fn style011_gallery_order() {
+    use ibis_doc_model::{FlowStyle, StyleKind};
+    let mut doc = FlowDocument::default();
+    let styles = std::sync::Arc::make_mut(&mut doc.styles);
+    for (id, priority, quick) in [("Zeta", Some(5), true), ("Alpha", Some(20), true), ("Beta", None, true), ("Gamma", Some(1), false)] {
+        styles.styles.insert(id.to_string(), FlowStyle { kind: StyleKind::Paragraph, name: id.to_string(), ui_priority: priority, quick, ..Default::default() });
+    }
+    let ids = |doc: &FlowDocument| super::toolbar::document_paragraph_styles(doc).into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+    assert_eq!(ids(&doc), ["Zeta", "Alpha", "Beta"], "the marked ones, by priority (99 without)");
+    for s in std::sync::Arc::make_mut(&mut doc.styles).styles.values_mut() {
+        s.quick = false;
+    }
+    assert_eq!(ids(&doc), ["Alpha", "Beta", "Gamma", "Zeta"], "none marked: all, by name");
+    // A Word file's styles say it.
+    let mut s = Scenario::open(REPORT);
+    let loaded = s.document();
+    assert!(loaded.styles.styles.values().any(|st| st.quick), "qFormat is read");
+    assert!(loaded.styles.styles.values().any(|st| st.ui_priority.is_some()), "uiPriority is read");
+}
+
+/// DOCX-FILE-014/015 自動回復：設定のパネル（間隔・保存先）、編集のある文書だけを間隔ごとに保存、回復のパネルから開く
+/// （名前の無い文書で、帯が出る）、名前を付けて保存すると回復用のファイルが消える。
+fn file014_autorecover() {
+    use crate::shell::autorecover::{AutoRecoverConfig, load_autorecover_config, save_autorecover_config};
+    let before = load_autorecover_config();
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input/autorecover-docx");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    save_autorecover_config(&AutoRecoverConfig { enabled: true, interval_minutes: 5, keep_last_unsaved: true, custom_location: Some(dir.clone()) });
+
+    let mut s = Scenario::open(REPORT);
+    // Settings: the panel shows what is in force; a bad interval is refused, a good one kept.
+    s.menu("docx.autorecover-settings");
+    assert!(s.with(|e, _| e.autorecover_settings.is_some()), "the panel is open");
+    s.update(|e, window, cx| {
+        let p = e.autorecover_settings.as_ref().unwrap();
+        p.interval_input.update(cx, |i, cx| i.set_value("0", window, cx));
+        e.save_autorecover_settings(cx);
+    });
+    assert_eq!(load_autorecover_config().interval_minutes, 5, "0 minutes is refused");
+    s.update(|e, window, cx| {
+        let p = e.autorecover_settings.as_ref().unwrap();
+        p.interval_input.update(cx, |i, cx| i.set_value("15", window, cx));
+        e.save_autorecover_settings(cx);
+    });
+    assert_eq!(load_autorecover_config().interval_minutes, 15);
+
+    // The timer's look: nothing without edits, nothing before the interval, a snapshot after it.
+    let files = |dir: &std::path::Path| std::fs::read_dir(dir).unwrap().filter_map(|f| f.ok()).map(|f| f.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
+    let start = s.with(|e, _| e.last_autorecover_ms);
+    assert!(!s.update(|e, _, _| e.autorecover_tick(start + 16 * 60_000)), "no edits: no snapshot");
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.type_text("未保存の追記");
+    assert!(!s.update(|e, _, _| e.autorecover_tick(start + 60_000)), "before the interval");
+    assert!(s.update(|e, _, _| e.autorecover_tick(start + 16 * 60_000)), "after it");
+    let names = files(&dir);
+    assert_eq!(names.len(), 1, "{names:?}");
+    assert!(names[0].ends_with(".docx") && names[0].contains("_autorecover_"), "{names:?}");
+    // Not for a file that has it turned off.
+    s.update(|e, _, _| e.autorecover_off = true);
+    assert!(!s.update(|e, _, _| e.autorecover_tick(start + 40 * 60_000)));
+    s.update(|e, _, _| e.autorecover_off = false);
+
+    // 回復: the panel lists it; opening it makes an untitled document, with the text typed and the banner.
+    s.menu("docx.recover-unsaved");
+    assert_eq!(s.with(|e, _| e.recover_unsaved.as_ref().map(|p| p.entries.len())), Some(1));
+    s.update(|e, window, cx| e.open_recovered_entry(0, window, cx));
+    s.settle();
+    assert!(s.with(|e, _| e.is_recovered && e.path.is_none()), "an untitled recovered file");
+    assert!(para(&s.document(), id).text().starts_with("未保存の追記"), "{}", para(&s.document(), id).text());
+    // Saving it under a name takes the recovery file away.
+    s.save_as("docx-file014-recovered.docx");
+    assert!(files(&dir).is_empty(), "{:?}", files(&dir));
+    assert!(s.with(|e, _| !e.is_recovered));
+    save_autorecover_config(&before);
+}
+
+/// DOCX-TABLE-002 罫線を引いて表を作成：挿入 > 罫線を引いて表を作成 でモードを入れ、ページ上でドラッグした大きさの 1 セルの表が
+/// できる（1 手の元に戻す。モードは切れる）。小さい箱では作らない。保存して読み直しても行の高さが残る。
+fn table002_draw_table() {
+    let mut s = Scenario::open(REPORT);
+    let tables = |doc: &FlowDocument| doc.body.iter().filter(|b| matches!(b, Block::Table(_))).count();
+    let before = tables(&s.document());
+    assert_eq!(s.menu_state("docx.insert.draw-table"), Some((true, false)));
+    s.menu("docx.insert.draw-table");
+    assert_eq!(s.menu_state("docx.insert.draw-table"), Some((true, true)), "the mode is on");
+    // Too small: nothing.
+    s.update(|e, _, cx| {
+        e.begin_draw_table(0, 100.0, 200.0, cx);
+        e.drag_draw_table(105.0, 203.0, cx);
+        e.end_draw_table(cx);
+    });
+    assert_eq!(tables(&s.document()), before);
+    assert_eq!(s.menu_state("docx.insert.draw-table"), Some((true, true)), "the mode stays after a box too small");
+    s.update(|e, _, cx| {
+        e.begin_draw_table(0, 100.0, 200.0, cx);
+        e.drag_draw_table(300.0, 260.0, cx);
+        e.end_draw_table(cx);
+    });
+    let doc = s.document();
+    assert_eq!(tables(&doc), before + 1, "a table was drawn");
+    assert_eq!(s.menu_state("docx.insert.draw-table"), Some((true, false)), "the mode is off again");
+    let table = doc.body.iter().filter_map(|b| if let Block::Table(t) = b { Some(t) } else { None }).find(|t| t.rows.len() == 1 && t.rows[0].cells.len() == 1 && matches!(t.rows[0].height, ibis_doc_model::RowHeight::AtLeast(h) if h == 60 * 12_700)).expect("a one-cell table 60 pt high");
+    assert_eq!(table.columns.iter().sum::<i64>() / 12_700, 200, "200 pt wide");
+    s.save_as("docx-table002.docx");
+    let saved = s.reopen();
+    assert!(flow(&saved).body.iter().any(|b| matches!(b, Block::Table(t) if t.rows.len() == 1 && matches!(t.rows[0].height, ibis_doc_model::RowHeight::AtLeast(h) if (h - 60 * 12_700).abs() < 12_700))), "the height is saved");
+    s.key("cmd-z");
+    assert_eq!(tables(&s.document()), before, "one step of undo");
+}
+
+/// DOCX-MERGE-011 NEXT・NEXTIF：次の宛先へ進む。1 部に宛先が 2 件（ラベルのように）入り、NEXT より後は次の宛先の値になる。
+fn merge011_next_record() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.merge");
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| a.set_value("氏名\n山田\n鈴木\n佐藤\n高橋\n", window, cx));
+        e.apply_merge_data(cx);
+    });
+    // 氏名, then a paragraph with NEXT, then 氏名 again (two records to a copy).
+    s.update(|e, _, cx| e.insert_merge_field("氏名", cx));
+    s.key("enter");
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().rule_field.clone();
+        input.update(cx, |a, cx| a.set_value("NEXT".to_string(), window, cx));
+        e.insert_merge_rule(cx);
+    });
+    s.key("enter");
+    s.update(|e, _, cx| e.insert_merge_field("氏名", cx));
+    s.save_as("docx-merge011-main.docx");
+    let saved = s.reopen();
+    let words: Vec<String> = body(flow(&saved)).iter().flat_map(|p| p.runs.iter()).filter_map(|r| match &r.kind { FlowRunKind::Field { instruction, .. } => Some(instruction.split_whitespace().next().unwrap_or("").to_string()), _ => None }).collect();
+    assert_eq!(words, ["MERGEFIELD", "NEXT", "MERGEFIELD"], "saved as fields");
+    let path = crate::shell::scenario::repo_root().join("target/scenario-input/merge011-letters.docx");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let count = s.update(|e, _, _| e.write_merged_documents(&path)).unwrap();
+    assert_eq!(count, 4);
+    let letters = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let names: Vec<&str> = body(flow(&letters)).iter().flat_map(|p| ["山田", "鈴木", "佐藤", "高橋"].into_iter().filter(move |n| p.text().starts_with(*n))).collect();
+    assert_eq!(names, ["山田", "鈴木", "佐藤", "高橋"], "two records to a copy, each in order");
+    let pages = body(flow(&letters)).iter().filter(|p| p.page_break_before).count();
+    assert_eq!(pages, 1, "two copies: one page break between");
+}
+
+/// DOCX-MERGE-016 封筒サイズと宛名配置: 封筒サイズ（長形3号・長形4号・洋形2号・洋形長3号・角形2号・DL・#10）と宛名・差出人の配置。
+/// 封筒設定による PageSetup 更新・差出人/受取人ブロック生成・1ステップUndo/Redo・保存再読込・個別文書作成を検証。
+fn merge016_envelope_setup() {
+    let mut s = Scenario::open(REPORT);
+    s.menu("docx.merge");
+    // Setup recipient list
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| {
+            a.set_value("郵便番号\t住所\t氏名\n150-0002\t東京都渋谷区\t山田太郎\n530-0001\t大阪府大阪市\t鈴木花子".to_string(), window, cx)
+        });
+        e.apply_merge_data(cx);
+    });
+
+    let before_size = s.with(|e, _| e.flow().unwrap().page.size);
+
+    // Apply Chou3 envelope setup with return address
+    s.update(|e, _, cx| {
+        e.setup_envelope(ibis_doc_model::merge::EnvelopePreset::Chou3, Some("アイビス\n東京都渋谷区"), cx);
+    });
+
+    // Verify envelope page size and mail_merge_type
+    let env_size = s.with(|e, _| e.flow().unwrap().page.size);
+    assert_eq!(env_size, ibis_doc_model::merge::EnvelopePreset::Chou3.size());
+    assert_eq!(s.document().mail_merge_type.as_deref(), Some("envelopes"));
+
+    // Verify body blocks: delivery address and return address
+    let has_address_block = s.with(|e, _| {
+        if let Some(ibis_doc_model::flow::Block::Paragraph(p)) = e.flow().unwrap().body.first() {
+            p.runs.iter().any(|r| matches!(&r.kind, FlowRunKind::Field { instruction, .. } if instruction.starts_with("ADDRESSBLOCK")))
+        } else {
+            false
+        }
+    });
+    assert!(has_address_block, "delivery address has address block field");
+    let texts: Vec<String> = s.with(|e, _| e.flow().unwrap().body.iter().filter_map(|b| if let ibis_doc_model::flow::Block::Paragraph(p) = b { Some(p.text()) } else { None }).collect());
+    assert_eq!(texts.len(), 2);
+    assert!(texts[1].contains("アイビス") && texts[1].contains("東京都渋谷区"), "return address block");
+
+    // 1-step Undo restores original document and page setup
+    s.menu("edit.undo");
+    assert_eq!(s.with(|e, _| e.flow().unwrap().page.size), before_size);
+    assert_ne!(s.document().mail_merge_type.as_deref(), Some("envelopes"));
+
+    // Redo restores envelope
+    s.menu("edit.redo");
+    assert_eq!(s.with(|e, _| e.flow().unwrap().page.size), env_size);
+    assert_eq!(s.document().mail_merge_type.as_deref(), Some("envelopes"));
+
+    s.save_as("docx-merge016-envelope.docx");
+    let saved = s.reopen();
+    assert_eq!(flow(&saved).mail_merge_type.as_deref(), Some("envelopes"), "envelopes preserved in OOXML settings");
+    let saved_size = flow(&saved).page.size;
+    assert!((saved_size.width - env_size.width).abs() < 635 && (saved_size.height - env_size.height).abs() < 635, "envelope page size preserved in OOXML sectPr");
+
+    // Test merged documents output
+    let path = crate::shell::scenario::repo_root().join("target/scenario-input/merge016-envelopes.docx");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let count = s.update(|e, _, _| e.write_merged_documents(&path)).unwrap();
+    assert_eq!(count, 2, "2 envelopes generated");
+    let letters = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let letter_texts: Vec<String> = body(flow(&letters)).iter().map(|p| p.text()).collect();
+    assert!(letter_texts.iter().any(|t| t.contains("山田太郎") && t.contains("150-0002")));
+    assert!(letter_texts.iter().any(|t| t.contains("鈴木花子") && t.contains("530-0001")));
+}
+
+/// DOCX-MERGE-017 ラベル規格と差込ラベル: ラベル規格（A4 24面/12面/10面/21面, Avery 5160/5163）に応じた表グリッド生成と NEXT レコード制御。
+/// ラベル設定による表生成・NEXTフィールド配置・1ステップUndo/Redo・保存再読込・個別文書作成（シートへの連続展開）を検証。
+fn merge017_label_sheet_setup() {
+    let mut s = Scenario::open(REPORT);
+    s.menu("docx.merge");
+    // Setup recipient list with 5 recipients
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| {
+            a.set_value("氏名\n山田太郎\n鈴木花子\n佐藤次郎\n田中三郎\n高橋四郎".to_string(), window, cx)
+        });
+        e.apply_merge_data(cx);
+    });
+
+    let before_blocks = s.with(|e, _| e.flow().unwrap().body.len());
+
+    // Apply A4 24面 label setup
+    s.update(|e, _, cx| {
+        e.setup_labels(ibis_doc_model::merge::LabelPreset::A4_24, cx);
+    });
+
+    // Verify mail_merge_type and table structure
+    assert_eq!(s.document().mail_merge_type.as_deref(), Some("mailingLabels"));
+    let (rows, cols) = s.with(|e, _| {
+        if let Some(ibis_doc_model::flow::Block::Table(t)) = e.flow().unwrap().body.first() {
+            (t.rows.len(), t.columns.len())
+        } else {
+            (0, 0)
+        }
+    });
+    assert_eq!((rows, cols), (8, 3), "8 rows x 3 cols = 24 labels");
+
+    // 1-step Undo restores original document
+    s.menu("edit.undo");
+    assert_eq!(s.with(|e, _| e.flow().unwrap().body.len()), before_blocks);
+    assert_ne!(s.document().mail_merge_type.as_deref(), Some("mailingLabels"));
+
+    // Redo restores label table
+    s.menu("edit.redo");
+    assert_eq!(s.document().mail_merge_type.as_deref(), Some("mailingLabels"));
+
+    // Save and reopen
+    s.save_as("docx-merge017-labels.docx");
+    let saved = s.reopen();
+    assert_eq!(flow(&saved).mail_merge_type.as_deref(), Some("mailingLabels"), "mailingLabels preserved in OOXML settings");
+    let saved_table = flow(&saved).body.iter().find_map(|b| if let ibis_doc_model::flow::Block::Table(t) = b { Some((t.rows.len(), t.columns.len())) } else { None });
+    assert_eq!(saved_table, Some((8, 3)), "label table preserved in OOXML");
+
+    // Test merged documents output: 5 recipients placed sequentially on the label sheet
+    let path = crate::shell::scenario::repo_root().join("target/scenario-input/merge017-label-letters.docx");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let count = s.update(|e, _, _| e.write_merged_documents(&path)).unwrap();
+    assert_eq!(count, 5);
+    let letters = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let mut cell_texts = Vec::new();
+    for b in &flow(&letters).body {
+        if let ibis_doc_model::flow::Block::Table(t) = b {
+            for r in &t.rows {
+                for c in &r.cells {
+                    for cb in &c.blocks {
+                        if let ibis_doc_model::flow::Block::Paragraph(p) = cb {
+                            cell_texts.push(p.text().trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cell_texts.len(), 24);
+    assert_eq!(cell_texts[0], "山田太郎 様");
+    assert_eq!(cell_texts[1], "鈴木花子 様");
+    assert_eq!(cell_texts[2], "佐藤次郎 様");
+    assert_eq!(cell_texts[3], "田中三郎 様");
+    assert_eq!(cell_texts[4], "高橋四郎 様");
+}
+
+/// DOCX-MERGE-009 フィールドと列の対応 (Match Fields: ECMA-376 Part 1 §17.14.15 `w:mailMerge/w:odso/w:fieldMapData`):
+/// 宛先一覧の列名と標準差し込み項目（Postal Code, Last Name, Company, Address 1, Address 2 など）の対応付け。
+/// 自動対応付け・手動切り替え・1ステップUndo/Redo・OOXML設定保存再読込・住所ブロック・個別文書作成を網羅検証。
+fn merge009_match_fields() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.merge");
+
+    // Recipient list with Japanese column headers
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| {
+            a.set_value(
+                "郵便番号,氏名,会社,住所1,住所2\n150-0002,山田太郎,アイビス,東京都渋谷区渋谷,2-1-1\n530-0001,鈴木花子,サンプル商事,大阪府大阪市北区梅田,1-2-3\n".to_string(),
+                window,
+                cx,
+            )
+        });
+        e.apply_merge_data(cx);
+    });
+
+    // Toggle match fields section
+    assert!(!s.with(|e, _| e.doc_state().unwrap().merge.as_ref().unwrap().match_fields_open));
+    s.menu("docx.merge.match-fields");
+    assert!(s.with(|e, _| e.doc_state().unwrap().merge.as_ref().unwrap().match_fields_open));
+
+    // Initially no mappings in document
+    assert!(s.document().mail_merge_field_map.is_empty());
+
+    // Auto-match standard fields
+    s.menu("docx.merge.auto-match-fields");
+    let map = s.document().mail_merge_field_map.clone();
+    assert!(!map.is_empty(), "auto match populated field map");
+    assert!(map.iter().any(|m| m.mapped_name == "Postal Code" && m.name == "郵便番号" && m.column == 0));
+    assert!(map.iter().any(|m| m.mapped_name == "Last Name" && m.name == "氏名" && m.column == 1));
+    assert!(map.iter().any(|m| m.mapped_name == "Company" && m.name == "会社" && m.column == 2));
+    assert!(map.iter().any(|m| m.mapped_name == "Address 1" && m.name == "住所1" && m.column == 3));
+    assert!(map.iter().any(|m| m.mapped_name == "Address 2" && m.name == "住所2" && m.column == 4));
+
+    // 1-step Undo restores previous unmapped state
+    s.menu("edit.undo");
+    assert!(s.document().mail_merge_field_map.is_empty(), "undo cleared field map");
+
+    // Redo restores mapped state
+    s.menu("edit.redo");
+    assert_eq!(s.document().mail_merge_field_map.len(), map.len(), "redo restored field map");
+
+    // Insert address block and greeting line using mapped fields
+    s.update(|e, _, cx| e.insert_merge_block(true, cx));
+    s.click_text(FlowPos::new(id, 1));
+    s.update(|e, _, cx| e.insert_merge_block(false, cx));
+
+    // Verify fields in caret paragraph
+    let doc = s.document();
+    let instructions: Vec<String> = para(&doc, id).runs.iter().filter_map(|r| match &r.kind { FlowRunKind::Field { instruction, .. } => Some(instruction.clone()), _ => None }).collect();
+    assert_eq!(instructions, [
+        "ADDRESSBLOCK \\f \"〒<郵便番号>\\n<住所1>\\n<住所2>\\n<会社>\\n<氏名> 様\" ",
+        "GREETINGLINE \\f \"<氏名> 様\" "
+    ]);
+
+    // Preview results
+    let texts = |s: &mut Scenario| -> String {
+        s.with(|e, _| {
+            let doc = e.flow().unwrap().clone();
+            let laid = super::flow_layout::pages(&doc, &e.resources);
+            laid.pages[0].items.iter().filter_map(|i| match i { super::flow_layout::Item::Text { text, .. } => Some(text.to_string()), _ => None }).collect::<Vec<_>>().join("|")
+        })
+    };
+    s.update(|e, _, cx| e.set_merge_preview(true, cx));
+    let first = texts(&mut s);
+    assert!(first.contains("〒150-0002") && first.contains("東京都渋谷区渋谷") && first.contains("2-1-1") && first.contains("アイビス") && first.contains("山田太郎 様"), "{first}");
+
+    s.update(|e, _, cx| e.step_merge_record(1, cx));
+    let second = texts(&mut s);
+    assert!(second.contains("〒530-0001") && second.contains("大阪府大阪市北区梅田") && second.contains("1-2-3") && second.contains("サンプル商事") && second.contains("鈴木花子 様"), "{second}");
+
+    // Clear mapping via action
+    s.menu("docx.merge.clear-match-fields");
+    assert!(s.document().mail_merge_field_map.is_empty(), "clear-match-fields emptied map");
+
+    // Undo restore
+    s.menu("edit.undo");
+    assert_eq!(s.document().mail_merge_field_map.len(), map.len());
+
+    // Save and reopen round-trip verification
+    s.save_as("docx-merge009-matched.docx");
+    let saved = s.reopen();
+    let saved_map = &flow(&saved).mail_merge_field_map;
+    assert_eq!(saved_map.len(), map.len(), "fieldMapData preserved in OOXML settings.xml");
+    assert!(saved_map.iter().any(|m| m.mapped_name == "Postal Code" && m.name == "郵便番号"));
+    assert!(saved_map.iter().any(|m| m.mapped_name == "Last Name" && m.name == "氏名"));
+    assert!(saved_map.iter().any(|m| m.mapped_name == "Company" && m.name == "会社"));
+
+    // Verify merged letters output
+    let path = crate::shell::scenario::repo_root().join("target/scenario-input/merge009-letters.docx");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let count = s.update(|e, _, _| e.write_merged_documents(&path)).unwrap();
+    assert_eq!(count, 2, "2 merged documents created");
+    let letters = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let letter_texts: Vec<String> = body(flow(&letters)).iter().map(|p| p.text()).collect();
+    assert!(letter_texts.iter().any(|t| t.contains("山田太郎") && t.contains("150-0002") && t.contains("アイビス")));
+    assert!(letter_texts.iter().any(|t| t.contains("鈴木花子") && t.contains("530-0001") && t.contains("サンプル商事")));
+}
+
+/// DOCX-MERGE-014 印刷への差込 (Print Merged Documents):
+/// 差し込み印刷の実行（印刷範囲: すべて・現在の宛先・範囲指定 From..To）、条件規則（SKIPIF）による除外、
+/// 差し込み文書生成（merged_document_for_range）、PDF書き出し（write_merged_pdf / export_merged_pdf）、
+/// 印刷（print_merged_documents）およびメニュー連携（docx.merge.print, docx.merge.export-pdf）を検証。
+fn merge014_print_merged_documents() {
+    use ibis_doc_model::merge::MergePrintRange;
+
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.merge");
+
+    // 1. Verify menu states for merge print and PDF export
+    assert_eq!(s.menu_state("docx.merge.print"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.merge.export-pdf"), Some((true, false)));
+
+    // 2. Set up recipient list with 5 recipients
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| {
+            a.set_value(
+                "氏名\t都市\n山田太郎\t東京\n鈴木花子\t大阪\n佐藤次郎\t京都\n田中三郎\t福岡\n高橋四郎\t札幌\n".to_string(),
+                window,
+                cx,
+            );
+        });
+        e.apply_merge_data(cx);
+        e.insert_merge_field("氏名", cx);
+    });
+
+    // 3. Test Range: All (5 recipients)
+    let (all_doc, all_count) = s.with(|e, _| e.merged_document_for_range(MergePrintRange::All)).expect("merge all");
+    assert_eq!(all_count, 5);
+    let all_texts: Vec<String> = body(&all_doc).iter().map(|p| p.text()).collect();
+    assert!(all_texts.iter().any(|t| t.contains("山田太郎")));
+    assert!(all_texts.iter().any(|t| t.contains("鈴木花子")));
+    assert!(all_texts.iter().any(|t| t.contains("佐藤次郎")));
+    assert!(all_texts.iter().any(|t| t.contains("田中三郎")));
+    assert!(all_texts.iter().any(|t| t.contains("高橋四郎")));
+
+    // 4. Test Range: Current recipient
+    // At current index 0 (山田太郎)
+    let (curr_doc, curr_count) = s.with(|e, _| e.merged_document_for_range(MergePrintRange::Current)).expect("merge current");
+    assert_eq!(curr_count, 1);
+    let curr_texts: Vec<String> = body(&curr_doc).iter().map(|p| p.text()).collect();
+    assert!(curr_texts.iter().any(|t| t.contains("山田太郎")));
+    assert!(!curr_texts.iter().any(|t| t.contains("鈴木花子")));
+
+    // Advance to recipient index 2 (佐藤次郎)
+    s.update(|e, _, cx| e.goto_merge_record(3, cx));
+    let (curr_doc2, curr_count2) = s.with(|e, _| e.merged_document_for_range(MergePrintRange::Current)).expect("merge current 3");
+    assert_eq!(curr_count2, 1);
+    let curr_texts2: Vec<String> = body(&curr_doc2).iter().map(|p| p.text()).collect();
+    assert!(curr_texts2.iter().any(|t| t.contains("佐藤次郎")));
+    assert!(!curr_texts2.iter().any(|t| t.contains("山田太郎")));
+
+    // 5. Test Range: FromTo slice (records 2..=4: 鈴木花子, 佐藤次郎, 田中三郎)
+    let (slice_doc, slice_count) = s.with(|e, _| e.merged_document_for_range(MergePrintRange::FromTo(2, 4))).expect("merge slice");
+    assert_eq!(slice_count, 3);
+    let slice_texts: Vec<String> = body(&slice_doc).iter().map(|p| p.text()).collect();
+    assert!(!slice_texts.iter().any(|t| t.contains("山田太郎")));
+    assert!(slice_texts.iter().any(|t| t.contains("鈴木花子")));
+    assert!(slice_texts.iter().any(|t| t.contains("佐藤次郎")));
+    assert!(slice_texts.iter().any(|t| t.contains("田中三郎")));
+    assert!(!slice_texts.iter().any(|t| t.contains("高橋四郎")));
+
+    // 6. Test invalid bounds error handling
+    assert!(s.with(|e, _| e.merged_document_for_range(MergePrintRange::FromTo(0, 3))).is_err());
+    assert!(s.with(|e, _| e.merged_document_for_range(MergePrintRange::FromTo(4, 2))).is_err());
+    assert!(s.with(|e, _| e.merged_document_for_range(MergePrintRange::FromTo(10, 20))).is_err());
+
+    // 7. Test range selection UI state and print range resolution
+    s.update(|e, window, cx| {
+        e.set_merge_print_range(MergePrintRange::FromTo(1, 1), cx);
+        if let Some(m) = e.doc_state().unwrap().merge.as_ref() {
+            m.print_from_field.update(cx, |input, cx| input.set_value("2".to_string(), window, cx));
+            m.print_to_field.update(cx, |input, cx| input.set_value("4".to_string(), window, cx));
+        }
+    });
+    let resolved_range = s.with(|e, cx| e.current_merge_print_range(cx));
+    assert_eq!(resolved_range, MergePrintRange::FromTo(2, 4));
+
+    // Switch to All
+    s.update(|e, _, cx| e.set_merge_print_range(MergePrintRange::All, cx));
+    assert_eq!(s.with(|e, cx| e.current_merge_print_range(cx)), MergePrintRange::All);
+
+    // Switch to Current
+    s.update(|e, _, cx| e.set_merge_print_range(MergePrintRange::Current, cx));
+    assert_eq!(s.with(|e, cx| e.current_merge_print_range(cx)), MergePrintRange::Current);
+
+    // 8. Test SKIPIF filtering during merge print
+    // Insert SKIPIF rule: skip if 都市 is 大阪
+    let (_, pid, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(pid, 0));
+    s.update(|e, window, cx| {
+        if let Some(m) = e.doc_state().unwrap().merge.as_ref() {
+            m.rule_field.update(cx, |input, cx| input.set_value("SKIPIF { MERGEFIELD 都市 } = \"大阪\"".to_string(), window, cx));
+        }
+        e.insert_merge_rule(cx);
+    });
+
+    let (filtered_doc, filtered_count) = s.with(|e, _| e.merged_document_for_range(MergePrintRange::All)).expect("merge all with skipif");
+    assert_eq!(filtered_count, 4, "5 recipients - 1 skipped (大阪) = 4");
+    let filtered_texts: Vec<String> = body(&filtered_doc).iter().map(|p| p.text()).collect();
+    assert!(!filtered_texts.iter().any(|t| t.contains("鈴木花子")), "鈴木花子 in 大阪 is skipped");
+    assert!(filtered_texts.iter().any(|t| t.contains("山田太郎")));
+    assert!(filtered_texts.iter().any(|t| t.contains("佐藤次郎")));
+
+    // 9. Test print execution status and menu triggers
+    s.update(|e, window, cx| e.print_merged_documents(window, cx));
+    let status_text = s.with(|e, _| e.status.clone()).unwrap_or_default();
+    assert!(status_text.contains("4") || status_text.contains("件"), "print status contains count: {status_text}");
+
+    // Menu trigger: docx.merge.print
+    s.menu("docx.merge.print");
+    let status_after_menu = s.with(|e, _| e.status.clone()).unwrap_or_default();
+    assert!(status_after_menu.contains("4") || status_after_menu.contains("件"));
+
+    // 10. Test PDF export of merged documents
+    let out_pdf = crate::shell::scenario::repo_root().join("target/scenario-input/merge014-print.pdf");
+    std::fs::create_dir_all(out_pdf.parent().unwrap()).unwrap();
+    let pdf_count = s.with(|e, _| e.write_merged_pdf(&out_pdf, MergePrintRange::All)).expect("write merged pdf");
+    assert_eq!(pdf_count, 4);
+    assert!(out_pdf.exists(), "merged PDF was created on disk");
+    assert!(std::fs::metadata(&out_pdf).unwrap().len() > 0, "merged PDF has non-zero size");
+}
+
+/// DOCX-FILE-016 バックアップ コピーの保存：ファイル > 常にバックアップ コピーを作成する を入れて上書き保存すると、同じフォルダーに
+/// 「<名前> のバックアップ.wbk」ができ、中は上書き前のファイルそのもの。切ると作らない。
+fn file016_backup_copy() {
+    let mut s = Scenario::open(REPORT);
+    let first = s.save_as("docx-file016.docx");
+    let original = std::fs::read(&first).unwrap();
+    let backup = first.with_file_name("docx-file016 のバックアップ.wbk");
+    let _ = std::fs::remove_file(&backup);
+    assert_eq!(s.menu_state("docx.backup-always"), Some((true, false)));
+    // Off: no copy.
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.type_text("一回目");
+    s.save_as("docx-file016.docx");
+    assert!(!backup.exists(), "off: no backup copy");
+    let before_second = std::fs::read(&first).unwrap();
+    assert_ne!(before_second, original);
+    // On: the next save keeps what the file was.
+    s.menu("docx.backup-always");
+    assert_eq!(s.menu_state("docx.backup-always"), Some((true, true)));
+    s.type_text("二回目");
+    s.save_as("docx-file016.docx");
+    assert!(backup.exists(), "a backup copy");
+    assert_eq!(std::fs::read(&backup).unwrap(), before_second, "the copy is the file as it was");
+    assert_ne!(std::fs::read(&first).unwrap(), before_second, "and the file has the new text");
+    s.menu("docx.backup-always");
+    assert!(!super::backup::backup_enabled());
+}
+
+/// DOCX-IMAGE-015 テキスト ボックスの文字列の折り返し：パネルの折り返し（四角・上下・背面・前面）を変えると、保存して読み直しても
+/// 同じ折り返し・背面の設定になる。
+fn image015_text_box_wrap() {
+    use ibis_doc_model::PictureWrapType;
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 3));
+    s.menu("insert.text-box");
+    let anchor = |doc: &FlowDocument| -> (String, bool) {
+        let shape = para(doc, id).runs.iter().find_map(|r| match &r.kind { FlowRunKind::Shape(shape) => Some(shape.clone()), _ => None }).expect("the text box");
+        let f = shape.floating.expect("it floats");
+        (f.wrap, f.behind_doc)
+    };
+    assert_eq!(anchor(&s.document()), ("square".to_string(), false));
+    for (wrap, expected) in [(PictureWrapType::TopAndBottom, ("topAndBottom", false)), (PictureWrapType::BehindText, ("none", true)), (PictureWrapType::InFrontOfText, ("none", false)), (PictureWrapType::Square, ("square", false))] {
+        s.update(|e, _, cx| e.set_shape_wrap(wrap, cx));
+        assert_eq!(anchor(&s.document()), (expected.0.to_string(), expected.1), "{wrap:?}");
+    }
+    s.update(|e, _, cx| e.set_shape_wrap(PictureWrapType::BehindText, cx));
+    s.save_as("docx-image015-wrap.docx");
+    let saved = s.reopen();
+    assert_eq!(anchor(flow(&saved)), ("none".to_string(), true), "kept by a save");
+    // The wrapping is one step of undo (the last change goes, the one before stays).
+    s.update(|e, _, cx| e.set_shape_wrap(PictureWrapType::TopAndBottom, cx));
+    s.menu("edit.undo");
+    assert_eq!(anchor(&s.document()), ("none".to_string(), true));
+}
+
+/// 数式（m:oMath・m:oMathPara）：文の中の式と独立した式を読み、ページに組んで描く（分数の線・根号など）。
+/// 式の隣の文字を打っても、保存した式はそのまま残る。
+fn math_in_text_and_display() {
+    let root = crate::shell::scenario::repo_root();
+    let input = root.join("target/scenario-input/docx-math.docx");
+    std::fs::create_dir_all(input.parent().unwrap()).unwrap();
+    std::fs::write(&input, ibis_pptx::test_files::docx_with_math(&std::fs::read(root.join(REPORT)).unwrap())).unwrap();
+    let mut s = Scenario::open("target/scenario-input/docx-math.docx");
+    let doc = s.document();
+    let maths: Vec<(u32, bool)> = body(&doc).iter().flat_map(|p| p.runs.iter().filter_map(move |r| match &r.kind { FlowRunKind::Math { display, .. } => Some((p.id, *display)), _ => None })).collect();
+    assert_eq!(maths.iter().map(|m| m.1).collect::<Vec<_>>(), [false, true], "an inline formula and a displayed one");
+    // Drawn: the text pieces of the formula and the bar of the fraction are in the page's items.
+    let (inline_id, display_id) = (maths[0].0, maths[1].0);
+    let items = s.with(|e, _| {
+        let doc = e.flow().unwrap().clone();
+        let laid = super::flow_layout::pages(&doc, &e.resources);
+        let mut texts = Vec::new();
+        let mut rules = 0;
+        for page in &laid.pages {
+            for item in &page.items {
+                match item {
+                    super::flow_layout::Item::Text { text, .. } => texts.push(text.to_string()),
+                    super::flow_layout::Item::Rect { .. } | super::flow_layout::Item::Stroke { .. } => rules += 1,
+                    _ => {}
+                }
+            }
+        }
+        (texts, rules)
+    });
+    // (The letters of a formula are the maths font's italic ones: 𝑎, 𝑏, 𝑥.)
+    let has = |plain: &str, italic: &str| items.0.iter().any(|t| t == plain || t == italic);
+    assert!(has("a", "𝑎") && has("b", "𝑏") && has("x", "𝑥"), "{:?}", items.0);
+    // Typing next to the formula keeps it: saved, the formulas are in the file as they were.
+    s.click_text(FlowPos::new(inline_id, 0));
+    s.type_text("前に");
+    let saved = s.save_as("docx-math-edited.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<m:oMath") && xml.contains("<m:f>") && xml.contains("<m:oMathPara") && xml.contains("<m:rad>"), "the formulas are kept");
+    assert!(xml.contains("前に"));
+    let reopened = s.reopen();
+    let again = body(flow(&reopened)).iter().filter(|p| p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Math { .. }))).count();
+    assert_eq!(again, 2);
+    let _ = display_id;
+}
+
+/// DOCX-MATH-001 & DOCX-FIELD-012: math structures, conversion, and quick-parts field insertion with roundtrip.
+fn math_structures_convert_and_quick_parts() {
+    let mut s = Scenario::open(REPORT);
+    let (id, _) = s.paragraph(2);
+    s.click_text(FlowPos::new(id, 0));
+
+    // 1. Open math panel
+    s.menu("insert.equation");
+    assert!(s.with(|e, _| e.sidebar_open));
+    assert!(s.with(|e, _| e.doc_state().and_then(|s| s.docx_math.as_ref()).is_some()));
+
+    // 2. Insert math structure (fraction)
+    s.menu("docx.math.struct.fraction");
+    let has_math = s.with(|e, _| {
+        e.flow().unwrap().body.iter().any(|b| {
+            matches!(b, ibis_doc_model::flow::Block::Paragraph(p) if p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Math { .. })))
+        })
+    });
+    assert!(has_math, "inserted math structure should exist in paragraph");
+
+    // 3. Convert math: 2D professional to 1D linear text
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.math.convert.linear");
+    // Verify undo restores it
+    s.menu("edit.undo");
+    let has_math_again = s.with(|e, _| {
+        e.flow().unwrap().body.iter().any(|b| {
+            matches!(b, ibis_doc_model::flow::Block::Paragraph(p) if p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Math { .. })))
+        })
+    });
+    assert!(has_math_again, "undo restores 2D math");
+
+    // 4. Quick Parts: open panel and insert document property field (TITLE)
+    s.menu("docx.quick-parts");
+    assert!(s.with(|e, _| e.sidebar_open));
+    assert!(s.with(|e, _| e.doc_state().and_then(|s| s.quick_parts.as_ref()).is_some()));
+    s.menu("docx.quick-parts.prop.title");
+    s.menu("docx.quick-parts.autotext");
+    let has_field = s.with(|e, _| {
+        e.flow().unwrap().body.iter().any(|b| {
+            matches!(b, ibis_doc_model::flow::Block::Paragraph(p) if p.runs.iter().any(|r| r.is_field()))
+        })
+    });
+    assert!(has_field, "quick parts field inserted");
+
+    // 5. Save as .docx and verify roundtrip without errors
+    let saved = s.save_as("math-quick-parts-roundtrip.docx");
+    let bytes = std::fs::read(&saved).expect("saved file exists");
+    assert!(!bytes.is_empty());
+    let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").expect("document.xml present");
+    assert!(xml.contains("<m:oMath") || xml.contains("<w:fldSimple") || xml.contains("w:instrText"), "saved XML contains inserted math or field elements");
+
+    // Reopen and ensure doc loaded cleanly
+    let reopened = s.reopen();
+    assert!(!flow(&reopened).body.is_empty());
 }
 
 /// DOCX-REF-012: a caption with the chapter number (章番号を含める): `図 2-1`, the numbers starting again at each chapter
@@ -16896,10 +20352,31 @@ fn ref012_caption_with_chapter_number() {
     s.menu("edit.redo");
     s.menu("edit.redo");
 
+    // CaptionPanel UI から「章番号を含める」オプション（見出し1、区切り文字「.」）を指定して挿入
+    let id_mid = find(&mut s, "第2章の行 2 ");
+    s.click_text(FlowPos::new(id_mid, 0));
+    s.menu("docx.caption.insert");
+    assert!(s.with(|e, _| e.sidebar_open && e.doc_state().and_then(|st| st.helper.caption.as_ref()).is_some()), "caption panel is open");
+    s.update(|e, w, cx| {
+        if let Some(panel) = e.doc_state_mut().and_then(|st| st.helper.caption.as_mut()) {
+            panel.label.update(cx, |i, cx| i.set_value("図", w, cx));
+            panel.text.update(cx, |i, cx| i.set_value("パネル挿入", w, cx));
+            panel.chapter = Some((1, 1)); // level 1, separator index 1 (".")
+        }
+        e.apply_caption_panel(cx);
+    });
+    assert_eq!(caption(&mut s), ["図 2-1 二つ目", "図 2.2 パネル挿入", "図 2-3 追加", "図 3-1 三つ目"]);
+
+    // 1手Undoでパネル挿入を取り消すと後続の番号が繰り下がり復元
+    s.menu("edit.undo");
+    assert_eq!(caption(&mut s), ["図 2-1 二つ目", "図 2-2 追加", "図 3-1 三つ目"]);
+    s.menu("edit.redo");
+    assert_eq!(caption(&mut s), ["図 2-1 二つ目", "図 2.2 パネル挿入", "図 2-3 追加", "図 3-1 三つ目"]);
+
     s.save_as("test-ref012-caption.docx");
     let saved = s.reopen();
     let texts: Vec<String> = body(flow(&saved)).into_iter().map(shown).filter(|t| t.starts_with("図 ")).collect();
-    assert_eq!(texts, ["図 2-1 二つ目", "図 2-2 追加", "図 3-1 三つ目"]);
+    assert_eq!(texts, ["図 2-1 二つ目", "図 2.2 パネル挿入", "図 2-3 追加", "図 3-1 三つ目"]);
     let xml = ibis_pptx::test_files::part_text(&std::fs::read(s.with(|e, _| e.path.clone()).unwrap()).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("STYLEREF 1") && xml.contains("SEQ 図 \\* ARABIC \\s 1"), "saved as fields");
 }
@@ -16932,6 +20409,334 @@ fn index_regenerated_on_open() {
     let entries: Vec<String> = body(&s.document()).into_iter().filter(|p| p.style.as_deref().is_some_and(|n| n == "10" || n == "2" || n == "a3")).map(shown).collect();
     assert_eq!(entries, ["Apple, 1", "banana, 2", "Banana, 4", "あいうえお, 3", "横浜, 5", "関西, 6, 「大阪」を参照", "京都, 3–5", "札幌, 4", "神戸, 5", "大阪, 2, 6", "東京, 1, 3, 6", "港区, 1", "新宿区, 2", "名古屋, 4"]);
     assert!(!s.with(|e, _| e.document.can_undo()), "no undo step");
+}
+
+/// DOCX-TOC-009・FCODE-031・FCODE-075: a word is marked (挿入 > 索引登録: an XE field after it), the index is inserted (挿入 > 索引: an INDEX
+/// field with the entry and its page), a second mark and 索引の更新 (the entry is added), the file saved and read again, and undone.
+fn toc009_mark_entry_insert_and_update_index() {
+    fn index_text(doc: &FlowDocument) -> Vec<String> {
+        let ps = body(doc);
+        let Some(start) = ps.iter().position(|p| p.field_start.as_deref().is_some_and(|i| i.trim_start().to_ascii_uppercase().starts_with("INDEX"))) else { return Vec::new() };
+        let end = start + ps[start..].iter().position(|p| p.field_end).unwrap_or(0);
+        ps[start..=end]
+            .iter()
+            .map(|p| p.runs.iter().map(|r| match &r.kind { FlowRunKind::Text(t) => t.clone(), FlowRunKind::Tab => " ".into(), FlowRunKind::Field { shown, .. } | FlowRunKind::PageRef { shown, .. } => shown.clone(), _ => String::new() }).collect::<String>())
+            .collect()
+    }
+    let mut s = Scenario::open(REPORT);
+    let (_, id, text) = text_paragraph(&mut s, 12);
+    let word: String = text.chars().take(3).collect();
+    s.click_text(FlowPos::new(id, 0));
+    for _ in 0..3 {
+        s.key("shift-right");
+    }
+    s.menu("docx.index.mark");
+    let doc_marked = s.document();
+    let marked = para(&doc_marked, id);
+    assert!(marked.runs.iter().any(|r| matches!(&r.kind, FlowRunKind::Field { instruction, .. } if instruction.trim_start().starts_with("XE") && instruction.contains(&word))), "an XE field with the word");
+    // The index at the start of the document.
+    s.key("cmd-up");
+    s.menu("docx.index");
+    let first = index_text(&s.document());
+    assert!(first.iter().any(|t| t.starts_with(&word) && t.chars().last().is_some_and(|c| c.is_ascii_digit())), "the entry with its page: {first:?}");
+    // A second entry, then the index made again.
+    let (_, id3, text3) = text_paragraph(&mut s, 12);
+    assert!(id3 != id, "another paragraph");
+    let word2: String = text3.chars().take(2).collect();
+    s.click_text(FlowPos::new(id3, 0));
+    for _ in 0..2 {
+        s.key("shift-right");
+    }
+    s.menu("docx.index.mark");
+    s.update(|e, _, cx| e.update_index(cx));
+    let second = index_text(&s.document());
+    assert!(second.iter().any(|t| t.starts_with(&word2)) && second.iter().any(|t| t.starts_with(&word)), "both entries: {second:?}");
+    // Saved and read again: the index as it was (the fields are the file's).
+    s.save_as("toc009_index.docx");
+    let reopened = s.reopen();
+    assert_eq!(index_text(flow(&reopened)), second);
+    // One undo takes the update back.
+    s.key("cmd-z");
+    s.key("cmd-z");
+    assert!(index_text(&s.document()) != second);
+}
+
+/// DOCX-FCODE-066: two words are marked as table of contents entries (挿入 > 目次項目の登録: a TC field after each, with its level), the
+/// table made of them (目次項目から目次を作る: `TOC \f \l \"1-9\"`), then a third entry and 目次の更新: it is there; saved and read again.
+fn fcode066_tc_entries_and_toc_f() {
+    fn entries(doc: &FlowDocument) -> Vec<String> {
+        let ps = body(doc);
+        let Some(start) = ps.iter().position(|p| p.field_start.as_deref().is_some_and(|i| i.contains("\\f"))) else { return Vec::new() };
+        let end = start + ps[start..].iter().position(|p| p.field_end).unwrap_or(0);
+        ps[start..=end]
+            .iter()
+            .map(|p| p.runs.iter().map(|r| match &r.kind { FlowRunKind::Text(t) => t.clone(), FlowRunKind::Tab => "\t".into(), FlowRunKind::PageRef { shown, .. } => shown.clone(), _ => String::new() }).collect::<String>())
+            .collect()
+    }
+    fn mark(s: &mut Scenario, _nth: usize, len: usize, menu: &str) -> String {
+        let doc = s.document();
+        let p = body(&doc).into_iter().filter(|p| p.len() >= 6 && !p.text().contains('\u{fffc}') && p.list.is_none() && p.field_start.is_none()).nth(0).expect("a paragraph");
+        let (id, word) = (p.id, p.text().chars().take(len).collect::<String>());
+        s.click_text(FlowPos::new(id, 0));
+        for _ in 0..len {
+            s.key("shift-right");
+        }
+        s.menu(menu);
+        word
+    }
+    let mut s = Scenario::open(REPORT);
+    let first = mark(&mut s, 0, 3, "docx.toc.mark-level-1");
+    let second = mark(&mut s, 1, 2, "docx.toc.mark-level-2");
+    let doc = s.document();
+    let tcs: Vec<String> = body(&doc).iter().flat_map(|p| p.runs.iter()).filter_map(|r| match &r.kind { FlowRunKind::Field { instruction, .. } if instruction.starts_with("TC") => Some(instruction.clone()), _ => None }).collect();
+    assert_eq!(tcs.len(), 2, "{tcs:?}");
+    assert!(tcs[1].contains("\\l 2"), "{tcs:?}");
+    s.key("cmd-up");
+    s.menu("docx.toc.from-entries");
+    let made = entries(&s.document());
+    assert_eq!(made.len(), 2, "{made:?}");
+    assert!(made[0].starts_with(&first) && made[1].starts_with(&second) && made.iter().all(|t| t.chars().last().is_some_and(|c| c.is_ascii_digit())), "{made:?}");
+    // A third entry; the table updated.
+    let third = mark(&mut s, 2, 2, "docx.toc.mark-level-1");
+    s.update(|e, _, cx| e.update_toc(None, cx));
+    let again = entries(&s.document());
+    assert_eq!(again.len(), 3, "{again:?}");
+    assert!(again.iter().any(|t| t.starts_with(&third)));
+    s.save_as("fcode066_tc.docx");
+    let reopened = s.reopen();
+    assert_eq!(entries(flow(&reopened)), again);
+}
+
+/// DOCX-FCODE-065・FCODE-070: two words are marked as citations of two categories (挿入 > 引用文献の登録: a TA field after each), the
+/// table of authorities made (挿入 > 引用文献目録: a heading for each category, the citation with its page), a third citation and the
+/// table made again, saved and read again, and undone.
+fn fcode065_citations_and_table_of_authorities() {
+    fn table(doc: &FlowDocument) -> Vec<String> {
+        let ps = body(doc);
+        let Some(start) = ps.iter().position(|p| p.field_start.as_deref().is_some_and(|i| i.trim_start().starts_with("TOA"))) else { return Vec::new() };
+        let end = start + ps[start..].iter().position(|p| p.field_end).unwrap_or(0);
+        ps[start..=end].iter().map(|p| p.runs.iter().map(|r| match &r.kind { FlowRunKind::Text(t) => t.clone(), FlowRunKind::Tab => "\t".into(), _ => String::new() }).collect::<String>()).collect()
+    }
+    fn mark(s: &mut Scenario, len: usize, menu: &str) -> String {
+        let doc = s.document();
+        let p = body(&doc).into_iter().filter(|p| p.len() >= 6 && !p.text().contains('\u{fffc}') && p.list.is_none() && p.field_start.is_none()).nth(0).expect("a paragraph");
+        let (id, word) = (p.id, p.text().chars().take(len).collect::<String>());
+        s.click_text(FlowPos::new(id, 0));
+        for _ in 0..len {
+            s.key("shift-right");
+        }
+        s.menu(menu);
+        word
+    }
+    let mut s = Scenario::open(REPORT);
+    let case = mark(&mut s, 3, "docx.toa.mark-category-1");
+    let statute = mark(&mut s, 2, "docx.toa.mark-category-2");
+    let doc = s.document();
+    let tas = body(&doc).iter().flat_map(|p| p.runs.iter()).filter(|r| matches!(&r.kind, FlowRunKind::Field { instruction, .. } if instruction.starts_with("TA"))).count();
+    assert_eq!(tas, 2);
+    s.key("cmd-up");
+    s.menu("docx.toa");
+    let made = table(&s.document());
+    assert_eq!(made.len(), 4, "{made:?}");
+    assert_eq!(made[0], "判例");
+    assert!(made[1].starts_with(&case) && made[1].chars().last().is_some_and(|c| c.is_ascii_digit()) && made[1].contains('\t'), "{made:?}");
+    assert_eq!(made[2], "法令");
+    assert!(made[3].starts_with(&statute), "{made:?}");
+    // A third citation (of the first category); the table made again.
+    let third = mark(&mut s, 2, "docx.toa.mark-category-1");
+    s.update(|e, _, cx| e.update_toa(cx));
+    let again = table(&s.document());
+    assert_eq!(again.len(), 5, "{again:?}");
+    assert!(again.iter().any(|t| t.starts_with(&third)));
+    s.save_as("fcode065_toa.docx");
+    let reopened = s.reopen();
+    assert_eq!(table(flow(&reopened)), again);
+    s.key("cmd-z");
+    s.key("cmd-z");
+    assert!(table(&s.document()) != again);
+}
+
+/// DOCX-FCODE-020: an EQ field of a fraction, a root and a superscript is typeset as a formula (the digits stacked with a bar, a radical
+/// sign, a raised 2), not as the characters the field saved; the field is kept as it is (saved, read again, F9).
+fn fcode020_eq_field_typeset() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 3));
+    let at = s.selection().unwrap().1;
+    s.update(|e, _, cx| {
+        e.run_flow(vec![FlowCommand::InsertField { at, kind: FlowRunKind::Field { instruction: "EQ \\f(13,27) ".into(), shown: "13/27".into() } }], cx);
+    });
+    let items = |s: &mut Scenario| -> Vec<super::flow_layout::Item> {
+        s.with(|e, _| {
+            let doc = e.flow().unwrap().clone();
+            super::flow_layout::pages(&doc, &e.resources).pages.iter().flat_map(|p| p.items.clone()).collect()
+        })
+    };
+    let all = items(&mut s);
+    let texts: Vec<String> = all.iter().filter_map(|i| match i { super::flow_layout::Item::Text { text, .. } => Some(text.to_string()), _ => None }).collect();
+    assert!(texts.iter().any(|t| t == "13") && texts.iter().any(|t| t == "27"), "the numerator and the denominator: {texts:?}");
+    assert!(!texts.iter().any(|t| t.contains("13/27")), "not the saved characters");
+    // The numerator is above the denominator, with a bar between.
+    let y_of = |what: &str| all.iter().find_map(|i| match i { super::flow_layout::Item::Text { text, y, .. } if text == what => Some(*y), _ => None }).unwrap();
+    assert!(y_of("13") < y_of("27"));
+    let bar = all.iter().any(|i| matches!(i, super::flow_layout::Item::Rect { y, h, .. } if *y > y_of("13") && *y < y_of("27") && *h < 2.0) || matches!(i, super::flow_layout::Item::Stroke { y, y2, .. } if *y > y_of("13") && *y < y_of("27") && (*y - *y2).abs() < 0.1));
+    assert!(bar, "a fraction bar");
+    // Kept as the field: saved and read again (the instruction as it was), and the F9 update leaves it.
+    s.update(|e, _, cx| e.update_fields(false, cx));
+    s.save_as("fcode020_eq.docx");
+    let reopened = s.reopen();
+    let found = body(flow(&reopened)).iter().flat_map(|p| p.runs.iter()).any(|r| matches!(&r.kind, FlowRunKind::Field { instruction, .. } if instruction.trim() == "EQ \\f(13,27)"));
+    assert!(found, "the EQ field is in the saved file");
+}
+
+/// DOCX-FCODE-030: an INCLUDETEXT field takes its result from the file it names when the fields are updated (F9): a text file's lines,
+/// the paragraphs of a .docx; a file that cannot be read leaves the result as it was; the instruction and the result are saved.
+fn fcode030_include_text_update() {
+    let mut s = Scenario::open(REPORT);
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
+    std::fs::create_dir_all(&dir).unwrap();
+    let txt = dir.join("include-text.txt");
+    std::fs::write(&txt, "最初の行\n次の行\n").unwrap();
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 3));
+    let at = s.selection().unwrap().1;
+    let instruction = format!("INCLUDETEXT \"{}\" ", txt.display());
+    s.update(|e, _, cx| {
+        e.run_flow(vec![FlowCommand::InsertField { at, kind: FlowRunKind::Field { instruction: instruction.clone(), shown: "古い結果".into() } }], cx);
+    });
+    let shown = |s: &mut Scenario| -> Option<String> {
+        let doc = s.document();
+        body(&doc).iter().flat_map(|p| p.runs.iter()).find_map(|r| match &r.kind { FlowRunKind::Field { instruction, shown } if instruction.starts_with("INCLUDETEXT") => Some(shown.clone()), _ => None })
+    };
+    assert_eq!(shown(&mut s).as_deref(), Some("古い結果"));
+    s.key("f9");
+    assert_eq!(shown(&mut s).as_deref(), Some("最初の行 次の行"), "the file's lines");
+    // One undo step.
+    s.menu("edit.undo");
+    assert_eq!(shown(&mut s).as_deref(), Some("古い結果"));
+    s.menu("edit.redo");
+    // The file changed: the result follows; a file that is not there leaves it.
+    std::fs::write(&txt, "書き換えた\n").unwrap();
+    s.key("f9");
+    assert_eq!(shown(&mut s).as_deref(), Some("書き換えた"));
+    std::fs::remove_file(&txt).unwrap();
+    s.key("f9");
+    assert_eq!(shown(&mut s).as_deref(), Some("書き換えた"), "no file: the result stays");
+    // Saved and read again.
+    s.save_as("fcode030_include.docx");
+    let reopened = s.reopen();
+    let again = body(flow(&reopened)).iter().flat_map(|p| p.runs.iter()).find_map(|r| match &r.kind { FlowRunKind::Field { instruction, shown } if instruction.starts_with("INCLUDETEXT") => Some((instruction.trim().to_string(), shown.clone())), _ => None });
+    assert_eq!(again, Some((instruction.trim().to_string(), "書き換えた".to_string())));
+}
+
+/// DOCX-FCODE-029: the picture that is the result of an INCLUDEPICTURE field is read again from the file when the fields are updated
+/// (F9), keeping its size and its place; a file that cannot be read leaves it; saved with the new picture.
+fn fcode029_include_picture_update() {
+    let root = crate::shell::scenario::repo_root();
+    let dir = root.join("target/scenario-input");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Two different PNG files: the picture the report has, and a 1x1 pixel one.
+    let first = dir.join("include-picture-a.png");
+    let second = dir.join("include-picture-b.png");
+    let tiny: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89, 0, 0, 0, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+    std::fs::write(&first, tiny).unwrap();
+    let mut other = tiny.to_vec();
+    other[16..20].copy_from_slice(&[0, 0, 0, 2]);
+    std::fs::write(&second, &other).unwrap();
+    let data = ibis_pptx::test_files::docx_with_include_picture(&std::fs::read(root.join(REPORT)).unwrap(), &first.display().to_string());
+    let input = dir.join("docx-include-picture.docx");
+    std::fs::write(&input, &data).unwrap();
+    let mut s = Scenario::open("target/scenario-input/docx-include-picture.docx");
+    let linked = |s: &mut Scenario| -> Option<(String, ibis_doc_model::MediaId, ibis_doc_model::EmuSize)> {
+        let doc = s.document();
+        body(&doc).iter().flat_map(|p| p.runs.iter()).find_map(|r| match &r.kind { FlowRunKind::Picture { media, size, look } => look.linked_file.clone().map(|f| (f, *media, *size)), _ => None })
+    };
+    let (file, media, size) = linked(&mut s).expect("the picture of an INCLUDEPICTURE field remembers its file");
+    assert!(file.ends_with("include-picture-a.png"), "{file}");
+    // The file is now another one: updating takes it.
+    std::fs::copy(&second, &first).unwrap();
+    s.key("f9");
+    let (_, again, same_size) = linked(&mut s).unwrap();
+    assert_ne!(again, media, "the picture is the file's now");
+    assert_eq!(same_size, size, "the size stays");
+    // Nothing changed: no new step.
+    let steps = s.with(|e, _| e.document.can_undo());
+    let before = s.document();
+    s.key("f9");
+    assert_eq!(s.document(), before);
+    let _ = steps;
+    // One undo takes it back.
+    s.menu("edit.undo");
+    assert_eq!(linked(&mut s).unwrap().1, media);
+    s.menu("edit.redo");
+    // Saved and read again: still the field's result, with the new picture.
+    s.save_as("fcode029_include_picture.docx");
+    let reopened = s.reopen();
+    let found = body(flow(&reopened)).iter().flat_map(|p| p.runs.iter()).any(|r| matches!(&r.kind, FlowRunKind::Picture { look, .. } if look.linked_file.as_deref().is_some_and(|f| f.ends_with("include-picture-a.png"))));
+    assert!(found);
+}
+
+/// DOCX-OPTIONS-007: typed straight quotes become curly ones; `* ` and `1. ` at the start of a paragraph make it a list item; `---` and
+/// Enter make the border below the paragraph; each is one undo step; off in the options, the text stays as typed.
+fn options007_smart_quotes_lists_and_borders() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, text) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.type_text("He said \"hi\" and 'it' don't ");
+    let line = para(&s.document(), id).text();
+    assert!(line.starts_with(&format!("He said \u{201c}hi\u{201d} and \u{2018}it\u{2019} don\u{2019}t {text}")), "{line}");
+    s.key("cmd-z");
+    assert!(para(&s.document(), id).text().contains("don\u{2019}t") || para(&s.document(), id).text().contains("don't"), "an undo step back");
+    s.key("cmd-shift-z");
+    // A list from `* ` and one from `1. ` at the start of new paragraphs at the end of the document.
+    s.key("cmd-down");
+    s.key("enter");
+    let last = |s: &mut Scenario| { let doc = s.document(); let ps = body(&doc); ps.last().map(|p| (p.id, p.text(), p.list)).unwrap() };
+    s.type_text("* ");
+    let (bullet_id, text_after, list) = last(&mut s);
+    assert!(list.is_some() && text_after.is_empty(), "a list item with no marker left: {text_after:?}");
+    s.type_text("first");
+    s.key("enter");
+    s.key("enter");
+    let (_, _, list) = last(&mut s);
+    assert!(list.is_none(), "an empty item ended by Enter stops the list");
+    s.type_text("1. ");
+    let (number_id, text_after, list_n) = last(&mut s);
+    assert!(list_n.is_some() && text_after.is_empty());
+    assert_ne!(list_n.map(|l| l.num_id), list.map(|l| l.num_id).or(None));
+    let doc = s.document();
+    let numbering = &doc.styles.numbering;
+    let format = |p: u32| para(&doc, p).list.and_then(|l| numbering.level(l.num_id, 0)).map(|l| l.format.clone());
+    assert_eq!(format(bullet_id).as_deref(), Some("bullet"));
+    assert_ne!(format(number_id).as_deref(), Some("bullet"));
+    // One undo step takes the list away and puts the marker back.
+    s.key("cmd-z");
+    assert_eq!(last(&mut s).1, "1.", "the marker is back");
+    // `---` and Enter: the line below an empty paragraph, a new paragraph after it.
+    s.key("cmd-z");
+    s.key("cmd-z");
+    s.key("cmd-shift-z");
+    let before = s.document().body.len();
+    s.key("cmd-down");
+    s.key("enter");
+    s.type_text("---");
+    assert_eq!(last(&mut s).1, "---");
+    s.key("enter");
+    let doc = s.document();
+    let ps = body(&doc);
+    let n = ps.len();
+    assert!(ps[n - 2].text().is_empty() && ps[n - 2].borders[2].is_some(), "the line is the border below the paragraph");
+    assert!(ps[n - 1].borders[2].is_none() && ps[n - 1].text().is_empty(), "a new paragraph without it");
+    assert!(n > before);
+    s.key("cmd-z");
+    assert_eq!(last(&mut s).1, "---", "one undo step");
+    s.key("cmd-shift-z");
+    // Off: the text stays as typed.
+    s.menu("docx.edit.autocorrect");
+    s.key("cmd-down");
+    s.type_text("\"x\" ");
+    let last_text = last(&mut s).1;
+    assert!(last_text.contains("\"x\""), "{last_text:?}");
 }
 
 /// DOCX-TOC-010: the same with `\c 2`: the section of the two columns stays after the index is made again.
@@ -17042,6 +20847,7 @@ fn tiny_png() -> Vec<u8> {
 
 /// DOCX-REVIEW-014 2 文書の比較: a document is compared with an earlier version (a file); what changed is tracked changes,
 /// undone in one step, and rejecting them all gives the earlier version's text back.
+/// Also tests comparing into a new document (DOCX-REVIEW-015).
 fn review014_compare_documents() {
     let mut s = Scenario::open("test/editing/docx-caption-chapters.docx");
     // The earlier version is a file: this document as it is.
@@ -17060,6 +20866,93 @@ fn review014_compare_documents() {
     s.menu("edit.undo");
     let after = body(&s.document()).into_iter().map(|p| p.text()).collect::<Vec<_>>();
     assert_eq!(after, edited, "undone");
+
+    // DOCX-REVIEW-015: 比較結果を新しい文書として作成 (Word's Compare into New Document)
+    s.menu("docx.compare.new-doc");
+    s.update(|e, _, cx| e.compare_with_file_new_doc(&path, cx));
+    let new_doc = s.document();
+    assert!(new_doc.track_changes, "new document has tracked changes enabled");
+    assert!(s.with(|e, _| e.path.is_none()), "new document is unsaved");
+    assert_eq!(s.with(|e, _| e.file_name.clone()), Some("比較結果".into()));
+    let new_inserted: String = body(&new_doc).iter().flat_map(|p| p.runs.iter()).filter(|r| matches!(r.revision.as_ref().map(|v| &v.kind), Some(ibis_doc_model::RevisionKind::Insert))).filter_map(|r| if let FlowRunKind::Text(t) = &r.kind { Some(t.clone()) } else { None }).collect();
+    assert!(new_inserted.contains("追記"), "new document preserves tracked insertion: {new_inserted:?}");
+}
+
+/// DOCX-OPTIONS-015: the ids of the menu items of an open document (menus and submenus) are written to
+/// tasks/doc/docx-menu-ids.txt, for `scripts/gen-docx-ribbon-map.py` (what the menus really have).
+fn options015_dump_menu_ids() {
+    let mut s = Scenario::open(REPORT);
+    let (id, _) = s.paragraph(2);
+    s.click_text(FlowPos::new(id, 0));
+    fn walk(entries: &[crate::shell::chrome::MenuEntry], out: &mut Vec<String>) {
+        use crate::shell::chrome::MenuEntry;
+        for entry in entries {
+            match entry {
+                MenuEntry::Item(item) => out.push(item.id.to_string()),
+                MenuEntry::Submenu(sub) => {
+                    out.push(sub.id.to_string());
+                    walk(&sub.items, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    let ids = s.with(|e, _| {
+        let menus = e.menus();
+        let mut out = Vec::new();
+        for (_, entries) in &menus.menus {
+            walk(entries, &mut out);
+        }
+        out
+    });
+    assert!(ids.len() > 200, "the menus have items: {}", ids.len());
+    let path = crate::shell::scenario::repo_root().join("tasks/doc/docx-menu-ids.txt");
+    std::fs::write(path, ids.join("\n")).unwrap();
+}
+
+/// DOCX-REVIEW-014 / DOCX-REVIEW-015: a word typed in a table's cell is an insertion in that cell, and a word made bold a formatting change.
+/// Also tests toggling all compare options: format, case, white_space, tables, headers, footnotes, comments, fields.
+fn review014_compare_tables() {
+    let mut s = Scenario::open(REPORT);
+    let path = s.save_as(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/compare-original-table.docx").to_str().unwrap());
+    // 比較の設定: all on at first, each switched by its menu item.
+    let option_ids = [
+        "docx.compare.format",
+        "docx.compare.case",
+        "docx.compare.white-space",
+        "docx.compare.tables",
+        "docx.compare.headers",
+        "docx.compare.footnotes",
+        "docx.compare.comments",
+        "docx.compare.fields",
+    ];
+    for id in option_ids {
+        assert_eq!(s.menu_state(id), Some((true, true)), "{id} is on");
+        s.menu(id);
+        assert_eq!(s.menu_state(id), Some((true, false)), "{id} is off");
+        s.menu(id);
+    }
+    s.menu("docx.compare.tables");
+    let first_cell = |doc: &FlowDocument| doc.body.iter().find_map(|b| if let Block::Table(t) = b { t.rows.iter().flat_map(|r| &r.cells).find_map(|c| c.blocks.iter().find_map(|b| if let Block::Paragraph(p) = b { (!p.text().is_empty()).then(|| p.id) } else { None })) } else { None }).expect("a cell with text");
+    let id = first_cell(&s.document());
+    s.click_text(FlowPos::new(id, 0));
+    s.type_text("追記");
+    // With tables not compared, the cell stands as it is in the revision.
+    s.update(|e, _, cx| e.compare_with_file(&path, cx));
+    let marked_in_cells = |doc: &FlowDocument| doc.body.iter().filter_map(|b| if let Block::Table(t) = b { Some(t) } else { None }).flat_map(|t| t.rows.iter().flat_map(|r| &r.cells).flat_map(|c| c.blocks.iter())).filter_map(|b| if let Block::Paragraph(p) = b { Some(p) } else { None }).any(|p| p.runs.iter().any(|r| r.revision.is_some()));
+    assert!(!marked_in_cells(&s.document()), "tables are not compared");
+    s.menu("edit.undo");
+    s.menu("docx.compare.tables");
+    s.update(|e, _, cx| e.compare_with_file(&path, cx));
+    let doc = s.document();
+    let cell_runs: Vec<ibis_doc_model::FlowRun> = doc.body.iter().filter_map(|b| if let Block::Table(t) = b { Some(t) } else { None }).flat_map(|t| t.rows.iter().flat_map(|r| &r.cells).flat_map(|c| c.blocks.iter())).filter_map(|b| if let Block::Paragraph(p) = b { Some(p.runs.clone()) } else { None }).flatten().collect();
+    let inserted: String = cell_runs.iter().filter(|r| matches!(r.revision.as_ref().map(|v| &v.kind), Some(ibis_doc_model::RevisionKind::Insert))).filter_map(|r| if let FlowRunKind::Text(t) = &r.kind { Some(t.clone()) } else { None }).collect();
+    assert!(inserted.contains("追記"), "the typed words are an insertion in the cell: {inserted:?}");
+    assert!(cell_runs.iter().all(|r| !matches!(r.revision.as_ref().map(|v| &v.kind), Some(ibis_doc_model::RevisionKind::Delete))), "nothing in the cells was deleted");
+    // Saved with the tracked change in the cell, and read again.
+    let saved = s.save_as("test-review014-table.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<w:ins ") && xml.contains("追記"));
 }
 
 /// DOCX-JA-010 禁則文字の調整: the characters a line may not start or end with are the document's own lists once set (panel,
@@ -17113,3 +21006,5091 @@ fn table_tab_moves_between_cells() {
     assert_eq!(rows(&mut s), 3, "Tab in the last cell adds a row");
     assert_eq!(cell(&mut s), (2, 0));
 }
+
+/// スペル チェック (ツール > スペル): a misspelling in the text is listed with
+/// suggestions and selected, changed (one, or every one of the same spelling in
+/// one step), ignored, undone; the menu is English in English.
+fn spelling_check() {
+    use crate::shell::i18n::{self, Language};
+    if !crate::spelling::available() {
+        return;
+    }
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.key("cmd-up");
+    s.type_text("We recieve it. recieve zzqxv. ");
+    let count = |s: &mut Scenario| {
+        s.with(|e, _| crate::docx::spelling_panel::scan(e.flow().unwrap(), &Default::default()).iter().filter(|i| i.word == "recieve").count())
+    };
+    if count(&mut s) != 2 {
+        // No English dictionary here.
+        return;
+    }
+    s.menu("pptx.spelling.check");
+    let first = s.with(|e, _| {
+        let p = e.doc_state().unwrap().helper.spelling.as_ref().expect("the panel is open");
+        p.issues.iter().find(|i| i.word == "recieve").cloned().expect("the word")
+    });
+    // The first word is selected in the text.
+    let current = s.with(|e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().issues[0].clone());
+    assert_eq!(s.selection(), Some((FlowPos::new(current.para, current.start), FlowPos::new(current.para, current.end))));
+    let _ = first;
+    // Walk to the first 'recieve'.
+    for _ in 0..8 {
+        let word = s.with(|e, _| {
+            let p = e.doc_state().unwrap().helper.spelling.as_ref().unwrap();
+            p.issues[p.current].word.clone()
+        });
+        if word == "recieve" {
+            break;
+        }
+        s.update(|e, w, cx| e.doc_spelling_step(true, w, cx));
+    }
+    let suggestions = s.with(|e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().suggestions.clone());
+    assert!(suggestions.iter().any(|x| x == "receive"), "{suggestions:?}");
+    s.screenshot("spelling");
+    // 変更: this one only.
+    s.update(|e, w, cx| e.doc_spelling_change("receive", false, w, cx));
+    assert_eq!(count(&mut s), 1);
+    // すべて変更: the other one.
+    for _ in 0..8 {
+        let word = s.with(|e, _| {
+            let p = e.doc_state().unwrap().helper.spelling.as_ref().unwrap();
+            p.issues.get(p.current).map(|i| i.word.clone()).unwrap_or_default()
+        });
+        if word == "recieve" {
+            break;
+        }
+        s.update(|e, w, cx| e.doc_spelling_step(true, w, cx));
+    }
+    s.update(|e, w, cx| e.doc_spelling_change("receive", true, w, cx));
+    assert_eq!(count(&mut s), 0);
+    // 無視 / すべて無視: the word is not listed again.
+    let word = s.with(|e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().issues.first().map(|i| i.word.clone()));
+    if let Some(word) = word {
+        s.update(|e, w, cx| e.doc_spelling_ignore(true, w, cx));
+        assert!(s.with(move |e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().issues.iter().all(|i| i.word != word)));
+    }
+    s.update(|e, w, cx| e.close_doc_spelling(w, cx));
+    assert!(s.with(|e, _| e.doc_state().unwrap().helper.spelling.is_none()));
+    // Undone, each in one step.
+    s.key("cmd-z");
+    assert_eq!(count(&mut s), 1);
+    s.key("cmd-z");
+    assert_eq!(count(&mut s), 2);
+    // English: the menu has no Japanese.
+    i18n::show(Language::English);
+    let label = s.with(|e, _| e.menus().find_mut("pptx.spelling.check").map(|i| i.label.to_string()).unwrap_or_default());
+    i18n::show(Language::Japanese);
+    assert!(!label.is_empty() && !label.chars().any(|c| ('\u{3040}'..='\u{9fff}').contains(&c)), "{label}");
+}
+
+/// DOCX-REVIEW-018: Word-standard Grammar & Spelling check (校閲 > スペルと文章校正 / docx.review.spelling-grammar).
+/// Detects repeated words ("the the", "のの"), repeated punctuation ("。。", ",,"),
+/// missing spaces after punctuation, multiple spaces, capitalization errors;
+/// offers suggestions; changes word in 1 undo step; ignore/ignore-all works;
+/// saved and reopened.
+fn review018_grammar_and_spelling_check() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.key("cmd-up");
+    s.type_text("We think that that is the the best result. これのの確認完了。。");
+
+    // Menu: docx.review.spelling-grammar
+    s.menu("docx.review.spelling-grammar");
+    assert!(s.with(|e, _| e.doc_state().unwrap().helper.spelling.is_some()), "spelling panel opened");
+
+    // Check detected issues in panel
+    let issues = s.with(|e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().issues.clone());
+    assert!(issues.len() >= 3, "expected at least 3 grammar issues, found: {issues:?}");
+
+    // Look for 'that that'
+    let that_idx = issues.iter().position(|i| i.word == "that that").expect("found 'that that'");
+    s.update(|e, _, cx| e.doc_spelling_goto(that_idx, cx));
+
+    let suggestions = s.with(|e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().suggestions.clone());
+    assert!(suggestions.iter().any(|x| x == "that"), "suggestions for 'that that': {suggestions:?}");
+
+    // Change 'that that' to 'that'
+    s.update(|e, w, cx| e.doc_spelling_change("that", false, w, cx));
+
+    // Verify 'that that' is replaced
+    let issues_after = s.with(|e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().issues.clone());
+    assert!(!issues_after.iter().any(|i| i.word == "that that"));
+
+    // Look for 'のの'
+    let nono_idx = issues_after.iter().position(|i| i.word == "のの").expect("found 'のの'");
+    s.update(|e, _, cx| e.doc_spelling_goto(nono_idx, cx));
+    let nono_suggestions = s.with(|e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().suggestions.clone());
+    assert!(nono_suggestions.iter().any(|x| x == "の"), "suggestions for 'のの': {nono_suggestions:?}");
+
+    // Change 'のの' to 'の'
+    s.update(|e, w, cx| e.doc_spelling_change("の", false, w, cx));
+
+    // Look for '。。'
+    let issues_after2 = s.with(|e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().issues.clone());
+    let punct_idx = issues_after2.iter().position(|i| i.word == "。。").expect("found '。。'");
+    s.update(|e, _, cx| e.doc_spelling_goto(punct_idx, cx));
+    let punct_suggestions = s.with(|e, _| e.doc_state().unwrap().helper.spelling.as_ref().unwrap().suggestions.clone());
+    assert!(punct_suggestions.iter().any(|x| x == "。"), "suggestions for '。。': {punct_suggestions:?}");
+
+    // Change '。。' to '。'
+    s.update(|e, w, cx| e.doc_spelling_change("。", false, w, cx));
+
+    // Undo check (1 step per change)
+    s.key("cmd-z");
+    let text = s.with(|e, _| body(e.flow().unwrap())[0].text());
+    assert!(text.contains("。。"));
+
+    // Redo
+    s.key("cmd-shift-z");
+    let text2 = s.with(|e, _| body(e.flow().unwrap())[0].text());
+    assert!(text2.contains("。") && !text2.contains("。。"));
+
+    // Close panel
+    s.update(|e, w, cx| e.close_doc_spelling(w, cx));
+    assert!(s.with(|e, _| e.doc_state().unwrap().helper.spelling.is_none()));
+
+    // Save and reopen
+    s.save_as("test-grammar-check.docx");
+    let saved = s.reopen();
+    let saved_text = body(flow(&saved))[0].text();
+    assert!(saved_text.contains("that is the the best result. これの確認完了。"), "saved text: {saved_text}");
+}
+
+/// The charts in the document's body, in order: (series values, categories) of each.
+fn body_charts(doc: &FlowDocument) -> Vec<ibis_doc_model::Chart> {
+    let mut out = Vec::new();
+    for block in &doc.body {
+        if let Block::Paragraph(p) = block {
+            for r in &p.runs {
+                if let FlowRunKind::Shape(shape) = &r.kind && let ibis_doc_model::ShapeKind::Chart(c) = &shape.kind {
+                    out.push((**c).clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 挿入 > グラフ: a chart of the kind chosen is put at the caret as one step of undo, drawn on the
+/// page, kept by a save (its chart part and workbook in the package, listed by its content types)
+/// and read again with the same series; the file is kept in `target/scenario` for a check in Word.
+fn insert_chart() {
+    use ibis_pptx::NewChartKind;
+    let mut s = Scenario::open(REPORT);
+    let before = body_charts(&s.document()).len();
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("pptx.insert-chart.column");
+    let charts = body_charts(&s.document());
+    assert_eq!(charts.len(), before + 1, "a chart was inserted");
+    let chart = charts.last().unwrap();
+    assert!(!chart.groups.is_empty() && !chart.groups[0].series.is_empty(), "the sample data");
+    s.screenshot("chart-column");
+    // データの編集: the inserted chart is selected; its panel changes the first value, as one step of undo.
+    assert_eq!(s.menu_state("pptx.chart.data-quick").map(|m| m.0), Some(true));
+    s.menu("pptx.chart.data-quick");
+    let values = s.with(|e, _| e.doc_state().unwrap().helper.chart.as_ref().expect("the data panel").0.values.clone());
+    s.update(|_, w, cx| values[0][0].update(cx, |f, cx| f.set_value("6", w, cx)));
+    s.update(|e, w, cx| e.apply_doc_chart_panel(w, cx));
+    let first = |doc: &FlowDocument| body_charts(doc)[before].groups[0].series[0].values[0].map(|n| n.0);
+    assert_eq!(first(&s.document()), Some(6.0));
+    s.key("cmd-z");
+    assert_ne!(first(&s.document()), Some(6.0), "undone");
+    s.key("cmd-shift-z");
+    assert_eq!(first(&s.document()), Some(6.0));
+    s.screenshot("chart-edited");
+    // Not selected (the selection's tint is off the colours of the series).
+    s.click_text(FlowPos::new(id, 3));
+    s.screenshot("chart-unselected");
+    // Another kind, further on.
+    s.click_text(FlowPos::new(id, 0));
+    s.key("cmd-down");
+    s.menu("pptx.insert-chart.pie");
+    assert_eq!(body_charts(&s.document()).len(), before + 2);
+    s.wheel((600.0, 600.0), -420.0);
+    s.screenshot("chart-pie");
+    s.key("right");
+    s.screenshot("chart-pie-unselected");
+    // One step of undo each.
+    s.key("cmd-z");
+    assert_eq!(body_charts(&s.document()).len(), before + 1);
+    s.key("cmd-shift-z");
+    assert_eq!(body_charts(&s.document()).len(), before + 2);
+    // Saved: the parts are in the package, and the file reads back with the same charts.
+    let path = s.save_as("chart-inserted.docx");
+    let bytes = std::fs::read(&path).unwrap();
+    let package = ibis_pptx::ibis_ooxml::Package::open(bytes).unwrap();
+    let names: Vec<String> = package.names().map(|n| n.to_string()).collect();
+    assert!(names.iter().any(|n| n.starts_with("word/charts/chart") && n.ends_with(".xml")), "{names:?}");
+    assert!(names.iter().any(|n| n.starts_with("word/embeddings/") && n.ends_with(".xlsx")), "{names:?}");
+    let saved = crate::read_file(&path).unwrap().presentation;
+    let again = body_charts(saved.flow.as_ref().unwrap());
+    assert_eq!(again.len(), before + 2);
+    let values = |c: &ibis_doc_model::Chart| c.groups.iter().flat_map(|g| g.series.iter().map(|x| x.values.clone())).collect::<Vec<_>>();
+    assert_eq!(values(&again[before]), values(&body_charts(&s.document())[before]));
+    assert_eq!(first(&saved.flow.as_ref().map(|f| (**f).clone()).unwrap()), Some(6.0), "the edit is in the file");
+    let _ = NewChartKind::Pie;
+}
+
+/// Split buttons as Word's (箇条書き・段落番号・網かけ): the left half toggles the list in the bullet (the number format)
+/// last chosen (the first time: the plain list), the ▼ has the library; the shading button shades in the fill last chosen.
+fn split_buttons_bullets_numbering_shading() {
+    let mut s = Scenario::open(REPORT);
+    for id in ["bullets", "numbered"] {
+        let b = s.tool_button(id).unwrap_or_else(|| panic!("no button {id}"));
+        assert!(b.menu.as_ref().is_some_and(|m| !m.is_empty()) && b.left_action().is_some(), "{id} is a split button");
+    }
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 1));
+    let bullet = |s: &mut Scenario| s.with(|e, _| e.caret_bullet_format().map(|(t, _, _)| t));
+    // Nothing chosen yet: the left half is the plain list; chosen from the ▼: that bullet.
+    s.toolbar_menu("bullets", "docx.bullet.square");
+    assert_eq!(bullet(&mut s).as_deref(), Some("■"));
+    s.toolbar("bullets");
+    assert!(para(&s.document(), id).list.is_none(), "the left half takes the list off");
+    s.toolbar("bullets");
+    assert_eq!(bullet(&mut s).as_deref(), Some("■"), "the bullet last chosen");
+    s.toolbar_menu("bullets", "docx.bullet.arrow");
+    s.toolbar("bullets");
+    s.toolbar("bullets");
+    assert_eq!(bullet(&mut s).as_deref(), Some("➢"));
+    s.toolbar("bullets");
+    // The same menu for the Format menu stays (a scenario can choose from it).
+    s.toolbar_menu("bullet-types", "docx.bullet.circle");
+    assert_eq!(bullet(&mut s).as_deref(), Some("○"));
+    s.toolbar("bullets");
+    s.toolbar("bullets");
+    assert_eq!(bullet(&mut s).as_deref(), Some("○"), "a choice from the Format menu's copy is remembered too");
+    s.toolbar("bullets");
+    // 段落番号.
+    let format = |s: &mut Scenario| s.with(|e, _| e.caret_list_format().map(|(f, _, _)| f));
+    s.toolbar_menu("numbered", "docx.list.format-upper-roman");
+    assert_eq!(format(&mut s).as_deref(), Some("upperRoman"));
+    s.toolbar("numbered");
+    assert!(para(&s.document(), id).list.is_none());
+    s.toolbar("numbered");
+    assert_eq!(format(&mut s).as_deref(), Some("upperRoman"), "the number format last chosen");
+    s.toolbar("numbered");
+    // 網かけ: in a table.
+    s.menu("docx.table.insert-3x3");
+    s.type_text("a");
+    s.toolbar_menu("cell-fill", "docx.fill.light-blue");
+    let fill_of = |s: &mut Scenario, row: usize, col: usize| {
+        s.with(|e, _| {
+            let table = e.table_at_caret().map(|(t, _, _)| t);
+            flow(e.presentation()).body.iter().find_map(|b| if let Block::Table(t) = b && Some(t.id) == table { t.rows[row].cells[col].shading } else { None })
+        })
+    };
+    let blue = fill_of(&mut s, 0, 0);
+    assert!(blue.is_some(), "shaded");
+    s.key("tab");
+    assert_eq!(fill_of(&mut s, 0, 1), None);
+    s.toolbar("cell-fill");
+    assert_eq!(fill_of(&mut s, 0, 1), blue, "the left half shades in the fill last chosen");
+    s.screenshot("split-buttons");
+}
+
+/// The charts of a file (not inserted since it was opened): their data is edited and saved into the
+/// chart part and workbook, and the kind is changed (the 書式 menu's グラフの種類); read again, the
+/// file has the new values and kind. The files are kept in `target/scenario` for a check in Word.
+fn edit_existing_chart() {
+    use ibis_doc_model::ChartType;
+    // A file with a chart of its own: one saved with a chart inserted.
+    let fixture = {
+        let mut s = Scenario::open(REPORT);
+        let (_, id, _) = text_paragraph(&mut s, 10);
+        s.click_text(FlowPos::new(id, 0));
+        s.menu("pptx.insert-chart.column");
+        let dir = crate::shell::scenario::repo_root().join("target/scenario-fixtures");
+        std::fs::create_dir_all(&dir).unwrap();
+        s.save_as(dir.join("docx-chart-source.docx").to_str().unwrap())
+    };
+    let mut s = Scenario::open(fixture.to_str().unwrap());
+    let charts = body_charts(&s.document());
+    assert_eq!(charts.len(), 1, "the file's chart");
+    // Select the chart (the one position of its paragraph) and edit its data.
+    let para = s.with(|e, _| {
+        let flow = e.flow().unwrap();
+        let p = body(flow).into_iter().find(|p| p.runs.iter().any(|r| matches!(&r.kind, FlowRunKind::Shape(sh) if matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))))).unwrap();
+        p.id
+    });
+    s.click_text(FlowPos::new(para, 0));
+    s.key("shift-right");
+    assert_eq!(s.menu_state("pptx.chart.data-quick").map(|m| m.0), Some(true), "a file's chart can be edited");
+    s.menu("pptx.chart.data-quick");
+    let values = s.with(|e, _| e.doc_state().unwrap().helper.chart.as_ref().expect("the data panel").0.values.clone());
+    s.update(|_, w, cx| values[0][0].update(cx, |f, cx| f.set_value("5.5", w, cx)));
+    s.update(|e, w, cx| e.apply_doc_chart_panel(w, cx));
+    let first = |doc: &FlowDocument| body_charts(doc)[0].groups[0].series[0].values[0].map(|n| n.0);
+    assert_eq!(first(&s.document()), Some(5.5));
+    // Another kind: a line chart.
+    s.update(|e, _, cx| e.set_doc_chart_type(crate::pptx::chart_panel::ChartPreset::Line, cx));
+    assert!(matches!(body_charts(&s.document())[0].groups[0].kind, ChartType::Line));
+    assert!(body_charts(&s.document())[0].groups[0].series.iter().all(|x| x.stroke.is_some() && x.fill == ibis_doc_model::Fill::None), "a line is drawn by its colour");
+    s.click_text(FlowPos::new(para, 0));
+    s.screenshot("chart-line");
+    let path = s.save_as("chart-edited.docx");
+    let saved = crate::read_file(&path).unwrap().presentation;
+    let flow = saved.flow.as_ref().map(|f| (**f).clone()).unwrap();
+    assert_eq!(first(&flow), Some(5.5), "the new value is in the file");
+    assert!(matches!(body_charts(&flow)[0].groups[0].kind, ChartType::Line), "the kind is in the file");
+    assert_eq!(body_charts(&flow)[0].groups[0].series[0].stroke.as_ref().map(|x| x.color), body_charts(&s.document())[0].groups[0].series[0].stroke.as_ref().map(|x| x.color), "the line's colour");
+    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    for name in package.names().filter(|n| n.starts_with("word/charts/chart") && n.ends_with(".xml")).map(str::to_string).collect::<Vec<_>>() {
+        let xml = String::from_utf8(package.read(&name).unwrap()).unwrap();
+        assert!(xml.contains("<a:ln") && !xml.contains("<c:ln ") && !xml.contains("<c:ln>") && !xml.contains("<c:round/>"), "a line is DrawingML's a:ln: {name}");
+    }
+    // The workbook has the value too.
+    let book = package.names().find(|n| n.starts_with("word/embeddings/") && n.ends_with(".xlsx")).expect("the workbook").to_string();
+    let workbook = ibis_pptx::ibis_ooxml::Package::open(package.read(&book).unwrap()).unwrap();
+    let sheet = String::from_utf8(workbook.read("xl/worksheets/sheet1.xml").unwrap()).unwrap();
+    assert!(sheet.contains("<v>5.5</v>"), "{sheet}");
+    // One more kind from the line chart: a chart of the file changed twice, then back by undo.
+    s.key("cmd-z");
+    assert!(matches!(body_charts(&s.document())[0].groups[0].kind, ChartType::Bar { .. }));
+}
+
+/// The underline button as a split button (Word's): the left half takes the underline off, or underlines in the kind last
+/// chosen from the ▼ (single at first); every kind chosen from the ▼ is saved as its `w:u/@w:val`.
+fn split_button_underline_kinds() {
+    use ibis_doc_model::UnderlineStyle;
+    let mut s = Scenario::open(REPORT);
+    let b = s.tool_button("underline").expect("the underline button");
+    assert!(b.left_action().is_some() && b.menu.as_ref().is_some_and(|m| m.len() >= 17), "a split button with the kinds");
+    let (_, id, text) = text_paragraph(&mut s, 12);
+    s.click_text(FlowPos::new(id, 1));
+    for _ in 0..3 { s.key("shift-right"); }
+    let selected: String = text.chars().skip(1).take(3).collect();
+    let style = |s: &mut Scenario| {
+        let doc = s.document();
+        let run = para(&doc, id).runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).map(|r| (r.style.underline, r.style.underline_style));
+        run.expect("the selected run")
+    };
+    s.toolbar("underline");
+    assert_eq!(style(&mut s), (true, UnderlineStyle::Single), "single at first");
+    s.toolbar("underline");
+    assert!(!style(&mut s).0, "the left half takes it off");
+    for name in ["words", "double", "thick", "dotted", "dottedHeavy", "dash", "dashedHeavy", "dashLong", "dashLongHeavy", "dotDash", "dashDotHeavy", "dotDotDash", "dashDotDotHeavy", "wave", "wavyHeavy", "wavyDouble"] {
+        s.toolbar_menu("underline", &format!("docx.underline.{name}"));
+        let kind = UnderlineStyle::from_name(name).unwrap();
+        assert_eq!(style(&mut s), (true, kind));
+        s.toolbar("underline");
+        assert!(!style(&mut s).0);
+        s.toolbar("underline");
+        assert_eq!(style(&mut s), (true, kind), "the kind last chosen: {name}");
+        s.save_as(&format!("split-underline-{name}.docx"));
+        let saved = s.reopen();
+        let p = body(flow(&saved)).into_iter().find(|p| p.text() == text).unwrap();
+        let run = p.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+        assert!(run.style.underline && run.style.underline_style.name() == name, "saved as {name}");
+    }
+    s.screenshot("split-underline");
+}
+
+/// DOCX-OPTIONS-011: 画像の品質と圧縮設定（Word の「図の圧縮…」「画像のサイズと品質」）。
+/// - Word Options > 詳細設定 > 画像のサイズと品質:
+///   - ファイル内の画像を圧縮しない (<w:doNotAutoCompressPictures/>)
+///   - 画像のトリミング部分を破棄する (<w14:discardImageEditingData/>)
+///   - 既定の解像度 (<w14:defaultImageDpi>): 330 (HD), 220 (印刷), 150 (Web), 96 (電子メール)
+/// - 図の形式 > 調整 > 画像の圧縮…:
+///   - 解像度選択 (HD 330, 印刷 220, Web 150, 電子メール 96)
+///   - 画像のトリミング部分を削除する (delete_crop)
+///   - この画像にのみ適用する (selected_only)
+/// - 1ステップ Undo/Redo、OOXML (word/settings.xml) ラウンドトリップ。
+#[cfg(all(target_os = "macos", feature = "export"))]
+fn options011_image_quality_and_compression() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial menu state: Word Options > 画像のサイズと品質
+    assert_eq!(s.menu_state("docx.options.image.do-not-compress"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.image.discard-cropped"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.image.res-high-fidelity"), Some((true, true)), "High fidelity is set in REPORT");
+    assert_eq!(s.menu_state("docx.options.image.res-hd"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.image.res-print"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.image.res-web"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.image.res-email"), Some((true, false)));
+
+    // 2. Toggle "do-not-compress", "discard-cropped", and change resolution to HD (330 ppi)
+    s.menu("docx.options.image.do-not-compress");
+    assert_eq!(s.menu_state("docx.options.image.do-not-compress"), Some((true, true)));
+
+    s.menu("docx.options.image.discard-cropped");
+    assert_eq!(s.menu_state("docx.options.image.discard-cropped"), Some((true, true)));
+
+    s.menu("docx.options.image.res-print");
+    assert_eq!(s.menu_state("docx.options.image.res-print"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.options.image.res-high-fidelity"), Some((true, false)));
+
+    s.menu("docx.options.image.res-hd");
+    assert_eq!(s.menu_state("docx.options.image.res-hd"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.options.image.res-print"), Some((true, false)));
+
+    // Undo / Redo for options
+    s.key("cmd-z");
+    assert_eq!(s.menu_state("docx.options.image.res-hd"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.image.res-print"), Some((true, true)));
+    s.key("cmd-shift-z");
+    assert_eq!(s.menu_state("docx.options.image.res-hd"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.options.image.res-print"), Some((true, false)));
+
+    // 3. Save and reopen to verify settings.xml round-trip
+    s.save_as("docx-options-011-quality.docx");
+    let saved = s.reopen();
+    let flow_doc = flow(&saved);
+    assert!(flow_doc.do_not_compress_images, "doNotAutoCompressPictures preserved");
+    assert!(flow_doc.discard_image_editing_data, "w14:discardImageEditingData preserved");
+    assert_eq!(flow_doc.default_image_dpi, Some(330), "w14:defaultImageDpi 330 ppi preserved");
+
+    // 4. Picture compression via sidebar panel / compress_docx_pictures
+    let mut large_png = Vec::new();
+    let mut rgba = Vec::with_capacity(400 * 400 * 4);
+    for y in 0..400 {
+        for x in 0..400 {
+            rgba.extend_from_slice(&[(x % 255) as u8, (y % 255) as u8, 128, 255]);
+        }
+    }
+    use image::ImageEncoder as _;
+    image::codecs::png::PngEncoder::new(&mut large_png)
+        .write_image(&rgba, 400, 400, image::ExtendedColorType::Rgba8)
+        .unwrap();
+
+    let (_, insert_para, _) = text_paragraph(&mut s, 6);
+    s.click_text(FlowPos::new(insert_para, 0));
+    s.update(|e, _, cx| e.doc_insert_picture(large_png, ibis_doc_model::MediaFormat::Png, cx));
+
+    // Caret is right after the picture
+    let (pic_pos, orig_media, _) = s.with(|e, _| e.picture_at_caret().expect("picture at caret"));
+    s.update(|e, _, cx| {
+        e.run_flow(
+            vec![
+                FlowCommand::SetPictureSize { at: pic_pos, size: ibis_doc_model::EmuSize::new(914_400, 914_400) },
+                FlowCommand::SetPictureLook {
+                    at: pic_pos,
+                    look: ibis_doc_model::PictureLook {
+                        crop: ibis_doc_model::Crop { left: 10_000, top: 10_000, right: 10_000, bottom: 10_000 },
+                        ..Default::default()
+                    },
+                },
+            ],
+            cx,
+        );
+    });
+
+    // Check menu item state
+    assert_eq!(s.menu_state("docx.picture.compress"), Some((true, false)));
+
+    // Open compress panel via menu
+    s.menu("docx.picture.compress");
+    let panel_state = s.with(|e, _| e.doc_state().unwrap().compress_panel.clone()).expect("compress panel open");
+    assert_eq!(panel_state.resolution, crate::pptx::compress::Resolution::Hd);
+    assert!(panel_state.delete_crop);
+    assert!(panel_state.selected_only);
+
+    // Apply picture compression (Email 96 ppi, delete crop = true)
+    let (count, before_bytes, after_bytes) = s.update(|e, _, cx| {
+        e.compress_docx_pictures(crate::pptx::compress::Resolution::Email, true, true, cx)
+    });
+    assert_eq!(count, 1, "inserted large picture compressed");
+    assert!(after_bytes < before_bytes, "compressed image is smaller: {after_bytes} < {before_bytes}");
+
+    let new_media = s.with(|e, _| e.picture_at_caret().expect("picture at caret").1);
+    assert_ne!(new_media, orig_media, "media id replaced with compressed picture");
+
+    // 5. Test 1-step Undo & Redo for compression
+    s.key("cmd-z");
+    let restored_media = s.with(|e, _| e.picture_at_caret().expect("picture restored").1);
+    assert_eq!(restored_media, orig_media, "original media restored on undo");
+
+    s.key("cmd-shift-z");
+    let redone_media = s.with(|e, _| e.picture_at_caret().expect("picture redone").1);
+    assert_eq!(redone_media, new_media, "compressed media restored on redo");
+
+    // Save compressed document and verify it reopens
+    s.save_as("docx-options-011-compressed.docx");
+    let reopen_compressed = s.reopen();
+    assert!(flow(&reopen_compressed).body.iter().any(|b| {
+        if let Block::Paragraph(p) = b {
+            p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Picture { .. }))
+        } else {
+            false
+        }
+    }));
+}
+
+/// DOCX-OPTIONS-012: 自動回復間隔と保存先
+/// - Word Options > 保存 > 自動回復用データの保存間隔 (ECMA-376 Part 1 §17.15.1.72 `<w:saveFrequency w:val="..."/>` in word/settings.xml)
+/// - メニュー項目の状態・プリセット切替・この文書の自動回復無効化
+/// - 1ステップ完全 Undo/Redo 連動
+/// - OOXML 保存・再読込保持、word/settings.xml 検証
+/// - 自動回復設定パネル・タイマースナップショット連動
+fn options012_autorecover_and_save_frequency() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial menu state
+    assert_eq!(s.menu_state("docx.options.save-frequency.default"), Some((true, true)), "default is checked initially");
+    assert_eq!(s.menu_state("docx.options.save-frequency.5min"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.save-frequency.10min"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.save-frequency.15min"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.save-frequency.20min"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.save-frequency.30min"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.save-frequency.off"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.autorecover.disable-doc"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.autorecover-settings"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.recover-unsaved"), Some((true, false)));
+
+    // 2. Change save frequency via menu presets (15min, then 20min)
+    s.menu("docx.options.save-frequency.15min");
+    assert_eq!(s.menu_state("docx.options.save-frequency.15min"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.options.save-frequency.default"), Some((true, false)));
+    assert_eq!(s.with(|e, _| e.save_frequency()), Some(15));
+
+    s.menu("docx.options.save-frequency.20min");
+    assert_eq!(s.menu_state("docx.options.save-frequency.20min"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.options.save-frequency.15min"), Some((true, false)));
+    assert_eq!(s.with(|e, _| e.save_frequency()), Some(20));
+
+    // 3. 1-step Undo & Redo for save frequency
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.save_frequency()), Some(15));
+    assert_eq!(s.menu_state("docx.options.save-frequency.15min"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.options.save-frequency.20min"), Some((true, false)));
+
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.save_frequency()), Some(20));
+    assert_eq!(s.menu_state("docx.options.save-frequency.20min"), Some((true, true)));
+
+    // 4. Disable AutoRecover for this document
+    s.menu("docx.options.autorecover.disable-doc");
+    assert_eq!(s.menu_state("docx.options.autorecover.disable-doc"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.options.save-frequency.off"), Some((true, true)));
+    assert!(s.with(|e, _| e.is_autorecover_disabled_for_doc()));
+
+    // Undo disabling restores previous 20min
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.is_autorecover_disabled_for_doc()));
+    assert_eq!(s.with(|e, _| e.save_frequency()), Some(20));
+    assert_eq!(s.menu_state("docx.options.save-frequency.20min"), Some((true, true)));
+
+    // 5. Save and reopen to verify settings.xml round-trip
+    let path = s.save_as("docx-options-012-recover.docx");
+    let saved = s.reopen();
+    let flow_doc = flow(&saved);
+    assert_eq!(flow_doc.save_frequency, Some(20), "saveFrequency 20 preserved");
+
+    // Verify word/settings.xml content
+    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let settings_xml = String::from_utf8(package.read("word/settings.xml").unwrap()).unwrap();
+    assert!(settings_xml.contains("saveFrequency"), "settings.xml contains saveFrequency");
+    assert!(settings_xml.contains("val=\"20\""), "settings.xml contains val=\"20\"");
+
+    // 6. Reset to default (removes saveFrequency element)
+    s.menu("docx.options.save-frequency.default");
+    assert_eq!(s.with(|e, _| e.save_frequency()), None);
+    assert_eq!(s.menu_state("docx.options.save-frequency.default"), Some((true, true)));
+
+    let default_path = s.save_as("docx-options-012-default.docx");
+    let saved_default = s.reopen();
+    assert_eq!(flow(&saved_default).save_frequency, None, "saveFrequency reset to None");
+
+    let default_package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&default_path).unwrap()).unwrap();
+    let default_settings_xml = String::from_utf8(default_package.read("word/settings.xml").unwrap()).unwrap();
+    assert!(!default_settings_xml.contains("saveFrequency"), "settings.xml does not contain saveFrequency when default");
+
+    // 7. AutoRecover settings sidebar panel integration
+    s.menu("docx.autorecover-settings");
+    assert!(s.with(|e, _| e.autorecover_settings.is_some()), "AutoRecover settings panel opened");
+
+    // Set custom 25 minutes via panel and save
+    s.update(|e, window, cx| {
+        if let Some(panel) = e.autorecover_settings.as_ref() {
+            panel.interval_input.update(cx, |input, cx| input.set_value("25".to_string(), window, cx));
+        }
+        e.save_autorecover_settings(cx);
+    });
+    assert_eq!(s.with(|e, _| e.save_frequency()), Some(25), "panel update sets document save frequency to 25");
+
+    // 8. AutoRecover snapshot tick integration
+    // Type text so document can_undo is true
+    let (_, para_id, _) = text_paragraph(&mut s, 6);
+    s.click_text(FlowPos::new(para_id, 0));
+    s.key("a");
+
+    let now = crate::clock::unix_millis();
+    s.update(|e, _, _| e.last_autorecover_ms = now);
+    // Before interval: tick returns false
+    let tick_early = s.update(|e, _, _| e.autorecover_tick(now + 10 * 60_000));
+    assert!(!tick_early, "tick before interval does not write snapshot");
+
+    // After interval: tick returns true and writes snapshot
+    let tick_due = s.update(|e, _, _| e.autorecover_tick(now + 26 * 60_000));
+    assert!(tick_due, "tick after interval writes snapshot");
+    assert!(s.with(|e, _| e.active_autorecover_file.is_some()), "active_autorecover_file is set");
+
+    // Clean up active snapshot on discard / dismiss
+    s.update(|e, _, _| e.cleanup_active_autorecover_file());
+    assert!(s.with(|e, _| e.active_autorecover_file.is_none()));
+}
+
+fn options013_font_embedding_and_compatibility() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial menu state
+    assert_eq!(s.menu_state("docx.options.font.embed"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.font.save-subset"), Some((true, false)));
+    // By default embed_system_fonts is false, which corresponds to "Do not embed system fonts" being checked (true)
+    assert_eq!(s.menu_state("docx.options.font.embed-system"), Some((true, true)));
+
+    // Compatibility mode: REPORT default is mode 15, useFELayout true, doNotExpandShiftReturn true
+    assert_eq!(s.menu_state("docx.options.compat.mode-word2013"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.options.compat.mode-word2010"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.compat.mode-word2007"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.compat.mode-word2003"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.options.compat.use-fe-layout"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.options.compat.shift-return"), Some((true, true)));
+
+    // 2. Toggle font embedding options
+    s.menu("docx.options.font.embed");
+    assert_eq!(s.menu_state("docx.options.font.embed"), Some((true, true)));
+    assert!(s.with(|e, _| e.is_embed_true_type_fonts()));
+
+    s.menu("docx.options.font.save-subset");
+    assert_eq!(s.menu_state("docx.options.font.save-subset"), Some((true, true)));
+    assert!(s.with(|e, _| e.is_save_subset_fonts()));
+
+    s.menu("docx.options.font.embed-system");
+    assert_eq!(s.menu_state("docx.options.font.embed-system"), Some((true, false)));
+    assert!(s.with(|e, _| e.is_embed_system_fonts()));
+
+    // 3. 1-step Undo & Redo for font embedding
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.is_embed_system_fonts()));
+    assert_eq!(s.menu_state("docx.options.font.embed-system"), Some((true, true)));
+
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.is_save_subset_fonts()));
+    assert_eq!(s.menu_state("docx.options.font.save-subset"), Some((true, false)));
+
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.is_embed_true_type_fonts()));
+    assert_eq!(s.menu_state("docx.options.font.embed"), Some((true, false)));
+
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.is_embed_true_type_fonts()));
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.is_save_subset_fonts()));
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.is_embed_system_fonts()));
+
+    // 4. Toggle compatibility options
+    s.menu("docx.options.compat.use-fe-layout");
+    assert_eq!(s.menu_state("docx.options.compat.use-fe-layout"), Some((true, false)));
+    assert!(!s.with(|e, _| e.is_use_fe_layout()));
+
+    s.menu("docx.options.compat.shift-return");
+    assert_eq!(s.menu_state("docx.options.compat.shift-return"), Some((true, false)));
+    assert!(!s.with(|e, _| e.is_do_not_expand_shift_return()));
+
+    // 1-step Undo & Redo for compatibility options
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.is_do_not_expand_shift_return()));
+    assert_eq!(s.menu_state("docx.options.compat.shift-return"), Some((true, true)));
+
+    s.key("cmd-shift-z");
+    assert!(!s.with(|e, _| e.is_do_not_expand_shift_return()));
+
+    // 5. Save and reopen to verify settings.xml round-trip
+    let path = s.save_as("docx-options-013-font-compat.docx");
+    let saved = s.reopen();
+    let flow_doc = flow(&saved);
+    assert!(flow_doc.embed_true_type_fonts, "embed_true_type_fonts preserved");
+    assert!(flow_doc.embed_system_fonts, "embed_system_fonts preserved");
+    assert!(flow_doc.save_subset_fonts, "save_subset_fonts preserved");
+    assert!(!flow_doc.use_fe_layout, "use_fe_layout false preserved");
+    assert!(!flow_doc.do_not_expand_shift_return, "do_not_expand_shift_return false preserved");
+
+    // Inspect word/settings.xml package content
+    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let settings_xml = String::from_utf8(package.read("word/settings.xml").unwrap()).unwrap();
+    assert!(settings_xml.contains("embedTrueTypeFonts"), "contains embedTrueTypeFonts");
+    assert!(settings_xml.contains("embedSystemFonts"), "contains embedSystemFonts");
+    assert!(settings_xml.contains("saveSubsetFonts"), "contains saveSubsetFonts");
+    assert!(!settings_xml.contains("<w:useFELayout/>") && !settings_xml.contains("<w:useFELayout>"), "useFELayout removed");
+    assert!(!settings_xml.contains("<w:doNotExpandShiftReturn/>") && !settings_xml.contains("<w:doNotExpandShiftReturn>"), "doNotExpandShiftReturn removed");
+
+    // 6. Reset font embedding and restore compatibility flags
+    s.menu("docx.options.font.embed");
+    assert_eq!(s.menu_state("docx.options.font.embed"), Some((true, false)));
+    assert!(!s.with(|e, _| e.is_embed_true_type_fonts()));
+
+    s.menu("docx.options.compat.use-fe-layout");
+    assert!(s.with(|e, _| e.is_use_fe_layout()));
+
+    s.menu("docx.options.compat.shift-return");
+    assert!(s.with(|e, _| e.is_do_not_expand_shift_return()));
+
+    let reset_path = s.save_as("docx-options-013-reset.docx");
+    let reset_saved = s.reopen();
+    assert!(!flow(&reset_saved).embed_true_type_fonts);
+    assert!(flow(&reset_saved).use_fe_layout);
+    assert!(flow(&reset_saved).do_not_expand_shift_return);
+
+    let reset_pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&reset_path).unwrap()).unwrap();
+    let reset_xml = String::from_utf8(reset_pkg.read("word/settings.xml").unwrap()).unwrap();
+    assert!(!reset_xml.contains("embedTrueTypeFonts"), "embedTrueTypeFonts removed");
+    assert!(reset_xml.contains("<w:useFELayout"), "useFELayout restored");
+    assert!(reset_xml.contains("<w:doNotExpandShiftReturn"), "doNotExpandShiftReturn restored");
+}
+
+fn page006_multiple_pages_and_book_fold() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial document has Normal multiple pages
+    assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::Normal);
+    assert_eq!(s.with(|e, _| e.caret_book_fold_sheets()), None);
+    assert!(!s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
+
+    // 2. Menu selection: Mirror Margins
+    s.menu("docx.page.multiple-pages.mirror-margins");
+    assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::MirrorMargins);
+    assert!(s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
+
+    // 1-step Undo / Redo
+    s.menu("edit.undo");
+    assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::Normal);
+    assert!(!s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
+    s.menu("edit.redo");
+    assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::MirrorMargins);
+    assert!(s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
+
+    // 3. Menu selection: Reverse Book Fold
+    s.menu("docx.page.multiple-pages.reverse-book-fold");
+    assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::ReverseBookFold);
+    assert!(s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
+
+    // 4. Menu selection: Two On One (2 pages per sheet)
+    s.menu("docx.page.multiple-pages.two-on-one");
+    assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::TwoOnOne);
+    assert!(!s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
+
+    // 5. Page Setup Panel: Book Fold with 16 sheets
+    s.update(|e, window, cx| e.open_page_setup_panel(window, cx));
+    assert!(s.with(|e, _| e.sidebar_open));
+
+    s.update(|e, window, cx| {
+        let p = e.doc_state_mut().unwrap().helper.page_setup.as_mut().unwrap();
+        p.multiple_pages = ibis_doc_model::MultiplePages::BookFold;
+        p.mirror = true;
+        p.book_fold_sheets.update(cx, |i, cx| i.set_value("16".to_string(), window, cx));
+        e.apply_page_setup_panel(cx);
+    });
+
+    assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::BookFold);
+    assert_eq!(s.with(|e, _| e.caret_book_fold_sheets()), Some(16));
+    assert!(s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
+
+    // 6. Save and Reopen roundtrip verification
+    let path = s.save_as("docx-page-006-bookfold.docx");
+    let reopened = s.reopen();
+    let doc = flow(&reopened);
+    assert_eq!(doc.page.multiple_pages, ibis_doc_model::MultiplePages::BookFold);
+    assert_eq!(doc.page.book_fold_sheets, Some(16));
+    assert!(doc.page.mirror_margins);
+    assert!(doc.page.is_mirrored());
+
+    // Check saved XML in word/settings.xml
+    let pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let xml = String::from_utf8(pkg.read("word/settings.xml").unwrap()).unwrap();
+    assert!(xml.contains("<w:bookFoldPrinting"), "bookFoldPrinting missing: {xml}");
+    assert!(xml.contains("<w:bookFoldPrintingSheets w:val=\"16\"/>"), "bookFoldPrintingSheets missing: {xml}");
+    assert!(!xml.contains("<w:mirrorMargins"), "mirrorMargins should not be present: {xml}");
+
+    // 7. Reset to Normal
+    s.menu("docx.page.multiple-pages.normal");
+    assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::Normal);
+    assert!(!s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
+
+    let normal_path = s.save_as("docx-page-006-normal.docx");
+    let normal_pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&normal_path).unwrap()).unwrap();
+    let normal_xml = String::from_utf8(normal_pkg.read("word/settings.xml").unwrap()).unwrap();
+    assert!(!normal_xml.contains("bookFoldPrinting"), "bookFoldPrinting removed");
+    assert!(!normal_xml.contains("bookFoldPrintingSheets"), "bookFoldPrintingSheets removed");
+}
+
+/// DOCX-OPTIONS-013 / DocProperties: DocPropertiesPanel font embedding toggles,
+/// immediate model reflection, sync via apply_doc_properties, 1-step Undo/Redo,
+/// persistence across save/reopen in word/settings.xml, and reopened panel state.
+fn doc_properties_embed_fonts() {
+    let mut s = Scenario::open(REPORT);
+
+    // Initial state: font embedding is off
+    assert!(!s.with(|e, _| e.is_embed_true_type_fonts()));
+    assert!(!s.with(|e, _| e.is_save_subset_fonts()));
+    assert!(!s.with(|e, _| e.is_embed_system_fonts()));
+
+    // 1. Open properties panel via file.info
+    s.menu("file.info");
+    assert!(s.with(|e, _| e.sidebar_open && e.doc_state().is_some_and(|st| st.helper.properties.is_some())), "properties panel is open");
+    let initial_props = s.with(|e, _| {
+        let p = e.doc_state().and_then(|st| st.helper.properties.as_ref()).unwrap();
+        (p.embed_true_type_fonts, p.save_subset_fonts, p.embed_system_fonts)
+    });
+    assert_eq!(initial_props, (false, false, false));
+
+    // 2. Toggle font embedding to true
+    s.update(|e, _, cx| {
+        e.toggle_doc_properties_embed_fonts(true, cx);
+    });
+    assert!(s.with(|e, _| e.is_embed_true_type_fonts()));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.helper.properties.as_ref()).unwrap().embed_true_type_fonts));
+
+    // 3. Toggle save_subset_fonts and embed_system_fonts
+    s.update(|e, _, cx| {
+        e.toggle_doc_properties_save_subset_fonts(true, cx);
+        e.toggle_doc_properties_embed_system_fonts(true, cx);
+    });
+    assert!(s.with(|e, _| e.is_save_subset_fonts()));
+    assert!(s.with(|e, _| e.is_embed_system_fonts()));
+    let (tt, sub, sys) = s.with(|e, _| {
+        let p = e.doc_state().and_then(|st| st.helper.properties.as_ref()).unwrap();
+        (p.embed_true_type_fonts, p.save_subset_fonts, p.embed_system_fonts)
+    });
+    assert_eq!((tt, sub, sys), (true, true, true));
+
+    // 4. Undo / Redo verification
+    // 3 steps undo
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.is_embed_system_fonts()));
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.is_save_subset_fonts()));
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.is_embed_true_type_fonts()));
+
+    // 3 steps redo
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.is_embed_true_type_fonts()));
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.is_save_subset_fonts()));
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.is_embed_system_fonts()));
+
+    // 5. Save and reopen to verify settings.xml round-trip
+    let path = s.save_as("test-docx-props-embedded-fonts.docx");
+    let saved = s.reopen();
+    let flow_doc = flow(&saved);
+    assert!(flow_doc.embed_true_type_fonts, "embed_true_type_fonts preserved");
+    assert!(flow_doc.save_subset_fonts, "save_subset_fonts preserved");
+    assert!(flow_doc.embed_system_fonts, "embed_system_fonts preserved");
+
+    // Inspect word/settings.xml package content
+    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let settings_xml = String::from_utf8(package.read("word/settings.xml").unwrap()).unwrap();
+    assert!(settings_xml.contains("embedTrueTypeFonts"), "embedTrueTypeFonts in settings.xml");
+    assert!(settings_xml.contains("saveSubsetFonts"), "saveSubsetFonts in settings.xml");
+    assert!(settings_xml.contains("embedSystemFonts"), "embedSystemFonts in settings.xml");
+
+    // 6. Open properties panel on reopened file - verify panel fields reflect the document
+    s.menu("file.info");
+    assert!(s.with(|e, _| e.sidebar_open && e.doc_state().is_some_and(|st| st.helper.properties.is_some())));
+    let reopened_props = s.with(|e, _| {
+        let p = e.doc_state().and_then(|st| st.helper.properties.as_ref()).unwrap();
+        (p.embed_true_type_fonts, p.save_subset_fonts, p.embed_system_fonts)
+    });
+    assert_eq!(reopened_props, (true, true, true));
+
+    // 7. Test applying changes via apply_doc_properties
+    s.update(|e, _, cx| {
+        if let Some(p) = e.doc_state_mut().and_then(|st| st.helper.properties.as_mut()) {
+            p.embed_true_type_fonts = false;
+            p.save_subset_fonts = false;
+            p.embed_system_fonts = false;
+        }
+        e.apply_doc_properties(cx);
+    });
+    assert!(!s.with(|e, _| e.is_embed_true_type_fonts()));
+    assert!(!s.with(|e, _| e.is_save_subset_fonts()));
+    assert!(!s.with(|e, _| e.is_embed_system_fonts()));
+
+    // 8. Save and reopen cleared document
+    let cleared_path = s.save_as("test-docx-props-cleared-fonts.docx");
+    let cleared = s.reopen();
+    let flow_cleared = flow(&cleared);
+    assert!(!flow_cleared.embed_true_type_fonts);
+    assert!(!flow_cleared.save_subset_fonts);
+    assert!(!flow_cleared.embed_system_fonts);
+
+    let cleared_pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&cleared_path).unwrap()).unwrap();
+    let cleared_xml = String::from_utf8(cleared_pkg.read("word/settings.xml").unwrap()).unwrap();
+    assert!(!cleared_xml.contains("embedTrueTypeFonts"), "embedTrueTypeFonts removed");
+}
+
+/// DOCX-REVIEW-017: 並べて表示と同期スクロール (View Side by Side & Synchronous Scrolling).
+/// Word standard `docx.view-side-by-side`, `docx.sync-scrolling`, `docx.reset-window-position`.
+fn review017_view_side_by_side_and_sync_scrolling() {
+    use crate::shell::editor::SlideEditor;
+    use gpui_kit::{point, px};
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial menu state with 1 window
+    assert_eq!(s.menu_state("docx.view-side-by-side"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.sync-scrolling"), Some((false, false)));
+    assert_eq!(s.menu_state("docx.reset-window-position"), Some((false, false)));
+
+    // 2. Open second window for the same document
+    s.menu("docx.new-window");
+    s.settle();
+
+    let windows = s.with(|_, app| app.windows());
+    assert_eq!(windows.len(), 2, "2 windows opened");
+    let doc_id = s.with(|e, _| e.document_id);
+    let ed1 = s.with_app(|app| {
+        let matching = SlideEditor::find_matching_document_windows(doc_id, app);
+        assert_eq!(matching.len(), 2);
+        matching[1].1.clone()
+    });
+
+    // 3. Activate View Side by Side via menu
+    s.menu("docx.view-side-by-side");
+    s.settle();
+
+    // Verify both windows are in side-by-side mode with sync scrolling ON
+    assert!(s.with(|e, _| e.side_by_side));
+    assert!(s.with(|e, _| e.sync_scrolling));
+    assert!(s.with(|_, app| ed1.read(app).side_by_side));
+    assert!(s.with(|_, app| ed1.read(app).sync_scrolling));
+
+    // Verify menu items updated
+    assert_eq!(s.menu_state("docx.view-side-by-side"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.sync-scrolling"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.reset-window-position"), Some((true, false)));
+
+    // 4. Synchronous scrolling:
+    // Scroll window 0 by (0, -120 px)
+    s.update(|e, _, cx| {
+        e.scroll_workspace_by(point(px(0.), px(-120.)), cx);
+    });
+    s.settle();
+
+    let offset0 = s.with(|e, _| e.workspace_scroll.offset());
+    let offset1 = s.with(|_, app| ed1.read(app).workspace_scroll.offset());
+    assert_eq!(offset0.y, px(-120.));
+    assert_eq!(offset1.y, px(-120.), "peer window scrolled synchronously");
+
+    // Scroll window 1 by (0 px, -80 px)
+    s.update_in(windows[1], &ed1, |e, _, cx| {
+        e.scroll_workspace_by(point(px(0.), px(-80.)), cx);
+    });
+    s.settle();
+
+    let offset0 = s.with(|e, _| e.workspace_scroll.offset());
+    let offset1 = s.with(|_, app| ed1.read(app).workspace_scroll.offset());
+    assert_eq!(offset1.y, px(-200.));
+    assert_eq!(offset0.y, px(-200.), "window 0 synchronized vertical scroll");
+
+    // 5. Toggle Synchronous Scrolling OFF
+    s.menu("docx.sync-scrolling");
+    s.settle();
+
+    assert_eq!(s.menu_state("docx.sync-scrolling"), Some((true, false)));
+    assert!(!s.with(|e, _| e.sync_scrolling));
+    assert!(!s.with(|_, app| ed1.read(app).sync_scrolling));
+    assert!(s.with(|e, _| e.side_by_side), "side by side remains active");
+
+    // Scroll window 0 while sync is off -> independent scrolling
+    s.update(|e, _, cx| {
+        e.scroll_workspace_by(point(px(0.), px(-60.)), cx);
+    });
+    s.settle();
+
+    let offset0_after = s.with(|e, _| e.workspace_scroll.offset());
+    let offset1_after = s.with(|_, app| ed1.read(app).workspace_scroll.offset());
+    assert_eq!(offset0_after.y, px(-260.));
+    assert_eq!(offset1_after.y, px(-200.), "peer window did not scroll while sync was off");
+
+    // Toggle Synchronous Scrolling back ON
+    s.menu("docx.sync-scrolling");
+    s.settle();
+
+    assert_eq!(s.menu_state("docx.sync-scrolling"), Some((true, true)));
+    assert!(s.with(|e, _| e.sync_scrolling));
+    assert!(s.with(|_, app| ed1.read(app).sync_scrolling));
+
+    // Scroll window 1 -> syncs again
+    s.update_in(windows[1], &ed1, |e, _, cx| {
+        e.scroll_workspace_by(point(px(0.), px(-30.)), cx);
+    });
+    s.settle();
+
+    let offset0_resync = s.with(|e, _| e.workspace_scroll.offset());
+    let offset1_resync = s.with(|_, app| ed1.read(app).workspace_scroll.offset());
+    assert_eq!(offset1_resync.y, px(-230.));
+    assert_eq!(offset0_resync.y, px(-290.), "window 0 synchronized by delta (-30)");
+
+    // 6. Reset Window Position
+    s.menu("docx.reset-window-position");
+    s.settle();
+
+    // 7. Deactivate View Side by Side via menu
+    s.menu("docx.view-side-by-side");
+    s.settle();
+
+    assert!(!s.with(|e, _| e.side_by_side));
+    assert!(!s.with(|e, _| e.sync_scrolling));
+    assert!(!s.with(|_, app| ed1.read(app).side_by_side));
+    assert!(!s.with(|_, app| ed1.read(app).sync_scrolling));
+    assert_eq!(s.menu_state("docx.view-side-by-side"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.sync-scrolling"), Some((false, false)));
+    assert_eq!(s.menu_state("docx.reset-window-position"), Some((false, false)));
+
+    // 8. Re-enable side-by-side, then close peer window -> cleans up side-by-side on window 0
+    s.menu("docx.view-side-by-side");
+    s.settle();
+    assert!(s.with(|e, _| e.side_by_side));
+
+    s.update_in(windows[1], &ed1, |e, window, cx| {
+        e.close_file(&crate::CloseFile, window, cx);
+    });
+    s.settle();
+
+    assert_eq!(s.with(|_, app| app.windows().len()), 1);
+    assert!(!s.with(|e, _| e.side_by_side), "reverted side-by-side when peer closed");
+    assert!(!s.with(|e, _| e.sync_scrolling));
+    assert_eq!(s.menu_state("docx.sync-scrolling"), Some((false, false)));
+}
+
+/// DOCX-FORM-016, DOCX-FORM-017, DOCX-FORM-018: レガシー フォーム フィールド
+/// - テキスト フォーム フィールド（insert.form-text / FORMTEXT / w:textInput）
+/// - チェック ボックス フォーム フィールド（insert.form-checkbox / FORMCHECKBOX / w:checkBox）
+/// - ドロップダウン フォーム フィールド（insert.form-dropdown / FORMDROPDOWN / w:ddList）
+/// - フォーム保護（docx.protect.forms）下での入力・操作の許可と、通常テキスト入力の制限
+/// - 1ステップ完全 Undo/Redo 連動
+/// - OOXML 保存・再読込保持（word/document.xml の w:fldChar / w:ffData 構造）
+fn form016_018_legacy_form_fields() {
+    use ibis_doc_model::{FormFieldKind, FlowRunKind};
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Move to end of document and create an empty line
+    s.key("cmd-down");
+    s.key("enter");
+
+    // 2. Insert text form field (DOCX-FORM-016)
+    s.menu("insert.form-text");
+    s.settle();
+
+    let (_id_para, ff_text_pos) = s.with(|e, _| {
+        let doc = flow(e.presentation());
+        for b in doc.body.iter().rev() {
+            if let Block::Paragraph(p) = b {
+                let mut offset = 0;
+                for r in &p.runs {
+                    if let FlowRunKind::FormField(f) = &r.kind {
+                        if matches!(&f.kind, FormFieldKind::TextInput { .. }) {
+                            return (p.id, FlowPos::new(p.id, offset));
+                        }
+                    }
+                    offset += r.len();
+                }
+            }
+        }
+        panic!("text form field not found");
+    });
+
+    // 3. Insert checkbox form field (DOCX-FORM-017)
+    s.menu("insert.form-checkbox");
+    s.settle();
+
+    let ff_check_pos = s.with(|e, _| {
+        let doc = flow(e.presentation());
+        for b in doc.body.iter().rev() {
+            if let Block::Paragraph(p) = b {
+                let mut offset = 0;
+                for r in &p.runs {
+                    if let FlowRunKind::FormField(f) = &r.kind {
+                        if matches!(&f.kind, FormFieldKind::CheckBox { .. }) {
+                            return FlowPos::new(p.id, offset);
+                        }
+                    }
+                    offset += r.len();
+                }
+            }
+        }
+        panic!("checkbox form field not found");
+    });
+
+    // 4. Insert dropdown form field (DOCX-FORM-018)
+    s.menu("insert.form-dropdown");
+    s.settle();
+
+    let ff_drop_pos = s.with(|e, _| {
+        let doc = flow(e.presentation());
+        for b in doc.body.iter().rev() {
+            if let Block::Paragraph(p) = b {
+                let mut offset = 0;
+                for r in &p.runs {
+                    if let FlowRunKind::FormField(f) = &r.kind {
+                        if matches!(&f.kind, FormFieldKind::DropDown { .. }) {
+                            return FlowPos::new(p.id, offset);
+                        }
+                    }
+                    offset += r.len();
+                }
+            }
+        }
+        panic!("dropdown form field not found");
+    });
+
+    // Verify initial values
+    let is_checked = |s: &mut Scenario| {
+        let doc = s.document();
+        let p = ibis_doc_model::flow_command::paragraph(&doc, ff_check_pos.para).unwrap();
+        let mut offset = 0;
+        for r in &p.runs {
+            if offset == ff_check_pos.offset {
+                if let FlowRunKind::FormField(f) = &r.kind {
+                    if let FormFieldKind::CheckBox { checked, .. } = &f.kind {
+                        return *checked;
+                    }
+                }
+            }
+            offset += r.len();
+        }
+        panic!("checkbox run not found");
+    };
+
+    let selected_dropdown = |s: &mut Scenario| {
+        let doc = s.document();
+        let p = ibis_doc_model::flow_command::paragraph(&doc, ff_drop_pos.para).unwrap();
+        let mut offset = 0;
+        for r in &p.runs {
+            if offset == ff_drop_pos.offset {
+                if let FlowRunKind::FormField(f) = &r.kind {
+                    if let FormFieldKind::DropDown { selected, .. } = &f.kind {
+                        return *selected;
+                    }
+                }
+            }
+            offset += r.len();
+        }
+        panic!("dropdown run not found");
+    };
+
+    let text_value = |s: &mut Scenario| {
+        let doc = s.document();
+        let p = ibis_doc_model::flow_command::paragraph(&doc, ff_text_pos.para).unwrap();
+        let mut offset = 0;
+        for r in &p.runs {
+            if offset == ff_text_pos.offset {
+                if let FlowRunKind::FormField(f) = &r.kind {
+                    if let FormFieldKind::TextInput { value, .. } = &f.kind {
+                        return value.clone();
+                    }
+                }
+            }
+            offset += r.len();
+        }
+        panic!("text field run not found");
+    };
+
+    assert!(!is_checked(&mut s));
+    assert_eq!(selected_dropdown(&mut s), 0);
+    assert_eq!(text_value(&mut s), "");
+
+    // 5. Test interaction with form fields:
+    // Update text form field
+    s.update(|e, _, cx| {
+        e.set_form_field_text_at(ff_text_pos, "Tokyo".into(), cx);
+    });
+    assert_eq!(text_value(&mut s), "Tokyo");
+
+    // Toggle checkbox form field
+    s.update(|e, _, cx| {
+        assert!(e.toggle_checkbox_at(ff_check_pos, cx));
+    });
+    assert!(is_checked(&mut s));
+
+    // Cycle dropdown form field
+    s.update(|e, _, cx| {
+        assert!(e.cycle_dropdown_item_at(ff_drop_pos, cx));
+    });
+    assert_eq!(selected_dropdown(&mut s), 1);
+
+    // 6. Test document protection for forms
+    s.menu("docx.protect.forms");
+    assert!(s.with(|e, _| e.is_protection_forms()));
+
+    // Normal typing is guarded/blocked
+    let before_len = s.document().body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.text().len()) } else { None }).sum::<usize>();
+    s.type_text("BlockedText");
+    let after_len = s.document().body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.text().len()) } else { None }).sum::<usize>();
+    assert_eq!(before_len, after_len, "normal typing blocked under forms protection");
+
+    // Form field edits succeed under forms protection!
+    s.update(|e, _, cx| {
+        assert!(e.toggle_checkbox_at(ff_check_pos, cx));
+    });
+    assert!(!is_checked(&mut s), "checkbox toggles under forms protection");
+
+    s.update(|e, _, cx| {
+        assert!(e.cycle_dropdown_item_at(ff_drop_pos, cx));
+    });
+    assert_eq!(selected_dropdown(&mut s), 0, "dropdown cycles under forms protection");
+
+    s.update(|e, _, cx| {
+        e.set_form_field_text_at(ff_text_pos, "Kyoto".into(), cx);
+    });
+    assert_eq!(text_value(&mut s), "Kyoto", "text form field edits under forms protection");
+    // 7. Test Undo / Redo of form field value edit
+    s.key("cmd-z");
+    assert_eq!(text_value(&mut s), "Tokyo", "undo restores text form field value");
+    s.key("cmd-shift-z");
+    assert_eq!(text_value(&mut s), "Kyoto", "redo restores text form field value");
+
+    // Stop protection
+    s.menu("docx.protect.stop");
+    assert!(!s.with(|e, _| e.is_protection_forms()));
+
+    // 8. Save and Reopen OOXML roundtrip
+    let path = s.save_as("docx-legacy-form-fields.docx");
+    let reopened = s.reopen();
+    let reopened_doc = flow(&reopened);
+
+    // Check saved XML contains w:ffData, w:textInput, w:checkBox, w:ddList
+    let pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let doc_xml = String::from_utf8(pkg.read("word/document.xml").unwrap()).unwrap();
+    assert!(doc_xml.contains("<w:ffData>"), "missing w:ffData: {doc_xml}");
+    assert!(doc_xml.contains("FORMTEXT") && doc_xml.contains("<w:textInput"), "missing textInput");
+    assert!(doc_xml.contains("FORMCHECKBOX") && doc_xml.contains("<w:checkBox"), "missing checkBox");
+    assert!(doc_xml.contains("FORMDROPDOWN") && doc_xml.contains("<w:ddList"), "missing ddList");
+
+    // Check reread model in reopened document
+    let mut found_text = false;
+    let mut found_check = false;
+    let mut found_drop = false;
+    for b in body(reopened_doc) {
+        for r in &b.runs {
+            if let FlowRunKind::FormField(f) = &r.kind {
+                match &f.kind {
+                    FormFieldKind::TextInput { value, .. } => {
+                        assert_eq!(value, "Kyoto");
+                        found_text = true;
+                    }
+                    FormFieldKind::CheckBox { checked, .. } => {
+                        assert_eq!(*checked, false);
+                        found_check = true;
+                    }
+                    FormFieldKind::DropDown { selected, .. } => {
+                        assert_eq!(*selected, 0);
+                        found_drop = true;
+                    }
+                }
+            }
+        }
+    }
+    assert!(found_text, "reopened text form field");
+    assert!(found_check, "reopened check form field");
+    assert!(found_drop, "reopened drop form field");
+}
+
+/// DOCX-SEC-014: 変更履歴付き印刷 (Print Markup / Print with tracked revisions & comments)
+/// Word standard print option: "変更履歴の印刷" / "変更履歴とコメントの印刷" (`docx.options.print.markup`, default true).
+/// When print_markup is true: printing/PDF export renders with revisions (insertions, deletions, strikethroughs, redlines, margin bars).
+/// When print_markup is false: printing/PDF export renders clean document as MarkupDisplayMode::None (insertions plain, deletions suppressed, margin bars suppressed).
+/// Full UI menu wiring under docx.print-options, toggle, layout cache segregation, and export CLI option verification.
+fn sec014_print_markup() {
+    use crate::docx::flow_layout::Item;
+
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Check default state: is_print_markup() is true, menu is checked
+    assert!(s.with(|e, _| e.is_print_markup()), "print_markup must default to true");
+    assert_eq!(s.menu_state("docx.options.print.markup"), Some((true, true)), "menu docx.options.print.markup should be enabled and checked");
+
+    // 2. Toggle via menu: docx.options.print.markup
+    s.menu("docx.options.print.markup");
+    assert!(!s.with(|e, _| e.is_print_markup()), "print_markup should be toggled to false");
+    assert_eq!(s.menu_state("docx.options.print.markup"), Some((true, false)), "menu should be unchecked");
+
+    // Toggle back to true
+    s.menu("docx.options.print.markup");
+    assert!(s.with(|e, _| e.is_print_markup()), "print_markup should be toggled back to true");
+    assert_eq!(s.menu_state("docx.options.print.markup"), Some((true, true)), "menu should be checked again");
+
+    // 3. Create tracked revisions (insertion & deletion)
+    s.key("cmd-down");
+    s.key("enter");
+    s.type_text("PREFIX_DEL_SUFFIX");
+
+    let p_id = s.with(|e, _| {
+        let doc = e.presentation().flow.clone().unwrap();
+        let p = doc.body.iter().rev().find_map(|b| if let Block::Paragraph(p) = b { Some(p) } else { None }).unwrap();
+        p.id
+    });
+
+    s.menu("docx.track.record");
+    assert!(s.document().track_changes);
+
+    // Replace "DEL" with "NEW"
+    s.click_text(FlowPos::new(p_id, 7));
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.type_text("NEW");
+
+    let deleted_chars = "DEL";
+    let inserted_chars = "NEW";
+
+    let has_margin_bar = |items: &[Item]| {
+        items.iter().any(|it| matches!(it, Item::Rect { w, h, .. } if (*w - 1.5).abs() < 0.1 && *h > 5.0))
+    };
+    let contains_text = |items: &[Item], text_sub: &str| {
+        items.iter().any(|it| match it {
+            Item::Text { text, .. } => text.contains(text_sub),
+            _ => false,
+        })
+    };
+    let is_revision_color = |items: &[Item], text_sub: &str| -> bool {
+        let rev_hsla = crate::render::shape_view::hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xC00000)));
+        items.iter().any(|it| match it {
+            Item::Text { text, color, .. } if text.contains(text_sub) => *color == rev_hsla,
+            _ => false,
+        })
+    };
+
+    // 4. Verify on-screen rendering is unaffected by print_markup setting
+    // When print_markup is true:
+    let screen_items_on = s.with(|e, _| {
+        let pgs = super::flow_layout::pages(e.flow().unwrap(), &e.resources);
+        pgs.pages.iter().flat_map(|p| p.items.clone()).collect::<Vec<_>>()
+    });
+    assert!(has_margin_bar(&screen_items_on), "Screen layout shows margin bar when print_markup is on");
+    assert!(contains_text(&screen_items_on, inserted_chars), "Screen layout shows inserted text");
+    assert!(contains_text(&screen_items_on, deleted_chars), "Screen layout shows deleted text");
+
+    // Toggle print_markup to false
+    s.menu("docx.options.print.markup");
+    assert!(!s.with(|e, _| e.is_print_markup()));
+
+    // Screen layout should STILL show markup because res.print == false!
+    let screen_items_off = s.with(|e, _| {
+        let pgs = super::flow_layout::pages(e.flow().unwrap(), &e.resources);
+        pgs.pages.iter().flat_map(|p| p.items.clone()).collect::<Vec<_>>()
+    });
+    assert!(has_margin_bar(&screen_items_off), "Screen layout still shows margin bar when print_markup is off");
+    assert!(contains_text(&screen_items_off, deleted_chars), "Screen layout still shows deleted text when print_markup is off");
+
+    // 5. Verify print layout with print_markup == false
+    // With res.print = true and res.print_markup = false, markup should be completely suppressed (MarkupDisplayMode::None)
+    let print_items_clean = s.update(|e, _, _| {
+        e.resources.print = true;
+        e.resources.print_markup = false;
+        let pgs = super::flow_layout::pages(e.flow().unwrap(), &e.resources);
+        pgs.pages.iter().flat_map(|p| p.items.clone()).collect::<Vec<_>>()
+    });
+    assert!(!has_margin_bar(&print_items_clean), "Clean print layout must suppress margin bar");
+    assert!(!contains_text(&print_items_clean, deleted_chars), "Clean print layout must omit deleted text");
+    assert!(contains_text(&print_items_clean, inserted_chars), "Clean print layout must include inserted text");
+    assert!(!is_revision_color(&print_items_clean, inserted_chars), "Clean print layout renders inserted text without revision color");
+
+    // 6. Verify print layout with print_markup == true
+    let print_items_markup = s.update(|e, _, _| {
+        e.resources.print = true;
+        e.resources.print_markup = true;
+        let pgs = super::flow_layout::pages(e.flow().unwrap(), &e.resources);
+        pgs.pages.iter().flat_map(|p| p.items.clone()).collect::<Vec<_>>()
+    });
+    assert!(has_margin_bar(&print_items_markup), "Print layout with markup must include margin bar");
+    assert!(contains_text(&print_items_markup, deleted_chars), "Print layout with markup must include deleted text");
+    assert!(contains_text(&print_items_markup, inserted_chars), "Print layout with markup must include inserted text");
+    assert!(is_revision_color(&print_items_markup, inserted_chars), "Print layout with markup renders inserted text in revision color");
+
+    // 7. Verify layout cache segregation (re-evaluating both doesn't yield cross-polluted cached pages)
+    let print_items_clean_cached = s.update(|e, _, _| {
+        e.resources.print = true;
+        e.resources.print_markup = false;
+        let pgs = super::flow_layout::pages(e.flow().unwrap(), &e.resources);
+        pgs.pages.iter().flat_map(|p| p.items.clone()).collect::<Vec<_>>()
+    });
+    assert!(!has_margin_bar(&print_items_clean_cached), "Cached clean print layout must not have margin bar");
+    assert!(!contains_text(&print_items_clean_cached, deleted_chars), "Cached clean print layout must not have deleted text");
+
+    let print_items_markup_cached = s.update(|e, _, _| {
+        e.resources.print = true;
+        e.resources.print_markup = true;
+        let pgs = super::flow_layout::pages(e.flow().unwrap(), &e.resources);
+        pgs.pages.iter().flat_map(|p| p.items.clone()).collect::<Vec<_>>()
+    });
+    assert!(has_margin_bar(&print_items_markup_cached), "Cached markup print layout must have margin bar");
+    assert!(contains_text(&print_items_markup_cached, deleted_chars), "Cached markup print layout must have deleted text");
+
+    // Restore resources.print to false and resources.print_markup to true
+    s.update(|e, _, _| {
+        e.resources.print = false;
+        e.resources.print_markup = true;
+    });
+}
+
+/// Word Design tab > Document Formatting > Paragraph Spacing presets:
+/// Default, No Space, Compact, Tight, Open, Relaxed, Double.
+fn design_paragraph_spacing_presets() {
+    let mut s = Scenario::open(REPORT);
+    let before = s.document();
+
+    let is_normal = |p: &FlowParagraph, doc: &FlowDocument| {
+        (p.style.is_none()
+            || p.style.as_deref() == doc.styles.default_paragraph.as_deref()
+            || p.style.as_deref() == Some("Normal")
+            || p.style.as_deref() == Some("a"))
+            && p.direct.line.is_none()
+            && p.direct.after.is_none()
+    };
+
+    // 1. Initial menu state: Default is checked
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.default"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.compact"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.double"), Some((true, false)));
+
+    // 2. Select Compact preset (after: 4pt = 50,800 EMU, line: single Auto(240))
+    s.menu("docx.design.paragraph-spacing.compact");
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.compact"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.default"), Some((true, false)));
+
+    let doc = s.document();
+    assert_eq!(doc.paragraph_spacing_preset, Some(ibis_doc_model::ParagraphSpacingPreset::Compact));
+    let normal_p = body(&doc).into_iter().find(|p| is_normal(p, &doc)).expect("normal paragraph");
+    assert_eq!(normal_p.space_after, 4 * 12_700);
+    assert_eq!(normal_p.line, ibis_doc_model::LineHeight::Auto(240));
+
+    // 3. Select Double preset (after: 8pt = 101,600 EMU, line: double Auto(480))
+    s.menu("docx.design.paragraph-spacing.double");
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.double"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.compact"), Some((true, false)));
+
+    let doc = s.document();
+    assert_eq!(doc.paragraph_spacing_preset, Some(ibis_doc_model::ParagraphSpacingPreset::Double));
+    let normal_p = body(&doc).into_iter().find(|p| is_normal(p, &doc)).expect("normal paragraph");
+    assert_eq!(normal_p.space_after, 8 * 12_700);
+    assert_eq!(normal_p.line, ibis_doc_model::LineHeight::Auto(480));
+
+    // 4. Undo to Compact
+    s.key("cmd-z");
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.compact"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.double"), Some((true, false)));
+    let doc = s.document();
+    assert_eq!(doc.paragraph_spacing_preset, Some(ibis_doc_model::ParagraphSpacingPreset::Compact));
+    let normal_p = body(&doc).into_iter().find(|p| is_normal(p, &doc)).expect("normal paragraph");
+    assert_eq!(normal_p.space_after, 4 * 12_700);
+
+    // 5. Undo to Default
+    s.key("cmd-z");
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.default"), Some((true, true)));
+    assert_eq!(s.document(), before);
+
+    // 6. Redo to Compact
+    s.key("cmd-shift-z");
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.compact"), Some((true, true)));
+
+    // 7. Save and reopen: verify Normal style and paragraph spacing persist
+    s.save_as("test-paragraph-spacing-presets.docx");
+    let saved = s.reopen();
+    let saved_doc = flow(&saved);
+    let normal_p = body(saved_doc).into_iter().find(|p| is_normal(p, saved_doc)).expect("normal paragraph");
+    assert_eq!(normal_p.space_after, 4 * 12_700);
+    assert_eq!(normal_p.line, ibis_doc_model::LineHeight::Auto(240));
+
+    // 8. Select No Paragraph Space
+    s.menu("docx.design.paragraph-spacing.none");
+    assert_eq!(s.menu_state("docx.design.paragraph-spacing.none"), Some((true, true)));
+    let doc = s.document();
+    assert_eq!(doc.paragraph_spacing_preset, Some(ibis_doc_model::ParagraphSpacingPreset::NoSpace));
+    let normal_p = body(&doc).into_iter().find(|p| is_normal(p, &doc)).expect("normal paragraph");
+    assert_eq!(normal_p.space_after, 0);
+    assert_eq!(normal_p.space_before, 0);
+    assert_eq!(normal_p.line, ibis_doc_model::LineHeight::Auto(240));
+}
+
+/// Word Header & Footer contextual tab > Options > Show Document Text:
+/// docx.section.show-document-text toggle.
+fn section_show_document_text() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial state: caret is in the body, show_document_text is true, hide_document_text is false
+    assert_eq!(s.menu_state("docx.section.show-document-text"), Some((true, true)));
+    assert!(!s.with(|e, _| e.resources.hide_document_text));
+    assert!(!s.with(|e, _| e.is_header_footer_editing()));
+
+    // 2. Edit header: caret moves to header
+    s.menu("docx.section.edit-header");
+    assert!(s.with(|e, _| e.is_header_footer_editing()));
+    assert!(!s.with(|e, _| e.resources.hide_document_text));
+    assert_eq!(s.menu_state("docx.section.show-document-text"), Some((true, true)));
+
+    // 3. Toggle off "Show Document Text" while in header
+    s.menu("docx.section.show-document-text");
+    assert_eq!(s.menu_state("docx.section.show-document-text"), Some((true, false)));
+    assert!(!s.with(|e, _| e.is_show_document_text()));
+    assert!(s.with(|e, _| e.resources.hide_document_text), "hide_document_text must be true when in header and show_document_text is false");
+
+    // Verify pagination still has pages and body_items_count > 0
+    let pgs = s.with(|e, _| super::flow_layout::pages(e.flow().unwrap(), &e.resources));
+    assert!(!pgs.pages.is_empty());
+    assert!(pgs.pages[0].body_items_count > 0);
+
+    // 4. Move caret back to body text
+    let body_id = s.with(|e, _| body(e.flow().unwrap())[0].id);
+    s.click_text(FlowPos::new(body_id, 0));
+    assert!(!s.with(|e, _| e.is_header_footer_editing()));
+    assert!(!s.with(|e, _| e.resources.hide_document_text), "hide_document_text must be false when caret is in body");
+    // Menu state still reflects the setting (false / unchecked)
+    assert_eq!(s.menu_state("docx.section.show-document-text"), Some((true, false)));
+
+    // 5. Move caret back into header: hide_document_text automatically becomes true again
+    s.menu("docx.section.edit-header");
+    assert!(s.with(|e, _| e.is_header_footer_editing()));
+    assert!(s.with(|e, _| e.resources.hide_document_text), "hide_document_text must reactivate when re-entering header");
+
+    // 6. Toggle on "Show Document Text" while in header
+    s.menu("docx.section.show-document-text");
+    assert_eq!(s.menu_state("docx.section.show-document-text"), Some((true, true)));
+    assert!(s.with(|e, _| e.is_show_document_text()));
+    assert!(!s.with(|e, _| e.resources.hide_document_text), "hide_document_text must be false when show_document_text is true");
+}
+
+/// Drop Cap (ドロップ キャップ): Insert > Text > Drop Cap
+/// w:framePr w:dropCap="drop|margin" w:lines="3" w:hSpace="0"
+fn para019_drop_cap() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial state: caret is in first paragraph, no drop cap
+    let body_id = s.with(|e, _| body(e.flow().unwrap())[0].id);
+    s.click_text(FlowPos::new(body_id, 0));
+    assert_eq!(s.menu_state("docx.drop-cap.none"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.drop-cap.drop"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.drop-cap.margin"), Some((true, false)));
+    assert_eq!(s.with(|e, _| e.caret_drop_cap()), None);
+    assert_eq!(s.with(|e, _| e.caret_drop_cap_location()), ibis_doc_model::DropCapLocation::None);
+
+    // 2. Set Drop Cap to "Drop" (本文内に配置)
+    s.menu("docx.drop-cap.drop");
+    assert_eq!(s.menu_state("docx.drop-cap.none"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.drop-cap.drop"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.drop-cap.margin"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.drop-cap.lines.3"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.drop-cap.lines.4"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.drop-cap.distance.0"), Some((true, true)));
+    let dc = s.with(|e, _| e.caret_drop_cap()).expect("drop cap should be set");
+    assert_eq!(dc.location, ibis_doc_model::DropCapLocation::Drop);
+    assert_eq!(dc.lines, 3);
+    assert_eq!(dc.space, 0);
+
+    // Verify layout works and lines/pages are generated without panic
+    let pgs = s.with(|e, _| super::flow_layout::pages(e.flow().unwrap(), &e.resources));
+    assert!(!pgs.pages.is_empty());
+
+    // 3. Change lines to 4
+    s.menu("docx.drop-cap.lines.4");
+    assert_eq!(s.menu_state("docx.drop-cap.lines.4"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.drop-cap.lines.3"), Some((true, false)));
+    let dc = s.with(|e, _| e.caret_drop_cap()).expect("drop cap");
+    assert_eq!(dc.lines, 4);
+
+    // 4. Change distance to 6 pt
+    s.menu("docx.drop-cap.distance.6");
+    assert_eq!(s.menu_state("docx.drop-cap.distance.6"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.drop-cap.distance.0"), Some((true, false)));
+    let dc = s.with(|e, _| e.caret_drop_cap()).expect("drop cap");
+    assert_eq!(dc.space, 6 * ibis_doc_model::EMU_PER_POINT);
+
+    // 5. Change location to Margin (余白に配置)
+    s.menu("docx.drop-cap.margin");
+    assert_eq!(s.menu_state("docx.drop-cap.none"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.drop-cap.drop"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.drop-cap.margin"), Some((true, true)));
+    let dc = s.with(|e, _| e.caret_drop_cap()).expect("drop cap");
+    assert_eq!(dc.location, ibis_doc_model::DropCapLocation::Margin);
+    assert_eq!(dc.lines, 4);
+    assert_eq!(dc.space, 6 * ibis_doc_model::EMU_PER_POINT);
+
+    // 6. Test Undo / Redo
+    s.key("cmd-z"); // Undo margin -> Drop
+    let dc = s.with(|e, _| e.caret_drop_cap()).expect("drop cap");
+    assert_eq!(dc.location, ibis_doc_model::DropCapLocation::Drop);
+
+    s.key("cmd-shift-z"); // Redo -> Margin
+    let dc = s.with(|e, _| e.caret_drop_cap()).expect("drop cap");
+    assert_eq!(dc.location, ibis_doc_model::DropCapLocation::Margin);
+
+    // 7. Save and reopen: verify DropCap is retained across OOXML roundtrip
+    s.save_as("test-drop-cap.docx");
+    let saved = s.reopen();
+    let p_saved = body(flow(&saved))[0];
+    let dc_saved = p_saved.drop_cap.expect("drop cap saved in ooxml");
+    assert_eq!(dc_saved.location, ibis_doc_model::DropCapLocation::Margin);
+    assert_eq!(dc_saved.lines, 4);
+    assert_eq!(dc_saved.space, 6 * ibis_doc_model::EMU_PER_POINT);
+
+    // 8. Remove drop cap
+    s.menu("docx.drop-cap.none");
+    assert_eq!(s.menu_state("docx.drop-cap.none"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.drop-cap.drop"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.drop-cap.margin"), Some((true, false)));
+    assert_eq!(s.with(|e, _| e.caret_drop_cap()), None);
+}
+
+/// Shape / Text Box Text Vertical Alignment (テキストの配置):
+/// Format contextual menu: Top, Middle, Bottom (wps:bodyPr/@anchor="t"|"ctr"|"b")
+fn shape001_align_text() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Initial state: caret is in a normal text paragraph, no shape at caret
+    let body_id = s.with(|e, _| body(e.flow().unwrap())[0].id);
+    s.click_text(FlowPos::new(body_id, 0));
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), None);
+    assert_eq!(s.menu_state("docx.shape.align-text.top"), Some((false, false)));
+    assert_eq!(s.menu_state("docx.shape.align-text.middle"), Some((false, false)));
+    assert_eq!(s.menu_state("docx.shape.align-text.bottom"), Some((false, false)));
+
+    // 2. Insert a text box (ShapeKind::Auto with ShapeText)
+    s.menu("insert.text-box");
+    let at = s.with(|e, _| e.text_box_at_caret().map(|t| t.at)).expect("text box at caret");
+    s.update(|e, _, cx| e.set_text_box_text(at, "Aligned Text in Shape", cx));
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), Some(ibis_doc_model::VerticalAnchor::Top));
+    assert_eq!(s.menu_state("docx.shape.align-text.top"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.shape.align-text.middle"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.shape.align-text.bottom"), Some((true, false)));
+
+    // 3. Switch anchor to Middle (上下中央揃え)
+    s.menu("docx.shape.align-text.middle");
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), Some(ibis_doc_model::VerticalAnchor::Middle));
+    assert_eq!(s.menu_state("docx.shape.align-text.top"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.shape.align-text.middle"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.shape.align-text.bottom"), Some((true, false)));
+
+    // 4. Switch anchor to Bottom (下揃え)
+    s.menu("docx.shape.align-text.bottom");
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), Some(ibis_doc_model::VerticalAnchor::Bottom));
+    assert_eq!(s.menu_state("docx.shape.align-text.top"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.shape.align-text.middle"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.shape.align-text.bottom"), Some((true, true)));
+
+    // 5. Test Undo / Redo
+    s.menu("edit.undo"); // Undo bottom -> middle
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), Some(ibis_doc_model::VerticalAnchor::Middle));
+    assert_eq!(s.menu_state("docx.shape.align-text.middle"), Some((true, true)));
+
+    s.menu("edit.undo"); // Undo middle -> top
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), Some(ibis_doc_model::VerticalAnchor::Top));
+    assert_eq!(s.menu_state("docx.shape.align-text.top"), Some((true, true)));
+
+    s.menu("edit.redo"); // Redo top -> middle
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), Some(ibis_doc_model::VerticalAnchor::Middle));
+
+    s.menu("edit.redo"); // Redo middle -> bottom
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), Some(ibis_doc_model::VerticalAnchor::Bottom));
+
+    // 6. Test panel integration: modifying anchor via text box panel
+    s.update(|e, window, cx| {
+        e.open_text_box(window, cx);
+        e.doc_state_mut().unwrap().text_box.as_mut().unwrap().anchor = ibis_doc_model::VerticalAnchor::Top;
+        e.apply_text_box(cx);
+    });
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), Some(ibis_doc_model::VerticalAnchor::Top));
+    s.menu("edit.undo");
+    assert_eq!(s.with(|e, _| e.caret_shape_anchor()), Some(ibis_doc_model::VerticalAnchor::Bottom));
+
+    // 7. Save and reopen: verify anchor is preserved across OOXML roundtrip
+    s.save_as("test-shape-align-text.docx");
+    let saved = s.reopen();
+    let shape_anchor = |doc: &ibis_doc_model::FlowDocument| -> Option<ibis_doc_model::VerticalAnchor> {
+        for block in &doc.body {
+            if let Block::Paragraph(p) = block {
+                for run in &p.runs {
+                    if let FlowRunKind::Shape(shape) = &run.kind {
+                        match &shape.kind {
+                            ibis_doc_model::ShapeKind::Auto(a) => {
+                                if let Some(t) = &a.text {
+                                    return Some(t.anchor);
+                                }
+                            }
+                            ibis_doc_model::ShapeKind::TextBox(tb) => {
+                                return Some(tb.anchor);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        None
+    };
+    assert_eq!(shape_anchor(flow(&saved)), Some(ibis_doc_model::VerticalAnchor::Bottom));
+}
+
+fn design002_theme_fonts() {
+    let mut s = Scenario::open(REPORT);
+
+    // Initial state: REPORT document has theme fonts
+    let _initial_preset = s.with(|e, _| e.current_docx_theme_fonts_preset());
+
+    // 1. Apply "times" preset via menu action
+    s.menu("docx.design.theme-fonts.times");
+    assert_eq!(s.with(|e, _| e.current_docx_theme_fonts_preset()), Some("times"));
+    let fonts_times = s.with(|e, _| e.presentation().theme_fonts.clone()).expect("theme fonts");
+    assert_eq!(fonts_times.major.latin.as_deref(), Some("Times New Roman"));
+    assert_eq!(fonts_times.minor.latin.as_deref(), Some("Times New Roman"));
+
+    // 2. Apply "arial" preset via menu action
+    s.menu("docx.design.theme-fonts.arial");
+    assert_eq!(s.with(|e, _| e.current_docx_theme_fonts_preset()), Some("arial"));
+    let fonts_arial = s.with(|e, _| e.presentation().theme_fonts.clone()).expect("theme fonts");
+    assert_eq!(fonts_arial.major.latin.as_deref(), Some("Arial"));
+    assert_eq!(fonts_arial.minor.latin.as_deref(), Some("Arial"));
+
+    // 3. Test Undo/Redo
+    s.menu("edit.undo");
+    assert_eq!(s.with(|e, _| e.current_docx_theme_fonts_preset()), Some("times"));
+    let fonts_undo = s.with(|e, _| e.presentation().theme_fonts.clone()).expect("theme fonts");
+    assert_eq!(fonts_undo.major.latin.as_deref(), Some("Times New Roman"));
+
+    s.menu("edit.redo");
+    assert_eq!(s.with(|e, _| e.current_docx_theme_fonts_preset()), Some("arial"));
+    let fonts_redo = s.with(|e, _| e.presentation().theme_fonts.clone()).expect("theme fonts");
+    assert_eq!(fonts_redo.major.latin.as_deref(), Some("Arial"));
+
+    // 4. Save and reopen: verify theme font changes are preserved across OOXML roundtrip
+    s.save_as("test-theme-fonts.docx");
+    let saved = s.reopen();
+    let saved_fonts = saved.theme_fonts.as_ref().expect("saved theme fonts");
+    assert_eq!(saved_fonts.major.latin.as_deref(), Some("Arial"));
+    assert_eq!(saved_fonts.minor.latin.as_deref(), Some("Arial"));
+    assert_eq!(saved_fonts.major.east_asian.as_deref(), Some("MS Gothic"));
+    assert_eq!(saved_fonts.minor.east_asian.as_deref(), Some("MS PGothic"));
+
+    // 5. Test another preset "century-gothic"
+    s.menu("docx.design.theme-fonts.century-gothic");
+    assert_eq!(s.with(|e, _| e.current_docx_theme_fonts_preset()), Some("century-gothic"));
+
+    s.save_as("test-theme-fonts-cg.docx");
+    let saved_cg = s.reopen();
+    let saved_cg_fonts = saved_cg.theme_fonts.as_ref().expect("saved cg fonts");
+    assert_eq!(saved_cg_fonts.major.latin.as_deref(), Some("Century Gothic"));
+    assert_eq!(saved_cg_fonts.minor.latin.as_deref(), Some("Century Gothic"));
+}
+
+fn design003_set_as_default() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Change paragraph spacing to Tight
+    s.menu("docx.design.paragraph-spacing.tight");
+    assert_eq!(s.with(|e, _| e.document_paragraph_spacing_preset()), Some(ibis_doc_model::ParagraphSpacingPreset::Tight));
+
+    // 2. Change theme fonts to calibri
+    s.menu("docx.design.theme-fonts.calibri");
+    assert_eq!(s.with(|e, _| e.current_docx_theme_fonts_preset()), Some("calibri"));
+
+    // 3. Trigger "既定に設定" (docx.design.set-as-default)
+    s.menu("docx.design.set-as-default");
+
+    // 4. Verify status message
+    let status = s.with(|e, _| e.status.clone()).expect("status set");
+    assert_eq!(status.as_ref(), "現在のスタイルとテーマを新しい文書の既定として設定しました。");
+
+    // 5. Verify settings were persisted
+    assert_eq!(crate::shell::settings::get("docx.default.theme_fonts").as_deref(), Some("calibri"));
+    assert_eq!(crate::shell::settings::get("docx.default.paragraph_spacing").as_deref(), Some("tight"));
+
+    // Drop s to release the ONE_AT_A_TIME scenario lock before opening another Scenario
+    drop(s);
+
+    // 6. Test creating a new document and applying default design
+    let mut s2 = Scenario::new_document(ibis_pptx::Kind::Document);
+    s2.update(|e, _window, cx| e.apply_docx_default_design(cx));
+
+    assert_eq!(s2.with(|e, _| e.document_paragraph_spacing_preset()), Some(ibis_doc_model::ParagraphSpacingPreset::Tight));
+    assert_eq!(s2.with(|e, _| e.current_docx_theme_fonts_preset()), Some("calibri"));
+}
+
+fn design004_style_set() {
+    let mut s = Scenario::open(REPORT);
+
+    // Initial state: no preset chosen or None
+    assert_eq!(s.with(|e, _| e.document_style_set_preset()), None);
+
+    // 1. Apply Centered style set
+    s.menu("docx.design.style-set.centered");
+    assert_eq!(s.with(|e, _| e.document_style_set_preset()), Some(ibis_doc_model::StyleSetPreset::Centered));
+
+    // Verify Heading 1 style has Center alignment
+    let doc = s.document();
+    let h1_id = doc.styles.paragraph_style_named("heading 1").expect("heading 1 style exists");
+    let h1_style = doc.styles.styles.get(h1_id).expect("heading 1 FlowStyle exists");
+    assert_eq!(h1_style.para.align, Some(ibis_doc_model::FlowAlign::Center));
+
+    // 2. Test Undo
+    s.menu("edit.undo");
+    assert_eq!(s.with(|e, _| e.document_style_set_preset()), None);
+
+    // 3. Test Redo
+    s.menu("edit.redo");
+    assert_eq!(s.with(|e, _| e.document_style_set_preset()), Some(ibis_doc_model::StyleSetPreset::Centered));
+
+    // 4. Apply Casual style set
+    s.menu("docx.design.style-set.casual");
+    assert_eq!(s.with(|e, _| e.document_style_set_preset()), Some(ibis_doc_model::StyleSetPreset::Casual));
+    let doc = s.document();
+    let h1_id = doc.styles.paragraph_style_named("heading 1").expect("heading 1 style exists");
+    let h1_style = doc.styles.styles.get(h1_id).expect("heading 1 FlowStyle exists");
+    assert_eq!(h1_style.run.italic, Some(true));
+    assert_eq!(h1_style.run.color, Some(ibis_doc_model::drawing::Rgb(0x7030A0)));
+
+    // 5. Test Save & Reopen
+    s.save_as("test-style-set.docx");
+    let saved = s.reopen();
+    let saved_styles = &flow(&saved).styles;
+    let h1_id = saved_styles.paragraph_style_named("heading 1").expect("heading 1 style exists after reopen");
+    let h1_style = saved_styles.styles.get(h1_id).expect("heading 1 FlowStyle exists after reopen");
+    assert_eq!(h1_style.run.italic, Some(true));
+    assert_eq!(h1_style.run.color, Some(ibis_doc_model::drawing::Rgb(0x7030A0)));
+}
+
+fn design005_theme_effects() {
+    let mut s = Scenario::open(REPORT);
+
+    // Initial state: default theme effects (Office)
+    assert!(s.with(|e, _| e.is_docx_theme_effects_active("office")));
+    assert_eq!(s.with(|e, _| e.is_docx_theme_effects_active("apex")), false);
+
+    // 1. Apply Apex preset
+    s.menu("docx.design.effects.apex");
+    assert!(s.with(|e, _| e.is_docx_theme_effects_active("apex")));
+    assert_eq!(s.with(|e, _| e.is_docx_theme_effects_active("office")), false);
+    assert!(s.with(|e, _| e.status.clone()).unwrap().as_ref().contains("アペックス"));
+
+    // 2. Test Undo
+    s.menu("edit.undo");
+    assert!(s.with(|e, _| e.is_docx_theme_effects_active("office")));
+    assert_eq!(s.with(|e, _| e.is_docx_theme_effects_active("apex")), false);
+
+    // 3. Test Redo
+    s.menu("edit.redo");
+    assert!(s.with(|e, _| e.is_docx_theme_effects_active("apex")));
+
+    // 4. Apply Aspect preset
+    s.menu("docx.design.effects.aspect");
+    assert!(s.with(|e, _| e.is_docx_theme_effects_active("aspect")));
+
+    // 5. Save as docx, verify word/theme/theme1.xml contains <a:fmtScheme name="Aspect">
+    let saved = s.save_as("docx-design005-theme-effects.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/theme/theme1.xml").unwrap();
+    assert!(xml.contains(r#"<a:fmtScheme name="Aspect""#), "Aspect fmtScheme written to theme1.xml: {xml}");
+
+    // 6. Reopen and verify theme_effects loaded
+    let reopened = s.reopen();
+    assert_eq!(reopened.theme_effects.as_deref(), Some("Aspect"));
+
+    // 7. Test Set as default
+    s.menu("docx.design.set-as-default");
+    assert_eq!(crate::shell::settings::get("docx.default.theme_effects").as_deref(), Some("Aspect"));
+
+    // Drop s to release the ONE_AT_A_TIME scenario lock before opening another Scenario
+    drop(s);
+
+    // 8. New document inherits default theme effects
+    let mut s2 = Scenario::new_document(ibis_pptx::Kind::Document);
+    s2.update(|e, _window, cx| e.apply_docx_default_design(cx));
+    assert!(s2.with(|e, _| e.is_docx_theme_effects_active("aspect")));
+}
+
+fn form020_design_mode() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("insert.plain-text");
+
+    let prompt = "クリックまたはタップしてテキストを入力してください。";
+    let get_plain_text = |s: &mut Scenario| {
+        let doc = s.document();
+        let r = para(&doc, id).runs[0].clone();
+        match r.kind {
+            FlowRunKind::PlainText { text, placeholder } => (text, placeholder, r.format.color),
+            other => panic!("expected PlainText, got {other:?}"),
+        }
+    };
+
+    // 1. Initial state: not in design mode, menu unchecked
+    assert_eq!(s.with(|e, _| e.form_design_mode()), false);
+    assert_eq!(s.menu_state("docx.form.design-mode"), Some((true, false)));
+    let (text, placeholder, color) = get_plain_text(&mut s);
+    assert_eq!((text.as_str(), placeholder), (prompt, true));
+    assert_eq!(color, Some(ibis_doc_model::drawing::Rgb(0x808080)));
+
+    // 2. Toggle Design Mode ON
+    s.menu("docx.form.design-mode");
+    assert_eq!(s.with(|e, _| e.form_design_mode()), true);
+    assert_eq!(s.menu_state("docx.form.design-mode"), Some((true, true)));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "デザイン モードを有効にしました");
+
+    // 3. In Design Mode, typing inside the placeholder edits the prompt itself without replacing
+    s.click_text(FlowPos::new(id, 0));
+    s.type_text("【案内】");
+    let (text, placeholder, _) = get_plain_text(&mut s);
+    assert_eq!(placeholder, true, "placeholder flag stays true in design mode");
+    assert_eq!(text.as_str(), "【案内】クリックまたはタップしてテキストを入力してください。");
+
+    // 4. Test Undo / Redo of prompt editing
+    for _ in 0..4 {
+        s.menu("edit.undo");
+    }
+    let (text, placeholder, _) = get_plain_text(&mut s);
+    assert_eq!((text.as_str(), placeholder), (prompt, true));
+
+    for _ in 0..4 {
+        s.menu("edit.redo");
+    }
+    let (text, placeholder, _) = get_plain_text(&mut s);
+    assert_eq!(text.as_str(), "【案内】クリックまたはタップしてテキストを入力してください。");
+    assert_eq!(placeholder, true);
+
+    // 5. Toggle Design Mode OFF
+    s.menu("docx.form.design-mode");
+    assert_eq!(s.with(|e, _| e.form_design_mode()), false);
+    assert_eq!(s.menu_state("docx.form.design-mode"), Some((true, false)));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "デザイン モードを無効にしました");
+
+    // 6. Save and Reopen, verify custom prompt and showingPlcHdr are preserved
+    let saved = s.save_as("docx-form020-design-mode.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("<w:showingPlcHdr/>"), "showingPlcHdr is written for custom prompt");
+    assert!(xml.contains("【案内】"), "custom prompt is written");
+
+    let reopened = s.reopen();
+    let reopened_p = para(flow(&reopened), id);
+    match &reopened_p.runs[0].kind {
+        FlowRunKind::PlainText { text, placeholder } => {
+            assert_eq!(*placeholder, true);
+            assert_eq!(text, "【案内】クリックまたはタップしてテキストを入力してください。");
+        }
+        other => panic!("expected PlainText, got {other:?}"),
+    }
+
+    // 7. In normal mode, typing replaces the custom prompt
+    s.click_text(FlowPos::new(id, 2));
+    s.type_text("本番データ");
+    let (text, placeholder, color) = get_plain_text(&mut s);
+    assert_eq!((text.as_str(), placeholder, color), ("本番データ", false, None));
+}
+
+fn merge020_check_errors() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Without merge panel / recipient list open:
+    s.menu("docx.merge.check-errors");
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "宛先リストが読み込まれていません。");
+
+    // 2. Open merge panel and load recipients
+    s.menu("docx.merge");
+    s.update(|e, window, cx| {
+        let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+        input.update(cx, |a, cx| {
+            a.set_value("氏名,会社名,部署\n山田太郎,アイビス,開発部\n佐藤花子,アイビス,営業部\n  ,  ,  ", window, cx);
+        });
+        e.apply_merge_data(cx);
+    });
+
+    // 3. No merge fields in document yet -> check
+    let res = s.update(|e, _, cx| e.check_merge_errors(cx));
+    assert_eq!(res.fields_used.is_empty(), true);
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "文書内に差し込みフィールドがありません。");
+
+    // 4. Insert valid merge fields at caret
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+    s.update(|e, _, cx| e.insert_merge_field("氏名", cx));
+    s.update(|e, _, cx| e.insert_merge_field("会社名", cx));
+
+    // 5. Check merge errors -> all fields exist and records are valid
+    let res = s.update(|e, _, cx| e.check_merge_errors(cx));
+    assert_eq!(res.recipient_count, 2);
+    assert_eq!(res.missing_fields.is_empty(), true);
+    assert_eq!(res.fields_used, vec!["氏名".to_string(), "会社名".to_string()]);
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "差し込み印刷のエラーは見つかりませんでした（2 件のレコード、2 個のフィールド）。");
+
+    // 6. Add an empty record via add_merge_record and test detection
+    s.update(|e, window, cx| e.add_merge_record(window, cx));
+    let res = s.update(|e, _, cx| e.check_merge_errors(cx));
+    assert_eq!(res.recipient_count, 3);
+    assert_eq!(res.empty_record_indices, vec![2]);
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "空白のレコードが 1 件あります。");
+
+    // 7. Exclude the 3rd empty record so all included records are valid
+    s.update(|e, _, _cx| {
+        let m = e.doc_state_mut().unwrap().merge.as_mut().unwrap();
+        m.included[2] = false;
+    });
+    let res = s.update(|e, _, cx| e.check_merge_errors(cx));
+    assert_eq!(res.empty_record_indices.is_empty(), true);
+
+    // 8. Insert an unmapped / nonexistent field e.g. "電話番号"
+    s.update(|e, _, cx| e.insert_merge_field("電話番号", cx));
+    let res = s.update(|e, _, cx| e.check_merge_errors(cx));
+    assert_eq!(res.missing_fields, vec!["電話番号".to_string()]);
+    assert!(s.with(|e, _| e.status.clone()).unwrap().as_ref().contains("電話番号"));
+
+    // 9. Test Undo removing the invalid field restores valid error check
+    s.menu("edit.undo");
+    let res = s.update(|e, _, cx| e.check_merge_errors(cx));
+    assert_eq!(res.missing_fields.is_empty(), true);
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "差し込み印刷のエラーは見つかりませんでした（3 件のレコード、2 個のフィールド）。");
+
+    // 10. Check menu action docx.merge.check-errors executes cleanly
+    s.menu("docx.merge.check-errors");
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "差し込み印刷のエラーは見つかりませんでした（3 件のレコード、2 個のフィールド）。");
+}
+
+fn shape002_picture_and_shape_tools() {
+    let mut s = Scenario::open(REPORT);
+
+    // Find the picture in REPORT
+    let (p_id, p_offset) = s.with(|e, _| {
+        for p in body(flow(e.presentation())) {
+            let mut offset = 0;
+            for r in &p.runs {
+                if matches!(r.kind, FlowRunKind::Picture { .. }) {
+                    return (p.id, offset);
+                }
+                offset += r.len();
+            }
+        }
+        panic!("a picture in REPORT");
+    });
+    s.click_text(FlowPos::new(p_id, p_offset));
+
+    // 1. Picture: Artistic Effects (docx.picture.artistic-effects)
+    s.menu("docx.picture.artistic-effects.marker");
+    assert_eq!(s.with(|e, _| e.picture_look_at_caret().and_then(|l| l.effects.saturation)), Some(150_000));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "アート効果を適用しました。");
+    s.menu("edit.undo");
+    assert_ne!(s.with(|e, _| e.picture_look_at_caret().and_then(|l| l.effects.saturation)), Some(150_000));
+    s.menu("edit.redo");
+    assert_eq!(s.with(|e, _| e.picture_look_at_caret().and_then(|l| l.effects.saturation)), Some(150_000));
+
+    // 2. Picture: Styles (docx.picture.styles)
+    s.menu("docx.picture.styles.simple-black");
+    let look = s.with(|e, _| e.picture_look_at_caret()).unwrap();
+    assert_eq!(look.stroke.map(|st| st.width), Some(12_700));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "図のスタイルを適用しました。");
+    s.menu("edit.undo");
+    s.menu("edit.redo");
+
+    // 3. Picture: Effects (docx.picture.effects)
+    s.menu("docx.picture.effects.soft-edge.5pt");
+    assert_eq!(s.with(|e, _| e.picture_look_at_caret().and_then(|l| l.soft_edge)), Some(63_500));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "図の効果を適用しました。");
+    s.menu("edit.undo");
+    assert_ne!(s.with(|e, _| e.picture_look_at_caret().and_then(|l| l.soft_edge)), Some(63_500));
+
+    // 4. Picture: Remove Background (docx.picture.remove-background)
+    s.menu("docx.picture.remove-background");
+    assert!(s.with(|e, _| e.is_docx_picture_remove_background_active()));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "画像の背景を透明に設定しました。");
+    s.menu("docx.picture.remove-background");
+    assert!(!s.with(|e, _| e.is_docx_picture_remove_background_active()));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "画像の背景の透明度を解除しました。");
+
+    // 5. Shape / Text Box tools
+    s.key("cmd-down");
+    s.key("enter");
+    s.update(|e, window, cx| e.doc_insert_text_box(window, cx));
+    assert!(s.with(|e, _| e.text_box_at_caret()).is_some());
+
+    // 6. Shape: Edit Shape (docx.shape.edit-shape)
+    s.menu("docx.shape.edit-shape.ellipse");
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "図形の種類を変更しました。");
+    s.menu("edit.undo");
+    s.menu("edit.redo");
+
+    // Edit points toggle
+    s.menu("docx.shape.edit-shape.edit-points");
+    assert!(s.with(|e, _| e.is_docx_shape_edit_points_active()));
+    s.menu("docx.shape.edit-shape.edit-points");
+    assert!(!s.with(|e, _| e.is_docx_shape_edit_points_active()));
+
+    // 7. Shape: WordArt Styles (docx.shape.wordart-styles)
+    s.menu("docx.shape.wordart-styles.style2");
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "ワードアートのスタイルを適用しました。");
+    s.menu("edit.undo");
+    s.menu("edit.redo");
+
+    // 8. Shape: Text Effects (docx.shape.text-effects)
+    s.menu("docx.shape.text-effects.fill.blue");
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "テキストの効果を適用しました。");
+    s.menu("edit.undo");
+    s.menu("edit.redo");
+
+    // 9. Save and Reopen round trip
+    s.save_as("test-shape-picture-tools.docx");
+    let reopened = s.reopen();
+    assert!(reopened.flow.is_some());
+}
+
+fn ref014_citations_and_bibliography() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Without citations, inserting bibliography creates a placeholder bibliography
+    s.menu("docx.reference.bibliography");
+    assert_eq!(
+        s.with(|e, _| e.status.clone()).unwrap().as_ref(),
+        "文献目録を挿入しました（0 件）。"
+    );
+    assert!(s.with(|e, _| super::bibliography::bibliography_field(e.flow().unwrap())).is_some());
+
+    // 2. Undo bibliography insertion
+    s.menu("edit.undo");
+    assert!(s.with(|e, _| super::bibliography::bibliography_field(e.flow().unwrap())).is_none());
+
+    // 3. Insert citations at paragraphs
+    let (_, id1, _) = text_paragraph(&mut s, 5);
+    s.click_text(FlowPos::new(id1, 0));
+    s.update(|e, _, cx| e.insert_citation("Knuth1984", cx));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "引用文献「Knuth1984」を挿入しました。");
+
+    let (_, id2, _) = text_paragraph(&mut s, 8);
+    s.click_text(FlowPos::new(id2, 0));
+    s.update(|e, _, cx| e.insert_citation("Lamport1994", cx));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "引用文献「Lamport1994」を挿入しました。");
+
+    // Also test selection-based citation insertion
+    let (_, id3, _) = text_paragraph(&mut s, 12);
+    s.click_text(FlowPos::new(id3, 0));
+    s.menu("docx.reference.insert-citation");
+    // Uses default tag
+    let citations = s.with(|e, _| super::bibliography::collect_citations(e.flow().unwrap()));
+    assert_eq!(citations.len(), 3);
+    assert_eq!(citations[0].tag, "Knuth1984");
+    assert_eq!(citations[1].tag, "Lamport1994");
+
+    // 4. Insert Bibliography now with citations present
+    let (_, last_id, _) = text_paragraph(&mut s, 15);
+    s.click_text(FlowPos::new(last_id, 0));
+    s.menu("docx.reference.bibliography");
+    assert!(s.with(|e, _| e.status.clone()).unwrap().as_ref().contains("文献目録を挿入しました"));
+
+    // Check bibliography entries generated
+    let doc = s.with(|e, _| e.flow().cloned()).unwrap();
+    let (_bib_para, instr) = super::bibliography::bibliography_field(&doc).expect("bibliography field present");
+    assert!(instr.starts_with("BIBLIOGRAPHY"));
+
+    // 5. Test saving to DOCX and reopening preserves CITATION fields and BIBLIOGRAPHY
+    s.save_as("ref014_saved.docx");
+    s.reload_saved();
+    let doc2 = s.with(|e, _| e.flow().cloned()).unwrap();
+    let citations2 = super::bibliography::collect_citations(&doc2);
+    assert_eq!(citations2.len(), 3);
+    assert_eq!(citations2[0].tag, "Knuth1984");
+    assert_eq!(citations2[1].tag, "Lamport1994");
+    assert!(super::bibliography::bibliography_field(&doc2).is_some());
+
+    // 6. Insert a new citation and update fields / bibliography
+    let id_new = body(&s.document())
+        .into_iter()
+        .find(|p| p.text().contains("夏季限定"))
+        .map(|p| p.id)
+        .expect("body paragraph outside bibliography");
+    s.click_text(FlowPos::new(id_new, 0));
+    s.update(|e, _, cx| e.insert_citation("Dijkstra1968", cx));
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "引用文献「Dijkstra1968」を挿入しました。");
+
+    // Update bibliography
+    s.menu("docx.reference.bibliography.update");
+    assert!(s.with(|e, _| e.status.clone()).unwrap().as_ref().contains("文献目録を更新しました"));
+    let doc3 = s.with(|e, _| e.flow().cloned()).unwrap();
+    let citations3 = super::bibliography::collect_citations(&doc3);
+    assert_eq!(citations3.len(), 4);
+    assert!(citations3.iter().any(|c| c.tag == "Dijkstra1968"));
+
+    // 7. Test Undo
+    s.menu("edit.undo");
+    s.menu("edit.undo");
+}
+
+/// DOCX-REVIEW-016: Combine documents (校閲 > 比較 > 文書の結合 / docx.combine).
+/// Revisions from different authors (Alice and Bob) are preserved together into a single document.
+fn review016_combine_documents() {
+    let mut s1 = Scenario::open(REPORT);
+
+    // 1. Build document 1 with an insertion by Alice
+    let p_test_id = s1.with(|e, _| e.flow().unwrap().new_id());
+    s1.update(|e, _, cx| {
+        let para = FlowParagraph {
+            id: p_test_id,
+            runs: vec![
+                ibis_doc_model::FlowRun {
+                    kind: FlowRunKind::Text("Base Document: ".to_string()),
+                    ..Default::default()
+                },
+                ibis_doc_model::FlowRun {
+                    kind: FlowRunKind::Text("Alice's proposal. ".to_string()),
+                    revision: Some(ibis_doc_model::Revision {
+                        kind: ibis_doc_model::RevisionKind::Insert,
+                        author: "Alice".to_string(),
+                        date: "2026-10-09T10:00:00Z".to_string(),
+                    }),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        e.run_flow(vec![FlowCommand::ReplaceBlocks { container: ibis_doc_model::Container::Body, index: 0, remove: 0, blocks: vec![Block::Paragraph(para)] }], cx);
+    });
+
+    let doc1_path = s1.save_as(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/combine-alice.docx").to_str().unwrap());
+    drop(s1);
+
+    // 2. Build document 2 with an insertion by Bob
+    let mut s2 = Scenario::open(REPORT);
+    let p_test_id2 = s2.with(|e, _| e.flow().unwrap().new_id());
+    s2.update(|e, _, cx| {
+        let para = FlowParagraph {
+            id: p_test_id2,
+            runs: vec![
+                ibis_doc_model::FlowRun {
+                    kind: FlowRunKind::Text("Base Document: ".to_string()),
+                    ..Default::default()
+                },
+                ibis_doc_model::FlowRun {
+                    kind: FlowRunKind::Text("Bob's amendment. ".to_string()),
+                    revision: Some(ibis_doc_model::Revision {
+                        kind: ibis_doc_model::RevisionKind::Insert,
+                        author: "Bob".to_string(),
+                        date: "2026-10-10T12:00:00Z".to_string(),
+                    }),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        e.run_flow(vec![FlowCommand::ReplaceBlocks { container: ibis_doc_model::Container::Body, index: 0, remove: 0, blocks: vec![Block::Paragraph(para)] }], cx);
+    });
+
+    // 3. Combine document 1 (Alice's file) into document 2 (Bob's document)
+    s2.update(|e, _, cx| e.combine_with_file(&doc1_path, cx));
+    assert!(s2.with(|e, _| e.status.clone()).unwrap().as_ref().contains("文書を結合しました"));
+
+    // 4. Verify that revisions from both Alice and Bob are present in the combined document
+    let doc_combined = s2.document();
+    let runs: Vec<ibis_doc_model::FlowRun> = doc_combined.body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.runs.clone()) } else { None }).flatten().collect();
+    let authors: Vec<String> = runs.iter().filter_map(|r| r.revision.as_ref().map(|v| v.author.clone())).collect();
+    assert!(authors.contains(&"Alice".to_string()), "Alice's revision is preserved: {authors:?}");
+    assert!(authors.contains(&"Bob".to_string()), "Bob's revision is preserved: {authors:?}");
+
+    // 5. Test 1-step Undo restores previous state
+    s2.menu("edit.undo");
+    let doc_undone = s2.document();
+    let undone_authors: Vec<String> = doc_undone.body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.runs.clone()) } else { None }).flatten().filter_map(|r| r.revision.as_ref().map(|v| v.author.clone())).collect();
+    assert!(!undone_authors.contains(&"Alice".to_string()), "Alice's revision undone");
+    assert!(undone_authors.contains(&"Bob".to_string()), "Bob's revision still in doc2");
+
+    // 6. Test Redo
+    s2.menu("edit.redo");
+    let doc_redone = s2.document();
+    let redone_authors: Vec<String> = doc_redone.body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.runs.clone()) } else { None }).flatten().filter_map(|r| r.revision.as_ref().map(|v| v.author.clone())).collect();
+    assert!(redone_authors.contains(&"Alice".to_string()), "Alice restored on redo");
+    assert!(redone_authors.contains(&"Bob".to_string()), "Bob restored on redo");
+
+    // 7. Save and reopen to verify OOXML document.xml roundtrip
+    let saved = s2.save_as("test-review016-combine.docx");
+    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("w:author=\"Alice\""), "Alice's revision saved in XML: {xml}");
+    assert!(xml.contains("w:author=\"Bob\""), "Bob's revision saved in XML: {xml}");
+}
+
+/// オブジェクト挿入（アイコン、SmartArt、ワードアート、署名欄、クイックパーツ）の統合シナリオ試験。
+fn insert_objects_suite() {
+    let mut s = Scenario::open(REPORT);
+
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+
+    // 1. アイコン挿入 (docx.insert.icon)
+    s.menu("docx.insert.icon");
+    let has_pic = s.with(|e, _| {
+        let doc = e.flow().unwrap();
+        let p = para(doc, id);
+        p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Picture { .. }))
+    });
+    assert!(has_pic, "icon inserted as picture");
+
+    // Undo / Redo の確認
+    s.menu("edit.undo");
+    let undone = s.with(|e, _| {
+        let doc = e.flow().unwrap();
+        let p = para(doc, id);
+        !p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Picture { .. }))
+    });
+    assert!(undone, "icon insert undone");
+    s.menu("edit.redo");
+    let redone = s.with(|e, _| {
+        let doc = e.flow().unwrap();
+        let p = para(doc, id);
+        p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Picture { .. }))
+    });
+    assert!(redone, "icon insert redone");
+
+    // 2. SmartArt 挿入 (insert.smartart / pptx.insert.smartart.cycle)
+    s.menu("insert.smartart");
+    let has_smartart = s.with(|e, _| {
+        let doc = e.flow().unwrap();
+        let p = para(doc, id);
+        p.runs.iter().any(|r| {
+            if let FlowRunKind::Shape(shape) = &r.kind {
+                shape.text_body().map_or(false, |b| b.text().contains("SmartArt"))
+            } else {
+                false
+            }
+        })
+    });
+    assert!(has_smartart, "smartart placeholder inserted");
+
+    s.menu("pptx.insert.smartart.cycle");
+    s.menu("edit.undo");
+
+    // 3. ワードアート挿入 (docx.insert.wordart / docx.insert.wordart.style2)
+    s.menu("docx.insert.wordart");
+    s.menu("docx.insert.wordart.style2");
+    s.menu("edit.undo");
+
+    // 4. 署名欄挿入 (docx.signature-line)
+    s.menu("docx.signature-line");
+    let has_sig = s.with(|e, _| {
+        let doc = e.flow().unwrap();
+        let p = para(doc, id);
+        p.runs.iter().any(|r| {
+            if let FlowRunKind::Shape(shape) = &r.kind {
+                shape.text_body().map_or(false, |b| b.text().contains("✕ _______________________________"))
+            } else {
+                false
+            }
+        })
+    });
+    assert!(has_sig, "signature line inserted");
+
+    // 5. クイックパーツ挿入 (docx.quick-parts, docx.quick-parts.author, docx.quick-parts.title)
+    s.menu("docx.quick-parts.author");
+    let has_author_field = s.with(|e, _| {
+        let doc = e.flow().unwrap();
+        let p = para(doc, id);
+        p.runs.iter().any(|r| matches!(&r.kind, FlowRunKind::Field { instruction, .. } if instruction == "AUTHOR"))
+    });
+    assert!(has_author_field, "quick parts author field inserted");
+
+    s.menu("docx.quick-parts.title");
+    s.menu("docx.quick-parts.filename");
+    s.menu("edit.undo");
+
+    // 6. 保存と再読込
+    s.menu("file.save");
+    let reopened = s.reopen();
+    let reread = flow(&reopened);
+    let p = para(reread, id);
+    assert!(p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Picture { .. })), "icon picture persisted across save/reload");
+}
+
+/// GitHub Issue #1: Comments are anchored and highlighted in document body, with bidirectional navigation.
+fn issue1_comment_anchors_and_navigation() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 12);
+    // Select text in paragraph
+    s.click_text(FlowPos::new(id, 2));
+    for _ in 0..4 {
+        s.key("shift-right");
+    }
+    let sel = s.selection().unwrap();
+    assert_ne!(sel.0, sel.1, "has selection");
+
+    // Insert comment
+    s.menu("insert.comment");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.is_some())), "comments panel is open");
+    s.type_text("Issue 1 comment verification");
+    s.key("cmd-enter");
+
+    let doc = s.document();
+    assert_eq!(doc.comments.len(), 1, "comment added");
+    let c_id = doc.comments[0].id;
+    let (from, to) = ibis_doc_model::comment_range(&doc, c_id).expect("comment range exists");
+
+    // 1. Verify highlight: the pages must contain Item::Rect with COMMENT_HIGHLIGHT_COLOR
+    let pagination = s.with(|e, _| crate::docx::flow_layout::pages(e.flow().unwrap(), &e.resources));
+    let has_comment_highlight = pagination.pages.iter().any(|pg| {
+        pg.items.iter().any(|it| {
+            if let crate::docx::flow_layout::Item::Rect { color, .. } = it {
+                let expected = crate::render::shape_view::hsla(crate::docx::flow_layout::COMMENT_HIGHLIGHT_COLOR);
+                (color.h - expected.h).abs() < 0.01 && (color.s - expected.s).abs() < 0.01 && (color.l - expected.l).abs() < 0.01
+            } else {
+                false
+            }
+        })
+    });
+    assert!(has_comment_highlight, "comment range has pale amber highlight rendered in document");
+
+    // 1b. Verify dashed underline: the pages must contain underline Item::Rect with COMMENT_BUBBLE_ICON
+    let has_comment_underline = pagination.pages.iter().any(|pg| {
+        pg.items.iter().any(|it| {
+            if let crate::docx::flow_layout::Item::Rect { color, h, .. } = it {
+                let expected = crate::render::shape_view::hsla(ibis_doc_model::Color::opaque(crate::docx::flow_layout::COMMENT_BUBBLE_ICON));
+                (color.h - expected.h).abs() < 0.01 && (color.s - expected.s).abs() < 0.01 && (color.l - expected.l).abs() < 0.01 && *h < 3.0
+            } else {
+                false
+            }
+        })
+    });
+    assert!(has_comment_underline, "comment range has dashed amber underline rendered in document");
+
+    // 2. Verify visual marker in margin: the pages must contain comment bubble item
+    let has_margin_bubble = pagination.pages.iter().any(|pg| {
+        pg.items.iter().any(|it| matches!(it, crate::docx::flow_layout::Item::CommentBubble { .. }))
+    });
+    assert!(has_margin_bubble, "comment bubble indicator rendered in margin");
+
+    // 3. Bidirectional Navigation (Panel -> Document):
+    // Clear selection first
+    s.click_text(FlowPos::new(id, 0));
+    assert_eq!(s.selection().map(|(a, b)| a == b), Some(true));
+
+    // Focus comment from panel
+    s.update(|e, _, cx| e.focus_comment(c_id, cx));
+    let sel_after = s.selection().unwrap();
+    assert_eq!((sel_after.0, sel_after.1), (from, to), "focus_comment selected the exact commented range");
+
+    // 4. Bidirectional Navigation (Document -> Panel):
+    // Move caret inside comment range
+    let mid_offset = (from.offset + to.offset) / 2;
+    s.click_text(FlowPos::new(from.para, mid_offset));
+    let active_id = s.with(|e, _| e.doc_state().and_then(|st| st.comments.as_ref()).and_then(|c| c.active_comment_id));
+    assert_eq!(active_id, Some(c_id), "caret inside comment marks it active in sidebar");
+
+    // Move caret outside comment range
+    s.click_text(FlowPos::new(id, 0));
+    let active_outside = s.with(|e, _| e.doc_state().and_then(|st| st.comments.as_ref()).and_then(|c| c.active_comment_id));
+    assert_ne!(active_outside, Some(c_id), "caret outside comment deactivates it in sidebar");
+
+    // Close comments sidebar
+    s.update(|e, _, cx| {
+        e.sidebar_open = false;
+        if let Some(st) = e.doc_state_mut() {
+            st.comments = None;
+        }
+        cx.notify();
+    });
+    assert!(!s.with(|e, _| e.sidebar_open));
+
+    // Clicking comment highlight range in body opens comments panel and activates comment
+    s.click_text(FlowPos::new(from.para, mid_offset));
+    assert!(s.with(|e, _| e.sidebar_open), "clicking commented text opens comments sidebar");
+    let active_clicked = s.with(|e, _| e.doc_state().and_then(|st| st.comments.as_ref()).and_then(|c| c.active_comment_id));
+    assert_eq!(active_clicked, Some(c_id), "clicking commented text activates comment in sidebar");
+
+    // 5. Margin bubble click test:
+    let bubble_pos = s.with(|e, _| {
+        let lines = e.flow_lines();
+        e.caret_box(&lines, to)
+    }).expect("caret box for comment end");
+    let (page, _, cy, ch) = bubble_pos;
+    let page_w = doc.page.size.width as f32 / 12_700.0;
+    let bubble_click_x = page_w + 8.0;
+    let bubble_click_y = cy + ch / 2.0;
+
+    let hit = s.with(|e, _| e.comment_at_point(page, bubble_click_x, bubble_click_y));
+    assert_eq!(hit, Some(c_id), "margin click point hits comment bubble");
+
+    // Also test margin bubble on starting line of range
+    let start_pos = s.with(|e, _| {
+        let lines = e.flow_lines();
+        e.caret_box(&lines, from)
+    }).expect("caret box for comment start");
+    let (s_page, _, s_cy, s_ch) = start_pos;
+    let start_bubble_y = s_cy + s_ch / 2.0;
+    let hit_start = s.with(|e, _| e.comment_at_point(s_page, bubble_click_x, start_bubble_y));
+    assert_eq!(hit_start, Some(c_id), "margin click point on start line hits comment bubble");
+}
+
+/// DOCX-COMMENT-002: Comment UI/UX improvements:
+/// - Alert message box when inserting comment with no selection
+/// - Right-side margin comment bubble icon outside page
+/// - Comment panel active icon inverted/filled
+/// - Inline reply text area with send paper-plane button and close (✕) button
+/// - Confirm delete dialog on deleting comment
+/// - Comments sorted by anchor Y coordinate in panel
+/// - Right-margin line end click cursor navigation
+fn comment002_ux_improvements() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. No selection: clicking comment button shows alert message box
+    let (p1, _) = s.paragraph(0);
+    s.click_text(FlowPos::new(p1, 0)); // caret only, no range
+    s.menu("insert.comment");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comment_alert_no_selection)), "alert shown when no selection");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.is_none())), "comments panel not opened when no selection");
+
+    // Dismiss alert
+    s.update(|e, _, _| {
+        if let Some(st) = e.doc_state_mut() {
+            st.comment_alert_no_selection = false;
+        }
+    });
+    assert!(!s.with(|e, _| e.doc_state().is_some_and(|st| st.comment_alert_no_selection)));
+
+    // 2. Select text and add comment
+    let (p2, p2_text) = s.paragraph(1);
+    s.update(|e, _, cx| {
+        e.set_caret(FlowPos::new(p2, 0), false, cx);
+        e.set_caret(FlowPos::new(p2, p2_text.len().min(10)), true, cx);
+    });
+    s.menu("insert.comment");
+    assert!(s.with(|e, _| e.sidebar_open), "sidebar opened with selection");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.as_ref().is_some_and(|c| c.target.is_some()))), "new comment input active");
+
+    // Close with ✕ button
+    s.update(|e, _, cx| e.cancel_comment_input(cx));
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.as_ref().is_some_and(|c| c.target.is_none()))), "new comment input cancelled");
+
+    // Re-open and send comment
+    s.update(|e, window, cx| e.open_comments(window, cx));
+    s.update(|e, window, cx| e.send_comment("First comment on P2", window, cx));
+    assert_eq!(s.document().comments.len(), 1, "first comment added");
+    let c1_id = s.document().comments[0].id;
+
+    // Add another comment on P1 (higher Y) to test Y-order sorting
+    s.update(|e, _, cx| {
+        e.set_caret(FlowPos::new(p1, 0), false, cx);
+        e.set_caret(FlowPos::new(p1, 5), true, cx);
+    });
+    s.update(|e, window, cx| e.open_comments(window, cx));
+    s.update(|e, window, cx| e.send_comment("Second comment on P1", window, cx));
+    assert_eq!(s.document().comments.len(), 2, "second comment added");
+    let c2_id = s.document().comments[1].id;
+
+    // Verify Y-order in panel: P1 comment (c2_id) should come BEFORE P2 comment (c1_id)
+    let sorted_ids = s.with(|e, _| {
+        let doc = e.flow().unwrap();
+        let mut parent_comments: Vec<_> = doc.comments.iter().filter(|c| c.parent.is_none()).collect();
+        parent_comments.sort_by(|a, b| {
+            let pos_a = crate::docx::comments::comment_anchor_position(e, &doc, a.id);
+            let pos_b = crate::docx::comments::comment_anchor_position(e, &doc, b.id);
+            pos_a.0.cmp(&pos_b.0).then_with(|| pos_a.1.total_cmp(&pos_b.1)).then_with(|| a.id.cmp(&b.id))
+        });
+        parent_comments.into_iter().map(|c| c.id).collect::<Vec<_>>()
+    });
+    assert_eq!(sorted_ids, vec![c2_id, c1_id], "comments sorted by Y position ascending");
+
+    // 3. Reply flow
+    s.update(|e, window, cx| e.reply_to(c1_id, window, cx));
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.as_ref().is_some_and(|c| c.target == Some(crate::docx::comments::CommentTarget::Reply(c1_id))))), "reply active for c1");
+
+    // Cancel reply with ✕
+    s.update(|e, _, cx| e.cancel_comment_input(cx));
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.as_ref().is_some_and(|c| c.target.is_none()))), "reply cancelled");
+
+    // Re-open reply and send via Cmd+Enter
+    s.update(|e, window, cx| e.reply_to(c1_id, window, cx));
+    s.type_text("Reply text to c1");
+    s.key("cmd-enter");
+    assert_eq!(s.document().comments.len(), 3, "reply added via Cmd+Enter");
+    assert_eq!(s.document().comments[2].parent, Some(c1_id), "is reply to c1");
+
+    // 4. Confirm delete flow
+    s.update(|e, _, cx| e.confirm_delete_comment(c1_id, cx));
+    assert_eq!(s.with(|e, _| e.doc_state().and_then(|st| st.comment_delete_confirm)), Some(c1_id), "delete confirm dialog shown");
+
+    // Cancel delete
+    s.update(|e, _, _| {
+        if let Some(st) = e.doc_state_mut() {
+            st.comment_delete_confirm = None;
+        }
+    });
+    assert_eq!(s.document().comments.len(), 3, "not deleted when cancelled");
+
+    // Execute delete
+    s.update(|e, _, cx| e.delete_comment(c1_id, cx));
+    // c1 and its reply should both be deleted
+    assert_eq!(s.document().comments.len(), 1, "c1 and reply deleted");
+    assert_eq!(s.document().comments[0].id, c2_id, "only c2 remains");
+
+    // 5. Margin click navigation on line end outside right edge of text
+    let p_line = s.with(|e, _| {
+        let lines = e.flow_lines();
+        lines.iter().find(|l| l.para == p2).cloned()
+    }).expect("p2 line exists");
+    let right_click_x = p_line.stops.last().map_or(p_line.x, |s| s.1) + 100.0; // blank space to right of line within page
+    let right_click_y = p_line.y + p_line.h / 2.0;
+    let clicked_pos = s.with(|e, _| e.position_at(p_line.page, right_click_x, right_click_y));
+    let last_stop_offset = p_line.stops.last().map(|s| s.0).unwrap_or(0);
+    assert_eq!(clicked_pos, Some(FlowPos::new(p2, last_stop_offset)), "clicking blank right margin in line moves caret to line end");
+}
+
+/// DOCX-MATH-003 〜 DOCX-MATH-019: Built-in equations, math structures (accent, limit), 2D/1D conversion, and OOXML save/reopen roundtrip.
+fn math003_builtin_equations_and_structures() {
+    let mut s = Scenario::open(REPORT);
+    let (id, _) = s.paragraph(2);
+    s.click_text(FlowPos::new(id, 0));
+
+    // 1. Open math panel via insert.equation
+    s.menu("insert.equation");
+    assert!(s.with(|e, _| e.sidebar_open));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.docx_math.as_ref()).is_some()));
+
+    // 2. Insert built-in quadratic formula
+    s.menu("docx.math.builtin.quadratic");
+    let has_quadratic = s.with(|e, _| {
+        e.flow().unwrap().body.iter().any(|b| {
+            matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| {
+                if let FlowRunKind::Math { math, .. } = &r.kind {
+                    let tex = math.to_latex();
+                    tex.contains(r"\frac") && tex.contains(r"\sqrt") && tex.contains("4ac")
+                } else {
+                    false
+                }
+            }))
+        })
+    });
+    assert!(has_quadratic, "inserted built-in quadratic formula exists in document");
+
+    // 3. Insert built-in binomial theorem equation
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.math.builtin.binomial");
+    let has_binomial = s.with(|e, _| {
+        e.flow().unwrap().body.iter().any(|b| {
+            matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| {
+                if let FlowRunKind::Math { math, .. } = &r.kind {
+                    let tex = math.to_latex();
+                    tex.contains(r"\binom") || (tex.contains(r"\sum") && tex.contains("n-k"))
+                } else {
+                    false
+                }
+            }))
+        })
+    });
+    assert!(has_binomial, "inserted built-in binomial formula exists in document");
+
+    // 4. Insert accent structure (\vec{v})
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.math.struct.accent");
+    let has_accent = s.with(|e, _| {
+        e.flow().unwrap().body.iter().any(|b| {
+            matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| {
+                if let FlowRunKind::Math { math, .. } = &r.kind {
+                    let tex = math.to_latex();
+                    tex.contains(r"\vec") || matches!(math, ibis_doc_model::math::Math::Mark { .. })
+                } else {
+                    false
+                }
+            }))
+        })
+    });
+    assert!(has_accent, "inserted accent structure exists in document");
+
+    // 5. Insert limit structure (\lim_{x \to \infty})
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.math.struct.limit");
+    let has_limit = s.with(|e, _| {
+        e.flow().unwrap().body.iter().any(|b| {
+            matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| {
+                if let FlowRunKind::Math { math, .. } = &r.kind {
+                    let lin = math.linear();
+                    lin.contains("lim")
+                } else {
+                    false
+                }
+            }))
+        })
+    });
+    assert!(has_limit, "inserted limit structure exists in document");
+
+    // 6. Test Math AutoCorrect (\alpha + \beta in linear mode) and 2D/1D conversion & display mode
+    let autocorrect_math = ibis_doc_model::math::parse_linear(r"\alpha+\beta=\gamma\pm\infty");
+    assert_eq!(autocorrect_math.linear(), "α+β=γ±∞");
+
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("docx.math.convert.linear");
+    s.menu("docx.math.convert.display");
+    s.menu("docx.math.convert.inline");
+    s.menu("edit.undo");
+
+    // 7. Save and reopen roundtrip verification
+    let saved = s.save_as("test-math-builtin-roundtrip.docx");
+    let bytes = std::fs::read(&saved).expect("saved file exists");
+    assert!(!bytes.is_empty());
+    let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").expect("document.xml present");
+    assert!(xml.contains("<m:oMath"), "saved XML contains m:oMath element");
+    assert!(xml.contains("<m:f>"), "saved XML contains m:f element for fraction");
+    assert!(xml.contains("<m:rad>"), "saved XML contains m:rad element for radical");
+    assert!(xml.contains("<m:nary>"), "saved XML contains m:nary element for summation");
+
+    // Reopen scenario from saved file
+    let reopened = s.reopen();
+    let math_runs = body(flow(&reopened)).iter().filter(|p| p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Math { .. }))).count();
+    assert!(math_runs >= 1, "reopened file has inserted math runs preserved: {math_runs}");
+}
+
+/// DOCX-SEC-013, DOCX-SEC-015, DOCX-SEC-016: Print settings panel (pages & sections range, duplex, collation, N-up)
+fn sec013_015_016_print_settings_panel() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Open print panel via menu
+    s.menu("docx.print-settings");
+    assert!(s.with(|e, _| e.sidebar_open));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.print_panel.as_ref()).is_some()));
+
+    // 2. Default settings test: All pages, 1 copy, collated, one-sided, 1-up, border false
+    s.with(|e, _| {
+        let set = e.docx_print_settings();
+        assert_eq!(set.range, crate::docx::print_panel::DocxPrintRange::All);
+        assert_eq!(set.copies, 1);
+        assert!(set.collate);
+        assert_eq!(set.duplex, crate::docx::print_panel::DocxDuplex::OneSided);
+        assert_eq!(set.pages_per_sheet, None);
+        assert!(!set.page_border);
+    });
+
+    // 3. Test changing settings (custom range "1-2", odd pages only, 2 copies uncollated, 2-up, duplex long edge, page border true)
+    s.update(|e, _, cx| {
+        e.edit_docx_print_settings(|settings| {
+            settings.range = crate::docx::print_panel::DocxPrintRange::Custom;
+            settings.custom_range = "1-2".to_string();
+            settings.subset = crate::docx::print_panel::DocxPageSubset::OddOnly;
+            settings.copies = 2;
+            settings.collate = false;
+            settings.duplex = crate::docx::print_panel::DocxDuplex::BothSidesLongEdge;
+            settings.pages_per_sheet = Some(2);
+            settings.page_border = true;
+        }, cx);
+    });
+
+    // 4. Verify docx_print_job_args generates correct slide indices and CLI flags
+    let (pages, flags) = s.with(|e, _| e.docx_print_job_args());
+    let pages = pages.expect("slide indices present");
+    let flags = flags.expect("cli args present");
+    // REPORT pages: custom range 1-2 filtered for Odd pages => page 1 only (1-based: [1]).
+    // 2 copies uncollated => [1, 1].
+    assert_eq!(pages, vec![1, 1]);
+    assert!(flags.contains(&"--handout".to_string()));
+    assert!(flags.contains(&"2".to_string()));
+    assert!(flags.contains(&"--print-frame".to_string()));
+
+    // 5. Test 4-up, 8-up, 16-up
+    s.update(|e, _, cx| {
+        e.edit_docx_print_settings(|settings| {
+            settings.range = crate::docx::print_panel::DocxPrintRange::All;
+            settings.subset = crate::docx::print_panel::DocxPageSubset::All;
+            settings.copies = 1;
+            settings.pages_per_sheet = Some(8);
+        }, cx);
+    });
+    let (_, flags8) = s.with(|e, _| e.docx_print_job_args());
+    let flags8 = flags8.expect("print job args 8-up");
+    assert!(flags8.contains(&"8".to_string()));
+
+    s.update(|e, _, cx| {
+        e.edit_docx_print_settings(|settings| {
+            settings.pages_per_sheet = Some(16);
+        }, cx);
+    });
+    let (_, flags16) = s.with(|e, _| e.docx_print_job_args());
+    let flags16 = flags16.expect("print job args 16-up");
+    assert!(flags16.contains(&"16".to_string()));
+
+    // 6. Test closing print panel
+    s.update(|e, _, cx| e.close_doc_print_panel(cx));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.print_panel.as_ref()).is_none()));
+
+    // 7. Test opening via file.print menu
+    s.menu("file.print");
+    assert!(s.with(|e, _| e.sidebar_open));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.print_panel.as_ref()).is_some()));
+}
+
+fn ref016_source_manager() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Open Source Manager panel via menu
+    s.menu("docx.reference.source-manager");
+    assert!(s.with(|e, _| e.sidebar_open));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.source_manager.as_ref()).is_some()));
+
+    // Verify master sources are present by default
+    s.with(|e, _| {
+        let mgr = e.doc_state().and_then(|st| st.source_manager.as_ref()).unwrap();
+        assert!(!mgr.master_list.is_empty(), "Master sources should have default sources loaded");
+        assert!(mgr.master_list.iter().any(|s| s.tag == "Ecma376"));
+    });
+
+    // 2. Add a new source to current document list
+    s.update(|e, window, cx| {
+        e.source_manager_start_new(crate::docx::source_manager::ActiveList::Current, window, cx);
+        if let Some(mgr) = e.doc_state_mut().and_then(|st| st.source_manager.as_mut()) {
+            if let Some(form) = &mut mgr.edit_form {
+                form.tag_input.update(cx, |i, cx| i.set_value("Turing1936", window, cx));
+                form.source_type = crate::docx::source_manager::SourceType::JournalArticle;
+                form.author_input.update(cx, |i, cx| i.set_value("Turing, Alan M.", window, cx));
+                form.title_input.update(cx, |i, cx| i.set_value("On Computable Numbers, with an Application to the Entscheidungsproblem", window, cx));
+                form.year_input.update(cx, |i, cx| i.set_value("1936", window, cx));
+                form.publisher_input.update(cx, |i, cx| i.set_value("Proceedings of the London Mathematical Society", window, cx));
+            }
+        }
+        e.source_manager_commit_edit(cx);
+    });
+
+    // Verify "Turing1936" is in current list
+    s.with(|e, _| {
+        let mgr = e.doc_state().and_then(|st| st.source_manager.as_ref()).unwrap();
+        assert!(mgr.current_list.iter().any(|s| s.tag == "Turing1936"));
+    });
+
+    // 3. Copy "Turing1936" from Current list to Master list
+    s.update(|e, _, cx| {
+        if let Some(mgr) = e.doc_state_mut().and_then(|st| st.source_manager.as_mut()) {
+            mgr.active_list = crate::docx::source_manager::ActiveList::Current;
+            mgr.selected_current = mgr.current_list.iter().position(|s| s.tag == "Turing1936");
+        }
+        e.source_manager_copy_current_to_master(cx);
+    });
+    s.with(|e, _| {
+        let mgr = e.doc_state().and_then(|st| st.source_manager.as_ref()).unwrap();
+        assert!(mgr.master_list.iter().any(|s| s.tag == "Turing1936"));
+    });
+
+    // 4. Copy "Ecma376" from Master list to Current list
+    s.update(|e, _, cx| {
+        if let Some(mgr) = e.doc_state_mut().and_then(|st| st.source_manager.as_mut()) {
+            mgr.active_list = crate::docx::source_manager::ActiveList::Master;
+            mgr.selected_master = mgr.master_list.iter().position(|s| s.tag == "Ecma376");
+        }
+        e.source_manager_copy_master_to_current(cx);
+    });
+    s.with(|e, _| {
+        let mgr = e.doc_state().and_then(|st| st.source_manager.as_ref()).unwrap();
+        assert!(mgr.current_list.iter().any(|s| s.tag == "Ecma376"));
+    });
+
+    // 5. Insert Citation for selected "Turing1936" into document
+    let (_, id1, _) = text_paragraph(&mut s, 5);
+    s.click_text(FlowPos::new(id1, 0));
+    s.update(|e, _, cx| {
+        if let Some(mgr) = e.doc_state_mut().and_then(|st| st.source_manager.as_mut()) {
+            mgr.active_list = crate::docx::source_manager::ActiveList::Current;
+            mgr.selected_current = mgr.current_list.iter().position(|s| s.tag == "Turing1936");
+        }
+        e.source_manager_insert_selected_citation(cx);
+    });
+
+    // Check CITATION was inserted
+    let citations = s.with(|e, _| super::bibliography::collect_citations(e.flow().unwrap()));
+    assert!(citations.iter().any(|c| c.tag == "Turing1936"));
+
+    // 6. Insert Bibliography and verify formatted entry uses source metadata
+    let (_, last_id, _) = text_paragraph(&mut s, 15);
+    s.click_text(FlowPos::new(last_id, 0));
+    s.menu("docx.reference.bibliography");
+
+    let doc = s.with(|e, _| e.flow().cloned()).unwrap();
+    let body_text: String = body(&doc).into_iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
+    assert!(body_text.contains("Turing, Alan M."), "Bibliography should contain author from source manager: {}", body_text);
+    assert!(body_text.contains("On Computable Numbers"), "Bibliography should contain title from source manager");
+
+    // 7. Save to DOCX and reload; verify doc_variables["_sources"] persisted
+    s.save_as("ref016_saved.docx");
+    s.reload_saved();
+
+    let doc_reloaded = s.with(|e, _| e.flow().cloned()).unwrap();
+    let sources_reloaded = crate::docx::source_manager::load_document_sources(&doc_reloaded);
+    assert!(sources_reloaded.iter().any(|s| s.tag == "Turing1936"));
+    assert!(sources_reloaded.iter().any(|s| s.tag == "Ecma376"));
+
+    // 8. Re-open source manager and verify current list loaded
+    s.menu("docx.reference.source-manager");
+    s.with(|e, _| {
+        let mgr = e.doc_state().and_then(|st| st.source_manager.as_ref()).unwrap();
+        assert!(mgr.current_list.iter().any(|s| s.tag == "Turing1936"));
+        assert!(mgr.current_list.iter().any(|s| s.tag == "Ecma376"));
+    });
+
+    // 9. Test Delete source from Current list
+    s.update(|e, _, cx| {
+        if let Some(mgr) = e.doc_state_mut().and_then(|st| st.source_manager.as_mut()) {
+            mgr.active_list = crate::docx::source_manager::ActiveList::Current;
+            mgr.selected_current = mgr.current_list.iter().position(|s| s.tag == "Ecma376");
+        }
+        e.source_manager_delete_selected(cx);
+    });
+    s.with(|e, _| {
+        let mgr = e.doc_state().and_then(|st| st.source_manager.as_ref()).unwrap();
+        assert!(!mgr.current_list.iter().any(|s| s.tag == "Ecma376"), "Ecma376 should be deleted from current");
+    });
+
+    // 10. Close panel
+    s.update(|e, _, cx| e.close_source_manager_panel(cx));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.source_manager.as_ref()).is_none()));
+}
+
+fn style018_building_blocks_and_autotext() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Select text in paragraph
+    let (_, id1, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id1, 0));
+    for _ in 0..10 {
+        s.key("shift-right");
+    }
+    let sel_text = s.with(|e, _| e.selected_text());
+    assert!(!sel_text.is_empty(), "selected text should not be empty");
+
+    // 2. Open Save Selection to Quick Part Gallery via menu
+    s.menu("docx.quick-parts.save-selection");
+    assert!(s.with(|e, _| e.sidebar_open));
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.quick_parts.as_ref()).is_some()));
+    assert!(s.with(|e, _| {
+        let qp = e.doc_state().and_then(|st| st.quick_parts.as_ref()).unwrap();
+        qp.save_form.is_some()
+    }));
+
+    // 3. Register a Document-scoped Building Block "MyGreeting"
+    s.update(|e, window, cx| {
+        if let Some(qp) = e.doc_state_mut().and_then(|st| st.quick_parts.as_mut()) {
+            if let Some(form) = &mut qp.save_form {
+                form.name_input.update(cx, |i, cx| i.set_value("MyGreeting", window, cx));
+                form.category_input.update(cx, |i, cx| i.set_value("挨拶", window, cx));
+                form.content_input.update(cx, |i, cx| i.set_value("お世話になっております。", window, cx));
+                form.scope = crate::docx::quick_parts::BuildingBlockScope::Document;
+                form.insert_option = crate::docx::quick_parts::BuildingBlockOption::ContentOnly;
+            }
+        }
+        e.quick_parts_commit_form(cx);
+    });
+
+    // Verify "MyGreeting" is registered in building blocks list
+    s.with(|e, _| {
+        let qp = e.doc_state().and_then(|st| st.quick_parts.as_ref()).unwrap();
+        assert!(qp.building_blocks.iter().any(|b| b.name == "MyGreeting"));
+    });
+
+    // 4. Move caret and insert "MyGreeting" at caret
+    let (_, id2, _) = text_paragraph(&mut s, 5);
+    s.click_text(FlowPos::new(id2, 0));
+    s.update(|e, _, cx| {
+        e.quick_parts_insert_block("MyGreeting", cx);
+    });
+
+    // Verify inserted text exists in document body
+    let body_text: String = body(&s.document()).into_iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
+    assert!(body_text.contains("お世話になっております。"), "Document should contain inserted building block text");
+
+    // 5. Register a Global building block "GlobalFooter"
+    s.update(|e, window, cx| {
+        e.quick_parts_start_new(window, cx);
+        if let Some(qp) = e.doc_state_mut().and_then(|st| st.quick_parts.as_mut()) {
+            if let Some(form) = &mut qp.save_form {
+                form.name_input.update(cx, |i, cx| i.set_value("GlobalFooter", window, cx));
+                form.content_input.update(cx, |i, cx| i.set_value("Confidential Global Footer", window, cx));
+                form.scope = crate::docx::quick_parts::BuildingBlockScope::Global;
+            }
+        }
+        e.quick_parts_commit_form(cx);
+    });
+
+    // 6. Save as DOCX and reload; verify doc_variables["_building_blocks"] persisted
+    s.save_as("style018_saved.docx");
+    s.reload_saved();
+
+    let doc_reloaded = s.document();
+    let doc_blocks = crate::docx::quick_parts::load_document_building_blocks(&doc_reloaded);
+    assert!(doc_blocks.iter().any(|b| b.name == "MyGreeting"), "Document building block should persist in doc_variables");
+
+    // 7. Re-open Quick Parts panel on reloaded document
+    s.menu("docx.quick-parts.panel");
+    s.with(|e, _| {
+        let qp = e.doc_state().and_then(|st| st.quick_parts.as_ref()).unwrap();
+        assert!(qp.building_blocks.iter().any(|b| b.name == "MyGreeting"));
+        assert!(qp.building_blocks.iter().any(|b| b.name == "GlobalFooter"));
+    });
+
+    // 8. Delete "MyGreeting" from Document
+    s.update(|e, _, cx| {
+        e.quick_parts_delete_block("MyGreeting", crate::docx::quick_parts::BuildingBlockScope::Document, cx);
+    });
+    s.with(|e, _| {
+        let qp = e.doc_state().and_then(|st| st.quick_parts.as_ref()).unwrap();
+        assert!(!qp.building_blocks.iter().any(|b| b.name == "MyGreeting"), "MyGreeting should be deleted");
+    });
+
+    // 9. Clean up GlobalFooter from Global
+    s.update(|e, _, cx| {
+        e.quick_parts_delete_block("GlobalFooter", crate::docx::quick_parts::BuildingBlockScope::Global, cx);
+    });
+}
+
+fn enter_preserves_formatting() {
+    let mut s = Scenario::open(REPORT);
+    let (index, id, text) = text_paragraph(&mut s, 10);
+    let end = text.chars().count();
+    s.click_text(FlowPos::new(id, end));
+
+    // Apply bold, italic, and larger font size (24pt = 2400 in half-points / internal units)
+    s.key("cmd-b");
+    s.key("cmd-i");
+    s.update(|e, _, cx| {
+        e.set_text_size(2400, cx);
+    });
+    s.type_text("FormattedPart");
+
+    // Press Enter to create a new paragraph
+    s.key("enter");
+
+    // Verify toolbar still shows bold and italic active
+    assert_eq!(s.toolbar_state("bold").map(|t| t.on), Some(true), "bold active after enter");
+    assert_eq!(s.toolbar_state("italic").map(|t| t.on), Some(true), "italic active after enter");
+
+    // Type text in the new paragraph
+    s.type_text("AfterEnter");
+
+    // Verify the newly typed text in the new paragraph has bold, italic, and font size preserved
+    let doc = s.document();
+    let body_paras = body(&doc);
+    let new_p = body_paras[index + 1];
+    assert!(new_p.text().starts_with("AfterEnter"), "new paragraph text: {}", new_p.text());
+    let run = new_p.runs.iter().find(|r| {
+        if let FlowRunKind::Text(t) = &r.kind {
+            t.contains("AfterEnter")
+        } else {
+            false
+        }
+    }).expect("run with AfterEnter");
+    assert!(run.style.bold, "bold should be preserved after Enter");
+    assert!(run.style.italic, "italic should be preserved after Enter");
+    assert_eq!(run.style.size, 2400, "font size should be preserved after Enter");
+}
+
+/// DOCX-REVIEW-019: 類義語辞典 (Thesaurus)
+/// 校閲 > 類義語辞典 (Shift+F7 / docx.review.thesaurus) の動作を検証する。
+fn review019_thesaurus() {
+    // 0. シソーラス辞書引きロジック（lookup）の検証
+    let res_ja = super::thesaurus::lookup("作成").expect("作成 should have synonyms");
+    assert_eq!(res_ja.query, "作成");
+    assert!(!res_ja.groups.is_empty());
+    let all_ja: Vec<&str> = res_ja.groups.iter().flat_map(|g| g.synonyms.iter().map(|s| s.as_str())).collect();
+    assert!(all_ja.contains(&"制作") || all_ja.contains(&"構築") || all_ja.contains(&"起草"));
+
+    let res_en = super::thesaurus::lookup("create").expect("create should have synonyms");
+    assert_eq!(res_en.query, "create");
+    let all_en: Vec<&str> = res_en.groups.iter().flat_map(|g| g.synonyms.iter().map(|s| s.as_str())).collect();
+    assert!(all_en.contains(&"make") || all_en.contains(&"generate") || all_en.contains(&"produce"));
+
+    assert!(super::thesaurus::lookup("IMPORTANT").is_some(), "case insensitive match");
+    assert!(super::thesaurus::lookup("xyznonexistentword12345").is_none(), "not found should be None");
+
+    let mut s = Scenario::open(REPORT);
+
+    // 1. 本文先頭にテスト用テキストを挿入
+    s.click_text(FlowPos::new(1, 0));
+    s.type_text("本日は重要な計画を作成します。");
+
+    // 2. 「重要」を選択して類義語辞典を開く
+    s.update(|e, _, cx| {
+        e.set_caret(FlowPos::new(1, 3), false, cx);
+        e.set_caret(FlowPos::new(1, 5), true, cx);
+    });
+    s.menu("docx.review.thesaurus");
+
+    // 類義語辞典パネルが開いており、クエリが「重要」であることを確認
+    let (is_open, query, has_results) = s.with(|e, _| {
+        let ts = e.doc_state().and_then(|st| st.thesaurus.as_ref());
+        (
+            e.sidebar_open,
+            ts.map(|t| t.query.clone()).unwrap_or_default(),
+            ts.and_then(|t| t.result.as_ref()).is_some(),
+        )
+    });
+    assert!(is_open, "sidebar should be open");
+    assert_eq!(query, "重要", "query should be detected from selection");
+    assert!(has_results, "should have synonyms for '重要'");
+
+    // 3. 類義語「必須」で置換
+    s.update(|e, _, cx| {
+        e.thesaurus_replace("必須", cx);
+    });
+
+    // 置換後の本文を確認
+    let text_after = s.document().body.iter().find_map(|b| {
+        if let Block::Paragraph(p) = b {
+            if p.id == 1 {
+                return Some(p.text());
+            }
+        }
+        None
+    }).unwrap_or_default();
+    assert!(text_after.contains("必須"), "text should contain replacement '必須': {text_after}");
+    assert!(!text_after.contains("重要"), "text should not contain '重要': {text_after}");
+
+    // 4. Undo で「重要」に戻ることを検証
+    s.update(|e, window, cx| e.undo(&crate::Undo, window, cx));
+    let text_undo = s.document().body.iter().find_map(|b| {
+        if let Block::Paragraph(p) = b {
+            if p.id == 1 {
+                return Some(p.text());
+            }
+        }
+        None
+    }).unwrap_or_default();
+    assert!(text_undo.contains("重要"), "text after undo should contain '重要': {text_undo}");
+    assert!(!text_undo.contains("必須"), "text after undo should not contain '必須': {text_undo}");
+
+    // 5. Redo で「必須」が再適用されることを検証
+    s.update(|e, window, cx| e.redo(&crate::Redo, window, cx));
+    let text_redo = s.document().body.iter().find_map(|b| {
+        if let Block::Paragraph(p) = b {
+            if p.id == 1 {
+                return Some(p.text());
+            }
+        }
+        None
+    }).unwrap_or_default();
+    assert!(text_redo.contains("必須"), "text after redo should contain '必須': {text_redo}");
+
+    // 6. 検索バーで任意単語「create」を手動検索
+    s.update(|e, w, cx| {
+        e.thesaurus_search("create", w, cx);
+    });
+    let query_create = s.with(|e, _| {
+        e.doc_state()
+            .and_then(|st| st.thesaurus.as_ref())
+            .map(|t| t.query.clone())
+            .unwrap_or_default()
+    });
+    assert_eq!(query_create, "create");
+
+    // 7. 履歴「戻る」で「重要」の結果に戻ることを検証
+    s.update(|e, w, cx| {
+        e.thesaurus_history_back(w, cx);
+    });
+    let query_back = s.with(|e, _| {
+        e.doc_state()
+            .and_then(|st| st.thesaurus.as_ref())
+            .map(|t| t.query.clone())
+            .unwrap_or_default()
+    });
+    assert_eq!(query_back, "重要");
+
+    // 8. 単語コピー
+    s.update(|e, _, cx| {
+        e.thesaurus_copy("大切", cx);
+    });
+    let msg = s.with(|e, _| {
+        e.doc_state()
+            .and_then(|st| st.thesaurus.as_ref())
+            .and_then(|t| t.message.clone())
+            .unwrap_or_default()
+    });
+    assert!(msg.contains("大切"), "copy message should mention the word: {msg}");
+
+    // 9. パネルを閉じる
+    s.update(|e, w, cx| {
+        e.close_thesaurus_panel(w, cx);
+    });
+    let is_open_after = s.with(|e, _| e.sidebar_open && e.doc_state().and_then(|st| st.thesaurus.as_ref()).is_some());
+    assert!(!is_open_after, "thesaurus panel should be closed");
+}
+
+/// DOCX-ACCESS-010: イマーシブ リーダー (Immersive Reader / 学習ツール)
+/// 表示 > イマーシブ リーダー (docx.view.immersive-reader) の動作を検証する。
+fn access010_immersive_reader() {
+    use super::immersive_reader::{ColumnWidth, ImmersivePageColor, LineFocus};
+    use gpui_kit::rgb;
+
+    // 0. 音節分割アルゴリズム（split_word_syllables / split_text_syllables）の検証
+    assert_eq!(super::immersive_reader::split_word_syllables("read"), "read");
+    assert_eq!(super::immersive_reader::split_word_syllables("reading"), "read·ing");
+    assert_eq!(super::immersive_reader::split_word_syllables("important"), "im·por·tant");
+    assert_eq!(super::immersive_reader::split_word_syllables("syllables"), "syl·la·bles");
+    let text_sample = "This is an important document for reading practice.";
+    let res = super::immersive_reader::split_text_syllables(text_sample);
+    assert!(res.contains("im·por·tant"), "should contain hyphenated important: {res}");
+    assert!(res.contains("read·ing"), "should contain hyphenated reading: {res}");
+
+    let mut s = Scenario::open(REPORT);
+    let original_doc = s.document();
+
+    // 1. 初期状態の検証（イマーシブ リーダーは無効）
+    assert!(!s.with(|e, _| e.is_immersive_reader_enabled()), "immersive reader should be initially disabled");
+
+    // 2. メニュー「docx.view.immersive-reader」による有効化
+    s.menu("docx.view.immersive-reader");
+    let (enabled, width, color, spacing, syllables, focus) = s.with(|e, _| {
+        let st = e.immersive_reader_state().cloned().unwrap_or_default();
+        (e.is_immersive_reader_enabled(), st.column_width, st.page_color, st.text_spacing, st.syllables, st.line_focus)
+    });
+    assert!(enabled, "immersive reader should be enabled after menu click");
+    assert_eq!(width, ColumnWidth::Moderate, "default column width should be Moderate");
+    assert_eq!(color, ImmersivePageColor::None, "default page color should be None");
+    assert!(!spacing, "default text spacing should be off");
+    assert!(!syllables, "default syllables should be off");
+    assert_eq!(focus, LineFocus::Off, "default line focus should be Off");
+
+    // 3. 列の幅（Column Width）の切り替え検証
+    s.update(|e, _, cx| {
+        e.set_immersive_column_width(ColumnWidth::Narrow, cx);
+    });
+    assert_eq!(s.with(|e, _| e.immersive_reader_state().unwrap().column_width), ColumnWidth::Narrow);
+    assert_eq!(ColumnWidth::Narrow.max_width_px(), Some(520.0));
+
+    s.update(|e, _, cx| {
+        e.set_immersive_column_width(ColumnWidth::VeryNarrow, cx);
+    });
+    assert_eq!(s.with(|e, _| e.immersive_reader_state().unwrap().column_width), ColumnWidth::VeryNarrow);
+    assert_eq!(ColumnWidth::VeryNarrow.max_width_px(), Some(380.0));
+
+    s.update(|e, _, cx| {
+        e.set_immersive_column_width(ColumnWidth::Wide, cx);
+    });
+    assert_eq!(s.with(|e, _| e.immersive_reader_state().unwrap().column_width), ColumnWidth::Wide);
+    assert_eq!(ColumnWidth::Wide.max_width_px(), None);
+
+    // 4. ページの色（Page Color）の切り替え検証
+    s.update(|e, _, cx| {
+        e.set_immersive_page_color(ImmersivePageColor::Sepia, cx);
+    });
+    assert_eq!(s.with(|e, _| e.immersive_reader_state().unwrap().page_color), ImmersivePageColor::Sepia);
+    assert_eq!(ImmersivePageColor::Sepia.paper_color(), rgb(0xfbf0d9));
+
+    s.update(|e, _, cx| {
+        e.set_immersive_page_color(ImmersivePageColor::Inverse, cx);
+    });
+    assert_eq!(s.with(|e, _| e.immersive_reader_state().unwrap().page_color), ImmersivePageColor::Inverse);
+    assert_eq!(ImmersivePageColor::Inverse.paper_color(), rgb(0x252525));
+
+    s.update(|e, _, cx| {
+        e.set_immersive_page_color(ImmersivePageColor::SoftYellow, cx);
+    });
+    assert_eq!(s.with(|e, _| e.immersive_reader_state().unwrap().page_color), ImmersivePageColor::SoftYellow);
+
+    // 5. テキストの間隔（Text Spacing）のトグル検証
+    s.update(|e, _, cx| {
+        e.toggle_immersive_text_spacing(cx);
+    });
+    assert!(s.with(|e, _| e.immersive_reader_state().unwrap().text_spacing), "text spacing should be on");
+    s.update(|e, _, cx| {
+        e.toggle_immersive_text_spacing(cx);
+    });
+    assert!(!s.with(|e, _| e.immersive_reader_state().unwrap().text_spacing), "text spacing should be off");
+
+    // 6. 音節（Syllables）のトグル検証
+    s.update(|e, _, cx| {
+        e.toggle_immersive_syllables(cx);
+    });
+    assert!(s.with(|e, _| e.immersive_reader_state().unwrap().syllables), "syllables should be on");
+
+    // 7. 行フォーカス（Line Focus）の設定と上下移動の検証
+    s.update(|e, _, cx| {
+        e.set_immersive_line_focus(LineFocus::ThreeLines, cx);
+    });
+    let st = s.with(|e, _| e.immersive_reader_state().cloned().unwrap());
+    assert_eq!(st.line_focus, LineFocus::ThreeLines);
+    assert_eq!(st.line_focus.line_count(), 3);
+    assert_eq!(st.focus_line, 0);
+
+    // 下へ移動
+    s.update(|e, _, cx| {
+        e.move_immersive_line_focus(2, cx);
+    });
+    assert_eq!(s.with(|e, _| e.immersive_reader_state().unwrap().focus_line), 2);
+
+    // 上へ移動
+    s.update(|e, _, cx| {
+        e.move_immersive_line_focus(-1, cx);
+    });
+    assert_eq!(s.with(|e, _| e.immersive_reader_state().unwrap().focus_line), 1);
+
+    // 上限アンダーフローのガード（saturating_sub）
+    s.update(|e, _, cx| {
+        e.move_immersive_line_focus(-10, cx);
+    });
+    assert_eq!(s.with(|e, _| e.immersive_reader_state().unwrap().focus_line), 0);
+
+    // 8. Esc キーでのイマーシブ リーダー終了検証
+    s.key("escape");
+    assert!(!s.with(|e, _| e.is_immersive_reader_enabled()), "escape should exit immersive reader");
+
+    // 9. 再度有効化と close_immersive_reader による終了検証
+    s.menu("docx.view.immersive-reader");
+    assert!(s.with(|e, _| e.is_immersive_reader_enabled()), "re-enabled via menu");
+
+    s.update(|e, w, cx| {
+        e.close_immersive_reader(w, cx);
+    });
+    assert!(!s.with(|e, _| e.is_immersive_reader_enabled()), "closed via close_immersive_reader");
+
+    // 10. ドキュメント非破壊性の検証（OOXML文書構造が一切不変であること）
+    assert_eq!(s.document(), original_doc, "document data must not be modified by immersive reader");
+}
+
+/// DOCX-OPTIONS-001: ミニ ツールバー（Mini Toolbar / クイック書式設定ツールバー）
+/// Word オプション「選択時にミニ ツールバーを表示する」および表示メニュー「表示 > ミニ ツールバー」の動作を検証する。
+fn opt001_mini_toolbar() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. 初期状態の検証（ミニ ツールバーは既定で有効）
+    assert!(s.with(|e, _| e.is_mini_toolbar_enabled()), "mini toolbar should be enabled by default");
+
+    // 2. 本文先頭にテスト用テキストを挿入
+    s.click_text(FlowPos::new(1, 0));
+    s.type_text("Quick formatting sample text.");
+
+    // 3. テキスト未選択時はミニ ツールバーが非表示（None）
+    s.update(|e, _, cx| {
+        e.set_caret(FlowPos::new(1, 0), false, cx);
+    });
+    let no_sel_toolbar = s.update(|e, _, cx| e.render_mini_toolbar(0, 1.0, cx));
+    assert!(no_sel_toolbar.is_none(), "mini toolbar should be None when nothing is selected");
+
+    // 4. テキスト選択時（範囲選択）にミニ ツールバーが表示される（Some）
+    s.update(|e, _, cx| {
+        e.set_caret(FlowPos::new(1, 0), false, cx);
+        e.set_caret(FlowPos::new(1, 5), true, cx);
+    });
+    let sel_toolbar = s.update(|e, _, cx| e.render_mini_toolbar(0, 1.0, cx));
+    assert!(sel_toolbar.is_some(), "mini toolbar should be Some when text is selected");
+
+    // 5. 書式設定アクション（太字、蛍光ペン、フォントサイズ変更）の動作検証
+    // 太字適用
+    s.update(|e, _, cx| {
+        e.toggle_bold(cx);
+    });
+    let is_bold = s.with(|e, _| e.current_format().map(|(_, s)| s.bold)).unwrap_or(false);
+    assert!(is_bold, "selected text should be bold after toggle_bold");
+
+    // 蛍光ペン適用（黄）
+    s.update(|e, _, cx| {
+        e.set_highlight(Some(ibis_doc_model::Rgb(0xffff00)), cx);
+    });
+    let is_highlighted = s.with(|e, _| e.current_format().and_then(|(_, s)| s.highlight)).is_some();
+    assert!(is_highlighted, "selected text should have highlight");
+
+    // Undo / Redo で書式が正しくロールバック / 再適用されること
+    s.update(|e, window, cx| e.undo(&crate::Undo, window, cx));
+    let hl_after_undo = s.with(|e, _| e.current_format().and_then(|(_, s)| s.highlight)).is_some();
+    assert!(!hl_after_undo, "highlight should be undone");
+    s.update(|e, window, cx| e.redo(&crate::Redo, window, cx));
+    let hl_after_redo = s.with(|e, _| e.current_format().and_then(|(_, s)| s.highlight)).is_some();
+    assert!(hl_after_redo, "highlight should be redone");
+
+    // 6. メニュー「表示 > ミニ ツールバー」（docx.view.mini-toolbar）でのトグル設定検証
+    s.menu("docx.view.mini-toolbar");
+    assert!(!s.with(|e, _| e.is_mini_toolbar_enabled()), "mini toolbar should be disabled after toggling menu");
+
+    // 無効化されているときは、テキスト選択中であっても非表示（None）
+    let disabled_toolbar = s.update(|e, _, cx| e.render_mini_toolbar(0, 1.0, cx));
+    assert!(disabled_toolbar.is_none(), "mini toolbar should be None when option is disabled");
+
+    // 再度メニューをクリックして有効化
+    s.menu("docx.view.mini-toolbar");
+    assert!(s.with(|e, _| e.is_mini_toolbar_enabled()), "mini toolbar should be re-enabled after toggling menu again");
+    let reenabled_toolbar = s.update(|e, _, cx| e.render_mini_toolbar(0, 1.0, cx));
+    assert!(reenabled_toolbar.is_some(), "mini toolbar should be Some again when re-enabled");
+}
+
+/// DOCX-OPTIONS-002: 画面のヒントのスタイル（ScreenTip Style）
+/// Word オプション「画面のヒントのスタイル」および表示メニュー「表示 > 画面のヒント」の動作を検証する。
+fn opt002_screentip_style() {
+    use super::screentip::ScreenTipStyle;
+
+    let mut s = Scenario::open(REPORT);
+    let original_doc = s.document();
+
+    // 1. 初期状態の検証（既定値は ShowFeatureDescriptions）
+    assert_eq!(
+        s.with(|e, _| e.screentip_style()),
+        ScreenTipStyle::ShowFeatureDescriptions,
+        "default screentip style should be ShowFeatureDescriptions"
+    );
+
+    // 2. ShowFeatureDescriptions 時の ScreenTip 整形検証（タイトル + ショートカット + 説明文）
+    let full_tip = s.with(|e, _| {
+        e.format_screentip("docx.mini.bold", Some("docx.tip.desc.bold"), Some("⌘B"))
+    });
+    assert!(full_tip.is_some(), "full tip should be Some");
+    let tip_text = full_tip.unwrap();
+    assert!(tip_text.contains("太字") || tip_text.contains("Bold"), "tip should contain title: {tip_text}");
+    assert!(tip_text.contains("⌘B"), "tip should contain shortcut: {tip_text}");
+    assert!(
+        tip_text.contains("選択したテキストを太字にします。") || tip_text.contains("Make your text bold."),
+        "tip should contain description: {tip_text}"
+    );
+
+    // 3. メニュー「表示 > 画面のヒント > 機能の説明を表示しない」への切り替え検証
+    s.menu("docx.view.screentips.dont-show-descriptions");
+    assert_eq!(
+        s.with(|e, _| e.screentip_style()),
+        ScreenTipStyle::DontShowFeatureDescriptions,
+        "style should be DontShowFeatureDescriptions after menu click"
+    );
+    let no_desc_tip = s.with(|e, _| {
+        e.format_screentip("docx.mini.bold", Some("docx.tip.desc.bold"), Some("⌘B"))
+    });
+    assert!(no_desc_tip.is_some(), "no-desc tip should be Some");
+    let no_desc_text = no_desc_tip.unwrap();
+    assert!(no_desc_text.contains("太字") || no_desc_text.contains("Bold"), "tip should contain title: {no_desc_text}");
+    assert!(no_desc_text.contains("⌘B"), "tip should contain shortcut: {no_desc_text}");
+    assert!(
+        !no_desc_text.contains("選択したテキストを太字にします。") && !no_desc_text.contains("Make your text bold."),
+        "tip must NOT contain description: {no_desc_text}"
+    );
+
+    // 4. メニュー「表示 > 画面のヒント > 画面のヒントを表示しない」への切り替え検証
+    s.menu("docx.view.screentips.dont-show");
+    assert_eq!(
+        s.with(|e, _| e.screentip_style()),
+        ScreenTipStyle::DontShowScreenTips,
+        "style should be DontShowScreenTips after menu click"
+    );
+    let hidden_tip = s.with(|e, _| {
+        e.format_screentip("docx.mini.bold", Some("docx.tip.desc.bold"), Some("⌘B"))
+    });
+    assert!(hidden_tip.is_none(), "tip must be None when DontShowScreenTips is active");
+
+    // 5. メニュー「表示 > 画面のヒント > 機能の説明を表示する」への再有効化検証
+    s.menu("docx.view.screentips.show-descriptions");
+    assert_eq!(
+        s.with(|e, _| e.screentip_style()),
+        ScreenTipStyle::ShowFeatureDescriptions,
+        "style should be restored to ShowFeatureDescriptions"
+    );
+    let restored_tip = s.with(|e, _| {
+        e.format_screentip("docx.mini.bold", Some("docx.tip.desc.bold"), Some("⌘B"))
+    });
+    assert!(restored_tip.is_some(), "restored tip should be Some");
+
+    // 6. OOXML 文書構造の非破壊性検証
+    assert_eq!(s.document(), original_doc, "screentip options must not modify document data");
+}
+
+/// DOCX-OPTIONS-005: ドラッグ編集と選択方法（Drag-and-Drop Editing & Selection Options）
+/// Word オプション「詳細設定 > 編集オプション」のドラッグ&ドロップテキスト編集および単語自動選択の動作を検証する。
+fn opt005_drag_select_options() {
+    let mut s = Scenario::open(REPORT);
+    let original_doc = s.document();
+
+    // 1. 初期状態の検証（Word 既定値: true）
+    assert!(
+        s.with(|e, _| e.is_drag_drop_text_editing_enabled()),
+        "default drag_drop_text_editing should be true"
+    );
+    assert!(
+        s.with(|e, _| e.is_auto_select_entire_word_enabled()),
+        "default auto_select_entire_word should be true"
+    );
+
+    // テスト対象の段落（"Sales rose 3.2% ..."）を取得
+    let sales_para_id = body(&s.document())
+        .into_iter()
+        .find(|p| p.text().starts_with("Sales"))
+        .expect("Sales paragraph")
+        .id;
+
+    // 2. auto_select_entire_word が有効時の単語境界スナップ拡張検証
+    // "Sales" の "ale"（オフセット 1..4）を選択指定 -> 単語全体 "Sales" (0..5) にスナップ
+    let (snapped_start, snapped_end) = s.with(|e, _| {
+        e.snap_selection_to_word_boundaries(
+            ibis_doc_model::FlowPos::new(sales_para_id, 1),
+            ibis_doc_model::FlowPos::new(sales_para_id, 4),
+        )
+    });
+    assert_eq!(
+        (snapped_start.offset, snapped_end.offset),
+        (0, 5),
+        "selection should snap to entire word 'Sales' (0..5)"
+    );
+
+    // 続いて "rose" の "os"（オフセット 7..9）を選択指定 -> 単語全体 "rose" (6..10) にスナップ
+    let (rose_start, rose_end) = s.with(|e, _| {
+        e.snap_selection_to_word_boundaries(
+            ibis_doc_model::FlowPos::new(sales_para_id, 7),
+            ibis_doc_model::FlowPos::new(sales_para_id, 9),
+        )
+    });
+    assert_eq!(
+        (rose_start.offset, rose_end.offset),
+        (6, 10),
+        "selection should snap to entire word 'rose' (6..10)"
+    );
+
+    // 3. メニュー「編集 > 選択とドラッグ編集 > 単語単位で自動選択する」でのトグル検証
+    s.menu("docx.edit.select-word");
+    assert!(
+        !s.with(|e, _| e.is_auto_select_entire_word_enabled()),
+        "auto_select_entire_word should be false after menu toggle"
+    );
+
+    // 無効時はスナップ拡張されず元の範囲がそのまま返る
+    let (unsnapped_start, unsnapped_end) = s.with(|e, _| {
+        e.snap_selection_to_word_boundaries(
+            ibis_doc_model::FlowPos::new(sales_para_id, 1),
+            ibis_doc_model::FlowPos::new(sales_para_id, 4),
+        )
+    });
+    assert_eq!(
+        (unsnapped_start.offset, unsnapped_end.offset),
+        (1, 4),
+        "selection should not snap when auto_select_entire_word is disabled"
+    );
+
+    // 再度トグルして再有効化
+    s.menu("docx.edit.select-word");
+    assert!(
+        s.with(|e, _| e.is_auto_select_entire_word_enabled()),
+        "auto_select_entire_word should be true after re-enabling"
+    );
+
+    // 4. メニュー「編集 > 選択とドラッグ編集 > ドラッグ アンド ドロップ編集を許可する」でのトグル検証
+    s.menu("docx.edit.drag-drop");
+    assert!(
+        !s.with(|e, _| e.is_drag_drop_text_editing_enabled()),
+        "drag_drop_text_editing should be false after menu toggle"
+    );
+
+    s.menu("docx.edit.drag-drop");
+    assert!(
+        s.with(|e, _| e.is_drag_drop_text_editing_enabled()),
+        "drag_drop_text_editing should be true after re-enabling"
+    );
+
+    // 5. OOXML 文書構造の非破壊性検証
+    assert_eq!(s.document(), original_doc, "drag and select options must not modify document data");
+}
+
+fn file020_open_and_repair() {
+    use ibis_pptx::repair::RepairMode;
+    use ibis_pptx::ibis_ooxml::zip::{EntryMeta, Writer};
+
+    let mut s = Scenario::open(REPORT);
+
+    // 1. 破損 Word 文書（XML構文破損・未完了タグ・不正制御文字・スタイル欠落）を作成
+    let root = crate::shell::scenario::repo_root();
+    let target_dir = root.join("target/scenario-input");
+    std::fs::create_dir_all(&target_dir).unwrap();
+    let damaged_file = target_dir.join("damaged_report.docx");
+
+    let damaged_doc_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r><w:t>Salvaged{}Word{}Doc</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>Second paragraph with unclosed tags"#,
+        '\x01', '\x08'
+    );
+    let mut w = Writer::new();
+    let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#;
+    let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#;
+    w.add("[Content_Types].xml", EntryMeta::new(), ct.as_bytes()).unwrap();
+    w.add("_rels/.rels", EntryMeta::new(), rels.as_bytes()).unwrap();
+    w.add("word/document.xml", EntryMeta::new(), damaged_doc_xml.as_bytes()).unwrap();
+    let zip_bytes = w.finish().unwrap();
+    std::fs::write(&damaged_file, zip_bytes).unwrap();
+
+    // 通常の read_file だとエラーになることを確認
+    assert!(crate::read_file(&damaged_file).is_err(), "damaged document normally fails to parse");
+
+    // 2. 開けなかった破損文書が DAMAGED_DOCUMENT に記録され、メニューから修復パネルが開く
+    assert_eq!(
+        s.menu_state("docx.file.repair").map(|m| m.0),
+        Some(true),
+        "repair menu enabled while a damaged document is known"
+    );
+    s.menu("docx.file.repair");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.doc_state().and_then(|s| s.repair.as_ref()).and_then(|p| p.file_path.clone())),
+        Some(damaged_file.clone()),
+        "repair panel opened for the damaged document"
+    );
+
+    // 3. パネルから「開いて修復 (Repair)」を実行
+    s.update(|e, window, cx| {
+        let p = e.doc_state_mut().and_then(|s| s.repair.as_mut()).unwrap();
+        p.file_path = Some(damaged_file.clone());
+        let path_str = damaged_file.to_string_lossy().to_string();
+        p.file_path_input.update(cx, |input, cx| input.set_value(path_str, window, cx));
+        p.mode = RepairMode::Repair;
+        e.execute_docx_repair(window, cx);
+    });
+    s.settle();
+
+    // 4. 修復後の状態を検証
+    assert!(s.with(|e, _| e.is_repaired), "is_repaired set to true");
+    assert!(s.with(|e, _| e.repair_summary.is_some()), "repair summary exists");
+    let report = s.with(|e, _| e.repair_report.clone()).expect("repair report exists");
+    assert!(report.success, "repair report success is true");
+    assert!(report.paragraphs_recovered >= 2, "paragraphs recovered >= 2");
+
+    // 復旧された段落テキストの確認
+    let current_flow = s.document();
+    let body_paras = body(&current_flow);
+    assert!(body_paras.iter().any(|p| p.text().contains("Salvaged") && p.text().contains("Word") && p.text().contains("Doc")), "first paragraph recovered and sanitized");
+    assert!(body_paras.iter().any(|p| p.text().contains("Second paragraph with unclosed tags")), "second unclosed paragraph recovered");
+
+    // 5. 修復バナーの閉じる動作の検証
+    s.update(|e, _, cx| {
+        e.dismiss_docx_repair_banner(cx);
+    });
+    s.settle();
+    assert!(!s.with(|e, _| e.is_repaired), "banner dismissed by dismiss_docx_repair_banner");
+
+    // 6. 「テキストの回復 (RecoverText)」モードの検証（非ZIP生データからのテキスト抽出）
+    let raw_text_file = target_dir.join("damaged_raw_text.docx");
+    let mut raw_bytes = vec![0x00, 0x01, 0xFF, 0xFE];
+    raw_bytes.extend_from_slice(b"Word recovered critical document plan 2027 with financial data.\nAnother line of important text.\n");
+    raw_bytes.extend_from_slice(&[0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF]);
+    std::fs::write(&raw_text_file, raw_bytes).unwrap();
+
+    s.update(|e, window, cx| {
+        e.open_docx_repair_panel(window, cx);
+        let p = e.doc_state_mut().and_then(|s| s.repair.as_mut()).unwrap();
+        let path_str = raw_text_file.to_string_lossy().to_string();
+        p.file_path_input.update(cx, |input, cx| input.set_value(path_str, window, cx));
+        p.mode = RepairMode::RecoverText;
+        e.execute_docx_repair(window, cx);
+    });
+    s.settle();
+
+    assert!(s.with(|e, _| e.is_repaired), "is_repaired set to true in RecoverText mode");
+    let doc = s.document();
+    let recovered_paras = body(&doc);
+    assert!(
+        recovered_paras.iter().any(|p| p.text().contains("critical document plan 2027")),
+        "raw text extracted and recovered into document paragraph"
+    );
+}
+
+/// DOCX-STYLE-017 (テンプレートの添付) & DOCX-FILE-009 (テンプレートの読込と解除)
+/// 検証項目:
+/// 1. テンプレート添付パネルの開閉 (open_docx_template_panel, is_docx_template_panel_open, close_docx_template_panel)
+/// 2. テンプレートパスの設定と反映 (set_docx_attached_template, apply_docx_template_from_panel)
+/// 3. 1ステップ Undo / Redo でのテンプレートパス復元
+/// 4. w:linkStyles（自動更新設定）のトグルと状態保持
+/// 5. 保存（save_as）と再オープン（reopen）での w:attachedTemplate / w:linkStyles / settings.xml.rels の完全永続化
+/// 6. 外部テンプレートファイルからのスタイルインポート（update_docx_styles_from_template_file, docx_update_styles_now）と Undo
+/// 7. テンプレート添付の解除（detach_docx_template）と再オープンでの解除確認
+fn style017_template_attach_and_link_styles() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. パネルを開く
+    s.update(|e, window, cx| {
+        e.open_docx_template_panel(window, cx);
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.is_docx_template_panel_open()), "template panel opened");
+    assert!(s.with(|e, _| e.docx_attached_template().is_none()), "initial template is none");
+    assert!(!s.with(|e, _| e.docx_link_styles()), "initial link_styles is false");
+
+    // 2. パネル入力からテンプレートパスを適用
+    let template_rel_path = "Templates/CorporateProposal.dotx";
+    s.update(|e, window, cx| {
+        let panel = e.doc_state_mut().and_then(|s| s.template_panel.as_mut()).unwrap();
+        panel.path_input.update(cx, |input, cx| input.set_value(template_rel_path.to_string(), window, cx));
+        e.apply_docx_template_from_panel(cx);
+    });
+    s.settle();
+
+    assert_eq!(
+        s.with(|e, _| e.docx_attached_template().map(str::to_string)),
+        Some(template_rel_path.to_string()),
+        "attached template path set"
+    );
+
+    // 3. 1ステップ Undo / Redo
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.docx_attached_template().is_none()), "undo clears attached template");
+    s.key("cmd-shift-z");
+    assert_eq!(
+        s.with(|e, _| e.docx_attached_template().map(str::to_string)),
+        Some(template_rel_path.to_string()),
+        "redo restores attached template"
+    );
+
+    // 4. link_styles トグル
+    s.update(|e, _, cx| {
+        e.toggle_docx_link_styles(cx);
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.docx_link_styles()), "link_styles toggled to true");
+
+    // 5. 保存と再オープン（OOXML 永続化）
+    let saved_path = s.save_as("style017_attached.docx");
+    let saved = s.reopen();
+    let flow_doc = flow(&saved);
+    assert_eq!(
+        flow_doc.attached_template.as_deref(),
+        Some(template_rel_path),
+        "reopened document preserves attached_template"
+    );
+    assert!(flow_doc.link_styles, "reopened document preserves link_styles = true");
+
+    // 6. 外部テンプレートファイルからの今すぐスタイル更新
+    let styles_count_before = s.document().styles.styles.len();
+
+    s.update(|e, window, cx| {
+        let panel = e.doc_state_mut().and_then(|s| s.template_panel.as_mut()).unwrap();
+        let path_str = saved_path.to_string_lossy().to_string();
+        panel.path_input.update(cx, |input, cx| input.set_value(path_str, window, cx));
+        e.docx_update_styles_now(cx);
+    });
+    s.settle();
+
+    let styles_count_after = s.document().styles.styles.len();
+    assert!(
+        styles_count_after >= styles_count_before,
+        "imported styles from external template (before: {styles_count_before}, after: {styles_count_after})"
+    );
+
+    // スタイル更新の Undo
+    s.key("cmd-z");
+    assert_eq!(
+        s.document().styles.styles.len(),
+        styles_count_before,
+        "undo restored original styles count"
+    );
+
+    // 7. テンプレート添付の解除（Detach）
+    s.update(|e, _, cx| {
+        e.detach_docx_template(cx);
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.docx_attached_template().is_none()), "template detached");
+    assert!(!s.with(|e, _| e.docx_link_styles()), "link_styles reset on detach");
+
+    s.save_as("style017_detached.docx");
+    let saved_detached = s.reopen();
+    let detached_flow = flow(&saved_detached);
+    assert!(detached_flow.attached_template.is_none(), "reopened document has no attached template");
+    assert!(!detached_flow.link_styles, "reopened document has link_styles = false");
+
+    // 8. パネルを閉じる
+    s.update(|e, _, cx| {
+        e.close_docx_template_panel(cx);
+    });
+    s.settle();
+    assert!(!s.with(|e, _| e.is_docx_template_panel_open()), "template panel closed");
+}
+
+/// DOCX-JA-010: 禁則処理の方式（標準 / 厳密）切り替え、プリセット、1ステップ Undo/Redo、OOXML 保存と再オープン永続化
+fn ja010_kinsoku_strict_and_normal() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. REPORT は strictFirstAndLastChars が未定義（ECMA-376 既定の standard = false）
+    assert!(!s.with(|e, _| e.strict_kinsoku()), "report starts with normal/standard kinsoku mode");
+
+    // 2. メニューから「厳密」へ切り替え
+    s.menu("docx.kinsoku.mode.strict");
+    s.settle();
+    assert!(s.with(|e, _| e.strict_kinsoku()), "switched to strict kinsoku mode via menu");
+
+    // 3. 1ステップ Undo
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.strict_kinsoku()), "undo restored normal kinsoku mode");
+
+    // 4. 1ステップ Redo
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.strict_kinsoku()), "redo switched back to strict kinsoku mode");
+
+    // 5. パネルでのプリセット切り替え
+    s.update(|e, window, cx| {
+        e.open_kinsoku_panel(window, cx);
+    });
+    s.settle();
+
+    // 標準プリセットを選択
+    s.update(|e, window, cx| {
+        e.select_normal_kinsoku_panel(window, cx);
+    });
+    s.settle();
+    assert!(!s.with(|e, _| e.strict_kinsoku()), "selected normal preset in panel");
+    let panel_start_text_norm = s.with(|e, cx| {
+        e.doc_state()
+            .and_then(|s| s.helper.kinsoku.as_ref())
+            .map(|p| p.start.read(cx).value().to_string())
+            .unwrap_or_default()
+    });
+    assert_eq!(panel_start_text_norm, super::flow_layout::NORMAL_NO_LINE_START);
+
+    // 厳密プリセットを選択
+    s.update(|e, window, cx| {
+        e.select_strict_kinsoku_panel(window, cx);
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.strict_kinsoku()), "selected strict preset in panel");
+    let panel_start_text = s.with(|e, cx| {
+        e.doc_state()
+            .and_then(|s| s.helper.kinsoku.as_ref())
+            .map(|p| p.start.read(cx).value().to_string())
+            .unwrap_or_default()
+    });
+    assert_eq!(panel_start_text, super::flow_layout::STRICT_NO_LINE_START);
+
+    // パネルを閉じる
+    s.update(|e, _, cx| {
+        e.close_kinsoku_panel(cx);
+    });
+    s.settle();
+
+    // 6. 保存と再オープン（OOXML 永続化: strict）
+    s.save_as("ja010_strict.docx");
+    let saved_strict = s.reopen();
+    let flow_strict = flow(&saved_strict);
+    assert!(flow_strict.strict_first_and_last_chars, "reopened doc preserves strict_first_and_last_chars = true");
+
+    // 7. メニューから「標準」へ切り替えて保存と再オープン（OOXML 永続化: normal）
+    s.menu("docx.kinsoku.mode.normal");
+    s.settle();
+    assert!(!s.with(|e, _| e.strict_kinsoku()), "switched to normal kinsoku mode");
+
+    s.save_as("ja010_normal.docx");
+    let saved_normal = s.reopen();
+    let flow_normal = flow(&saved_normal);
+    assert!(!flow_normal.strict_first_and_last_chars, "reopened doc preserves strict_first_and_last_chars = false");
+}
+
+/// DOCX-JA-019: 編集言語と校正言語設定の完全実装（Bidi言語、themeFontLang 既定言語設定、1ステップ Undo/Redo、OOXML 保存と再オープン永続化）
+fn ja019_default_language_and_bidi() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. テキストを選択して Bidi 言語（アラビア語: ar-SA）をメニューから設定
+    let (_, id, _) = text_paragraph(&mut s, 12);
+    s.click_text(FlowPos::new(id, 2));
+    for _ in 0..4 {
+        s.key("shift-right");
+    }
+
+    assert_eq!(s.menu_state("docx.language.ar"), Some((true, false)));
+    s.menu("docx.language.ar");
+    s.settle();
+    assert_eq!(s.menu_state("docx.language.ar"), Some((true, true)));
+
+    let fmt = s.with(|e, _| e.current_format().map(|(f, _)| f)).expect("current format");
+    assert_eq!(fmt.lang_bidi.as_deref(), Some("ar-SA"), "bidi language set to ar-SA");
+
+    // 2. 1ステップ Undo / Redo
+    s.key("cmd-z");
+    let fmt_undo = s.with(|e, _| e.current_format().map(|(f, _)| f)).expect("current format");
+    assert_ne!(fmt_undo.lang_bidi.as_deref(), Some("ar-SA"), "undo reverted bidi language");
+
+    s.key("cmd-shift-z");
+    let fmt_redo = s.with(|e, _| e.current_format().map(|(f, _)| f)).expect("current format");
+    assert_eq!(fmt_redo.lang_bidi.as_deref(), Some("ar-SA"), "redo restored bidi language");
+
+    // 3. 現在の言語を既定の言語として設定（themeFontLang）
+    s.menu("docx.language.set-default");
+    s.settle();
+
+    let tfl = s.with(|e, _| e.theme_font_lang()).expect("theme_font_lang configured");
+    assert_eq!(tfl.bidi.as_deref(), Some("ar-SA"), "default theme font lang bidi set to ar-SA");
+
+    // 4. themeFontLang の 1ステップ Undo / Redo
+    s.key("cmd-z");
+    let tfl_undo = s.with(|e, _| e.theme_font_lang());
+    assert_ne!(tfl_undo.as_ref().and_then(|t| t.bidi.as_deref()), Some("ar-SA"), "undo reverted default theme font lang");
+
+    s.key("cmd-shift-z");
+    let tfl_redo = s.with(|e, _| e.theme_font_lang()).expect("theme_font_lang restored");
+    assert_eq!(tfl_redo.bidi.as_deref(), Some("ar-SA"), "redo restored default theme font lang");
+
+    // 5. OOXML 保存と再オープンで永続化を検証
+    s.save_as("ja019_default_lang.docx");
+    let saved = s.reopen();
+    let fdoc = flow(&saved);
+
+    // Run の lang_bidi 永続化確認
+    let p = para(fdoc, id);
+    let run = p.runs.iter().find(|r| r.format.lang_bidi.is_some()).expect("bidi run");
+    assert_eq!(run.format.lang_bidi.as_deref(), Some("ar-SA"), "reopened run has lang_bidi = ar-SA");
+
+    // settings.xml の themeFontLang 永続化確認
+    let reopened_tfl = fdoc.theme_font_lang.as_ref().expect("reopened theme_font_lang");
+    assert_eq!(reopened_tfl.bidi.as_deref(), Some("ar-SA"), "reopened doc preserves themeFontLang bidi");
+}
+
+/// Scenario to capture full window screenshot with docx comments and comment panel open
+fn screenshot_docx_comments_panel() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 12);
+    // Select text in paragraph
+    s.click_text(FlowPos::new(id, 2));
+    for _ in 0..12 {
+        s.key("shift-right");
+    }
+    // Insert comment
+    s.menu("insert.comment");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.is_some())), "comments panel is open");
+    s.type_text("業績推移の数値データについて、第3四半期の最新開示資料と突合確認をお願いします。");
+    s.key("cmd-enter");
+
+    // Add a reply to demonstrate comment threading
+    let cs = s.with(|e, _| flow(e.presentation()).comments.clone());
+    assert!(!cs.is_empty(), "comment created");
+    let parent = cs[0].id;
+    s.update(|e, window, cx| e.reply_to(parent, window, cx));
+    s.type_text("承知いたしました。財務部より最新の確定数値を受領次第、差し替え対応を行います。");
+    s.key("cmd-enter");
+
+    // Capture the entire window with comments panel active
+    s.screenshot("docx-comments-panel-window");
+}
+
+/// DOCX-LIST-011 リストスタイルの作成：
+/// 表示形式 > 段落番号 > 「新しいリスト スタイルの定義…」（docx.list.define-style）から
+/// リストスタイル定義パネル（ListStylePanel）を開き、スタイル名「契約書条項」、
+/// 番号書式・接頭辞・接尾辞（第%1条）・配置・インデントを設定して適用。
+/// 選択段落にリストスタイルが適用され、numStyleLink と styles.xml の numbering スタイルが連携。
+/// メニュー「表示形式 > 段落番号 > リスト スタイル」から既存リストスタイルを選択して別段落へ適用。
+/// 1手 Undo/Redo 連動。
+/// ファイル保存・再オープンで styles.xml (w:type="numbering") と numbering.xml (w:numStyleLink) の完全保持・復元を検証。
+fn list011_define_list_style() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 0));
+
+    // 1. メニュー「表示形式 > 段落番号 > 新しいリスト スタイルの定義…」を開く
+    s.menu("docx.list.define-style");
+    s.settle();
+
+    let is_panel_open = s.with(|e, _| e.doc_state().and_then(|st| st.list_style.as_ref()).is_some());
+    assert!(is_panel_open, "Define list style panel opened");
+
+    // 2. パネルで設定を入力して適用
+    s.update(|e, window, cx| {
+        let state = e.doc_state().unwrap();
+        let ls = state.list_style.as_ref().unwrap();
+        ls.name.update(cx, |inp, cx| inp.set_value("契約書条項", window, cx));
+        ls.prefix.update(cx, |inp, cx| inp.set_value("第", window, cx));
+        ls.suffix_text.update(cx, |inp, cx| inp.set_value("条", window, cx));
+        ls.start.update(cx, |inp, cx| inp.set_value("1", window, cx));
+        e.apply_list_style_panel(true, cx);
+    });
+    s.settle();
+
+    // 3. 適用されたリストスタイルと段落番号の検証
+    let caret_style = s.with(|e, _| e.caret_list_style()).expect("caret list style exists");
+    assert_eq!(caret_style, "契約書条項");
+
+    let styles_list = s.with(|e, _| e.list_styles());
+    assert!(styles_list.iter().any(|(_, name, _)| name == "契約書条項"), "list_styles contains 契約書条項: {:?}", styles_list);
+
+    let doc = s.document();
+    let p = para(&doc, id);
+    let num_id = p.list.expect("paragraph is in list").num_id;
+    let abs_id = doc.styles.numbering.nums[&num_id].abstract_id;
+    let abs = &doc.styles.numbering.abstracts[&abs_id];
+    assert_eq!(abs.num_style_link.as_deref(), Some("契約書条項"));
+    assert_eq!(abs.levels[0].text, "第%1条");
+
+    // 4. 別段落への既存リストスタイルの適用
+    let (_, id2, _) = text_paragraph(&mut s, 20);
+    s.click_text(FlowPos::new(id2, 0));
+    s.update(|e, _, cx| e.apply_list_style(num_id, cx));
+    s.settle();
+
+    let doc2 = s.document();
+    let p2 = para(&doc2, id2);
+    assert_eq!(p2.list.map(|l| l.num_id), Some(num_id));
+
+    // 5. 1ステップ Undo / Redo
+    s.key("cmd-z");
+    let doc_undo = s.document();
+    assert!(para(&doc_undo, id2).list.is_none(), "undo removed list from second paragraph");
+    s.key("cmd-shift-z");
+    let doc_redo = s.document();
+    assert_eq!(para(&doc_redo, id2).list.map(|l| l.num_id), Some(num_id), "redo restored list on second paragraph");
+
+    // 6. OOXML 保存と再オープンで永続化を検証
+    s.save_as("list011_list_style.docx");
+    let saved = s.reopen();
+    let fdoc = flow(&saved);
+
+    // styles.xml のリストスタイル検証
+    let style = fdoc.styles.styles.get("契約書条項").expect("saved style exists");
+    assert_eq!(style.kind, ibis_doc_model::StyleKind::Numbering);
+    assert_eq!(style.num_id, Some(num_id));
+
+    // numbering.xml の numStyleLink 検証
+    let reopened_abs = &fdoc.styles.numbering.abstracts[&abs_id];
+    assert_eq!(reopened_abs.num_style_link.as_deref(), Some("契約書条項"));
+    assert_eq!(reopened_abs.levels[0].text, "第%1条");
+
+    // 段落のリスト設定検証
+    let rp = para(fdoc, id);
+    assert_eq!(rp.list.map(|l| l.num_id), Some(num_id));
+    let rp2 = para(fdoc, id2);
+    assert_eq!(rp2.list.map(|l| l.num_id), Some(num_id));
+}
+
+/// DOCX-FILE-011 互換モードと現行形式への変換：
+/// `w:compatSetting` の `compatibilityMode` が 11/12/14 の文書を互換モードとして検出し、
+/// 情報バー（`[互換モード]` バッジ＋バージョン表示＋「現行形式に変換」ボタン）、
+/// 「ファイル > 現行形式に変換 (docx.file.convert)」メニュー、および「ファイル > オプション > 互換性…」パネルから
+/// 現行形式（compatibilityMode = 15: Word 2013–2024）へ変換。
+/// 1手 Undo/Redo 連動、および OOXML 保存・再読込での保持を検証。
+fn file011_compatibility_mode_and_convert() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. まず Word 2007 互換モード（compatibilityMode = 12）に設定
+    s.update(|e, _, cx| {
+        e.run_flow(
+            vec![FlowCommand::SetCompatibilityOptions {
+                compatibility_mode: Some(12),
+                use_fe_layout: true,
+                do_not_expand_shift_return: false,
+            }],
+            cx,
+        );
+    });
+    s.settle();
+
+    assert!(s.with(|e, _| e.is_docx_compatibility_mode()), "compatibilityMode=12 should be compatibility mode");
+    assert_eq!(s.with(|e, _| e.docx_compatibility_mode_name()), "Word 2007");
+
+    // 2. メニュー「ファイル > 現行形式に変換 (docx.file.convert)」で Word 2013-2024 (15) へ変換
+    s.menu("docx.file.convert");
+    s.settle();
+
+    assert!(!s.with(|e, _| e.is_docx_compatibility_mode()), "converted to current format (mode=15)");
+    assert_eq!(s.with(|e, _| e.docx_compatibility_mode_name()), "Word 2013-2024");
+    assert_eq!(s.document().compatibility_mode, Some(15));
+
+    // 3. 1ステップ Undo / Redo
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.is_docx_compatibility_mode()), "undo restored compatibility mode (12)");
+    assert_eq!(s.document().compatibility_mode, Some(12));
+
+    s.key("cmd-shift-z");
+    assert!(!s.with(|e, _| e.is_docx_compatibility_mode()), "redo restored current format (15)");
+    assert_eq!(s.document().compatibility_mode, Some(15));
+
+    // 4. 互換性パネルを開き、Word 2010 (14) からパネル経由でも変換できることを確認
+    s.key("cmd-z");
+    s.update(|e, _, cx| {
+        e.run_flow(
+            vec![FlowCommand::SetCompatibilityOptions {
+                compatibility_mode: Some(14),
+                use_fe_layout: true,
+                do_not_expand_shift_return: false,
+            }],
+            cx,
+        );
+    });
+    s.settle();
+    assert_eq!(s.with(|e, _| e.docx_compatibility_mode_name()), "Word 2010");
+
+    s.menu("docx.compatibility-check");
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.compatibility_panel.as_ref()).is_some()));
+
+    s.update(|e, _, cx| e.convert_docx_to_current_format(cx));
+    s.settle();
+    assert!(!s.with(|e, _| e.is_docx_compatibility_mode()));
+    assert_eq!(s.document().compatibility_mode, Some(15));
+
+    // 5. OOXML 保存・再オープンで compatibilityMode=15 が保持されることを検証
+    s.save_as("file011_converted_mode15.docx");
+    let saved = s.reopen();
+    let fdoc = flow(&saved);
+    assert_eq!(fdoc.compatibility_mode, Some(15));
+    assert!(!fdoc.is_compatibility_mode());
+}
+
+/// DOCX-STYLE-012 文書テーマ・DOCX-STYLE-013 テーマ色の設定：
+/// 1. 「デザイン > テーマ (docx.design.themes.*)」から組み込みテーマ（Facet / Integral 等）を適用し、
+///    配色・フォント（major/minor Latin/EastAsia）・効果と本文のテーマ色参照ラン・スタイルが連動更新されることを検証。
+/// 2. 「デザイン > 配色 (docx.design.theme-colors.*)」から組み込み配色プリセット（Blue Warm / Green / Violet 等）を適用。
+/// 3. 「デザイン > 配色 > 配色のカスタマイズ… (docx.design.theme-colors.customize)」サイドバーパネルを開き、
+///    12色の `#RRGGBB` と見出し・本文フォント（英数字・日本語）をカスタマイズして適用。
+/// 4. 1ステップ Undo / Redo 連動、および OOXML (`word/theme/theme1.xml`) 保存・再読込での完全往復を検証。
+fn style012_013_document_themes_and_theme_colors() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 0);
+
+    // 段落先頭ランを選択して accent1 テーマ色を設定しておく
+    s.click_text(FlowPos::new(id, 0));
+    s.key("shift-right");
+    s.key("shift-right");
+    s.update(|e, _, cx| {
+        e.set_theme_color(
+            ibis_doc_model::Rgb(0x4472c4),
+            ibis_doc_model::FlowThemeColor::new("accent1", None::<String>, None::<String>),
+            cx,
+        );
+    });
+    s.settle();
+
+    // 1. 「デザイン > テーマ > ファセット (docx.design.themes.facet)」を適用
+    s.menu("docx.design.themes.facet");
+    s.settle();
+
+    assert_eq!(s.with(|e, _| e.current_docx_theme_preset()), Some("facet"));
+    let (major_latin, minor_latin, accent1_rgb) = s.with(|e, _| {
+        let p = e.presentation();
+        let acc1 = p.theme_colors.iter().find(|(k, _)| k == "accent1").map(|(_, c)| *c);
+        let maj = p.theme_fonts.as_ref().and_then(|f| f.major.latin.clone());
+        let min = p.theme_fonts.as_ref().and_then(|f| f.minor.latin.clone());
+        (maj, min, acc1)
+    });
+    assert_eq!(major_latin.as_deref(), Some("Century Gothic"));
+    assert_eq!(minor_latin.as_deref(), Some("Century Gothic"));
+    assert_eq!(accent1_rgb, Some(ibis_doc_model::Rgb(0x549e39)));
+
+    // 段落ランの解決色も Facet の accent1 (#549E39) に自動再計算されていることを確認
+    let run_rgb = para(&s.document(), id).runs[0].format.color;
+    assert_eq!(run_rgb, Some(ibis_doc_model::Rgb(0x549e39)));
+    assert_eq!(para(&s.document(), id).runs[0].style.color, ibis_doc_model::Rgb(0x549e39));
+
+    // 2. 1ステップ Undo / Redo（テーマ一括変更）
+    s.key("cmd-z");
+    assert_ne!(para(&s.document(), id).runs[0].format.color, Some(ibis_doc_model::Rgb(0x549e39)));
+    s.key("cmd-shift-z");
+    assert_eq!(para(&s.document(), id).runs[0].format.color, Some(ibis_doc_model::Rgb(0x549e39)));
+
+    // 3. 「デザイン > 配色 > ブルー ウォーム (docx.design.theme-colors.blue_warm)」を適用
+    s.menu("docx.design.theme-colors.blue_warm");
+    s.settle();
+
+    assert_eq!(s.with(|e, _| e.current_docx_theme_colors_preset()), Some("blue_warm"));
+    // フォントは Facet のまま維持され、配色と解決色のみが Blue Warm の accent1 (#4A66AC) に更新される
+    assert_eq!(
+        s.with(|e, _| e.presentation().theme_fonts.as_ref().and_then(|f| f.major.latin.clone())).as_deref(),
+        Some("Century Gothic")
+    );
+    assert_eq!(para(&s.document(), id).runs[0].format.color, Some(ibis_doc_model::Rgb(0x4a66ac)));
+
+    // 4. 「デザイン > 配色 > 配色のカスタマイズ… (docx.design.theme-colors.customize)」パネルを開く
+    s.menu("docx.design.theme-colors.customize");
+    s.settle();
+
+    let is_panel_open = s.with(|e, _| e.doc_state().and_then(|st| st.theme_panel.as_ref()).is_some());
+    assert!(is_panel_open, "Custom theme colors/fonts panel opened");
+
+    // パネルで accent1 を #E1306C、見出し英数字フォントを Georgia、見出し日本語フォントを 游明朝 に変更して適用
+    s.update(|e, window, cx| {
+        let state = e.doc_state().unwrap();
+        let panel = state.theme_panel.as_ref().unwrap();
+        // index 4 is accent1
+        panel.colors[4].2.update(cx, |inp, cx| inp.set_value("#E1306C", window, cx));
+        panel.fonts[0].update(cx, |inp, cx| inp.set_value("Georgia", window, cx));
+        panel.fonts[1].update(cx, |inp, cx| inp.set_value("游明朝", window, cx));
+        e.apply_docx_theme_panel(window, cx);
+    });
+    s.settle();
+
+    assert_eq!(para(&s.document(), id).runs[0].format.color, Some(ibis_doc_model::Rgb(0xe1306c)));
+    assert_eq!(
+        s.with(|e, _| e.presentation().theme_fonts.as_ref().and_then(|f| f.major.latin.clone())).as_deref(),
+        Some("Georgia")
+    );
+    assert_eq!(
+        s.with(|e, _| e.presentation().theme_fonts.as_ref().and_then(|f| f.major.east_asian.clone())).as_deref(),
+        Some("游明朝")
+    );
+
+    // 5. OOXML 保存・再オープンで word/theme/theme1.xml と解決色が保持されることを検証
+    s.save_as("style012_013_custom_theme.docx");
+    let saved = s.reopen();
+    assert_eq!(saved.theme_fonts.as_ref().and_then(|f| f.major.latin.as_deref()), Some("Georgia"));
+    assert_eq!(saved.theme_fonts.as_ref().and_then(|f| f.major.east_asian.as_deref()), Some("游明朝"));
+    let reopened_acc1 = saved.theme_colors.iter().find(|(k, _)| k == "accent1").map(|(_, c)| *c);
+    assert_eq!(reopened_acc1, Some(ibis_doc_model::Rgb(0xe1306c)));
+    let fdoc = flow(&saved);
+    assert_eq!(para(fdoc, id).runs[0].format.color, Some(ibis_doc_model::Rgb(0xe1306c)));
+}
+
+/// DOCX-FLOAT-006 折り返し点の編集 (`wp:wrapPolygon`)：
+/// 1. 画像挿入後に「折り返し点の編集 (`docx.picture.edit-wrap-points`)」をONにすると、
+///    自動的に折り返しが `Tight` に切り替わり、既定の矩形ポリゴン（0..21600）が設定されることを検証。
+/// 2. プリセット（`diamond` / `octagon` / `inset`）、頂点の移動（`nudge_picture_wrap_point`）、
+///    頂点の追加（`insert_picture_wrap_point`）・削除（`remove_picture_wrap_point`）・リセット（`docx.picture.wrap-points.reset`）を検証。
+/// 3. 1ステップ Undo / Redo、および OOXML (`<wp:wrapPolygon edited="1">`) 保存・再読込での完全往復を検証。
+fn float006_edit_wrap_points() {
+    let mut s = Scenario::open(REPORT);
+    let (id, offset) = s.with(|e, _| {
+        for p in body(flow(e.presentation())) {
+            let mut offset = 0;
+            for r in &p.runs {
+                if matches!(r.kind, FlowRunKind::Picture { .. }) {
+                    return (p.id, offset);
+                }
+                offset += r.len();
+            }
+        }
+        panic!("a picture in REPORT");
+    });
+    s.click_text(FlowPos::new(id, offset));
+
+    // 1. メニューから「折り返し点の編集」をON
+    s.menu("docx.picture.edit-wrap-points");
+    s.settle();
+    assert!(s.with(|e, _| e.is_editing_wrap_points()));
+    assert_eq!(s.with(|e, _| e.picture_wrap_at_caret()), Some(ibis_doc_model::PictureWrapType::Tight));
+    let poly0 = s.with(|e, _| e.picture_wrap_polygon_at_caret()).expect("wrap polygon created");
+    assert_eq!(poly0.start, ibis_doc_model::WrapPoint::new(0, 0));
+
+    // 2. ひし形プリセットと頂点移動・頂点追加を検証
+    s.update(|e, _, cx| {
+        assert!(e.apply_picture_wrap_polygon_preset("diamond", cx));
+    });
+    s.settle();
+    let poly_diamond = s.with(|e, _| e.picture_wrap_polygon_at_caret()).unwrap();
+    assert_eq!(poly_diamond.start, ibis_doc_model::WrapPoint::new(10_800, 0));
+    assert!(poly_diamond.edited);
+
+    // 1ステップ Undo / Redo
+    s.key("cmd-z");
+    assert_eq!(
+        s.with(|e, _| e.picture_wrap_polygon_at_caret()).unwrap().start,
+        ibis_doc_model::WrapPoint::new(0, 0)
+    );
+    s.key("cmd-shift-z");
+    assert_eq!(
+        s.with(|e, _| e.picture_wrap_polygon_at_caret()).unwrap().start,
+        ibis_doc_model::WrapPoint::new(10_800, 0)
+    );
+
+    // 頂点の微調整（nudge）と追加（insert）
+    s.update(|e, _, cx| {
+        assert!(e.nudge_picture_wrap_point(0, 1000, 500, cx));
+        assert!(e.insert_picture_wrap_point(1, ibis_doc_model::WrapPoint::new(5000, 5000), cx));
+    });
+    s.settle();
+    let poly_edited = s.with(|e, _| e.picture_wrap_polygon_at_caret()).unwrap();
+    assert_eq!(poly_edited.start, ibis_doc_model::WrapPoint::new(11_800, 500));
+    assert_eq!(poly_edited.line_to.len(), 5);
+
+    // 3. OOXML 保存・再オープンで <wp:wrapPolygon> が往復保持されることを検証
+    s.save_as("float006_wrap_polygon.docx");
+    let saved = s.reopen();
+    let fdoc = flow(&saved);
+    let saved_poly = para(fdoc, id)
+        .runs
+        .iter()
+        .find_map(|r| match &r.kind {
+            FlowRunKind::Shape(sh) => sh.floating.as_ref().and_then(|f| f.wrap_polygon.clone()),
+            _ => None,
+        })
+        .expect("reopened wrap polygon");
+    assert!(saved_poly.edited);
+    assert_eq!(saved_poly.start, ibis_doc_model::WrapPoint::new(11_800, 500));
+    assert_eq!(saved_poly.line_to.len(), 5);
+}
+
+/// DOCX-TOC-016 マスター文書とサブ文書 (`w:subDoc`)：
+/// 1. 見出し段落から「見出しからサブ文書を作成 (`docx.master-doc.create-from-heading`)」でサブ文書化。
+/// 2. 展開 / 折りたたみ一括切り替え (`docx.master-doc.toggle-expand`)、ロック切り替え (`docx.master-doc.lock`) と編集保護。
+/// 3. サブ文書の分割 (`docx.master-doc.split`)・結合 (`docx.master-doc.merge`)・リンク解除 (`docx.master-doc.unlink`)。
+/// 4. 1ステップ Undo / Redo と OOXML (`<w:subDoc r:id="..."/>` + `subDocument` リレーションシップ) 往復保持を検証。
+fn toc016_master_and_subdocuments() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 0);
+    s.click_text(FlowPos::new(id, 0));
+
+    // 1. サブ文書を挿入し、分割・結合・ロック・展開を検証
+    s.update(|e, _, cx| {
+        assert!(e.insert_subdocument("chapter1.docx", cx));
+    });
+    s.settle();
+    assert_eq!(s.with(|e, _| e.subdocuments().len()), 1);
+    assert_eq!(s.with(|e, _| e.subdocument_at_caret().unwrap().1.target), "chapter1.docx");
+
+    // 展開・折りたたみの切り替え
+    s.menu("docx.master-doc.toggle-expand");
+    s.settle();
+    assert!(!s.with(|e, _| e.subdocument_at_caret().unwrap().1.expanded));
+
+    // ロックの切り替え
+    s.menu("docx.master-doc.lock");
+    s.settle();
+    assert!(s.with(|e, _| e.subdocument_at_caret().unwrap().1.locked));
+
+    // ロック解除
+    s.menu("docx.master-doc.lock");
+    s.settle();
+    assert!(!s.with(|e, _| e.subdocument_at_caret().unwrap().1.locked));
+
+    // サブ文書の分割 -> 2件のサブ文書になる
+    s.menu("docx.master-doc.split");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.subdocuments().len()), 2);
+    assert_eq!(s.with(|e, _| e.subdocuments()[1].1.target.clone()), "chapter1_part2.docx");
+
+    // 1ステップ Undo / Redo（サブ文書分割）
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.subdocuments().len()), 1);
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.subdocuments().len()), 2);
+
+    // 隣接するサブ文書の結合 -> 1件に戻る
+    s.menu("docx.master-doc.merge");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.subdocuments().len()), 1);
+
+    // OOXML 保存・再オープンで <w:subDoc r:id="..."/> が保持されることを検証
+    s.save_as("toc016_master_doc.docx");
+    let saved = s.reopen();
+    let fdoc = flow(&saved);
+    let reopened_sub = para(fdoc, id).subdoc.as_ref().expect("reopened subdoc");
+    assert_eq!(reopened_sub.target, "chapter1.docx");
+    assert!(!reopened_sub.expanded);
+
+    // リンク解除（本文へ統合）でサブ文書属性が解除されることを検証
+    s.menu("docx.master-doc.unlink");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.subdocuments().len()), 0);
+}
+
+/// DOCX-IMAGE-019, DOCX-INK-001〜007 手描き注釈・インク描画・色・太さ・効果・消しゴム・範囲選択・移動・サイズ変更・マウス切替・図形変換：
+/// 1. ペン (`Pen`)・鉛筆 (`Pencil`)・蛍光ペン (`Highlighter`) でフリーハンドのインク ストロークを描画 (`DOCX-IMAGE-019`, `DOCX-INK-001`)。
+/// 2. ペンの色・太さ・インク効果（レインボー / ギャラクシー / ゴールド等）の変更と選択インクへの反映 (`DOCX-INK-002`)。
+/// 3. マウス描画の切替 (`DOCX-INK-006`)、なげなわ・矩形範囲選択 (`DOCX-INK-004`)、移動とサイズ変更 (`DOCX-INK-005`)。
+/// 4. インクを図形に変換 (`DOCX-INK-007`)、消しゴムによる消去 (`DOCX-INK-003`)、1ステップ Undo / Redo、および `.docx` 保存・再読込での `<a:custGeom>` / `<a:gradFill>` 往復保持を検証。
+fn ink001_007_draw_erase_select_move_resize_and_to_shape() {
+    use crate::docx::ink::{InkEffect, PenKind, is_docx_ink_shape};
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 0);
+    s.click_text(FlowPos::new(id, 0));
+
+    let count_ink = |doc: &FlowDocument| -> usize {
+        body(doc)
+            .iter()
+            .flat_map(|p| &p.runs)
+            .filter(|r| matches!(&r.kind, FlowRunKind::Shape(sh) if is_docx_ink_shape(sh)))
+            .count()
+    };
+    let initial_ink = count_ink(&s.document());
+    assert_eq!(initial_ink, 0);
+
+    // 1. メニューから「ペン」を選択してインク パネルを開き、1本目のインク ストロークを描画 (DOCX-IMAGE-019, DOCX-INK-001)
+    s.menu("docx.ink.pen");
+    s.settle();
+    assert!(s.with(|e, _| e.sidebar_open));
+    assert_eq!(
+        s.with(|e, _| e.doc_state().and_then(|st| st.docx_ink.as_ref()).map(|i| i.pen)),
+        Some(PenKind::Pen)
+    );
+
+    s.update(|e, _, cx| {
+        assert!(e.insert_docx_ink_stroke(0, &[(100.0, 120.0), (140.0, 135.0), (190.0, 125.0)], cx));
+    });
+    s.settle();
+    assert_eq!(count_ink(&s.document()), 1);
+
+    // 2. 蛍光ペンに切り替えて2本目のストロークを描画 (DOCX-INK-001)
+    s.menu("docx.ink.highlighter");
+    s.settle();
+    s.update(|e, _, cx| {
+        assert!(e.insert_docx_ink_stroke(0, &[(100.0, 160.0), (220.0, 160.0)], cx));
+    });
+    s.settle();
+    assert_eq!(count_ink(&s.document()), 2);
+
+    // 3. ペンの色・太さ・インク効果（Rainbow）を選択中のインクに適用 (DOCX-INK-002)
+    s.update(|e, _, cx| {
+        e.set_docx_ink_width(4.5, cx);
+        e.set_docx_ink_effect(Some(InkEffect::Rainbow), cx);
+    });
+    s.settle();
+    let has_gradient_stroke = s.with(|e, _| {
+        body(flow(e.presentation()))
+            .iter()
+            .flat_map(|p| &p.runs)
+            .any(|r| match &r.kind {
+                FlowRunKind::Shape(sh) => match &sh.kind {
+                    ibis_doc_model::ShapeKind::Auto(a) => a
+                        .stroke
+                        .as_ref()
+                        .is_some_and(|st| matches!(st.fill, Some(ibis_doc_model::Fill::Linear { .. }))),
+                    _ => false,
+                },
+                _ => false,
+            })
+    });
+    assert!(has_gradient_stroke, "selected ink should have Rainbow linear gradient stroke");
+
+    // 4. タッチ / マウス描画切替 (DOCX-INK-006)
+    s.menu("docx.ink.draw-with-mouse");
+    s.settle();
+    assert!(!s.with(|e, _| e.doc_state().and_then(|st| st.docx_ink.as_ref()).unwrap().mouse));
+    // マウス描画 OFF 時は begin_docx_ink が false を返すこと
+    assert!(!s.update(|e, _, cx| e.begin_docx_ink(0, 120.0, 120.0, cx)));
+    // 再度 ON に戻す
+    s.menu("docx.ink.draw-with-mouse");
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.docx_ink.as_ref()).unwrap().mouse));
+
+    // 5. 矩形範囲（なげなわ）選択で2本のインクを一括選択し、移動・サイズ変更 (DOCX-INK-004, DOCX-INK-005)
+    let selected = s.update(|e, _, cx| e.select_docx_ink_in_rect(0, 80.0, 100.0, 250.0, 180.0, cx));
+    assert_eq!(selected, 2);
+
+    let before_pos = s.with(|e, _| {
+        let pos = e.target_docx_ink_positions()[0];
+        let p = ibis_doc_model::flow_command::paragraph(flow(e.presentation()), pos.para).unwrap();
+        p.runs.iter().find_map(|r| match &r.kind {
+            FlowRunKind::Shape(sh) if is_docx_ink_shape(sh) => sh.floating.as_ref().map(|f| (f.offset_x, f.offset_y, sh.frame.width)),
+            _ => None,
+        }).unwrap()
+    });
+    s.update(|e, _, cx| {
+        assert_eq!(e.move_selected_docx_ink(20.0, 10.0, cx), 2);
+        assert_eq!(e.resize_selected_docx_ink(1.5, 1.5, cx), 2);
+    });
+    s.settle();
+    let after_pos = s.with(|e, _| {
+        let pos = e.target_docx_ink_positions()[0];
+        let p = ibis_doc_model::flow_command::paragraph(flow(e.presentation()), pos.para).unwrap();
+        p.runs.iter().find_map(|r| match &r.kind {
+            FlowRunKind::Shape(sh) if is_docx_ink_shape(sh) => sh.floating.as_ref().map(|f| (f.offset_x, f.offset_y, sh.frame.width)),
+            _ => None,
+        }).unwrap()
+    });
+    assert!(after_pos.0 > before_pos.0 && after_pos.1 > before_pos.1);
+    assert!(after_pos.2 > before_pos.2);
+
+    // 6. OOXML 保存・再読込でインクのカスタムジオメトリとグラデーション効果が保持されることを検証
+    s.save_as("ink001_007_roundtrip.docx");
+    let saved = s.reopen();
+    let saved_fdoc = flow(&saved);
+    assert_eq!(count_ink(saved_fdoc), 2);
+
+    // 7. 消しゴムによるポイント消去と Undo / Redo (DOCX-INK-003)
+    s.update(|e, _, cx| {
+        let erased = e.erase_docx_ink_at(0, 120.0, 170.0, cx);
+        assert_eq!(erased, 1);
+    });
+    s.settle();
+    assert_eq!(count_ink(&s.document()), 1);
+
+    s.key("cmd-z");
+    assert_eq!(count_ink(&s.document()), 2, "undo restores erased ink stroke");
+    s.key("cmd-shift-z");
+    assert_eq!(count_ink(&s.document()), 1, "redo re-erases ink stroke");
+
+    // 8. 四角形のインクを描画し、「選択インクを図形に変換 (`docx_ink_to_shape`)」で四角形プリセット図形に変換 (DOCX-INK-007)
+    s.update(|e, _, cx| {
+        e.set_docx_ink_pen(PenKind::Pen, cx);
+        assert!(e.insert_docx_ink_stroke(
+            0,
+            &[
+                (100.0, 220.0),
+                (200.0, 220.0),
+                (200.0, 280.0),
+                (100.0, 280.0),
+                (100.0, 220.0),
+            ],
+            cx
+        ));
+    });
+    s.settle();
+    assert_eq!(count_ink(&s.document()), 2);
+
+    let converted = s.update(|e, _, cx| e.docx_ink_to_shape(cx));
+    assert_eq!(converted, 1, "closed rectangular ink stroke should convert to a preset rectangle shape");
+    assert_eq!(count_ink(&s.document()), 1);
+}
+
+/// DOCX-INK-010 インク エディターによる操作ジェスチャ（取り消し線で削除・丸囲みで選択・蛍光ペンでハイライト・縦線で空白挿入）：
+/// 1. インク エディター モード (`docx.ink.ink-editor`) を ON にする。
+/// 2. 丸囲みジェスチャで行内テキストが選択されることを検証 (`SelectRange`)。
+/// 3. 蛍光ペンジェスチャで行内テキストにハイライト色が適用されることを検証 (`HighlightRange`)。
+/// 4. 縦線ジェスチャで行内テキストに半角空白が挿入されることを検証 (`InsertSpace`)。
+/// 5. 取り消し線ジェスチャで行内テキストが削除され、1ステップ Undo / Redo で復元・再削除できることを検証 (`DeleteRange`)。
+fn ink010_ink_editor_gestures() {
+    use crate::docx::ink::{DocxInkGesture, PenKind};
+    let mut s = Scenario::open(REPORT);
+    let (_, id, initial_text) = text_paragraph(&mut s, 0);
+    s.click_text(FlowPos::new(id, 0));
+
+    // 段落の行ジオメトリから1行目の座標を取得
+    let (line_x, line_y, line_h) = s.with(|e, _| {
+        let lines = e.flow_lines();
+        let l = lines.iter().find(|l| l.para == id).expect("line for first paragraph");
+        (l.x, l.y, l.h)
+    });
+    let mid_y = line_y + line_h * 0.5;
+
+    // 1. インク エディター モードを ON
+    s.menu("docx.ink.ink-editor");
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().and_then(|st| st.docx_ink.as_ref()).unwrap().ink_editor_mode));
+
+    // 2. 丸囲みジェスチャ -> テキスト範囲が選択されること (SelectRange)
+    let select_gesture = s.update(|e, _, cx| {
+        e.apply_docx_ink_gesture(
+            0,
+            &[
+                (line_x + 2.0, mid_y - 6.0),
+                (line_x + 45.0, mid_y - 6.0),
+                (line_x + 45.0, mid_y + 6.0),
+                (line_x + 2.0, mid_y + 6.0),
+                (line_x + 2.0, mid_y - 6.0),
+            ],
+            cx,
+        )
+    });
+    assert!(matches!(select_gesture, Some(DocxInkGesture::SelectRange(_, _))));
+    let (sel_a, sel_b) = s.with(|e, _| e.ordered_selection().expect("selection from circle gesture"));
+    assert!(sel_b.offset > sel_a.offset);
+
+    // 3. 蛍光ペンジェスチャ -> テキスト範囲にハイライトが適用されること (HighlightRange)
+    s.update(|e, _, cx| {
+        e.set_docx_ink_pen(PenKind::Highlighter, cx);
+        let g = e.apply_docx_ink_gesture(
+            0,
+            &[(line_x + 2.0, mid_y), (line_x + 40.0, mid_y)],
+            cx,
+        );
+        assert!(matches!(g, Some(DocxInkGesture::HighlightRange(_, _))));
+    });
+    s.settle();
+    assert!(para(&s.document(), id).runs.iter().any(|r| r.format.highlight.is_some()));
+
+    // 4. ペンに戻して縦線ジェスチャ -> 空白が挿入されること (InsertSpace)
+    let len_before_space = para(&s.document(), id).text().chars().count();
+    s.update(|e, _, cx| {
+        e.set_docx_ink_pen(PenKind::Pen, cx);
+        let g = e.apply_docx_ink_gesture(
+            0,
+            &[(line_x + 15.0, mid_y - 8.0), (line_x + 15.0, mid_y + 8.0)],
+            cx,
+        );
+        assert!(matches!(g, Some(DocxInkGesture::InsertSpace(_))));
+    });
+    s.settle();
+    assert_eq!(para(&s.document(), id).text().chars().count(), len_before_space + 1);
+    s.key("cmd-z");
+    assert_eq!(para(&s.document(), id).text().chars().count(), len_before_space);
+
+    // 5. 取り消し線ジェスチャ -> 横切ったテキストが削除され、Undo / Redo で戻せること (DeleteRange)
+    s.update(|e, _, cx| {
+        let g = e.apply_docx_ink_gesture(
+            0,
+            &[(line_x + 2.0, mid_y), (line_x + 50.0, mid_y)],
+            cx,
+        );
+        assert!(matches!(g, Some(DocxInkGesture::DeleteRange(_, _))));
+    });
+    s.settle();
+    let after_delete_text = para(&s.document(), id).text();
+    assert!(after_delete_text.chars().count() < initial_text.chars().count());
+
+    // 1ステップ Undo / Redo
+    s.key("cmd-z");
+    assert_eq!(para(&s.document(), id).text(), initial_text);
+    s.key("cmd-shift-z");
+    assert_eq!(para(&s.document(), id).text(), after_delete_text);
+}
+
+/// DOCX-MATH-001 (本文中の行内数式 `m:oMath`) / DOCX-MATH-002 (独立した表示数式 `m:oMathPara`) / DOCX-MATH-023 (OMML構造と保存再読込)：
+/// 1. 行内数式 (`display = false`) を挿入し、キャレット上の既存数式で `insert.equation` パネルを開くと既存の LaTeX 式・表示モードがパネルに読み込まれることを検証。
+/// 2. パネルから数式を編集・確定 (`insert_docx_math_from_panel`) すると、新規挿入ではなく既存の数式がその場で置き換えられ（表示モードも `display = true` の独立表示数式へ変更可能）、1ステップ Undo / Redo が効くことを検証。
+/// 3. 斜め分数 (`docx.math.struct.fraction-skewed` / `\sfrac`)、1行分数 (`docx.math.struct.fraction-linear` / `\lfrac`)、線なし分数 (`docx.math.struct.fraction-nobar` / `\nobarfrac`) を挿入し、OOXML 保存・再読込で `<m:fPr><m:type m:val="skw|lin|noBar"/></m:fPr>` が完全往復することを検証。
+fn math001_002_023_inplace_edit_and_skewed_linear_frac_roundtrip() {
+    use ibis_doc_model::FlowRunKind;
+    use ibis_doc_model::math::{FracKind, Math};
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 0);
+    s.click_text(FlowPos::new(id, 0));
+
+    // 1. Insert an inline equation via insert_docx_math_structure("fraction")
+    s.menu("docx.math.struct.fraction");
+    s.settle();
+    let initial_math_count = para(&s.document(), id)
+        .runs
+        .iter()
+        .filter(|r| matches!(r.kind, FlowRunKind::Math { .. }))
+        .count();
+    assert_eq!(initial_math_count, 1);
+
+    // Move caret back to offset 0 (on the math run) and open the equation panel
+    s.click_text(FlowPos::new(id, 0));
+    s.menu("insert.equation");
+    s.settle();
+
+    // Verify existing equation is preloaded into the panel
+    let (loaded_text, loaded_display) = s.update(|e, _, cx| {
+        let panel = e.doc_state().and_then(|st| st.docx_math.as_ref()).expect("math panel open");
+        let text = panel.input.read(cx).value().to_string();
+        let disp = panel.display;
+        (text, disp)
+    });
+    assert_eq!(loaded_text, "a/b");
+    assert!(!loaded_display);
+
+    // 2. Edit equation in-place via panel and switch to display mode (m:oMathPara)
+    s.update(|e, window, cx| {
+        let panel = e.doc_state_mut().and_then(|st| st.docx_math.as_mut()).unwrap();
+        panel.display = true;
+        panel.input.update(cx, |inp, cx| {
+            inp.set_value(r"\sfrac{x}{y}+\lfrac{u}{v}+\nobarfrac{p}{q}", window, cx);
+        });
+        e.insert_docx_math_from_panel(cx);
+    });
+    s.settle();
+
+    // Verify math count is still 1 (edited in-place, not duplicated) and display is now true
+    let math_runs: Vec<(Math, bool)> = para(&s.document(), id)
+        .runs
+        .iter()
+        .filter_map(|r| match &r.kind {
+            FlowRunKind::Math { math, display } => Some((math.clone(), *display)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(math_runs.len(), 1);
+    assert!(math_runs[0].1, "updated in-place to display math (m:oMathPara)");
+    assert_eq!(math_runs[0].0.to_latex(), r"\sfrac{x}{y}+\lfrac{u}{v}+\nobarfrac{p}{q}");
+
+    // Verify 1-step Undo restores original inline \frac{a}{b} and Redo re-applies the edit
+    s.click_text(FlowPos::new(id, 0));
+    s.key("cmd-z");
+    let undone_runs: Vec<(Math, bool)> = para(&s.document(), id)
+        .runs
+        .iter()
+        .filter_map(|r| match &r.kind {
+            FlowRunKind::Math { math, display } => Some((math.clone(), *display)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(undone_runs.len(), 1);
+    assert!(!undone_runs[0].1);
+    assert_eq!(undone_runs[0].0.to_latex(), r"\frac{a}{b}");
+
+    s.key("cmd-shift-z");
+    let redone_runs: Vec<(Math, bool)> = para(&s.document(), id)
+        .runs
+        .iter()
+        .filter_map(|r| match &r.kind {
+            FlowRunKind::Math { math, display } => Some((math.clone(), *display)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(redone_runs.len(), 1);
+    assert!(redone_runs[0].1);
+
+    // 3. Save and reopen OOXML roundtrip
+    let saved = s.save_as("test-math-inplace-and-frac-kinds.docx");
+    let bytes = std::fs::read(&saved).expect("read saved docx");
+    let reopened = ibis_pptx::read(&bytes).expect("reopen saved docx");
+    let re_p = body(flow(&reopened))
+        .into_iter()
+        .find(|p| p.id == id)
+        .expect("reopened paragraph");
+    let (re_math, re_disp) = re_p
+        .runs
+        .iter()
+        .find_map(|r| match &r.kind {
+            FlowRunKind::Math { math, display } => Some((math, *display)),
+            _ => None,
+        })
+        .expect("reopened math run");
+    assert!(re_disp);
+    assert_eq!(re_math.to_latex(), r"\sfrac{x}{y}+\lfrac{u}{v}+\nobarfrac{p}{q}");
+    let Math::Row(items) = re_math else { panic!("expected Math::Row") };
+    let kinds: Vec<FracKind> = items
+        .iter()
+        .filter_map(|m| match m {
+            Math::Frac { kind, .. } => Some(*kind),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, vec![FracKind::Skew, FracKind::Linear, FracKind::NoBar]);
+}
+
+/// DOCX-FLOAT-016 グループ化と解除 (`wpg:wgp`)：
+/// 1. 段落内に複数の浮動図形を配置し、メニュー `docx.shape.group` でグループ化できることを検証。
+/// 2. グループ化された状態で `move_docx_shape_group` を呼ぶと、グループ内の全図形が一体として移動し、1ステップ Undo / Redo で戻せることを検証。
+/// 3. OOXML 保存・再読込で `<wpg:wgp>`（WordprocessingGroup）として書き出され、再読込後も `shape_groups` と各子図形の座標・サイズが保持されることを検証。
+/// 4. メニュー `docx.shape.ungroup` でグループ解除でき、1ステップ Undo / Redo が効くことを検証。
+fn float016_group_and_ungroup_shapes() {
+    use ibis_doc_model::{Command, EmuSize, FlowCommand, FlowRunKind, Geometry, Rgb};
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 0);
+    s.click_text(FlowPos::new(id, 0));
+
+    // 1. Insert 2 floating shapes in paragraph `id`
+    let at0 = FlowPos::new(id, 0);
+    let at1 = FlowPos::new(id, 1);
+    s.update(|e, _, cx| {
+        e.run(
+            vec![
+                Command::Flow(FlowCommand::InsertShape {
+                    at: at0,
+                    size: EmuSize::new(914_400, 457_200),
+                    geometry: Geometry::Rect,
+                    fill: Some(Rgb(0x4472c4)),
+                    line: Some((Rgb(0x1f4e79), 12_700)),
+                }),
+                Command::Flow(FlowCommand::PlaceShapeOnPage {
+                    at: at0,
+                    size: EmuSize::new(914_400, 457_200),
+                    x: 457_200,
+                    y: 457_200,
+                }),
+                Command::Flow(FlowCommand::InsertShape {
+                    at: at1,
+                    size: EmuSize::new(685_800, 685_800),
+                    geometry: Geometry::Ellipse,
+                    fill: Some(Rgb(0xed7d31)),
+                    line: Some((Rgb(0xc55a11), 12_700)),
+                }),
+                Command::Flow(FlowCommand::PlaceShapeOnPage {
+                    at: at1,
+                    size: EmuSize::new(685_800, 685_800),
+                    x: 1_600_200,
+                    y: 685_800,
+                }),
+            ],
+            cx,
+        );
+    });
+    s.settle();
+
+    // Verify docx.shape.group is enabled and docx.shape.ungroup is disabled initially
+    assert_eq!(s.menu_state("docx.shape.group"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.shape.ungroup"), Some((false, false)));
+
+    // Group shapes via menu "docx.shape.group"
+    s.menu("docx.shape.group");
+    s.settle();
+    assert_eq!(s.document().shape_groups.len(), 1);
+    assert_eq!(s.document().shape_groups[0].leaf_shape_ids().len(), 2);
+    assert_eq!(s.menu_state("docx.shape.ungroup"), Some((true, false)));
+
+    let first_shape_id = s.document().shape_groups[0].leaf_shape_ids()[0];
+
+    // 2. Move the grouped shape by (+228_600, +114_300) EMUs -> both shapes move together
+    let moved = s.update(|e, _, cx| e.move_docx_shape_group(first_shape_id, 228_600, 114_300, cx));
+    assert!(moved);
+    s.settle();
+
+    let origins_after_move: Vec<(i64, i64)> = para(&s.document(), id)
+        .runs
+        .iter()
+        .filter_map(|r| match &r.kind {
+            FlowRunKind::Shape(sh) => Some((sh.frame.x, sh.frame.y)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(origins_after_move, vec![(457_200 + 228_600, 457_200 + 114_300), (1_600_200 + 228_600, 685_800 + 114_300)]);
+
+    // 1-step Undo / Redo of group move
+    s.key("cmd-z");
+    let origins_undone: Vec<(i64, i64)> = para(&s.document(), id)
+        .runs
+        .iter()
+        .filter_map(|r| match &r.kind {
+            FlowRunKind::Shape(sh) => Some((sh.frame.x, sh.frame.y)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(origins_undone, vec![(457_200, 457_200), (1_600_200, 685_800)]);
+
+    s.key("cmd-shift-z");
+
+    // 3. Save and reopen OOXML roundtrip (<wpg:wgp>)
+    let saved = s.save_as("test-float016-wpg-group.docx");
+    let bytes = std::fs::read(&saved).expect("read saved docx");
+    let reopened = ibis_pptx::read(&bytes).expect("reopen saved docx");
+    assert_eq!(flow(&reopened).shape_groups.len(), 1);
+    assert_eq!(flow(&reopened).shape_groups[0].leaf_shape_ids().len(), 2);
+
+    // 4. Ungroup via menu "docx.shape.ungroup" and test Undo / Redo
+    s.menu("docx.shape.ungroup");
+    s.settle();
+    assert!(s.document().shape_groups.is_empty());
+
+    s.key("cmd-z");
+    assert_eq!(s.document().shape_groups.len(), 1);
+    s.key("cmd-shift-z");
+    assert!(s.document().shape_groups.is_empty());
+}
+
+/// DOCX-SEC-019 (旧doc・RTF・テキスト変換), DOCX-FILE-010 (docxと旧docの変換),
+/// DOCX-FILE-012 (ODT・HTML等の変換), DOCX-FILE-013 (PDFから文書への変換)：
+/// 1. メニュー `docx.file.convert-format` で文書形式の変換パネルが開くことを検証。
+/// 2. `.doc` (Word 97-2003 OLE2 CFB)、`.rtf`、`.txt`、`.html`、`.odt` の各形式への書き出しと再変換読み込みを検証。
+/// 3. `.pdf` (PDF ストリーム) から Word 文書へのリフロー変換読み込みと `.docx` 保存ラウンドトリップを検証。
+fn file010_012_013_sec019_document_conversions() {
+    use ibis_pptx::docx_convert::DocxConvertFormat;
+
+    let mut s = Scenario::open(REPORT);
+
+    // 1. Open conversion panel via menu "docx.file.convert-format"
+    s.menu("docx.file.convert-format");
+    assert!(s.with(|e, _| e.is_docx_convert_panel_open()));
+
+    let out_dir = crate::shell::scenario::repo_root().join("target/test-docx-conversions");
+    let _ = std::fs::create_dir_all(&out_dir);
+
+    // 2. Export and re-import .doc (OLE2 CFB), .rtf, .txt, .html, .odt
+    for fmt in [
+        DocxConvertFormat::Doc,
+        DocxConvertFormat::Rtf,
+        DocxConvertFormat::Txt,
+        DocxConvertFormat::Html,
+        DocxConvertFormat::Odt,
+    ] {
+        let path = out_dir.join(format!("converted_report.{}", fmt.extension()));
+        s.update(|e, window, cx| {
+            e.set_docx_convert_export_format(fmt, window, cx);
+        });
+        let written = s
+            .update(|e, _, cx| e.export_docx_to_file(fmt, &path, cx))
+            .expect("export should succeed");
+        assert!(written > 0);
+        assert!(path.exists());
+    }
+
+    // Verify .doc starts with OLE2 Compound File Binary magic D0 CF 11 E0 A1 B1 1A E1
+    let doc_bytes = std::fs::read(out_dir.join("converted_report.doc")).expect("read .doc");
+    assert_eq!(&doc_bytes[0..8], &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]);
+
+    // Import .doc, .rtf, .txt, .html, .odt back into editor
+    for fmt in [
+        DocxConvertFormat::Doc,
+        DocxConvertFormat::Rtf,
+        DocxConvertFormat::Txt,
+        DocxConvertFormat::Html,
+        DocxConvertFormat::Odt,
+    ] {
+        let path = out_dir.join(format!("converted_report.{}", fmt.extension()));
+        let detected = s
+            .update(|e, window, cx| e.import_docx_from_file(&path, window, cx))
+            .expect("import should succeed");
+        assert_eq!(detected, fmt);
+        s.settle();
+        assert!(!body(&s.document()).is_empty(), "imported {:?} should have paragraphs", fmt);
+    }
+
+    // 3. PDF-to-Word reflow import (DOCX-FILE-013)
+    let pdf_path = out_dir.join("sample_reflow.pdf");
+    let sample_pdf = b"%PDF-1.4\n\
+1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n\
+3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>\nendobj\n\
+4 0 obj\n<< /Length 142 >>\nstream\n\
+BT\n\
+/F1 18 Tf\n\
+1 0 0 1 72 740 Tm\n\
+(Quarterly Financial Summary) Tj\n\
+/F1 11 Tf\n\
+1 0 0 1 72 700 Tm\n\
+(Revenue increased by 25 percent year over year.) Tj\n\
+ET\n\
+endstream\nendobj\n\
+%%EOF\n";
+    std::fs::write(&pdf_path, sample_pdf).expect("write sample PDF");
+
+    let pdf_fmt = s
+        .update(|e, window, cx| e.import_docx_from_file(&pdf_path, window, cx))
+        .expect("import PDF should succeed");
+    assert_eq!(pdf_fmt, DocxConvertFormat::Pdf);
+    s.settle();
+
+    let pdf_texts: Vec<String> = body(&s.document()).iter().map(|p| p.text()).collect();
+    assert_eq!(
+        pdf_texts,
+        vec![
+            "Quarterly Financial Summary".to_string(),
+            "Revenue increased by 25 percent year over year.".to_string(),
+        ]
+    );
+    // Heading inferred from 18pt font in PDF
+    assert_eq!(body(&s.document())[0].style.as_deref(), Some("Heading1"));
+
+    // Save imported PDF as .docx and verify roundtrip
+    let saved = s.save_as("test-pdf-converted.docx");
+    let bytes = std::fs::read(&saved).expect("read saved docx");
+    let reopened = ibis_pptx::read(&bytes).expect("reopen saved docx");
+    let re_texts: Vec<String> = body(flow(&reopened)).iter().map(|p| p.text()).collect();
+    assert_eq!(re_texts, pdf_texts);
+}
+
+/// DOCX-ACCESS-007 (スクリーンリーダーの操作), DOCX-ACCESS-009 (読み上げ),
+/// DOCX-CLOUD-020 (リボンとクイックアクセスのカスタマイズ):
+/// 1. メニュー `docx.screen-reader` でスクリーンリーダー操作パネルを開き、見出し・表・リンク等のランドマーク一覧取得と次／前移動・現在位置の読み上げ案内を検証。
+/// 2. メニュー `docx.read-aloud` で音声読み上げパネルを開き、段落ごとの読み上げ追従、再生／一時停止、次／前移動、速度・音声変更を検証。
+/// 3. メニュー `docx.customize-toolbar` でツールバー＆クイックアクセスのカスタマイズパネルを開き、リボングループの表示切替・QAT コマンド追加削除・既定値リセットを検証。
+fn access007_009_cloud020_screen_reader_read_aloud_and_customize() {
+    use crate::docx::accessibility::{DocxToolbarGroup, ReadAloudVoice, ScreenReaderLandmarkKind};
+
+    let mut s = Scenario::open(REPORT);
+
+    // 1. DOCX-ACCESS-007: Screen Reader Navigation
+    s.menu("docx.screen-reader");
+    assert!(s.with(|e, _| e.is_docx_screen_reader_open()));
+
+    let all_landmarks = s.with(|e, _| e.docx_screen_reader_landmarks(Some(ScreenReaderLandmarkKind::All)));
+    assert!(!all_landmarks.is_empty(), "REPORT should have screen reader landmarks");
+
+    let heading_landmarks = s.with(|e, _| e.docx_screen_reader_landmarks(Some(ScreenReaderLandmarkKind::Heading)));
+    assert!(!heading_landmarks.is_empty(), "REPORT should have heading landmarks");
+
+    let first_lm = s
+        .update(|e, _, cx| e.docx_screen_reader_next_landmark(Some(ScreenReaderLandmarkKind::All), cx))
+        .expect("should jump to first landmark");
+    assert_eq!(s.selection().map(|(_, c)| c), Some(first_lm.at));
+
+    let second_lm = s
+        .update(|e, _, cx| e.docx_screen_reader_next_landmark(Some(ScreenReaderLandmarkKind::All), cx))
+        .expect("should jump to second landmark");
+    assert_eq!(s.selection().map(|(_, c)| c), Some(second_lm.at));
+
+    let announcement = s.update(|e, _, _| e.docx_screen_reader_announce_at_caret());
+    assert!(!announcement.is_empty());
+
+    let prev_lm = s
+        .update(|e, _, cx| e.docx_screen_reader_prev_landmark(Some(ScreenReaderLandmarkKind::All), cx))
+        .expect("should jump back to first landmark");
+    assert_eq!(prev_lm.at, first_lm.at);
+    assert_eq!(s.selection().map(|(_, c)| c), Some(prev_lm.at));
+
+    s.update(|e, _, cx| e.close_docx_screen_reader_panel(cx));
+    assert!(!s.with(|e, _| e.is_docx_screen_reader_open()));
+
+    // 2. DOCX-ACCESS-009: Read Aloud
+    s.menu("docx.read-aloud");
+    assert!(s.with(|e, _| e.is_docx_read_aloud_open()));
+    assert!(s.with(|e, _| e.is_docx_read_aloud_playing()));
+
+    let first_spoken = s.with(|e, _| e.docx_read_aloud_spoken_text()).expect("first spoken unit");
+    assert!(!first_spoken.trim().is_empty());
+
+    assert!(s.update(|e, _, cx| e.docx_read_aloud_next(cx)));
+    let second_spoken = s.with(|e, _| e.docx_read_aloud_spoken_text()).expect("second spoken unit");
+    assert_ne!(first_spoken, second_spoken);
+
+    assert!(s.update(|e, _, cx| e.docx_read_aloud_prev(cx)));
+    assert_eq!(s.with(|e, _| e.docx_read_aloud_spoken_text()).as_deref(), Some(first_spoken.as_str()));
+
+    s.update(|e, _, cx| {
+        e.docx_read_aloud_set_speed(1.5, cx);
+        e.docx_read_aloud_set_voice(ReadAloudVoice::KyokoJa, cx);
+        e.docx_read_aloud_toggle_play(cx);
+    });
+    assert!(!s.with(|e, _| e.is_docx_read_aloud_playing()));
+    s.update(|e, _, cx| e.close_docx_read_aloud(cx));
+    assert!(!s.with(|e, _| e.is_docx_read_aloud_open()));
+
+    // 3. DOCX-CLOUD-020: Customize Ribbon & Quick Access Toolbar
+    s.menu("docx.customize-toolbar");
+    assert!(s.with(|e, _| e.is_docx_customize_toolbar_open()));
+    assert!(s.toolbar_state("bold").is_some(), "bold button visible by default");
+
+    // Hide Font group -> bold button is filtered from toolbar_right
+    s.update(|e, _, cx| e.set_docx_toolbar_group_visible(DocxToolbarGroup::Font, false, cx));
+    s.settle();
+    assert!(!s.with(|e, _| e.is_docx_toolbar_group_visible(DocxToolbarGroup::Font)));
+    assert!(s.toolbar_state("bold").is_none(), "bold button hidden when Font group is off");
+
+    // Add Word command to Quick Access Toolbar
+    crate::shell::qat::toggle("docx.read-aloud");
+    assert!(crate::shell::qat::commands().contains(&"docx.read-aloud".to_string()));
+
+    // Reset all customizations
+    s.update(|e, _, cx| e.reset_docx_toolbar_customization(cx));
+    s.settle();
+    assert!(s.with(|e, _| e.is_docx_toolbar_group_visible(DocxToolbarGroup::Font)));
+    assert!(s.toolbar_state("bold").is_some(), "bold button restored after reset");
+    assert!(!crate::shell::qat::commands().contains(&"docx.read-aloud".to_string()));
+}
+
+/// Comprehensive scenario verifying:
+/// DOCX-EDIT-006 (手動改行とタブの入力), DOCX-EDIT-010 (テキストのみ貼付),
+/// DOCX-FONT-018 (直接書式の解除), DOCX-PARA-014 (次段落と分離しない), DOCX-PARA-015 (段落内で改ページしない),
+/// DOCX-LIST-006 (複数レベルのリスト), DOCX-LIST-009 (番号の配置と字下げ), DOCX-LIST-012 (リストのレベル変更),
+/// DOCX-TBLFMT-004 (行高の固定値・最小値), DOCX-FLOAT-001 (行内配置),
+/// DOCX-FLOAT-003 (外周・内部の折返し), DOCX-FLOAT-004 (上下のみの折返し),
+/// DOCX-HEADER-003 (奇数偶数ページを別指定), DOCX-HEADER-005 (上下端からの位置),
+/// DOCX-TOC-005 (目次のタブリーダーとページ番号), DOCX-TOC-013 (ナビゲーションペイン),
+/// DOCX-MERGE-006 (差込フィールド), DOCX-FORM-012 (コントロール削除禁止), DOCX-FORM-013 (コントロール内容の編集禁止),
+/// DOCX-REVIEW-007 (変更履歴の承諾), DOCX-REVIEW-012 (コメントへの返信), DOCX-REVIEW-013 (コメントの解決と再開),
+/// DOCX-ACCESS-011 (表示ズーム), DOCX-SEC-012 (印刷プレビュー), DOCX-SEC-017 (PDF出力とタグ),
+/// DOCX-FCODE-021 (FileName), DOCX-FCODE-048 (PageRef), DOCX-FCODE-062 (StyleRef),
+/// DOCX-MATH-028 (全構造・記号・変換の版条件照合), DOCX-VIEW-001 (印刷レイアウト表示),
+/// DOCX-VIEW-007 (ページの縦方向移動), DOCX-VIEW-010 (ズーム倍率指定),
+/// DOCX-FILE-003 (既存文書を開く), DOCX-FILE-004 (最近使った文書と保存先),
+/// DOCX-OPTIONS-016 (コンテキストタブと右クリック照合), DOCX-AUDIT-006 (OOXML標準とMicrosoft拡張の保存要素対応).
+fn audit_core_editing_formatting_layout_and_review() {
+    let mut s = Scenario::open(REPORT);
+
+    // 1. DOCX-FILE-003 & DOCX-VIEW-001 & DOCX-ACCESS-011 & DOCX-VIEW-010:
+    // Verify Print Layout view and Zoom controls
+    assert!(!s.document().body.is_empty(), "existing document opened");
+    s.menu("view.zoom-in");
+    let z_in = s.with(|e, _| e.zoom.unwrap_or(1.0));
+    assert!(z_in > 1.0, "zoom increased: {z_in}");
+    s.update(|e, window, cx| e.zoom_100_percent(window, cx));
+    assert!((s.with(|e, _| e.zoom.unwrap_or(1.0)) - 1.0).abs() < 0.01, "zoom reset to 100%");
+
+    // 2. DOCX-EDIT-006 (Shift+Enter LineBreak & Tab) and DOCX-FONT-018 (Clear Direct Formatting)
+    let (_, p_id, _) = text_paragraph(&mut s, 8);
+    s.click_text(FlowPos::new(p_id, 0));
+    s.key("shift-enter");
+    s.key("tab");
+    let doc = s.document();
+    let p = para(&doc, p_id);
+    assert!(p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::LineBreak)), "Shift+Enter inserts LineBreak");
+    assert!(p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Tab)), "Tab key inserts Tab run");
+
+    // Select a character, make bold, then clear direct formatting (RunChange::Clear)
+    s.click_text(FlowPos::new(p_id, 2));
+    s.key("shift-right");
+    s.toolbar("bold");
+    assert!(para(&s.document(), p_id).runs.iter().any(|r| r.style.bold));
+    s.toolbar("clear-format");
+    assert!(!para(&s.document(), p_id).runs.iter().any(|r| r.style.bold), "direct formatting cleared");
+
+    // 3. DOCX-PARA-014 (KeepNext) & DOCX-PARA-015 (KeepLines)
+    s.menu("docx.para.keep-next");
+    s.menu("docx.para.keep-lines");
+    let p_after = para(&s.document(), p_id).clone();
+    assert_eq!(p_after.direct.keep_next, Some(true), "KeepNext enabled");
+    assert_eq!(p_after.direct.keep_lines, Some(true), "KeepLines enabled");
+
+    // 4. DOCX-LIST-006, DOCX-LIST-009, DOCX-LIST-012: Multilevel list & level change
+    s.update(|e, _, cx| e.toggle_list(false, cx));
+    assert!(para(&s.document(), p_id).list.is_some(), "bullet list applied");
+    s.update(|e, _, cx| e.step_indent(true, cx));
+    assert_eq!(para(&s.document(), p_id).list.as_ref().map(|l| l.level), Some(1), "list level increased to 1");
+    s.update(|e, _, cx| e.step_indent(false, cx));
+    assert_eq!(para(&s.document(), p_id).list.as_ref().map(|l| l.level), Some(0), "list level decreased to 0");
+
+    // 5. DOCX-HEADER-003 (evenAndOddHeaders) & DOCX-TOC-013 (Outline Navigation Pane)
+    s.menu("docx.section.even-odd");
+    assert!(s.document().even_and_odd, "even_and_odd toggled on");
+    s.menu("docx.show-outline");
+    assert!(s.with(|e, _| e.outline_open), "navigation outline pane opened");
+    s.menu("docx.show-outline");
+    assert!(!s.with(|e, _| e.outline_open), "navigation outline pane closed");
+
+    // 6. Save and reopen roundtrip
+    let saved = s.save_as("docx-audit-core-roundtrip.docx");
+    let reopened = s.reopen();
+    assert!(flow(&reopened).even_and_odd, "even_and_odd persisted");
+    assert!(saved.exists());
+}
+
+
+

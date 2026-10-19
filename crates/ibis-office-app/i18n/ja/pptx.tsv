@@ -97,9 +97,17 @@ pptx.distribute.h	左右に整列
 pptx.distribute.v	上下に整列
 text.superscript	上付き
 text.subscript	下付き
+text.spacing-very-tight	文字の間隔：より狭く
 text.spacing-tight	文字の間隔：狭く
 text.spacing-normal	文字の間隔：標準
 text.spacing-loose	文字の間隔：広く
+text.spacing-very-loose	文字の間隔：より広く
+pptx.text.character-spacing	文字の間隔
+pptx.spacing.very-tight	より狭く (-3pt)
+pptx.spacing.tight	狭く (-1.5pt)
+pptx.spacing.normal	標準 (0pt)
+pptx.spacing.loose	広く (+3pt)
+pptx.spacing.very-loose	より広く (+6pt)
 text.caps	すべて大文字
 text.small-caps	小型英大文字
 pptx.text.case	大文字と小文字の変更
@@ -126,6 +134,10 @@ pptx.picture.color.sepia	セピア
 pptx.picture.color.blue	青（モノトーン）
 pptx.picture.color.green	緑（モノトーン）
 pptx.picture.color.red	赤（モノトーン）
+pptx.picture.color.transparent-white	透明色を指定（白）
+pptx.picture.color.transparent-black	透明色を指定（黒）
+pptx.picture.color.transparent-clear	透明色の解除
+pptx.picture.remove-background	背景の削除（透明色）
 pptx.picture.reset-colors	画像の色効果を解除
 pptx.picture.correction	画像の補正（明るさとコントラスト）
 pptx.picture.lum.normal	標準（明るさ 0%、コントラスト 0%）
@@ -147,6 +159,30 @@ pptx.picture.alpha.50	透明度: 50%
 pptx.picture.alpha.65	透明度: 65%
 pptx.picture.alpha.80	透明度: 80%
 pptx.picture.alpha.95	透明度: 95%
+pptx.picture.artistic-effect	アート効果
+pptx.picture.artistic.none	なし
+pptx.picture.artistic.marker	マーカー
+pptx.picture.artistic.chalk-sketch	チョークスケッチ
+pptx.picture.artistic.crisscross-etching	網目
+pptx.picture.artistic.pencil-grayscale	鉛筆（グレースケール）
+pptx.picture.artistic.pencil-sketch	鉛筆スケッチ
+pptx.picture.artistic.line-drawing	線画
+pptx.picture.artistic.watercolor-sponge	水彩スポンジ
+pptx.picture.artistic.paint-brush	ペイント ブラシ
+pptx.picture.artistic.paint-strokes	ペイント ストローク
+pptx.picture.artistic.blur	ぼかし
+pptx.picture.artistic.glow-diffused	拡散光
+pptx.picture.artistic.glow-edges	ネオン
+pptx.picture.artistic.glass	ガラス
+pptx.picture.artistic.pastels-smooth	パステル調
+pptx.picture.artistic.plastic-wrap	ラップフィルム
+pptx.picture.artistic.mosaic-bubbles	モザイク バブル
+pptx.picture.artistic.texturizer	テクスチャライザー
+pptx.picture.artistic.film-grain	粒状フィルム
+pptx.picture.artistic.cutout	切り絵
+pptx.picture.artistic.photocopy	コピー
+pptx.picture.artistic.cement	セメント
+pptx.picture.artistic.light-screen	明るい画面
 pptx.reset-slide	スライドをリセット
 pptx.reset-placement	プレースホルダーの配置をリセット
 pptx.section.add	セクションの追加…
@@ -185,6 +221,8 @@ pptx.glow	図形の光彩
 pptx.reflection	図形の反射
 pptx.soft-edge	ぼかし（やわらかい縁）
 pptx.bevel	面取り
+pptx.3d-rotation	3D 回転
+pptx.3d-depth	3D 奥行き
 pptx.sections	セクション
 pptx.slide-size	スライドのサイズ（図形のサイズを保持）
 pptx.new-slide-layout	レイアウトを選んで新しいスライド
@@ -231,16 +269,28 @@ pptx.chart.data-quick	データの編集（簡易）…
 pptx.insert-chart.column	集合縦棒
 pptx.insert-chart.stacked-column	積み上げ縦棒
 pptx.insert-chart.percent-stacked-column	100% 積み上げ縦棒
+pptx.insert-chart.3d-clustered-column	3D 集合縦棒
+pptx.insert-chart.3d-stacked-column	3D 積み上げ縦棒
+pptx.insert-chart.3d-percent-stacked-column	100% 3D 積み上げ縦棒
+pptx.insert-chart.3d-column	3D 縦棒
 pptx.insert-chart.bar	集合横棒
 pptx.insert-chart.stacked-bar	積み上げ横棒
 pptx.insert-chart.percent-stacked-bar	100% 積み上げ横棒
+pptx.insert-chart.3d-clustered-bar	3D 集合横棒
+pptx.insert-chart.3d-stacked-bar	3D 積み上げ横棒
+pptx.insert-chart.3d-percent-stacked-bar	100% 3D 積み上げ横棒
 pptx.insert-chart.line	折れ線
 pptx.insert-chart.stacked-line	積み上げ折れ線
 pptx.insert-chart.percent-stacked-line	100% 積み上げ折れ線
+pptx.insert-chart.3d-line	3D 折れ線
 pptx.insert-chart.area	面
 pptx.insert-chart.stacked-area	積み上げ面
 pptx.insert-chart.percent-stacked-area	100% 積み上げ面
+pptx.insert-chart.3d-area	3D 面
+pptx.insert-chart.3d-stacked-area	3D 積み上げ面
+pptx.insert-chart.3d-percent-stacked-area	100% 3D 積み上げ面
 pptx.insert-chart.pie	円
+pptx.insert-chart.3d-pie	3D 円
 pptx.insert-chart.doughnut	ドーナツ
 pptx.insert-chart.scatter	散布図
 pptx.insert-chart.scatter-smooth	散布図 (平滑線)
@@ -495,6 +545,25 @@ pptx.bevel.convex	凸面
 pptx.bevel.cool-slant	クール スラント
 pptx.bevel.hard-edge	ハード エッジ
 pptx.bevel.art-deco	アールデコ
+pptx.3d-rotation.none	回転なし
+pptx.3d-rotation.isometric-right-up	アイソメトリック（右上）
+pptx.3d-rotation.isometric-left-up	アイソメトリック（左上）
+pptx.3d-rotation.isometric-top-up	アイソメトリック（上向き）
+pptx.3d-rotation.off-axis-1-top	オフアクシス 1（上）
+pptx.3d-rotation.off-axis-1-left	オフアクシス 1（左）
+pptx.3d-rotation.off-axis-1-right	オフアクシス 1（右）
+pptx.3d-rotation.perspective-front	透視投影（正面）
+pptx.3d-rotation.perspective-above	透視投影（上向き）
+pptx.3d-rotation.perspective-below	透視投影（下向き）
+pptx.3d-rotation.perspective-left	透視投影（左向き）
+pptx.3d-rotation.perspective-right	透視投影（右向き）
+pptx.3d-rotation.oblique-top-left	傾斜（左上）
+pptx.3d-rotation.oblique-top-right	傾斜（右上）
+pptx.3d-depth.none	奥行きなし
+pptx.3d-depth.10pt	10 pt
+pptx.3d-depth.20pt	20 pt
+pptx.3d-depth.36pt	36 pt
+pptx.3d-depth.72pt	72 pt
 table.new.2x2	2 行 × 2 列
 table.new.3x3	3 行 × 3 列
 table.new.3x4	3 行 × 4 列
@@ -613,6 +682,15 @@ pptx.anim.in.fly-bottom	スライドイン（下から）
 pptx.anim.in.fly-left	スライドイン（左から）
 pptx.anim.in.fly-right	スライドイン（右から）
 pptx.anim.in.fly-top	スライドイン（上から）
+pptx.anim.in.float	フロートイン
+pptx.anim.in.float-down	フロートイン（下へ）
+pptx.anim.in.wipe	ワイプ
+pptx.anim.in.wipe-bottom	ワイプ（下から）
+pptx.anim.in.wipe-left	ワイプ（左から）
+pptx.anim.in.wipe-right	ワイプ（右から）
+pptx.anim.in.wipe-top	ワイプ（上から）
+pptx.anim.in.zoom	ズーム
+pptx.anim.in.replay	インクの再生
 pptx.anim.em.spin	スピン
 pptx.anim.em.grow	拡大／収縮
 pptx.anim.out.disappear	クリア
@@ -621,6 +699,15 @@ pptx.anim.out.fly-bottom	スライドアウト（下へ）
 pptx.anim.out.fly-left	スライドアウト（左へ）
 pptx.anim.out.fly-right	スライドアウト（右へ）
 pptx.anim.out.fly-top	スライドアウト（上へ）
+pptx.anim.out.float	フロートアウト
+pptx.anim.out.float-up	フロートアウト（上へ）
+pptx.anim.out.wipe	ワイプ
+pptx.anim.out.wipe-bottom	ワイプ（下へ）
+pptx.anim.out.wipe-left	ワイプ（左へ）
+pptx.anim.out.wipe-right	ワイプ（右へ）
+pptx.anim.out.wipe-top	ワイプ（上へ）
+pptx.anim.out.zoom	ズーム
+pptx.anim.out.rewind	巻き戻し
 pptx.anim.start	開始
 pptx.anim.start.click	クリック時
 pptx.anim.start.with	直前の動作と同時
@@ -695,6 +782,18 @@ pptx.theme.palette.slate	スレート
 pptx.theme.palette.median	メディアン
 pptx.theme.palette.orient	オリエント
 pptx.theme.palette.blue	ブルー II
+pptx.theme.effects	テーマの効果
+pptx.theme.effects.office	Office（標準）
+pptx.theme.effects.office-2007-2010	Office 2007 - 2010
+pptx.theme.effects.metro	メトロ
+pptx.theme.effects.aspect	アスペクト
+pptx.theme.effects.apex	アペックス
+pptx.theme.effects.slate	スレート
+pptx.theme.effects.median	メディアン
+pptx.theme.effects.glossy	光沢
+pptx.theme.effects.bubbles	バブル
+pptx.theme.effects.shadow	シャドウ
+pptx.theme.save-theme	現在のテーマを保存…
 chart.type.column	集合縦棒
 chart.type.column-stacked	積み上げ縦棒
 chart.type.column-percent	100% 積み上げ縦棒
@@ -725,6 +824,14 @@ number.type.alphaUcPeriod	A. B. C.
 number.type.alphaLcParenR	a) b) c)
 number.type.romanLcPeriod	i. ii. iii.
 number.type.romanUcPeriod	I. II. III.
+pptx.numbering.start-at	開始番号
+pptx.numbering.start-at-1	1 から開始
+pptx.numbering.start-at-2	2 から開始
+pptx.numbering.start-at-3	3 から開始
+pptx.numbering.start-at-4	4 から開始
+pptx.numbering.start-at-5	5 から開始
+pptx.numbering.start-at-10	10 から開始
+pptx.numbering.options	箇条書きと段落番号の設定…
 pptx.action-buttons	アクション ボタン
 pptx.action.previous	前へ
 pptx.action.next	次へ
@@ -744,6 +851,7 @@ pptx.export-all-slides-png	すべてのスライドを画像として書き出�
 pptx.export-gif	アニメーション GIF として書き出し…
 pptx.export-ppsx	PowerPoint スライドショー（.ppsx）
 pptx.export-potx	PowerPoint テンプレート（.potx）
+pptx.export-thmx	Office テーマ（.thmx）
 pptx.new-from-template	テンプレートから新規作成…
 pptx.outline-view	アウトライン表示
 pptx.notes-page-view	ノート
@@ -829,6 +937,12 @@ pptx.anim.opt.fly-bottom	下から
 pptx.anim.opt.fly-left	左から
 pptx.anim.opt.fly-right	右から
 pptx.anim.opt.fly-top	上から
+pptx.anim.opt.float-up	上へフロート
+pptx.anim.opt.float-down	下へフロート
+pptx.anim.opt.wipe-bottom	下から
+pptx.anim.opt.wipe-left	左から
+pptx.anim.opt.wipe-right	右から
+pptx.anim.opt.wipe-top	上から
 pptx.anim.opt.spin-360-cw	360° 時計回り
 pptx.anim.opt.spin-360-ccw	360° 反時計回り
 pptx.anim.opt.spin-180	180° 半回転
@@ -876,6 +990,8 @@ pptx.properties-panel.created	作成日時
 pptx.properties-panel.modified	最終更新日時
 pptx.properties-panel.author	作成者
 pptx.properties-panel.subject	件名
+pptx.properties-panel.fonts-section	フォント
+pptx.properties-panel.embed-fonts	ファイルにフォントを埋め込む
 pptx.inspect-document	ドキュメントの検査…
 pptx.inspect-panel.inspect-presentation	ドキュメントの検査
 pptx.inspect-panel.inspect-presentation-personal	プレゼンテーション内の個人情報や非表示コンテンツを検査し、削除します。
@@ -957,6 +1073,7 @@ pptx.chrome.transition-sound	画面切り替えサウンド
 pptx.editing.sound	サウンド
 pptx.chrome.picture-color	画像の色
 pptx.chrome.brightness-contrast	明るさとコントラスト
+pptx.chrome.artistic-effects	アート効果
 pptx.custom-format.borders	罫線
 pptx.chrome.table-styles	表スタイル
 pptx.chrome.table-style-options	表のスタイルオプション
@@ -1030,6 +1147,10 @@ pptx.text.warp.fade-right	右フェード
 pptx.text.warp.fade-left	左フェード
 pptx.text.warp.fade-up	上フェード
 pptx.text.warp.fade-down	下フェード
+pptx.insert.screenshot	スクリーンショット
+pptx.insert.screenshot.available-windows	使用できるウィンドウ
+pptx.insert.screenshot.clipping	画面の領域…
+pptx.insert.screenshot.clipboard	クリップボードのスクリーンショット
 pptx.insert.icon	アイコン…
 pptx.icon-category.arrows	矢印・方向
 pptx.icon-category.business	ビジネス・オフィス
@@ -1176,6 +1297,26 @@ transition.dir.by-char	文字
 pptx.video-link	ビデオ（ファイルにリンク）…
 pptx.audio-link	オーディオ（ファイルにリンク）…
 pptx.spelling.check	スペルチェック…
+pptx.autocorrect-options	オートコレクトのオプション…
+pptx.math	数式…
+pptx.math.title	数式
+pptx.math.hint	数式を線形式（UnicodeMath）または LaTeX 形式で入力します（例：a/b、\frac{a}{b}、x^2、\sqrt{x+1}、\sum_{i=1}^n x）
+pptx.math.insert	挿入
+pptx.ink.pen	ペン
+pptx.ink.pencil	鉛筆
+pptx.ink.highlighter	蛍光ペン
+pptx.ink.eraser	消しゴム
+pptx.ink.ruler	ルーラー
+pptx.ink.ruler-angle	角度
+pptx.ink.ruler-length	長さ
+pptx.ink.ruler-level	水平に戻す
+pptx.ink.replay	インクの再生
+pptx.ink.replayed	インクの再生アニメーションを設定しました
+pptx.ink.to-shape	インクを図形に変換
+pptx.ink.to-text	インクをテキストに変換
+pptx.ink.to-math	インクを数式に変換
+pptx.ink.message.converted-text	インクをテキストに変換しました
+pptx.ink.message.converted-math	インクを数式に変換しました
 pptx.master-view	スライド マスター
 pptx.notes-format	ノートの書式編集
 pptx.anim.path.custom	カスタム軌跡を描く
@@ -1280,6 +1421,8 @@ pptx.find.whole-words	✓ 単語全体
 pptx.frame-panel.height-width-must-0-1584	高さ・幅は 0〜1584 cm、位置は −1584〜1584 cm、回転は角度の数値にしてください
 pptx.frame-panel.height-cm	高さ (cm)
 pptx.frame-panel.width-cm	幅 (cm)
+pptx.frame-panel.scale-height-percent	高さの倍率 (%)
+pptx.frame-panel.scale-width-percent	幅の倍率 (%)
 pptx.frame-panel.rotation-degrees	回転 (°)
 pptx.frame-panel.horizontal-position-cm-top-left	横位置 (cm、左上から)
 pptx.frame-panel.vertical-position-cm-top-left	縦位置 (cm、左上から)
@@ -1366,6 +1509,8 @@ pptx.paragraph-panel.alignment-mixed-font-sizes-keep	異なる文字サイズの
 pptx.paragraph-panel.line-spacing-value	行間の値
 pptx.paragraph-panel.before-pt	段落前 (pt)
 pptx.paragraph-panel.after-pt	段落後 (pt)
+pptx.paragraph-panel.start-at	番号の開始値
+pptx.paragraph-panel.invalid-start-at	開始番号は 1 から 32767 の整数を指定してください
 pptx.misc.line-paragraph-spacing	行間と段落の間隔
 pptx.section-panel.new-section	新しいセクション
 pptx.section-panel.slide-structure-has-changed	スライド構造が変更されています。入力を確定し、パネルを開き直してください
@@ -1724,3 +1869,322 @@ _pptx.can-t-save	保存できません
 _pptx.enter-valid-values-in-points-for-line-spacing-pa	行間・段落前後の値、またはインデントの値（pt）を正しく入力してください
 _pptx.replace-fonts	フォントの置換
 _pptx.no-custom-shows-have-been-defined	(登録された目的別スライド ショーはありません)
+pptx.master-view.placeholder.insert	プレースホルダーの挿入
+pptx.master-view.placeholder.title	タイトル
+pptx.master-view.placeholder.text	テキスト
+pptx.master-view.placeholder.content	コンテンツ
+pptx.master-view.placeholder.picture	図
+pptx.master-view.placeholder.chart	グラフ
+pptx.master-view.placeholder.table	表
+pptx.master-view.placeholder.media	メディア
+pptx.notes-master	ノート マスター
+pptx.notes-format.notes-master-undo-history	ノート マスター：閉じるときに、取り消しの履歴は消えます
+pptx.notes-format.notes-master-closed-undo-history	ノート マスターを閉じました（取り消しの履歴は消えました）
+pptx.notes-format.notes-master-help	スライドのイメージ・ノート・ヘッダー・日付・フッター・ページ番号の枠を動かし、大きさや文字の書式を変えます。ノートの階層ごとの文字の書式は変わりません
+pptx.notes-format.close-notes-master	ノート マスターを閉じる
+pptx.notes-format.notes-master	ノート マスター
+pptx.slideshow.notes-smaller	文字を小さく
+pptx.slideshow.notes-larger	文字を大きく
+pptx.slideshow.teleprompter	テレプロンプター
+pptx.slideshow.teleprompter-speed	{n} pt/秒
+pptx.edit-points.smooth	滑らかな点
+pptx.edit-points.straight	直線の点
+pptx.edit-points.corner	角の点
+pptx.insert-chart.box-whisker	箱ひげ図
+pptx.insert-chart.treemap	ツリーマップ
+pptx.insert-chart.sunburst	サンバースト
+pptx.print-panel.outline	アウトライン（スライドのタイトルと本文を文字で）
+pptx.anim.build.word	単語別
+pptx.anim.build.letter	文字別
+pptx.chart.ex.own-color	グラフの既定の色
+pptx.chart.ex.increase	増加
+pptx.chart.ex.decrease	減少
+pptx.chart.ex.total	合計
+pptx.math.insert-inline	行内に挿入（選んだ図形の文字の末尾）
+pptx.math.format-unicodemath	UnicodeMath
+pptx.math.format-latex	LaTeX
+pptx.math.copy-latex	LaTeX をコピー
+pptx.math.copy-selection-latex	数式を LaTeX としてコピー
+pptx.math.latex-copied	LaTeX をクリップボードにコピーしました
+pptx.color-mode	カラー/白黒
+pptx.view.color	カラー
+pptx.view.grayscale	グレースケール
+pptx.view.high-contrast	単純白黒
+pptx.accessibility-panel.high-contrast	高コントラスト表示
+pptx.accessibility-panel.color-view	カラー表示に戻す
+pptx.ink.effects	効果
+pptx.ink.custom-color	カスタム色
+pptx.ink.effect.rainbow	レインボー
+pptx.ink.effect.galaxy	ギャラクシー
+pptx.ink.effect.lava	溶岩
+pptx.ink.effect.ocean	海
+pptx.ink.effect.rose-gold	ローズ ゴールド
+pptx.ink.effect.gold	ゴールド
+pptx.ink.effect.silver	シルバー
+pptx.ink.effect.bronze	ブロンズ
+pptx.replace-fonts.substitute	代替フォントに設定
+pptx.replace-fonts.substitute-success	フォント「{target}」の代替フォントを「{substitute}」に設定しました
+pptx.replace-fonts.substitute-removed	フォント「{target}」の代替を解除しました
+pptx.replace-fonts.substitutions-title	設定中の代替フォント:
+pptx.replace-fonts.missing-fonts-title	不足しているフォント（代替または埋め込みを推奨）:
+pptx.replace-fonts.embedded-fonts-title	ファイルに埋め込まれているフォント:
+pptx.replace-fonts.embed-button	フォントを埋め込む
+pptx.replace-fonts.embed-success	フォント「{name}」をプレゼンテーションに埋め込みました
+pptx.replace-fonts.remove-embed	埋め込みを解除
+pptx.replace-fonts.remove-embed-success	フォント「{name}」の埋め込みを解除しました
+pptx.photo-album	フォト アルバム…
+pptx.photo-album.title	フォト アルバム
+pptx.photo-album.pictures-in-album	アルバムの写真枚数:
+pptx.photo-album.move-up	上へ
+pptx.photo-album.move-down	下へ
+pptx.photo-album.remove	削除
+pptx.photo-album.picture-options	写真のオプション
+pptx.photo-album.bw-on	☑ すべて白黒
+pptx.photo-album.bw-off	☐ すべて白黒
+pptx.photo-album.captions-on	☑ キャプション表示
+pptx.photo-album.captions-off	☐ キャプション表示
+pptx.photo-album.album-layout	アルバムのレイアウト
+pptx.photo-album.layout.fit-to-slide	スライドに合わせる
+pptx.photo-album.layout.1pic	1枚の写真
+pptx.photo-album.layout.2pic	2枚の写真
+pptx.photo-album.layout.4pic	4枚の写真
+pptx.photo-album.layout.1pic-title	1枚の写真 (タイトル付き)
+pptx.photo-album.layout.2pic-title	2枚の写真 (タイトル付き)
+pptx.photo-album.layout.4pic-title	4枚の写真 (タイトル付き)
+pptx.photo-album.frame-shape	枠の形状
+pptx.photo-album.frame.rect	長方形
+pptx.photo-album.frame.round-rect	角丸長方形
+pptx.photo-album.frame.simple-white	単純な枠 (白)
+pptx.photo-album.frame.simple-black	単純な枠 (黒)
+pptx.photo-album.frame.compound-black	二重枠 (黒)
+pptx.photo-album.frame.center-shadow	中心の影
+pptx.photo-album.frame.soft-edge	ソフト エッジ
+pptx.photo-album.create	作成
+pptx.photo-album.create-success	フォト アルバムを作成しました
+pptx.anim.chart-build	グラフの動作
+pptx.anim.chart.whole	1 つのオブジェクトとして
+pptx.anim.chart.series	系列別
+pptx.anim.chart.category	カテゴリ別
+pptx.anim.chart.series-el	系列内の要素別
+pptx.anim.chart.category-el	カテゴリ内の要素別
+pptx.anim.chart.anim-bg	背景を描画して開始
+pptx.anim.dgm-build	スマートアート アニメーション
+pptx.anim.dgm.whole	1 つのオブジェクトとして
+pptx.anim.dgm.all	すべて同時
+pptx.anim.dgm.one-by-one	1 つずつ
+pptx.anim.dgm.level-at-once	レベルごと
+pptx.anim.dgm.level-one-by-one	レベルで 1 つずつ
+pptx.insert.smartart.list	基本ブロック リスト
+pptx.insert.smartart.vlist	縦方向リスト
+pptx.insert.smartart.process	基本手順
+pptx.insert.smartart.chevron	連続山形矢印
+pptx.insert.smartart.cycle	基本循環
+pptx.insert.smartart.hierarchy	組織図
+pptx.insert.smartart.relationship	基本集合関係
+pptx.insert.smartart.matrix	基本マトリックス
+pptx.insert.smartart.pyramid	基本ピラミッド
+pptx.insert.smartart.picture	画像付きリスト
+pptx.smartart.convert-text	箇条書きから SmartArt へ変換
+pptx.smartart.add-shape	SmartArt に項目を追加
+pptx.smartart.remove-shape	SmartArt から項目を削除
+pptx.smartart.add-assistant	アシスタントの追加
+pptx.smartart.move-up	上へ移動
+pptx.smartart.move-down	下へ移動
+pptx.smartart.promote	レベル上げ
+pptx.smartart.demote	レベル下げ
+pptx.smartart.text-pane	テキスト ウィンドウ
+pptx.smartart.change-layout	レイアウトの変更
+pptx.smartart.layout.list	基本ブロック リスト
+pptx.smartart.layout.vlist	縦方向リスト
+pptx.smartart.layout.process	基本手順
+pptx.smartart.layout.chevron	連続山形矢印
+pptx.smartart.layout.cycle	基本循環
+pptx.smartart.layout.hierarchy	組織図
+pptx.smartart.layout.relationship	基本集合関係
+pptx.smartart.layout.matrix	基本マトリックス
+pptx.smartart.layout.pyramid	基本ピラミッド
+pptx.smartart.layout.picture	画像付きリスト
+pptx.smartart.color	色の変更
+pptx.smartart.color.colorful	カラフル
+pptx.smartart.color.accent1	アクセント 1 (青)
+pptx.smartart.color.accent2	アクセント 2 (オレンジ)
+pptx.smartart.color.accent3	アクセント 3 (緑)
+pptx.smartart.color.outline	枠線のみ
+pptx.review.compare	プレゼンテーションの比較…
+pptx.review.accept	変更の反映
+pptx.review.accept-all	すべての変更を反映
+pptx.review.reject	変更の破棄
+pptx.review.reject-all	すべての変更を破棄
+pptx.review.end-review	レビューの終了
+pptx.compare.title	プレゼンテーションの比較
+pptx.compare.no-changes	変更点は見つかりませんでした。2つのファイルは同一です。
+pptx.compare.accept	反映
+pptx.compare.reject	破棄
+pptx.compare.cannot-read	比較対象のファイルを読み込めませんでした。
+pptx.thesaurus	類義語辞典
+pptx.thesaurus.select-word	単語が入力された図形または文字を選択してください
+pptx.thesaurus.lookup	「{word}」の類義語を検索します
+pptx.audio.record	録音
+pptx.audio.stop	停止
+pptx.audio.record-title	オーディオの録音
+pptx.audio.recorded-sound-default	録音されたサウンド
+pptx.audio.sound-name	名前:
+pptx.audio.total-sound-length	録音時間:
+pptx.audio.status-ready	待機中
+pptx.audio.status-recording	録音中...
+pptx.audio.status-recorded	録音完了
+pptx.audio.insert-to-slide	スライドに挿入
+pptx.audio.recorded-inserted	オーディオ「{name}」を挿入しました
+pptx.audio-record	オーディオの録音…
+pptx.media.section-title	メディアの圧縮と互換性
+pptx.media.media-count	{count} 個のメディア ファイル
+pptx.media.compress	メディアの圧縮
+pptx.media.compress-1080p	Full HD (1080p)
+pptx.media.compress-720p	HD (720p)
+pptx.media.compress-480p	標準 (480p)
+pptx.media.optimize-compatibility	互換性の最適化
+pptx.media.no-media-found	このプレゼンテーションにはメディアが含まれていません
+pptx.media.already-compressed	メディアはすでに圧縮されています
+pptx.media.compressed-report	メディアを圧縮しました: {saved} KB 節約
+pptx.media.optimized-compatible	すべてのメディアの互換性が最適化されました
+pptx.3d-model	3D モデル…
+pptx.3d-model.not-available-here	この環境では 3D モデルの挿入は利用できません。
+pptx.insert-object	オブジェクトの挿入…
+pptx.insert-object.not-available-here	この環境ではオブジェクトの挿入は利用できません。
+pptx.table.distribute	均等配分
+table.remove-table	表を削除
+pptx.text.edit	テキストの編集
+pptx.grid-and-guides	グリッドとガイド
+pptx.format-shape	図形の書式設定…
+pptx.format-picture	図の書式設定…
+pptx.text-direction	テキストの向き
+pptx.text.autofit	テキストの自動調整
+pptx.3d-model.panel	3D モデルの設定…
+pptx.3d-model.title	3D モデルの設定
+pptx.3d-model.views	定義済みのモデル ビュー
+pptx.3d-model.view.default	既定 (正面)
+pptx.3d-model.view.above	上
+pptx.3d-model.view.below	下
+pptx.3d-model.view.left	左
+pptx.3d-model.view.right	右
+pptx.3d-model.view.iso-top-left	等角 (左上)
+pptx.3d-model.view.iso-top-right	等角 (右上)
+pptx.3d-model.view.iso-bottom-left	等角 (左下)
+pptx.3d-model.view.iso-bottom-right	等角 (右下)
+pptx.3d-model.view.front-ortho	平行投影 (正面)
+pptx.3d-model.rotation	3軸回転 (X / Y / Z)
+pptx.3d-model.rot-x	X軸回転 (°)
+pptx.3d-model.rot-y	Y軸回転 (°)
+pptx.3d-model.rot-z	Z軸回転 (°)
+pptx.3d-model.pan-zoom	パンとズーム
+pptx.3d-model.pan-left	← 左へパン
+pptx.3d-model.pan-right	右へパン →
+pptx.3d-model.pan-up	↑ 上へパン
+pptx.3d-model.pan-down	↓ 下へパン
+pptx.3d-model.zoom-in	ズーム イン (+25%)
+pptx.3d-model.zoom-out	ズーム アウト (-25%)
+pptx.3d-model.pos-size	モデルの位置とサイズ
+pptx.3d-model.width-plus	幅 +10%
+pptx.3d-model.width-minus	幅 -10%
+pptx.3d-model.height-plus	高さ +10%
+pptx.3d-model.height-minus	高さ -10%
+pptx.3d-model.reset	3D モデルのリセット
+pptx.3d-model.reset-size	モデルとサイズのリセット
+pptx.3d-model.scenes	シーン選択と再生
+pptx.3d-model.scene.1	シーン 1 (既定)
+pptx.3d-model.scene.2	シーン 2 (展開)
+pptx.3d-model.scene.3	シーン 3 (回転)
+pptx.3d-model.scene.4	シーン 4 (パルス)
+pptx.3d-model.play	再生
+pptx.3d-model.pause	一時停止
+pptx.3d-model.animations	3D アニメーション効果
+pptx.3d-model.anim.arrive	到着 (Arrive)
+pptx.3d-model.anim.turntable	ターンテーブル (Turntable)
+pptx.3d-model.anim.swing	スイング (Swing)
+pptx.3d-model.anim.jump-turn	ジャンプしてターン (Jump & Turn)
+pptx.3d-model.anim.leave	退場 (Leave)
+pptx.3d-model.web-note	デスクトップ版ではローカル3Dモデルの挿入・全操作に対応。Web版では既存モデルの表示・3軸回転・ビュー切替・サイズ変更に対応します。
+pptx.record-preview	録画のプレビュー…
+pptx.record-preview.title	録画プレビュー
+pptx.record-preview.play	プレビュー再生
+pptx.record-preview.pause	一時停止
+pptx.record-preview.prev-slide	前のスライド
+pptx.record-preview.next-slide	次のスライド
+pptx.record-preview.clear-timing	現在のスライド時間をクリア
+pptx.record-preview.set-5s	現在のスライド時間を5秒に設定
+pptx.record-preview.start-show	現在のスライドからショー開始
+pptx.screen-reader	スクリーンリーダー ナビゲーション…
+pptx.screen-reader.title	スクリーンリーダー操作
+pptx.screen-reader.current	現在の読み上げ案内
+pptx.screen-reader.prev	前へ
+pptx.screen-reader.next	次へ
+pptx.screen-reader.read-aloud	現在位置を読み上げ
+pptx.screen-reader.stop-aloud	読み上げ停止
+pptx.screen-reader.filter.all	すべて
+pptx.screen-reader.filter.title	タイトル
+pptx.screen-reader.filter.text	本文・テキスト
+pptx.screen-reader.filter.table	表
+pptx.screen-reader.filter.chart	グラフ
+pptx.screen-reader.filter.media	画像・メディア
+pptx.screen-reader.filter.notes	ノート・コメント
+pptx.customize-ribbon	リボンとクイックアクセスの設定…
+pptx.customize-ribbon.title	リボンとクイックアクセスの設定
+pptx.customize-ribbon.groups	ツールバー グループの表示
+pptx.customize-ribbon.group.slides	スライド
+pptx.customize-ribbon.group.font	フォント
+pptx.customize-ribbon.group.paragraph	段落
+pptx.customize-ribbon.group.insert	挿入
+pptx.customize-ribbon.group.drawing	図形と描画
+pptx.customize-ribbon.group.arrange	配置と表示
+pptx.customize-ribbon.reset-groups	グループ表示をリセット
+pptx.customize-ribbon.qat	クイック アクセス ツール バー (QAT)
+pptx.customize-ribbon.qat-reset	QATを既定にリセット
+pptx.trust-center	セキュリティ センター…
+pptx.trust-center.title	セキュリティ センターと信頼設定
+pptx.trust-center.links-warning	外部リンクを含むプレゼンテーションを開くときに警告を表示する
+pptx.trust-center.media-warning	外部メディア・リンクされたクリップの再生前に確認する
+pptx.trust-center.protected-view	信頼できない場所のファイルを保護ビュー（読み取り専用）で開く
+pptx.trust-center.macro-note	マクロ付きファイル (.pptm / .ppsm / .potm) はVBAコードを実行せず安全に保持・往復保存します。
+pptx.common.close	閉じる
+pptx.comments.post-tip-mac	投稿 (⌘Enter)
+pptx.comments.post-tip-other	投稿 (Ctrl+Enter)
+pptx.compare.kind.text-box	テキスト ボックス
+pptx.compare.kind.picture	画像
+pptx.compare.kind.chart	グラフ
+pptx.compare.kind.line	線
+pptx.compare.kind.shape	図形
+pptx.compare.kind.table	表
+pptx.compare.kind.object	オブジェクト
+pptx.compare.title-count	{title} ({n} 件)
+pptx.compare.slide-added	➕ [スライド追加] スライド {n}: {title}
+pptx.compare.slide-deleted	➖ [スライド削除] スライド {n}: {title}
+pptx.compare.slide-modified	📝 スライド {n}: {title}
+pptx.compare.shape-added	  ・図形追加: {kind}
+pptx.compare.shape-deleted	  ・図形削除: {name}
+pptx.compare.text-changed	  ・文字変更 ({name}): 「{old}」→「{new}」
+pptx.compare.frame-changed	  ・位置サイズ変更: {name}
+pptx.compare.notes-changed	  ・ノート変更: 「{old}」→「{new}」
+pptx.smartart.item.item-n	項目 {n}
+pptx.smartart.item.step-n	ステップ {n}
+pptx.smartart.item.plan	計画
+pptx.smartart.item.do	実行
+pptx.smartart.item.evaluate	評価
+pptx.smartart.item.improve	改善
+pptx.smartart.item.leader	代表 / リーダー
+pptx.smartart.item.member-a	担当 A
+pptx.smartart.item.member-b	担当 B
+pptx.smartart.item.element-a	要素 A
+pptx.smartart.item.element-b	要素 B
+pptx.smartart.item.quadrant-n	第 {n} 象限
+pptx.smartart.item.quadrant	象限
+pptx.smartart.item.top	トップ
+pptx.smartart.item.middle	ミドル
+pptx.smartart.item.base	ベース
+pptx.smartart.item.item-a	項目 A
+pptx.smartart.item.assistant	アシスタント
+pptx.smartart.color.blue-short	青
+pptx.smartart.color.orange-short	オレンジ
+pptx.smartart.color.green-short	緑
+pptx.smartart.color.outline-short	枠線
+pptx.smartart.select-prompt	SmartArt 図表を選択してください。
+pptx.smartart.item.item-b	項目 B

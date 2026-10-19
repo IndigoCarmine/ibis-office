@@ -10,8 +10,47 @@
 
 use crate::drawing::{Rgb, Stroke};
 use crate::geometry::{Emu, EmuSize};
+use crate::merge::FieldMapData;
 use crate::model::{MediaId, Shape};
 use crate::text::FontAlign;
+
+/// 複数ページ設定（見開きページ、袋とじ、本（袋とじ）、1枚に2ページ）
+/// ECMA-376 Part 1 §17.15.1.58 (mirrorMargins), §17.15.1.11 (bookFoldPrinting),
+/// §17.15.1.12 (bookFoldRevPrinting), §17.15.1.70 (printTwoOnOne).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum MultiplePages {
+    /// 通常 (Normal).
+    #[default]
+    Normal,
+    /// 見開きページ (`w:mirrorMargins`).
+    MirrorMargins,
+    /// 袋とじ (`w:bookFoldPrinting`).
+    BookFold,
+    /// 本（袋とじ） (`w:bookFoldRevPrinting`).
+    ReverseBookFold,
+    /// 1枚に2ページ (`w:printTwoOnOne`).
+    TwoOnOne,
+}
+
+impl MultiplePages {
+    pub const ALL: [MultiplePages; 5] = [
+        Self::Normal,
+        Self::MirrorMargins,
+        Self::BookFold,
+        Self::ReverseBookFold,
+        Self::TwoOnOne,
+    ];
+
+    /// Whether inside and outside margins are mirrored on facing pages.
+    pub fn is_mirrored(&self) -> bool {
+        matches!(self, Self::MirrorMargins | Self::BookFold | Self::ReverseBookFold)
+    }
+
+    /// Whether this multiple pages mode involves booklet printing.
+    pub fn is_book_fold(&self) -> bool {
+        matches!(self, Self::BookFold | Self::ReverseBookFold)
+    }
+}
 
 /// Page size, margins and the distances of the header and footer from the
 /// page's edges.
@@ -48,6 +87,10 @@ pub struct PageSetup {
     /// left and right margins are the inside and outside ones, swapped on
     /// even pages.
     pub mirror_margins: bool,
+    /// 複数ページ設定 (`w:mirrorMargins`, `w:bookFoldPrinting`, `w:bookFoldRevPrinting`, `w:printTwoOnOne`).
+    pub multiple_pages: MultiplePages,
+    /// 袋とじの印刷枚数 (`w:bookFoldPrintingSheets/@w:val`): None は「すべて」(all pages in 1 booklet)。
+    pub book_fold_sheets: Option<u32>,
     /// 垂直方向の配置 (`w:vAlign`): where the body sits on its pages.
     pub v_align: PageVAlign,
     /// 脚注 and 文末脚注の設定 (`w:footnotePr`, `w:endnotePr`).
@@ -351,6 +394,8 @@ impl Default for PageSetup {
             gutter: 0,
             gutter_at_top: false,
             mirror_margins: false,
+            multiple_pages: MultiplePages::Normal,
+            book_fold_sheets: None,
             v_align: PageVAlign::Top,
             footnotes: NoteSettings::FOOTNOTES,
             endnotes: NoteSettings::ENDNOTES,
@@ -358,6 +403,14 @@ impl Default for PageSetup {
             line_numbers: None,
             direction: CellDirection::LrTb,
         }
+    }
+}
+
+impl PageSetup {
+    /// 見開き（偶数ページで左右余白を入れ替える）かどうか。
+    /// 見開きページ、袋とじ、本（袋とじ）のいずれか、または mirror_margins が有効な場合。
+    pub fn is_mirrored(&self) -> bool {
+        self.mirror_margins || self.multiple_pages.is_mirrored()
     }
 }
 
@@ -385,6 +438,454 @@ pub enum LineHeight {
 impl Default for LineHeight {
     fn default() -> Self {
         LineHeight::Auto(240)
+    }
+}
+
+/// Presets for document-wide paragraph spacing (Word's デザイン > ドキュメントの書式設定 > 段落の間隔).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ParagraphSpacingPreset {
+    Default,
+    NoSpace,
+    Compact,
+    Tight,
+    Open,
+    Relaxed,
+    Double,
+}
+
+impl ParagraphSpacingPreset {
+    /// Spacing before (EMU), spacing after (EMU), and line height.
+    pub fn spacing(self) -> (Emu, Emu, LineHeight) {
+        match self {
+            ParagraphSpacingPreset::Default => (0, 0, LineHeight::Auto(240)),
+            ParagraphSpacingPreset::NoSpace => (0, 0, LineHeight::Auto(240)),
+            ParagraphSpacingPreset::Compact => (0, 4 * 12_700, LineHeight::Auto(240)),
+            ParagraphSpacingPreset::Tight => (0, 6 * 12_700, LineHeight::Auto(276)),
+            ParagraphSpacingPreset::Open => (0, 10 * 12_700, LineHeight::Auto(276)),
+            ParagraphSpacingPreset::Relaxed => (0, 6 * 12_700, LineHeight::Auto(360)),
+            ParagraphSpacingPreset::Double => (0, 8 * 12_700, LineHeight::Auto(480)),
+        }
+    }
+}
+
+/// Presets for document-wide style sets (Word's デザイン > ドキュメントの書式設定 > スタイル セット).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StyleSetPreset {
+    Default,
+    Casual,
+    Centered,
+    Formal,
+    Elegant,
+    Modern,
+    Simple,
+    Minimalist,
+}
+
+impl StyleSetPreset {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Casual => "casual",
+            Self::Centered => "centered",
+            Self::Formal => "formal",
+            Self::Elegant => "elegant",
+            Self::Modern => "modern",
+            Self::Simple => "simple",
+            Self::Minimalist => "minimalist",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "default" => Some(Self::Default),
+            "casual" => Some(Self::Casual),
+            "centered" => Some(Self::Centered),
+            "formal" => Some(Self::Formal),
+            "elegant" => Some(Self::Elegant),
+            "modern" => Some(Self::Modern),
+            "simple" => Some(Self::Simple),
+            "minimalist" => Some(Self::Minimalist),
+            _ => None,
+        }
+    }
+
+    /// Apply the style set formatting to document styles.
+    pub fn apply(self, styles: &mut FlowStyles) {
+        let normal_id = styles.default_paragraph.clone().or_else(|| {
+            styles.paragraph_style_named("Normal").map(str::to_string)
+        });
+
+        let mut ensure_or_update = |name: &str, priority: u32, update_fn: &dyn Fn(&mut FlowStyle)| {
+            if let Some(id) = styles.paragraph_style_named(name).map(str::to_string) {
+                if let Some(st) = styles.styles.get_mut(&id) {
+                    st.run.theme_color = None;
+                    update_fn(st);
+                }
+            } else {
+                let mut style_id = name.replace(' ', "");
+                while styles.styles.contains_key(&style_id) {
+                    style_id.push('_');
+                }
+                let mut st = FlowStyle {
+                    kind: StyleKind::Paragraph,
+                    name: name.to_string(),
+                    based_on: normal_id.clone(),
+                    para: ParaFormat::default(),
+                    run: RunFormat::default(),
+                    next: normal_id.clone(),
+                    auto_update: false,
+                    ui_priority: Some(priority),
+                    quick: true,
+                    conditional: Vec::new(),
+                    num_id: None,
+                };
+                update_fn(&mut st);
+                styles.styles.insert(style_id, st);
+            }
+        };
+
+        match self {
+            Self::Default => {
+                ensure_or_update("Title", 10, &|s| {
+                    s.run.size = Some(2800);
+                    s.run.bold = Some(false);
+                    s.run.color = Some(crate::drawing::Rgb(0x2E74B5));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(0);
+                    s.para.after = Some(120 * 635);
+                });
+                ensure_or_update("Subtitle", 11, &|s| {
+                    s.run.size = Some(1100);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x5A5A5A));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(0);
+                    s.para.after = Some(160 * 635);
+                });
+                ensure_or_update("heading 1", 1, &|s| {
+                    s.run.size = Some(1600);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x2E74B5));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(240 * 635);
+                    s.para.after = Some(60 * 635);
+                });
+                ensure_or_update("heading 2", 2, &|s| {
+                    s.run.size = Some(1300);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x2E74B5));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(180 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+                ensure_or_update("heading 3", 3, &|s| {
+                    s.run.size = Some(1200);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x1F4E79));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(120 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+            }
+            Self::Casual => {
+                ensure_or_update("Title", 10, &|s| {
+                    s.run.size = Some(2600);
+                    s.run.bold = Some(true);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x7030A0));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.after = Some(140 * 635);
+                });
+                ensure_or_update("Subtitle", 11, &|s| {
+                    s.run.size = Some(1200);
+                    s.run.italic = Some(false);
+                    s.run.color = Some(crate::drawing::Rgb(0x7030A0));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.after = Some(160 * 635);
+                });
+                ensure_or_update("heading 1", 1, &|s| {
+                    s.run.size = Some(1500);
+                    s.run.bold = Some(true);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x7030A0));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(200 * 635);
+                    s.para.after = Some(60 * 635);
+                });
+                ensure_or_update("heading 2", 2, &|s| {
+                    s.run.size = Some(1300);
+                    s.run.bold = Some(true);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x7030A0));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(160 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+                ensure_or_update("heading 3", 3, &|s| {
+                    s.run.size = Some(1100);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x3B3838));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(120 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+            }
+            Self::Centered => {
+                ensure_or_update("Title", 10, &|s| {
+                    s.run.size = Some(2600);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x1F4E79));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.after = Some(160 * 635);
+                });
+                ensure_or_update("Subtitle", 11, &|s| {
+                    s.run.size = Some(1200);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x595959));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.after = Some(200 * 635);
+                });
+                ensure_or_update("heading 1", 1, &|s| {
+                    s.run.size = Some(1600);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x1F4E79));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.before = Some(240 * 635);
+                    s.para.after = Some(80 * 635);
+                });
+                ensure_or_update("heading 2", 2, &|s| {
+                    s.run.size = Some(1300);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x1F4E79));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.before = Some(180 * 635);
+                    s.para.after = Some(60 * 635);
+                });
+                ensure_or_update("heading 3", 3, &|s| {
+                    s.run.size = Some(1200);
+                    s.run.bold = Some(false);
+                    s.run.color = Some(crate::drawing::Rgb(0x595959));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.before = Some(120 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+            }
+            Self::Formal => {
+                ensure_or_update("Title", 10, &|s| {
+                    s.run.size = Some(2400);
+                    s.run.bold = Some(true);
+                    s.run.font = Some("Times New Roman".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0x000000));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.after = Some(140 * 635);
+                });
+                ensure_or_update("Subtitle", 11, &|s| {
+                    s.run.size = Some(1100);
+                    s.run.italic = Some(true);
+                    s.run.font = Some("Times New Roman".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0x333333));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.after = Some(180 * 635);
+                });
+                ensure_or_update("heading 1", 1, &|s| {
+                    s.run.size = Some(1400);
+                    s.run.bold = Some(true);
+                    s.run.font = Some("Times New Roman".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0x000000));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(240 * 635);
+                    s.para.after = Some(60 * 635);
+                });
+                ensure_or_update("heading 2", 2, &|s| {
+                    s.run.size = Some(1200);
+                    s.run.bold = Some(true);
+                    s.run.italic = Some(true);
+                    s.run.font = Some("Times New Roman".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0x000000));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(180 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+                ensure_or_update("heading 3", 3, &|s| {
+                    s.run.size = Some(1100);
+                    s.run.bold = Some(true);
+                    s.run.font = Some("Times New Roman".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0x333333));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(120 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+            }
+            Self::Elegant => {
+                ensure_or_update("Title", 10, &|s| {
+                    s.run.size = Some(2600);
+                    s.run.bold = Some(false);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x385723));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.after = Some(180 * 635);
+                });
+                ensure_or_update("Subtitle", 11, &|s| {
+                    s.run.size = Some(1150);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x548235));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.after = Some(200 * 635);
+                });
+                ensure_or_update("heading 1", 1, &|s| {
+                    s.run.size = Some(1500);
+                    s.run.bold = Some(false);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x385723));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.before = Some(240 * 635);
+                    s.para.after = Some(80 * 635);
+                });
+                ensure_or_update("heading 2", 2, &|s| {
+                    s.run.size = Some(1300);
+                    s.run.bold = Some(false);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x548235));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.before = Some(180 * 635);
+                    s.para.after = Some(60 * 635);
+                });
+                ensure_or_update("heading 3", 3, &|s| {
+                    s.run.size = Some(1150);
+                    s.run.bold = Some(false);
+                    s.run.italic = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x70AD47));
+                    s.para.align = Some(FlowAlign::Center);
+                    s.para.before = Some(120 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+            }
+            Self::Modern => {
+                ensure_or_update("Title", 10, &|s| {
+                    s.run.size = Some(2800);
+                    s.run.bold = Some(true);
+                    s.run.font = Some("Arial".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0xC00000));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.after = Some(120 * 635);
+                });
+                ensure_or_update("Subtitle", 11, &|s| {
+                    s.run.size = Some(1200);
+                    s.run.bold = Some(false);
+                    s.run.font = Some("Arial".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0x595959));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.after = Some(160 * 635);
+                });
+                ensure_or_update("heading 1", 1, &|s| {
+                    s.run.size = Some(1600);
+                    s.run.bold = Some(true);
+                    s.run.font = Some("Arial".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0xC00000));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(240 * 635);
+                    s.para.after = Some(60 * 635);
+                });
+                ensure_or_update("heading 2", 2, &|s| {
+                    s.run.size = Some(1400);
+                    s.run.bold = Some(true);
+                    s.run.font = Some("Arial".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0x262626));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(180 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+                ensure_or_update("heading 3", 3, &|s| {
+                    s.run.size = Some(1200);
+                    s.run.bold = Some(true);
+                    s.run.font = Some("Arial".to_string());
+                    s.run.color = Some(crate::drawing::Rgb(0x595959));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(120 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+            }
+            Self::Simple => {
+                ensure_or_update("Title", 10, &|s| {
+                    s.run.size = Some(2200);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x000000));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.after = Some(100 * 635);
+                });
+                ensure_or_update("Subtitle", 11, &|s| {
+                    s.run.size = Some(1100);
+                    s.run.bold = Some(false);
+                    s.run.color = Some(crate::drawing::Rgb(0x595959));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.after = Some(140 * 635);
+                });
+                ensure_or_update("heading 1", 1, &|s| {
+                    s.run.size = Some(1400);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x000000));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(180 * 635);
+                    s.para.after = Some(60 * 635);
+                });
+                ensure_or_update("heading 2", 2, &|s| {
+                    s.run.size = Some(1200);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x333333));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(140 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+                ensure_or_update("heading 3", 3, &|s| {
+                    s.run.size = Some(1100);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x595959));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(100 * 635);
+                    s.para.after = Some(30 * 635);
+                });
+            }
+            Self::Minimalist => {
+                ensure_or_update("Title", 10, &|s| {
+                    s.run.size = Some(2000);
+                    s.run.bold = Some(false);
+                    s.run.color = Some(crate::drawing::Rgb(0x262626));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.after = Some(80 * 635);
+                });
+                ensure_or_update("Subtitle", 11, &|s| {
+                    s.run.size = Some(1050);
+                    s.run.bold = Some(false);
+                    s.run.color = Some(crate::drawing::Rgb(0x7F7F7F));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.after = Some(100 * 635);
+                });
+                ensure_or_update("heading 1", 1, &|s| {
+                    s.run.size = Some(1300);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x262626));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(120 * 635);
+                    s.para.after = Some(40 * 635);
+                });
+                ensure_or_update("heading 2", 2, &|s| {
+                    s.run.size = Some(1150);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x595959));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(80 * 635);
+                    s.para.after = Some(30 * 635);
+                });
+                ensure_or_update("heading 3", 3, &|s| {
+                    s.run.size = Some(1050);
+                    s.run.bold = Some(true);
+                    s.run.color = Some(crate::drawing::Rgb(0x7F7F7F));
+                    s.para.align = Some(FlowAlign::Left);
+                    s.para.before = Some(60 * 635);
+                    s.para.after = Some(20 * 635);
+                });
+            }
+        }
     }
 }
 
@@ -596,6 +1097,130 @@ impl EmphasisMark {
     }
 }
 
+/// OpenType の合字 (`w14:ligatures`).
+/// ST_Ligatures (MS-DOCX §2.5.31).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum Ligatures {
+    #[default]
+    None,
+    Standard,
+    Contextual,
+    Historical,
+    Discretional,
+    StandardContextual,
+    StandardHistorical,
+    ContextualHistorical,
+    StandardDiscretional,
+    ContextualDiscretional,
+    HistoricalDiscretional,
+    StandardContextualHistorical,
+    StandardContextualDiscretional,
+    StandardHistoricalDiscretional,
+    ContextualHistoricalDiscretional,
+    All,
+}
+
+impl Ligatures {
+    pub fn from_ooxml(v: &str) -> Option<Self> {
+        match v {
+            "none" => Some(Self::None),
+            "standard" => Some(Self::Standard),
+            "contextual" => Some(Self::Contextual),
+            "historical" => Some(Self::Historical),
+            "discretional" | "discretionary" => Some(Self::Discretional),
+            "standardContextual" => Some(Self::StandardContextual),
+            "standardHistorical" => Some(Self::StandardHistorical),
+            "contextualHistorical" => Some(Self::ContextualHistorical),
+            "standardDiscretional" | "standardDiscretionary" => Some(Self::StandardDiscretional),
+            "contextualDiscretional" | "contextualDiscretionary" => Some(Self::ContextualDiscretional),
+            "historicalDiscretional" | "historicalDiscretionary" | "historicalAndDiscretionary" => Some(Self::HistoricalDiscretional),
+            "standardContextualHistorical" => Some(Self::StandardContextualHistorical),
+            "standardContextualDiscretional" | "standardContextualDiscretionary" => Some(Self::StandardContextualDiscretional),
+            "standardHistoricalDiscretional" | "standardHistoricalDiscretionary" => Some(Self::StandardHistoricalDiscretional),
+            "contextualHistoricalDiscretional" | "contextualHistoricalDiscretionary" => Some(Self::ContextualHistoricalDiscretional),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    pub fn to_ooxml(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Standard => "standard",
+            Self::Contextual => "contextual",
+            Self::Historical => "historical",
+            Self::Discretional => "discretional",
+            Self::StandardContextual => "standardContextual",
+            Self::StandardHistorical => "standardHistorical",
+            Self::ContextualHistorical => "contextualHistorical",
+            Self::StandardDiscretional => "standardDiscretional",
+            Self::ContextualDiscretional => "contextualDiscretional",
+            Self::HistoricalDiscretional => "historicalDiscretional",
+            Self::StandardContextualHistorical => "standardContextualHistorical",
+            Self::StandardContextualDiscretional => "standardContextualDiscretional",
+            Self::StandardHistoricalDiscretional => "standardHistoricalDiscretional",
+            Self::ContextualHistoricalDiscretional => "contextualHistoricalDiscretional",
+            Self::All => "all",
+        }
+    }
+}
+
+/// OpenType の数字のスタイル (`w14:numForm`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum NumberForm {
+    #[default]
+    Default,
+    Lining,
+    OldStyle,
+}
+
+impl NumberForm {
+    pub fn from_ooxml(v: &str) -> Option<Self> {
+        match v {
+            "default" => Some(Self::Default),
+            "lining" => Some(Self::Lining),
+            "oldStyle" => Some(Self::OldStyle),
+            _ => None,
+        }
+    }
+
+    pub fn to_ooxml(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Lining => "lining",
+            Self::OldStyle => "oldStyle",
+        }
+    }
+}
+
+/// OpenType の数字の間隔 (`w14:numSpacing`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum NumberSpacing {
+    #[default]
+    Default,
+    Proportional,
+    Tabular,
+}
+
+impl NumberSpacing {
+    pub fn from_ooxml(v: &str) -> Option<Self> {
+        match v {
+            "default" => Some(Self::Default),
+            "proportional" => Some(Self::Proportional),
+            "tabular" => Some(Self::Tabular),
+            _ => None,
+        }
+    }
+
+    pub fn to_ooxml(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Proportional => "proportional",
+            Self::Tabular => "tabular",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum VerticalPosition {
     #[default]
@@ -629,6 +1254,10 @@ pub struct FlowRunStyle {
     pub small_caps: bool,
     pub color: Rgb,
     pub highlight: Option<Rgb>,
+    /// The pattern of a run's shading (`w:shd` with a stripe or a grid) and its colour, over the highlight (its fill).
+    pub shd_pattern: Option<(ShadingPattern, Rgb)>,
+    /// Word 2010's text effects (`w14:textOutline`, `w14:glow`, `w14:shadow`, `w14:textFill`).
+    pub effects: Option<std::sync::Arc<TextEffects>>,
     pub position: VerticalPosition,
     /// Added after each character, in EMU (`w:spacing`).
     pub spacing: Emu,
@@ -655,6 +1284,14 @@ pub struct FlowRunStyle {
     pub emboss: bool,
     /// 浮き彫り (`w:imprint`).
     pub imprint: bool,
+    /// OpenType 合字 (`w14:ligatures`).
+    pub ligatures: Ligatures,
+    /// OpenType 数字のスタイル (`w14:numForm`).
+    pub num_form: NumberForm,
+    /// OpenType 数字の間隔 (`w14:numSpacing`).
+    pub num_spacing: NumberSpacing,
+    /// OpenType 前後関係に依存する異体字 (`w14:cntxtAlts`).
+    pub contextual_alternates: bool,
 }
 
 impl Default for FlowRunStyle {
@@ -677,6 +1314,8 @@ impl Default for FlowRunStyle {
             small_caps: false,
             color: Rgb::BLACK,
             highlight: None,
+            shd_pattern: None,
+            effects: None,
             position: VerticalPosition::Baseline,
             spacing: 0,
             scale: 100,
@@ -690,6 +1329,10 @@ impl Default for FlowRunStyle {
             shadow: false,
             emboss: false,
             imprint: false,
+            ligatures: Ligatures::None,
+            num_form: NumberForm::Default,
+            num_spacing: NumberSpacing::Default,
+            contextual_alternates: false,
         }
     }
 }
@@ -733,7 +1376,8 @@ impl FlowRunStyle {
         }
         // Punctuation and symbols from U+2010 up take the East Asian font
         // in a Japanese document, as Word draws them ("―" full-width).
-        let east_asian = c as u32 >= 0x2010 && !matches!(c as u32, 0xff61..=0xff9f);
+        // (not "…" U+2026: Word draws it in the Latin font, as three dots on the baseline: DIDX).
+        let east_asian = c as u32 >= 0x2010 && !matches!(c as u32, 0xff61..=0xff9f | 0x2026);
         if east_asian {
             self.east_asian_font.as_deref().or(self.font.as_deref()).or(self.cs_font.as_deref())
         } else {
@@ -756,8 +1400,6 @@ pub struct PictureLook {
     pub stroke: Option<Stroke>,
     /// 明るさ・コントラスト (`a:lum`): bright and contrast in 100 000ths (-100 000 to 100 000).
     pub luminance: Option<(i32, i32)>,
-    /// 透明度: opacity of the whole picture (`a:alphaModFix/@amt`) in 100 000ths, below 100 000.
-    pub alpha: Option<u32>,
     /// Recoloured from dark to light between two colours (`a:duotone`; grayscale is black and white).
     pub duotone: Option<(crate::drawing::Rgb, crate::drawing::Rgb)>,
     /// Alternative text (`wp:docPr/@descr`, `@title`).
@@ -768,13 +1410,30 @@ pub struct PictureLook {
     pub name: String,
     /// The embedded object the picture is the preview of (`w:object`).
     pub ole: Option<crate::model::OleId>,
+    /// The file an `INCLUDEPICTURE` field names, when the picture is that field's result (read again when the fields are updated).
+    pub linked_file: Option<String>,
+    /// Soft edge blur radius in EMU (`a:effectLst/a:softEdge`).
+    pub soft_edge: Option<i64>,
+    /// Additional colour and opacity effects on the picture (`a:blip`'s children).
+    pub effects: crate::model::BlipEffects,
+    /// Preset geometry the picture is cut to (`pic:spPr/a:prstGeom/@prst`), or None for standard rectangle.
+    pub geometry: Option<crate::drawing::Geometry>,
 }
 
 impl PictureLook {
     /// Whether the picture has no turn, flips, crop or stroke (it is drawn
     /// as a simple inline picture, not needing a turned shape).
     pub fn is_visual_default(&self) -> bool {
-        self.rotation == 0 && !self.flip_h && !self.flip_v && self.crop == Default::default() && self.stroke.is_none() && self.luminance.is_none() && self.alpha.is_none() && self.duotone.is_none()
+        self.rotation == 0
+            && !self.flip_h
+            && !self.flip_v
+            && self.crop == Default::default()
+            && self.stroke.is_none()
+            && self.luminance.is_none()
+            && self.duotone.is_none()
+            && self.soft_edge.is_none()
+            && self.effects.is_none()
+            && self.geometry.as_ref().map_or(true, |g| matches!(g, crate::drawing::Geometry::Rect))
     }
 }
 
@@ -829,10 +1488,56 @@ pub enum FlowRunKind {
     DropDownList { items: Vec<(String, String)>, selected: usize, combo: bool },
     /// A date picker content control (`w:date` within `w:sdt`).
     DatePicker { full_date: String, date_format: String, text: String },
-    /// A rich text content control (`w:sdt` without type-specific controls).
-    RichText { text: String },
-    /// A plain text content control (`w:text` within `w:sdt`).
-    PlainText { text: String },
+    /// A rich text content control (`w:sdt` without type-specific controls);
+    /// `placeholder`: `text` is the prompt (`w:showingPlcHdr`), not content.
+    RichText { text: String, placeholder: bool },
+    /// A plain text content control (`w:text` within `w:sdt`); `placeholder` as above.
+    PlainText { text: String, placeholder: bool },
+    /// A picture content control (`w14:picture` or `w:picture` within `w:sdt`);
+    /// `placeholder`: whether it is showing the placeholder image (`w:showingPlcHdr`).
+    PictureControl { media: MediaId, size: EmuSize, look: PictureLook, placeholder: bool },
+    /// A building block gallery content control (`w:docPartList` or `w:docPartObj` within `w:sdt`).
+    BuildingBlockGallery { gallery: String, category: String, text: String, placeholder: bool },
+    /// A repeating section content control (`w15:repeatingSection` within `w:sdt`).
+    RepeatingSection { section_title: String, items: Vec<String>, selected: usize, do_not_allow_insert_delete: bool },
+    /// A group content control (`w:group` within `w:sdt`).
+    Group { text: String, placeholder: bool },
+    /// A legacy form field (`w:ffData` within `w:fldChar`: `FORMTEXT`, `FORMCHECKBOX`, or `FORMDROPDOWN`).
+    FormField(FormFieldData),
+    /// A math formula (`m:oMath`, or `m:oMathPara`: `display`, a paragraph of its own and centred).
+    Math { math: crate::math::Math, display: bool },
+}
+
+/// A legacy form field's data (`w:ffData` within `w:fldChar`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormFieldData {
+    pub name: String,
+    pub enabled: bool,
+    pub calc_on_exit: bool,
+    pub kind: FormFieldKind,
+}
+
+/// The kind of legacy form field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormFieldKind {
+    /// Text input form field (`FORMTEXT` / `w:textInput`).
+    TextInput {
+        value: String,
+        default: String,
+        max_length: usize,
+    },
+    /// Check box form field (`FORMCHECKBOX` / `w:checkBox`).
+    CheckBox {
+        checked: bool,
+        default: bool,
+        size_auto: bool,
+    },
+    /// Drop-down list form field (`FORMDROPDOWN` / `w:ddList`).
+    DropDown {
+        items: Vec<String>,
+        selected: usize,
+        default: usize,
+    },
 }
 
 /// A comment (`comments.xml`), a reply to another (`parent`) and whether
@@ -880,6 +1585,57 @@ pub struct FlowRun {
     /// フィールドのロック（Word の「フィールドのロック」Ctrl+F11 / ⌘F11、w:fldLock="1"）。
     /// ロック中はフィールド更新（F9）による再計算をスキップする。
     pub field_locked: bool,
+    /// What a content control run (`w:sdt`) says about itself: its title, tag
+    /// and locks (`None` when it has none).
+    pub control: Option<Box<ControlInfo>>,
+}
+
+/// A content control's title (`w:alias`), tag (`w:tag`) and lock (`w:lock`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ControlInfo {
+    pub title: String,
+    pub tag: String,
+    pub lock: ControlLock,
+}
+
+/// `w:lock`: whether the control can be deleted and whether its content can
+/// be edited.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ControlLock {
+    #[default]
+    None,
+    /// `sdtLocked`: the control cannot be deleted; its content can be edited.
+    Control,
+    /// `contentLocked`: the content cannot be edited; the control can be deleted.
+    Content,
+    /// `sdtContentLocked`: neither.
+    Both,
+}
+
+impl ControlLock {
+    pub fn keeps_control(self) -> bool {
+        matches!(self, Self::Control | Self::Both)
+    }
+    pub fn keeps_content(self) -> bool {
+        matches!(self, Self::Content | Self::Both)
+    }
+    /// The `w:lock/@w:val`.
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Control => Some("sdtLocked"),
+            Self::Content => Some("contentLocked"),
+            Self::Both => Some("sdtContentLocked"),
+        }
+    }
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "sdtLocked" => Self::Control,
+            "contentLocked" => Self::Content,
+            "sdtContentLocked" => Self::Both,
+            _ => Self::None,
+        }
+    }
 }
 
 /// A tracked change: who made it, when, and what.
@@ -900,6 +1656,27 @@ pub enum RevisionKind {
     /// Formatting changed; this was the run's own formatting before
     /// (`w:rPrChange`).
     Format(RunFormat),
+    /// Text moved from this location (`w:moveFrom`).
+    MoveFrom,
+    /// Text moved to this location (`w:moveTo`).
+    MoveTo,
+}
+
+impl RevisionKind {
+    /// Whether this revision acts as an insertion (new text appearing).
+    pub fn is_insert(&self) -> bool {
+        matches!(self, Self::Insert | Self::MoveTo)
+    }
+
+    /// Whether this revision acts as a deletion (text being removed).
+    pub fn is_delete(&self) -> bool {
+        matches!(self, Self::Delete | Self::MoveFrom)
+    }
+
+    /// Whether this revision is part of a move operation (`w:moveFrom` or `w:moveTo`).
+    pub fn is_move(&self) -> bool {
+        matches!(self, Self::MoveFrom | Self::MoveTo)
+    }
 }
 
 /// Where a link goes.
@@ -915,7 +1692,7 @@ impl FlowRun {
     /// A run with no direct formatting, drawn with `style` until the
     /// paragraph is resolved again.
     pub fn new(kind: FlowRunKind, style: FlowRunStyle) -> Self {
-        Self { kind, style, format: RunFormat::default(), char_style: None, link: None, revision: None, show_field_code: false, field_locked: false }
+        Self { kind, style, format: RunFormat::default(), char_style: None, link: None, revision: None, show_field_code: false, field_locked: false, control: None }
     }
 
     /// The characters the run takes in a paragraph's positions: a text
@@ -927,13 +1704,119 @@ impl FlowRun {
                 items.get(*selected).map_or(0, |(d, _)| d.chars().count())
             }
             FlowRunKind::DatePicker { text, .. } => text.chars().count(),
-            FlowRunKind::RichText { text } | FlowRunKind::PlainText { text } => text.chars().count(),
+            FlowRunKind::RichText { text, .. }
+            | FlowRunKind::PlainText { text, .. }
+            | FlowRunKind::BuildingBlockGallery { text, .. }
+            | FlowRunKind::Group { text, .. } => text.chars().count(),
+            FlowRunKind::RepeatingSection { items, selected, .. } => {
+                items.get(*selected).map_or(0, |s| s.chars().count())
+            }
+            FlowRunKind::FormField(f) => match &f.kind {
+                FormFieldKind::TextInput { value, default, .. } => {
+                    let c = value.chars().count();
+                    if c == 0 {
+                        if !default.is_empty() {
+                            default.chars().count()
+                        } else {
+                            5
+                        }
+                    } else {
+                        c
+                    }
+                }
+                FormFieldKind::CheckBox { .. } => 1,
+                FormFieldKind::DropDown { items, selected, .. } => {
+                    items.get(*selected).map_or(0, |s| s.chars().count())
+                }
+            },
             _ => 1,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Whether this run is a legacy form field (`w:ffData`).
+    pub fn is_form_field(&self) -> bool {
+        matches!(self.kind, FlowRunKind::FormField(_))
+    }
+
+    /// The legacy form field data, if applicable.
+    pub fn form_field(&self) -> Option<&FormFieldData> {
+        match &self.kind {
+            FlowRunKind::FormField(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// The legacy form field data as mutable, if applicable.
+    pub fn form_field_mut(&mut self) -> Option<&mut FormFieldData> {
+        match &mut self.kind {
+            FlowRunKind::FormField(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// Whether this run is a content control (`w:sdt`).
+    pub fn is_content_control(&self) -> bool {
+        matches!(self.kind, FlowRunKind::CheckBox { .. } | FlowRunKind::DropDownList { .. } | FlowRunKind::DatePicker { .. } | FlowRunKind::RichText { .. } | FlowRunKind::PlainText { .. } | FlowRunKind::PictureControl { .. } | FlowRunKind::BuildingBlockGallery { .. } | FlowRunKind::RepeatingSection { .. } | FlowRunKind::Group { .. })
+    }
+
+    /// Whether this run is a group content control (`w:group`).
+    pub fn is_group(&self) -> bool {
+        matches!(self.kind, FlowRunKind::Group { .. })
+    }
+
+    /// The group content control properties (text, placeholder), if applicable.
+    pub fn group(&self) -> Option<(&str, bool)> {
+        match &self.kind {
+            FlowRunKind::Group { text, placeholder } => Some((text.as_str(), *placeholder)),
+            _ => None,
+        }
+    }
+
+    /// Whether this run is a repeating section content control.
+    pub fn is_repeating_section(&self) -> bool {
+        matches!(self.kind, FlowRunKind::RepeatingSection { .. })
+    }
+
+    /// The repeating section properties (section_title, items, selected, do_not_allow_insert_delete), if applicable.
+    pub fn repeating_section(&self) -> Option<(&str, &[String], usize, bool)> {
+        match &self.kind {
+            FlowRunKind::RepeatingSection { section_title, items, selected, do_not_allow_insert_delete } => {
+                Some((section_title.as_str(), items.as_slice(), *selected, *do_not_allow_insert_delete))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this run is a building block gallery content control.
+    pub fn is_building_block_gallery(&self) -> bool {
+        matches!(self.kind, FlowRunKind::BuildingBlockGallery { .. })
+    }
+
+    /// The building block gallery properties (gallery, category, text, placeholder), if applicable.
+    pub fn building_block_gallery(&self) -> Option<(&str, &str, &str, bool)> {
+        match &self.kind {
+            FlowRunKind::BuildingBlockGallery { gallery, category, text, placeholder } => {
+                Some((gallery.as_str(), category.as_str(), text.as_str(), *placeholder))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this run is a picture (`Picture` or `PictureControl`).
+    pub fn is_picture(&self) -> bool {
+        matches!(self.kind, FlowRunKind::Picture { .. } | FlowRunKind::PictureControl { .. })
+    }
+
+    /// The picture's media id, size and look, if it is a picture run.
+    pub fn picture(&self) -> Option<(MediaId, EmuSize, &PictureLook)> {
+        match &self.kind {
+            FlowRunKind::Picture { media, size, look } | FlowRunKind::PictureControl { media, size, look, .. } => Some((*media, *size, look)),
+            _ => None,
+        }
     }
 
     /// Whether this run is a field (`PageNumber`, `FileName`, `PageRef`, `Field`).
@@ -980,7 +1863,7 @@ impl Default for FlowRun {
             link: None,
             revision: None,
             show_field_code: false,
-            field_locked: false,
+            field_locked: false, control: None,
         }
     }
 }
@@ -1001,6 +1884,30 @@ pub struct TabStop {
     pub align: TabAlign,
     /// Dots or a line leading to the stop.
     pub leader: bool,
+}
+
+/// Word 2010's text effects of a run (the `w14:` elements of its `w:rPr`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextEffects {
+    /// An outline (`w14:textOutline`): its width (EMU) and colour.
+    pub outline: Option<(Emu, Rgb)>,
+    /// A glow (`w14:glow`): its radius (EMU), colour and opacity (0 to 255).
+    pub glow: Option<(Emu, Rgb, u8)>,
+    /// A shadow (`w14:shadow`).
+    pub shadow: Option<TextShadow>,
+    /// A gradient fill (`w14:textFill/w14:gradFill`): stops (position in 100 000ths, colour) and the angle in
+    /// 60 000ths of a degree (0: left to right).
+    pub gradient: Option<(Vec<(u32, Rgb)>, i32)>,
+}
+
+/// A text shadow (`w14:shadow`): blur and distance (EMU), direction (60 000ths of a degree), colour, opacity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextShadow {
+    pub blur: Emu,
+    pub distance: Emu,
+    pub direction: i32,
+    pub color: Rgb,
+    pub alpha: u8,
 }
 
 /// A two-color shading pattern (`ST_Shd` stripes and crosses).
@@ -1309,8 +2216,9 @@ impl FlowBorder {
             ThinThickLargeGap => (vec![2 * t, t], vec![w]),
             ThickThinLargeGap => (vec![t, 2 * t], vec![w]),
             ThinThickThinLargeGap => (vec![t, 2 * t, t], vec![w, w]),
-            DoubleWave => (vec![t / 2, t / 2], vec![2 * PT]),
-            Wave => (vec![t], vec![]),
+            // Word: a wave is 2.5 pt high and a double wave two of them, one above the other (a 0.75 pt line).
+            DoubleWave => (vec![PT * 11 / 4, PT * 11 / 4], vec![]),
+            Wave => (vec![PT * 13 / 4], vec![]),
             ThreeDEmboss | ThreeDEngrave => (vec![w + t], vec![]),
             _ => (vec![w], vec![]),
         };
@@ -1345,11 +2253,42 @@ impl FlowBorder {
     }
 }
 
+/// Where a drop cap is placed (`w:framePr/@w:dropCap`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum DropCapLocation {
+    #[default]
+    None,
+    Drop,
+    Margin,
+}
+
+/// Text frame drop cap properties (`w:framePr/@w:dropCap`, `@w:lines`, `@w:hSpace`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DropCap {
+    pub location: DropCapLocation,
+    /// Vertical height in lines (default 3, 1..=10).
+    pub lines: u32,
+    /// Distance from surrounding text in EMU (default 0).
+    pub space: Emu,
+}
+
+impl Default for DropCap {
+    fn default() -> Self {
+        Self {
+            location: DropCapLocation::None,
+            lines: 3,
+            space: 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FlowParagraph {
     /// Names the paragraph in the document (unique; see
     /// [`FlowDocument::new_id`]). A save finds the paragraph's element by it.
     pub id: u32,
+    /// A drop cap on the paragraph's initial letter (`w:framePr w:dropCap="drop|margin"`).
+    pub drop_cap: Option<DropCap>,
     /// The paragraph style (`w:pStyle`); `None` for the default one.
     pub style: Option<String>,
     /// The style of the table the paragraph is in, which it inherits from.
@@ -1403,6 +2342,8 @@ pub struct FlowParagraph {
     pub word_wrap: bool,
     pub overflow_punct: bool,
     pub bidi: bool,
+    /// 見出し段落が折りたたまれているか (`w15:collapsed`, MS-DOCX 2.6.27 `CT_OnOff`).
+    pub collapsed: bool,
     pub tabs: Vec<TabStop>,
     pub shading: Option<Rgb>,
     pub shading_fill: Option<Rgb>,
@@ -1433,6 +2374,23 @@ pub struct FlowParagraph {
     pub field_end: bool,
     /// The style of the list item's number or bullet.
     pub list_style: FlowRunStyle,
+    /// Subdocument reference (`<w:subDoc r:id="..."/>`, ECMA-376 Part 1 §17.17.1.1, DOCX-TOC-016).
+    pub subdoc: Option<SubdocumentInfo>,
+}
+
+/// Subdocument reference attached to a paragraph (`<w:subDoc r:id="..."/>`, ECMA-376 Part 1 §17.17.1.1).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubdocumentInfo {
+    /// Target file path or URI of the subdocument (`Target` of the `subDocument` relationship).
+    pub target: String,
+    /// Display title / heading of the subdocument.
+    pub title: String,
+    /// Whether the subdocument is currently expanded inline in master document view.
+    pub expanded: bool,
+    /// Whether the subdocument is locked against editing (`locked`).
+    pub locked: bool,
+    /// Inline paragraphs/lines stored when created or collapsed from the master document.
+    pub content_paragraphs: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1722,6 +2680,29 @@ pub struct SectionSetup {
     pub parts: [Option<Vec<Block>>; 6],
 }
 
+/// The line above the footnotes (or the endnotes): `w:footnote w:type="separator"`'s content.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NoteSeparator {
+    /// The short line (`w:separator`).
+    #[default]
+    Standard,
+    /// A line across the text (`w:continuationSeparator`).
+    Full,
+    /// None (an empty paragraph).
+    Hidden,
+}
+
+/// 文書の既定テーマフォント言語（ECMA-376 Part 1 §17.15.1.88 `w:themeFontLang`、DOCX-JA-019）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThemeFontLang {
+    /// Latin / 欧文テキスト言語 (`w:val`, 例: `en-US`).
+    pub val: Option<String>,
+    /// East Asian / 東アジア・和文テキスト言語 (`w:eastAsia`, 例: `ja-JP`).
+    pub east_asia: Option<String>,
+    /// Complex Script / Bidi テキスト言語 (`w:bidi`, 例: `ar-SA`).
+    pub bidi: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FlowDocument {
     /// The file's name, for `FILENAME` fields; `None` shows the text saved
@@ -1779,8 +2760,14 @@ pub struct FlowDocument {
     /// ページの色 (`w:background`, shown with `displayBackgroundShape`):
     /// drawn on the screen only, not in a PDF or on paper (as Word for Mac).
     pub page_color: Option<Rgb>,
+    /// ドキュメント全体の段落の間隔のプリセット（Word's デザイン > 段落の間隔: NoSpace, Compact, Tight, Open, Relaxed, Double）.
+    pub paragraph_spacing_preset: Option<ParagraphSpacingPreset>,
+    /// ドキュメント全体のスタイル セットのプリセット（Word's デザイン > ドキュメントの書式設定 > スタイル セット）.
+    pub style_set_preset: Option<StyleSetPreset>,
     /// フィールドコードの表示（Word の「フィールドコードの表示/非表示」Alt+F9 / ⌥F9）。
     pub show_field_codes: bool,
+    /// コンテンツ コントロールのデザイン モード（Word の「デザイン モード」開発 > デザイン モード）。
+    pub form_design_mode: bool,
     /// 文書のプロパティ（`docProps/core.xml`, `docProps/app.xml`: タイトル、作成者、作成日時等）。
     pub properties: DocProperties,
     /// 最終版としてマーク（Word の「最終版にする」: `docProps/custom.xml` の `_MarkAsFinal`）。
@@ -1789,16 +2776,29 @@ pub struct FlowDocument {
     /// `None` は標準の文字。
     pub no_line_start: Option<String>,
     pub no_line_end: Option<String>,
+    /// 禁則処理の方式（Word の「禁則処理の方式」標準/厳密: `word/settings.xml` の `w:strictFirstAndLastChars`, ECMA-376 Part 1 §17.15.1.84, DOCX-JA-010）。
+    /// `true`: 厳密（Strict: 小書き仮名や長音記号等を行頭禁則とする、Word 日本語版の標準）、`false`: 標準（Normal）。
+    pub strict_first_and_last_chars: bool,
+    /// 文書の既定テーマフォント言語・既定言語（Word の「校正言語の設定 > 既定に設定」: `word/settings.xml` の `w:themeFontLang`, ECMA-376 Part 1 §17.15.1.88, DOCX-JA-019）。
+    pub theme_font_lang: Option<ThemeFontLang>,
     /// 読み取り専用を推奨（Word の「読み取り専用を推奨する」: `word/settings.xml` の `w:readOnlyRecommended`）。
     pub read_only_recommended: bool,
     /// 印刷前・文書オープン時にフィールドを更新（Word の「印刷前にフィールドを更新する」: `word/settings.xml` の `w:updateFields`）。
     pub update_fields: bool,
+    /// The lines above the footnotes and the endnotes.
+    pub note_separators: [NoteSeparator; 2],
+    /// 差し込み印刷の文書の種類（`word/settings.xml` の `w:mailMerge/w:mainDocumentType`: `formLetters`・`email`・`fax`・`envelopes`・`mailingLabels`・`catalog`。無ければ通常の文書）。
+    pub mail_merge_type: Option<String>,
+    /// 差し込み印刷のフィールドと列の対応（`word/settings.xml` の `w:mailMerge/w:odso/w:fieldMapData`、ECMA-376 Part 1 §17.14.15、DOCX-MERGE-009）。
+    pub mail_merge_field_map: Vec<FieldMapData>,
     /// 変更履歴の記録をロック（Word の「変更履歴の記録をロック」: `word/settings.xml` の `w:documentProtection w:edit="trackedChanges"`）。
     pub lock_tracking: bool,
     /// 文書変数（Word の `w:settings/w:docVars/w:docVar`）。
     pub doc_variables: std::collections::BTreeMap<String, String>,
     /// 添付テンプレート（Word の `word/settings.xml` の `w:attachedTemplate`）。
     pub attached_template: Option<String>,
+    /// 文書のスタイルを自動更新する（Word の `word/settings.xml` の `w:linkStyles`, DOCX-STYLE-017, DOCX-FILE-009）。
+    pub link_styles: bool,
     /// 表示モード（Word の `word/settings.xml` の `w:view`: print, reading, web, normal 等、DOCX-VIEW-005）。
     pub view_mode: DocumentViewMode,
     /// 文書の編集制限・保護モード (`word/settings.xml` の `w:documentProtection/@w:edit`、ECMA-376 Part 1 §17.15.1.29、DOCX-SEC-002, DOCX-SEC-004, DOCX-SEC-005)。
@@ -1807,6 +2807,28 @@ pub struct FlowDocument {
     pub formatting_protection: bool,
     /// 閲覧・レビュー・編集モード（Word の 編集/レビュー/閲覧 ドロップダウンモード切替、DOCX-VIEW-021）。
     pub interaction_mode: DocumentInteractionMode,
+    /// ファイル内の画像を圧縮しない (Word の「ファイル内の画像を圧縮しない」: `word/settings.xml` の `w:doNotAutoCompressPictures`, DOCX-OPTIONS-011)。
+    pub do_not_compress_images: bool,
+    /// 既定の解像度 (Word の「既定の解像度」: `word/settings.xml` の `w14:defaultImageDpi`, DOCX-OPTIONS-011)。
+    pub default_image_dpi: Option<u32>,
+    /// 画像のトリミング部分を破棄する (Word の「画像のトリミング部分を破棄する」: `word/settings.xml` の `w14:discardImageEditingData`, DOCX-OPTIONS-011)。
+    pub discard_image_editing_data: bool,
+    /// 自動回復用データの保存間隔（分、ECMA-376 Part 1 §17.15.1.72 `w:saveFrequency`、DOCX-OPTIONS-012）。
+    pub save_frequency: Option<u32>,
+    /// ファイルにフォントを埋め込む (Word の「ファイルにフォントを埋め込む」: `word/settings.xml` の `w:embedTrueTypeFonts`, ECMA-376 Part 1 §17.15.1.35, DOCX-OPTIONS-013)。
+    pub embed_true_type_fonts: bool,
+    /// 標準のシステム フォントを埋め込む (`word/settings.xml` の `w:embedSystemFonts`, ECMA-376 Part 1 §17.15.1.34, DOCX-OPTIONS-013)。
+    pub embed_system_fonts: bool,
+    /// 文書で使用されている文字だけを埋め込む (`word/settings.xml` の `w:saveSubsetFonts`, ECMA-376 Part 1 §17.15.1.75, DOCX-OPTIONS-013)。
+    pub save_subset_fonts: bool,
+    /// 互換性モード (Word の「この文書を開くときに使用する互換性モード」: `word/settings.xml` の `<w:compatSetting w:name="compatibilityMode" w:val="..."/>`, DOCX-OPTIONS-013)。
+    pub compatibility_mode: Option<u32>,
+    /// 互換性オプション: 東アジアのレイアウトを使用 (`word/settings.xml` の `w:compat/w:useFELayout`, DOCX-OPTIONS-013)。
+    pub use_fe_layout: bool,
+    /// 互換性オプション: Shift+Return で終わる行の文字間隔を広げない (`word/settings.xml` の `w:compat/w:doNotExpandShiftReturn`, DOCX-OPTIONS-013)。
+    pub do_not_expand_shift_return: bool,
+    /// 図形のグループ階層 (`wpg:wgp`, DOCX-FLOAT-016)。
+    pub shape_groups: Vec<crate::ShapeGroup>,
 }
 
 /// A custom document property value (`docProps/custom.xml`).
@@ -1908,6 +2930,51 @@ impl FlowThemeColor {
             shade: shade.map(Into::into),
         }
     }
+
+    /// Resolve this theme colour (`accent1`, `text1`, `dk1`, etc.) with its optional hex `tint` and `shade`
+    /// against `colors` (falling back to the default Office theme colours when absent).
+    pub fn resolve(&self, colors: &[(String, Rgb)]) -> Option<Rgb> {
+        let key = match self.name.as_str() {
+            "text1" | "dark1" => "dk1",
+            "background1" | "light1" => "lt1",
+            "text2" | "dark2" => "dk2",
+            "background2" | "light2" => "lt2",
+            "hyperlink" => "hlink",
+            "followedHyperlink" => "folHlink",
+            other => other,
+        };
+        let base = colors
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key) || k.eq_ignore_ascii_case(&self.name))
+            .map(|(_, c)| *c)
+            .or_else(|| match key {
+                "dk1" => Some(Rgb(0x000000)),
+                "lt1" => Some(Rgb(0xffffff)),
+                "dk2" => Some(Rgb(0x44546a)),
+                "lt2" => Some(Rgb(0xe7e6e6)),
+                "accent1" => Some(Rgb(0x4472c4)),
+                "accent2" => Some(Rgb(0xed7d31)),
+                "accent3" => Some(Rgb(0xa5a5a5)),
+                "accent4" => Some(Rgb(0xffc000)),
+                "accent5" => Some(Rgb(0x5b9bd5)),
+                "accent6" => Some(Rgb(0x70ad47)),
+                "hlink" => Some(Rgb(0x0563c1)),
+                "folHlink" => Some(Rgb(0x954f72)),
+                _ => None,
+            })?;
+        let byte = |v: Option<&str>| v.and_then(|s| u8::from_str_radix(s, 16).ok()).map(|b| b as f32 / 255.0);
+        let channels = [(base.0 >> 16) & 0xff, (base.0 >> 8) & 0xff, base.0 & 0xff].map(|c| {
+            let mut c = c as f32;
+            if let Some(t) = byte(self.tint.as_deref()) {
+                c += (255.0 - c) * (1.0 - t);
+            }
+            if let Some(s) = byte(self.shade.as_deref()) {
+                c *= s;
+            }
+            c.round().clamp(0.0, 255.0) as u32
+        });
+        Some(Rgb((channels[0] << 16) | (channels[1] << 8) | channels[2]))
+    }
 }
 
 /// Run properties, each unset (`None`) until some level sets it: the direct
@@ -1939,6 +3006,10 @@ pub struct RunFormat {
     pub theme_color: Option<FlowThemeColor>,
     /// `Some(None)` sets no highlight.
     pub highlight: Option<Option<Rgb>>,
+    /// The pattern of the shading over the highlight (`Some(None)` none).
+    pub shd_pattern: Option<Option<(ShadingPattern, Rgb)>>,
+    /// The text effects (`Some(None)` none).
+    pub effects: Option<Option<std::sync::Arc<TextEffects>>>,
     pub position: Option<VerticalPosition>,
     /// EMU.
     pub spacing: Option<Emu>,
@@ -1962,10 +3033,21 @@ pub struct RunFormat {
     pub emboss: Option<bool>,
     /// 浮き彫り (`w:imprint`).
     pub imprint: Option<bool>,
-    /// The language of the text (`w:lang/@w:val`, `en-US`) and of its East
-    /// Asian text (`w:lang/@w:eastAsia`, `ja-JP`).
+    /// 校正しない (`w:noProof`): the text is not checked for spelling.
+    pub no_proof: Option<bool>,
+    /// The language of the text (`w:lang/@w:val`, `en-US`), of its East
+    /// Asian text (`w:lang/@w:eastAsia`, `ja-JP`), and of its Complex Script/Bidi text (`w:lang/@w:bidi`, `ar-SA`).
     pub lang: Option<String>,
     pub lang_east_asia: Option<String>,
+    pub lang_bidi: Option<String>,
+    /// OpenType 合字 (`w14:ligatures`).
+    pub ligatures: Option<Ligatures>,
+    /// OpenType 数字のスタイル (`w14:numForm`).
+    pub num_form: Option<NumberForm>,
+    /// OpenType 数字の間隔 (`w14:numSpacing`).
+    pub num_spacing: Option<NumberSpacing>,
+    /// OpenType 前後関係に依存する異体字 (`w14:cntxtAlts`).
+    pub contextual_alternates: Option<bool>,
 }
 
 impl RunFormat {
@@ -1993,6 +3075,8 @@ impl RunFormat {
         set(&mut self.color, &other.color);
         set(&mut self.theme_color, &other.theme_color);
         set(&mut self.highlight, &other.highlight);
+        set(&mut self.shd_pattern, &other.shd_pattern);
+        set(&mut self.effects, &other.effects);
         set(&mut self.position, &other.position);
         set(&mut self.spacing, &other.spacing);
         set(&mut self.scale, &other.scale);
@@ -2006,8 +3090,14 @@ impl RunFormat {
         set(&mut self.shadow, &other.shadow);
         set(&mut self.emboss, &other.emboss);
         set(&mut self.imprint, &other.imprint);
+        set(&mut self.no_proof, &other.no_proof);
         set(&mut self.lang, &other.lang);
         set(&mut self.lang_east_asia, &other.lang_east_asia);
+        set(&mut self.lang_bidi, &other.lang_bidi);
+        set(&mut self.ligatures, &other.ligatures);
+        set(&mut self.num_form, &other.num_form);
+        set(&mut self.num_spacing, &other.num_spacing);
+        set(&mut self.contextual_alternates, &other.contextual_alternates);
     }
 
     /// This without what `other` sets to the same values (formatting a
@@ -2036,6 +3126,8 @@ impl RunFormat {
         clear(&mut f.color, &other.color);
         clear(&mut f.theme_color, &other.theme_color);
         clear(&mut f.highlight, &other.highlight);
+        clear(&mut f.shd_pattern, &other.shd_pattern);
+        clear(&mut f.effects, &other.effects);
         clear(&mut f.position, &other.position);
         clear(&mut f.spacing, &other.spacing);
         clear(&mut f.scale, &other.scale);
@@ -2049,8 +3141,14 @@ impl RunFormat {
         clear(&mut f.shadow, &other.shadow);
         clear(&mut f.emboss, &other.emboss);
         clear(&mut f.imprint, &other.imprint);
+        clear(&mut f.no_proof, &other.no_proof);
         clear(&mut f.lang, &other.lang);
         clear(&mut f.lang_east_asia, &other.lang_east_asia);
+        clear(&mut f.lang_bidi, &other.lang_bidi);
+        clear(&mut f.ligatures, &other.ligatures);
+        clear(&mut f.num_form, &other.num_form);
+        clear(&mut f.num_spacing, &other.num_spacing);
+        clear(&mut f.contextual_alternates, &other.contextual_alternates);
         f
     }
 
@@ -2074,6 +3172,8 @@ impl RunFormat {
             small_caps: self.small_caps.unwrap_or(false),
             color: self.color.unwrap_or(Rgb::BLACK),
             highlight: self.highlight.flatten(),
+            shd_pattern: self.shd_pattern.flatten(),
+            effects: self.effects.clone().flatten(),
             position: self.position.unwrap_or_default(),
             spacing: self.spacing.unwrap_or(0),
             scale: self.scale.unwrap_or(100),
@@ -2087,6 +3187,10 @@ impl RunFormat {
             shadow: self.shadow.unwrap_or(false),
             emboss: self.emboss.unwrap_or(false),
             imprint: self.imprint.unwrap_or(false),
+            ligatures: self.ligatures.unwrap_or_default(),
+            num_form: self.num_form.unwrap_or_default(),
+            num_spacing: self.num_spacing.unwrap_or_default(),
+            contextual_alternates: self.contextual_alternates.unwrap_or(false),
         }
     }
 }
@@ -2126,6 +3230,7 @@ pub struct ParaFormat {
     pub word_wrap: Option<bool>,
     pub overflow_punct: Option<bool>,
     pub bidi: Option<bool>,
+    pub collapsed: Option<bool>,
     pub tabs: Vec<TabChange>,
     pub shading: Option<Option<Rgb>>,
     pub shading_fill: Option<Option<Rgb>>,
@@ -2136,6 +3241,7 @@ pub struct ParaFormat {
     pub num_id: Option<u32>,
     /// Its level in the list (`w:numPr/w:ilvl`).
     pub level: Option<u32>,
+    pub drop_cap: Option<Option<DropCap>>,
 }
 
 impl ParaFormat {
@@ -2170,6 +3276,7 @@ impl ParaFormat {
         set(&mut self.word_wrap, &other.word_wrap);
         set(&mut self.overflow_punct, &other.overflow_punct);
         set(&mut self.bidi, &other.bidi);
+        set(&mut self.collapsed, &other.collapsed);
         self.tabs.extend(other.tabs.iter().copied());
         set(&mut self.shading, &other.shading);
         set(&mut self.shading_fill, &other.shading_fill);
@@ -2180,6 +3287,7 @@ impl ParaFormat {
         }
         set(&mut self.num_id, &other.num_id);
         set(&mut self.level, &other.level);
+        set(&mut self.drop_cap, &other.drop_cap);
     }
 
     /// The tab stops after setting and clearing them in order.
@@ -2223,12 +3331,16 @@ impl ParaFormat {
         p.word_wrap = self.word_wrap.unwrap_or(true);
         p.overflow_punct = self.overflow_punct.unwrap_or(true);
         p.bidi = self.bidi.unwrap_or(false);
+        p.collapsed = self.collapsed.unwrap_or(false);
         p.tabs = self.tab_stops();
         p.shading = self.shading.flatten();
         p.shading_fill = self.shading_fill.flatten();
         p.shading_pattern = self.shading_pattern.flatten();
         p.shading_color = self.shading_color.flatten();
         p.borders = self.borders.map(Option::flatten);
+        if let Some(dc) = self.drop_cap {
+            p.drop_cap = dc;
+        }
     }
 }
 
@@ -2256,9 +3368,15 @@ pub struct FlowStyle {
     /// スタイルを自動的に更新する (`w:autoRedefine`): formatting changed by hand on a
     /// paragraph of this style is taken into the style.
     pub auto_update: bool,
+    /// Where the style comes in the gallery (`w:uiPriority`; 99 when it has none).
+    pub ui_priority: Option<u32>,
+    /// Whether the gallery offers it (`w:qFormat`).
+    pub quick: bool,
     /// A table style's formatting of some of its cells and their
     /// paragraphs (`w:tblStylePr`: the heading row, the bands…).
     pub conditional: Vec<TableCondition>,
+    /// A numbering style's list instance id (`w:pPr/w:numPr/w:numId`).
+    pub num_id: Option<u32>,
 }
 
 /// A table style's formatting of one part of its tables (`w:tblStylePr`).
@@ -2581,6 +3699,38 @@ impl FlowParagraph {
 }
 
 impl FlowDocument {
+    /// An id for a new shape (a chart): above the ids of the shapes in the document, and as `new_id`.
+    pub fn new_shape_id(&self) -> u64 {
+        fn max(blocks: &[Block], m: &mut u64) {
+            for b in blocks {
+                match b {
+                    Block::Paragraph(p) => {
+                        for r in &p.runs {
+                            if let FlowRunKind::Shape(s) = &r.kind {
+                                *m = (*m).max(s.id.0);
+                            }
+                        }
+                    }
+                    Block::Table(t) => t.rows.iter().flat_map(|r| &r.cells).for_each(|c| max(&c.blocks, m)),
+                }
+            }
+        }
+        let mut m = u64::from(self.new_id());
+        max(&self.body, &mut m);
+        max(&self.header, &mut m);
+        max(&self.footer, &mut m);
+        for list in [&self.header_first, &self.footer_first, &self.header_even, &self.footer_even] {
+            max(list, &mut m);
+        }
+        for note in self.footnotes.iter().chain(&self.endnotes) {
+            max(&note.blocks, &mut m);
+        }
+        for c in &self.comments {
+            max(&c.blocks, &mut m);
+        }
+        m + 1
+    }
+
     /// An id for a new paragraph or table: larger than any in the document
     /// and than any the file had.
     pub fn new_id(&self) -> u32 {
@@ -2624,6 +3774,86 @@ impl FlowDocument {
             max(&c.blocks, &mut m);
         }
         m + 1
+    }
+
+    /// Whether the document is in Word Compatibility Mode (`compatibilityMode` < 15: Word 2003=11, 2007=12, 2010=14).
+    pub fn is_compatibility_mode(&self) -> bool {
+        self.compatibility_mode.is_some_and(|m| m < 15)
+    }
+
+    /// Human-readable Word format version name for `compatibility_mode`.
+    pub fn compatibility_mode_version_name(&self) -> &'static str {
+        match self.compatibility_mode {
+            Some(11) => "Word 2003",
+            Some(12) => "Word 2007",
+            Some(14) => "Word 2010",
+            Some(m) if m < 15 => "Word 97-2003",
+            _ => "Word 2013-2024",
+        }
+    }
+
+    /// Re-resolve all theme colour references (`FlowThemeColor`) in styles and paragraphs against `colors`.
+    pub fn retheme(&mut self, colors: &[(String, Rgb)]) {
+        let styles = std::sync::Arc::make_mut(&mut self.styles);
+        for style in styles.styles.values_mut() {
+            if let Some(tc) = &style.run.theme_color
+                && let Some(rgb) = tc.resolve(colors)
+            {
+                style.run.color = Some(rgb);
+            }
+        }
+        let styles_arc = self.styles.clone();
+        fn retheme_blocks(blocks: &mut [Block], colors: &[(String, Rgb)], styles: &FlowStyles) {
+            for b in blocks {
+                match b {
+                    Block::Paragraph(p) => {
+                        if let Some(tc) = &p.mark_format.theme_color
+                            && let Some(rgb) = tc.resolve(colors)
+                        {
+                            p.mark_format.color = Some(rgb);
+                        }
+                        for r in &mut p.runs {
+                            if let Some(tc) = &r.format.theme_color
+                                && let Some(rgb) = tc.resolve(colors)
+                            {
+                                r.format.color = Some(rgb);
+                            }
+                        }
+                        if let Some(sec) = &mut p.section {
+                            let sec = std::sync::Arc::make_mut(sec);
+                            for part in sec.parts.iter_mut().flatten() {
+                                retheme_blocks(part, colors, styles);
+                            }
+                        }
+                        p.resolve(styles);
+                    }
+                    Block::Table(t) => {
+                        for row in &mut t.rows {
+                            for cell in &mut row.cells {
+                                retheme_blocks(&mut cell.blocks, colors, styles);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for list in [
+            &mut self.body,
+            &mut self.header,
+            &mut self.footer,
+            &mut self.header_first,
+            &mut self.footer_first,
+            &mut self.header_even,
+            &mut self.footer_even,
+        ] {
+            retheme_blocks(list, colors, &styles_arc);
+        }
+        for note in self.footnotes.iter_mut().chain(&mut self.endnotes) {
+            retheme_blocks(&mut note.blocks, colors, &styles_arc);
+        }
+        for comment in &mut self.comments {
+            retheme_blocks(&mut comment.blocks, colors, &styles_arc);
+        }
     }
 }
 
@@ -2669,6 +3899,8 @@ pub struct ListLevel {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AbstractList {
     pub levels: Vec<ListLevel>,
+    /// Link to a numbering style (`w:numStyleLink`): the styleId of the style in `styles.xml`.
+    pub num_style_link: Option<String>,
 }
 
 /// A list (`w:num`): a definition, with levels restarted at other numbers.
@@ -2728,8 +3960,37 @@ impl Numbering {
                 }
             })
             .collect();
-        out.abstracts.insert(abstract_id, AbstractList { levels });
+        out.abstracts.insert(abstract_id, AbstractList { levels, num_style_link: None });
         out.nums.insert(num_id, ListInstance { abstract_id, start_overrides: Default::default() });
+        (out, num_id)
+    }
+
+    /// These definitions with a new list style (`w:numStyleLink`) with the given style ID,
+    /// optional custom levels, returning the updated Numbering and the newly created `num_id`.
+    pub fn with_new_list_style(&self, style_id: &str, levels: Option<Vec<ListLevel>>) -> (Numbering, u32) {
+        let (mut out, num_id) = self.with_new_list(false);
+        let abstract_id = out.nums[&num_id].abstract_id;
+        if let Some(list) = out.abstracts.get_mut(&abstract_id) {
+            list.num_style_link = Some(style_id.to_string());
+            if let Some(lvls) = levels {
+                list.levels = lvls;
+            }
+        }
+        (out, num_id)
+    }
+
+    /// These definitions with a new list whose bullets are the picture `media` (`size`: the bullet's own, or the text's size), and its id.
+    pub fn with_new_picture_list(&self, media: crate::model::MediaId, size: Option<crate::geometry::EmuSize>) -> (Numbering, u32) {
+        let (mut out, num_id) = self.with_new_list(true);
+        let picture_id = out.pic_bullets.keys().max().map_or(0, |m| m + 1);
+        out.pic_bullets.insert(picture_id, (media, size));
+        let abstract_id = out.nums[&num_id].abstract_id;
+        if let Some(list) = out.abstracts.get_mut(&abstract_id) {
+            for level in &mut list.levels {
+                level.pic_bullet = Some(picture_id);
+                level.text = "\u{2022}".to_string();
+            }
+        }
         (out, num_id)
     }
 
@@ -2794,7 +4055,59 @@ pub fn format_list_number(n: u32, format: &str) -> String {
         "decimalFullWidth" | "decimalFullWidth2" => full_width(&n.to_string()),
         "decimalEnclosedParen" => format!("({n})"),
         "decimalEnclosedFullstop" => format!("{n}."),
-        "japaneseCounting" | "chineseCounting" | "chineseCountingThousand" | "koreanCounting" => kanji(n),
+        "japaneseCounting" | "chineseCounting" | "chineseCountingThousand" => kanji(n),
+        // 이십칠: the Sino-Korean numerals, with no 일 before 십・백・천 (measured on Word's PDF of DNUM).
+        "koreanCounting" => {
+            let digits = ['영', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
+            if n == 0 {
+                return "영".into();
+            }
+            let mut s = String::new();
+            for (d, unit) in [(n / 1000 % 10, "천"), (n / 100 % 10, "백"), (n / 10 % 10, "십")] {
+                if d > 0 {
+                    if d > 1 {
+                        s.push(digits[d as usize]);
+                    }
+                    s.push_str(unit);
+                }
+            }
+            if n % 10 > 0 {
+                s.push(digits[(n % 10) as usize]);
+            }
+            s
+        }
+        // 이칠: the digits one by one.
+        "koreanDigital" => n.to_string().chars().map(|c| ['영', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'][c.to_digit(10).unwrap_or(0) as usize]).collect(),
+        // 스물일곱: the native Korean numerals.
+        "koreanLegal" => {
+            const ONES: [&str; 10] = ["", "하나", "둘", "셋", "넷", "다섯", "여섯", "일곱", "여덟", "아홉"];
+            const TENS: [&str; 10] = ["", "열", "스물", "서른", "마흔", "쉰", "예순", "일흔", "여든", "아흔"];
+            if n == 0 || n >= 100 {
+                return n.to_string();
+            }
+            format!("{}{}", TENS[(n / 10) as usize], ONES[(n % 10) as usize])
+        }
+        // 贰拾柒 / 貳拾柒: the legal digits, with the units (a digit before 拾 and 佰 always).
+        "chineseLegalSimplified" | "ideographLegalTraditional" => {
+            let d: [char; 10] = if format == "chineseLegalSimplified" { ['零', '壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖'] } else { ['零', '壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖'] };
+            let mut s = String::new();
+            for (v, unit) in [(n / 1000 % 10, '仟'), (n / 100 % 10, '佰'), (n / 10 % 10, '拾')] {
+                if v > 0 {
+                    s.push(d[v as usize]);
+                    s.push(unit);
+                }
+            }
+            if n % 10 > 0 || s.is_empty() {
+                s.push(d[(n % 10) as usize]);
+            }
+            s
+        }
+        // 庚寅: the stem and the branch of the sexagenary cycle.
+        "ideographZodiacTraditional" => {
+            let i = (n.max(1) - 1) as usize;
+            format!("{}{}", "甲乙丙丁戊己庚辛壬癸".chars().nth(i % 10).unwrap_or('甲'), "子丑寅卯辰巳午未申酉戌亥".chars().nth(i % 12).unwrap_or('子'))
+        }
+        "hindiNumbers" => n.to_string().chars().map(|c| ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'][c.to_digit(10).unwrap_or(0) as usize]).collect(),
         "aiueoFullWidth" | "aiueo" => {
             const A: &str = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン";
             A.chars().nth(((n.max(1) - 1) % 46) as usize).map(String::from).unwrap_or_default()
@@ -3405,4 +4718,57 @@ impl FlowDocument {
         Some(String::new())
     }
 }
+
+
+/// The prompt a text content control shows when it has no content and its
+/// document does not give one (`w:placeholder`'s building block is not read).
+pub const DEFAULT_CONTROL_PROMPT: &str = "クリックまたはタップしてテキストを入力してください。"; // i18n-ok（Word の既定の案内文）
+
+/// Word 標準の画像コンテンツ コントロールの初期プレースホルダー PNG 画像 (120×90 ピクセル、4:3 比率)。
+pub const DEFAULT_PICTURE_CONTROL_PLACEHOLDER_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x5a, 0x08, 0x02, 0x00, 0x00, 0x00, 0xfc, 0x62, 0x05,
+    0xb8, 0x00, 0x00, 0x01, 0x3d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0xed, 0xdb, 0x31, 0x0e, 0xc2,
+    0x20, 0x18, 0x80, 0xd1, 0xde, 0x7f, 0xe8, 0xe2, 0x3d, 0x3a, 0x38, 0x79, 0x8d, 0x2e, 0xde, 0xa0,
+    0x0e, 0x9d, 0x1b, 0x67, 0x9b, 0x34, 0x71, 0xd0, 0x68, 0x0a, 0x08, 0xa2, 0xbc, 0xe4, 0x73, 0x75,
+    0x78, 0x31, 0x04, 0x7e, 0xa4, 0x1b, 0xc7, 0xb3, 0x0a, 0xd4, 0xad, 0x9f, 0x65, 0xb9, 0x2a, 0x6b,
+    0xa0, 0x41, 0x83, 0x16, 0x68, 0xd0, 0xa0, 0x41, 0x83, 0x06, 0x2d, 0xd0, 0xa0, 0x41, 0x83, 0x06,
+    0x0d, 0x5a, 0xa0, 0x41, 0x83, 0x06, 0x0d, 0x1a, 0xb4, 0x40, 0x83, 0x06, 0x0d, 0x1a, 0x34, 0x68,
+    0xd5, 0x0c, 0xdd, 0xf7, 0x87, 0x3a, 0xfb, 0x43, 0xe8, 0x69, 0x9a, 0x6b, 0x0b, 0x34, 0x68, 0xd0,
+    0xa0, 0x41, 0x83, 0x06, 0x0d, 0x1a, 0x74, 0x16, 0xe8, 0xcb, 0xa9, 0xdb, 0x02, 0x9d, 0x11, 0xfa,
+    0xae, 0x5c, 0xde, 0xba, 0x21, 0xe8, 0x07, 0xe5, 0xc2, 0xd6, 0xa0, 0x41, 0x83, 0xb6, 0x46, 0x83,
+    0xb6, 0xeb, 0xb0, 0x8f, 0x06, 0x0d, 0x1a, 0x34, 0x68, 0xd0, 0xa0, 0x7f, 0xe3, 0xce, 0x70, 0x18,
+    0x8e, 0x99, 0x02, 0x5d, 0xc2, 0xda, 0x2f, 0xba, 0x84, 0xb5, 0xa5, 0xa3, 0x84, 0xb5, 0x35, 0x1a,
+    0x74, 0x35, 0x7f, 0xa0, 0xf9, 0xa0, 0x32, 0xe8, 0x8c, 0xd6, 0xad, 0xec, 0xa3, 0xbf, 0x6b, 0xdd,
+    0xd6, 0x81, 0x05, 0x74, 0xb9, 0x93, 0x61, 0x3a, 0xf4, 0xfa, 0x25, 0xe9, 0xca, 0x4d, 0x1c, 0xc1,
+    0x13, 0x95, 0xb7, 0x12, 0x95, 0x5b, 0x99, 0x75, 0x24, 0x2a, 0xef, 0xb7, 0x36, 0x54, 0x9a, 0x13,
+    0x95, 0x41, 0x07, 0x4c, 0xef, 0x52, 0x94, 0xf7, 0x58, 0x1b, 0x93, 0x86, 0x59, 0xbf, 0xf7, 0x8a,
+    0x53, 0x6e, 0x71, 0x1e, 0x9d, 0xa2, 0xfc, 0xca, 0xda, 0xe0, 0x3f, 0xcc, 0x7a, 0xe7, 0x08, 0x1f,
+    0x74, 0xc0, 0x0d, 0x4b, 0xb4, 0xf2, 0xb3, 0xb5, 0xab, 0xac, 0x00, 0xeb, 0x88, 0xab, 0xa9, 0x20,
+    0xe5, 0xd6, 0xef, 0x0c, 0xa3, 0x95, 0xdd, 0x19, 0x7a, 0x67, 0xe8, 0xe5, 0xac, 0x27, 0xca, 0xa0,
+    0x05, 0x1a, 0x34, 0x68, 0xd0, 0xa0, 0x41, 0x0b, 0x34, 0x68, 0xd0, 0xa0, 0x41, 0x83, 0x16, 0x68,
+    0xd0, 0xa0, 0x41, 0x83, 0x06, 0x2d, 0xd0, 0xa0, 0x41, 0x83, 0x06, 0x0d, 0x5a, 0x31, 0xd0, 0x2a,
+    0xd0, 0x0d, 0x2a, 0x3f, 0x0c, 0xf3, 0xd4, 0x1a, 0x9b, 0xad, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+/// 画像コンテンツ コントロールの既定の幅 (120 pt = 1,524,000 EMU)。
+pub const DEFAULT_PICTURE_CONTROL_WIDTH_EMU: i64 = 1_524_000;
+/// 画像コンテンツ コントロールの既定の高さ (90 pt = 1,143,000 EMU)。
+pub const DEFAULT_PICTURE_CONTROL_HEIGHT_EMU: i64 = 1_143_000;
+
+/// Word 標準の文書パーツ ギャラリー コンテンツ コントロールの初期プレースホルダー案内文。
+pub const DEFAULT_BUILDING_BLOCK_GALLERY_PROMPT: &str = "ここをクリックまたはタップして、文書パーツ ギャラリーの項目を挿入します。"; // i18n-ok（Word の既定の案内文）
+/// 文書パーツ ギャラリーの既定のギャラリー名。
+pub const DEFAULT_BUILDING_BLOCK_GALLERY_NAME: &str = "Custom";
+/// 文書パーツ ギャラリーの既定のカテゴリ名。
+pub const DEFAULT_BUILDING_BLOCK_GALLERY_CATEGORY: &str = "General";
+
+/// Word 標準の繰返しセクション コンテンツ コントロールの既定のセクション名。
+pub const DEFAULT_REPEATING_SECTION_TITLE: &str = "セクション";
+/// Word 標準の繰返しセクション コンテンツ コントロールの初期項目案内文。
+pub const DEFAULT_REPEATING_SECTION_ITEM_PROMPT: &str = "ここをクリックまたはタップして、セクションの内容を入力します。"; // i18n-ok（Word の既定の案内文）
+
+/// Word 標準のグループ化コンテンツ コントロールの初期プレースホルダー案内文。
+pub const DEFAULT_GROUP_PROMPT: &str = "ここをクリックまたはタップして、グループ化されたテキストを入力します。"; // i18n-ok（Word の既定の案内文）
 

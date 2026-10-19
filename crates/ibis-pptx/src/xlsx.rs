@@ -646,11 +646,28 @@ pub(crate) fn read_custom_sheet_views(root: Node) -> Vec<ibis_doc_model::CustomS
             let zoom = attr_i64(v, "scale").map(|z| z.max(10) as u16);
             let grid_lines = attr_bool(v, "showGridLines").unwrap_or(true);
             let headings = attr_bool(v, "showRowCol").unwrap_or(true);
+            let show_ruler = attr_bool(v, "showRuler").unwrap_or(true);
             let page_break_preview = attr(v, "view") == Some("pageBreakPreview");
-            let frozen = child(v, "pane").filter(|p| matches!(attr(*p, "state"), Some("frozen" | "frozenSplit"))).map(|p| {
-                let split = |name: &str| attr(p, name).and_then(|val| val.parse::<f64>().ok()).unwrap_or(0.0).max(0.0) as u32;
-                (split("xSplit"), split("ySplit"))
-            });
+            let pane_elem = child(v, "pane");
+            let pane_state = pane_elem.and_then(|p| attr(p, "state")).unwrap_or("split");
+            let (frozen, split) = match pane_elem {
+                Some(p) if matches!(pane_state, "frozen" | "frozenSplit") => {
+                    let parse_s = |name: &str| attr(p, name).and_then(|val| val.parse::<f64>().ok()).unwrap_or(0.0).max(0.0) as u32;
+                    (Some((parse_s("xSplit"), parse_s("ySplit"))), None)
+                }
+                Some(p) => {
+                    let top_left = attr(p, "topLeftCell").and_then(cell_ref);
+                    let (col, row) = match top_left {
+                        Some((c, r)) => (c, r),
+                        None => {
+                            let parse_s = |name: &str| attr(p, name).and_then(|val| val.parse::<f64>().ok()).unwrap_or(0.0).max(0.0) as u32;
+                            (parse_s("xSplit"), parse_s("ySplit"))
+                        }
+                    };
+                    (None, (col > 0 || row > 0).then_some((col, row)))
+                }
+                None => (None, None),
+            };
             let selection = child(v, "selection");
             let active_cell = selection.and_then(|s| attr(s, "activeCell")).and_then(cell_ref);
             let selection_range = selection.and_then(|s| attr(s, "sqref")).and_then(parse_range);
@@ -663,14 +680,18 @@ pub(crate) fn read_custom_sheet_views(root: Node) -> Vec<ibis_doc_model::CustomS
                 let range = attr(f, "ref").and_then(parse_range)?;
                 Some(ibis_doc_model::AutoFilter { range, columns: Vec::new() })
             });
+            let show_formulas = attr_bool(v, "showFormulas").unwrap_or(false);
+            let show_zeros = attr_bool(v, "showZeros").unwrap_or(true);
             ibis_doc_model::CustomSheetView {
                 guid,
                 name,
                 zoom,
                 grid_lines,
                 headings,
+                show_ruler,
                 page_break_preview,
                 frozen,
+                split,
                 active_cell,
                 selection_range,
                 print,
@@ -678,6 +699,8 @@ pub(crate) fn read_custom_sheet_views(root: Node) -> Vec<ibis_doc_model::CustomS
                 hidden_columns: None,
                 auto_filter: auto_filter.map(Some),
                 filtered_rows: None,
+                show_formulas,
+                show_zeros,
             }
         })
         .collect()
@@ -768,11 +791,73 @@ fn read_validations(root: Node) -> Vec<ibis_doc_model::Validation> {
         .collect()
 }
 
+/// The 2010 conditional formats (`x14:cfRule`) that no rule of 2007 names (by `x14:id`): icon sets and data bars
+/// only 2010 has (3Stars, 3Triangles, 5Boxes).
+fn read_conditional_x14_only(root: Node, colors: &SheetColors) -> Vec<ibis_doc_model::ConditionalFormat> {
+    use ibis_doc_model::{CfKind, CfRule, CfValue, ConditionalFormat};
+    let named: std::collections::HashSet<String> = root
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "id" && n.parent().is_some_and(|p| p.tag_name().name() == "ext"))
+        .filter_map(|n| n.text().map(|t| t.trim().to_string()))
+        .collect();
+    let cfvo = |n: Node| CfValue { kind: attr(n, "type").unwrap_or("num").to_string(), value: attr(n, "val").map(str::to_string).or_else(|| child(n, "f").and_then(|f| f.text()).map(str::to_string)), gte: attr_bool(n, "gte").unwrap_or(true) };
+    let _ = colors;
+    let mut out = Vec::new();
+    for group in root.descendants().filter(|n| n.is_element() && n.tag_name().name() == "conditionalFormatting" && n.attribute("sqref").is_none()) {
+        let ranges: Vec<CellRange> = child(group, "sqref").and_then(|s| s.text()).unwrap_or("").split_whitespace().filter_map(parse_range).collect();
+        let mut rules = Vec::new();
+        for r in children(group, "cfRule") {
+            if r.attribute("id").is_some_and(|id| named.contains(id.trim())) {
+                continue;
+            }
+            if attr(r, "type") != Some("iconSet") {
+                continue;
+            }
+            let Some(is) = child(r, "iconSet") else { continue };
+            let icons: Vec<Option<ibis_doc_model::CfIcon>> = is
+                .descendants()
+                .filter(|n| n.tag_name().name() == "cfIcon")
+                .map(|ci| {
+                    let s = attr(ci, "iconSet").unwrap_or("NoIcon").to_string();
+                    let id = attr_i64(ci, "iconId").unwrap_or(-1) as i32;
+                    Some(if id < 0 || s == "NoIcon" { ibis_doc_model::CfIcon::no_icon() } else { ibis_doc_model::CfIcon::new(s, id) })
+                })
+                .collect();
+            rules.push(CfRule {
+                kind: CfKind::IconSet {
+                    set: attr(is, "iconSet").unwrap_or("3TrafficLights1").to_string(),
+                    values: children(is, "cfvo").map(cfvo).collect(),
+                    reverse: attr_bool(is, "reverse").unwrap_or(false),
+                    show_value: attr_bool(is, "showValue").unwrap_or(true),
+                    custom: attr_bool(is, "custom").unwrap_or(false),
+                    icons,
+                },
+                priority: attr_i64(r, "priority").unwrap_or(1000).max(0) as u32,
+                stop: false,
+                style: None,
+            });
+        }
+        if !rules.is_empty() && !ranges.is_empty() {
+            out.push(ConditionalFormat { source_index: None, ranges, rules });
+        }
+    }
+    out
+}
+
 /// A sheet's conditional formats (`conditionalFormatting`), with their
 /// rules' formats from `dxfs`.
 fn read_conditional(root: Node, styles: &Styles, colors: &SheetColors) -> Vec<ibis_doc_model::ConditionalFormat> {
-    use ibis_doc_model::{CfKind, CfRule, CfValue, ConditionalFormat, DataBarAxisPosition};
-    let cfvo = |n: Node| CfValue { kind: attr(n, "type").unwrap_or("num").to_string(), value: attr(n, "val").map(str::to_string), gte: attr_bool(n, "gte").unwrap_or(true) };
+    use ibis_doc_model::{CfKind, CfRule, CfValue, ConditionalFormat, DataBarAxisPosition, DataBarDirection};
+    let cfvo = |n: Node| CfValue { kind: attr(n, "type").unwrap_or("num").to_string(), value: attr(n, "val").map(str::to_string).or_else(|| child(n, "f").and_then(|f| f.text()).map(str::to_string)), gte: attr_bool(n, "gte").unwrap_or(true) };
+    // The Excel 2010 rules (`x14:cfRule` in the sheet's `extLst`), by their ids: a rule of 2007 names its
+    // 2010 half by `x14:id` in its own `extLst`, and that half holds the data bar's gradient, border, direction and
+    // axis, and the icon sets of 2010.
+    let x14_rules: std::collections::HashMap<String, Node> = root
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "cfRule" && n.attribute("id").is_some() && n.parent().is_some_and(|p| p.tag_name().name() == "conditionalFormatting"))
+        .filter_map(|n| Some((n.attribute("id")?.to_string(), n)))
+        .collect();
+    let x14_of = |r: Node| -> Option<Node> { r.descendants().find(|n| n.is_element() && n.tag_name().name() == "id" && n.parent().is_some_and(|p| p.tag_name().name() == "ext")).and_then(|n| n.text()).and_then(|id| x14_rules.get(id.trim()).copied()) };
     children(root, "conditionalFormatting")
         .enumerate().map(|(source_index, cf)| {
             let ranges = attr(cf, "sqref").unwrap_or("").split_whitespace().filter_map(parse_range).collect();
@@ -816,10 +901,11 @@ fn read_conditional(root: Node, styles: &Styles, colors: &SheetColors) -> Vec<ib
                             Some(db) => {
                                 let points: Vec<CfValue> = children(db, "cfvo").map(cfvo).collect();
                                 let color = child(db, "color").and_then(|c| colors.color(c)).unwrap_or(Rgb(0x638EC6));
-                                let min_length = attr_i64(db, "minLength").map(|v| v.max(0) as u32);
-                                let max_length = attr_i64(db, "maxLength").map(|v| v.max(0) as u32);
+                                let x14_db = x14_of(r).and_then(|x| child(x, "dataBar")).or_else(|| r.descendants().find(|n| n.tag_name().name() == "dataBar" && n != &db));
+                                // The 2010 half's lengths (0 to 100 by default) over the 2007 half's (10 to 90).
+                                let min_length = x14_db.and_then(|x| attr_i64(x, "minLength")).or_else(|| attr_i64(db, "minLength")).map(|v| v.max(0) as u32);
+                                let max_length = x14_db.and_then(|x| attr_i64(x, "maxLength")).or_else(|| attr_i64(db, "maxLength")).map(|v| v.max(0) as u32);
 
-                                let x14_db = r.descendants().find(|n| n.tag_name().name() == "dataBar" && n != &db);
                                 let gradient = if let Some(x14) = x14_db {
                                     attr_bool(x14, "gradient").unwrap_or_else(|| attr(x14, "gradient") != Some("0"))
                                 } else {
@@ -829,11 +915,22 @@ fn read_conditional(root: Node, styles: &Styles, colors: &SheetColors) -> Vec<ib
                                     .or_else(|| child(db, "negativeFillColor").or_else(|| child(db, "negativeBarColor")).and_then(|c| colors.color(c)));
                                 let axis_color = x14_db.and_then(|x14| child(x14, "axisColor")).and_then(|c| colors.color(c))
                                     .or_else(|| child(db, "axisColor").and_then(|c| colors.color(c)));
-                                let axis_position = x14_db.and_then(|x14| attr(x14, "axisPosition")).or_else(|| attr(db, "axisPosition")).map(|pos| match pos {
-                                    "midpoint" => DataBarAxisPosition::Midpoint,
-                                    "none" => DataBarAxisPosition::None,
-                                    _ => DataBarAxisPosition::Automatic,
+                                // A rule of 2007 alone has no axis and no negative bars; with its 2010 half the axis is automatic
+                                // unless named.
+                                let axis_position = Some(match x14_db.map(|x14| attr(x14, "axisPosition")).unwrap_or(attr(db, "axisPosition")) {
+                                    Some("midpoint") => DataBarAxisPosition::Midpoint,
+                                    Some("none") => DataBarAxisPosition::None,
+                                    Some(_) => DataBarAxisPosition::Automatic,
+                                    None if x14_db.is_some() => DataBarAxisPosition::Automatic,
+                                    None => DataBarAxisPosition::None,
                                 });
+                                let border_color = x14_db.filter(|x| attr_bool(*x, "border").unwrap_or(false)).map(|x| child(x, "borderColor").and_then(|c| colors.color(c)).unwrap_or(color));
+                                let negative_border_color = x14_db.and_then(|x| child(x, "negativeBorderColor")).and_then(|c| colors.color(c));
+                                let direction = match x14_db.and_then(|x| attr(x, "direction")) {
+                                    Some("leftToRight") => DataBarDirection::LeftToRight,
+                                    Some("rightToLeft") => DataBarDirection::RightToLeft,
+                                    _ => DataBarDirection::Context,
+                                };
 
                                 let at = |i: usize| points.get(i).cloned().unwrap_or(CfValue { kind: if i == 0 { "min".into() } else { "max".into() }, value: None, gte: true });
                                 CfKind::DataBar {
@@ -846,13 +943,16 @@ fn read_conditional(root: Node, styles: &Styles, colors: &SheetColors) -> Vec<ib
                                     axis_position,
                                     min_length,
                                     max_length,
+                                    border_color,
+                                    negative_border_color,
+                                    direction,
                                 }
                             }
                             None => CfKind::Other,
                         },
                         "iconSet" => match child(r, "iconSet") {
                             Some(is) => {
-                                let x14_is = r.descendants().find(|n| n.tag_name().name() == "iconSet" && n != &is);
+                                let x14_is = x14_of(r).and_then(|x| child(x, "iconSet")).or_else(|| r.descendants().find(|n| n.tag_name().name() == "iconSet" && n != &is));
                                 let set = x14_is.and_then(|x14| attr(x14, "iconSet")).or_else(|| attr(is, "iconSet")).unwrap_or("3TrafficLights1").to_string();
                                 let reverse = x14_is.and_then(|x14| attr_bool(x14, "reverse")).or_else(|| attr_bool(is, "reverse")).unwrap_or(false);
                                 let show_value = x14_is.and_then(|x14| attr_bool(x14, "showValue")).or_else(|| attr_bool(is, "showValue")).unwrap_or(true);
@@ -1054,7 +1154,14 @@ fn expand_fill(base: String, offset: usize, fill_char: char, col_width: f64) -> 
 fn cell_value(kind: Option<&str>, raw: &str, c: Node, strings: &[String], number_format: &str, date1904: bool, col_width: f64) -> (CellValue, String) {
     let value = match kind {
         Some("s") => CellValue::Text(raw.trim().parse::<usize>().ok().and_then(|i| strings.get(i)).cloned().unwrap_or_default()),
-        Some("str") => CellValue::Text(decode_xstring(raw)),
+        Some("str") => {
+            let text = decode_xstring(raw);
+            if let Some(e) = CellError::parse(text.trim()) {
+                CellValue::Error(e)
+            } else {
+                CellValue::Text(text)
+            }
+        },
         Some("inlineStr") => CellValue::Text(child(c, "is").map(inline_text).unwrap_or_default()),
         Some("b") => CellValue::Bool(raw.trim() == "1" || raw.trim().eq_ignore_ascii_case("true")),
         Some("e") => match CellError::parse(raw.trim()) {
@@ -1130,7 +1237,7 @@ pub(crate) fn column_pixels(chars: f64, digit: f64) -> f64 {
 /// The width of a column with none of its own, in points: `defaultColWidth`
 /// characters, or `baseColWidth` (8 if not given) characters and Excel's
 /// padding.
-fn default_column_width(format: Option<Node>, digit: f64) -> f64 {
+pub(crate) fn default_column_width(format: Option<Node>, digit: f64) -> f64 {
     format
         .and_then(|f| attr(f, "defaultColWidth"))
         .and_then(|v| v.parse::<f64>().ok())
@@ -1341,8 +1448,15 @@ fn line_height(font: Option<&str>, font_pt: f64) -> f64 {
     }
 }
 
+/// Excel's most a row can be high (409.5 pt): a cell of many lines stops there, as Excel's automatic height does.
+pub(crate) const MAX_ROW_HEIGHT_PT: f64 = 409.5;
+
 /// Calculate the needed row height in points for a cell with text, column width, font size and wrap setting.
-fn cell_needed_height(text: &str, col_chars: f64, font: Option<&str>, font_pt: f64, wrap: bool, bold: bool) -> f64 {
+pub(crate) fn cell_needed_height(text: &str, col_chars: f64, font: Option<&str>, font_pt: f64, wrap: bool, bold: bool) -> f64 {
+    cell_needed_height_uncapped(text, col_chars, font, font_pt, wrap, bold).min(MAX_ROW_HEIGHT_PT)
+}
+
+fn cell_needed_height_uncapped(text: &str, col_chars: f64, font: Option<&str>, font_pt: f64, wrap: bool, bold: bool) -> f64 {
     let line = line_height(font, font_pt);
     if text.is_empty() {
         return line;
@@ -1481,7 +1595,25 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     let mut sheet_styles: Vec<CellStyle> = Vec::new();
     // Shared formulas by index: the formula and the cell it is written for.
     let mut shared: HashMap<String, (String, u32, u32)> = HashMap::new();
+    let (mut rows_seen, mut rows_reported) = (0u32, 0usize);
+    // The cells of merged ranges: Excel does not fit a row to the text of a merged cell.
+    let merged_cells: Vec<CellRange> = child(root, "mergeCells")
+        .into_iter()
+        .flat_map(|m| children(m, "mergeCell"))
+        .filter_map(|m| {
+            let (a, b) = attr(m, "ref")?.split_once(':')?;
+            let ((c0, r0), (c1, r1)) = (cell_ref(a)?, cell_ref(b)?);
+            Some(CellRange { first_row: r0.min(r1), first_column: c0.min(c1), last_row: r0.max(r1), last_column: c0.max(c1) })
+        })
+        .collect();
     for row in child(root, "sheetData").into_iter().flat_map(|d| children(d, "row")) {
+        // The progress bar of the loading box.
+        rows_seen += 1;
+        if rows_seen % 2048 == 0 {
+            let end = row.range().end;
+            crate::progress::rows_done((end - rows_reported) as u64);
+            rows_reported = end;
+        }
         let Some(r) = attr_i64(row, "r").map(|v| (v.max(1) - 1) as u32) else { continue };
         if let Some(level) = attr_i64(row, "outlineLevel").filter(|&l| l > 0) {
             outline_rows.insert(r, level.min(7) as u8);
@@ -1513,7 +1645,15 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 value = CellValue::Error(error);
                 text = display_with_width(&value, format.map_or("General", |f| f.number_format.as_str()), styles.date1904, col_width);
             }
-            if !custom_height && !hidden {
+            let in_merge = merged_cells.iter().any(|m| m.first_row <= row_index && row_index <= m.last_row && m.first_column <= column && column <= m.last_column);
+            if !custom_height && !hidden && in_merge && !text.is_empty() {
+                // A merged cell does not fit its row to its text (it does not wrap into more rows), but a larger
+                // font still makes the row as tall as one line of it (Excel's PDFs of xlsx-XCEL).
+                let font_pt = format.map_or(styles.default_font.1 as f64 / 100.0, |f| f.style.font_size as f64 / 100.0).max(1.0);
+                let font_name = format.and_then(|f| f.style.font.as_deref()).or(styles.default_font.0.as_deref());
+                auto_ht = auto_ht.max(line_height(font_name, font_pt));
+            }
+            if !custom_height && !hidden && !in_merge {
                 let font_pt = format.map_or(styles.default_font.1 as f64 / 100.0, |f| f.style.font_size as f64 / 100.0).max(1.0);
                 let wrap = format.map_or(false, |f| f.style.wrap);
                 // A cell with nothing in it does not make its row taller.
@@ -1645,8 +1785,11 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     let view = child(root, "sheetViews").and_then(|v| child(v, "sheetView"));
     let grid_lines = view.and_then(|v| attr_bool(v, "showGridLines")).unwrap_or(true);
     let headings = view.and_then(|v| attr_bool(v, "showRowColHeaders")).unwrap_or(true);
+    let show_ruler = view.and_then(|v| attr_bool(v, "showRuler")).unwrap_or(true);
     let page_break_preview = view.and_then(|v| attr(v, "view")) == Some("pageBreakPreview");
     let page_layout = view.and_then(|v| attr(v, "view")) == Some("pageLayout");
+    let show_formulas = view.and_then(|v| attr_bool(v, "showFormulas")).unwrap_or(false);
+    let show_zeros = view.and_then(|v| attr_bool(v, "showZeros")).unwrap_or(true);
     // Page break preview and page layout view have a zoom of their own.
     let zoom_attr = if page_break_preview {
         "zoomScaleSheetLayoutView"
@@ -1659,24 +1802,45 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         .and_then(|v| attr(v, zoom_attr).or_else(|| attr(v, "zoomScale")))
         .and_then(|v| v.parse::<u16>().ok())
         .filter(|z| *z > 0 && *z != 100);
-    let frozen = view.and_then(|v| child(v, "pane")).filter(|p| matches!(attr(*p, "state"), Some("frozen" | "frozenSplit"))).map(|p| {
-        let split = |name: &str| attr(p, name).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0).max(0.0) as u32;
-        (split("xSplit"), split("ySplit"))
-    });
+    let pane_elem = view.and_then(|v| child(v, "pane"));
+    let pane_state = pane_elem.and_then(|p| attr(p, "state")).unwrap_or("split");
+    let (frozen, split) = match pane_elem {
+        Some(p) if matches!(pane_state, "frozen" | "frozenSplit") => {
+            let parse_s = |name: &str| attr(p, name).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0).max(0.0) as u32;
+            (Some((parse_s("xSplit"), parse_s("ySplit"))), None)
+        }
+        Some(p) => {
+            let top_left = attr(p, "topLeftCell").and_then(cell_ref);
+            let (col, row) = match top_left {
+                Some((c, r)) => (c, r),
+                None => {
+                    let parse_s = |name: &str| attr(p, name).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0).max(0.0) as u32;
+                    (parse_s("xSplit"), parse_s("ySplit"))
+                }
+            };
+            (None, (col > 0 || row > 0).then_some((col, row)))
+        }
+        None => (None, None),
+    };
     let columns = (0..max_column).map(|c| widths.get(&c).copied().unwrap_or(px(default_width))).collect();
+    // A row of its own height counts even with nothing shown in it (a picture in a cell leaves its cell's text empty).
+    if let Some(last) = heights.iter().filter(|(_, h)| **h != pt(default_row_pt)).map(|(r, _)| *r).max() {
+        max_row = max_row.max(last + 1);
+    }
     let rows = (0..max_row).map(|r| heights.get(&r).copied().unwrap_or(pt(default_row_pt))).collect();
     cells.sort_by_key(|c| (c.row, c.column));
     let print = read_print(root);
     let show_phonetic = view.and_then(|v| attr_bool(v, "showPhonetic")).unwrap_or(false);
     let phonetic_pr = child(root, "phoneticPr").map(|p| {
+        let font_id = attr(p, "fontId").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
         let phonetic_type = attr(p, "type").and_then(ibis_doc_model::PhoneticType::from_ooxml).unwrap_or_default();
         let alignment = attr(p, "alignment").and_then(ibis_doc_model::PhoneticAlignment::from_ooxml).unwrap_or_default();
-        ibis_doc_model::PhoneticProperties { phonetic_type, alignment }
+        ibis_doc_model::PhoneticProperties { font_id, phonetic_type, alignment }
     });
     let mut sheet = Sheet {
         columns,
         rows,
-        cells,
+        cells: cells.into(),
         styles: sheet_styles,
         merges,
         grid_lines,
@@ -1684,10 +1848,12 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         print_area: None,
         tab_color: None,
         frozen,
+        split,
         protection: read_protection(root),
         protected_ranges: read_protected_ranges(root),
         page_break_preview,
         page_layout,
+        show_ruler,
         zoom,
         print,
         default_row: pt(default_row_pt),
@@ -1696,6 +1862,7 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         hidden_columns,
         spills,
         conditional: read_conditional(root, styles, colors),
+        conditional_x14: read_conditional_x14_only(root, colors),
         validations: read_validations(root),
         hyperlinks: Vec::new(),
         comments: Vec::new(),
@@ -1715,6 +1882,10 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         phonetic_pr,
         ignored_errors: read_ignored_errors(root),
         cell_images,
+        web_images: Default::default(),
+        show_formulas,
+        show_zeros,
+        hide_ink: false,
     };
     if let Some(f) = &sheet.auto_filter {
         sheet.filtered_rows = ibis_doc_model::sheet_command::filtered_rows(&sheet, f, styles.date1904).into_iter().filter(|&row| sheet.rows.get(row as usize) == Some(&0)).collect();
@@ -2282,6 +2453,253 @@ fn read_print(root: Node) -> SheetPrint {
     print
 }
 
+/// What a chunk of a text file's rows (CSV, TSV) made into cells.
+struct CsvChunk {
+    cells: Vec<SheetCell>,
+    /// The number formats the cells use, in order of first use (a cell's `style` is an index into it until the chunks are put together); `None` is General.
+    codes: Vec<Option<&'static str>>,
+    /// The heights of the chunk's rows, in EMU.
+    heights: Vec<Emu>,
+    /// The sheet's size by the cells that show something, as `read_sheet` counts it.
+    max_row: u32,
+    max_column: u32,
+}
+
+/// A number as the General format shows it, for the numbers whose text is just the shortest digits that give the number back (not rounded to the width, not in exponent form): `None` for the others.
+fn general_number_text(n: f64) -> Option<String> {
+    let a = n.abs();
+    if n == 0.0 {
+        return Some("0".into());
+    }
+    if !(1e-3..1e9).contains(&a) {
+        return None;
+    }
+    let text = n.to_string();
+    (text.len() <= 10).then_some(text)
+}
+
+/// The cells of a text file's `records` (the first row at `first_row`), made as `read_sheet` makes them from the workbook `csv::workbook_from` writes: the values typed in as Excel reads them, the number format they give, rows as high as their text needs.
+fn csv_chunk(first_row: usize, records: &[Vec<String>], base: &CellStyle, default_font: &Option<String>, default_row_pt: f64, col_chars: f64) -> CsvChunk {
+    let pt = |v: f64| (v * EMU_PER_POINT as f64).round() as Emu;
+    let mut chunk = CsvChunk { cells: Vec::new(), codes: Vec::new(), heights: Vec::with_capacity(records.len()), max_row: 0, max_column: 0 };
+    let font_pt = (base.font_size as f64 / 100.0).max(1.0);
+    let font = base.font.as_deref().or(default_font.as_deref());
+    // The height of a line of text (the same for every format: the font is the default one).
+    let line_height = cell_needed_height("x", col_chars, font, font_pt, false, base.bold);
+    for (offset, record) in records.iter().enumerate() {
+        let row = (first_row + offset) as u32;
+        let mut row_height = default_row_pt;
+        for (column, field) in record.iter().enumerate() {
+            if field.is_empty() {
+                continue;
+            }
+            let column = column as u32;
+            let (value, formula, code) = match ibis_calc::input::parse_input(field, false) {
+                ibis_calc::input::Typed::Formula(f) => (CellValue::Empty, Some(ibis_calc::formula::from_file(&ibis_calc::formula::to_file(&f))).filter(|t| !t.is_empty()), None),
+                ibis_calc::input::Typed::Value(v, code) => {
+                    // As the workbook file holds it, and as reading that gives it back.
+                    let v = match v {
+                        // A short number typed as it is (not worked out, as a percentage or a date is) comes back as it was written.
+                        CellValue::Number(n) if code.is_none() && field.len() <= 15 => CellValue::Number(n),
+                        CellValue::Number(n) => {
+                            let written = ibis_calc::eval::number_to_text(n);
+                            written.trim().parse::<f64>().map(CellValue::Number).unwrap_or(CellValue::Text(written))
+                        }
+                        CellValue::Text(t) if t.contains('\r') => CellValue::Text(t.replace("\r\n", "\n").replace('\r', "\n")),
+                        other => other,
+                    };
+                    (v, None, code)
+                }
+            };
+            let text = match (&value, code) {
+                (CellValue::Number(n), None) => general_number_text(*n).unwrap_or_else(|| display_with_width(&value, "General", false, col_chars)),
+                _ => display_with_width(&value, code.unwrap_or("General"), false, col_chars),
+            };
+            if !text.is_empty() {
+                let needed = if text.contains('\n') { cell_needed_height(&text, col_chars, font, font_pt, false, base.bold) } else { line_height };
+                row_height = row_height.max(needed);
+            }
+            let visible = formula.is_some() || !text.is_empty();
+            if !visible && value.is_empty() {
+                continue;
+            }
+            if visible {
+                chunk.max_row = chunk.max_row.max(row + 1);
+                chunk.max_column = chunk.max_column.max(column + 1);
+            }
+            let style = match chunk.codes.iter().position(|c| *c == code) {
+                Some(i) => i,
+                None => {
+                    chunk.codes.push(code);
+                    chunk.codes.len() - 1
+                }
+            };
+            let kind = CellKind::of(&value);
+            chunk.cells.push(SheetCell { runs: None, phonetic: None, row, column, value, text, kind, formula, style: style as u32 });
+        }
+        chunk.heights.push(pt(row_height));
+    }
+    chunk
+}
+
+/// Fills `sheet`, the empty sheet of the workbook `csv::workbook_from("")` writes, with the cells of a text file's `records`: what `read_sheet` makes of the workbook that function writes from the same records, without writing and reading its XML (most of the time of opening a large file).
+pub(crate) fn fill_csv_sheet(sheet: &mut Sheet, root: Node, styles: &Styles, digit: f64, records: &[Vec<String>]) {
+    const CHUNK_ROWS: usize = 10_000;
+    let format = child(root, "sheetFormatPr");
+    let default_row_pt = default_row_height(format, (&styles.default_font.0, styles.default_font.1));
+    let default_width = default_column_width(format, digit);
+    let col_chars = format.and_then(|f| attr(f, "defaultColWidth")).and_then(|v| v.parse::<f64>().ok()).unwrap_or(8.43);
+    let pt = |v: f64| (v * EMU_PER_POINT as f64).round() as Emu;
+    let base = styles.formats.first().map(|f| f.style.clone()).unwrap_or_default();
+    let default_font = styles.default_font.0.clone();
+
+    let items: Vec<(usize, &[Vec<String>])> = records.chunks(CHUNK_ROWS).enumerate().map(|(i, c)| (i * CHUNK_ROWS, c)).collect();
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let chunks = crate::reader::par_map(&items, |(first, chunk)| {
+        let made = csv_chunk(*first, chunk, &base, &default_font, default_row_pt, col_chars);
+        // The progress bar: most of the time of a large file is here.
+        let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        crate::progress::fraction(0.15 + 0.8 * n as f64 / items.len() as f64);
+        made
+    });
+
+    // Put together: styles by first use (as `read_sheet` makes them), rows, columns.
+    let mut sheet_styles: Vec<CellStyle> = Vec::new();
+    let mut style_of: Vec<(Option<&'static str>, u32)> = Vec::new();
+    let mut cells: Vec<SheetCell> = Vec::with_capacity(chunks.iter().map(|c| c.cells.len()).sum());
+    let mut heights: Vec<Emu> = Vec::with_capacity(records.len());
+    let (mut max_row, mut max_column) = (0u32, 0u32);
+    for chunk in chunks {
+        let map: Vec<u32> = chunk
+            .codes
+            .iter()
+            .map(|code| match style_of.iter().find(|(c, _)| c == code) {
+                Some((_, i)) => *i,
+                None => {
+                    let mut style = base.clone();
+                    if let Some(code) = code {
+                        style.number_format = (*code).to_string();
+                        style.xf = None;
+                    }
+                    sheet_styles.push(style);
+                    let i = (sheet_styles.len() - 1) as u32;
+                    style_of.push((*code, i));
+                    i
+                }
+            })
+            .collect();
+        cells.extend(chunk.cells.into_iter().map(|mut c| {
+            c.style = map[c.style as usize];
+            c
+        }));
+        heights.extend(chunk.heights);
+        max_row = max_row.max(chunk.max_row);
+        max_column = max_column.max(chunk.max_column);
+    }
+    sheet.cells = cells.into();
+    sheet.styles = sheet_styles;
+    sheet.columns = (0..max_column).map(|_| pt(default_width)).collect();
+    sheet.rows = (0..max_row).map(|r| heights.get(r as usize).copied().unwrap_or(pt(default_row_pt))).collect();
+}
+
+/// Builds the cells and row heights for a slice of CSV records starting at `first_row`,
+/// adding new number formats to `sheet_styles` as needed.
+pub fn process_csv_chunk(
+    first_row: usize,
+    records: &[Vec<String>],
+    base_style: &CellStyle,
+    sheet_styles: &mut Vec<CellStyle>,
+) -> (Vec<SheetCell>, Vec<Emu>) {
+    const CHUNK_ROWS: usize = 10_000;
+    let default_row_pt = 13.5;
+    let col_chars = 8.43;
+    let default_font = None;
+
+    let mut style_of: Vec<(Option<&'static str>, u32)> = Vec::new();
+    for (idx, s) in sheet_styles.iter().enumerate() {
+        if s.number_format.is_empty() || s.number_format == "General" {
+            style_of.push((None, idx as u32));
+        }
+    }
+
+    let items: Vec<(usize, &[Vec<String>])> = records.chunks(CHUNK_ROWS).enumerate().map(|(i, c)| (first_row + i * CHUNK_ROWS, c)).collect();
+    let chunks = crate::reader::par_map(&items, |(first, chunk)| {
+        csv_chunk(*first, chunk, base_style, &default_font, default_row_pt, col_chars)
+    });
+
+    let mut cells = Vec::with_capacity(chunks.iter().map(|c| c.cells.len()).sum());
+    let mut heights = Vec::with_capacity(records.len());
+    for chunk in chunks {
+        let map: Vec<u32> = chunk
+            .codes
+            .iter()
+            .map(|code| match style_of.iter().find(|(c, _)| c == code) {
+                Some((_, i)) => *i,
+                None => {
+                    let mut style = base_style.clone();
+                    if let Some(code) = code {
+                        style.number_format = (*code).to_string();
+                        style.xf = None;
+                    }
+                    sheet_styles.push(style);
+                    let i = (sheet_styles.len() - 1) as u32;
+                    style_of.push((*code, i));
+                    i
+                }
+            })
+            .collect();
+        cells.extend(chunk.cells.into_iter().map(|mut c| {
+            c.style = map[c.style as usize];
+            c
+        }));
+        heights.extend(chunk.heights);
+    }
+    (cells, heights)
+}
+
+#[cfg(test)]
+mod csv_fast_path_tests {
+    use super::*;
+
+    /// The quick text of a number is what the General format gives it.
+    #[test]
+    fn the_quick_text_of_a_number_is_the_general_formats() {
+        let mut state = 0x2545F4914F6CDD1Du64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut checked = 0;
+        for i in 0..400_000u64 {
+            let r = next();
+            // Integers, decimals of a few digits, long decimals, magnitudes from 1e-5 to 1e12, both signs.
+            let n = match i % 6 {
+                0 => (r % 2_000_000_000) as f64 - 1_000_000_000.0,
+                1 => (r % 100_000) as f64 / 100.0,
+                2 => (r % 10_000_000) as f64 / 1000.0 * if r & 1 == 0 { 1.0 } else { -1.0 },
+                3 => (r % 1_000_000_007) as f64 / 7.0,
+                4 => (r as f64 / u64::MAX as f64) * 10f64.powi((r % 18) as i32 - 5),
+                _ => f64::from_bits(r) % 1e12,
+            };
+            if !n.is_finite() {
+                continue;
+            }
+            if let Some(quick) = general_number_text(n) {
+                assert_eq!(quick, display_with_width(&CellValue::Number(n), "General", false, 8.43), "for {n:?}");
+                checked += 1;
+            }
+        }
+        for n in [0.0, -0.0, 1.0, -1.0, 0.001, 0.0009999, 999_999_999.0, 1e9, 0.1 + 0.2, 1234567.891, 12345678.91, 123456789.1] {
+            if let Some(quick) = general_number_text(n) {
+                assert_eq!(quick, display_with_width(&CellValue::Number(n), "General", false, 8.43), "for {n:?}");
+            }
+        }
+        assert!(checked > 100_000, "the quick text is used for the numbers that matter: {checked}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -2408,10 +2826,10 @@ mod tests {
     #[test]
     fn table_styles_and_borders_applied() {
         let mut sheet = Sheet {
-            cells: vec![
+            cells: Vec::from([
                 SheetCell { runs: None, phonetic: None, row: 0, column: 0, value: CellValue::Text("Name".into()), text: "Name".into(), kind: CellKind::Text, formula: None, style: 0 },
                 SheetCell { runs: None, phonetic: None, row: 1, column: 0, value: CellValue::Text("Item".into()), text: "Item".into(), kind: CellKind::Text, formula: None, style: 0 },
-            ],
+            ]).into(),
             styles: vec![CellStyle::default()],
             ..Default::default()
         };
@@ -2504,6 +2922,8 @@ mod tests {
         assert_eq!(cell_needed_height("三行に折り返される非常に長い文章テキストサンプル", 10.0, None, 11.0, true, false), 95.0);
         assert_eq!(cell_needed_height("改行1行目\n改行2行目\n改行3行目", 10.0, None, 11.0, true, false), 57.0);
         assert_eq!(cell_needed_height("自動拡張される3行の折り返しテキスト", 10.0, None, 11.0, true, false), 76.0);
+        // Many lines stop at Excel's most (409.5 pt).
+        assert_eq!(cell_needed_height(&"行\n".repeat(100), 10.0, None, 11.0, true, false), 409.5);
     }
 }
 

@@ -44,7 +44,6 @@ fn fill_submenu(menus: &mut Menus, id: &str, items: Vec<MenuEntry>) {
     }
 }
 
-pub(super) const FONTS: &[&str] = &["游ゴシック", "游明朝", "ＭＳ Ｐゴシック", "ＭＳ ゴシック", "メイリオ", "BIZ UDPゴシック", "Arial", "Calibri", "Times New Roman"]; // i18n-ok（フォント名。メニューの表示と、保存する値に使う（訳さない））
 /// Fill colours (the light ones first, as a highlight).
 /// The theme colours in SpreadsheetML's order: Excel's names, the menu ids, and the tints its palette gives each (millionths).
 const THEME_NAMES: [&str; 10] = ["_xlsx.background-1", "_xlsx.text-1", "_xlsx.background-2", "_xlsx.text-2", "_xlsx.accent-1", "_xlsx.accent-2", "_xlsx.accent-3", "_xlsx.accent-4", "_xlsx.accent-5", "_xlsx.accent-6"];
@@ -67,13 +66,57 @@ pub(super) const NUMBER_FORMATS: &[(&str, &str)] = &[
 ];
 
 impl SlideEditor {
-    /// The selected cell's format.
+    /// The selected cell's format (reflecting pending or run styles when editing a cell).
     pub(crate) fn current_style(&self) -> CellStyle {
         let default = || self.presentation().workbook.as_ref().and_then(|w| w.default_style.clone()).unwrap_or_default();
-        match (self.current_sheet(), self.current_cell()) {
+        let mut style = match (self.current_sheet(), self.current_cell()) {
             (Some((_, sheet)), Some((column, row))) => sheet.cell(row, column).map_or_else(default, |c| sheet.styles[c.style as usize].clone()),
             _ => default(),
+        };
+        // When editing a cell, reflect the pending style changes or active run style immediately in the toolbar.
+        if let Some(edit) = self.cell_edit() {
+            if let Some((col, row)) = self.current_cell() {
+                if edit.slide == self.current_slide && edit.column == col && edit.row == row {
+                    if let Some(pending) = &edit.pending {
+                        for change in &pending.changes {
+                            change.apply(&mut style);
+                        }
+                    } else if let Some(runs) = &edit.runs {
+                        let caret_byte = super::cell_edit::byte_at(&edit.text, edit.caret);
+                        let mut at = 0usize;
+                        for run in runs {
+                            let next = at + run.text.len();
+                            if caret_byte <= next {
+                                if let Some(font) = &run.font {
+                                    style.font = Some(font.clone());
+                                }
+                                if let Some(size) = run.size {
+                                    style.font_size = size;
+                                }
+                                if let Some(bold) = run.bold {
+                                    style.bold = bold;
+                                }
+                                if let Some(italic) = run.italic {
+                                    style.italic = italic;
+                                }
+                                if let Some(underline) = run.underline {
+                                    style.underline = underline;
+                                }
+                                if let Some(strike) = run.strike {
+                                    style.strike = strike;
+                                }
+                                if let Some(color) = run.color {
+                                    style.color = color;
+                                }
+                                break;
+                            }
+                            at = next;
+                        }
+                    }
+                }
+            }
         }
+        style
     }
 
     pub(crate) fn current_style_bold(&self) -> bool {
@@ -118,17 +161,48 @@ impl SlideEditor {
     }
 
     pub(crate) fn run_sheet(&mut self, commands: Vec<Command>, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            let view_only = commands.iter().all(|c| match c {
+                Command::Sheet(sc) => matches!(
+                    sc,
+                    ibis_doc_model::SheetCommand::SetZoom { .. }
+                        | ibis_doc_model::SheetCommand::SetGridLines { .. }
+                        | ibis_doc_model::SheetCommand::SetHeadings { .. }
+                        | ibis_doc_model::SheetCommand::SetPageBreakPreview { .. }
+                        | ibis_doc_model::SheetCommand::SetPageLayout { .. }
+                        | ibis_doc_model::SheetCommand::SetShowRuler { .. }
+                        | ibis_doc_model::SheetCommand::SetHideInk { .. }
+                        | ibis_doc_model::SheetCommand::Freeze { .. }
+                        | ibis_doc_model::SheetCommand::Split { .. }
+                ),
+                _ => false,
+            });
+            if !view_only {
+                return;
+            }
+        }
         if let Some(s) = self.sheet_state_mut() {
             s.last_fill = None;
         }
-        if let Err(err) = self.document.execute(commands) {
+        super::sheet_view::release_layouts();
+        let started = crate::debug_timing::start();
+        let executed = self.document.execute(commands);
+        crate::debug_timing::report("sheet edit: execute", started);
+        if let Err(err) = executed {
             log::warn!("edit rejected: {err}");
             self.status = Some(crate::shell::i18n::format("_xlsx.this-operation-can-t-be-done-err", &[("err", &err)]).into());
         }
         if self.presentation().slide(self.current_slide).is_none() {
-            self.current_slide = self.presentation().slides[0].id;
+            self.current_slide = self
+                .presentation()
+                .workbook
+                .as_ref()
+                .and_then(|w| w.sheets.iter().find_map(|s| s.slide))
+                .unwrap_or(self.presentation().slides[0].id);
         }
+        let started = crate::debug_timing::start();
         self.sync_workbook_peers(cx);
+        crate::debug_timing::report("sheet edit: sync peers", started);
         cx.notify();
     }
 
@@ -193,7 +267,7 @@ impl SlideEditor {
         self.run_sheet(commands, cx);
     }
 
-    fn merge_cells(&mut self, center: bool, cx: &mut Context<Self>) {
+    pub(crate) fn merge_cells(&mut self, center: bool, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let Some(range) = self.selected_range() else { return };
         let slide = self.current_slide;
@@ -212,10 +286,25 @@ impl SlideEditor {
         self.run_sheet(commands, cx);
     }
 
-    /// The status bar's 平均・データの個数・合計 of the selected range (more
+    pub(crate) fn status_summary_flag(&self, flag: u8) -> bool {
+        self.sheet_state().map_or(super::STATUS_SUMMARY_DEFAULT, |s| s.status_summary_mask) & flag != 0
+    }
+
+    pub(crate) fn toggle_status_summary_flag(&mut self, flag: u8, cx: &mut Context<Self>) {
+        if let Some(state) = self.sheet_state_mut() {
+            state.status_summary_mask ^= flag;
+            cx.notify();
+        }
+    }
+
+    /// The status bar's 平均・データの個数・数値の個数・最小値・最大値・合計 of the selected range (more
     /// than one cell; hidden rows and columns left out), in the selected
     /// cell's number format.
     pub(crate) fn range_summary(&self) -> Option<String> {
+        let mask = self.sheet_state().map_or(super::STATUS_SUMMARY_DEFAULT, |s| s.status_summary_mask);
+        if mask == 0 {
+            return None;
+        }
         let (ranges, (_, sheet)) = (self.selected_ranges(), self.current_sheet()?);
         if ranges.len() < 2 && ranges.iter().all(|r| r.first_row == r.last_row && r.first_column == r.last_column) {
             return None;
@@ -224,6 +313,7 @@ impl SlideEditor {
         // measured against Excel for overlapping ranges).
         let inside = |c: &ibis_doc_model::SheetCell| ranges.iter().any(|r| (r.first_row..=r.last_row).contains(&c.row) && (r.first_column..=r.last_column).contains(&c.column));
         let (mut count, mut numbers, mut sum) = (0usize, 0usize, 0.0f64);
+        let (mut min_val, mut max_val): (Option<f64>, Option<f64>) = (None, None);
         for c in &sheet.cells {
             if !inside(c) {
                 continue;
@@ -235,6 +325,8 @@ impl SlideEditor {
             if let ibis_doc_model::CellValue::Number(n) = c.value {
                 numbers += 1;
                 sum += n;
+                min_val = Some(min_val.map_or(n, |m| m.min(n)));
+                max_val = Some(max_val.map_or(n, |m| m.max(n)));
             }
         }
         // Excel shows them from two cells with something in them.
@@ -244,11 +336,37 @@ impl SlideEditor {
         let code = self.current_style().number_format;
         let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
         let show = |v: f64| ibis_calc::numfmt::format(&ibis_doc_model::CellValue::Number(v), &code, date1904).text;
-        Some(if numbers == 0 {
-            crate::shell::i18n::format("_xlsx.count-count", &[("count", &count)])
-        } else {
-            crate::shell::i18n::format("_xlsx.average-average-count-count-sum-sum", &[("average", &show(sum / numbers as f64)), ("count", &count), ("sum", &show(sum))])
-        })
+        if mask == super::STATUS_SUMMARY_DEFAULT {
+            return Some(if numbers == 0 {
+                crate::shell::i18n::format("_xlsx.count-count", &[("count", &count)])
+            } else {
+                crate::shell::i18n::format("_xlsx.average-average-count-count-sum-sum", &[("average", &show(sum / numbers as f64)), ("count", &count), ("sum", &show(sum))])
+            });
+        }
+        let mut parts = Vec::new();
+        if (mask & super::STATUS_SUMMARY_AVG) != 0 && numbers > 0 {
+            parts.push(format!("{}: {}", crate::shell::i18n::text("xlsx.status-summary-average"), show(sum / numbers as f64)));
+        }
+        if (mask & super::STATUS_SUMMARY_COUNT) != 0 {
+            parts.push(format!("{}: {count}", crate::shell::i18n::text("xlsx.status-summary-count")));
+        }
+        if (mask & super::STATUS_SUMMARY_NUM_COUNT) != 0 && numbers > 0 {
+            parts.push(format!("{}: {numbers}", crate::shell::i18n::text("xlsx.status-summary-num-count")));
+        }
+        if (mask & super::STATUS_SUMMARY_MIN) != 0 {
+            if let Some(m) = min_val {
+                parts.push(format!("{}: {}", crate::shell::i18n::text("xlsx.status-summary-min"), show(m)));
+            }
+        }
+        if (mask & super::STATUS_SUMMARY_MAX) != 0 {
+            if let Some(m) = max_val {
+                parts.push(format!("{}: {}", crate::shell::i18n::text("xlsx.status-summary-max"), show(m)));
+            }
+        }
+        if (mask & super::STATUS_SUMMARY_SUM) != 0 && numbers > 0 {
+            parts.push(format!("{}: {}", crate::shell::i18n::text("xlsx.status-summary-sum"), show(sum)));
+        }
+        (!parts.is_empty()).then(|| parts.join("   "))
     }
 
     /// Select every cell of the sheet (⌘A).
@@ -373,8 +491,41 @@ impl SlideEditor {
         self.run_sheet(vec![Command::Sheet(SheetCommand::DeleteSheet { slide })], cx);
     }
 
-    /// ウィンドウ枠の固定: the rows above and columns left of the selected
-    /// cell stay in view (A1: the top row's… nothing); again, unfrozen.
+    /// ウィンドウ枠の固定（任意位置）：the rows above and columns left of selected cell stay in view.
+    pub(crate) fn freeze_panes(&mut self, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let Some((_, _sheet)) = self.current_sheet() else { return };
+        let slide = self.current_slide;
+        let frozen = self.current_cell().filter(|&(c, r)| c > 0 || r > 0);
+        // Frozen panes take the place of split ones (表示 > 分割).
+        self.wb_mut().panels.splits.remove(&slide);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::Freeze { slide, frozen })], cx);
+    }
+
+    /// 先頭行の固定（Freeze Top Row）：keeps row 1 visible while scrolling.
+    pub(crate) fn freeze_top_row(&mut self, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let slide = self.current_slide;
+        self.wb_mut().panels.splits.remove(&slide);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::Freeze { slide, frozen: Some((0, 1)) })], cx);
+    }
+
+    /// 先頭列の固定（Freeze First Column）：keeps column A visible while scrolling.
+    pub(crate) fn freeze_first_column(&mut self, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let slide = self.current_slide;
+        self.wb_mut().panels.splits.remove(&slide);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::Freeze { slide, frozen: Some((1, 0)) })], cx);
+    }
+
+    /// ウィンドウ枠固定の解除（Unfreeze Panes）：removes frozen panes.
+    pub(crate) fn unfreeze_panes(&mut self, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let slide = self.current_slide;
+        self.run_sheet(vec![Command::Sheet(SheetCommand::Freeze { slide, frozen: None })], cx);
+    }
+
+    /// ウィンドウ枠の固定（トグル）：既存互換。
     pub(crate) fn toggle_freeze(&mut self, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let Some((_, sheet)) = self.current_sheet() else { return };
@@ -386,7 +537,6 @@ impl SlideEditor {
         if frozen.is_none() && sheet.frozen.is_none() {
             return;
         }
-        // Frozen panes take the place of split ones (表示 > 分割).
         self.wb_mut().panels.splits.remove(&slide);
         self.run_sheet(vec![Command::Sheet(SheetCommand::Freeze { slide, frozen })], cx);
     }
@@ -503,6 +653,86 @@ impl SlideEditor {
         }
     }
 
+    /// The whole workbook, as an OpenDocument spreadsheet, to `path`.
+    pub(crate) fn write_ods(&self, path: &std::path::Path) -> std::io::Result<()> {
+        let bytes = match self.source.as_deref() {
+            Some(source) => ibis_pptx::write_ods_with_source(self.presentation(), source),
+            None => ibis_pptx::write_ods(self.presentation()),
+        }
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+        std::fs::write(path, bytes)
+    }
+
+    /// The whole workbook, as an old Excel file, to `path`; what was left out.
+    pub(crate) fn write_xls(&self, path: &std::path::Path) -> std::io::Result<Option<SharedString>> {
+        let (bytes, report) = ibis_pptx::write_xls_report(self.presentation()).map_err(|e| std::io::Error::other(e.to_string()))?;
+        std::fs::write(path, bytes)?;
+        Ok(super::export_xls::note(&report))
+    }
+
+    /// Ask where, and write the workbook there as an old Excel file (.xls).
+    pub(crate) fn export_xls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let directory = self.path.as_deref().and_then(|p| p.parent()).map(std::path::Path::to_path_buf).or_else(|| std::env::var_os("HOME").map(Into::into)).unwrap_or_else(|| ".".into());
+            let stem = self.path.as_deref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Book1".into());
+            let name = format!("{stem}.xls");
+            let picked = cx.prompt_for_new_path(&directory, Some(&name));
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(path))) = picked.await else { return };
+                this.update(cx, |this, cx| {
+                    let r = this.write_xls(&path);
+                    this.status = Some(match r {
+                        Ok(Some(note)) => note,
+                        Ok(None) => crate::shell::i18n::format("_xlsx.exported-to-path", &[("path", &path.display())]).into(),
+                        Err(e) => crate::shell::i18n::format("_xlsx.couldn-t-export-error", &[("error", &e)]).into(),
+                    });
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = window;
+            self.status = Some(crate::shell::i18n::text("_shell.exporting-is-not-yet-available-in-the-browser-ve"));
+            cx.notify();
+        }
+    }
+
+    /// Ask where, and write the workbook there as an OpenDocument spreadsheet (.ods).
+    pub(crate) fn export_ods(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let directory = self.path.as_deref().and_then(|p| p.parent()).map(std::path::Path::to_path_buf).or_else(|| std::env::var_os("HOME").map(Into::into)).unwrap_or_else(|| ".".into());
+            let stem = self.path.as_deref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Book1".into());
+            let name = format!("{stem}.ods");
+            let picked = cx.prompt_for_new_path(&directory, Some(&name));
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(path))) = picked.await else { return };
+                this.update(cx, |this, cx| {
+                    let r = this.write_ods(&path);
+                    this.status = Some(match r {
+                        Ok(()) => crate::shell::i18n::format("_xlsx.exported-to-path", &[("path", &path.display())]).into(),
+                        Err(e) => crate::shell::i18n::format("_xlsx.couldn-t-export-error", &[("error", &e)]).into(),
+                    });
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = window;
+            self.status = Some(crate::shell::i18n::text("_shell.exporting-is-not-yet-available-in-the-browser-ve"));
+            cx.notify();
+        }
+    }
+
     /// The sheet shown, as Shift_JIS CSV, to `path`.
     pub(crate) fn write_csv_sjis(&self, path: &std::path::Path) -> std::io::Result<()> {
         let index = self.presentation().slide_index(self.current_slide).unwrap_or(0);
@@ -527,8 +757,18 @@ impl SlideEditor {
 
     /// グループ化 (`deeper`) or グループ解除 of the selected rows (or columns).
     pub(crate) fn group_lines(&mut self, deeper: bool, cx: &mut Context<Self>) {
+        let (axis, _, _) = self.outline_axis();
+        self.group_lines_on_axis(axis, deeper, cx);
+    }
+
+    /// グループ化 (`deeper`) or グループ解除 along an explicit `axis` (rows or columns).
+    pub(crate) fn group_lines_on_axis(&mut self, axis: Axis, deeper: bool, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
-        let (axis, first, last) = self.outline_axis();
+        let Some(r) = self.selected_range() else { return };
+        let (first, last) = match axis {
+            Axis::Columns => (r.first_column, r.last_column),
+            Axis::Rows => (r.first_row, r.last_row),
+        };
         let slide = self.current_slide;
         self.run_sheet(vec![Command::Sheet(SheetCommand::Group { slide, axis, first, last, deeper })], cx);
     }
@@ -650,6 +890,22 @@ impl SlideEditor {
         self.run_sheet(vec![Command::Sheet(SheetCommand::MoveSheet { slide, to: to as usize })], cx);
     }
 
+    /// Move the current sheet to the very first (`to_first == true`) or very last (`to_first == false`) position in the workbook.
+    pub(crate) fn move_sheet_to_edge(&mut self, to_first: bool, cx: &mut Context<Self>) {
+        if self.workbook_protection_refuses(cx) {
+            return;
+        }
+        self.commit_cell_edit(cx);
+        let slide = self.current_slide;
+        let Some(wb) = self.presentation().workbook.clone() else { return };
+        let Some(at) = wb.sheets.iter().position(|s| s.slide == Some(slide)) else { return };
+        let to = if to_first { 0 } else { wb.sheets.len().saturating_sub(1) };
+        if at == to {
+            return;
+        }
+        self.run_sheet(vec![Command::Sheet(SheetCommand::MoveSheet { slide, to })], cx);
+    }
+
     /// Hide the current sheet (シートを非表示).
     pub(crate) fn hide_sheet(&mut self, cx: &mut Context<Self>) {
         if self.workbook_protection_refuses(cx) {
@@ -671,6 +927,36 @@ impl SlideEditor {
         let (slide, shape) = (self.document.ids().new_slide_id(), self.document.ids().new_shape_id());
         self.run_sheet(vec![Command::Sheet(SheetCommand::HideSheet { slide, sheet, hidden: false, shape })], cx);
         if self.presentation().slide(slide).is_some() {
+            self.select_slide(slide, window, cx);
+        }
+    }
+
+    /// Show all hidden sheets in the workbook at once.
+    pub(crate) fn unhide_all_sheets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workbook_protection_refuses(cx) {
+            return;
+        }
+        self.commit_cell_edit(cx);
+        let hidden_indices: Vec<usize> = self
+            .presentation()
+            .workbook
+            .as_ref()
+            .map(|w| w.sheets.iter().enumerate().filter(|(_, s)| s.slide.is_none() && s.hidden.is_some() && !s.other).map(|(i, _)| i).collect())
+            .unwrap_or_default();
+        if hidden_indices.is_empty() {
+            return;
+        }
+        let mut last_slide = None;
+        let commands: Vec<Command> = hidden_indices
+            .into_iter()
+            .map(|sheet| {
+                let (slide, shape) = (self.document.ids().new_slide_id(), self.document.ids().new_shape_id());
+                last_slide = Some(slide);
+                Command::Sheet(SheetCommand::HideSheet { slide, sheet, hidden: false, shape })
+            })
+            .collect();
+        self.run_sheet(commands, cx);
+        if let Some(slide) = last_slide.filter(|&id| self.presentation().slide(id).is_some()) {
             self.select_slide(slide, window, cx);
         }
     }
@@ -848,22 +1134,43 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
     number_menu.push(MenuEntry::Separator);
     number_menu.push(MenuItem::tr("xlsx.number-format-custom").on(|this, window, cx| this.open_custom_format(window, cx)).into());
     let font = style.font.clone().unwrap_or_else(|| "游ゴシック".into()); // i18n-ok（既定のフォント名（スタイルに保存される値））
-    let font_menu: Vec<MenuEntry> = FONTS.iter().map(|&f| MenuItem::new("xlsx.font", f).checked(font == f).on(format(StyleChange::Font(Some(f.into())))).into()).collect();
+    let font_menu = crate::shell::font_list::build_font_menu_entries(
+        "xlsx.font",
+        Vec::new(),
+        Some(&font),
+        |f, this, _, cx| {
+            this.format_cells(StyleChange::Font(Some(f.to_string())), cx);
+        },
+    );
     let size = style.font_size;
     let halign = |id: &'static str, icon: &'static str, label: &'static str, a: CellAlign| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).checked(style.align == a).on(format(StyleChange::Align(a))).into() };
     let valign = |id: &'static str, icon: &'static str, label: &'static str, a: CellVerticalAlign| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).checked(style.vertical == a).on(format(StyleChange::Vertical(a))).into() };
     let border = |id: &'static str, icon: &'static str, label: &'static str, kind: &'static str| -> MenuEntry { MenuItem::new(id, label).icon(icon).on(move |this, _, cx| this.set_borders(kind, cx)).into() };
     let border_styles = border_style_items(editor);
     let border_colors = border_color_menu(editor);
-    let halign_icon = match style.align {
-        CellAlign::Center | CellAlign::CenterAcross => "format_align_center",
-        CellAlign::Right => "format_align_right",
-        CellAlign::Distributed => "format_align_justify",
-        _ => "format_align_left",
+    // Whether the selection holds a merged range (the merge button is then pressed).
+    let merged = match (editor.selected_range(), editor.current_sheet()) {
+        (Some(r), Some((_, sheet))) => sheet.merges.iter().any(|m| m.first_row <= r.last_row && r.first_row <= m.last_row && m.first_column <= r.last_column && r.first_column <= m.last_column),
+        _ => false,
     };
     vec![
-        ToolButton::text("currency", "¥", "_shell.accounting-number-format").click(format(StyleChange::NumberFormat("\"¥\"#,##0;\"¥\"\\-#,##0".into()))).into(),
+        // A split button as Excel's: the left half is the accounting format of the currency last chosen (¥ at first),
+        // the ▼ has the currencies and その他の会計表示形式….
+        ToolButton::text("currency", "¥", "_shell.accounting-number-format")
+            .menu(vec![
+                currency_item("xlsx.currency.jpy", "¥", 0, &style.number_format),
+                currency_item("xlsx.currency.usd", "$", 2, &style.number_format),
+                currency_item("xlsx.currency.gbp", "£", 2, &style.number_format),
+                currency_item("xlsx.currency.eur", "€", 2, &style.number_format),
+                currency_item("xlsx.currency.cny", "¥", 2, &style.number_format),
+                currency_item("xlsx.currency.chf", "CHF", 2, &style.number_format),
+                MenuEntry::Separator,
+                MenuItem::tr("xlsx.currency.more").on(|this, window, cx| this.open_custom_format(window, cx)).into(),
+            ])
+            .last_used(editor, "currency", |i| i.id != "xlsx.currency.more", |i| i.id == "xlsx.currency.jpy", false)
+            .into(),
         ToolButton::new("percent", "percent", "_shell.percent-style").click(format(StyleChange::NumberFormat("0%".into()))).into(),
+        ToolButton::text("comma", ",", "_shell.comma-style").click(format(StyleChange::NumberFormat("#,##0".into()))).into(),
         ToolButton::new("decimal-less", "decimal_decrease", "_shell.decrease-decimal").click(|this, _, cx| this.step_decimals(false, cx)).into(),
         ToolButton::new("decimal-more", "decimal_increase", "_shell.increase-decimal").click(|this, _, cx| this.step_decimals(true, cx)).into(),
         ToolButton::text("number-format", "123", "_shell.more-number-formats").menu(number_menu).into(),
@@ -878,15 +1185,20 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         sep(),
         ToolButton::new("bold", "format_bold", "_shell.bold-b").on(style.bold).click(format(StyleChange::Bold(!style.bold))).into(),
         ToolButton::new("italic", "format_italic", "_shell.italic-i").on(style.italic).click(format(StyleChange::Italic(!style.italic))).into(),
-        ToolButton::new("underline", "format_underlined", "_shell.underline-u").on(style.underline.enabled()).click(format(StyleChange::Underline(!style.underline.enabled()))).into(),
-        ToolButton::new("underline-kind", "arrow_drop_down", "_xlsx.underline-style").menu(ibis_doc_model::CellUnderline::ALL.into_iter().map(|u| {
+        ToolButton::new("underline", "format_underlined", "_shell.underline-u").on(style.underline.enabled()).click(format(StyleChange::Underline(!style.underline.enabled())))
+            // A split button as Excel's: the left half underlines in the kind last chosen (single at first) or takes the underline off.
+            .menu(ibis_doc_model::CellUnderline::ALL.into_iter().map(|u| {
             let label = match u { ibis_doc_model::CellUnderline::None => crate::shell::i18n::text("_xlsx.no-underline"), ibis_doc_model::CellUnderline::Single => crate::shell::i18n::text("_xlsx.single-underline"), ibis_doc_model::CellUnderline::Double => crate::shell::i18n::text("_xlsx.double-underline"), ibis_doc_model::CellUnderline::SingleAccounting => crate::shell::i18n::text("_xlsx.single-accounting"), ibis_doc_model::CellUnderline::DoubleAccounting => crate::shell::i18n::text("_xlsx.double-accounting") };
             MenuItem::new(u.ooxml(), label).checked(style.underline == u).on(format(StyleChange::UnderlineKind(u))).into()
-        }).collect()).into(),
+        }).collect())
+            .last_used(editor, "underline", |i| i.id != "none", |i| i.id == "single", false)
+            .quick_off(style.underline.enabled(), format(StyleChange::UnderlineKind(ibis_doc_model::CellUnderline::None)))
+            .into(),
         ToolButton::new("text-color", "format_color_text", "_shell.font-color").palette(editor, "text-color", 0xff0000, cell_color_menu(editor, false)).into(),
         sep(),
         ToolButton::new("fill", "format_color_fill", "_shell.fill-color").palette(editor, "fill", 0xffff00, cell_color_menu(editor, true)).into(),
-        ToolButton::new("borders", "border_all", "_shell.line")
+        // A split button as Excel's: the left half draws the border last chosen (the bottom border at first), with its icon.
+        ToolButton::new("borders", "border_bottom", "_shell.line")
             .menu(vec![
                 border("xlsx.border-all", "border_all", "_xlsx.all-borders", "all"),
                 border("xlsx.border-outside", "border_outer", "_xlsx.outside-borders", "outside"),
@@ -903,17 +1215,37 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                 Submenu::tr("xlsx.border-styles", "border_all", border_styles).into(),
                 Submenu::tr("xlsx.border-colors", "palette", border_colors).into(),
             ])
+            .last_used(editor, "borders", |i| i.id.starts_with("xlsx.border-") && i.id != "xlsx.border-color", |i| i.id == "xlsx.border-bottom", true)
             .into(),
+        // A split button as Excel's: the left half is 結合して中央揃え (and takes the merge off where the selection has one).
         ToolButton::new("merge", "cell_merge", "_shell.merge-cells")
+            .on(merged)
             .menu(vec![
                 MenuItem::tr("xlsx.merge-center").icon("ibis/merge-center").on(|this, _, cx| this.merge_cells(true, cx)).into(),
                 MenuItem::tr("xlsx.merge-across").icon("ibis/merge-across").on(|this, _, cx| this.merge_across(cx)).into(),
                 MenuItem::tr("xlsx.merge").icon("cell_merge").on(|this, _, cx| this.merge_cells(false, cx)).into(),
                 MenuItem::tr("xlsx.unmerge").icon("ibis/unmerge").on(|this, _, cx| this.unmerge_cells(cx)).into(),
             ])
+            .quick(move |this, _, cx| if merged { this.unmerge_cells(cx) } else { this.merge_cells(true, cx) })
             .into(),
         sep(),
-        ToolButton::new("halign", halign_icon, "_shell.horizontal-alignment")
+        ToolButton::new("align-left", "format_align_left", "_shell.left")
+            .segment(crate::shell::chrome::SegmentRounding::Left)
+            .on(style.align == CellAlign::Left)
+            .click(format(StyleChange::Align(CellAlign::Left)))
+            .into(),
+        ToolButton::new("align-center", "format_align_center", "_shell.center")
+            .segment(crate::shell::chrome::SegmentRounding::Middle)
+            .on(style.align == CellAlign::Center || style.align == CellAlign::CenterAcross)
+            .click(format(StyleChange::Align(CellAlign::Center)))
+            .into(),
+        ToolButton::new("align-right", "format_align_right", "_shell.right")
+            .segment(crate::shell::chrome::SegmentRounding::Middle)
+            .on(style.align == CellAlign::Right)
+            .click(format(StyleChange::Align(CellAlign::Right)))
+            .into(),
+        ToolButton::dropdown("halign", "_shell.horizontal-alignment")
+            .segment(crate::shell::chrome::SegmentRounding::Right)
             .menu(vec![
                 halign("xlsx.align-general", "format_align_left", "_xlsx.general", CellAlign::General),
                 halign("xlsx.align-left", "format_align_left", "_shell.left", CellAlign::Left),
@@ -927,7 +1259,23 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                 MenuItem::tr("xlsx.shrink").checked(style.shrink).on(move |this, _, cx| this.format_cells(StyleChange::Shrink(!style.shrink), cx)).into(),
             ])
             .into(),
-        ToolButton::new("valign", "vertical_align_bottom", "_shell.vertical-alignment")
+        ToolButton::new("valign-top", "vertical_align_top", "_shell.top")
+            .segment(crate::shell::chrome::SegmentRounding::Left)
+            .on(style.vertical == CellVerticalAlign::Top)
+            .click(format(StyleChange::Vertical(CellVerticalAlign::Top)))
+            .into(),
+        ToolButton::new("valign-center", "vertical_align_center", "_shell.center")
+            .segment(crate::shell::chrome::SegmentRounding::Middle)
+            .on(style.vertical == CellVerticalAlign::Center)
+            .click(format(StyleChange::Vertical(CellVerticalAlign::Center)))
+            .into(),
+        ToolButton::new("valign-bottom", "vertical_align_bottom", "_shell.bottom")
+            .segment(crate::shell::chrome::SegmentRounding::Middle)
+            .on(style.vertical == CellVerticalAlign::Bottom)
+            .click(format(StyleChange::Vertical(CellVerticalAlign::Bottom)))
+            .into(),
+        ToolButton::dropdown("valign", "_shell.vertical-alignment")
+            .segment(crate::shell::chrome::SegmentRounding::Right)
             .menu(vec![
                 valign("xlsx.valign-top", "vertical_align_top", "_shell.top", CellVerticalAlign::Top),
                 valign("xlsx.valign-center", "vertical_align_center", "_shell.center", CellVerticalAlign::Center),
@@ -941,7 +1289,9 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("indent-more", "format_indent_increase", "_xlsx.increase-indent").click(format(StyleChange::Indent(style.indent + 1))).into(),
         sep(),
         ToolButton::new("functions", "functions", "_shell.functions")
-            .menu(super::autosum::FUNCTIONS.iter().map(|&(f, label)| MenuItem::new("xlsx.function", format!("{f}（{}）", crate::shell::i18n::text(label))).on(move |this, _, cx| this.auto_function(f, cx)).into()).collect()) // i18n-ok（関数名の括弧）
+            .menu(super::autosum::FUNCTIONS.iter().map(|&(f, label)| MenuItem::new("xlsx.function", crate::shell::i18n::format("xlsx.toolbar.function-item", &[("name", &f), ("label", &crate::shell::i18n::text(label))])).on(move |this, _, cx| this.auto_function(f, cx)).into()).collect())
+            // A split button as Excel's: the left half is the sum.
+            .quick(|this, _, cx| this.auto_function("SUM", cx))
             .into(),
     ]
 }
@@ -966,7 +1316,11 @@ fn push_into(entries: &mut Vec<MenuEntry>, id: &str, new: MenuEntry) -> Result<(
 
 /// Put `new` after the item `id` (in whatever menu or submenu it is).
 fn insert_after(entries: &mut Vec<MenuEntry>, id: &str, new: MenuEntry) -> Result<(), MenuEntry> {
-    if let Some(i) = entries.iter().position(|e| matches!(e, MenuEntry::Item(item) if item.id == id)) {
+    if let Some(i) = entries.iter().position(|e| match e {
+        MenuEntry::Item(item) => item.id == id,
+        MenuEntry::Submenu(sub) => sub.id == id,
+        _ => false,
+    }) {
         entries.insert(i + 1, new);
         return Ok(());
     }
@@ -1046,8 +1400,38 @@ fn text_warp_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 }
 
 pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
-    // ツール > スペル > スペルチェック…
-    fill_submenu(menus, "tools.spelling", vec![MenuItem::tr("pptx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_sheet_spelling(w, cx)).into()]);
+    // ツール > スペル > スペルチェック… / 類義語辞典
+    fill_submenu(
+        menus,
+        "tools.spelling",
+        vec![
+            MenuItem::tr("xlsx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_sheet_spelling(w, cx)).into(),
+            MenuItem::tr("pptx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_sheet_spelling(w, cx)).into(),
+            MenuItem::tr("xlsx.thesaurus").icon("menu_book").on(|e, w, cx| e.open_thesaurus(w, cx)).into(),
+        ],
+    );
+    // 書式 > テキスト: 下線（下線・二重下線）
+    let style = editor.current_style();
+    let underline_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("xlsx.underline-single")
+            .icon("format_underlined")
+            .shortcut("⌘U")
+            .checked(style.underline == ibis_doc_model::CellUnderline::Single)
+            .on(|this, _, cx| this.format_cells(ibis_doc_model::StyleChange::UnderlineKind(ibis_doc_model::CellUnderline::Single), cx))
+            .into(),
+        MenuItem::tr("xlsx.underline-double")
+            .icon("format_underlined")
+            .checked(style.underline == ibis_doc_model::CellUnderline::Double)
+            .on(|this, _, cx| this.format_cells(ibis_doc_model::StyleChange::UnderlineKind(ibis_doc_model::CellUnderline::Double), cx))
+            .into(),
+    ];
+    fill_submenu(
+        menus,
+        "format.text",
+        vec![
+            crate::shell::chrome::Submenu::tr("xlsx.underline-menu", "format_underlined", underline_items).into(),
+        ],
+    );
     // 編集 > 画像としてコピー (after コピー).
     let mut copy_as_pic: MenuEntry = MenuItem::tr("xlsx.copy-as-picture").icon("image").shortcut("⌥⇧⌘C").on(|this, _, cx| this.copy_as_picture(cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
@@ -1063,7 +1447,11 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         .as_ref()
         .map(|w| w.sheets.iter().enumerate().filter(|(_, s)| s.slide.is_none() && s.hidden.is_some() && !s.other).map(|(i, s)| (i, s.name.clone())).collect())
         .unwrap_or_default();
-    let items: Vec<MenuEntry> = hidden.into_iter().map(|(i, name)| MenuItem::new("xlsx.unhide-sheet", name).on(move |this, window, cx| this.unhide_sheet(i, window, cx)).into()).collect();
+    let mut items: Vec<MenuEntry> = hidden.into_iter().map(|(i, name)| MenuItem::new("xlsx.unhide-sheet", name).on(move |this, window, cx| this.unhide_sheet(i, window, cx)).into()).collect();
+    if !items.is_empty() {
+        items.push(MenuEntry::Separator);
+        items.push(MenuItem::tr("xlsx.unhide-all-sheets").on(|this, window, cx| this.unhide_all_sheets(window, cx)).into());
+    }
     let mut entry: MenuEntry = if items.is_empty() {
         MenuItem::tr("xlsx.unhide-sheet").icon("visibility").disabled(true).into()
     } else {
@@ -1094,6 +1482,8 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     for (after, entry) in [
         ("xlsx.duplicate-sheet", MenuItem::tr("xlsx.move-sheet-left").on(|this, _, cx| this.move_sheet(-1, cx))),
         ("xlsx.move-sheet-left", MenuItem::tr("xlsx.move-sheet-right").on(|this, _, cx| this.move_sheet(1, cx))),
+        ("xlsx.move-sheet-right", MenuItem::tr("xlsx.move-sheet-first").on(|this, _, cx| this.move_sheet_to_edge(true, cx))),
+        ("xlsx.move-sheet-first", MenuItem::tr("xlsx.move-sheet-last").on(|this, _, cx| this.move_sheet_to_edge(false, cx))),
     ] {
         let mut entry: MenuEntry = entry.into();
         for (_, entries) in menus.menus.iter_mut() {
@@ -1104,6 +1494,10 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         }
     }
     menus.connect("xlsx.freeze", |this, _, cx| this.toggle_freeze(cx));
+    menus.connect("xlsx.freeze-panes", |this, _, cx| this.freeze_panes(cx));
+    menus.connect("xlsx.unfreeze-panes", |this, _, cx| this.unfreeze_panes(cx));
+    menus.connect("xlsx.freeze-top-row", |this, _, cx| this.freeze_top_row(cx));
+    menus.connect("xlsx.freeze-first-column", |this, _, cx| this.freeze_first_column(cx));
     // 表示 > 分割 (after ウィンドウ枠の固定).
     let mut split: MenuEntry = MenuItem::tr("xlsx.split").checked(editor.split_panes().is_some()).on(|this, _, cx| this.toggle_split(cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
@@ -1129,6 +1523,30 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         }
     }
     menus.connect("xlsx.advanced-filter", |this, window, cx| this.open_advanced_filter_panel(window, cx));
+    // 並べ替えとフィルター > 再適用 (Excel's ホーム / データ > 並べ替えとフィルター > 再適用, ⌥⌘L)
+    let has_filter = editor.current_sheet().is_some_and(|(_, s)| s.auto_filter.is_some() || s.tables.iter().any(|t| t.filter.is_some()));
+    let mut reapply: MenuEntry = MenuItem::tr("xlsx.reapply-filter").icon("refresh").shortcut("⌥⌘L").disabled(!has_filter).on(|this, _, cx| this.reapply_auto_filter(cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.advanced-filter", reapply) {
+            Ok(()) => break,
+            Err(back) => reapply = back,
+        }
+    }
+    menus.connect("xlsx.reapply-filter", |this, _, cx| this.reapply_auto_filter(cx));
+    menus.connect("xlsx.filter.reapply", |this, _, cx| this.reapply_auto_filter(cx));
+
+    // 並べ替えとフィルター > クリア (Excel's ホーム / データ > 並べ替えとフィルター > クリア)
+    let mut clear_flt: MenuEntry = MenuItem::tr("xlsx.clear-filter").icon("filter_alt_off").disabled(!has_filter).on(|this, _, cx| this.clear_auto_filter(cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.reapply-filter", clear_flt) {
+            Ok(()) => break,
+            Err(back) => clear_flt = back,
+        }
+    }
+    menus.connect("xlsx.clear-filter", |this, _, cx| this.clear_auto_filter(cx));
+    menus.connect("xlsx.filter.clear", |this, _, cx| this.clear_auto_filter(cx));
+    menus.connect("xlsx.filter-clear", |this, _, cx| this.clear_auto_filter(cx));
+    menus.connect("xlsx.sort-ascending", |this, _, cx| this.sort_by_selected_column(true, cx));
     // データ > 重複の削除 (after the sorting).
     let mut dedupe: MenuEntry = MenuItem::tr("xlsx.remove-duplicates").icon("sort").on(|this, window, cx| this.open_dedupe_panel(window, cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
@@ -1137,17 +1555,66 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             Err(back) => dedupe = back,
         }
     }
-    // 編集 > 条件を選択してジャンプ (after 検索と置換).
+    // 編集 > ジャンプ... (after 検索と置換).
+    let mut goto_menu: MenuEntry = MenuItem::tr("xlsx.goto").shortcut("⌃G").icon("find_replace").on(|this, window, cx| this.open_goto(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "edit.find-replace", goto_menu) {
+            Ok(()) => break,
+            Err(back) => goto_menu = back,
+        }
+    }
+    menus.connect("xlsx.goto", |this, window, cx| this.open_goto(window, cx));
+
+    // 編集 > 条件を選択してジャンプ (after ジャンプ).
     let mut goto_special: MenuEntry = MenuItem::tr("xlsx.goto-special").icon("find_replace").on(|this, _, cx| this.open_goto_special_panel(cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "edit.find-replace", goto_special) {
+        match insert_after(entries, "xlsx.goto", goto_special) {
             Ok(()) => break,
             Err(back) => goto_special = back,
         }
     }
+    menus.connect("xlsx.goto-special", |this, _, cx| this.open_goto_special_panel(cx));
+    // 編集 > 検索と選択 (Excel's ホーム > 編集 > 検索と選択: 1 クリック選択)
+    use super::goto_special::Special as GS;
+    let find_select_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("xlsx.select-formulas").on(|this, _, cx| this.select_special_kind(GS::Formulas, cx)).into(),
+        MenuItem::tr("xlsx.select-notes").on(|this, _, cx| this.select_special_kind(GS::Comments, cx)).into(),
+        MenuItem::tr("xlsx.select-conditional-formats").on(|this, _, cx| this.select_special_kind(GS::Conditional, cx)).into(),
+        MenuItem::tr("xlsx.select-constants").on(|this, _, cx| this.select_special_kind(GS::Constants, cx)).into(),
+        MenuItem::tr("xlsx.select-data-validation").on(|this, _, cx| this.select_special_kind(GS::Validation, cx)).into(),
+        MenuItem::tr("xlsx.select-blanks").on(|this, _, cx| this.select_special_kind(GS::Blanks, cx)).into(),
+        MenuItem::tr("xlsx.select-visible-cells").on(|this, _, cx| this.select_special_kind(GS::Visible, cx)).into(),
+        MenuItem::tr("xlsx.select-current-region").on(|this, _, cx| this.select_special_kind(GS::CurrentRegion, cx)).into(),
+        MenuItem::tr("xlsx.select-objects").on(|this, _, cx| this.select_special_kind(GS::Objects, cx)).into(),
+    ];
+    let mut find_and_select_menu: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.find-and-select", "find_replace", find_select_items).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.goto-special", find_and_select_menu) {
+            Ok(()) => break,
+            Err(back) => find_and_select_menu = back,
+        }
+    }
+    // 編集 > オブジェクトの選択と表示 (Excel's ホーム > 編集 / ページ レイアウト > 配置)
+    let sel_pane_open = editor.sheet_state().is_some_and(|s| s.panels.selection_pane.is_some());
+    let mut sel_pane_edit: MenuEntry = MenuItem::tr("xlsx.selection-pane").icon("visibility").checked(sel_pane_open).on(|this, window, cx| { this.toggle_xlsx_selection_pane(window, cx); }).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.find-and-select", sel_pane_edit) {
+            Ok(()) => break,
+            Err(back) => sel_pane_edit = back,
+        }
+    }
+    menus.items_mut(crate::shell::chrome::MenuId::Arrange).push(
+        MenuItem::tr("xlsx.selection-pane")
+            .icon("visibility")
+            .checked(sel_pane_open)
+            .on(|this, window, cx| {
+                this.toggle_xlsx_selection_pane(window, cx);
+            })
+            .into(),
+    );
     // 挿入 > 新しいメモ (編集 for a cell with one), after the link; メモの削除.
     let has_note = editor.current_cell().zip(editor.current_sheet()).is_some_and(|((c, r), (_, sheet))| sheet.comment_at(r, c).is_some());
-    let mut note: MenuEntry = MenuItem::tr(if has_note { "xlsx.note-edit" } else { "xlsx.note-new" }).icon("note_add").on(|this, window, cx| this.open_note_panel(window, cx)).into();
+    let mut note: MenuEntry = MenuItem::tr(if has_note { "xlsx.note-edit" } else { "xlsx.note-new" }).icon("note_add").shortcut("⇧F2").on(|this, window, cx| this.open_note_panel(window, cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
         match insert_after(entries, "insert.link", note) {
             Ok(()) => break,
@@ -1181,6 +1648,192 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             Err(back) => clear_comments = back,
         }
     }
+    let mut prev_comment: MenuEntry = MenuItem::tr("xlsx.previous-comment").icon("arrow_back").disabled(!has_any_comments).on(|this, _, cx| this.select_next_comment(false, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.clear-comments", prev_comment) {
+            Ok(()) => break,
+            Err(back) => prev_comment = back,
+        }
+    }
+    let mut next_comment: MenuEntry = MenuItem::tr("xlsx.next-comment").icon("arrow_forward").disabled(!has_any_comments).on(|this, _, cx| this.select_next_comment(true, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.previous-comment", next_comment) {
+            Ok(()) => break,
+            Err(back) => next_comment = back,
+        }
+    }
+    let show_all_notes = editor.sheet_state().is_some_and(|s| s.show_all_notes);
+    let mut all_notes: MenuEntry = MenuItem::tr("xlsx.show-all-notes").icon("visibility").checked(show_all_notes).on(|this, _, cx| this.toggle_show_all_notes(cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.next-comment", all_notes) {
+            Ok(()) => break,
+            Err(back) => all_notes = back,
+        }
+    }
+
+    let is_landscape = editor.current_print().is_some_and(|p| p.landscape);
+    let orientation_items = vec![
+        MenuItem::tr("xlsx.orientation-portrait")
+            .icon("crop_portrait")
+            .checked(!is_landscape)
+            .on(|this, _, cx| {
+                this.set_print(|p| p.landscape = false, None, cx);
+            })
+            .into(),
+        MenuItem::tr("xlsx.orientation-landscape")
+            .icon("crop_landscape")
+            .checked(is_landscape)
+            .on(|this, _, cx| {
+                this.set_print(|p| p.landscape = true, None, cx);
+            })
+            .into(),
+    ];
+    let mut page_setup_menu: MenuEntry = MenuItem::tr("xlsx.page-setup").icon("settings").on(|this, _, cx| this.open_page_setup(cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "file.page-setup", page_setup_menu) {
+            Ok(()) => break,
+            Err(back) => page_setup_menu = back,
+        }
+    }
+    let mut margins_menu: MenuEntry = MenuItem::tr("xlsx.margins").icon("crop_portrait").on(|this, _, cx| this.open_page_setup(cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.page-setup", margins_menu) {
+            Ok(()) => break,
+            Err(back) => margins_menu = back,
+        }
+    }
+    let mut hf_menu: MenuEntry = MenuItem::tr("xlsx.header-footer").icon("view_headline").on(|this, window, cx| this.open_header_footer_edit(super::header_footer_edit::HfTarget::Header, window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.margins", hf_menu) {
+            Ok(()) => break,
+            Err(back) => hf_menu = back,
+        }
+    }
+
+    let mut page_orient: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.page-orientation", "rotate_right", orientation_items).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.header-footer", page_orient) {
+            Ok(()) => break,
+            Err(back) => page_orient = back,
+        }
+    }
+
+    let current_paper = editor.current_print().map(|p| p.paper).unwrap_or(ibis_doc_model::SheetPrint::A4);
+    let paper_items = vec![
+        MenuItem::tr("xlsx.paper-a4")
+            .checked(current_paper == ibis_doc_model::SheetPrint::A4)
+            .on(|this, _, cx| {
+                this.set_print(|p| p.paper = ibis_doc_model::SheetPrint::A4, None, cx);
+            })
+            .into(),
+        MenuItem::tr("xlsx.paper-a3")
+            .checked(current_paper == (297 * 36_000, 420 * 36_000))
+            .on(|this, _, cx| {
+                this.set_print(|p| p.paper = (297 * 36_000, 420 * 36_000), None, cx);
+            })
+            .into(),
+        MenuItem::tr("xlsx.paper-b5")
+            .checked(current_paper == (182 * 36_000, 257 * 36_000))
+            .on(|this, _, cx| {
+                this.set_print(|p| p.paper = (182 * 36_000, 257 * 36_000), None, cx);
+            })
+            .into(),
+        MenuItem::tr("xlsx.paper-letter")
+            .checked(current_paper == (7_772_400, 10_058_400))
+            .on(|this, _, cx| {
+                this.set_print(|p| p.paper = (7_772_400, 10_058_400), None, cx);
+            })
+            .into(),
+    ];
+    let mut paper_menu: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.paper-size", "description", paper_items).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.page-orientation", paper_menu) {
+            Ok(()) => break,
+            Err(back) => paper_menu = back,
+        }
+    }
+
+    let has_titles = editor.print_title_rows().is_some() || editor.print_title_columns().is_some();
+    let print_title_items = vec![
+        MenuItem::tr("xlsx.print-titles-dialog")
+            .icon("settings")
+            .on(|this, _, cx| {
+                this.open_page_setup(cx);
+            })
+            .into(),
+        MenuItem::tr("xlsx.print-titles-set-rows")
+            .icon("view_stream")
+            .on(|this, _, cx| {
+                let rows = this.selected_range().map(|r| (r.first_row, r.last_row)).or_else(|| this.current_cell().map(|(_, r)| (r, r)));
+                this.set_print_title_rows(rows, cx);
+            })
+            .into(),
+        MenuItem::tr("xlsx.print-titles-clear")
+            .icon("clear")
+            .disabled(!has_titles)
+            .on(|this, _, cx| {
+                this.set_print_title_rows(None, cx);
+                this.set_print_title_columns(None, cx);
+            })
+            .into(),
+    ];
+    let mut titles_menu: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.print-titles", "view_stream", print_title_items).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.paper-size", titles_menu) {
+            Ok(()) => break,
+            Err(back) => titles_menu = back,
+        }
+    }
+    let cur_print = editor.current_print().unwrap_or_default();
+    let fit_w = cur_print.fit_to.map(|(w, _)| w).unwrap_or(0);
+    let fit_h = cur_print.fit_to.map(|(_, h)| h).unwrap_or(0);
+    let scale_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("xlsx.scale-width-auto")
+            .checked(fit_w == 0)
+            .on(|this, _, cx| this.set_print_fit_width(0, cx))
+            .into(),
+        MenuItem::tr("xlsx.scale-width-1")
+            .checked(fit_w == 1)
+            .on(|this, _, cx| this.set_print_fit_width(1, cx))
+            .into(),
+        MenuItem::tr("xlsx.scale-width-2")
+            .checked(fit_w == 2)
+            .on(|this, _, cx| this.set_print_fit_width(2, cx))
+            .into(),
+        MenuEntry::Separator,
+        MenuItem::tr("xlsx.scale-height-auto")
+            .checked(fit_h == 0)
+            .on(|this, _, cx| this.set_print_fit_height(0, cx))
+            .into(),
+        MenuItem::tr("xlsx.scale-height-1")
+            .checked(fit_h == 1)
+            .on(|this, _, cx| this.set_print_fit_height(1, cx))
+            .into(),
+        MenuItem::tr("xlsx.scale-height-2")
+            .checked(fit_h == 2)
+            .on(|this, _, cx| this.set_print_fit_height(2, cx))
+            .into(),
+        MenuEntry::Separator,
+        MenuItem::tr("xlsx.scale-100")
+            .checked(cur_print.fit_to.is_none() && cur_print.scale == 100)
+            .on(|this, _, cx| this.set_print_scale_percent(100, cx))
+            .into(),
+        MenuItem::tr("xlsx.scale-80")
+            .checked(cur_print.fit_to.is_none() && cur_print.scale == 80)
+            .on(|this, _, cx| this.set_print_scale_percent(80, cx))
+            .into(),
+        MenuItem::tr("xlsx.scale-50")
+            .checked(cur_print.fit_to.is_none() && cur_print.scale == 50)
+            .on(|this, _, cx| this.set_print_scale_percent(50, cx))
+            .into(),
+    ];
+    let mut scale_menu: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.scale-to-fit", "fit_screen", scale_items).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.print-titles", scale_menu) {
+            Ok(()) => break,
+            Err(back) => scale_menu = back,
+        }
+    }
     // ツール > シートの保護… / シート保護の解除…, ブックの保護… / ブック保護の解除…, and 表示形式 > セルのロック・数式を表示しない.
     let protected = editor.sheet_protection().is_some();
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr(if protected { "xlsx.unprotect-sheet" } else { "xlsx.protect-sheet" }).icon("lock").on(|this, window, cx| this.open_protect_panel(window, cx)).into());
@@ -1189,13 +1842,18 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.allow-edit-ranges").icon("lock").on(|this, window, cx| this.open_allow_edit_ranges_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.accessibility-check").icon("accessibility").on(|this, window, cx| this.open_xlsx_accessibility_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.compatibility-check").icon("rule").on(|this, window, cx| this.open_xlsx_compatibility_panel(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autorecover-settings").icon("settings_backup_restore").on(|this, window, cx| this.open_xlsx_autorecover_settings_panel(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.recover-unsaved").icon("restore_page").on(|this, window, cx| this.open_xlsx_recover_unsaved_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.error-options").icon("rule").on(|this, window, cx| this.open_error_options_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autocorrect").icon("spellcheck").on(|this, window, cx| this.open_autocorrect_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autorecover-settings").icon("settings_backup_restore").on(|this, window, cx| { this.wb_mut().panels.close(); this.open_autorecover_settings(window, cx) }).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.recover-unsaved").icon("restore_page").on(|this, _window, cx| { this.wb_mut().panels.close(); this.open_recover_unsaved(cx) }).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.backup-save-settings").icon("save_as").on(|this, window, cx| this.open_xlsx_backup_save_settings_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.open-and-repair").icon("cleaning_services").disabled(super::repair::damaged_workbook().is_none()).on(|this, window, cx| this.open_xlsx_repair_damaged(window, cx)).into());
+    let hide_ink = editor.current_sheet().is_some_and(|(_, s)| s.hide_ink);
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.hide-ink").icon("visibility_off").checked(hide_ink).on(|this, _, cx| this.toggle_hide_ink(cx)).into());
     let style = editor.current_style();
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.lock-cells").checked(!style.unlocked).on(|this, _, cx| this.toggle_cell_protection(false, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.hide-formulas").checked(style.formula_hidden).on(|this, _, cx| this.toggle_cell_protection(true, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.comma-style").checked(style.number_format == "#,##0").on(|this, _, cx| this.format_cells(ibis_doc_model::StyleChange::NumberFormat("#,##0".into()), cx)).into());
     let show_phonetic = editor
         .presentation()
         .slide(editor.current_slide)
@@ -1229,6 +1887,13 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             Err(back) => text_columns = back,
         }
     }
+    let mut get_data: MenuEntry = MenuItem::tr("xlsx.get-data").icon("cloud_download").on(|this, window, cx| this.open_import_text_panel(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.text-to-columns", get_data) {
+            Ok(()) => break,
+            Err(back) => get_data = back,
+        }
+    }
     let mut import_text: MenuEntry = MenuItem::tr("xlsx.import-text").icon("sort").on(|this, window, cx| this.open_import_text_panel(window, cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
         match insert_after(entries, "xlsx.text-to-columns", import_text) {
@@ -1236,9 +1901,30 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             Err(back) => import_text = back,
         }
     }
+    let mut from_table: MenuEntry = MenuItem::tr("xlsx.query-from-table").icon("table_chart").on(|this, window, cx| this.open_query_from_selection(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.import-text", from_table) {
+            Ok(()) => break,
+            Err(back) => from_table = back,
+        }
+    }
+    let mut query_blank: MenuEntry = MenuItem::tr("xlsx.query-blank").icon("note_add").on(|this, window, cx| this.open_blank_query(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.query-from-table", query_blank) {
+            Ok(()) => break,
+            Err(back) => query_blank = back,
+        }
+    }
+    let mut queries: MenuEntry = MenuItem::tr("xlsx.queries").icon("link").on(|this, _window, cx| this.open_queries_panel(cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.query-from-table", queries) {
+            Ok(()) => break,
+            Err(back) => queries = back,
+        }
+    }
     let mut external_links: MenuEntry = MenuItem::tr("xlsx.external-links").icon("link").on(|this, window, cx| this.open_external_links_panel(window, cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "xlsx.import-text", external_links) {
+        match insert_after(entries, "xlsx.queries", external_links) {
             Ok(()) => break,
             Err(back) => external_links = back,
         }
@@ -1259,6 +1945,30 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         }
     }
     menus.connect("xlsx.subtotal", |this, window, cx| this.open_subtotal_panel(window, cx));
+    let mut analysis: MenuEntry = MenuItem::tr("xlsx.data-analysis").icon("functions").on(|this, window, cx| this.open_analysis_panel(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.subtotal", analysis) {
+            Ok(()) => break,
+            Err(back) => analysis = back,
+        }
+    }
+    menus.connect("xlsx.data-analysis", |this, window, cx| this.open_analysis_panel(window, cx));
+    let mut solver: MenuEntry = MenuItem::tr("xlsx.solver").icon("functions").on(|this, window, cx| this.open_solver_panel(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.data-analysis", solver) {
+            Ok(()) => break,
+            Err(back) => solver = back,
+        }
+    }
+    menus.connect("xlsx.solver", |this, window, cx| this.open_solver_panel(window, cx));
+    let mut forecast: MenuEntry = MenuItem::tr("xlsx.forecast-sheet").icon("show_chart").on(|this, window, cx| this.open_forecast_panel(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.data-analysis", forecast) {
+            Ok(()) => break,
+            Err(back) => forecast = back,
+        }
+    }
+    menus.connect("xlsx.forecast-sheet", |this, window, cx| this.open_forecast_panel(window, cx));
     let mut sort_down: MenuEntry = MenuItem::tr("xlsx.sort-descending").icon("sort").on(|this, _, cx| this.sort_by_selected_column(false, cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
         match insert_after(entries, "xlsx.sort", sort_down) {
@@ -1294,6 +2004,64 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             cx.notify();
         }
     });
+    let summary_items: Vec<MenuEntry> = [
+        ("xlsx.status-summary-average", super::STATUS_SUMMARY_AVG),
+        ("xlsx.status-summary-count", super::STATUS_SUMMARY_COUNT),
+        ("xlsx.status-summary-num-count", super::STATUS_SUMMARY_NUM_COUNT),
+        ("xlsx.status-summary-min", super::STATUS_SUMMARY_MIN),
+        ("xlsx.status-summary-max", super::STATUS_SUMMARY_MAX),
+        ("xlsx.status-summary-sum", super::STATUS_SUMMARY_SUM),
+    ]
+    .into_iter()
+    .map(|(id, flag)| {
+        MenuItem::tr(id)
+            .checked(editor.status_summary_flag(flag))
+            .on(move |this, _, cx| this.toggle_status_summary_flag(flag, cx))
+            .into()
+    })
+    .collect();
+    let mut status_summary_menu: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.status-bar-summary", "calculate", summary_items).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.formula-bar", status_summary_menu) {
+            Ok(()) => break,
+            Err(back) => status_summary_menu = back,
+        }
+    }
+    let show_formulas = editor.current_sheet().is_some_and(|(_, s)| s.show_formulas);
+    if let Some(item) = menus.find_mut("xlsx.show-formulas") {
+        item.checked = show_formulas;
+    }
+    menus.connect("xlsx.show-formulas", |this, _, cx| {
+        this.toggle_show_formulas(cx);
+    });
+    let show_zeros = editor.current_sheet().map_or(true, |(_, s)| s.show_zeros);
+    if let Some(item) = menus.find_mut("xlsx.show-zeros") {
+        item.checked = show_zeros;
+    }
+    menus.connect("xlsx.show-zeros", |this, _, cx| {
+        this.toggle_show_zeros(cx);
+    });
+    menus.connect("xlsx.hide-ink", |this, _, cx| {
+        this.toggle_hide_ink(cx);
+    });
+    let is_normal = editor.current_sheet().is_some_and(|(_, s)| !s.page_break_preview && !s.page_layout);
+    if let Some(item) = menus.find_mut("xlsx.normal-view") {
+        item.checked = is_normal;
+    }
+    menus.connect("xlsx.normal-view", |this, _, cx| {
+        let Some((_, sheet)) = this.current_sheet() else { return };
+        let slide = this.current_slide;
+        let mut commands = Vec::new();
+        if sheet.page_break_preview {
+            commands.push(Command::Sheet(SheetCommand::SetPageBreakPreview { slide, shown: false }));
+        }
+        if sheet.page_layout {
+            commands.push(Command::Sheet(SheetCommand::SetPageLayout { slide, shown: false }));
+        }
+        if !commands.is_empty() {
+            this.run_sheet(commands, cx);
+        }
+    });
     let preview = editor.current_sheet().is_some_and(|(_, s)| s.page_break_preview);
     if let Some(item) = menus.find_mut("xlsx.page-break-preview") {
         item.checked = preview;
@@ -1312,6 +2080,23 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         let (slide, shown) = (this.current_slide, !sheet.page_layout);
         this.run_sheet(vec![Command::Sheet(SheetCommand::SetPageLayout { slide, shown })], cx);
     });
+    let is_page_layout = editor.current_sheet().is_some_and(|(_, s)| s.page_layout);
+    let show_ruler = editor.current_sheet().map_or(true, |(_, s)| s.show_ruler);
+    if let Some(item) = menus.find_mut("xlsx.ruler") {
+        item.disabled = !is_page_layout;
+        item.checked = is_page_layout && show_ruler;
+    }
+    menus.connect("xlsx.ruler", |this, _, cx| {
+        let Some((_, sheet)) = this.current_sheet() else { return };
+        if !sheet.page_layout { return };
+        let (slide, shown) = (this.current_slide, !sheet.show_ruler);
+        this.run_sheet(vec![Command::Sheet(SheetCommand::SetShowRuler { slide, shown })], cx);
+    });
+    menus.connect("xlsx.ruler-unit.cm", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Centimeters, cx));
+    menus.connect("xlsx.ruler-unit.mm", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Millimeters, cx));
+    menus.connect("xlsx.ruler-unit.inch", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Inches, cx));
+    menus.connect("xlsx.ruler-unit.point", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Points, cx));
+    menus.connect("xlsx.ruler-unit.pica", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Picas, cx));
     menus.connect("xlsx.zoom-selection", |this, window, cx| {
         this.zoom_to_selection(window, cx);
     });
@@ -1389,15 +2174,44 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     }
     menus.connect("xlsx.export-tsv", |this, window, cx| this.export_tsv(window, cx));
 
+    // ファイル > 書き出し > OpenDocument スプレッドシート（.ods）
+    let mut ods: MenuEntry = MenuItem::tr("xlsx.export-ods").icon("description").on(|this, window, cx| this.export_ods(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.export-tsv", ods) {
+            Ok(()) => break,
+            Err(back) => ods = back,
+        }
+    }
+    menus.connect("xlsx.export-ods", |this, window, cx| this.export_ods(window, cx));
+
+    // ファイル > 書き出し > Excel 97-2003 ブック（.xls）
+    let mut xls: MenuEntry = MenuItem::tr("xlsx.export-xls").icon("description").on(|this, window, cx| this.export_xls(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.export-ods", xls) {
+            Ok(()) => break,
+            Err(back) => xls = back,
+        }
+    }
+    menus.connect("xlsx.export-xls", |this, window, cx| this.export_xls(window, cx));
+
     // ファイル > 書き出し > Excel テンプレート（.xltx）
     let mut xltx: MenuEntry = MenuItem::tr("xlsx.export-xltx").icon("description").on(|this, window, cx| this.export_xltx(window, cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "xlsx.export-tsv", xltx) {
+        match insert_after(entries, "xlsx.export-ods", xltx) {
             Ok(()) => break,
             Err(back) => xltx = back,
         }
     }
     menus.connect("xlsx.export-xltx", |this, window, cx| this.export_xltx(window, cx));
+    // ファイル > 書き出し > マクロなしで書き出し…
+    let mut no_macros: MenuEntry = MenuItem::tr("xlsx.export-without-macros").icon("description").on(|this, window, cx| this.export_without_macros(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.export-xltx", no_macros) {
+            Ok(()) => break,
+            Err(back) => no_macros = back,
+        }
+    }
+    menus.connect("xlsx.export-without-macros", |this, window, cx| this.export_without_macros(window, cx));
 
     // ファイル > 新規 > テンプレートから新規作成…
     let mut tmpl_entry: MenuEntry = MenuItem::tr("xlsx.new-from-template")
@@ -1415,7 +2229,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     // ファイル > 未保存のブックの回復…
     let mut recover_entry: MenuEntry = MenuItem::tr("xlsx.recover-unsaved")
         .icon("restore_page")
-        .on(|this, window, cx| this.open_xlsx_recover_unsaved_panel(window, cx))
+        .on(|this, _window, cx| { this.wb_mut().panels.close(); this.open_recover_unsaved(cx) })
         .into();
     for (_, entries) in menus.menus.iter_mut() {
         match insert_after(entries, "file.open", recover_entry) {
@@ -1486,6 +2300,132 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         }).into()
     }).collect();
     data.push(crate::shell::chrome::Submenu::tr("xlsx.calc-options", "tune", modes).into());
+    data.push(MenuItem::tr("xlsx.insert-function").icon("functions").shortcut("⇧F3").on(|this, window, cx| {
+        this.insert_function_action(window, cx);
+    }).into());
+
+    let fn_item = |id: &'static str, name: &'static str| -> MenuEntry {
+        MenuItem::tr(id).on(move |this, window, cx| {
+            this.insert_function_named(name, window, cx);
+        }).into()
+    };
+    let recent_fn_items: Vec<MenuEntry> = vec![
+        fn_item("xlsx.fn.sum", "SUM"),
+        fn_item("xlsx.fn.average", "AVERAGE"),
+        fn_item("xlsx.fn.if", "IF"),
+        fn_item("xlsx.fn.count", "COUNT"),
+        fn_item("xlsx.fn.max", "MAX"),
+        fn_item("xlsx.fn.min", "MIN"),
+        fn_item("xlsx.fn.vlookup", "VLOOKUP"),
+        fn_item("xlsx.fn.xlookup", "XLOOKUP"),
+    ];
+    let financial_fn_items: Vec<MenuEntry> = vec![
+        fn_item("xlsx.fn.pmt", "PMT"),
+        fn_item("xlsx.fn.fv", "FV"),
+        fn_item("xlsx.fn.pv", "PV"),
+        fn_item("xlsx.fn.npv", "NPV"),
+        fn_item("xlsx.fn.irr", "IRR"),
+        fn_item("xlsx.fn.rate", "RATE"),
+        fn_item("xlsx.fn.nper", "NPER"),
+    ];
+    let text_fn_items: Vec<MenuEntry> = vec![
+        fn_item("xlsx.fn.concat", "CONCAT"),
+        fn_item("xlsx.fn.text", "TEXT"),
+        fn_item("xlsx.fn.left", "LEFT"),
+        fn_item("xlsx.fn.right", "RIGHT"),
+        fn_item("xlsx.fn.mid", "MID"),
+        fn_item("xlsx.fn.len", "LEN"),
+        fn_item("xlsx.fn.trim", "TRIM"),
+        fn_item("xlsx.fn.substitute", "SUBSTITUTE"),
+    ];
+    let lookup_fn_items: Vec<MenuEntry> = vec![
+        fn_item("xlsx.fn.xlookup", "XLOOKUP"),
+        fn_item("xlsx.fn.vlookup", "VLOOKUP"),
+        fn_item("xlsx.fn.hlookup", "HLOOKUP"),
+        fn_item("xlsx.fn.index", "INDEX"),
+        fn_item("xlsx.fn.match", "MATCH"),
+        fn_item("xlsx.fn.xmatch", "XMATCH"),
+        fn_item("xlsx.fn.filter", "FILTER"),
+        fn_item("xlsx.fn.unique", "UNIQUE"),
+        fn_item("xlsx.fn.sort", "SORT"),
+    ];
+    let math_fn_items: Vec<MenuEntry> = vec![
+        fn_item("xlsx.fn.sumif", "SUMIF"),
+        fn_item("xlsx.fn.sumifs", "SUMIFS"),
+        fn_item("xlsx.fn.round", "ROUND"),
+        fn_item("xlsx.fn.roundup", "ROUNDUP"),
+        fn_item("xlsx.fn.rounddown", "ROUNDDOWN"),
+        fn_item("xlsx.fn.abs", "ABS"),
+        fn_item("xlsx.fn.product", "PRODUCT"),
+        fn_item("xlsx.fn.mod", "MOD"),
+    ];
+    let logical_fn_items: Vec<MenuEntry> = vec![
+        fn_item("xlsx.fn.if", "IF"),
+        fn_item("xlsx.fn.ifs", "IFS"),
+        fn_item("xlsx.fn.iferror", "IFERROR"),
+        fn_item("xlsx.fn.and", "AND"),
+        fn_item("xlsx.fn.or", "OR"),
+        fn_item("xlsx.fn.not", "NOT"),
+    ];
+    let other_fn_items: Vec<MenuEntry> = vec![
+        fn_item("xlsx.fn.countif", "COUNTIF"),
+        fn_item("xlsx.fn.countifs", "COUNTIFS"),
+        fn_item("xlsx.fn.averageif", "AVERAGEIF"),
+        fn_item("xlsx.fn.median", "MEDIAN"),
+        fn_item("xlsx.fn.stdev-s", "STDEV.S"),
+        fn_item("xlsx.fn.isblank", "ISBLANK"),
+        fn_item("xlsx.fn.iserror", "ISERROR"),
+    ];
+
+    let defined_names: Vec<String> = editor.presentation().workbook.as_deref().map(|w| {
+        w.names.iter().map(|n| n.name.clone()).collect()
+    }).unwrap_or_default();
+    let mut use_name_items: Vec<MenuEntry> = defined_names.into_iter().take(15).map(|n| {
+        let name_clone = n.clone();
+        let item_id: &'static str = Box::leak(format!("xlsx.use-name-{n}").into_boxed_str());
+        MenuItem::new(item_id, n).on(move |this, window, cx| {
+            this.use_name_in_formula(&name_clone, window, cx);
+        }).into()
+    }).collect();
+    use_name_items.push(MenuItem::tr("xlsx.use-in-formula-paste").icon("content_paste").on(|this, window, cx| {
+        this.open_names(window, cx);
+    }).into());
+
+    let create_names_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("xlsx.create-names-top-row").icon("table_rows").on(|this, _, cx| {
+            this.create_names_from_selection(true, false, cx);
+        }).into(),
+        MenuItem::tr("xlsx.create-names-left-col").icon("view_column").on(|this, _, cx| {
+            this.create_names_from_selection(false, true, cx);
+        }).into(),
+        MenuItem::tr("xlsx.create-names-both").icon("grid_view").on(|this, _, cx| {
+            this.create_names_from_selection(true, true, cx);
+        }).into(),
+    ];
+
+    data.push(crate::shell::chrome::Submenu::tr("xlsx.recent-functions", "schedule", recent_fn_items).into());
+    data.push(crate::shell::chrome::Submenu::tr("xlsx.financial-functions", "payments", financial_fn_items).into());
+    data.push(crate::shell::chrome::Submenu::tr("xlsx.logical-functions", "rule", logical_fn_items).into());
+    data.push(crate::shell::chrome::Submenu::tr("xlsx.text-functions", "title", text_fn_items).into());
+    data.push(crate::shell::chrome::Submenu::tr("xlsx.lookup-functions", "search", lookup_fn_items).into());
+    data.push(crate::shell::chrome::Submenu::tr("xlsx.math-functions", "calculate", math_fn_items).into());
+    data.push(crate::shell::chrome::Submenu::tr("xlsx.other-functions", "functions", other_fn_items).into());
+    data.push(MenuItem::tr("xlsx.name-manager").icon("label").on(|this, window, cx| {
+        if let Some(s) = this.sheet_state_mut() {
+            s.validation = None;
+            s.find = None;
+        }
+        this.open_names(window, cx);
+    }).into());
+    data.push(MenuItem::tr("xlsx.define-name").icon("new_label").on(|this, window, cx| {
+        if let Some(s) = this.sheet_state_mut() {
+            s.validation = None;
+            s.find = None;
+        }
+        this.open_names(window, cx);
+    }).into());
+    data.push(crate::shell::chrome::Submenu::tr("xlsx.use-in-formula", "label", use_name_items).into());
+    data.push(crate::shell::chrome::Submenu::tr("xlsx.create-from-selection", "new_label", create_names_items).into());
     data.push(MenuItem::tr("xlsx.calculate-now").shortcut("F9").on(|this, _, cx| {
         this.run_sheet(vec![Command::Sheet(SheetCommand::CalculateNow)], cx);
     }).into());
@@ -1516,8 +2456,23 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     data.push(crate::shell::chrome::Submenu::tr("xlsx.remove-arrows", "clear", remove_arrow_items).into());
     data.push(MenuItem::tr("xlsx.evaluate-formula").icon("functions").on(|this, window, cx| this.open_evaluate_formula(window, cx)).into());
     data.push(MenuItem::tr("xlsx.watch-window").icon("visibility").on(|this, window, cx| this.open_watch_window(window, cx)).into());
+    data.push(MenuItem::tr("xlsx.show-formulas").icon("functions").shortcut("⌘`").checked(show_formulas).on(|this, _, cx| this.toggle_show_formulas(cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.slicer-settings").icon("tune").on(|this, window, cx| this.open_slicer_settings_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.control-properties").icon("tune").on(|this, window, cx| this.open_control_properties_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.design-mode").icon("design_services").on(|this, _, cx| this.toggle_design_mode(cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.view-code").icon("code").on(|this, _, cx| this.view_code(cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.xml-source").icon("data_object").on(|this, window, cx| this.open_xml_source(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.xml-map-properties").icon("tune").on(|this, window, cx| this.open_xml_map_properties(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.slicer-insert").icon("filter_alt").on(|this, window, cx| this.open_slicer_insert_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.timeline-insert").icon("timeline").on(|this, window, cx| this.open_timeline_insert_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(crate::shell::chrome::Submenu::new("xlsx.insert-control", "widgets", crate::shell::i18n::text("xlsx.insert-control"), super::control_insert::control_insert_items()).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.ink").icon("draw").on(|this, window, cx| this.open_ink_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.pivot-insert").icon("table_chart").on(|this, window, cx| this.open_create_pivot(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.recommended-pivots").icon("auto_graph").on(|this, window, cx| this.open_recommended_pivots(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.recommended-pivot-tables").icon("auto_awesome_motion").on(|this, window, cx| this.open_recommended_pivot_tables(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.pivot-chart-insert").icon("insert_chart").on(|this, window, cx| this.open_insert_pivot_chart(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.3d-model").icon("view_in_ar").on(|this, window, cx| this.pick_sheet_3d_model(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.signature-line").icon("draw").on(|this, _, cx| { this.insert_sheet_signature_line("", "", cx); }).into());
     let spark_style_items: Vec<MenuEntry> = [
         ("xlsx.sparkline-style-1", 0),
         ("xlsx.sparkline-style-2", 1),
@@ -1552,6 +2507,150 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     let spark_axis_items: Vec<MenuEntry> = vec![
         MenuItem::tr("xlsx.sparkline-date-axis-on").on(|this, _, cx| this.set_selected_sparklines_date_axis(true, cx)).into(),
         MenuItem::tr("xlsx.sparkline-date-axis-off").on(|this, _, cx| this.set_selected_sparklines_date_axis(false, cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("xlsx.sparkline-show-axis").on(|this, _, cx| this.toggle_selected_sparklines_display_x_axis(cx)).into(),
+        MenuItem::tr("xlsx.sparkline-right-to-left").on(|this, _, cx| this.toggle_selected_sparklines_right_to_left(cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("xlsx.sparkline-min-individual").on(|this, _, cx| this.set_selected_sparklines_min_axis(ibis_doc_model::SparklineAxis::Individual, cx)).into(),
+        MenuItem::tr("xlsx.sparkline-min-group").on(|this, _, cx| this.set_selected_sparklines_min_axis(ibis_doc_model::SparklineAxis::Group, cx)).into(),
+        MenuItem::tr("xlsx.sparkline-min-custom").on(|this, window, cx| this.open_sparkline_panel(None, window, cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("xlsx.sparkline-max-individual").on(|this, _, cx| this.set_selected_sparklines_max_axis(ibis_doc_model::SparklineAxis::Individual, cx)).into(),
+        MenuItem::tr("xlsx.sparkline-max-group").on(|this, _, cx| this.set_selected_sparklines_max_axis(ibis_doc_model::SparklineAxis::Group, cx)).into(),
+        MenuItem::tr("xlsx.sparkline-max-custom").on(|this, window, cx| this.open_sparkline_panel(None, window, cx)).into(),
+    ];
+    use crate::xlsx::sparkline_dialog::SparklinePointKind as SPK;
+    let spark_points_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("xlsx.sparkline-high-point").on(|this, _, cx| this.toggle_selected_sparklines_point(SPK::High, cx)).into(),
+        MenuItem::tr("xlsx.sparkline-low-point").on(|this, _, cx| this.toggle_selected_sparklines_point(SPK::Low, cx)).into(),
+        MenuItem::tr("xlsx.sparkline-negative-points").on(|this, _, cx| this.toggle_selected_sparklines_point(SPK::Negative, cx)).into(),
+        MenuItem::tr("xlsx.sparkline-first-point").on(|this, _, cx| this.toggle_selected_sparklines_point(SPK::First, cx)).into(),
+        MenuItem::tr("xlsx.sparkline-last-point").on(|this, _, cx| this.toggle_selected_sparklines_point(SPK::Last, cx)).into(),
+        MenuItem::tr("xlsx.sparkline-markers").on(|this, _, cx| this.toggle_selected_sparklines_point(SPK::Markers, cx)).into(),
+    ];
+    const MARKER_COLOR_MENUS: [(
+        &str,
+        &str,
+        SPK,
+        [(&str, &str, u32); 8],
+    ); 6] = [
+        (
+            "xlsx.sparkline-marker-color-negative",
+            "xlsx.sparkline-negative-points",
+            SPK::Negative,
+            [
+                ("xlsx.sparkline-mc-negative-blue", "xlsx.sparkline-color-blue", 0x376092),
+                ("xlsx.sparkline-mc-negative-red", "xlsx.sparkline-color-red", 0xC00000),
+                ("xlsx.sparkline-mc-negative-green", "xlsx.sparkline-color-green", 0x70AD47),
+                ("xlsx.sparkline-mc-negative-purple", "xlsx.sparkline-color-purple", 0x7030A0),
+                ("xlsx.sparkline-mc-negative-cyan", "xlsx.sparkline-color-cyan", 0x4BACC6),
+                ("xlsx.sparkline-mc-negative-orange", "xlsx.sparkline-color-orange", 0xED7D31),
+                ("xlsx.sparkline-mc-negative-gray", "xlsx.sparkline-color-gray", 0x7F7F7F),
+                ("xlsx.sparkline-mc-negative-black", "xlsx.sparkline-color-black", 0x000000),
+            ],
+        ),
+        (
+            "xlsx.sparkline-marker-color-markers",
+            "xlsx.sparkline-markers",
+            SPK::Markers,
+            [
+                ("xlsx.sparkline-mc-markers-blue", "xlsx.sparkline-color-blue", 0x376092),
+                ("xlsx.sparkline-mc-markers-red", "xlsx.sparkline-color-red", 0xC00000),
+                ("xlsx.sparkline-mc-markers-green", "xlsx.sparkline-color-green", 0x70AD47),
+                ("xlsx.sparkline-mc-markers-purple", "xlsx.sparkline-color-purple", 0x7030A0),
+                ("xlsx.sparkline-mc-markers-cyan", "xlsx.sparkline-color-cyan", 0x4BACC6),
+                ("xlsx.sparkline-mc-markers-orange", "xlsx.sparkline-color-orange", 0xED7D31),
+                ("xlsx.sparkline-mc-markers-gray", "xlsx.sparkline-color-gray", 0x7F7F7F),
+                ("xlsx.sparkline-mc-markers-black", "xlsx.sparkline-color-black", 0x000000),
+            ],
+        ),
+        (
+            "xlsx.sparkline-marker-color-high",
+            "xlsx.sparkline-high-point",
+            SPK::High,
+            [
+                ("xlsx.sparkline-mc-high-blue", "xlsx.sparkline-color-blue", 0x376092),
+                ("xlsx.sparkline-mc-high-red", "xlsx.sparkline-color-red", 0xC00000),
+                ("xlsx.sparkline-mc-high-green", "xlsx.sparkline-color-green", 0x70AD47),
+                ("xlsx.sparkline-mc-high-purple", "xlsx.sparkline-color-purple", 0x7030A0),
+                ("xlsx.sparkline-mc-high-cyan", "xlsx.sparkline-color-cyan", 0x4BACC6),
+                ("xlsx.sparkline-mc-high-orange", "xlsx.sparkline-color-orange", 0xED7D31),
+                ("xlsx.sparkline-mc-high-gray", "xlsx.sparkline-color-gray", 0x7F7F7F),
+                ("xlsx.sparkline-mc-high-black", "xlsx.sparkline-color-black", 0x000000),
+            ],
+        ),
+        (
+            "xlsx.sparkline-marker-color-low",
+            "xlsx.sparkline-low-point",
+            SPK::Low,
+            [
+                ("xlsx.sparkline-mc-low-blue", "xlsx.sparkline-color-blue", 0x376092),
+                ("xlsx.sparkline-mc-low-red", "xlsx.sparkline-color-red", 0xC00000),
+                ("xlsx.sparkline-mc-low-green", "xlsx.sparkline-color-green", 0x70AD47),
+                ("xlsx.sparkline-mc-low-purple", "xlsx.sparkline-color-purple", 0x7030A0),
+                ("xlsx.sparkline-mc-low-cyan", "xlsx.sparkline-color-cyan", 0x4BACC6),
+                ("xlsx.sparkline-mc-low-orange", "xlsx.sparkline-color-orange", 0xED7D31),
+                ("xlsx.sparkline-mc-low-gray", "xlsx.sparkline-color-gray", 0x7F7F7F),
+                ("xlsx.sparkline-mc-low-black", "xlsx.sparkline-color-black", 0x000000),
+            ],
+        ),
+        (
+            "xlsx.sparkline-marker-color-first",
+            "xlsx.sparkline-first-point",
+            SPK::First,
+            [
+                ("xlsx.sparkline-mc-first-blue", "xlsx.sparkline-color-blue", 0x376092),
+                ("xlsx.sparkline-mc-first-red", "xlsx.sparkline-color-red", 0xC00000),
+                ("xlsx.sparkline-mc-first-green", "xlsx.sparkline-color-green", 0x70AD47),
+                ("xlsx.sparkline-mc-first-purple", "xlsx.sparkline-color-purple", 0x7030A0),
+                ("xlsx.sparkline-mc-first-cyan", "xlsx.sparkline-color-cyan", 0x4BACC6),
+                ("xlsx.sparkline-mc-first-orange", "xlsx.sparkline-color-orange", 0xED7D31),
+                ("xlsx.sparkline-mc-first-gray", "xlsx.sparkline-color-gray", 0x7F7F7F),
+                ("xlsx.sparkline-mc-first-black", "xlsx.sparkline-color-black", 0x000000),
+            ],
+        ),
+        (
+            "xlsx.sparkline-marker-color-last",
+            "xlsx.sparkline-last-point",
+            SPK::Last,
+            [
+                ("xlsx.sparkline-mc-last-blue", "xlsx.sparkline-color-blue", 0x376092),
+                ("xlsx.sparkline-mc-last-red", "xlsx.sparkline-color-red", 0xC00000),
+                ("xlsx.sparkline-mc-last-green", "xlsx.sparkline-color-green", 0x70AD47),
+                ("xlsx.sparkline-mc-last-purple", "xlsx.sparkline-color-purple", 0x7030A0),
+                ("xlsx.sparkline-mc-last-cyan", "xlsx.sparkline-color-cyan", 0x4BACC6),
+                ("xlsx.sparkline-mc-last-orange", "xlsx.sparkline-color-orange", 0xED7D31),
+                ("xlsx.sparkline-mc-last-gray", "xlsx.sparkline-color-gray", 0x7F7F7F),
+                ("xlsx.sparkline-mc-last-black", "xlsx.sparkline-color-black", 0x000000),
+            ],
+        ),
+    ];
+    let spark_marker_color_items: Vec<MenuEntry> = MARKER_COLOR_MENUS
+        .into_iter()
+        .map(|(sub_id, label_key, pt, palette)| {
+            let items: Vec<MenuEntry> = palette
+                .into_iter()
+                .map(|(item_id, color_label, hex)| {
+                    MenuItem::new(item_id, color_label)
+                        .on(move |this, _, cx| {
+                            this.set_selected_sparklines_point_color(pt, Some(ibis_doc_model::Rgb(hex)), cx);
+                        })
+                        .into()
+                })
+                .collect();
+            crate::shell::chrome::Submenu::new(sub_id, "palette", label_key, items).into()
+        })
+        .collect();
+    let spark_weight_items: Vec<MenuEntry> = vec![
+        MenuItem::new("xlsx.sparkline-weight-75", "0.75 pt").on(|this, _, cx| this.set_selected_sparklines_line_weight(75, cx)).into(),
+        MenuItem::new("xlsx.sparkline-weight-100", "1.0 pt").on(|this, _, cx| this.set_selected_sparklines_line_weight(100, cx)).into(),
+        MenuItem::new("xlsx.sparkline-weight-150", "1.5 pt").on(|this, _, cx| this.set_selected_sparklines_line_weight(150, cx)).into(),
+        MenuItem::new("xlsx.sparkline-weight-225", "2.25 pt").on(|this, _, cx| this.set_selected_sparklines_line_weight(225, cx)).into(),
+    ];
+    let spark_empty_items: Vec<MenuEntry> = vec![
+        MenuItem::new("xlsx.sparkline-empty-gap", "_xlsx.gaps").on(|this, _, cx| this.set_selected_sparklines_empty(ibis_doc_model::SparklineEmpty::Gap, cx)).into(),
+        MenuItem::new("xlsx.sparkline-empty-zero", "_xlsx.zeros").on(|this, _, cx| this.set_selected_sparklines_empty(ibis_doc_model::SparklineEmpty::Zero, cx)).into(),
+        MenuItem::new("xlsx.sparkline-empty-span", "_xlsx.connect-data-points-with-line").on(|this, _, cx| this.set_selected_sparklines_empty(ibis_doc_model::SparklineEmpty::Span, cx)).into(),
     ];
     let spark_items = vec![
         MenuItem::tr("xlsx.sparkline-line").on(|this, window, cx| this.open_sparkline_panel(Some(ibis_doc_model::SparklineKind::Line), window, cx)).into(),
@@ -1560,8 +2659,15 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         MenuEntry::Separator,
         crate::shell::chrome::Submenu::tr("xlsx.sparkline-styles", "palette", spark_style_items).into(),
         crate::shell::chrome::Submenu::tr("xlsx.sparkline-colors", "format_color_text", spark_color_items).into(),
+        crate::shell::chrome::Submenu::tr("xlsx.sparkline-marker-colors", "palette", spark_marker_color_items).into(),
+        crate::shell::chrome::Submenu::tr("xlsx.sparkline-weight", "line_weight", spark_weight_items).into(),
+        crate::shell::chrome::Submenu::tr("xlsx.sparkline-points", "scatter_plot", spark_points_items).into(),
+        crate::shell::chrome::Submenu::tr("xlsx.sparkline-empty-cells", "space_bar", spark_empty_items).into(),
         crate::shell::chrome::Submenu::tr("xlsx.sparkline-display-hidden", "visibility", spark_hidden_items).into(),
         crate::shell::chrome::Submenu::tr("xlsx.sparkline-date-axis-menu", "timeline", spark_axis_items).into(),
+        MenuEntry::Separator,
+        MenuItem::new("xlsx.sparkline-group", crate::shell::i18n::text("xlsx.group")).on(|this, _, cx| this.group_selected_sparklines(cx)).into(),
+        MenuItem::new("xlsx.sparkline-ungroup", crate::shell::i18n::text("xlsx.ungroup")).on(|this, _, cx| this.ungroup_selected_sparklines(cx)).into(),
     ];
     menus.items_mut(crate::shell::chrome::MenuId::Insert).push(crate::shell::chrome::Submenu::tr("xlsx.sparklines", "show_chart", spark_items).into());
     let shape_entries: Vec<MenuEntry> = super::shape_edit::SHEET_SHAPES
@@ -1592,16 +2698,60 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         .collect();
 
     let insert = menus.items_mut(crate::shell::chrome::MenuId::Insert);
+    insert.push(MenuItem::tr("xlsx.insert-function").icon("functions").shortcut("⇧F3").on(|this, window, cx| { this.insert_function_action(window, cx); }).into());
     insert.push(MenuItem::tr("xlsx.insert-textbox").icon("text_fields").on(|this, window, cx| { this.insert_sheet_textbox(window, cx); }).into());
     insert.push(crate::shell::chrome::Submenu::tr("xlsx.insert-shape", "shapes", shape_entries.clone()).into());
-    insert.push(MenuItem::tr("xlsx.insert-picture").icon("image").on(|this, window, cx| { this.pick_sheet_picture(window, cx); }).into());
+    let picture_subitems = vec![
+        MenuItem::tr("xlsx.insert-picture-in-cell").icon("table_rows").on(|this, window, cx| { this.pick_sheet_pictures_in_cells(window, cx); }).into(),
+        MenuItem::tr("xlsx.insert-picture-over-cells").icon("image").on(|this, window, cx| { this.pick_sheet_picture(window, cx); }).into(),
+        MenuItem::tr("xlsx.camera-tool").icon("photo_camera").shortcut("⌥⇧⌘X").on(|this, _, cx| { this.insert_camera_picture(cx); }).into(),
+    ];
+    insert.push(crate::shell::chrome::Submenu::tr("xlsx.insert-picture-menu", "image", picture_subitems.clone()).into());
+    let screenshot_subitems = vec![
+        MenuItem::tr("xlsx.screenshot.available-windows").icon("fit_screen").on(|this, _, cx| { this.insert_sheet_screenshot_window(cx); }).into(),
+        MenuItem::tr("xlsx.screenshot.clipping").icon("crop").on(|this, _, cx| { this.insert_sheet_screenshot_clipping(cx); }).into(),
+        MenuItem::tr("xlsx.screenshot.clipboard").icon("content_paste").on(|this, _, cx| { this.insert_sheet_screenshot_from_clipboard(cx); }).into(),
+    ];
+    let screenshot_menu = crate::shell::chrome::Submenu::tr("xlsx.screenshot", "fit_screen", screenshot_subitems.clone());
+    insert.push(screenshot_menu.clone().into());
     insert.push(crate::shell::embed::insert_menu());
     insert.push(MenuItem::tr("xlsx.insert.wordart").icon("title").on(|this, _, cx| { this.insert_sheet_wordart(0, None, cx); }).into());
     insert.push(crate::shell::chrome::Submenu::tr("xlsx.insert.wordart-styles", "title", wordart_insert_items()).into());
+    let smartart_items = crate::pptx::chrome::smartart_insert_items();
+    insert.push(crate::shell::chrome::Submenu::tr("insert.smartart", "account_tree", smartart_items.clone()).into());
+    insert.push(MenuItem::tr("xlsx.insert-link").icon("link").on(|this, window, cx| { this.open_link_panel(window, cx); }).into());
+    insert.push(MenuItem::tr("xlsx.insert-symbol").icon("functions").on(|this, _, cx| { this.open_symbols(cx); }).into());
 
     fill_submenu(menus, "insert.shape", shape_entries);
     fill_submenu(menus, "insert.chart", super::chart_insert::chart_items());
-    fill_submenu(menus, "insert.image", vec![MenuItem::tr("xlsx.insert-picture").icon("upload").on(|this, window, cx| { this.pick_sheet_picture(window, cx); }).into()]);
+    fill_submenu(menus, "insert.image", picture_subitems);
+    let mut screenshot_entry: MenuEntry = screenshot_menu.into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "insert.image", screenshot_entry) {
+            Ok(()) => break,
+            Err(back) => screenshot_entry = back,
+        }
+    }
+    menus.connect("xlsx.screenshot", |this, _, cx| { this.insert_sheet_screenshot(cx); });
+    menus.connect("xlsx.screenshot.available-windows", |this, _, cx| { this.insert_sheet_screenshot_window(cx); });
+    menus.connect("xlsx.screenshot.clipping", |this, _, cx| { this.insert_sheet_screenshot_clipping(cx); });
+    menus.connect("xlsx.screenshot.clipboard", |this, _, cx| { this.insert_sheet_screenshot_from_clipboard(cx); });
+    menus.connect("xlsx.insert.screenshot", |this, _, cx| { this.insert_sheet_screenshot(cx); });
+    menus.connect("xlsx.insert.screenshot.available-windows", |this, _, cx| { this.insert_sheet_screenshot_window(cx); });
+    menus.connect("xlsx.insert.screenshot.clipping", |this, _, cx| { this.insert_sheet_screenshot_clipping(cx); });
+    menus.connect("xlsx.insert.screenshot.clipboard", |this, _, cx| { this.insert_sheet_screenshot_from_clipboard(cx); });
+    fill_submenu(menus, "insert.smartart", smartart_items);
+    menus.connect("insert.smartart", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::BasicProcess, cx));
+    menus.connect("pptx.insert.smartart.list", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::BasicBlockList, cx));
+    menus.connect("pptx.insert.smartart.vlist", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::VerticalList, cx));
+    menus.connect("pptx.insert.smartart.process", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::BasicProcess, cx));
+    menus.connect("pptx.insert.smartart.chevron", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::ContinuousChevronProcess, cx));
+    menus.connect("pptx.insert.smartart.cycle", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::BasicCycle, cx));
+    menus.connect("pptx.insert.smartart.hierarchy", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::OrganizationChart, cx));
+    menus.connect("pptx.insert.smartart.relationship", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::BasicRelationship, cx));
+    menus.connect("pptx.insert.smartart.matrix", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::BasicMatrix, cx));
+    menus.connect("pptx.insert.smartart.pyramid", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::BasicPyramid, cx));
+    menus.connect("pptx.insert.smartart.picture", |this, _, cx| this.insert_smartart(crate::pptx::SmartArtKind::PictureList, cx));
     menus.connect("insert.symbol", |this, _, cx| this.open_symbols(cx));
     menus.connect("insert.link", |this, window, cx| this.open_link_panel(window, cx));
     menus.connect("insert.comment", |this, window, cx| this.open_threaded_comment_panel(window, cx));
@@ -1612,6 +2762,100 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     });
     menus.connect("xlsx.clear-comments", |this, _, cx| this.delete_threaded_comments_and_notes(cx));
     menus.connect("file.page-setup", |this, _, cx| this.open_page_setup(cx));
+    menus.connect("xlsx.page-setup", |this, _, cx| this.open_page_setup(cx));
+    menus.connect("xlsx.margins", |this, _, cx| this.open_page_setup(cx));
+    menus.connect("xlsx.header-footer", |this, window, cx| this.open_header_footer_edit(super::header_footer_edit::HfTarget::Header, window, cx));
+    menus.connect("xlsx.spelling.check", |this, window, cx| this.open_sheet_spelling(window, cx));
+    menus.connect("xlsx.spelling", |this, window, cx| this.open_sheet_spelling(window, cx));
+    menus.connect("xlsx.insert-link", |this, window, cx| this.open_link_panel(window, cx));
+    menus.connect("xlsx.insert-symbol", |this, _, cx| this.open_symbols(cx));
+    menus.connect("xlsx.logical-functions", |this, window, cx| this.insert_function_named("IF", window, cx));
+    menus.connect("xlsx.datetime-functions", |this, window, cx| this.insert_function_named("TODAY", window, cx));
+    menus.connect("xlsx.previous-comment", |this, _, cx| this.select_next_comment(false, cx));
+    menus.connect("xlsx.next-comment", |this, _, cx| this.select_next_comment(true, cx));
+    menus.connect("xlsx.show-all-notes", |this, _, cx| this.toggle_show_all_notes(cx));
+    menus.connect("xlsx.page-orientation", |this, _, cx| this.open_page_setup(cx));
+    menus.connect("xlsx.orientation-portrait", |this, _, cx| this.set_print(|p| p.landscape = false, None, cx));
+    menus.connect("xlsx.orientation-landscape", |this, _, cx| this.set_print(|p| p.landscape = true, None, cx));
+    menus.connect("xlsx.paper-size", |this, _, cx| this.open_page_setup(cx));
+    menus.connect("xlsx.paper-a4", |this, _, cx| this.set_print(|p| p.paper = ibis_doc_model::SheetPrint::A4, None, cx));
+    menus.connect("xlsx.paper-a3", |this, _, cx| this.set_print(|p| p.paper = (297 * 36_000, 420 * 36_000), None, cx));
+    menus.connect("xlsx.paper-b5", |this, _, cx| this.set_print(|p| p.paper = (182 * 36_000, 257 * 36_000), None, cx));
+    menus.connect("xlsx.paper-letter", |this, _, cx| this.set_print(|p| p.paper = (7_772_400, 10_058_400), None, cx));
+    menus.connect("xlsx.print-titles", |this, _, cx| this.open_page_setup(cx));
+    menus.connect("xlsx.print-titles-dialog", |this, _, cx| this.open_page_setup(cx));
+    menus.connect("xlsx.print-titles-set-rows", |this, _, cx| {
+        let rows = this.selected_range().map(|r| (r.first_row, r.last_row)).or_else(|| this.current_cell().map(|(_, r)| (r, r)));
+        this.set_print_title_rows(rows, cx);
+    });
+    menus.connect("xlsx.print-titles-clear", |this, _, cx| {
+        this.set_print_title_rows(None, cx);
+        this.set_print_title_columns(None, cx);
+    });
+    menus.connect("xlsx.insert-function", |this, window, cx| this.insert_function_action(window, cx));
+    menus.connect("xlsx.recent-functions", |this, window, cx| this.insert_function_named("SUM", window, cx));
+    menus.connect("xlsx.financial-functions", |this, window, cx| this.insert_function_named("PMT", window, cx));
+    menus.connect("xlsx.text-functions", |this, window, cx| this.insert_function_named("CONCAT", window, cx));
+    menus.connect("xlsx.lookup-functions", |this, window, cx| this.insert_function_named("XLOOKUP", window, cx));
+    menus.connect("xlsx.math-functions", |this, window, cx| this.insert_function_named("SUMIF", window, cx));
+    menus.connect("xlsx.other-functions", |this, window, cx| this.insert_function_named("COUNTIF", window, cx));
+    menus.connect("xlsx.use-in-formula", |this, window, cx| this.open_names(window, cx));
+    menus.connect("xlsx.use-in-formula-paste", |this, window, cx| this.open_names(window, cx));
+    menus.connect("xlsx.create-from-selection", |this, _, cx| { this.create_names_from_selection(true, false, cx); });
+    menus.connect("xlsx.create-names-top-row", |this, _, cx| { this.create_names_from_selection(true, false, cx); });
+    menus.connect("xlsx.create-names-left-col", |this, _, cx| { this.create_names_from_selection(false, true, cx); });
+    menus.connect("xlsx.create-names-both", |this, _, cx| { this.create_names_from_selection(true, true, cx); });
+
+    menus.connect("xlsx.fn.sum", |this, window, cx| this.insert_function_named("SUM", window, cx));
+    menus.connect("xlsx.fn.average", |this, window, cx| this.insert_function_named("AVERAGE", window, cx));
+    menus.connect("xlsx.fn.if", |this, window, cx| this.insert_function_named("IF", window, cx));
+    menus.connect("xlsx.fn.ifs", |this, window, cx| this.insert_function_named("IFS", window, cx));
+    menus.connect("xlsx.fn.iferror", |this, window, cx| this.insert_function_named("IFERROR", window, cx));
+    menus.connect("xlsx.fn.and", |this, window, cx| this.insert_function_named("AND", window, cx));
+    menus.connect("xlsx.fn.or", |this, window, cx| this.insert_function_named("OR", window, cx));
+    menus.connect("xlsx.fn.not", |this, window, cx| this.insert_function_named("NOT", window, cx));
+    menus.connect("xlsx.fn.count", |this, window, cx| this.insert_function_named("COUNT", window, cx));
+    menus.connect("xlsx.fn.max", |this, window, cx| this.insert_function_named("MAX", window, cx));
+    menus.connect("xlsx.fn.min", |this, window, cx| this.insert_function_named("MIN", window, cx));
+    menus.connect("xlsx.fn.vlookup", |this, window, cx| this.insert_function_named("VLOOKUP", window, cx));
+    menus.connect("xlsx.fn.xlookup", |this, window, cx| this.insert_function_named("XLOOKUP", window, cx));
+    menus.connect("xlsx.fn.pmt", |this, window, cx| this.insert_function_named("PMT", window, cx));
+    menus.connect("xlsx.fn.fv", |this, window, cx| this.insert_function_named("FV", window, cx));
+    menus.connect("xlsx.fn.pv", |this, window, cx| this.insert_function_named("PV", window, cx));
+    menus.connect("xlsx.fn.npv", |this, window, cx| this.insert_function_named("NPV", window, cx));
+    menus.connect("xlsx.fn.irr", |this, window, cx| this.insert_function_named("IRR", window, cx));
+    menus.connect("xlsx.fn.rate", |this, window, cx| this.insert_function_named("RATE", window, cx));
+    menus.connect("xlsx.fn.nper", |this, window, cx| this.insert_function_named("NPER", window, cx));
+    menus.connect("xlsx.fn.concat", |this, window, cx| this.insert_function_named("CONCAT", window, cx));
+    menus.connect("xlsx.fn.text", |this, window, cx| this.insert_function_named("TEXT", window, cx));
+    menus.connect("xlsx.fn.left", |this, window, cx| this.insert_function_named("LEFT", window, cx));
+    menus.connect("xlsx.fn.right", |this, window, cx| this.insert_function_named("RIGHT", window, cx));
+    menus.connect("xlsx.fn.mid", |this, window, cx| this.insert_function_named("MID", window, cx));
+    menus.connect("xlsx.fn.len", |this, window, cx| this.insert_function_named("LEN", window, cx));
+    menus.connect("xlsx.fn.trim", |this, window, cx| this.insert_function_named("TRIM", window, cx));
+    menus.connect("xlsx.fn.substitute", |this, window, cx| this.insert_function_named("SUBSTITUTE", window, cx));
+    menus.connect("xlsx.fn.hlookup", |this, window, cx| this.insert_function_named("HLOOKUP", window, cx));
+    menus.connect("xlsx.fn.index", |this, window, cx| this.insert_function_named("INDEX", window, cx));
+    menus.connect("xlsx.fn.match", |this, window, cx| this.insert_function_named("MATCH", window, cx));
+    menus.connect("xlsx.fn.xmatch", |this, window, cx| this.insert_function_named("XMATCH", window, cx));
+    menus.connect("xlsx.fn.filter", |this, window, cx| this.insert_function_named("FILTER", window, cx));
+    menus.connect("xlsx.fn.unique", |this, window, cx| this.insert_function_named("UNIQUE", window, cx));
+    menus.connect("xlsx.fn.sort", |this, window, cx| this.insert_function_named("SORT", window, cx));
+    menus.connect("xlsx.fn.sumif", |this, window, cx| this.insert_function_named("SUMIF", window, cx));
+    menus.connect("xlsx.fn.sumifs", |this, window, cx| this.insert_function_named("SUMIFS", window, cx));
+    menus.connect("xlsx.fn.round", |this, window, cx| this.insert_function_named("ROUND", window, cx));
+    menus.connect("xlsx.fn.roundup", |this, window, cx| this.insert_function_named("ROUNDUP", window, cx));
+    menus.connect("xlsx.fn.rounddown", |this, window, cx| this.insert_function_named("ROUNDDOWN", window, cx));
+    menus.connect("xlsx.fn.abs", |this, window, cx| this.insert_function_named("ABS", window, cx));
+    menus.connect("xlsx.fn.product", |this, window, cx| this.insert_function_named("PRODUCT", window, cx));
+    menus.connect("xlsx.fn.mod", |this, window, cx| this.insert_function_named("MOD", window, cx));
+    menus.connect("xlsx.fn.countif", |this, window, cx| this.insert_function_named("COUNTIF", window, cx));
+    menus.connect("xlsx.fn.countifs", |this, window, cx| this.insert_function_named("COUNTIFS", window, cx));
+    menus.connect("xlsx.fn.averageif", |this, window, cx| this.insert_function_named("AVERAGEIF", window, cx));
+    menus.connect("xlsx.fn.median", |this, window, cx| this.insert_function_named("MEDIAN", window, cx));
+    menus.connect("xlsx.fn.stdev-s", |this, window, cx| this.insert_function_named("STDEV.S", window, cx));
+    menus.connect("xlsx.fn.isblank", |this, window, cx| this.insert_function_named("ISBLANK", window, cx));
+    menus.connect("xlsx.fn.iserror", |this, window, cx| this.insert_function_named("ISERROR", window, cx));
     menus.connect("file.info", |this, window, cx| this.open_sheet_doc_properties_panel(window, cx));
     menus.connect("xlsx.properties", |this, window, cx| this.open_sheet_doc_properties_panel(window, cx));
     menus.connect("xlsx.named-ranges", |this, window, cx| {
@@ -1621,6 +2865,23 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         }
         this.open_names(window, cx);
     });
+    menus.connect("xlsx.name-manager", |this, window, cx| {
+        if let Some(s) = this.sheet_state_mut() {
+            s.validation = None;
+            s.find = None;
+        }
+        this.open_names(window, cx);
+    });
+    menus.connect("xlsx.define-name", |this, window, cx| {
+        if let Some(s) = this.sheet_state_mut() {
+            s.validation = None;
+            s.find = None;
+        }
+        this.open_names(window, cx);
+    });
+    menus.connect("xlsx.remove-duplicates", |this, window, cx| this.open_dedupe_panel(window, cx));
+    menus.connect("xlsx.scenario-manager", |this, window, cx| this.open_scenario_manager(window, cx));
+    menus.connect("xlsx.text-to-columns", |this, window, cx| this.open_text_columns_panel(window, cx));
     menus.connect("xlsx.validation", |this, window, cx| {
         if let Some(s) = this.sheet_state_mut() {
             s.names = None;
@@ -1640,14 +2901,135 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.watch-window", |this, window, cx| this.open_watch_window(window, cx));
     menus.connect("xlsx.accessibility-check", |this, window, cx| this.open_xlsx_accessibility_panel(window, cx));
     menus.connect("xlsx.compatibility-check", |this, window, cx| this.open_xlsx_compatibility_panel(window, cx));
-    menus.connect("xlsx.autorecover-settings", |this, window, cx| this.open_xlsx_autorecover_settings_panel(window, cx));
-    menus.connect("xlsx.recover-unsaved", |this, window, cx| this.open_xlsx_recover_unsaved_panel(window, cx));
+    menus.connect("xlsx.error-options", |this, window, cx| this.open_error_options_panel(window, cx));
+    menus.connect("xlsx.slicer-settings", |this, window, cx| this.open_slicer_settings_panel(window, cx));
+    menus.connect("xlsx.slicer-insert", |this, window, cx| this.open_slicer_insert_panel(window, cx));
+    menus.connect("xlsx.timeline-insert", |this, window, cx| this.open_timeline_insert_panel(window, cx));
+    menus.connect("xlsx.pivot-insert-timeline", |this, window, cx| this.open_timeline_insert_panel(window, cx));
+    menus.connect("xlsx.get-data", |this, window, cx| this.open_import_text_panel(window, cx));
+    menus.connect("xlsx.query-from-table", |this, window, cx| this.open_query_from_selection(window, cx));
+    menus.connect("xlsx.query-blank", |this, window, cx| this.open_blank_query(window, cx));
+    menus.connect("xlsx.queries", |this, _, cx| this.open_queries_panel(cx));
+    menus.connect("xlsx.control-properties", |this, window, cx| this.open_control_properties_panel(window, cx));
+    menus.connect("xlsx.insert-control", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::Button, cx));
+    menus.connect("xlsx.insert-control.button", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::Button, cx));
+    menus.connect("xlsx.insert-control.checkbox", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::CheckBox, cx));
+    menus.connect("xlsx.insert-control.radio", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::Radio, cx));
+    menus.connect("xlsx.insert-control.dropdown", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::Drop, cx));
+    menus.connect("xlsx.insert-control.list", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::List, cx));
+    menus.connect("xlsx.insert-control.spin", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::Spin, cx));
+    menus.connect("xlsx.insert-control.scroll", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::Scroll, cx));
+    menus.connect("xlsx.insert-control.groupbox", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::GroupBox, cx));
+    menus.connect("xlsx.insert-control.label", |this, _, cx| this.insert_form_control(ibis_doc_model::ControlKind::Label, cx));
+    menus.connect("xlsx.design-mode", |this, _, cx| this.toggle_design_mode(cx));
+    menus.connect("xlsx.view-code", |this, _, cx| this.view_code(cx));
+    menus.connect("xlsx.xml-source", |this, window, cx| this.open_xml_source(window, cx));
+    menus.connect("xlsx.xml-map-properties", |this, window, cx| this.open_xml_map_properties(window, cx));
+    menus.connect("xlsx.3d-model", |this, window, cx| this.pick_sheet_3d_model(window, cx));
+    menus.connect("xlsx.signature-line", |this, _, cx| { this.insert_sheet_signature_line("", "", cx); });
+    menus.connect("xlsx.ink", |this, window, cx| this.open_ink_panel(window, cx));
+    menus.connect("xlsx.autocorrect", |this, window, cx| this.open_autocorrect_panel(window, cx));
+    menus.connect("xlsx.autorecover-settings", |this, window, cx| { this.wb_mut().panels.close(); this.open_autorecover_settings(window, cx) });
+    menus.connect("xlsx.recover-unsaved", |this, _window, cx| { this.wb_mut().panels.close(); this.open_recover_unsaved(cx) });
     menus.connect("xlsx.backup-save-settings", |this, window, cx| this.open_xlsx_backup_save_settings_panel(window, cx));
     menus.connect("xlsx.open-and-repair", |this, window, cx| this.open_xlsx_repair_damaged(window, cx));
     menus.connect("xlsx.print-active-sheet", |this, _, cx| this.set_print_what(super::PrintWhat::ActiveSheet, cx));
     menus.connect("xlsx.print-entire-workbook", |this, _, cx| this.set_print_what(super::PrintWhat::EntireWorkbook, cx));
-    menus.connect("xlsx.print-selection", |this, _, cx| this.set_print_what(super::PrintWhat::Selection, cx));
-    menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.table-design").icon("table").on(|this, window, cx| this.open_table_design(window, cx)).into());
+    menus.connect("xlsx.find-and-select", |this, _, cx| this.open_goto_special_panel(cx));
+    menus.connect("xlsx.select-formulas", |this, _, cx| this.select_special_kind(GS::Formulas, cx));
+    menus.connect("xlsx.select-notes", |this, _, cx| this.select_special_kind(GS::Comments, cx));
+    menus.connect("xlsx.select-conditional-formats", |this, _, cx| this.select_special_kind(GS::Conditional, cx));
+    menus.connect("xlsx.select-constants", |this, _, cx| this.select_special_kind(GS::Constants, cx));
+    menus.connect("xlsx.select-data-validation", |this, _, cx| this.select_special_kind(GS::Validation, cx));
+    menus.connect("xlsx.select-objects", |this, _, cx| this.select_special_kind(GS::Objects, cx));
+    menus.connect("xlsx.scale-to-fit", |this, _, cx| this.open_page_setup(cx));
+    menus.connect("xlsx.scale-width-auto", |this, _, cx| this.set_print_fit_width(0, cx));
+    menus.connect("xlsx.scale-width-1", |this, _, cx| this.set_print_fit_width(1, cx));
+    menus.connect("xlsx.scale-width-2", |this, _, cx| this.set_print_fit_width(2, cx));
+    menus.connect("xlsx.scale-height-auto", |this, _, cx| this.set_print_fit_height(0, cx));
+    menus.connect("xlsx.scale-height-1", |this, _, cx| this.set_print_fit_height(1, cx));
+    menus.connect("xlsx.scale-height-2", |this, _, cx| this.set_print_fit_height(2, cx));
+    menus.connect("xlsx.scale-100", |this, _, cx| this.set_print_scale_percent(100, cx));
+    menus.connect("xlsx.scale-80", |this, _, cx| this.set_print_scale_percent(80, cx));
+    menus.connect("xlsx.scale-50", |this, _, cx| this.set_print_scale_percent(50, cx));
+    let text = |id: &str| crate::shell::i18n::text(id);
+    let cur_table_style = editor
+        .table_at_selection()
+        .and_then(|idx| editor.current_sheet().and_then(|(_, s)| s.tables.get(idx)))
+        .and_then(|t| t.style.as_ref().map(|st| st.name.clone()));
+    const FORMAT_AS_TABLE_PRESETS: [(&str, &str); 7] = [
+        ("xlsx.format-as-table.light-1", "TableStyleLight1"),
+        ("xlsx.format-as-table.light-9", "TableStyleLight9"),
+        ("xlsx.format-as-table.medium-2", "TableStyleMedium2"),
+        ("xlsx.format-as-table.medium-4", "TableStyleMedium4"),
+        ("xlsx.format-as-table.medium-9", "TableStyleMedium9"),
+        ("xlsx.format-as-table.dark-1", "TableStyleDark1"),
+        ("xlsx.format-as-table.dark-2", "TableStyleDark2"),
+    ];
+    let mut format_as_table_items: Vec<MenuEntry> = FORMAT_AS_TABLE_PRESETS
+        .into_iter()
+        .map(|(item_id, style_name)| {
+            MenuItem::tr(item_id)
+                .checked(cur_table_style.as_deref() == Some(style_name))
+                .on(move |this, _, cx| this.format_as_table_with_style(style_name, cx))
+                .into()
+        })
+        .collect();
+    format_as_table_items.push(MenuEntry::Separator);
+    format_as_table_items.push(
+        MenuItem::tr("xlsx.new-table-style")
+            .on(|this, window, cx| this.open_new_table_style(window, cx))
+            .into(),
+    );
+    menus.connect("xlsx.format-as-table", |this, window, cx| this.open_table_dialog(window, cx));
+    for (item_id, style_name) in FORMAT_AS_TABLE_PRESETS {
+        menus.connect(item_id, move |this, _, cx| this.format_as_table_with_style(style_name, cx));
+    }
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(
+        Submenu::tr("xlsx.format-as-table", "table_chart", format_as_table_items).into(),
+    );
+    let table_menu = vec![
+        MenuItem::tr("xlsx.table-design").icon("table").on(|this, window, cx| this.open_table_design(window, cx)).into(),
+        MenuItem::new("xlsx.table-resize", text("_xlsx.table-resize")).on(|this, window, cx| this.resize_table_dialog(window, cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::new("xlsx.table-header-row", text("docx.table-design.header-row")).on(|this, _, cx| this.toggle_table_header_row_at_selection(cx)).into(),
+        MenuItem::new("xlsx.table-total-row", text("docx.table-design.total-row")).on(|this, _, cx| this.toggle_table_totals_row_at_selection(cx)).into(),
+        MenuItem::new("xlsx.table-banded-rows", text("_xlsx.banded-rows")).on(|this, _, cx| this.toggle_table_banded_rows_at_selection(cx)).into(),
+        MenuItem::new("xlsx.table-banded-columns", text("_xlsx.banded-columns")).on(|this, _, cx| this.toggle_table_banded_columns_at_selection(cx)).into(),
+        MenuItem::new("xlsx.table-first-column", text("docx.table-design.first-column")).on(|this, _, cx| this.toggle_table_first_column_at_selection(cx)).into(),
+        MenuItem::new("xlsx.table-last-column", text("docx.table-design.last-column")).on(|this, _, cx| this.toggle_table_last_column_at_selection(cx)).into(),
+        MenuItem::new("xlsx.table-filter-button", text("_xlsx.filter-button")).on(|this, _, cx| this.toggle_table_filter_button_at_selection(cx)).into(),
+        MenuItem::tr("xlsx.new-table-style").on(|this, window, cx| this.open_new_table_style(window, cx)).into(),
+        MenuItem::new("xlsx.table-style-clear", text("_xlsx.clear")).on(|this, _, cx| this.clear_table_style_at_selection(cx)).into(),
+    ];
+    menus.connect("xlsx.new-table-style", |this, window, cx| this.open_new_table_style(window, cx));
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(Submenu::new("xlsx.table-menu", "table", text("_xlsx.table-design"), table_menu).into());
+
+    let row_menu = vec![
+        MenuItem::new("xlsx.row-height", text("_xlsx.row-height")).on(|this, window, cx| this.open_row_height_panel(window, cx)).into(),
+        MenuItem::new("xlsx.autofit-row-height", text("_xlsx.autofit-row-height")).on(|this, window, cx| this.fit_selected(Axis::Rows, window, cx)).into(),
+        MenuItem::new("xlsx.hide-rows", crate::shell::i18n::format("_xlsx.hide-unit", &[("unit", &text("_xlsx.row"))])).on(|this, _, cx| this.hide_lines(Axis::Rows, true, cx)).into(),
+        MenuItem::new("xlsx.unhide-rows", crate::shell::i18n::format("_xlsx.unhide-unit", &[("unit", &text("_xlsx.row"))])).on(|this, _, cx| this.hide_lines(Axis::Rows, false, cx)).into(),
+        MenuItem::new("xlsx.page-break", text("_xlsx.page-break")).on(|this, _, cx| this.toggle_row_break(cx)).into(),
+    ];
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(Submenu::new("xlsx.rows-menu", "table_rows", text("_xlsx.row"), row_menu).into());
+
+    let col_menu = vec![
+        MenuItem::new("xlsx.column-width", text("_xlsx.column-width")).on(|this, window, cx| this.open_column_width_panel(window, cx)).into(),
+        MenuItem::new("xlsx.autofit-column-width", text("_xlsx.autofit-column-width")).on(|this, window, cx| this.fit_selected(Axis::Columns, window, cx)).into(),
+        MenuItem::new("xlsx.hide-columns", crate::shell::i18n::format("_xlsx.hide-unit", &[("unit", &text("_xlsx.column"))])).on(|this, _, cx| this.hide_lines(Axis::Columns, true, cx)).into(),
+        MenuItem::new("xlsx.unhide-columns", crate::shell::i18n::format("_xlsx.unhide-unit", &[("unit", &text("_xlsx.column"))])).on(|this, _, cx| this.hide_lines(Axis::Columns, false, cx)).into(),
+    ];
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(Submenu::new("xlsx.columns-menu", "view_column", text("_xlsx.column"), col_menu).into());
+
+    let has_print_area = editor.current_sheet().is_some_and(|(_, s)| s.print_area.is_some());
+    let print_area_menu = vec![
+        MenuItem::tr("xlsx.print-area-set").on(|this, _, cx| this.set_print_area_from_selection(cx)).into(),
+        MenuItem::tr("xlsx.print-area-add").on(|this, _, cx| this.add_to_print_area_from_selection(cx)).into(),
+        MenuItem::tr("xlsx.print-area-clear").disabled(!has_print_area).on(|this, _, cx| this.clear_print_area(cx)).into(),
+    ];
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(Submenu::tr("xlsx.print-area-menu", "print", print_area_menu).into());
+
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(super::conditional_quick::menu());
     menus.items_mut(crate::shell::chrome::MenuId::Format).extend(super::format_more::menus());
     // 表示形式 > セルのスタイル (Excel's ホーム > セルのスタイル).
@@ -1685,7 +3067,48 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             .on(|this, window, cx| this.open_xlsx_theme_panel(window, cx))
             .into(),
     );
+    let theme_fonts_items: Vec<MenuEntry> = super::theme_panel::THEME_FONTS_PRESETS
+        .iter()
+        .map(|preset| {
+            let pid = preset.id;
+            let active = editor.is_xlsx_theme_fonts_active(pid);
+            MenuItem::new(preset.action_id, preset.label)
+                .checked(active)
+                .on(move |this, _, cx| this.apply_xlsx_theme_fonts(pid, cx))
+                .into()
+        })
+        .chain(std::iter::once(
+            MenuItem::tr("xlsx.theme-fonts.customize")
+                .icon("tune")
+                .on(|this, window, cx| this.open_xlsx_theme_panel(window, cx))
+                .into(),
+        ))
+        .collect();
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(
+        Submenu::tr("xlsx.theme-fonts", "font_download", theme_fonts_items).into(),
+    );
+    let theme_effects_items: Vec<MenuEntry> = ibis_pptx::theme_effects::THEME_EFFECTS
+        .iter()
+        .map(|preset| {
+            let pid = preset.id;
+            let active = editor.is_xlsx_theme_effects_active(pid);
+            MenuItem::new(super::theme_panel::theme_effect_action_id(pid), crate::shell::i18n::text(preset.label_key))
+                .checked(active)
+                .on(move |this, _, cx| this.apply_xlsx_theme_effects(pid, cx))
+                .into()
+        })
+        .collect();
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(
+        Submenu::tr("xlsx.theme-effects", "auto_awesome", theme_effects_items).into(),
+    );
     let has_chart = editor.sheet_chart().is_some();
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(
+        MenuItem::new("xlsx.chart-switch-row-column", text("_xlsx.switch-row-column"))
+            .icon("swap_horiz")
+            .disabled(!has_chart)
+            .on(|this, window, cx| this.switch_sheet_chart_row_column(window, cx))
+            .into(),
+    );
     let has_data_table = editor.sheet_chart().is_some_and(|(_, c)| c.data_table.is_some());
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         MenuItem::tr("xlsx.chart-data-table")
@@ -1753,6 +3176,35 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         crate::shell::chrome::Submenu::tr("xlsx.chart-palettes", "color_lens", palette_items).into(),
     );
+    let chart_obj = editor.sheet_chart().map(|(_, c)| c);
+    let chart_type_items = crate::pptx::chrome::chart_type_items_for(chart_obj, SlideEditor::set_sheet_chart_type);
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(
+        crate::shell::chrome::Submenu::tr("xlsx.chart-type", "insert_chart", chart_type_items).into(),
+    );
+    const QUICK_LAYOUTS: [(&str, u32); 10] = [
+        ("xlsx.chart-quick-layout-1", 1),
+        ("xlsx.chart-quick-layout-2", 2),
+        ("xlsx.chart-quick-layout-3", 3),
+        ("xlsx.chart-quick-layout-4", 4),
+        ("xlsx.chart-quick-layout-5", 5),
+        ("xlsx.chart-quick-layout-6", 6),
+        ("xlsx.chart-quick-layout-7", 7),
+        ("xlsx.chart-quick-layout-8", 8),
+        ("xlsx.chart-quick-layout-9", 9),
+        ("xlsx.chart-quick-layout-10", 10),
+    ];
+    let quick_layout_items: Vec<MenuEntry> = QUICK_LAYOUTS
+        .iter()
+        .map(|&(id, layout)| {
+            MenuItem::tr(id)
+                .disabled(!has_chart)
+                .on(move |this, _, cx| this.set_sheet_chart_quick_layout(layout, cx))
+                .into()
+        })
+        .collect();
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(
+        crate::shell::chrome::Submenu::tr("xlsx.chart-quick-layout", "dashboard_customize", quick_layout_items).into(),
+    );
     menus.connect("xlsx.theme-palette.office", |this, _, cx| this.apply_xlsx_theme_palette("office", cx));
     menus.connect("xlsx.theme-palette.aspect", |this, _, cx| this.apply_xlsx_theme_palette("aspect", cx));
     menus.connect("xlsx.theme-palette.apex", |this, _, cx| this.apply_xlsx_theme_palette("apex", cx));
@@ -1762,6 +3214,27 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.theme-palette.blue", |this, _, cx| this.apply_xlsx_theme_palette("blue", cx));
     menus.connect("xlsx.theme-colors", |this, window, cx| this.open_xlsx_theme_panel(window, cx));
     menus.connect("xlsx.theme", |this, window, cx| this.open_xlsx_theme_panel(window, cx));
+    menus.connect("xlsx.theme-fonts", |this, window, cx| this.open_xlsx_theme_panel(window, cx));
+    menus.connect("xlsx.theme-fonts.customize", |this, window, cx| this.open_xlsx_theme_panel(window, cx));
+    for preset in &super::theme_panel::THEME_FONTS_PRESETS {
+        let pid = preset.id;
+        menus.connect(preset.action_id, move |this, _, cx| this.apply_xlsx_theme_fonts(pid, cx));
+    }
+    menus.connect("xlsx.theme-font.office", |this, _, cx| this.apply_xlsx_theme_fonts("office", cx));
+    menus.connect("xlsx.theme-font.aptos", |this, _, cx| this.apply_xlsx_theme_fonts("aptos", cx));
+    menus.connect("xlsx.theme-font.arial", |this, _, cx| this.apply_xlsx_theme_fonts("arial", cx));
+    menus.connect("xlsx.theme-font.century-gothic", |this, _, cx| this.apply_xlsx_theme_fonts("century-gothic", cx));
+    menus.connect("xlsx.theme-font.meiryo", |this, _, cx| this.apply_xlsx_theme_fonts("meiryo", cx));
+    menus.connect("xlsx.theme-font.yu-gothic", |this, _, cx| this.apply_xlsx_theme_fonts("yu-gothic", cx));
+    menus.connect("xlsx.theme-effects", |this, _, cx| this.apply_xlsx_theme_effects("office", cx));
+    for preset in &ibis_pptx::theme_effects::THEME_EFFECTS {
+        let pid = preset.id;
+        menus.connect(super::theme_panel::theme_effect_action_id(pid), move |this, _, cx| this.apply_xlsx_theme_effects(pid, cx));
+    }
+    menus.connect("xlsx.theme-effects.office", |this, _, cx| this.apply_xlsx_theme_effects("office", cx));
+    menus.connect("xlsx.theme-effects.subtle", |this, _, cx| this.apply_xlsx_theme_effects("subtle", cx));
+    menus.connect("xlsx.theme-effects.moderate", |this, _, cx| this.apply_xlsx_theme_effects("moderate", cx));
+    menus.connect("xlsx.theme-effects.intense", |this, _, cx| this.apply_xlsx_theme_effects("intense", cx));
     menus.connect("xlsx.chart-data-table", |this, _, cx| {
         let shown = this.sheet_chart().map(|(_, c)| c.data_table.is_some()).unwrap_or(false);
         this.set_sheet_chart_data_table_shown(!shown, cx);
@@ -1791,6 +3264,20 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.chart-palette-8", |this, _, cx| this.set_sheet_chart_color_palette(7, cx));
     menus.connect("xlsx.chart-palette-9", |this, _, cx| this.set_sheet_chart_color_palette(8, cx));
     menus.connect("xlsx.chart-palette-10", |this, _, cx| this.set_sheet_chart_color_palette(9, cx));
+    for &(preset, id) in &crate::pptx::chart_panel::ChartPreset::ALL {
+        menus.connect(id, move |this, _, cx| this.set_sheet_chart_type(preset, cx));
+    }
+    menus.connect("xlsx.chart-quick-layout-1", |this, _, cx| this.set_sheet_chart_quick_layout(1, cx));
+    menus.connect("xlsx.chart-quick-layout-2", |this, _, cx| this.set_sheet_chart_quick_layout(2, cx));
+    menus.connect("xlsx.chart-quick-layout-3", |this, _, cx| this.set_sheet_chart_quick_layout(3, cx));
+    menus.connect("xlsx.chart-quick-layout-4", |this, _, cx| this.set_sheet_chart_quick_layout(4, cx));
+    menus.connect("xlsx.chart-quick-layout-5", |this, _, cx| this.set_sheet_chart_quick_layout(5, cx));
+    menus.connect("xlsx.chart-quick-layout-6", |this, _, cx| this.set_sheet_chart_quick_layout(6, cx));
+    menus.connect("xlsx.chart-quick-layout-7", |this, _, cx| this.set_sheet_chart_quick_layout(7, cx));
+    menus.connect("xlsx.chart-quick-layout-8", |this, _, cx| this.set_sheet_chart_quick_layout(8, cx));
+    menus.connect("xlsx.chart-quick-layout-9", |this, _, cx| this.set_sheet_chart_quick_layout(9, cx));
+    menus.connect("xlsx.chart-quick-layout-10", |this, _, cx| this.set_sheet_chart_quick_layout(10, cx));
+    menus.connect("xlsx.chart-quick-layout", |this, _, cx| this.set_sheet_chart_quick_layout(1, cx));
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         MenuItem::tr("xlsx.alt-text")
             .icon("accessibility")
@@ -1981,9 +3468,31 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             .disabled(!is_picture)
             .on(|this, _, cx| this.set_selected_pictures_duotone(Some((ibis_doc_model::Rgb(0x400060), ibis_doc_model::Rgb(0xf2e6ff))), cx))
             .into(),
+        MenuEntry::Separator,
+        MenuItem::tr("xlsx.picture.color.transparent-white")
+            .disabled(!is_picture)
+            .on(|this, _, cx| this.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0xffffff)), cx))
+            .into(),
+        MenuItem::tr("xlsx.picture.color.transparent-black")
+            .disabled(!is_picture)
+            .on(|this, _, cx| this.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0x000000)), cx))
+            .into(),
+        MenuItem::tr("xlsx.picture.color.transparent-clear")
+            .disabled(!is_picture)
+            .on(|this, _, cx| this.set_selected_pictures_clear(None, cx))
+            .into(),
     ];
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         crate::shell::chrome::Submenu::tr("xlsx.picture.color", "palette", color_items).into(),
+    );
+
+    // 背景の削除（透明色） (xlsx.picture.remove-background)
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(
+        MenuItem::tr("xlsx.picture.remove-background")
+            .icon("auto_fix_high")
+            .disabled(!is_picture)
+            .on(|this, _, cx| this.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0xffffff)), cx))
+            .into(),
     );
 
     // 画像の補正 (xlsx.picture.correction)
@@ -2074,6 +3583,38 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             .disabled(!is_picture)
             .on(|this, _, cx| this.reset_picture_effects(cx))
             .into(),
+    );
+
+    // 図の圧縮 (xlsx.picture.compress)
+    let compress_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("xlsx.picture.compress.print")
+            .disabled(!is_picture)
+            .on(|this, _, cx| {
+                this.compress_sheet_pictures(crate::pptx::compress::Resolution::Print, false, true, cx);
+            })
+            .into(),
+        MenuItem::tr("xlsx.picture.compress.web")
+            .disabled(!is_picture)
+            .on(|this, _, cx| {
+                this.compress_sheet_pictures(crate::pptx::compress::Resolution::Web, false, true, cx);
+            })
+            .into(),
+        MenuItem::tr("xlsx.picture.compress.email")
+            .disabled(!is_picture)
+            .on(|this, _, cx| {
+                this.compress_sheet_pictures(crate::pptx::compress::Resolution::Email, false, true, cx);
+            })
+            .into(),
+        MenuEntry::Separator,
+        MenuItem::tr("xlsx.picture.compress.delete-crop")
+            .disabled(!is_picture)
+            .on(|this, _, cx| {
+                this.compress_sheet_pictures(crate::pptx::compress::Resolution::Print, true, true, cx);
+            })
+            .into(),
+    ];
+    menus.items_mut(crate::shell::chrome::MenuId::Format).push(
+        crate::shell::chrome::Submenu::tr("xlsx.picture.compress", "photo_size_select_small", compress_items).into(),
     );
 
     // 図形の変更 (xlsx.change-shape)
@@ -2469,13 +4010,22 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     let special = |id: &'static str, label: &'static str, kind: P| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).on(move |this, _, cx| this.paste_special(kind, cx)).into() };
     let submenu: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.paste-special", "content_paste",
         vec![
+            MenuItem::new("xlsx.paste-special-dialog", crate::shell::i18n::text("xlsx.paste-special-dots")).icon("content_paste").shortcut("⌘⌥V").on(|this, _, cx| this.open_paste_special_dialog(cx)).into(),
+            MenuEntry::Separator,
             special("xlsx.paste-all", "_xlsx.all", P::All),
             special("xlsx.paste-values", "_xlsx.values", P::Values),
             special("xlsx.paste-formulas", "_xlsx.equation", P::Formulas),
             special("xlsx.paste-formats", "_xlsx.formats", P::Formats),
+            special("xlsx.paste-comments", "xlsx.paste-comments", P::Comments),
             special("xlsx.paste-validation", "xlsx.paste-validation", P::Validation),
+            special("xlsx.paste-all-except-borders", "xlsx.paste-all-except-borders", P::AllExceptBorders),
+            special("xlsx.paste-column-widths", "xlsx.paste-column-widths", P::ColumnWidths),
+            special("xlsx.paste-formulas-and-number-formats", "xlsx.paste-formulas-and-number-formats", P::FormulasAndNumberFormats),
+            special("xlsx.paste-values-and-number-formats", "xlsx.paste-values-and-number-formats", P::ValuesAndNumberFormats),
             special("xlsx.paste-transpose", "_xlsx.transpose", P::Transpose),
             special("xlsx.paste-link", "_xlsx.paste-link", P::Link),
+            MenuItem::tr("xlsx.paste-picture").icon("image").on(|this, _, cx| this.paste_as_picture(false, cx)).into(),
+            MenuItem::tr("xlsx.paste-linked-picture").icon("add_photo_alternate").on(|this, _, cx| this.paste_as_picture(true, cx)).into(),
             MenuEntry::Separator,
             special("xlsx.paste-add", "_xlsx.add", P::Add),
             special("xlsx.paste-subtract", "_xlsx.subtract", P::Subtract),
@@ -2500,22 +4050,58 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             break;
         }
     }
-    // 編集 > すべてクリア (Excel's ホーム > クリア > すべてクリア), after 削除.
+    // 編集 > クリア (Excel's ホーム > 編集 > クリア)
     let edit = menus.items_mut(crate::shell::chrome::MenuId::Edit);
     let at = edit.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "edit.delete")).map_or(edit.len(), |i| i + 1);
-    edit.insert(at, MenuItem::tr("xlsx.clear-all").icon("delete").on(|this, _, cx| this.clear_all_cells(cx)).into());
-    // コメントとメモのクリア (Excel's クリア > コメントとメモのクリア), after it.
-    edit.insert(at + 1, MenuItem::tr("xlsx.clear-comments").icon("delete").on(|this, _, cx| this.delete_notes(cx)).into());
+    let clear_submenu = vec![
+        MenuItem::tr("xlsx.clear-all").icon("delete").on(|this, _, cx| this.clear_all_cells(cx)).into(),
+        MenuItem::tr("xlsx.clear-formats").icon("format_clear").on(|this, _, cx| this.clear_cell_formats(cx)).into(),
+        MenuItem::tr("xlsx.clear-contents").icon("backspace").on(|this, _, cx| this.clear_selected_cells(cx)).into(),
+        MenuItem::tr("xlsx.clear-comments")
+            .icon("comment")
+            .on(|this, window, cx| {
+                this.delete_threaded_comments_and_notes(cx);
+                this.focus_handle.focus(window, cx);
+            })
+            .into(),
+        MenuItem::tr("xlsx.clear-hyperlinks").icon("link_off").on(|this, _, cx| this.remove_cell_link(cx)).into(),
+    ];
+    edit.insert(at, crate::shell::chrome::Submenu::tr("xlsx.clear-menu", "delete", clear_submenu).into());
+
     let clear_sparklines_submenu = vec![
         MenuItem::tr("xlsx.sparkline-clear-selected").on(|this, _, cx| this.clear_sparklines_action(false, cx)).into(),
         MenuItem::tr("xlsx.sparkline-clear-group").on(|this, _, cx| this.clear_sparklines_action(true, cx)).into(),
     ];
-    edit.insert(at + 2, crate::shell::chrome::Submenu::tr("xlsx.clear-sparklines", "delete", clear_sparklines_submenu).into());
-    // 連続データの作成… (Excel's ホーム > フィル > 連続データの作成), after them.
-    edit.insert(at + 3, MenuItem::tr("xlsx.series").icon("format_list_numbered").on(|this, window, cx| this.open_series_panel(window, cx)).into());
-    // 下方向へコピー・右方向へコピー (Excel's フィル), ⌘D and ⌘R.
-    edit.insert(at + 4, MenuItem::tr("xlsx.fill-down").icon("arrow_downward").shortcut("⌘D").on(|this, _, cx| this.fill_selection_edge(true, cx)).into());
-    edit.insert(at + 5, MenuItem::tr("xlsx.fill-right").icon("arrow_forward").shortcut("⌘R").on(|this, _, cx| this.fill_selection_edge(false, cx)).into());
+    edit.insert(at + 1, crate::shell::chrome::Submenu::tr("xlsx.clear-sparklines", "delete", clear_sparklines_submenu).into());
+
+    // 編集 > フィル (Excel's ホーム > 編集 > フィル)
+    let fill_submenu = vec![
+        MenuItem::tr("xlsx.fill-down").icon("arrow_downward").shortcut("⌘D").on(|this, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Down, cx)).into(),
+        MenuItem::tr("xlsx.fill-right").icon("arrow_forward").shortcut("⌘R").on(|this, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Right, cx)).into(),
+        MenuItem::tr("xlsx.fill-up").icon("arrow_upward").on(|this, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Up, cx)).into(),
+        MenuItem::tr("xlsx.fill-left").icon("arrow_back").on(|this, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Left, cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("xlsx.series").icon("format_list_numbered").on(|this, window, cx| this.open_series_panel(window, cx)).into(),
+        MenuItem::tr("flash-fill.done").icon("auto_fix_high").shortcut("⌃E").on(|this, _, cx| this.flash_fill_column(cx)).into(),
+    ];
+    edit.insert(at + 2, crate::shell::chrome::Submenu::tr("xlsx.fill-menu", "format_color_fill", fill_submenu).into());
+
+    // 編集 > オートSUM (Excel's ホーム > 編集 > オートSUM)
+    let autosum_submenu = vec![
+        MenuItem::new("xlsx.autosum", crate::shell::i18n::text("_xlsx.sum")).icon("functions").shortcut("⌥=").on(|this, _, cx| this.auto_function("SUM", cx)).into(),
+        MenuItem::new("xlsx.autosum.sum", crate::shell::i18n::text("_xlsx.sum")).icon("functions").on(|this, _, cx| this.auto_function("SUM", cx)).into(),
+        MenuItem::new("xlsx.autosum.average", crate::shell::i18n::text("_xlsx.average")).on(|this, _, cx| this.auto_function("AVERAGE", cx)).into(),
+        MenuItem::new("xlsx.autosum.count", crate::shell::i18n::text("_xlsx.count-numbers")).on(|this, _, cx| this.auto_function("COUNT", cx)).into(),
+        MenuItem::new("xlsx.autosum.max", crate::shell::i18n::text("_xlsx.max")).on(|this, _, cx| this.auto_function("MAX", cx)).into(),
+        MenuItem::new("xlsx.autosum.min", crate::shell::i18n::text("_xlsx.min-2")).on(|this, _, cx| this.auto_function("MIN", cx)).into(),
+    ];
+    edit.insert(at + 3, crate::shell::chrome::Submenu::new("xlsx.autosum-menu", "functions", crate::shell::i18n::text("_shell.functions"), autosum_submenu).into());
+    menus.connect("xlsx.autosum", |this, _, cx| this.auto_function("SUM", cx));
+    menus.connect("xlsx.autosum.sum", |this, _, cx| this.auto_function("SUM", cx));
+    menus.connect("xlsx.autosum.average", |this, _, cx| this.auto_function("AVERAGE", cx));
+    menus.connect("xlsx.autosum.count", |this, _, cx| this.auto_function("COUNT", cx));
+    menus.connect("xlsx.autosum.max", |this, _, cx| this.auto_function("MAX", cx));
+    menus.connect("xlsx.autosum.min", |this, _, cx| this.auto_function("MIN", cx));
     menus.connect("edit.select-all", |this, _, cx| this.select_all_cells(cx));
     menus.connect("xlsx.insert-row-above", |this, _, cx| this.insert_lines(Axis::Rows, false, cx));
     menus.connect("xlsx.insert-row-below", |this, _, cx| this.insert_lines(Axis::Rows, true, cx));
@@ -2526,8 +4112,41 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.insert-sheet", |this, window, cx| this.insert_sheet(window, cx));
     menus.connect("xlsx.insert-table", |this, window, cx| this.open_table_dialog(window, cx));
     menus.connect("xlsx.table-to-range", |this, _, cx| this.table_to_range(cx));
+    menus.connect("xlsx.table-resize", |this, window, cx| this.resize_table_dialog(window, cx));
+    menus.connect("xlsx.table-design", |this, window, cx| this.open_table_design(window, cx));
+    menus.connect("xlsx.table-header-row", |this, _, cx| this.toggle_table_header_row_at_selection(cx));
+    menus.connect("xlsx.table-total-row", |this, _, cx| this.toggle_table_totals_row_at_selection(cx));
+    menus.connect("xlsx.table-banded-rows", |this, _, cx| this.toggle_table_banded_rows_at_selection(cx));
+    menus.connect("xlsx.table-banded-columns", |this, _, cx| this.toggle_table_banded_columns_at_selection(cx));
+    menus.connect("xlsx.table-first-column", |this, _, cx| this.toggle_table_first_column_at_selection(cx));
+    menus.connect("xlsx.table-last-column", |this, _, cx| this.toggle_table_last_column_at_selection(cx));
+    menus.connect("xlsx.table-filter-button", |this, _, cx| this.toggle_table_filter_button_at_selection(cx));
+    menus.connect("xlsx.table-style-clear", |this, _, cx| this.clear_table_style_at_selection(cx));
+    menus.connect("xlsx.table-insert-row-above", |this, _, cx| this.insert_table_rows_above(cx));
+    menus.connect("xlsx.table-insert-row-below", |this, _, cx| this.insert_table_rows_below(cx));
+    menus.connect("xlsx.table-insert-col-left", |this, _, cx| this.insert_table_columns_left(cx));
+    menus.connect("xlsx.table-insert-col-right", |this, _, cx| this.insert_table_columns_right(cx));
+    menus.connect("xlsx.table-delete-row", |this, _, cx| this.delete_table_rows(cx));
+    menus.connect("xlsx.table-delete-col", |this, _, cx| this.delete_table_columns(cx));
+    menus.connect("xlsx.row-height", |this, window, cx| this.open_row_height_panel(window, cx));
+    menus.connect("xlsx.column-width", |this, window, cx| this.open_column_width_panel(window, cx));
+    menus.connect("xlsx.autofit-column-width", |this, window, cx| this.fit_selected(Axis::Columns, window, cx));
+    menus.connect("xlsx.autofit-row-height", |this, window, cx| this.fit_selected(Axis::Rows, window, cx));
+    menus.connect("xlsx.hide-rows", |this, _, cx| this.hide_lines(Axis::Rows, true, cx));
+    menus.connect("xlsx.unhide-rows", |this, _, cx| this.hide_lines(Axis::Rows, false, cx));
+    menus.connect("xlsx.hide-columns", |this, _, cx| this.hide_lines(Axis::Columns, true, cx));
+    menus.connect("xlsx.unhide-columns", |this, _, cx| this.hide_lines(Axis::Columns, false, cx));
+    menus.connect("xlsx.print-area-set", |this, _, cx| this.set_print_area_from_selection(cx));
+    menus.connect("xlsx.print-area-add", |this, _, cx| this.add_to_print_area_from_selection(cx));
+    menus.connect("xlsx.print-area-clear", |this, _, cx| this.clear_print_area(cx));
+    menus.connect("xlsx.page-break", |this, _, cx| this.toggle_row_break(cx));
+    menus.connect("xlsx.pivot-insert", |this, window, cx| this.open_create_pivot(window, cx));
+    menus.connect("xlsx.recommended-pivots", |this, window, cx| this.open_recommended_pivots(window, cx));
+    menus.connect("xlsx.recommended-pivot-tables", |this, window, cx| this.open_recommended_pivot_tables(window, cx));
     menus.connect("xlsx.pivot-chart-insert", |this, window, cx| this.open_insert_pivot_chart(window, cx));
     menus.connect("xlsx.chart-format", |this, window, cx| this.open_sheet_chart_panel(window, cx));
+    menus.connect("xlsx.chart-switch-row-column", |this, window, cx| this.switch_sheet_chart_row_column(window, cx));
+    menus.connect("xlsx.switch-row-column", |this, window, cx| this.switch_sheet_chart_row_column(window, cx));
     menus.connect("xlsx.move-chart", |this, window, cx| this.open_move_chart_panel(window, cx));
     menus.connect("xlsx.chart.save-template", |this, window, cx| this.open_chart_template_panel(crate::xlsx::chart_template::ChartTemplateMode::Save, window, cx));
     menus.connect("xlsx.chart-save-template", |this, window, cx| this.open_chart_template_panel(crate::xlsx::chart_template::ChartTemplateMode::Save, window, cx));
@@ -2566,21 +4185,129 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.sparkline-empty-gap", |this, _, cx| this.set_selected_sparklines_empty(ibis_doc_model::SparklineEmpty::Gap, cx));
     menus.connect("xlsx.sparkline-empty-zero", |this, _, cx| this.set_selected_sparklines_empty(ibis_doc_model::SparklineEmpty::Zero, cx));
     menus.connect("xlsx.sparkline-empty-span", |this, _, cx| this.set_selected_sparklines_empty(ibis_doc_model::SparklineEmpty::Span, cx));
+    menus.connect("xlsx.sparkline-high-point", |this, _, cx| this.toggle_selected_sparklines_point(crate::xlsx::sparkline_dialog::SparklinePointKind::High, cx));
+    menus.connect("xlsx.sparkline-low-point", |this, _, cx| this.toggle_selected_sparklines_point(crate::xlsx::sparkline_dialog::SparklinePointKind::Low, cx));
+    menus.connect("xlsx.sparkline-negative-points", |this, _, cx| this.toggle_selected_sparklines_point(crate::xlsx::sparkline_dialog::SparklinePointKind::Negative, cx));
+    menus.connect("xlsx.sparkline-first-point", |this, _, cx| this.toggle_selected_sparklines_point(crate::xlsx::sparkline_dialog::SparklinePointKind::First, cx));
+    menus.connect("xlsx.sparkline-last-point", |this, _, cx| this.toggle_selected_sparklines_point(crate::xlsx::sparkline_dialog::SparklinePointKind::Last, cx));
+    menus.connect("xlsx.sparkline-markers", |this, _, cx| this.toggle_selected_sparklines_point(crate::xlsx::sparkline_dialog::SparklinePointKind::Markers, cx));
+    menus.connect("xlsx.sparkline-weight-75", |this, _, cx| this.set_selected_sparklines_line_weight(75, cx));
+    menus.connect("xlsx.sparkline-weight-100", |this, _, cx| this.set_selected_sparklines_line_weight(100, cx));
+    menus.connect("xlsx.sparkline-weight-150", |this, _, cx| this.set_selected_sparklines_line_weight(150, cx));
+    menus.connect("xlsx.sparkline-weight-225", |this, _, cx| this.set_selected_sparklines_line_weight(225, cx));
+    menus.connect("xlsx.sparkline-show-axis", |this, _, cx| this.toggle_selected_sparklines_display_x_axis(cx));
+    menus.connect("xlsx.sparkline-right-to-left", |this, _, cx| this.toggle_selected_sparklines_right_to_left(cx));
+    menus.connect("xlsx.sparkline-min-individual", |this, _, cx| this.set_selected_sparklines_min_axis(ibis_doc_model::SparklineAxis::Individual, cx));
+    menus.connect("xlsx.sparkline-min-group", |this, _, cx| this.set_selected_sparklines_min_axis(ibis_doc_model::SparklineAxis::Group, cx));
+    menus.connect("xlsx.sparkline-min-custom", |this, window, cx| this.open_sparkline_panel(None, window, cx));
+    menus.connect("xlsx.sparkline-max-individual", |this, _, cx| this.set_selected_sparklines_max_axis(ibis_doc_model::SparklineAxis::Individual, cx));
+    menus.connect("xlsx.sparkline-max-group", |this, _, cx| this.set_selected_sparklines_max_axis(ibis_doc_model::SparklineAxis::Group, cx));
+    menus.connect("xlsx.sparkline-max-custom", |this, window, cx| this.open_sparkline_panel(None, window, cx));
+    for (_, _, pt, palette) in MARKER_COLOR_MENUS {
+        for (item_id, _, hex) in palette {
+            menus.connect(item_id, move |this, _, cx| {
+                this.set_selected_sparklines_point_color(pt, Some(ibis_doc_model::Rgb(hex)), cx);
+            });
+        }
+    }
+    menus.connect("xlsx.pivot-fields", |this, window, cx| this.open_pivot_fields(window, cx));
+    menus.connect("xlsx.pivot-value-settings", |this, window, cx| this.open_pivot_value_settings(window, cx));
     menus.connect("xlsx.pivot-options", |this, window, cx| this.open_pivot_options(window, cx));
+    menus.connect("xlsx.pivot-change-data-source", |this, window, cx| this.open_pivot_change_source(window, cx));
+    menus.connect("xlsx.pivot-drill-buttons", |this, _, cx| this.toggle_pivot_drill_buttons(cx));
+    menus.connect("xlsx.pivot-show-details", |this, _, cx| this.show_pivot_details_at_selection(cx));
     menus.connect("xlsx.pivot-calculated-field", |this, window, cx| this.open_pivot_calc_field(window, cx));
     menus.connect("xlsx.pivot-calculated-item", |this, window, cx| this.open_pivot_calc_item(window, cx));
     menus.connect("xlsx.pivot-group", |this, window, cx| this.open_pivot_group(window, cx));
     menus.connect("xlsx.pivot-ungroup", |this, _, cx| this.pivot_ungroup(cx));
+    menus.connect("xlsx.pivot-refresh", |this, _, cx| this.refresh_pivots(false, cx));
+    menus.connect("xlsx.pivot-refresh-all", |this, _, cx| this.refresh_pivots(true, cx));
+    menus.connect("xlsx.pivot-clear-all", |this, _, cx| this.clear_pivot_all(cx));
+    menus.connect("xlsx.pivot-clear-filters", |this, _, cx| this.clear_pivot_filters(cx));
+    menus.connect("xlsx.pivot-select-entire-table", |this, _, cx| this.select_pivot_part(0, cx));
+    menus.connect("xlsx.pivot-select-values", |this, _, cx| this.select_pivot_part(1, cx));
+    menus.connect("xlsx.pivot-select-labels", |this, _, cx| this.select_pivot_part(2, cx));
+    menus.connect("xlsx.pivot-insert-blank-line", |this, _, cx| this.set_pivot_blank_line(true, cx));
+    menus.connect("xlsx.pivot-remove-blank-line", |this, _, cx| this.set_pivot_blank_line(false, cx));
+    menus.connect("xlsx.pivot-banded-rows", |this, _, cx| this.toggle_pivot_banded_rows(cx));
+    menus.connect("xlsx.pivot-banded-columns", |this, _, cx| this.toggle_pivot_banded_columns(cx));
+    for &(id, name, _) in &crate::xlsx::pivot::PIVOT_STYLES {
+        menus.connect(id, move |this, _, cx| this.set_pivot_style_named(name, cx));
+    }
+    menus.connect("xlsx.pivot-report-layout", |this, _, cx| this.set_pivot_report_layout(crate::xlsx::pivot::PivotReportLayout::Compact, cx));
+    menus.connect("xlsx.pivot-layout-compact", |this, _, cx| this.set_pivot_report_layout(crate::xlsx::pivot::PivotReportLayout::Compact, cx));
+    menus.connect("xlsx.pivot-layout-outline", |this, _, cx| this.set_pivot_report_layout(crate::xlsx::pivot::PivotReportLayout::Outline, cx));
+    menus.connect("xlsx.pivot-layout-tabular", |this, _, cx| this.set_pivot_report_layout(crate::xlsx::pivot::PivotReportLayout::Tabular, cx));
+    menus.connect("xlsx.pivot-subtotal-off", |this, _, cx| this.set_pivot_subtotals(0, cx));
+    menus.connect("xlsx.pivot-subtotal-bottom", |this, _, cx| this.set_pivot_subtotals(1, cx));
+    menus.connect("xlsx.pivot-subtotal-top", |this, _, cx| this.set_pivot_subtotals(2, cx));
+    menus.connect("xlsx.pivot-grand-rows", |this, _, cx| this.toggle_pivot_row_grand_totals(cx));
+    menus.connect("xlsx.pivot-grand-cols", |this, _, cx| this.toggle_pivot_col_grand_totals(cx));
+    menus.connect("xlsx.pivot-repeat-labels", |this, _, cx| this.toggle_pivot_repeat_item_labels(cx));
+    menus.connect("xlsx.pivot-clear", |this, _, cx| this.clear_pivot_fields(cx));
+    menus.connect("xlsx.pivot-select", |this, _, cx| this.select_entire_pivot(cx));
+    menus.connect("xlsx.pivot-move", |this, window, cx| this.open_pivot_move(window, cx));
+    menus.connect("xlsx.pivot-blank-rows", |this, _, cx| this.toggle_pivot_blank_rows(cx));
+    menus.connect("xlsx.pivot-row-headers", |this, _, cx| this.toggle_pivot_row_headers(cx));
+    menus.connect("xlsx.pivot-col-headers", |this, _, cx| this.toggle_pivot_col_headers(cx));
+    menus.connect("xlsx.pivot-styles", |this, _, cx| this.set_pivot_style("PivotStyleLight16", cx));
+    menus.connect("xlsx.recommended-charts", |this, window, cx| this.open_recommended_charts(window, cx));
+    menus.connect("xlsx.thesaurus", |this, window, cx| this.open_thesaurus(window, cx));
     menus.connect("edit.copy", |this, _, cx| this.copy_cells(false, cx));
     menus.connect("xlsx.copy-as-picture", |this, _, cx| this.copy_as_picture(cx));
     menus.connect("edit.cut", |this, _, cx| this.copy_cells(true, cx));
     menus.connect("edit.paste", |this, _, cx| this.paste_cells(false, cx));
     menus.connect("edit.paste-plain", |this, _, cx| this.paste_cells(true, cx));
     menus.connect("format.clear", |this, _, cx| this.clear_cell_formats(cx));
+    menus.connect("xlsx.clear-formats", |this, _, cx| this.clear_cell_formats(cx));
+    menus.connect("xlsx.clear-contents", |this, _, cx| this.clear_selected_cells(cx));
+    menus.connect("xlsx.clear-hyperlinks", |this, _, cx| this.remove_cell_link(cx));
+    menus.connect("xlsx.cell-link-open", |this, window, cx| {
+        this.follow_cell_link(window, cx);
+    });
+    menus.connect("xlsx.cell-link-edit", |this, window, cx| {
+        this.open_link_panel(window, cx);
+    });
+    menus.connect("xlsx.cell-link-remove", |this, _, cx| {
+        this.remove_cell_link(cx);
+    });
+    menus.connect("xlsx.fill-down", |this, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Down, cx));
+    menus.connect("xlsx.fill-right", |this, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Right, cx));
+    menus.connect("xlsx.fill-up", |this, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Up, cx));
+    menus.connect("xlsx.fill-left", |this, _, cx| this.fill_selection_edge(crate::xlsx::fill::FillDirection::Left, cx));
+    menus.connect("xlsx.underline-single", |this, _, cx| this.format_cells(ibis_doc_model::StyleChange::UnderlineKind(ibis_doc_model::CellUnderline::Single), cx));
+    menus.connect("xlsx.underline-double", |this, _, cx| this.format_cells(ibis_doc_model::StyleChange::UnderlineKind(ibis_doc_model::CellUnderline::Double), cx));
+    menus.connect("xlsx.comma-style", |this, _, cx| this.format_cells(ibis_doc_model::StyleChange::NumberFormat("#,##0".into()), cx));
+    menus.connect("_shell.comma-style", |this, _, cx| this.format_cells(ibis_doc_model::StyleChange::NumberFormat("#,##0".into()), cx));
+    menus.connect("xlsx.percent-style", |this, _, cx| this.format_cells(ibis_doc_model::StyleChange::NumberFormat("0%".into()), cx));
+    menus.connect("xlsx.decrease-decimal", |this, _, cx| this.step_decimals(false, cx));
+    menus.connect("xlsx.increase-decimal", |this, _, cx| this.step_decimals(true, cx));
+    menus.connect("xlsx.merge-center", |this, _, cx| this.merge_cells(true, cx));
+    menus.connect("xlsx.merge-across", |this, _, cx| this.merge_across(cx));
+    menus.connect("xlsx.merge", |this, _, cx| this.merge_cells(false, cx));
+    menus.connect("xlsx.unmerge", |this, _, cx| this.unmerge_cells(cx));
+    menus.connect("xlsx.wrap-text", |this, _, cx| {
+        let wrap = this.current_style().wrap;
+        this.format_cells(ibis_doc_model::StyleChange::Wrap(!wrap), cx);
+    });
+    menus.connect("xlsx.decrease-indent", |this, _, cx| {
+        let indent = this.current_style().indent.saturating_sub(1);
+        this.format_cells(ibis_doc_model::StyleChange::Indent(indent), cx);
+    });
+    menus.connect("xlsx.increase-indent", |this, _, cx| {
+        let indent = this.current_style().indent + 1;
+        this.format_cells(ibis_doc_model::StyleChange::Indent(indent), cx);
+    });
+    menus.connect("xlsx.format-cells", |this, window, cx| this.open_custom_format(window, cx));
+    menus.connect("xlsx.cell-format", |this, window, cx| this.open_custom_format(window, cx));
     menus.connect("xlsx.protect-workbook", |this, window, cx| this.open_protect_workbook_panel(window, cx));
     menus.connect("xlsx.unprotect-workbook", |this, window, cx| this.open_protect_workbook_panel(window, cx));
     menus.connect("xlsx.allow-edit-ranges", |this, window, cx| this.open_allow_edit_ranges_panel(window, cx));
+    menus.connect("xlsx.paste-special-dialog", |this, _, cx| this.open_paste_special_dialog(cx));
     menus.connect("xlsx.paste-validation", |this, _, cx| this.paste_special(super::clipboard::PasteSpecial::Validation, cx));
+    menus.connect("xlsx.paste-picture", |this, _, cx| this.paste_as_picture(false, cx));
+    menus.connect("xlsx.paste-linked-picture", |this, _, cx| this.paste_as_picture(true, cx));
+    menus.connect("xlsx.camera-tool", |this, _, cx| this.insert_camera_picture(cx));
     menus.connect("insert.text-box", |this, window, cx| { this.insert_sheet_textbox(window, cx); });
     menus.connect("xlsx.insert-textbox", |this, window, cx| { this.insert_sheet_textbox(window, cx); });
     menus.connect("xlsx.shape.rect", |this, _, cx| { this.insert_sheet_shape("rect", cx); });
@@ -2602,6 +4329,20 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("shape.wedgeRectCallout", |this, _, cx| { this.insert_sheet_shape("wedgeRectCallout", cx); });
     menus.connect("shape.heart", |this, _, cx| { this.insert_sheet_shape("heart", cx); });
     menus.connect("xlsx.insert-picture", |this, window, cx| { this.pick_sheet_picture(window, cx); });
+    menus.connect("xlsx.insert-picture-over-cells", |this, window, cx| { this.pick_sheet_picture(window, cx); });
+    menus.connect("xlsx.insert-picture-in-cell", |this, window, cx| { this.pick_sheet_pictures_in_cells(window, cx); });
+    menus.connect("xlsx.place-in-cell", |this, _, cx| {
+        if let Some(id) = this.selected_sheet_shape() {
+            this.place_picture_in_cell(id, cx);
+        }
+    });
+    menus.connect("xlsx.place-over-cells", |this, _, cx| {
+        if let Some(id) = this.selected_sheet_shape() {
+            this.place_picture_over_cells(id, cx);
+        } else {
+            this.place_current_cell_picture_over_cells(cx);
+        }
+    });
     menus.connect("xlsx.image-file", |this, window, cx| { this.pick_sheet_picture(window, cx); });
     menus.connect("image.file", |this, window, cx| { this.pick_sheet_picture(window, cx); });
     menus.connect("xlsx.order-front", |this, _, cx| { this.order_sheet_shape(crate::pptx::editing::Order::Front, cx); });
@@ -2693,6 +4434,10 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.picture.color.red", |this, _, cx| { this.set_selected_pictures_duotone(Some((ibis_doc_model::Rgb(0x600000), ibis_doc_model::Rgb(0xfce4d6))), cx); });
     menus.connect("xlsx.picture.color.orange", |this, _, cx| { this.set_selected_pictures_duotone(Some((ibis_doc_model::Rgb(0x803000), ibis_doc_model::Rgb(0xffe6cc))), cx); });
     menus.connect("xlsx.picture.color.purple", |this, _, cx| { this.set_selected_pictures_duotone(Some((ibis_doc_model::Rgb(0x400060), ibis_doc_model::Rgb(0xf2e6ff))), cx); });
+    menus.connect("xlsx.picture.remove-background", |this, _, cx| { this.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0xffffff)), cx); });
+    menus.connect("xlsx.picture.color.transparent-white", |this, _, cx| { this.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0xffffff)), cx); });
+    menus.connect("xlsx.picture.color.transparent-black", |this, _, cx| { this.set_selected_pictures_clear(Some(ibis_doc_model::Rgb(0x000000)), cx); });
+    menus.connect("xlsx.picture.color.transparent-clear", |this, _, cx| { this.set_selected_pictures_clear(None, cx); });
 
     menus.connect("xlsx.picture.lum.normal", |this, _, cx| { this.set_selected_pictures_luminance(None, cx); });
     menus.connect("xlsx.picture.lum.bright-p40", |this, _, cx| { this.set_selected_pictures_luminance(Some((40_000, 0)), cx); });
@@ -2713,6 +4458,22 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.picture.corner.round", |this, _, cx| { this.crop_selected_pictures_corner(50_000, cx); });
 
     menus.connect("xlsx.picture.reset", |this, _, cx| { this.reset_picture_effects(cx); });
+
+    menus.connect("xlsx.picture.compress", |this, _, cx| {
+        this.compress_sheet_pictures(crate::pptx::compress::Resolution::Print, true, true, cx);
+    });
+    menus.connect("xlsx.picture.compress.print", |this, _, cx| {
+        this.compress_sheet_pictures(crate::pptx::compress::Resolution::Print, false, true, cx);
+    });
+    menus.connect("xlsx.picture.compress.web", |this, _, cx| {
+        this.compress_sheet_pictures(crate::pptx::compress::Resolution::Web, false, true, cx);
+    });
+    menus.connect("xlsx.picture.compress.email", |this, _, cx| {
+        this.compress_sheet_pictures(crate::pptx::compress::Resolution::Email, false, true, cx);
+    });
+    menus.connect("xlsx.picture.compress.delete-crop", |this, _, cx| {
+        this.compress_sheet_pictures(crate::pptx::compress::Resolution::Print, true, true, cx);
+    });
 
     menus.connect("xlsx.text.bold", |this, window, cx| { this.format_sheet_text_bold(window, cx); });
     menus.connect("xlsx.text.italic", |this, window, cx| { this.format_sheet_text_italic(window, cx); });
@@ -2852,3 +4613,33 @@ mod tests {
         assert_eq!(step_decimals("\"¥\"#,##0;\"¥\"\\-#,##0", true), "\"¥\"#,##0.0;\"¥\"\\-#,##0.0");
     }
 }
+
+/// An item of the ¥ button's menu: the accounting number format of `symbol` with `decimals` decimal places, checked
+/// when the selected cell (`current`) has it, labelled by its id.
+fn currency_item(id: &'static str, symbol: &str, decimals: usize, current: &str) -> MenuEntry {
+    let places = if decimals == 0 { String::new() } else { format!(".{}", "0".repeat(decimals)) };
+    let dash = if decimals == 0 { "\"-\"".to_string() } else { format!("\"-\"{}", "?".repeat(decimals)) };
+    let code = format!("_ \"{symbol}\"* #,##0{places}_ ;_ \"{symbol}\"* \\-#,##0{places}_ ;_ \"{symbol}\"* {dash}_ ;_ @_ ");
+    MenuItem::tr(id).checked(current == code).on(move |this, _, cx| this.format_cells(StyleChange::NumberFormat(code.clone()), cx)).into()
+}
+
+impl SlideEditor {
+    pub(crate) fn toggle_show_formulas(&mut self, cx: &mut Context<Self>) {
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let (slide, shown) = (self.current_slide, !sheet.show_formulas);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::SetShowFormulas { slide, shown })], cx);
+    }
+
+    pub(crate) fn toggle_show_zeros(&mut self, cx: &mut Context<Self>) {
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let (slide, shown) = (self.current_slide, !sheet.show_zeros);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::SetShowZeros { slide, shown })], cx);
+    }
+
+    pub(crate) fn toggle_hide_ink(&mut self, cx: &mut Context<Self>) {
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let (slide, hidden) = (self.current_slide, !sheet.hide_ink);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::SetHideInk { slide, hidden })], cx);
+    }
+}
+

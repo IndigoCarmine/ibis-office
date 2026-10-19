@@ -96,6 +96,42 @@ fn png(w: u32, h: u32, pixels: &[[u8; 4]]) -> Vec<u8> {
     out
 }
 
+/// A PNG representation of a captured screenshot or window snapshot.
+pub fn screenshot_snapshot(w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    let mut pixels = vec![[0xf4u8, 0xf6, 0xf8, 0xff]; (w * h) as usize];
+    // Draw a subtle window titlebar (e.g. height 28px) and border
+    let bar_h = 28.min(h);
+    for y in 0..bar_h {
+        for x in 0..w {
+            pixels[(y * w + x) as usize] = [0xdd, 0xe1, 0xe7, 0xff];
+        }
+    }
+    // 3 small window buttons (close, minimize, maximize)
+    for (btn_x, color) in [(14, [0xed, 0x6a, 0x5e, 0xff]), (26, [0xf4, 0xbf, 0x4f, 0xff]), (38, [0x61, 0xc5, 0x54, 0xff])] {
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                if dx * dx + dy * dy <= 9 {
+                    let py = 14 + dy;
+                    let px = btn_x + dx;
+                    if px >= 0 && px < w as i32 && py >= 0 && py < h as i32 {
+                        pixels[(py as u32 * w + px as u32) as usize] = color;
+                    }
+                }
+            }
+        }
+    }
+    // Window border
+    for x in 0..w {
+        pixels[x as usize] = [0xc8, 0xcd, 0xd4, 0xff];
+        pixels[((h - 1) * w + x) as usize] = [0xc8, 0xcd, 0xd4, 0xff];
+    }
+    for y in 0..h {
+        pixels[(y * w) as usize] = [0xc8, 0xcd, 0xd4, 0xff];
+        pixels[(y * w + w - 1) as usize] = [0xc8, 0xcd, 0xd4, 0xff];
+    }
+    (png(w, h, &pixels), w, h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

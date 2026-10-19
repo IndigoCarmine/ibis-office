@@ -137,13 +137,17 @@ impl SlideEditor {
         cx.notify();
     }
 
+    pub(crate) fn resolve_subtotal_range(&self, raw: &str) -> Option<CellRange> {
+        self.resolve_advanced_filter_range(raw).or_else(|| parse_range(raw))
+    }
+
     pub(crate) fn apply_subtotal(&mut self, cx: &mut Context<Self>) {
         if self.protection_refuses(super::protection::Guarded::Cells, cx) {
             return;
         }
         let Some(p) = self.sheet_state().and_then(|s| s.panels.subtotal.as_ref()) else { return };
         let range_str = p.range.read(cx).value();
-        let range = parse_range(&range_str).unwrap_or(p.fallback_range);
+        let range = self.resolve_subtotal_range(&range_str).unwrap_or(p.fallback_range);
 
         if p.subtotal_columns.is_empty() {
             if let Some(p) = self.sheet_state_mut().and_then(|s| s.panels.subtotal.as_mut()) {
@@ -153,11 +157,37 @@ impl SlideEditor {
             return;
         }
 
+        let group_by_column = if (range.first_column..=range.last_column).contains(&p.group_by_column) {
+            p.group_by_column
+        } else {
+            range.first_column
+        };
+        let mut subtotal_columns: Vec<u32> = p
+            .subtotal_columns
+            .iter()
+            .copied()
+            .filter(|c| (range.first_column..=range.last_column).contains(c))
+            .collect();
+        if subtotal_columns.is_empty() {
+            if let Some((_, sheet)) = self.current_sheet() {
+                for col in range.first_column..=range.last_column {
+                    if let Some(below) = sheet.cell(range.first_row + 1, col)
+                        && matches!(below.value, ibis_doc_model::CellValue::Number(_))
+                    {
+                        subtotal_columns.push(col);
+                    }
+                }
+            }
+            if subtotal_columns.is_empty() {
+                subtotal_columns.push(range.last_column);
+            }
+        }
+
         let params = SubtotalParams {
             range,
-            group_by_column: p.group_by_column,
+            group_by_column,
             function_code: p.function_code,
-            subtotal_columns: p.subtotal_columns.clone(),
+            subtotal_columns,
             replace_existing: p.replace_existing,
             summary_below: p.summary_below,
             page_breaks: p.page_breaks,
@@ -178,13 +208,83 @@ impl SlideEditor {
         }
         let Some(p) = self.sheet_state().and_then(|s| s.panels.subtotal.as_ref()) else { return };
         let range_str = p.range.read(cx).value();
-        let range = parse_range(&range_str).unwrap_or(p.fallback_range);
+        let range = self.resolve_subtotal_range(&range_str).unwrap_or(p.fallback_range);
         let slide = p.slide;
 
         self.run_sheet(vec![Command::Sheet(SheetCommand::RemoveSubtotal { slide, range })], cx);
 
         if let Some(s) = self.sheet_state_mut() {
             s.panels.subtotal = None;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn select_all_subtotal_columns(&mut self, select_all: bool, cx: &mut Context<Self>) {
+        if let Some(p) = self.sheet_state_mut().and_then(|s| s.panels.subtotal.as_mut()) {
+            if select_all {
+                p.subtotal_columns = p.columns.iter().map(|&(col, _)| col).collect();
+            } else {
+                p.subtotal_columns.clear();
+            }
+            p.message.clear();
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn refresh_subtotal_range_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (r, def_col, _) = match self.sort_selection() {
+            Some(s) => s,
+            None => {
+                let range = self.selected_range().unwrap_or(CellRange {
+                    first_row: 0,
+                    last_row: 1,
+                    first_column: 0,
+                    last_column: 0,
+                });
+                (range, range.first_column, true)
+            }
+        };
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let mut cols = Vec::new();
+        let mut default_subtotals = Vec::new();
+        for col in r.first_column..=r.last_column {
+            let label = if let Some(cell) = sheet.cell(r.first_row, col) {
+                if !cell.text.is_empty() {
+                    cell.text.clone()
+                } else {
+                    column_name(col)
+                }
+            } else {
+                column_name(col)
+            };
+            cols.push((col, label));
+            if let Some(below) = sheet.cell(r.first_row + 1, col) {
+                if matches!(below.value, ibis_doc_model::CellValue::Number(_)) {
+                    default_subtotals.push(col);
+                }
+            }
+        }
+        if default_subtotals.is_empty() {
+            default_subtotals.push(r.last_column);
+        }
+        let range_text = format!(
+            "{}:{}",
+            ibis_doc_model::cell_name(r.first_column, r.first_row),
+            ibis_doc_model::cell_name(r.last_column, r.last_row)
+        );
+        let group_col = if def_col >= r.first_column && def_col <= r.last_column {
+            def_col
+        } else {
+            r.first_column
+        };
+        let Some(range_input) = self.sheet_state().and_then(|s| s.panels.subtotal.as_ref()).map(|p| p.range.clone()) else { return };
+        range_input.update(cx, |i, cx| i.set_value(range_text, window, cx));
+        if let Some(p) = self.sheet_state_mut().and_then(|s| s.panels.subtotal.as_mut()) {
+            p.fallback_range = r;
+            p.columns = cols;
+            p.group_by_column = group_col;
+            p.subtotal_columns = default_subtotals;
+            p.message.clear();
         }
         cx.notify();
     }
@@ -226,7 +326,23 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.range")))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.range")))
+                        .child(mark(
+                            "xlsx.subtotal.use-selection",
+                            Button::new("subtotal-use-selection")
+                                .xsmall()
+                                .ghost()
+                                .label(text("xlsx.subtotal-use-selection"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.refresh_subtotal_range_from_selection(window, cx);
+                                }))
+                                .into_any_element(),
+                        )),
+                )
                 .child(mark("xlsx.subtotal.range", Input::new(&p.range).small().into_any_element())),
         );
 
@@ -320,7 +436,38 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.add-subtotal-to")))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.add-subtotal-to")))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(mark(
+                                    "xlsx.subtotal.select-all",
+                                    Button::new("subtotal-select-all")
+                                        .xsmall()
+                                        .ghost()
+                                        .label(text("xlsx.subtotal-select-all"))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.select_all_subtotal_columns(true, cx);
+                                        }))
+                                        .into_any_element(),
+                                ))
+                                .child(mark(
+                                    "xlsx.subtotal.unselect-all",
+                                    Button::new("subtotal-unselect-all")
+                                        .xsmall()
+                                        .ghost()
+                                        .label(text("xlsx.subtotal-unselect-all"))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.select_all_subtotal_columns(false, cx);
+                                        }))
+                                        .into_any_element(),
+                                )),
+                        ),
+                )
                 .child(mark("xlsx.subtotal.columns-box", col_list.into_any_element())),
         );
 

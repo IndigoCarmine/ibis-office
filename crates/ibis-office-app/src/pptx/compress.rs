@@ -12,8 +12,9 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+#[cfg(all(any(target_os = "macos", windows, target_os = "linux"), feature = "export"))]
 use image::{ImageEncoder as _, ImageFormat};
-use ibis_doc_model::{Command, Crop, MediaFormat, MediaId, Shape, ShapeId, ShapeKind};
+use ibis_doc_model::{Command, Crop, MediaFormat, MediaId, ShapeId, ShapeKind};
 
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
@@ -24,6 +25,8 @@ const EMU_PER_INCH: f64 = 914_400.0;
 /// The resolution the pictures are compressed to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Resolution {
+    /// 高精細 (330 ppi).
+    Hd,
     /// 印刷用 (220 ppi).
     #[default]
     Print,
@@ -36,14 +39,35 @@ pub(crate) enum Resolution {
 impl Resolution {
     pub(crate) fn ppi(self) -> f64 {
         match self {
+            Resolution::Hd => 330.0,
             Resolution::Print => 220.0,
             Resolution::Web => 150.0,
             Resolution::Email => 96.0,
         }
     }
+
+    pub(crate) fn from_dpi(dpi: u32) -> Self {
+        match dpi {
+            330.. => Resolution::Hd,
+            220.. => Resolution::Print,
+            150.. => Resolution::Web,
+            _ => Resolution::Email,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn dpi(self) -> u32 {
+        match self {
+            Resolution::Hd => 330,
+            Resolution::Print => 220,
+            Resolution::Web => 150,
+            Resolution::Email => 96,
+        }
+    }
 }
 
 /// What a compress made of one picture.
+#[allow(dead_code)]
 pub(crate) struct Compressed {
     pub(crate) data: Vec<u8>,
     pub(crate) format: MediaFormat,
@@ -54,6 +78,7 @@ pub(crate) struct Compressed {
 /// Picture `data` (`format`) shown `width_emu` × `height_emu` with `crop`,
 /// compressed to `ppi`, with the cropped parts taken off if `delete_crop`;
 /// `None` when it cannot be read or does not get smaller.
+#[cfg(all(any(target_os = "macos", windows, target_os = "linux"), feature = "export"))]
 pub(crate) fn compress_picture(data: &[u8], format: MediaFormat, width_emu: i64, height_emu: i64, crop: Crop, ppi: f64, delete_crop: bool) -> Option<Compressed> {
     let (kind, is_jpeg) = match format {
         MediaFormat::Jpeg => (ImageFormat::Jpeg, true),
@@ -94,6 +119,11 @@ pub(crate) fn compress_picture(data: &[u8], format: MediaFormat, width_emu: i64,
             .ok()?;
     }
     (out.len() < data.len()).then_some(Compressed { data: out, format, width, height })
+}
+
+#[cfg(not(all(any(target_os = "macos", windows, target_os = "linux"), feature = "export")))]
+pub(crate) fn compress_picture(_data: &[u8], _format: MediaFormat, _width_emu: i64, _height_emu: i64, _crop: Crop, _ppi: f64, _delete_crop: bool) -> Option<Compressed> {
+    None
 }
 
 /// The panel's choices.

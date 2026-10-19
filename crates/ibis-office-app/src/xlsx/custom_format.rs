@@ -61,6 +61,8 @@ pub(crate) struct FormatPanel {
     /// The font's name and size (点) typed in フォント.
     pub(crate) font: Entity<InputState>,
     pub(crate) size: Entity<InputState>,
+    /// The text rotation angle (度) typed in 配置.
+    pub(crate) rotation: Entity<InputState>,
     pub(crate) ui: PaneBounds,
     pub(crate) menus: PaneMenus,
     _subscriptions: Vec<Subscription>,
@@ -215,7 +217,14 @@ impl SlideEditor {
         font.update(cx, |i, cx| i.set_value(style.font.clone().unwrap_or_default(), window, cx));
         let size = cx.new(|cx| InputState::new(window, cx).placeholder("11"));
         size.update(cx, |i, cx| i.set_value(format!("{}", style.font_size as f32 / 100.0), window, cx));
-        // Enter in the size or the name applies it.
+        let rotation = cx.new(|cx| InputState::new(window, cx).placeholder("0"));
+        let rot_text = match style.rotation {
+            0..=90 => format!("{}", style.rotation),
+            91..=180 => format!("-{}", style.rotation as i16 - 90),
+            _ => String::new(),
+        };
+        rotation.update(cx, |i, cx| i.set_value(rot_text, window, cx));
+        // Enter in the size, the name, or the rotation angle applies it.
         let on_size = cx.subscribe_in(&size, window, |this: &mut Self, input, event: &InputEvent, _, cx| {
             if let InputEvent::PressEnter { .. } = event {
                 let text = input.read(cx).value().trim().to_string();
@@ -228,6 +237,12 @@ impl SlideEditor {
                 this.format_cells(StyleChange::Font((!name.is_empty()).then_some(name)), cx);
             }
         });
+        let on_rotation = cx.subscribe_in(&rotation, window, |this: &mut Self, input, event: &InputEvent, _, cx| {
+            if let InputEvent::PressEnter { .. } = event {
+                let text = input.read(cx).value().trim().to_string();
+                this.apply_pane_rotation(&text, cx);
+            }
+        });
         if let Some(s) = self.sheet_state_mut() {
             s.names = None;
             s.validation = None;
@@ -237,7 +252,7 @@ impl SlideEditor {
             if show {
                 s.format_open[tab as usize] = true;
             }
-            s.custom_format = Some(FormatPanel { code, font, size, ui: Default::default(), menus: Default::default(), _subscriptions: vec![on_size, on_font] });
+            s.custom_format = Some(FormatPanel { code, font, size, rotation, ui: Default::default(), menus: Default::default(), _subscriptions: vec![on_size, on_font, on_rotation] });
         }
         self.sidebar_open = true;
         cx.notify();
@@ -252,9 +267,26 @@ impl SlideEditor {
         }
     }
 
+    /// The rotation angle (度, `-90..=90` or OOXML `0..=180`) typed in the pane, applied to the selected cells.
+    pub(crate) fn apply_pane_rotation(&mut self, text: &str, cx: &mut Context<Self>) {
+        let trimmed = text.trim().trim_end_matches('°').trim_end_matches('度').trim();
+        if let Ok(deg) = trimmed.parse::<i16>() {
+            let rot = if (0..=180).contains(&deg) {
+                Some(deg as u8)
+            } else if (-90..=-1).contains(&deg) {
+                Some((90 - deg) as u8)
+            } else {
+                None
+            };
+            if let Some(r) = rot {
+                self.format_cells(StyleChange::Rotation(r), cx);
+            }
+        }
+    }
+
     pub(crate) fn custom_format_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let panel = self.sheet_state()?.custom_format.as_ref()?;
-        let (code, font, size) = (panel.code.clone(), panel.font.clone(), panel.size.clone());
+        let (code, font, size, rotation) = (panel.code.clone(), panel.font.clone(), panel.size.clone(), panel.rotation.clone());
         let pane = Pane { ui: panel.ui.clone(), menus: panel.menus.clone(), editor: cx.entity().downgrade() };
         let open = self.wb().format_open;
         pane.menus.borrow_mut().clear();
@@ -305,17 +337,41 @@ impl SlideEditor {
                     let turns = [("0°", 0u8), ("45°", 45), ("90°", 90), ("135°", 135), ("180°", 180), ("_xlsx.vertical-text", 255)];
                     let h_label = horizontal.iter().find(|(_, a)| *a == style.align).map(|(n, _)| text(n)).unwrap_or_default();
                     let v_label = vertical.iter().find(|(_, a)| *a == style.vertical).map(|(n, _)| text(n)).unwrap_or_default();
-                    let t_label = turns.iter().find(|(_, d)| *d == style.rotation).map(|(n, _)| text(n)).unwrap_or_else(|| SharedString::from(format!("{}°", style.rotation)));
+                    let t_label = turns.iter().find(|(_, d)| *d == style.rotation).map(|(n, _)| text(n)).unwrap_or_else(|| {
+                        if (91..=180).contains(&style.rotation) {
+                            SharedString::from(format!("-{}°", style.rotation as i16 - 90))
+                        } else {
+                            SharedString::from(format!("{}°", style.rotation))
+                        }
+                    });
                     let h_items: Vec<MenuEntry> = horizontal.into_iter().map(|(n, a)| choice("xlsx.halign", text(n), style.align == a, StyleChange::Align(a))).collect();
                     let v_items: Vec<MenuEntry> = vertical.into_iter().map(|(n, a)| choice("xlsx.valign", text(n), style.vertical == a, StyleChange::Vertical(a))).collect();
-                    let t_items: Vec<MenuEntry> = turns.into_iter().map(|(n, d)| choice("xlsx.rotation", text(n), style.rotation == d, StyleChange::Rotation(d))).collect();
+                    let t_items: Vec<MenuEntry> = turns.into_iter().map(|(n, d)| {
+                        let rot_input = rotation.clone();
+                        MenuItem::new("xlsx.rotation", text(n)).checked(style.rotation == d).on(move |this, window, cx| {
+                            this.format_cells(StyleChange::Rotation(d), cx);
+                            let txt = match d {
+                                0..=90 => format!("{d}"),
+                                91..=180 => format!("-{}", d as i16 - 90),
+                                _ => String::new(),
+                            };
+                            rot_input.update(cx, |i, cx| i.set_value(txt, window, cx));
+                        }).into()
+                    }).collect();
+                    let r2 = rotation.clone();
                     section = section
                         .child(caption("_xlsx.horizontal"))
                         .child(pane.select("cell-format-halign", None, h_label, h_items))
                         .child(caption("_xlsx.vertical"))
                         .child(pane.select("cell-format-valign", None, v_label, v_items))
                         .child(caption("_xlsx.text-direction"))
-                        .child(pane.select("cell-format-rotation", None, t_label, t_items))
+                        .child(h_flex().gap_1().items_center()
+                            .child(div().flex_1().child(pane.select("cell-format-rotation", None, t_label, t_items)))
+                            .child(div().w(px(56.)).child(pane.marked("cell-format-rotation-input", Input::new(&rotation).small())))
+                            .child(pane.marked("cell-format-rotation-set", Button::new("cell-format-rotation-set").small().label(text("_xlsx.apply")).on_click(cx.listener(move |this, _, _, cx| {
+                                let val = r2.read(cx).value().trim().to_string();
+                                this.apply_pane_rotation(&val, cx);
+                            })))))
                         .child(h_flex().gap_1().flex_wrap()
                             .child(change("cell-format-wrap".into(), mark(style.wrap, "_xlsx.wrap-text"), StyleChange::Wrap(!style.wrap), cx))
                             .child(change("cell-format-shrink".into(), mark(style.shrink, "_xlsx.shrink-to-fit"), StyleChange::Shrink(!style.shrink), cx)))
@@ -364,6 +420,32 @@ impl SlideEditor {
                             .child(toggle("cell-format-strike", "format_strikethrough", "pptx.chrome.strikethrough", style.strike, StyleChange::Strike(!style.strike))))
                         .child(caption("docx.common.color"))
                         .child(pane.select("cell-format-color", Some(rgb_hsla(color)), color_name(color, super::toolbar::COLORS), color_menu));
+                    let u_label = |u: ibis_doc_model::CellUnderline| match u {
+                        ibis_doc_model::CellUnderline::None => text("_xlsx.no-underline"),
+                        ibis_doc_model::CellUnderline::Single => text("_xlsx.single-underline"),
+                        ibis_doc_model::CellUnderline::Double => text("_xlsx.double-underline"),
+                        ibis_doc_model::CellUnderline::SingleAccounting => text("_xlsx.single-accounting"),
+                        ibis_doc_model::CellUnderline::DoubleAccounting => text("_xlsx.double-accounting"),
+                    };
+                    let u_items: Vec<MenuEntry> = ibis_doc_model::CellUnderline::ALL
+                        .into_iter()
+                        .map(|u| choice("xlsx.underline-kind", u_label(u), style.underline == u, StyleChange::UnderlineKind(u)))
+                        .collect();
+                    let effects = [
+                        ("_xlsx.normal-no-superscript-or-subscript", ibis_doc_model::VerticalPosition::Baseline),
+                        ("docx.chrome.superscript", ibis_doc_model::VerticalPosition::Superscript),
+                        ("docx.chrome.subscript", ibis_doc_model::VerticalPosition::Subscript),
+                    ];
+                    let e_label = effects.iter().find(|(_, v)| *v == style.vert_align).map(|(n, _)| text(n)).unwrap_or_default();
+                    let e_items: Vec<MenuEntry> = effects
+                        .into_iter()
+                        .map(|(n, v)| choice("xlsx.font-effect", text(n), style.vert_align == v, StyleChange::VertAlign(v)))
+                        .collect();
+                    section = section
+                        .child(caption("_shell.underline-u"))
+                        .child(pane.select("cell-format-underline-kind", None, u_label(style.underline), u_items))
+                        .child(caption("xlsx.font-effects"))
+                        .child(pane.select("cell-format-effect", None, e_label, e_items));
                 }
                 FormatTab::Border => {
                     let wb = self.wb();
@@ -387,9 +469,98 @@ impl SlideEditor {
                         entries = crate::shell::color_palette::mark_current(entries, f);
                     }
                     let label = fill.map(|f| color_name(f, super::toolbar::FILLS)).unwrap_or_else(|| text("xlsx.fill-none"));
+                    let cur_pat = style.pattern.as_ref().map(|p| p.0.as_str()).unwrap_or("");
+                    let pat_label = super::format_more::PATTERNS
+                        .iter()
+                        .find(|(_, p)| *p == cur_pat)
+                        .map(|(n, _)| text(n))
+                        .unwrap_or_else(|| text("_shell.none"));
+                    let pat_items: Vec<MenuEntry> = super::format_more::PATTERNS
+                        .iter()
+                        .map(|&(n, preset)| {
+                            MenuItem::new("xlsx.pattern", text(n))
+                                .checked(cur_pat == preset)
+                                .on(move |this, _, cx| {
+                                    let st = this.current_style();
+                                    let fg = st.pattern.as_ref().map(|p| p.1).unwrap_or(ibis_doc_model::Rgb(0));
+                                    let bg = st.pattern.as_ref().map(|p| p.2).or(st.fill).unwrap_or(ibis_doc_model::Rgb(0xFF_FFFF));
+                                    let change = if preset.is_empty() {
+                                        StyleChange::Pattern(None)
+                                    } else {
+                                        StyleChange::Pattern(Some((preset.to_string(), fg, bg)))
+                                    };
+                                    this.format_cells(change, cx);
+                                })
+                                .into()
+                        })
+                        .collect();
+                    let pat_col = style.pattern.as_ref().map(|p| p.1).unwrap_or(ibis_doc_model::Rgb(0));
+                    let pat_col_label = super::format_more::PATTERN_COLORS
+                        .iter()
+                        .find(|(_, c)| *c == pat_col)
+                        .map(|(n, _)| text(n))
+                        .unwrap_or_else(|| format!("#{:06X}", pat_col.0).into());
+                    let pat_col_items: Vec<MenuEntry> = super::format_more::PATTERN_COLORS
+                        .iter()
+                        .map(|&(n, col)| choice("xlsx.pattern-color", text(n), pat_col == col, StyleChange::PatternColor(col)))
+                        .collect();
+                    let grad_label = match &style.gradient {
+                        None => text("_xlsx.no-gradient"),
+                        Some(ibis_doc_model::CellGradient::Linear { degree: 0, .. }) => text("_xlsx.horizontal-left-to-right"),
+                        Some(ibis_doc_model::CellGradient::Linear { degree: 90, .. }) => text("_xlsx.vertical-top-to-bottom"),
+                        Some(ibis_doc_model::CellGradient::Linear { degree: 45, .. }) => text("_xlsx.diagonal-top-left-to-bottom-right"),
+                        Some(ibis_doc_model::CellGradient::Linear { degree: 135, .. }) => text("_xlsx.diagonal-top-right-to-bottom-left"),
+                        Some(ibis_doc_model::CellGradient::Linear { degree, .. }) => SharedString::from(format!("{degree}°")),
+                        Some(ibis_doc_model::CellGradient::Path { .. }) => text("_xlsx.from-center"),
+                    };
+                    let mut grad_items: Vec<MenuEntry> = vec![
+                        choice("xlsx.gradient-none", text("_xlsx.no-gradient"), style.gradient.is_none(), StyleChange::Gradient(None)),
+                    ];
+                    for (id, n, deg) in [
+                        ("xlsx.gradient-horz", "_xlsx.horizontal-left-to-right", 0),
+                        ("xlsx.gradient-vert", "_xlsx.vertical-top-to-bottom", 90),
+                        ("xlsx.gradient-diag-down", "_xlsx.diagonal-top-left-to-bottom-right", 45),
+                        ("xlsx.gradient-diag-up", "_xlsx.diagonal-top-right-to-bottom-left", 135),
+                    ] {
+                        let is_cur = matches!(style.gradient, Some(ibis_doc_model::CellGradient::Linear { degree, .. }) if degree == deg);
+                        grad_items.push(
+                            MenuItem::new(id, text(n))
+                                .checked(is_cur)
+                                .on(move |this, _, cx| {
+                                    let col = this.current_style().fill.unwrap_or(ibis_doc_model::Rgb(0x4472C4));
+                                    let grad = ibis_doc_model::CellGradient::Linear {
+                                        degree: deg,
+                                        stops: vec![(0, col), (1000, ibis_doc_model::Rgb(0xFF_FFFF))],
+                                    };
+                                    this.format_cells(StyleChange::Gradient(Some(grad)), cx);
+                                })
+                                .into(),
+                        );
+                    }
+                    let is_path = matches!(style.gradient, Some(ibis_doc_model::CellGradient::Path { .. }));
+                    grad_items.push(
+                        MenuItem::new("xlsx.gradient-center", text("_xlsx.from-center"))
+                            .checked(is_path)
+                            .on(|this, _, cx| {
+                                let col = this.current_style().fill.unwrap_or(ibis_doc_model::Rgb(0x4472C4));
+                                let grad = ibis_doc_model::CellGradient::Path {
+                                    path: ibis_doc_model::GradientPath::Rect,
+                                    focus: [50_000, 50_000, 50_000, 50_000],
+                                    stops: vec![(0, col), (1000, ibis_doc_model::Rgb(0xFF_FFFF))],
+                                };
+                                this.format_cells(StyleChange::Gradient(Some(grad)), cx);
+                            })
+                            .into(),
+                    );
                     section = section
                         .child(caption("_xlsx.background-color"))
-                        .child(pane.select("cell-format-fill", Some(fill.map(rgb_hsla).unwrap_or_else(|| gpui_kit::rgb(0xffffff).into())), label, entries));
+                        .child(pane.select("cell-format-fill", Some(fill.map(rgb_hsla).unwrap_or_else(|| gpui_kit::rgb(0xffffff).into())), label, entries))
+                        .child(caption("xlsx.fill-pattern"))
+                        .child(pane.select("cell-format-pattern", None, pat_label, pat_items))
+                        .child(caption("xlsx.pattern-color"))
+                        .child(pane.select("cell-format-pattern-color", Some(rgb_hsla(pat_col)), pat_col_label, pat_col_items))
+                        .child(caption("xlsx.fill-gradient"))
+                        .child(pane.select("cell-format-gradient", None, grad_label, grad_items));
                 }
                 FormatTab::Protection => {
                     section = section

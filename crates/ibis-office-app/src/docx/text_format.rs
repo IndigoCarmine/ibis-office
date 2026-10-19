@@ -33,7 +33,7 @@ impl SlideEditor {
         let styles = doc.styles.clone();
         let track = doc.track_changes;
         let who = super::comments::comment_author();
-        let mut apply=|p:&mut ibis_doc_model::FlowParagraph,a:usize,b:usize| {
+        let apply=|p:&mut ibis_doc_model::FlowParagraph,a:usize,b:usize| {
             // Paragraph-mark revisions are not represented by the model. Do not
             // leave an untracked mark change behind when run changes are rejected.
             if !track && a == 0 && b == p.len() { update(&mut p.mark_format); }
@@ -88,7 +88,7 @@ impl SlideEditor {
             // its visible predecessor, or the mark if every run is deleted.
             let offset = if start != end { start.offset + 1 } else { start.offset };
             let (format, char_style, style) = super::editing::visible_format_at(p, offset);
-            let source = ibis_doc_model::FlowRun { kind: ibis_doc_model::FlowRunKind::Text(String::new()), format, char_style, style, link: None, revision: None, show_field_code: false, field_locked: false };
+            let source = ibis_doc_model::FlowRun { kind: ibis_doc_model::FlowRunKind::Text(String::new()), format, char_style, style, link: None, revision: None, show_field_code: false, field_locked: false, control: None };
             super::clipboard::resolved_format(&source)
         } else {
             let mut offset = 0;

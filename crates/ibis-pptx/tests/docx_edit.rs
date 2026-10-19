@@ -144,7 +144,6 @@ fn scenario_data(file: &str, data: Vec<u8>, parts: &[&str], commands: impl FnOnc
     for (part, _) in &report.differences {
         assert!(parts.contains(&"*") || parts.contains(&part.as_str()), "{file}: {part} changed: {}", report.to_json());
     }
-    // Read back: the edited model.
     let reread = ibis_pptx::read(&saved).unwrap();
     let (a, b) = (normalized(flow(&reread)), normalized(flow(&edited)));
     if a != b {
@@ -286,8 +285,9 @@ fn character_formatting() {
         RunChange::Spacing(Some(-6_350)),
         RunChange::Scale(Some(150)),
         RunChange::Scale(Some(80)),
-        RunChange::Language { lang: Some("en-GB".into()), east_asia: None },
-        RunChange::Language { lang: None, east_asia: Some("zh-CN".into()) },
+        RunChange::Language { lang: Some("en-GB".into()), east_asia: None, bidi: None },
+        RunChange::Language { lang: None, east_asia: Some("zh-CN".into()), bidi: None },
+        RunChange::Language { lang: None, east_asia: None, bidi: Some("ar-SA".into()) },
         RunChange::Clear,
     ];
     for file in [REPORT, STATEMENT] {
@@ -899,6 +899,7 @@ fn a_table_of_contents_with_custom_styles() {
             hyperlinks: true,
             hide_in_web: true,
             use_outline_levels: true,
+            ..Default::default()
         };
 
         let missing = missing_toc_styles_for_levels(&styled.styles, instruction.all_levels());
@@ -2498,7 +2499,7 @@ fn test_styleref_field() {
         link: None,
         revision: None,
         show_field_code: false,
-        field_locked: false,
+        field_locked: false, control: None,
     }];
     let (container, idx) = ibis_doc_model::flow_command::locate(doc, target_p_id).unwrap();
     let change_heading_cmd = ibis_doc_model::FlowCommand::ReplaceBlocks {
@@ -4445,6 +4446,90 @@ fn test_ask_and_fillin_fields_update() {
 }
 
 #[test]
+fn test_autotext_and_citation_fields_update() {
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data).unwrap();
+    let mut document = ibis_doc_model::Document::new(opened.presentation.clone());
+
+    let p_id = flow(document.presentation()).body.iter().find_map(|b| if let Block::Paragraph(p) = b { Some(p.id) } else { None }).unwrap();
+
+    // 2. AUTOTEXT "ReportHeader" \* Upper を挿入
+    let (cmds1, _) = ibis_doc_model::flow_command::insert_field_at_range(
+        flow(document.presentation()),
+        Some((FlowPos::new(p_id, 0), FlowPos::new(p_id, 0))),
+        "AUTOTEXT \"ReportHeader\" \\* Upper",
+        false,
+    ).unwrap();
+    for cmd in cmds1 {
+        document.execute(vec![Command::Flow(cmd)]).unwrap();
+    }
+
+    // 3. AUTOTEXTLIST "Draft Version" \s "Normal" を挿入
+    let (cmds2, _) = ibis_doc_model::flow_command::insert_field_at_range(
+        flow(document.presentation()),
+        Some((FlowPos::new(p_id, 1), FlowPos::new(p_id, 1))),
+        "AUTOTEXTLIST \"Draft Version\" \\s \"Normal\"",
+        false,
+    ).unwrap();
+    for cmd in cmds2 {
+        document.execute(vec![Command::Flow(cmd)]).unwrap();
+    }
+
+    // 4. CITATION Knuth1984 \l 1041 を挿入
+    let (cmds3, _) = ibis_doc_model::flow_command::insert_field_at_range(
+        flow(document.presentation()),
+        Some((FlowPos::new(p_id, 2), FlowPos::new(p_id, 2))),
+        "CITATION Knuth1984 \\l 1041",
+        false,
+    ).unwrap();
+    for cmd in cmds3 {
+        document.execute(vec![Command::Flow(cmd)]).unwrap();
+    }
+
+    // 初期評価の検証
+    {
+        let doc_now = flow(document.presentation());
+        let p = doc_now.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        let field_vals: Vec<&str> = p.runs.iter().filter_map(|r| if let FlowRunKind::Field { shown, .. } = &r.kind { Some(shown.as_str()) } else { None }).collect();
+        assert_eq!(field_vals, vec![
+            "REPORTHEADER",
+            "Draft Version",
+            "(Knuth1984)",
+        ], "initial evaluated AUTOTEXT, AUTOTEXTLIST, CITATION values");
+    }
+
+    // F9 更新 (updated_fields_in_range)
+    let update_cmds = ibis_doc_model::updated_fields_in_range(flow(document.presentation()), None, None);
+    for cmd in update_cmds {
+        document.execute(vec![Command::Flow(cmd)]).unwrap();
+    }
+
+    // 更新後の検証
+    {
+        let doc_updated = flow(document.presentation());
+        let p = doc_updated.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        let field_vals: Vec<&str> = p.runs.iter().filter_map(|r| if let FlowRunKind::Field { shown, .. } = &r.kind { Some(shown.as_str()) } else { None }).collect();
+        assert_eq!(field_vals, vec![
+            "REPORTHEADER",
+            "Draft Version",
+            "(Knuth1984)",
+        ], "updated field values after F9");
+    }
+
+    // 保存と再オープン検証 (OOXML computed_field roundtrip)
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let reread_flow = flow(&reread);
+    let r_p = reread_flow.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+    let r_field_vals: Vec<&str> = r_p.runs.iter().filter_map(|r| if let FlowRunKind::Field { shown, .. } = &r.kind { Some(shown.as_str()) } else { None }).collect();
+    assert_eq!(r_field_vals, vec![
+        "REPORTHEADER",
+        "Draft Version",
+        "(Knuth1984)",
+    ], "reopened AUTOTEXT, AUTOTEXTLIST, CITATION values preserved");
+}
+
+#[test]
 fn test_checkbox_control_load_toggle_save() {
     let data = std::fs::read(path(REPORT)).unwrap();
     let opened = ibis_pptx::open(data).unwrap();
@@ -4969,7 +5054,7 @@ fn test_rich_text_control_load_edit_save() {
     let cmd = FlowCommand::InsertField {
         at,
         kind: FlowRunKind::RichText {
-            text: initial_text.clone(),
+            text: initial_text.clone(), placeholder: false 
         },
     };
     document.execute(vec![Command::Flow(cmd)]).unwrap();
@@ -4980,7 +5065,7 @@ fn test_rich_text_control_load_edit_save() {
         assert_eq!(
             p.runs[0].kind,
             FlowRunKind::RichText {
-                text: initial_text.clone(),
+                text: initial_text.clone(), placeholder: false 
             }
         );
         assert!(p.text().starts_with("リッチテキスト初期値"));
@@ -4990,7 +5075,7 @@ fn test_rich_text_control_load_edit_save() {
     let next_text = "リッチテキスト更新値".to_string();
     let set_cmd = FlowCommand::SetContentControlText {
         at,
-        text: next_text.clone(),
+        text: next_text.clone(), placeholder: false 
     };
     document.execute(vec![Command::Flow(set_cmd)]).unwrap();
 
@@ -5000,7 +5085,7 @@ fn test_rich_text_control_load_edit_save() {
         assert_eq!(
             p.runs[0].kind,
             FlowRunKind::RichText {
-                text: next_text.clone(),
+                text: next_text.clone(), placeholder: false 
             }
         );
         assert!(p.text().starts_with("リッチテキスト更新値"));
@@ -5011,13 +5096,13 @@ fn test_rich_text_control_load_edit_save() {
     {
         let doc = flow(document.presentation());
         let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
-        assert_eq!(p.runs[0].kind, FlowRunKind::RichText { text: initial_text.clone() });
+        assert_eq!(p.runs[0].kind, FlowRunKind::RichText { text: initial_text.clone(), placeholder: false });
     }
     assert!(document.redo());
     {
         let doc = flow(document.presentation());
         let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
-        assert_eq!(p.runs[0].kind, FlowRunKind::RichText { text: next_text.clone() });
+        assert_eq!(p.runs[0].kind, FlowRunKind::RichText { text: next_text.clone(), placeholder: false });
     }
 
     // 4. 保存と XML 検証
@@ -5034,7 +5119,7 @@ fn test_rich_text_control_load_edit_save() {
     assert_eq!(
         r_p.runs[0].kind,
         FlowRunKind::RichText {
-            text: next_text,
+            text: next_text, placeholder: false,
         }
     );
 }
@@ -5053,7 +5138,7 @@ fn test_plain_text_control_load_edit_save() {
     let cmd = FlowCommand::InsertField {
         at,
         kind: FlowRunKind::PlainText {
-            text: initial_text.clone(),
+            text: initial_text.clone(), placeholder: false 
         },
     };
     document.execute(vec![Command::Flow(cmd)]).unwrap();
@@ -5064,7 +5149,7 @@ fn test_plain_text_control_load_edit_save() {
         assert_eq!(
             p.runs[0].kind,
             FlowRunKind::PlainText {
-                text: initial_text.clone(),
+                text: initial_text.clone(), placeholder: false 
             }
         );
         assert!(p.text().starts_with("プレーンテキスト初期値"));
@@ -5074,7 +5159,7 @@ fn test_plain_text_control_load_edit_save() {
     let next_text = "プレーンテキスト更新値".to_string();
     let set_cmd = FlowCommand::SetContentControlText {
         at,
-        text: next_text.clone(),
+        text: next_text.clone(), placeholder: false 
     };
     document.execute(vec![Command::Flow(set_cmd)]).unwrap();
 
@@ -5084,7 +5169,7 @@ fn test_plain_text_control_load_edit_save() {
         assert_eq!(
             p.runs[0].kind,
             FlowRunKind::PlainText {
-                text: next_text.clone(),
+                text: next_text.clone(), placeholder: false 
             }
         );
         assert!(p.text().starts_with("プレーンテキスト更新値"));
@@ -5095,13 +5180,13 @@ fn test_plain_text_control_load_edit_save() {
     {
         let doc = flow(document.presentation());
         let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
-        assert_eq!(p.runs[0].kind, FlowRunKind::PlainText { text: initial_text.clone() });
+        assert_eq!(p.runs[0].kind, FlowRunKind::PlainText { text: initial_text.clone(), placeholder: false });
     }
     assert!(document.redo());
     {
         let doc = flow(document.presentation());
         let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
-        assert_eq!(p.runs[0].kind, FlowRunKind::PlainText { text: next_text.clone() });
+        assert_eq!(p.runs[0].kind, FlowRunKind::PlainText { text: next_text.clone(), placeholder: false });
     }
 
     // 4. 保存と XML 検証
@@ -5118,9 +5203,358 @@ fn test_plain_text_control_load_edit_save() {
     assert_eq!(
         r_p.runs[0].kind,
         FlowRunKind::PlainText {
-            text: next_text,
+            text: next_text, placeholder: false,
         }
     );
+}
+
+#[test]
+fn test_picture_content_control_roundtrip() {
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+
+    let p_id = flow(document.presentation()).body.iter().find_map(|b| if let Block::Paragraph(p) = b { Some(p.id) } else { None }).unwrap();
+    let at = FlowPos::new(p_id, 0);
+
+    // 1. 画像コントロール（DOCX-FORM-003）の挿入
+    let media = document.ids().add_media(ibis_doc_model::MediaFormat::Png, ibis_doc_model::DEFAULT_PICTURE_CONTROL_PLACEHOLDER_PNG.to_vec());
+    let size = ibis_doc_model::EmuSize::new(ibis_doc_model::DEFAULT_PICTURE_CONTROL_WIDTH_EMU, ibis_doc_model::DEFAULT_PICTURE_CONTROL_HEIGHT_EMU);
+    let cmd = FlowCommand::InsertPictureControl {
+        at,
+        media,
+        size,
+        placeholder: true,
+    };
+    document.execute(vec![Command::Flow(cmd)]).unwrap();
+
+    // 2. プロパティ（タイトル・タグ・ロック）の設定
+    let info = ibis_doc_model::ControlInfo {
+        title: "ProfilePicture".to_string(),
+        tag: "TAG_PIC_01".to_string(),
+        lock: ibis_doc_model::ControlLock::None,
+    };
+    document.execute(vec![Command::Flow(FlowCommand::SetControlInfo { at, info: Some(Box::new(info)) })]).unwrap();
+
+    // 3. 画像の差し替え
+    let new_png = vec![
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+        0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+        0x42, 0x60, 0x82,
+    ];
+    let new_media = document.ids().add_media(ibis_doc_model::MediaFormat::Png, new_png);
+    document.execute(vec![Command::Flow(FlowCommand::ReplacePicture { at, media: new_media, size: None })]).unwrap();
+
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(p.runs[0].kind, FlowRunKind::PictureControl { media: m, placeholder: false, .. } if m == new_media));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("ProfilePicture"));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.tag.as_str()), Some("TAG_PIC_01"));
+    }
+
+    // 4. Undo / Redo
+    assert!(document.undo());
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(p.runs[0].kind, FlowRunKind::PictureControl { media: m, placeholder: true, .. } if m == media));
+    }
+    assert!(document.redo());
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(p.runs[0].kind, FlowRunKind::PictureControl { media: m, placeholder: false, .. } if m == new_media));
+    }
+
+    // 5. 保存と XML 検証
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+    assert!(xml.contains("<w:sdt>"), "contains w:sdt in XML: {xml}");
+    assert!(xml.contains("picture"), "contains picture in XML: {xml}");
+    assert!(xml.contains("ProfilePicture"), "contains alias in XML: {xml}");
+    assert!(xml.contains("TAG_PIC_01"), "contains tag in XML: {xml}");
+
+    // 6. 再オープン検証
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let reread_flow = flow(&reread);
+    let r_p = reread_flow.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+    assert!(matches!(r_p.runs[0].kind, FlowRunKind::PictureControl { placeholder: false, .. }));
+    assert_eq!(r_p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("ProfilePicture"));
+    assert_eq!(r_p.runs[0].control.as_ref().map(|c| c.tag.as_str()), Some("TAG_PIC_01"));
+}
+
+#[test]
+fn test_building_block_gallery_content_control_roundtrip() {
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+
+    let p_id = flow(document.presentation()).body.iter().find_map(|b| if let Block::Paragraph(p) = b { Some(p.id) } else { None }).unwrap();
+    let at = FlowPos::new(p_id, 0);
+
+    // 1. 文書パーツギャラリー コンテンツ コントロールの挿入 (DOCX-FORM-008)
+    let cmd = FlowCommand::InsertField {
+        at,
+        kind: FlowRunKind::BuildingBlockGallery {
+            gallery: "Custom".to_string(),
+            category: "General".to_string(),
+            text: ibis_doc_model::DEFAULT_BUILDING_BLOCK_GALLERY_PROMPT.to_string(),
+            placeholder: true,
+        },
+    };
+    document.execute(vec![Command::Flow(cmd)]).unwrap();
+
+    // 2. プロパティ（タイトル・タグ）の設定
+    let info = ibis_doc_model::ControlInfo {
+        title: "MyGallery".to_string(),
+        tag: "TAG_BBG_01".to_string(),
+        lock: ibis_doc_model::ControlLock::None,
+    };
+    document.execute(vec![Command::Flow(FlowCommand::SetControlInfo { at, info: Some(Box::new(info)) })]).unwrap();
+
+    // 3. ギャラリーメタデータ更新
+    document.execute(vec![Command::Flow(FlowCommand::SetBuildingBlockGalleryMeta {
+        at,
+        gallery: "Quick Parts".to_string(),
+        category: "Built-In".to_string(),
+    })]).unwrap();
+
+    // 4. テキスト更新
+    let selected_text = "SelectedBuildingBlockText".to_string();
+    document.execute(vec![Command::Flow(FlowCommand::SetContentControlText {
+        at,
+        text: selected_text.clone(),
+        placeholder: false,
+    })]).unwrap();
+
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::BuildingBlockGallery { gallery, category, text, placeholder }
+            if gallery == "Quick Parts" && category == "Built-In" && text == "SelectedBuildingBlockText" && !placeholder));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("MyGallery"));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.tag.as_str()), Some("TAG_BBG_01"));
+    }
+
+    // 5. Undo / Redo
+    assert!(document.undo());
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::BuildingBlockGallery { text, placeholder, .. }
+            if text == ibis_doc_model::DEFAULT_BUILDING_BLOCK_GALLERY_PROMPT && *placeholder));
+    }
+    assert!(document.redo());
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::BuildingBlockGallery { text, placeholder, .. }
+            if text == "SelectedBuildingBlockText" && !placeholder));
+    }
+
+    // 6. 保存と XML 検証
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+    assert!(xml.contains("<w:sdt>"), "contains w:sdt in XML: {xml}");
+    assert!(xml.contains("docPartList"), "contains docPartList in XML: {xml}");
+    assert!(xml.contains("Quick Parts"), "contains Quick Parts in XML: {xml}");
+    assert!(xml.contains("Built-In"), "contains Built-In in XML: {xml}");
+    assert!(xml.contains("MyGallery"), "contains alias in XML: {xml}");
+    assert!(xml.contains("TAG_BBG_01"), "contains tag in XML: {xml}");
+    assert!(xml.contains("SelectedBuildingBlockText"), "contains text in XML: {xml}");
+
+    // 7. 再オープン検証
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let reread_flow = flow(&reread);
+    let r_p = reread_flow.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+    assert!(matches!(&r_p.runs[0].kind, FlowRunKind::BuildingBlockGallery { gallery, category, text, placeholder }
+        if gallery == "Quick Parts" && category == "Built-In" && text == "SelectedBuildingBlockText" && !placeholder));
+    assert_eq!(r_p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("MyGallery"));
+    assert_eq!(r_p.runs[0].control.as_ref().map(|c| c.tag.as_str()), Some("TAG_BBG_01"));
+}
+
+#[test]
+fn test_repeating_section_content_control_roundtrip() {
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+
+    let p_id = flow(document.presentation()).body.iter().find_map(|b| if let Block::Paragraph(p) = b { Some(p.id) } else { None }).unwrap();
+    let at = FlowPos::new(p_id, 0);
+
+    // 1. 繰返しセクション コントロールの挿入 (DOCX-FORM-009)
+    let cmd = FlowCommand::InsertField {
+        at,
+        kind: FlowRunKind::RepeatingSection {
+            section_title: ibis_doc_model::DEFAULT_REPEATING_SECTION_TITLE.to_string(),
+            items: vec!["Section 1".to_string()],
+            selected: 0,
+            do_not_allow_insert_delete: false,
+        },
+    };
+    document.execute(vec![Command::Flow(cmd)]).unwrap();
+
+    // 2. プロパティ（タイトル・タグ）の設定
+    let info = ibis_doc_model::ControlInfo {
+        title: "InvoiceItems".to_string(),
+        tag: "TAG_REP_01".to_string(),
+        lock: ibis_doc_model::ControlLock::None,
+    };
+    document.execute(vec![Command::Flow(FlowCommand::SetControlInfo { at, info: Some(Box::new(info)) })]).unwrap();
+
+    // 3. セクションタイトルの変更と挿入削除許可
+    document.execute(vec![Command::Flow(FlowCommand::SetRepeatingSectionMeta {
+        at,
+        section_title: "明細行".to_string(),
+        do_not_allow_insert_delete: false,
+    })]).unwrap();
+
+    // 4. 項目の追加
+    document.execute(vec![Command::Flow(FlowCommand::InsertRepeatingSectionItem {
+        at,
+        index: 1,
+        text: "Section 2".to_string(),
+        restore_selected: None,
+    })]).unwrap();
+
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::RepeatingSection { section_title, items, selected, do_not_allow_insert_delete }
+            if section_title == "明細行" && items == &["Section 1", "Section 2"] && *selected == 1 && !do_not_allow_insert_delete));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("InvoiceItems"));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.tag.as_str()), Some("TAG_REP_01"));
+    }
+
+    // 5. Undo / Redo
+    assert!(document.undo());
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::RepeatingSection { items, selected, .. }
+            if items == &["Section 1"] && *selected == 0));
+    }
+    assert!(document.redo());
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::RepeatingSection { items, selected, .. }
+            if items == &["Section 1", "Section 2"] && *selected == 1));
+    }
+
+    // 6. 保存と XML 検証
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+    assert!(xml.contains("<w:sdt>"), "contains w:sdt in XML: {xml}");
+    assert!(xml.contains("repeatingSection"), "contains repeatingSection in XML: {xml}");
+    assert!(xml.contains("sectionTitle"), "contains sectionTitle in XML: {xml}");
+    assert!(xml.contains("明細行"), "contains 明細行 in XML: {xml}");
+    assert!(xml.contains("InvoiceItems"), "contains alias in XML: {xml}");
+    assert!(xml.contains("TAG_REP_01"), "contains tag in XML: {xml}");
+    assert!(xml.contains("repeatingSectionItem"), "contains repeatingSectionItem in XML: {xml}");
+    assert!(xml.contains("Section 1"), "contains Section 1 in XML: {xml}");
+    assert!(xml.contains("Section 2"), "contains Section 2 in XML: {xml}");
+
+    // 7. 再オープン検証
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let reread_flow = flow(&reread);
+    let r_p = reread_flow.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+    assert!(matches!(&r_p.runs[0].kind, FlowRunKind::RepeatingSection { section_title, items, .. }
+        if section_title == "明細行" && items == &["Section 1", "Section 2"]));
+    assert_eq!(r_p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("InvoiceItems"));
+    assert_eq!(r_p.runs[0].control.as_ref().map(|c| c.tag.as_str()), Some("TAG_REP_01"));
+}
+
+#[test]
+fn test_group_content_control_roundtrip() {
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+
+    let p_id = flow(document.presentation()).body.iter().find_map(|b| if let Block::Paragraph(p) = b { Some(p.id) } else { None }).unwrap();
+    let at = FlowPos::new(p_id, 0);
+
+    // 1. グループ化コントロールの挿入 (DOCX-FORM-014)
+    let cmd = FlowCommand::GroupControl {
+        at,
+        text: "Grouped Section Text".to_string(),
+        placeholder: false,
+        control: None,
+    };
+    document.execute(vec![Command::Flow(cmd)]).unwrap();
+
+    // 2. プロパティ（タイトル・タグ）の設定
+    let info = ibis_doc_model::ControlInfo {
+        title: "SectionGroup".to_string(),
+        tag: "TAG_GRP_01".to_string(),
+        lock: ibis_doc_model::ControlLock::None,
+    };
+    document.execute(vec![Command::Flow(FlowCommand::SetControlInfo { at, info: Some(Box::new(info)) })]).unwrap();
+
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::Group { text, placeholder }
+            if text == "Grouped Section Text" && !placeholder));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("SectionGroup"));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.tag.as_str()), Some("TAG_GRP_01"));
+    }
+
+    // 3. Undo / Redo
+    assert!(document.undo());
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert_eq!(p.runs[0].control, None);
+    }
+    assert!(document.redo());
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::Group { text, placeholder }
+            if text == "Grouped Section Text" && !placeholder));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("SectionGroup"));
+    }
+
+    // 4. 保存と XML 検証
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+    assert!(xml.contains("<w:sdt>"), "contains w:sdt in XML: {xml}");
+    assert!(xml.contains("<w:group/>"), "contains <w:group/> in XML: {xml}");
+    assert!(xml.contains("SectionGroup"), "contains SectionGroup in XML: {xml}");
+    assert!(xml.contains("TAG_GRP_01"), "contains tag in XML: {xml}");
+    assert!(xml.contains("Grouped Section Text"), "contains Grouped Section Text in XML: {xml}");
+
+    // 5. 再オープン検証
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let reread_flow = flow(&reread);
+    let r_p = reread_flow.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+    assert!(matches!(&r_p.runs[0].kind, FlowRunKind::Group { text, placeholder }
+        if text == "Grouped Section Text" && !placeholder));
+    assert_eq!(r_p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("SectionGroup"));
+    assert_eq!(r_p.runs[0].control.as_ref().map(|c| c.tag.as_str()), Some("TAG_GRP_01"));
+
+    // 6. 解除 (UngroupControl) 検証
+    document.execute(vec![Command::Flow(FlowCommand::UngroupControl { at, restore: None })]).unwrap();
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::Text(t) if t == "Grouped Section Text"));
+        assert_eq!(p.runs[0].control, None);
+    }
+
+    // 7. 解除の Undo
+    assert!(document.undo());
+    {
+        let doc = flow(document.presentation());
+        let p = doc.body.iter().find_map(|b| if let Block::Paragraph(p) = b { if p.id == p_id { Some(p) } else { None } } else { None }).unwrap();
+        assert!(matches!(&p.runs[0].kind, FlowRunKind::Group { text, placeholder }
+            if text == "Grouped Section Text" && !placeholder));
+        assert_eq!(p.runs[0].control.as_ref().map(|c| c.title.as_str()), Some("SectionGroup"));
+    }
 }
 
 #[test]
@@ -5659,7 +6093,7 @@ fn text_language_is_written_and_kept() {
     let out = scenario(REPORT, BODY, |doc| {
         let p = text_paragraph(doc, 8);
         vec![
-            FlowCommand::SetRunFormat { from: FlowPos::new(p.id, 2), to: FlowPos::new(p.id, 6), change: RunChange::Language { lang: Some("fr-FR".into()), east_asia: Some("ko-KR".into()) } },
+            FlowCommand::SetRunFormat { from: FlowPos::new(p.id, 2), to: FlowPos::new(p.id, 6), change: RunChange::Language { lang: Some("fr-FR".into()), east_asia: Some("ko-KR".into()), bidi: None } },
         ]
     });
     let xml = ibis_pptx::test_files::part_text(&out.saved, "word/document.xml").unwrap();
@@ -5803,6 +6237,92 @@ fn drawn_shape_insert_and_style() {
 }
 
 #[test]
+fn connector_with_glue_is_written_read_and_released() {
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data.clone()).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    let p = text_paragraph(flow(document.presentation()), 4).clone();
+    let at = FlowPos::new(p.id, 2);
+    let connector_of = |presentation: &Presentation| -> ibis_doc_model::Shape {
+        paragraphs(flow(presentation)).into_iter().find(|q| q.id == p.id).unwrap().runs.iter().find_map(|r| match &r.kind {
+            ibis_doc_model::FlowRunKind::Shape(s) => Some((**s).clone()),
+            _ => None,
+        }).expect("the connector")
+    };
+    let mut stroke = ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(Rgb(0x2F528F)), 19_050);
+    stroke.tail = ibis_doc_model::LineEnd::parse(Some("triangle"), None, None);
+    let glue = ibis_doc_model::Glue { start: Some((7, 3)), end: Some((9, 1)) };
+    let geometry = ibis_pptx::preset_geometry("curvedConnector3");
+    document.execute(vec![Command::Flow(FlowCommand::InsertConnector { at, size: ibis_doc_model::EmuSize::new(1_905_000, 952_500), stroke, geometry, flip_h: true, flip_v: false, glue })]).unwrap();
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+    assert!(xml.contains("<wps:cNvCnPr><a:stCxn id=\"7\" idx=\"3\"/><a:endCxn id=\"9\" idx=\"1\"/></wps:cNvCnPr>"), "the glue is written");
+    assert!(xml.contains("flipH=\"1\"") && xml.contains("prst=\"curvedConnector3\""));
+    let read = connector_of(&ibis_pptx::read(&saved).unwrap());
+    assert_eq!(read.floating.as_ref().unwrap().glue, glue);
+    assert!(read.flip_h && !read.flip_v);
+    let ibis_doc_model::ShapeKind::Auto(auto) = &read.kind else { panic!("a connector's geometry: {:?}", read.kind) };
+    assert_eq!(auto.geometry.preset_name(), Some("curvedConnector3"));
+    // A connector Word wrote is a `wps:cxnSp` (no text body): it is read too.
+    let mut package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let start = xml.find("<wps:wsp><wps:cNvCnPr>").expect("the connector's element");
+    let end = start + xml[start..].find("</wps:wsp>").unwrap() + "</wps:wsp>".len();
+    let element = &xml[start..end];
+    let body_pr = element.find("<wps:bodyPr").unwrap();
+    let body_end = body_pr + element[body_pr..].find("</wps:bodyPr>").unwrap() + "</wps:bodyPr>".len();
+    let word = format!("<wps:cxnSp>{}</wps:cxnSp>", &element["<wps:wsp>".len()..body_pr]) + &element[body_end..element.len() - "</wps:wsp>".len()];
+    package.set_bytes("word/document.xml", format!("{}{}{}", &xml[..start], word, &xml[end..]).into_bytes());
+    let word_file = package.save(ibis_ooxml::SaveOptions::default()).unwrap();
+    let from_word = connector_of(&ibis_pptx::read(&word_file).unwrap());
+    assert_eq!(from_word.floating.as_ref().unwrap().glue, glue, "a cxnSp is read, with its glue");
+    // Put by hand, the connector is released: the glue leaves the file.
+    let reopened = ibis_pptx::open(saved.clone()).unwrap();
+    let mut second = Document::new(reopened.presentation.clone());
+    second.execute(vec![Command::Flow(FlowCommand::SetShapeGeometry { at, size: None, offset: Some((635_000, 635_000)) })]).unwrap();
+    let saved2 = reopened.source.save(second.presentation(), SaveOptions::default()).unwrap();
+    let xml2 = ibis_pptx::test_files::part_text(&saved2, "word/document.xml").unwrap();
+    assert!(!xml2.contains("<a:stCxn") && !xml2.contains("<a:endCxn"), "released");
+    assert_eq!(connector_of(&ibis_pptx::read(&saved2).unwrap()).floating.unwrap().glue, ibis_doc_model::Glue::default());
+    while document.can_undo() {
+        document.undo();
+    }
+    assert!(opened.source.save(document.presentation(), SaveOptions::default()).unwrap() == data);
+}
+
+#[test]
+fn text_box_characters_formatted_in_part() {
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data.clone()).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    let p = text_paragraph(flow(document.presentation()), 4).clone();
+    let at = FlowPos::new(p.id, 2);
+    document.execute(vec![Command::Flow(FlowCommand::InsertTextBox { at, size: ibis_doc_model::EmuSize::new(1_828_800, 914_400), text: "alpha beta\ngamma".into() })]).unwrap();
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    // The text box is read from the file; its characters 6..10 ("beta") become bold, red, 18 pt, in the file's own element.
+    let reopened = ibis_pptx::open(saved.clone()).unwrap();
+    let mut second = Document::new(reopened.presentation.clone());
+    second.execute(vec![Command::Flow(FlowCommand::SetShapeRangeFormat { at, from: 6, to: 10, bold: Some(true), italic: None, size: Some(1800), color: Some(Rgb(0xC00000)) })]).unwrap();
+    let saved2 = reopened.source.save(second.presentation(), SaveOptions::default()).unwrap();
+    let xml = ibis_pptx::test_files::part_text(&saved2, "word/document.xml").unwrap();
+    let start = xml.find("<w:txbxContent>").unwrap();
+    let content = &xml[start..xml[start..].find("</w:txbxContent>").unwrap() + start];
+    assert_eq!(content.matches("<w:b/>").count(), 1, "only one run is bold: {content}");
+    assert!(content.contains(">alpha </w:t>") && content.contains(">beta</w:t>") && content.contains(">gamma</w:t>"));
+    assert!(content.contains("C00000") && content.contains("w:val=\"36\""));
+    let reread = ibis_pptx::read(&saved2).unwrap();
+    let shape = paragraphs(flow(&reread)).into_iter().find(|q| q.id == p.id).unwrap().runs.iter().find_map(|r| match &r.kind {
+        ibis_doc_model::FlowRunKind::Shape(s) => Some((**s).clone()),
+        _ => None,
+    }).unwrap();
+    let ibis_doc_model::ShapeKind::Auto(auto) = &shape.kind else { panic!("a text box") };
+    let body = auto.text.as_ref().unwrap();
+    let bold: Vec<(&str, bool)> = body.paragraphs.iter().flat_map(|p| p.runs.iter()).map(|r| (r.text.as_str(), r.style.bold.unwrap_or(body.style.bold))).collect();
+    assert_eq!(bold, [("alpha ", false), ("beta", true), ("gamma", false)]);
+    second.undo();
+    assert!(reopened.source.save(second.presentation(), SaveOptions::default()).unwrap() == saved, "undone, the file is as it was");
+}
+
+#[test]
 fn drawn_line_insert_and_stroke() {
     let data = std::fs::read(path(REPORT)).unwrap();
     let opened = ibis_pptx::open(data.clone()).unwrap();
@@ -5855,7 +6375,7 @@ fn picture_corrections_brightness_contrast_recolor() {
         paragraphs(flow(presentation)).into_iter().find(|q| q.id == p.id).unwrap().runs.iter().find_map(|r| match &r.kind {
             FlowRunKind::Picture { look, .. } => Some(look.clone()),
             FlowRunKind::Shape(s) => match &s.kind {
-                ibis_doc_model::ShapeKind::Picture(pic) => Some(ibis_doc_model::PictureLook { luminance: pic.luminance, duotone: pic.duotone, ..Default::default() }),
+                ibis_doc_model::ShapeKind::Picture(pic) => Some(ibis_doc_model::PictureLook { luminance: pic.luminance, duotone: pic.duotone, effects: pic.effects, soft_edge: pic.soft_edge, ..Default::default() }),
                 _ => None,
             },
             _ => None,
@@ -5888,3 +6408,1589 @@ fn picture_corrections_brightness_contrast_recolor() {
     }
     assert!(opened.source.save(document.presentation(), SaveOptions::default()).unwrap() == data);
 }
+
+#[test]
+fn picture_corrections_extended_effects_save_and_reopen() {
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data.clone()).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    let media = document.ids().add_media(ibis_doc_model::MediaFormat::Png, a_png());
+    let p = text_paragraph(flow(document.presentation()), 4).clone();
+    let at = FlowPos::new(p.id, 2);
+    let look_of = |presentation: &Presentation| -> ibis_doc_model::PictureLook {
+        paragraphs(flow(presentation)).into_iter().find(|q| q.id == p.id).unwrap().runs.iter().find_map(|r| match &r.kind {
+            FlowRunKind::Picture { look, .. } => Some(look.clone()),
+            FlowRunKind::Shape(s) => match &s.kind {
+                ibis_doc_model::ShapeKind::Picture(pic) => Some(ibis_doc_model::PictureLook {
+                    luminance: pic.luminance,
+                    duotone: pic.duotone,
+                    effects: pic.effects,
+                    soft_edge: pic.soft_edge,
+                    ..Default::default()
+                }),
+                _ => None,
+            },
+            _ => None,
+        }).expect("the picture")
+    };
+    document.execute(vec![Command::Flow(FlowCommand::InsertPicture { at, media, size: ibis_doc_model::EmuSize::new(914_400, 685_800) })]).unwrap();
+    let mut look = ibis_doc_model::PictureLook::default();
+    look.effects.opacity = Some(75_000);
+    look.effects.saturation = Some(200_000);
+    look.effects.bilevel = Some(50_000);
+    look.soft_edge = Some(31_750);
+    document.execute(vec![Command::Flow(FlowCommand::SetPictureLook { at, look: look.clone() })]).unwrap();
+
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let read = look_of(&ibis_pptx::read(&saved).unwrap());
+    assert_eq!(read.effects.opacity, Some(75_000));
+    assert_eq!(read.effects.saturation, Some(200_000));
+    assert_eq!(read.effects.bilevel, Some(50_000));
+    assert_eq!(read.soft_edge, Some(31_750));
+    let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+    assert!(xml.contains(r#"<a:alphaModFix amt="75000"/>"#), "has alphaModFix");
+    assert!(xml.contains(r#"<a:satMod amt="200000"/>"#), "has satMod");
+    assert!(xml.contains(r#"<a:biLevel thresh="50000"/>"#), "has biLevel");
+    assert!(xml.contains(r#"<a:softEdge rad="31750"/>"#), "has softEdge");
+
+    // Clear effects
+    let clean = ibis_doc_model::PictureLook::default();
+    document.execute(vec![Command::Flow(FlowCommand::SetPictureLook { at, look: clean })]).unwrap();
+    let saved_clean = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let read_clean = look_of(&ibis_pptx::read(&saved_clean).unwrap());
+    assert_eq!(read_clean.effects.opacity, None);
+    assert_eq!(read_clean.effects.saturation, None);
+    assert_eq!(read_clean.effects.bilevel, None);
+    assert_eq!(read_clean.soft_edge, None);
+    let xml_clean = ibis_pptx::test_files::part_text(&saved_clean, "word/document.xml").unwrap();
+    assert!(!xml_clean.contains("alphaModFix"), "cleared alphaModFix");
+    assert!(!xml_clean.contains("satMod"), "cleared satMod");
+    assert!(!xml_clean.contains("biLevel"), "cleared biLevel");
+    assert!(!xml_clean.contains("softEdge"), "cleared softEdge");
+}
+
+/// DOCX-AUDIT-007: every .docx of the test files (those Word made, the coverage's, the editing set's), opened and saved with no edit,
+/// is the original package: no part differs (what is not supported stays where it was). The files that cannot be opened (a password,
+/// a damaged one) are counted, not skipped silently.
+#[test]
+fn unedited_save_keeps_every_part_of_every_test_docx() {
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for dir in ["editing", "benchmark"] {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "docx") {
+                    out.push(p);
+                }
+            }
+        }
+        walk(&path(dir), &mut files);
+    }
+    files.sort();
+    assert!(files.len() >= 8, "{} docx files", files.len());
+    let (mut checked, mut unreadable, mut changed) = (0, Vec::new(), Vec::new());
+    for file in &files {
+        let data = std::fs::read(file).unwrap();
+        let Ok(opened) = ibis_pptx::open(data.clone()) else {
+            unreadable.push(file.display().to_string());
+            continue;
+        };
+        let saved = opened.source.save(&opened.presentation, SaveOptions::default()).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        let report = diff_packages(&data, &saved, &[]).unwrap();
+        if !report.differences.is_empty() {
+            changed.push(format!("{}: {:?}", file.display(), report.differences.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>()));
+        }
+        checked += 1;
+    }
+    eprintln!("unedited save: {checked} files kept every part; {} could not be opened", unreadable.len());
+    assert!(changed.is_empty(), "saved with no edit, these differ:\n{}", changed.join("\n"));
+    assert!(checked >= 8, "{checked} files checked");
+}
+
+#[test]
+fn font_embedding_and_compatibility_save_and_reopen() {
+    let outcome = scenario(REPORT, &["word/settings.xml"], |_| {
+        vec![
+            FlowCommand::SetFontEmbedding {
+                embed_true_type_fonts: true,
+                embed_system_fonts: true,
+                save_subset_fonts: true,
+            },
+            FlowCommand::SetCompatibilityOptions {
+                compatibility_mode: Some(15),
+                use_fe_layout: true,
+                do_not_expand_shift_return: true,
+            },
+        ]
+    });
+    let xml = ibis_pptx::test_files::part_text(&outcome.saved, "word/settings.xml").unwrap();
+    assert!(xml.contains("<w:embedTrueTypeFonts/>") || xml.contains("<w:embedTrueTypeFonts "), "embedTrueTypeFonts missing: {xml}");
+    assert!(xml.contains("<w:embedSystemFonts/>") || xml.contains("<w:embedSystemFonts "), "embedSystemFonts missing: {xml}");
+    assert!(xml.contains("<w:saveSubsetFonts/>") || xml.contains("<w:saveSubsetFonts "), "saveSubsetFonts missing: {xml}");
+    assert!(xml.contains("compatibilityMode") && xml.contains("val=\"15\""), "compatibilityMode missing: {xml}");
+
+    // Reopen and check FlowDocument
+    let reopened = ibis_pptx::open(outcome.saved).unwrap();
+    let doc = flow(&reopened.presentation);
+    assert!(doc.embed_true_type_fonts);
+    assert!(doc.embed_system_fonts);
+    assert!(doc.save_subset_fonts);
+    assert_eq!(doc.compatibility_mode, Some(15));
+    assert!(doc.use_fe_layout);
+    assert!(doc.do_not_expand_shift_return);
+}
+
+#[test]
+fn multiple_pages_and_book_fold_save_and_reopen() {
+    use ibis_doc_model::MultiplePages;
+
+    // 1. Book Fold with 16 sheets
+    let outcome = scenario(REPORT, &["word/settings.xml"], |doc| {
+        let mut page = doc.page;
+        page.multiple_pages = MultiplePages::BookFold;
+        page.book_fold_sheets = Some(16);
+        page.mirror_margins = true;
+        vec![FlowCommand::SetPage { page }]
+    });
+    let xml = ibis_pptx::test_files::part_text(&outcome.saved, "word/settings.xml").unwrap();
+    assert!(xml.contains("<w:bookFoldPrinting"), "bookFoldPrinting missing: {xml}");
+    assert!(xml.contains("<w:bookFoldPrintingSheets w:val=\"16\"/>"), "bookFoldPrintingSheets missing: {xml}");
+    assert!(!xml.contains("<w:mirrorMargins"), "mirrorMargins should not be written when bookFoldPrinting is active: {xml}");
+
+    let reopened = ibis_pptx::open(outcome.saved).unwrap();
+    let doc = flow(&reopened.presentation);
+    assert_eq!(doc.page.multiple_pages, MultiplePages::BookFold);
+    assert_eq!(doc.page.book_fold_sheets, Some(16));
+    assert!(doc.page.mirror_margins);
+    assert!(doc.page.is_mirrored());
+
+    // 2. Reverse Book Fold (All sheets)
+    let outcome2 = scenario(REPORT, &["word/settings.xml"], |doc| {
+        let mut page = doc.page;
+        page.multiple_pages = MultiplePages::ReverseBookFold;
+        page.book_fold_sheets = None;
+        page.mirror_margins = true;
+        vec![FlowCommand::SetPage { page }]
+    });
+    let xml2 = ibis_pptx::test_files::part_text(&outcome2.saved, "word/settings.xml").unwrap();
+    assert!(xml2.contains("<w:bookFoldRevPrinting"), "bookFoldRevPrinting missing: {xml2}");
+    assert!(!xml2.contains("<w:bookFoldPrintingSheets"), "bookFoldPrintingSheets should be absent for all sheets: {xml2}");
+
+    let reopened2 = ibis_pptx::open(outcome2.saved).unwrap();
+    let doc2 = flow(&reopened2.presentation);
+    assert_eq!(doc2.page.multiple_pages, MultiplePages::ReverseBookFold);
+    assert_eq!(doc2.page.book_fold_sheets, None);
+    assert!(doc2.page.is_mirrored());
+
+    // 3. Two on One (1枚に2ページ)
+    let outcome3 = scenario(REPORT, &["word/settings.xml"], |doc| {
+        let mut page = doc.page;
+        page.multiple_pages = MultiplePages::TwoOnOne;
+        page.mirror_margins = false;
+        vec![FlowCommand::SetPage { page }]
+    });
+    let xml3 = ibis_pptx::test_files::part_text(&outcome3.saved, "word/settings.xml").unwrap();
+    assert!(xml3.contains("<w:printTwoOnOne"), "printTwoOnOne missing: {xml3}");
+    assert!(!xml3.contains("<w:bookFoldPrinting"), "bookFoldPrinting should be absent: {xml3}");
+
+    let reopened3 = ibis_pptx::open(outcome3.saved).unwrap();
+    let doc3 = flow(&reopened3.presentation);
+    assert_eq!(doc3.page.multiple_pages, MultiplePages::TwoOnOne);
+    assert!(!doc3.page.is_mirrored());
+}
+
+#[test]
+fn crop_picture_to_shape_save_and_reopen() {
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data.clone()).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    let media = document.ids().add_media(ibis_doc_model::MediaFormat::Png, a_png());
+    let p = text_paragraph(flow(document.presentation()), 4).clone();
+    let at = FlowPos::new(p.id, 2);
+    let look_of = |presentation: &Presentation| -> ibis_doc_model::PictureLook {
+        paragraphs(flow(presentation)).into_iter().find(|q| q.id == p.id).unwrap().runs.iter().find_map(|r| match &r.kind {
+            FlowRunKind::Picture { look, .. } => Some(look.clone()),
+            FlowRunKind::Shape(s) => match &s.kind {
+                ibis_doc_model::ShapeKind::Picture(pic) => Some(ibis_doc_model::PictureLook {
+                    luminance: pic.luminance,
+                    duotone: pic.duotone,
+                    effects: pic.effects,
+                    soft_edge: pic.soft_edge,
+                    geometry: pic.geometry.clone(),
+                    ..Default::default()
+                }),
+                _ => None,
+            },
+            _ => None,
+        }).expect("the picture")
+    };
+    document.execute(vec![Command::Flow(FlowCommand::InsertPicture { at, media, size: ibis_doc_model::EmuSize::new(914_400, 685_800) })]).unwrap();
+
+    // 1. Crop to Ellipse
+    let mut look = ibis_doc_model::PictureLook::default();
+    look.geometry = ibis_pptx::preset_geometry("ellipse");
+    document.execute(vec![Command::Flow(FlowCommand::SetPictureLook { at, look: look.clone() })]).unwrap();
+
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let read = look_of(&ibis_pptx::read(&saved).unwrap());
+    assert_eq!(read.geometry.as_ref().and_then(|g| g.preset_name()), Some("ellipse"));
+    let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+    assert!(xml.contains(r#"<a:prstGeom prst="ellipse">"#), "has ellipse prstGeom: {xml}");
+
+    // 2. Crop to RoundRect with custom radius
+    let mut look_rr = ibis_doc_model::PictureLook::default();
+    look_rr.geometry = Some(ibis_doc_model::Geometry::RoundRect { radius: 25_000 });
+    document.execute(vec![Command::Flow(FlowCommand::SetPictureLook { at, look: look_rr })]).unwrap();
+    let saved_rr = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let read_rr = look_of(&ibis_pptx::read(&saved_rr).unwrap());
+    assert_eq!(read_rr.geometry, Some(ibis_doc_model::Geometry::RoundRect { radius: 25_000 }));
+    let xml_rr = ibis_pptx::test_files::part_text(&saved_rr, "word/document.xml").unwrap();
+    assert!(xml_rr.contains(r#"<a:prstGeom prst="roundRect">"#), "has roundRect prstGeom: {xml_rr}");
+    assert!(xml_rr.contains(r#"fmla="val 25000""#), "has adj 25000: {xml_rr}");
+
+    // 3. Crop to Heart
+    let mut look_heart = ibis_doc_model::PictureLook::default();
+    look_heart.geometry = ibis_pptx::preset_geometry("heart");
+    document.execute(vec![Command::Flow(FlowCommand::SetPictureLook { at, look: look_heart })]).unwrap();
+    let saved_heart = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let read_heart = look_of(&ibis_pptx::read(&saved_heart).unwrap());
+    assert_eq!(read_heart.geometry.as_ref().and_then(|g| g.preset_name()), Some("heart"));
+    let xml_heart = ibis_pptx::test_files::part_text(&saved_heart, "word/document.xml").unwrap();
+    assert!(xml_heart.contains(r#"<a:prstGeom prst="heart">"#), "has heart prstGeom: {xml_heart}");
+
+    // 4. Reset to Rectangle (None)
+    let clean = ibis_doc_model::PictureLook::default();
+    document.execute(vec![Command::Flow(FlowCommand::SetPictureLook { at, look: clean })]).unwrap();
+    let saved_clean = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let read_clean = look_of(&ibis_pptx::read(&saved_clean).unwrap());
+    assert_eq!(read_clean.geometry, None);
+    let xml_clean = ibis_pptx::test_files::part_text(&saved_clean, "word/document.xml").unwrap();
+    assert!(xml_clean.contains(r#"<a:prstGeom prst="rect">"#), "has rect prstGeom: {xml_clean}");
+}
+
+#[test]
+fn mail_merge_field_map_data_save_and_reopen() {
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data.clone()).unwrap();
+    let mut document = Document::new(opened.presentation);
+
+    // Initial: empty field map
+    let initial = flow(document.presentation());
+    assert!(initial.mail_merge_field_map.is_empty());
+
+    // 1. Set field map data
+    let mappings = vec![
+        ibis_doc_model::merge::FieldMapData {
+            name: "ZipCode".into(),
+            mapped_name: "Postal Code".into(),
+            column: 0,
+        },
+        ibis_doc_model::merge::FieldMapData {
+            name: "FullAddress".into(),
+            mapped_name: "Address 1".into(),
+            column: 1,
+        },
+        ibis_doc_model::merge::FieldMapData {
+            name: "CustomerName".into(),
+            mapped_name: "Last Name".into(),
+            column: 2,
+        },
+    ];
+    document.execute(vec![Command::Flow(FlowCommand::SetMailMergeFieldMap(mappings.clone()))]).unwrap();
+    assert_eq!(flow(document.presentation()).mail_merge_field_map, mappings);
+
+    // 2. Save and reopen
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::open(saved.clone()).unwrap();
+    let doc_reopened = flow(&reopened.presentation);
+    assert_eq!(doc_reopened.mail_merge_field_map, mappings);
+
+    // Verify settings.xml has w:fieldMapData, w:mappedName, w:name, w:column
+    let pkg = ibis_ooxml::Package::open(saved).unwrap();
+    let settings_xml = pkg.read("word/settings.xml").unwrap();
+    let settings_str = String::from_utf8_lossy(&settings_xml);
+    assert!(settings_str.contains("<w:fieldMapData>"), "settings has fieldMapData: {settings_str}");
+    assert!(settings_str.contains(r#"<w:mappedName w:val="Postal Code"/>"#));
+    assert!(settings_str.contains(r#"<w:name w:val="ZipCode"/>"#));
+    assert!(settings_str.contains(r#"<w:column w:val="0"/>"#));
+
+    // 3. Clear mappings (reset)
+    document.execute(vec![Command::Flow(FlowCommand::SetMailMergeFieldMap(Vec::new()))]).unwrap();
+    assert!(flow(document.presentation()).mail_merge_field_map.is_empty());
+    let saved_cleared = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened_cleared = ibis_pptx::open(saved_cleared.clone()).unwrap();
+    assert!(flow(&reopened_cleared.presentation).mail_merge_field_map.is_empty());
+    let pkg_cleared = ibis_ooxml::Package::open(saved_cleared).unwrap();
+    let settings_cleared = pkg_cleared.read("word/settings.xml").unwrap();
+    let settings_cleared_str = String::from_utf8_lossy(&settings_cleared);
+    assert!(!settings_cleared_str.contains("<w:fieldMapData>"));
+}
+
+#[test]
+fn test_opentype_features_roundtrip() {
+    use ibis_doc_model::{Ligatures, NumberForm, NumberSpacing};
+
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data.clone()).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+
+    let p = text_paragraph(flow(document.presentation()), 1).clone();
+    let from = FlowPos::new(p.id, 0);
+    let to = FlowPos::new(p.id, 5);
+
+    // 1. OpenType 書式の設定: 合字 (standardContextual)、数字形式 (oldStyle)、数字間隔 (tabular)、コンテキスト代替 (true)
+    document.execute(vec![
+        Command::Flow(FlowCommand::SetRunFormat { from, to, change: RunChange::Ligatures(Ligatures::StandardContextual) }),
+        Command::Flow(FlowCommand::SetRunFormat { from, to, change: RunChange::NumberForm(NumberForm::OldStyle) }),
+        Command::Flow(FlowCommand::SetRunFormat { from, to, change: RunChange::NumberSpacing(NumberSpacing::Tabular) }),
+        Command::Flow(FlowCommand::SetRunFormat { from, to, change: RunChange::ContextualAlternates(true) }),
+    ]).unwrap();
+
+    let cur_flow = flow(document.presentation());
+    let p_mod = paragraphs(cur_flow).into_iter().find(|q| q.id == p.id).unwrap();
+    let r0 = &p_mod.runs[0];
+    assert_eq!(r0.format.ligatures, Some(Ligatures::StandardContextual));
+    assert_eq!(r0.format.num_form, Some(NumberForm::OldStyle));
+    assert_eq!(r0.format.num_spacing, Some(NumberSpacing::Tabular));
+    assert_eq!(r0.format.contextual_alternates, Some(true));
+    assert_eq!(r0.style.ligatures, Ligatures::StandardContextual);
+    assert_eq!(r0.style.num_form, NumberForm::OldStyle);
+    assert_eq!(r0.style.num_spacing, NumberSpacing::Tabular);
+    assert!(r0.style.contextual_alternates);
+
+    // 2. OOXML 保存と XML 要素の検証
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let pkg = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let doc_xml = String::from_utf8_lossy(&pkg.read("word/document.xml").unwrap()).to_string();
+    assert!(doc_xml.contains("ligatures"), "ligatures in doc_xml: {doc_xml}");
+    assert!(doc_xml.contains("standardContextual"), "standardContextual in doc_xml: {doc_xml}");
+    assert!(doc_xml.contains("numForm"), "numForm in doc_xml: {doc_xml}");
+    assert!(doc_xml.contains("oldStyle"), "oldStyle in doc_xml: {doc_xml}");
+    assert!(doc_xml.contains("numSpacing"), "numSpacing in doc_xml: {doc_xml}");
+    assert!(doc_xml.contains("tabular"), "tabular in doc_xml: {doc_xml}");
+    assert!(doc_xml.contains("cntxtAlts"), "cntxtAlts in doc_xml: {doc_xml}");
+
+    // 3. 再読込検証: 各 OpenType 設定が忠実に復元されること
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let reread_flow = flow(&reread);
+    let q = paragraphs(reread_flow).into_iter().find(|q| q.id == p.id).unwrap();
+    let qr0 = &q.runs[0];
+    assert_eq!(qr0.format.ligatures, Some(Ligatures::StandardContextual));
+    assert_eq!(qr0.format.num_form, Some(NumberForm::OldStyle));
+    assert_eq!(qr0.format.num_spacing, Some(NumberSpacing::Tabular));
+    assert_eq!(qr0.format.contextual_alternates, Some(true));
+    assert_eq!(qr0.style.ligatures, Ligatures::StandardContextual);
+    assert_eq!(qr0.style.num_form, NumberForm::OldStyle);
+    assert_eq!(qr0.style.num_spacing, NumberSpacing::Tabular);
+    assert!(qr0.style.contextual_alternates);
+
+    // 4. Undo 検証
+    assert!(document.undo());
+    let p_undone = paragraphs(flow(document.presentation())).into_iter().find(|q| q.id == p.id).unwrap();
+    let r_undone = &p_undone.runs[0];
+    assert_eq!(r_undone.format.contextual_alternates, None);
+    assert_eq!(r_undone.format.num_spacing, None);
+    assert_eq!(r_undone.format.num_form, None);
+    assert_eq!(r_undone.format.ligatures, None);
+    assert_eq!(r_undone.style.ligatures, Ligatures::None);
+    assert_eq!(r_undone.style.num_form, NumberForm::Default);
+    assert_eq!(r_undone.style.num_spacing, NumberSpacing::Default);
+    assert!(!r_undone.style.contextual_alternates);
+}
+
+#[test]
+fn test_legacy_form_fields_roundtrip_and_commands() {
+    use ibis_doc_model::{FormFieldData, FormFieldKind};
+
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    let p = text_paragraph(flow(document.presentation()), 2).clone();
+    let at0 = FlowPos::new(p.id, 0);
+
+    // 1. Insert Legacy Form Fields: TextInput, CheckBox, DropDown
+    let text_field = FormFieldData {
+        name: "Txt1".into(),
+        enabled: true,
+        calc_on_exit: false,
+        kind: FormFieldKind::TextInput {
+            value: "InitialVal".into(),
+            default: "DefVal".into(),
+            max_length: 50,
+        },
+    };
+    let check_field = FormFieldData {
+        name: "Chk1".into(),
+        enabled: true,
+        calc_on_exit: true,
+        kind: FormFieldKind::CheckBox {
+            checked: false,
+            default: false,
+            size_auto: true,
+        },
+    };
+    let drop_field = FormFieldData {
+        name: "DD1".into(),
+        enabled: true,
+        calc_on_exit: false,
+        kind: FormFieldKind::DropDown {
+            items: vec!["Alpha".into(), "Beta".into(), "Gamma".into()],
+            selected: 0,
+            default: 0,
+        },
+    };
+
+    document.execute(vec![
+        Command::Flow(FlowCommand::InsertField { at: at0, kind: FlowRunKind::FormField(text_field) }),
+        Command::Flow(FlowCommand::InsertField { at: at0, kind: FlowRunKind::FormField(check_field) }),
+        Command::Flow(FlowCommand::InsertField { at: at0, kind: FlowRunKind::FormField(drop_field) }),
+    ]).unwrap();
+
+    // 2. Test commands: SetFormFieldText, ToggleCheckBox, SelectDropDownItem
+    let find_para = |doc: &Document| {
+        paragraphs(flow(doc.presentation())).into_iter().find(|q| q.id == p.id).unwrap().clone()
+    };
+    let para = find_para(&document);
+    let mut text_pos = None;
+    let mut check_pos = None;
+    let mut drop_pos = None;
+    let mut offset = 0;
+    for run in &para.runs {
+        let len = run.len();
+        if let FlowRunKind::FormField(ff) = &run.kind {
+            match &ff.kind {
+                FormFieldKind::TextInput { .. } => text_pos = Some(FlowPos::new(p.id, offset)),
+                FormFieldKind::CheckBox { .. } => check_pos = Some(FlowPos::new(p.id, offset)),
+                FormFieldKind::DropDown { .. } => drop_pos = Some(FlowPos::new(p.id, offset)),
+            }
+        }
+        offset += len;
+    }
+
+    let text_pos = text_pos.expect("text pos");
+    let check_pos = check_pos.expect("check pos");
+    let drop_pos = drop_pos.expect("drop pos");
+
+    // Execute edits
+    document.execute(vec![
+        Command::Flow(FlowCommand::SetFormFieldText { at: text_pos, text: "UpdatedVal".into() }),
+        Command::Flow(FlowCommand::ToggleCheckBox { at: check_pos }),
+        Command::Flow(FlowCommand::SelectDropDownItem { at: drop_pos, index: 1 }),
+    ]).unwrap();
+
+    // Verify values updated in model
+    let p_edited = find_para(&document);
+    let ff_text = p_edited.runs.iter().filter_map(|r| r.form_field()).find(|f| f.name == "Txt1").unwrap();
+    if let FormFieldKind::TextInput { value, .. } = &ff_text.kind {
+        assert_eq!(value, "UpdatedVal");
+    } else {
+        panic!("expected text input");
+    }
+
+    let ff_check = p_edited.runs.iter().filter_map(|r| r.form_field()).find(|f| f.name == "Chk1").unwrap();
+    if let FormFieldKind::CheckBox { checked, .. } = &ff_check.kind {
+        assert!(*checked, "checkbox should be checked");
+    } else {
+        panic!("expected checkbox");
+    }
+
+    let ff_drop = p_edited.runs.iter().filter_map(|r| r.form_field()).find(|f| f.name == "DD1").unwrap();
+    if let FormFieldKind::DropDown { selected, .. } = &ff_drop.kind {
+        assert_eq!(*selected, 1, "dropdown should select item 1 (Beta)");
+    } else {
+        panic!("expected dropdown");
+    }
+
+    // 3. Save to OOXML and reread
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let p_reread = paragraphs(flow(&reread)).into_iter().find(|q| q.id == p.id).unwrap();
+
+    let r_text = p_reread.runs.iter().filter_map(|r| r.form_field()).find(|f| f.name == "Txt1").expect("reread Txt1");
+    assert_eq!(r_text.enabled, true);
+    assert_eq!(r_text.calc_on_exit, false);
+    if let FormFieldKind::TextInput { value, default, max_length } = &r_text.kind {
+        assert_eq!(value, "UpdatedVal");
+        assert_eq!(default, "DefVal");
+        assert_eq!(*max_length, 50);
+    } else {
+        panic!("reread expected text input");
+    }
+
+    let r_check = p_reread.runs.iter().filter_map(|r| r.form_field()).find(|f| f.name == "Chk1").expect("reread Chk1");
+    assert_eq!(r_check.enabled, true);
+    assert_eq!(r_check.calc_on_exit, true);
+    if let FormFieldKind::CheckBox { checked, default, size_auto } = &r_check.kind {
+        assert!(*checked, "reread checkbox must be checked");
+        assert_eq!(*default, false);
+        assert!(*size_auto);
+    } else {
+        panic!("reread expected checkbox");
+    }
+
+    let r_drop = p_reread.runs.iter().filter_map(|r| r.form_field()).find(|f| f.name == "DD1").expect("reread DD1");
+    assert_eq!(r_drop.enabled, true);
+    if let FormFieldKind::DropDown { items, selected, default } = &r_drop.kind {
+        assert_eq!(items, &["Alpha", "Beta", "Gamma"]);
+        assert_eq!(*selected, 1);
+        assert_eq!(*default, 0);
+    } else {
+        panic!("reread expected dropdown");
+    }
+
+    // 4. Test Undo symmetry
+    assert!(document.undo());
+    let p_undo = find_para(&document);
+    let u_drop = p_undo.runs.iter().filter_map(|r| r.form_field()).find(|f| f.name == "DD1").unwrap();
+    if let FormFieldKind::DropDown { selected, .. } = &u_drop.kind {
+        assert_eq!(*selected, 0, "undo restores dropdown selection to 0");
+    }
+    let u_check = p_undo.runs.iter().filter_map(|r| r.form_field()).find(|f| f.name == "Chk1").unwrap();
+    if let FormFieldKind::CheckBox { checked, .. } = &u_check.kind {
+        assert!(!*checked, "undo restores checkbox to unchecked");
+    }
+    let u_text = p_undo.runs.iter().filter_map(|r| r.form_field()).find(|f| f.name == "Txt1").unwrap();
+    if let FormFieldKind::TextInput { value, .. } = &u_text.kind {
+        assert_eq!(value, "InitialVal", "undo restores text to InitialVal");
+    }
+}
+
+#[test]
+fn attached_template_and_link_styles_save_and_reopen() {
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+
+    // Initially none/false
+    assert_eq!(flow(document.presentation()).attached_template, None);
+    assert!(!flow(document.presentation()).link_styles);
+
+    // Attach template and link_styles
+    document.execute(vec![Command::Flow(FlowCommand::AttachTemplate {
+        template: Some("CompanyTemplate.dotx".to_string()),
+        link_styles: true,
+    })]).unwrap();
+
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    assert_eq!(flow(&reopened).attached_template.as_deref(), Some("CompanyTemplate.dotx"));
+    assert!(flow(&reopened).link_styles);
+
+    let settings_xml = ibis_pptx::test_files::part_text(&saved, "word/settings.xml").unwrap();
+    assert!(settings_xml.contains("<w:attachedTemplate"), "settings.xml has attachedTemplate");
+    assert!(settings_xml.contains("<w:linkStyles"), "settings.xml has linkStyles");
+
+    let rels_xml = ibis_pptx::test_files::part_text(&saved, "word/_rels/settings.xml.rels").unwrap();
+    assert!(rels_xml.contains("CompanyTemplate.dotx"), "settings.xml.rels has CompanyTemplate.dotx");
+
+    // Detach template and link_styles
+    let opened2 = ibis_pptx::open(saved).unwrap();
+    let mut document2 = Document::new(opened2.presentation.clone());
+    document2.execute(vec![Command::Flow(FlowCommand::AttachTemplate {
+        template: None,
+        link_styles: false,
+    })]).unwrap();
+
+    let saved2 = opened2.source.save(document2.presentation(), SaveOptions::default()).unwrap();
+    let reopened2 = ibis_pptx::read(&saved2).unwrap();
+    assert_eq!(flow(&reopened2).attached_template, None);
+    assert!(!flow(&reopened2).link_styles);
+
+    let settings_xml2 = ibis_pptx::test_files::part_text(&saved2, "word/settings.xml").unwrap();
+    assert!(!settings_xml2.contains("<w:attachedTemplate"), "attachedTemplate removed from settings.xml");
+    assert!(!settings_xml2.contains("<w:linkStyles"), "linkStyles removed from settings.xml");
+}
+
+#[test]
+fn strict_first_and_last_chars_save_and_reopen() {
+    let blank = ibis_pptx::blank_file(ibis_pptx::Kind::Document).unwrap();
+    let opened = ibis_pptx::open(blank).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    assert!(flow(document.presentation()).strict_first_and_last_chars);
+
+    // Set to false (standard rules)
+    document.execute(vec![Command::Flow(FlowCommand::SetStrictFirstAndLastChars(false))]).unwrap();
+    assert!(!flow(document.presentation()).strict_first_and_last_chars);
+
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    assert!(!flow(&reopened).strict_first_and_last_chars);
+
+    let settings_xml = ibis_pptx::test_files::part_text(&saved, "word/settings.xml").unwrap();
+    assert!(!settings_xml.contains("<w:strictFirstAndLastChars"), "strictFirstAndLastChars removed when false");
+
+    // Set back to true (strict rules)
+    let opened2 = ibis_pptx::open(saved).unwrap();
+    let mut document2 = Document::new(opened2.presentation.clone());
+    document2.execute(vec![Command::Flow(FlowCommand::SetStrictFirstAndLastChars(true))]).unwrap();
+    assert!(flow(document2.presentation()).strict_first_and_last_chars);
+
+    let saved2 = opened2.source.save(document2.presentation(), SaveOptions::default()).unwrap();
+    let reopened2 = ibis_pptx::read(&saved2).unwrap();
+    assert!(flow(&reopened2).strict_first_and_last_chars);
+
+    let settings_xml2 = ibis_pptx::test_files::part_text(&saved2, "word/settings.xml").unwrap();
+    assert!(settings_xml2.contains("<w:strictFirstAndLastChars"), "strictFirstAndLastChars added when true");
+}
+
+#[test]
+fn theme_font_lang_and_bidi_save_and_reopen() {
+    let blank = ibis_pptx::blank_file(ibis_pptx::Kind::Document).unwrap();
+    let opened = ibis_pptx::open(blank).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+
+    // 1. Check default themeFontLang from blank template
+    let initial_tfl = flow(document.presentation()).theme_font_lang.clone().expect("default theme font lang");
+    assert_eq!(initial_tfl.val.as_deref(), Some("en-US"));
+    assert_eq!(initial_tfl.east_asia.as_deref(), Some("ja-JP"));
+    assert_eq!(initial_tfl.bidi.as_deref(), Some("ar-SA"));
+
+    // 2. Set Bidi language on run
+    let p_id = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.id,
+        _ => panic!("expected paragraph"),
+    };
+    document
+        .execute(vec![
+            Command::Flow(FlowCommand::InsertText {
+                at: FlowPos::new(p_id, 0),
+                text: "Hello".into(),
+                format: None,
+            }),
+            Command::Flow(FlowCommand::SetRunFormat {
+                from: FlowPos::new(p_id, 0),
+                to: FlowPos::new(p_id, 5),
+                change: RunChange::Language {
+                    lang: Some("en-US".into()),
+                    east_asia: Some("ja-JP".into()),
+                    bidi: Some("ar-SA".into()),
+                },
+            }),
+        ])
+        .unwrap();
+
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let doc_xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+    assert!(doc_xml.contains(r#"w:bidi="ar-SA""#), "bidi attribute saved in document.xml: {doc_xml}");
+
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    let fdoc = flow(&reopened);
+    let run = match &fdoc.body[0] {
+        Block::Paragraph(p) => &p.runs[0],
+        _ => panic!("expected paragraph"),
+    };
+    assert_eq!(run.format.lang_bidi.as_deref(), Some("ar-SA"));
+    assert_eq!(run.format.lang.as_deref(), Some("en-US"));
+    assert_eq!(run.format.lang_east_asia.as_deref(), Some("ja-JP"));
+
+    // 3. Change themeFontLang (e.g. Set as Default language)
+    let new_tfl = ibis_doc_model::ThemeFontLang {
+        val: Some("fr-FR".into()),
+        east_asia: Some("zh-CN".into()),
+        bidi: Some("he-IL".into()),
+    };
+    document
+        .execute(vec![Command::Flow(FlowCommand::SetThemeFontLang(Some(new_tfl.clone())))])
+        .unwrap();
+
+    let saved2 = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let settings_xml2 = ibis_pptx::test_files::part_text(&saved2, "word/settings.xml").unwrap();
+    assert!(
+        settings_xml2.contains(r#"<w:themeFontLang w:val="fr-FR" w:eastAsia="zh-CN" w:bidi="he-IL"/>"#),
+        "themeFontLang updated in settings.xml: {settings_xml2}"
+    );
+
+    let reopened2 = ibis_pptx::read(&saved2).unwrap();
+    assert_eq!(flow(&reopened2).theme_font_lang.as_ref(), Some(&new_tfl));
+
+    // 4. Clear themeFontLang (None)
+    document
+        .execute(vec![Command::Flow(FlowCommand::SetThemeFontLang(None))])
+        .unwrap();
+
+    let saved3 = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let settings_xml3 = ibis_pptx::test_files::part_text(&saved3, "word/settings.xml").unwrap();
+    assert!(
+        !settings_xml3.contains("<w:themeFontLang"),
+        "themeFontLang removed from settings.xml: {settings_xml3}"
+    );
+
+    let reopened3 = ibis_pptx::read(&saved3).unwrap();
+    assert!(flow(&reopened3).theme_font_lang.is_none());
+
+    // 5. Test Undo / Redo
+    assert!(document.undo());
+    assert_eq!(flow(document.presentation()).theme_font_lang.as_ref(), Some(&new_tfl));
+    assert!(document.undo());
+    assert_eq!(flow(document.presentation()).theme_font_lang.as_ref(), Some(&initial_tfl));
+    assert!(document.redo());
+    assert_eq!(flow(document.presentation()).theme_font_lang.as_ref(), Some(&new_tfl));
+    assert!(document.redo());
+    assert!(flow(document.presentation()).theme_font_lang.is_none());
+}
+
+#[test]
+fn collapsed_heading_save_and_reopen() {
+    let blank = ibis_pptx::blank_file(ibis_pptx::Kind::Document).unwrap();
+    let opened = ibis_pptx::open(blank).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+
+    let p_id = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.id,
+        _ => panic!("expected paragraph"),
+    };
+    assert!(!match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.collapsed,
+        _ => panic!("expected paragraph"),
+    });
+
+    // 1. Collapse the paragraph
+    document
+        .execute(vec![Command::Flow(FlowCommand::SetParagraphFormat {
+            first: p_id,
+            last: p_id,
+            change: ParaChange::Collapsed(true),
+        })])
+        .unwrap();
+
+    assert!(match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.collapsed,
+        _ => panic!("expected paragraph"),
+    });
+
+    // 2. Save and check document.xml contains collapsed
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let doc_xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+    assert!(doc_xml.contains("collapsed"), "collapsed element saved in document.xml: {doc_xml}");
+
+    // 3. Reopen and verify collapsed = true
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    assert!(match &flow(&reopened).body[0] {
+        Block::Paragraph(p) => p.collapsed,
+        _ => panic!("expected paragraph"),
+    });
+
+    // 4. Expand the paragraph (collapsed = false)
+    let opened2 = ibis_pptx::open(saved).unwrap();
+    let mut document2 = Document::new(opened2.presentation.clone());
+    document2
+        .execute(vec![Command::Flow(FlowCommand::SetParagraphFormat {
+            first: p_id,
+            last: p_id,
+            change: ParaChange::Collapsed(false),
+        })])
+        .unwrap();
+
+    let saved2 = opened2.source.save(document2.presentation(), SaveOptions::default()).unwrap();
+    let doc_xml2 = ibis_pptx::test_files::part_text(&saved2, "word/document.xml").unwrap();
+    assert!(!doc_xml2.contains("collapsed"), "collapsed element removed from document.xml: {doc_xml2}");
+
+    let reopened2 = ibis_pptx::read(&saved2).unwrap();
+    assert!(!match &flow(&reopened2).body[0] {
+        Block::Paragraph(p) => p.collapsed,
+        _ => panic!("expected paragraph"),
+    });
+
+    // 5. Test Undo / Redo
+    assert!(document.undo());
+    assert!(!match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.collapsed,
+        _ => panic!("expected paragraph"),
+    });
+    assert!(document.redo());
+    assert!(match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.collapsed,
+        _ => panic!("expected paragraph"),
+    });
+}
+
+#[test]
+fn test_list_style_num_style_link_save_and_reopen() {
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data.clone()).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    let doc = flow(document.presentation());
+
+    // 1. リストスタイル (StyleKind::Numbering) と numbering (numStyleLink) を新規定義
+    let style_id = "LegalClauseList";
+    let (mut numbering, num_id) = doc.styles.numbering.with_new_list_style(style_id, None);
+    // レベル 0 の書式をカスタマイズ（第%1条）
+    let abs_id = numbering.nums[&num_id].abstract_id;
+    if let Some(abs) = numbering.abstracts.get_mut(&abs_id) {
+        if let Some(lvl0) = abs.levels.get_mut(0) {
+            lvl0.format = "decimal".into();
+            lvl0.text = "第%1条".into();
+            lvl0.suffix = ibis_doc_model::ListSuffix::Space;
+        }
+    }
+
+    let mut styles = (*doc.styles).clone();
+    styles.numbering = numbering.clone();
+    let list_style = ibis_doc_model::FlowStyle {
+        kind: ibis_doc_model::StyleKind::Numbering,
+        name: "契約書条項リスト".into(),
+        num_id: Some(num_id),
+        quick: true,
+        ..ibis_doc_model::FlowStyle::default()
+    };
+    styles.styles.insert(style_id.to_string(), list_style.clone());
+
+    let p_id = match &doc.body[0] {
+        Block::Paragraph(p) => p.id,
+        _ => panic!("expected paragraph"),
+    };
+
+    // 2. コマンドを実行して段落にリストスタイルを適用
+    let commands = vec![
+        Command::Flow(FlowCommand::SetNumbering { numbering }),
+        Command::Flow(FlowCommand::SetStyle { id: style_id.to_string(), style: Some(list_style) }),
+        Command::Flow(FlowCommand::SetParagraphFormat {
+            first: p_id,
+            last: p_id,
+            change: ParaChange::List(Some(num_id)),
+        }),
+    ];
+    document.execute(commands).unwrap();
+
+    // 3. 保存と XML 検証
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let styles_xml = ibis_pptx::test_files::part_text(&saved, "word/styles.xml").unwrap();
+    assert!(styles_xml.contains(r#"w:type="numbering""#), "styles.xml contains numbering type: {styles_xml}");
+    assert!(styles_xml.contains(r#"w:styleId="LegalClauseList""#), "styles.xml contains styleId: {styles_xml}");
+    assert!(styles_xml.contains(&format!(r#"<w:numId w:val="{num_id}"/>"#)), "styles.xml contains numId: {styles_xml}");
+
+    let numbering_xml = ibis_pptx::test_files::part_text(&saved, "word/numbering.xml").unwrap();
+    assert!(numbering_xml.contains(r#"<w:numStyleLink w:val="LegalClauseList"/>"#), "numbering.xml contains numStyleLink: {numbering_xml}");
+    assert!(numbering_xml.contains("第%1条"), "numbering.xml contains custom text: {numbering_xml}");
+
+    // 4. 再オープンと復元検証
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    let reopened_doc = flow(&reopened);
+    let reopened_style = reopened_doc.styles.styles.get(style_id).expect("reopened style exists");
+    assert_eq!(reopened_style.kind, ibis_doc_model::StyleKind::Numbering);
+    assert_eq!(reopened_style.num_id, Some(num_id));
+    assert_eq!(reopened_style.name, "契約書条項リスト");
+
+    let reopened_abs = &reopened_doc.styles.numbering.abstracts[&abs_id];
+    assert_eq!(reopened_abs.num_style_link.as_deref(), Some("LegalClauseList"));
+    assert_eq!(reopened_abs.levels[0].text, "第%1条");
+
+    let first_p = match &reopened_doc.body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    assert_eq!(first_p.list.map(|l| l.num_id), Some(num_id));
+
+    // 5. 1ステップ Undo / Redo
+    assert!(document.undo());
+    let undone_doc = flow(document.presentation());
+    assert!(match &undone_doc.body[0] {
+        Block::Paragraph(p) => p.list.is_none(),
+        _ => false,
+    });
+
+    assert!(document.redo());
+    let redone_doc = flow(document.presentation());
+    assert_eq!(match &redone_doc.body[0] {
+        Block::Paragraph(p) => p.list.map(|l| l.num_id),
+        _ => None,
+    }, Some(num_id));
+}
+
+#[test]
+fn test_docx_theme_colors_and_retheme_roundtrip() {
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation);
+
+    let p_id = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.id,
+        _ => panic!("expected paragraph"),
+    };
+
+    // 1. Set run color to themeColor="accent1"
+    let tc = ibis_doc_model::FlowThemeColor::new("accent1", None::<String>, None::<String>);
+    document
+        .execute(vec![Command::Flow(FlowCommand::SetRunFormat {
+            from: FlowPos::new(p_id, 0),
+            to: FlowPos::new(p_id, 2),
+            change: RunChange::ThemeColor {
+                color: Rgb(0x4472c4),
+                theme_color: tc.clone(),
+            },
+        })])
+        .unwrap();
+
+    // 2. Apply a new theme color palette (e.g. Aspect: accent1 = 0xf0a22e) + theme fonts
+    let new_colors = vec![
+        ("dk1".to_string(), Rgb(0x000000)),
+        ("lt1".to_string(), Rgb(0xffffff)),
+        ("dk2".to_string(), Rgb(0x242852)),
+        ("lt2".to_string(), Rgb(0xe3e3e3)),
+        ("accent1".to_string(), Rgb(0xf0a22e)),
+        ("accent2".to_string(), Rgb(0xa56110)),
+        ("accent3".to_string(), Rgb(0x90a437)),
+        ("accent4".to_string(), Rgb(0x43896a)),
+        ("accent5".to_string(), Rgb(0x427891)),
+        ("accent6".to_string(), Rgb(0x4e4273)),
+        ("hlink".to_string(), Rgb(0xd86a14)),
+        ("folHlink".to_string(), Rgb(0x745a45)),
+    ];
+    let new_fonts = ibis_doc_model::ThemeFonts {
+        major: ibis_doc_model::FontSet {
+            latin: Some("Century Gothic".to_string()),
+            east_asian: Some("Yu Gothic".to_string()),
+            complex: None,
+        },
+        minor: ibis_doc_model::FontSet {
+            latin: Some("Century Gothic".to_string()),
+            east_asian: Some("Yu Gothic".to_string()),
+            complex: None,
+        },
+    };
+    document
+        .execute(vec![
+            Command::SetTheme {
+                colors: new_colors.clone(),
+                fonts: Some(new_fonts.clone()),
+            },
+            Command::SetThemeEffects {
+                name: Some("Metro".to_string()),
+            },
+        ])
+        .unwrap();
+
+    // Verify run's resolved color updated to 0xf0a22e in memory
+    let p_after = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    assert_eq!(p_after.runs[0].format.color, Some(Rgb(0xf0a22e)));
+    assert_eq!(p_after.runs[0].style.color, Rgb(0xf0a22e));
+
+    // 3. Test 1-step Undo / Redo of theme switch
+    assert!(document.undo());
+    let p_undone = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    assert_ne!(p_undone.runs[0].format.color, Some(Rgb(0xf0a22e)));
+
+    assert!(document.redo());
+    let p_redone = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    assert_eq!(p_redone.runs[0].format.color, Some(Rgb(0xf0a22e)));
+
+    // 4. Save and reopen OOXML roundtrip
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    assert!(reopened.theme_colors.iter().any(|(k, c)| k == "accent1" && *c == Rgb(0xf0a22e)));
+    assert_eq!(
+        reopened.theme_fonts.as_ref().and_then(|f| f.major.latin.as_deref()),
+        Some("Century Gothic")
+    );
+    let p_reopened = match &flow(&reopened).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    assert_eq!(p_reopened.runs[0].format.color, Some(Rgb(0xf0a22e)));
+    assert_eq!(p_reopened.runs[0].style.color, Rgb(0xf0a22e));
+}
+
+#[test]
+fn test_docx_compatibility_mode_detection_and_convert() {
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation);
+
+    // 1. Set compatibility mode to Word 2007 (12)
+    document
+        .execute(vec![Command::Flow(FlowCommand::SetCompatibilityOptions {
+            compatibility_mode: Some(12),
+            use_fe_layout: true,
+            do_not_expand_shift_return: false,
+        })])
+        .unwrap();
+    assert!(flow(document.presentation()).is_compatibility_mode());
+    assert_eq!(flow(document.presentation()).compatibility_mode_version_name(), "Word 2007");
+
+    // 2. Convert to current format (Word 2013-2024 = 15)
+    document
+        .execute(vec![Command::Flow(FlowCommand::SetCompatibilityOptions {
+            compatibility_mode: Some(15),
+            use_fe_layout: true,
+            do_not_expand_shift_return: false,
+        })])
+        .unwrap();
+    assert!(!flow(document.presentation()).is_compatibility_mode());
+    assert_eq!(flow(document.presentation()).compatibility_mode_version_name(), "Word 2013-2024");
+
+    // 3. 1-step Undo / Redo
+    assert!(document.undo());
+    assert!(flow(document.presentation()).is_compatibility_mode());
+    assert_eq!(flow(document.presentation()).compatibility_mode, Some(12));
+
+    assert!(document.redo());
+    assert!(!flow(document.presentation()).is_compatibility_mode());
+    assert_eq!(flow(document.presentation()).compatibility_mode, Some(15));
+
+    // 4. Save and reopen
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    assert!(!flow(&reopened).is_compatibility_mode());
+    assert_eq!(flow(&reopened).compatibility_mode, Some(15));
+}
+
+#[test]
+fn test_docx_wrap_polygon_roundtrip() {
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut pres = opened.presentation;
+    let p_id = match &flow(&pres).body[0] {
+        Block::Paragraph(p) => p.id,
+        _ => panic!("expected paragraph"),
+    };
+    let png_bytes = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+        0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+        0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+        0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    let media_id = pres.add_media(ibis_doc_model::MediaFormat::Png, png_bytes);
+    let mut document = Document::new(pres);
+    document
+        .execute(vec![
+            Command::Flow(FlowCommand::InsertPicture {
+                at: FlowPos::new(p_id, 0),
+                media: media_id,
+                size: ibis_doc_model::EmuSize::new(914_400, 914_400),
+            }),
+            Command::Flow(FlowCommand::SetPictureWrap {
+                at: FlowPos::new(p_id, 0),
+                wrap: ibis_doc_model::PictureWrapType::Tight,
+            }),
+        ])
+        .unwrap();
+
+    let initial_poly = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => match &p.runs[0].kind {
+            FlowRunKind::Shape(s) => s.floating.as_ref().and_then(|f| f.wrap_polygon.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+    .expect("wrap_polygon initialized on Tight wrap");
+    assert_eq!(initial_poly.start, ibis_doc_model::WrapPoint::new(0, 0));
+    assert_eq!(initial_poly.line_to.len(), 4);
+
+    let diamond = ibis_doc_model::WrapPolygon::diamond_21600();
+    let mut anchor = ibis_doc_model::FloatingAnchor::default();
+    anchor.wrap = "tight".to_string();
+    anchor.wrap_polygon = Some(diamond.clone());
+    document
+        .execute(vec![Command::Flow(FlowCommand::SetPictureFloating {
+            at: FlowPos::new(p_id, 0),
+            anchor: Some(anchor),
+        })])
+        .unwrap();
+
+    let top_span = diamond.x_span_for_y_band(0.0, 0.0, 100.0, 100.0, 5.0, 15.0).unwrap();
+    let mid_span = diamond.x_span_for_y_band(0.0, 0.0, 100.0, 100.0, 45.0, 55.0).unwrap();
+    assert!((mid_span.1 - mid_span.0) > (top_span.1 - top_span.0));
+
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    let reopened_poly = match &flow(&reopened).body[0] {
+        Block::Paragraph(p) => match &p.runs[0].kind {
+            FlowRunKind::Shape(s) => s.floating.as_ref().and_then(|f| f.wrap_polygon.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+    .expect("reopened wrap_polygon");
+    assert!(reopened_poly.edited);
+    assert_eq!(reopened_poly.start, ibis_doc_model::WrapPoint::new(10_800, 0));
+    assert_eq!(reopened_poly.line_to, diamond.line_to);
+}
+
+#[test]
+fn test_docx_master_and_subdocument_roundtrip() {
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation);
+
+    let p_id = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.id,
+        _ => panic!("expected paragraph"),
+    };
+
+    let subdoc = ibis_doc_model::SubdocumentInfo {
+        target: "chapters/chapter1.docx".to_string(),
+        title: "第1章 概要".to_string(),
+        expanded: false,
+        locked: true,
+        content_paragraphs: vec!["サブ文書本文1".to_string(), "サブ文書本文2".to_string()],
+    };
+    document
+        .execute(vec![Command::Flow(FlowCommand::SetParagraphSubdocument {
+            para: p_id,
+            subdoc: Some(subdoc.clone()),
+        })])
+        .unwrap();
+
+    let err = document
+        .execute(vec![Command::Flow(FlowCommand::InsertText {
+            at: FlowPos::new(p_id, 0),
+            text: "Blocked".to_string(),
+            format: None,
+        })])
+        .unwrap_err();
+    assert_eq!(err, ibis_doc_model::EditError::ControlLocked);
+
+    assert!(document.undo());
+    let p_undone = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    assert!(p_undone.subdoc.is_none());
+
+    assert!(document.redo());
+    let p_redone = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    assert_eq!(p_redone.subdoc.as_ref(), Some(&subdoc));
+
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    let p_reopened = match &flow(&reopened).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    let re_sub = p_reopened.subdoc.as_ref().expect("reopened subdoc");
+    assert_eq!(re_sub.target, "chapters/chapter1.docx");
+    assert_eq!(re_sub.title, "第1章 概要");
+    assert!(!re_sub.expanded);
+    assert!(re_sub.locked);
+    assert_eq!(re_sub.content_paragraphs, vec!["サブ文書本文1".to_string(), "サブ文書本文2".to_string()]);
+}
+
+#[test]
+fn test_docx_ink_stroke_and_effects_roundtrip() {
+    use ibis_doc_model::{
+        Color, EmuSize, Fill, FormulaGeometry, Geometry, GeometryDef, GeometryPath, Glue,
+        GradientStop, LineCap, LineJoin, PathFill, PathOp, Rgb, ShapeKind, Stroke,
+    };
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation);
+
+    let p_id = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.id,
+        _ => panic!("expected paragraph"),
+    };
+    let at = FlowPos::new(p_id, 0);
+
+    // Build a custom geometry ink stroke with Rainbow linear gradient effect and Round cap/join
+    let path = GeometryPath {
+        width: 500_000,
+        height: 300_000,
+        fill: PathFill::None,
+        stroke: true,
+        ops: vec![
+            PathOp::MoveTo("0".into(), "0".into()),
+            PathOp::LineTo("250000".into(), "150000".into()),
+            PathOp::LineTo("500000".into(), "300000".into()),
+        ],
+    };
+    let geom = Geometry::Formula(FormulaGeometry {
+        preset: None,
+        adjust: Vec::new(),
+        def: std::sync::Arc::new(GeometryDef {
+            adjust: Vec::new(),
+            guides: Vec::new(),
+            paths: vec![path],
+            text_rect: None,
+        }),
+    });
+    let mut stroke = Stroke::solid(Color { rgb: Rgb(0xFF0000), alpha: 128 }, 57_150);
+    stroke.cap = LineCap::Round;
+    stroke.join = LineJoin::Round;
+    stroke.fill = Some(Fill::Linear {
+        angle: 0,
+        scaled: false,
+        stops: vec![
+            GradientStop { position: 0, color: Color::opaque(Rgb(0xFF0000)) },
+            GradientStop { position: 100_000, color: Color::opaque(Rgb(0x9B30FF)) },
+        ],
+    });
+    let size = EmuSize::new(500_000, 300_000);
+    document
+        .execute(vec![
+            Command::Flow(FlowCommand::InsertConnector {
+                at,
+                size,
+                stroke: stroke.clone(),
+                geometry: Some(geom),
+                flip_h: false,
+                flip_v: false,
+                glue: Glue::default(),
+            }),
+            Command::Flow(FlowCommand::PlaceShapeOnPage {
+                at,
+                size,
+                x: 914_400,
+                y: 914_400,
+            }),
+        ])
+        .unwrap();
+
+    // Verify 1-step Undo and Redo
+    assert!(document.undo());
+    let p_undone = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    assert!(!p_undone.runs.iter().any(|r| matches!(r.kind, ibis_doc_model::FlowRunKind::Shape(_))));
+
+    assert!(document.redo());
+
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    let p_reopened = match &flow(&reopened).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    let re_shape = p_reopened
+        .runs
+        .iter()
+        .find_map(|r| match &r.kind {
+            ibis_doc_model::FlowRunKind::Shape(s) => Some(s),
+            _ => None,
+        })
+        .expect("reopened ink shape");
+    assert_eq!(re_shape.frame.width, 500_000);
+    assert_eq!(re_shape.frame.height, 300_000);
+    let ShapeKind::Auto(auto) = &re_shape.kind else {
+        panic!("expected AutoShape for ink stroke");
+    };
+    let Geometry::Formula(fg) = &auto.geometry else {
+        panic!("expected FormulaGeometry for ink stroke");
+    };
+    assert!(fg.preset.is_none());
+    assert_eq!(fg.def.paths[0].ops.len(), 3);
+    let re_stroke = auto.stroke.as_ref().expect("reopened ink stroke");
+    assert_eq!(re_stroke.width, 57_150);
+    assert_eq!(re_stroke.cap, LineCap::Round);
+    assert_eq!(re_stroke.join, LineJoin::Round);
+    assert!(matches!(re_stroke.fill, Some(Fill::Linear { .. })));
+}
+
+#[test]
+fn test_docx_math_skewed_linear_frac_roundtrip() {
+    use ibis_doc_model::math::{FracKind, Math};
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation);
+
+    let p_id = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.id,
+        _ => panic!("expected paragraph"),
+    };
+    let at = FlowPos::new(p_id, 0);
+
+    let latex_str = r"\sfrac{a}{b}+\lfrac{c}{d}+\nobarfrac{e}{f}";
+    let parsed = ibis_doc_model::latex::parse_latex(latex_str);
+    assert_eq!(parsed.to_latex(), r"\sfrac{a}{b}+\lfrac{c}{d}+\nobarfrac{e}{f}");
+
+    document
+        .execute(vec![Command::Flow(FlowCommand::InsertField {
+            at,
+            kind: ibis_doc_model::FlowRunKind::Math {
+                math: parsed.clone(),
+                display: true,
+            },
+        })])
+        .unwrap();
+
+    // Save and reopen OOXML roundtrip
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    let p_reopened = match &flow(&reopened).body[0] {
+        Block::Paragraph(p) => p,
+        _ => panic!("expected paragraph"),
+    };
+    let (re_math, re_display) = p_reopened
+        .runs
+        .iter()
+        .find_map(|r| match &r.kind {
+            ibis_doc_model::FlowRunKind::Math { math, display } => Some((math, *display)),
+            _ => None,
+        })
+        .expect("reopened math run");
+    assert!(re_display);
+    let Math::Row(items) = re_math else {
+        panic!("expected Math::Row");
+    };
+    let frac_kinds: Vec<FracKind> = items
+        .iter()
+        .filter_map(|m| match m {
+            Math::Frac { kind, .. } => Some(*kind),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(frac_kinds, vec![FracKind::Skew, FracKind::Linear, FracKind::NoBar]);
+    assert_eq!(re_math.to_latex(), latex_str);
+}
+
+#[test]
+fn test_docx_wpg_group_and_ungroup_roundtrip() {
+    use ibis_doc_model::{EmuSize, Geometry, Rgb, ShapeGroup};
+    let bytes = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let mut document = Document::new(opened.presentation);
+
+    let p_id = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p.id,
+        _ => panic!("expected paragraph"),
+    };
+
+    // Insert 2 shapes in the first paragraph
+    let at0 = FlowPos::new(p_id, 0);
+    let at1 = FlowPos::new(p_id, 1);
+    document
+        .execute(vec![
+            Command::Flow(FlowCommand::InsertShape {
+                at: at0,
+                size: EmuSize::new(914_400, 457_200),
+                geometry: Geometry::Rect,
+                fill: Some(Rgb(0x4472c4)),
+                line: Some((Rgb(0x1f4e79), 12_700)),
+            }),
+            Command::Flow(FlowCommand::PlaceShapeOnPage {
+                at: at0,
+                size: EmuSize::new(914_400, 457_200),
+                x: 457_200,
+                y: 457_200,
+            }),
+            Command::Flow(FlowCommand::InsertShape {
+                at: at1,
+                size: EmuSize::new(685_800, 685_800),
+                geometry: Geometry::Ellipse,
+                fill: Some(Rgb(0xed7d31)),
+                line: Some((Rgb(0xc55a11), 12_700)),
+            }),
+            Command::Flow(FlowCommand::PlaceShapeOnPage {
+                at: at1,
+                size: EmuSize::new(685_800, 685_800),
+                x: 1_600_200,
+                y: 685_800,
+            }),
+        ])
+        .unwrap();
+
+    let shape_ids: Vec<ibis_doc_model::ShapeId> = match &flow(document.presentation()).body[0] {
+        Block::Paragraph(p) => p
+            .runs
+            .iter()
+            .filter_map(|r| match &r.kind {
+                ibis_doc_model::FlowRunKind::Shape(s) => Some(s.id),
+                _ => None,
+            })
+            .collect(),
+        _ => panic!("expected paragraph"),
+    };
+    assert_eq!(shape_ids.len(), 2);
+
+    // Group the 2 shapes via SetShapeGroups
+    let group = ShapeGroup::from_shape_ids("9001", "Group 1", &shape_ids);
+    document
+        .execute(vec![Command::Flow(FlowCommand::SetShapeGroups(vec![group.clone()]))])
+        .unwrap();
+    assert_eq!(flow(document.presentation()).shape_groups.len(), 1);
+
+    // Undo / Redo grouping
+    assert!(document.undo());
+    assert!(flow(document.presentation()).shape_groups.is_empty());
+    assert!(document.redo());
+    assert_eq!(flow(document.presentation()).shape_groups.len(), 1);
+
+    // Save and reopen: verify <wpg:wgp> was written and parsed back into shape_groups
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    let re_flow = flow(&reopened);
+    assert_eq!(re_flow.shape_groups.len(), 1);
+    assert_eq!(re_flow.shape_groups[0].leaf_shape_ids().len(), 2);
+
+    // Verify both child shapes' geometries and relative bounds were preserved across <wpg:wgp>
+    let re_shapes: Vec<&ibis_doc_model::Shape> = match &re_flow.body[0] {
+        Block::Paragraph(p) => p
+            .runs
+            .iter()
+            .filter_map(|r| match &r.kind {
+                ibis_doc_model::FlowRunKind::Shape(s) => Some(s.as_ref()),
+                _ => None,
+            })
+            .collect(),
+        _ => panic!("expected paragraph"),
+    };
+    assert_eq!(re_shapes.len(), 2);
+    assert_eq!(re_shapes[0].frame.x, 457_200);
+    assert_eq!(re_shapes[0].frame.y, 457_200);
+    assert_eq!(re_shapes[0].frame.width, 914_400);
+    assert_eq!(re_shapes[0].frame.height, 457_200);
+    assert_eq!(re_shapes[1].frame.x, 1_600_200);
+    assert_eq!(re_shapes[1].frame.y, 685_800);
+    assert_eq!(re_shapes[1].frame.width, 685_800);
+    assert_eq!(re_shapes[1].frame.height, 685_800);
+}
+
+#[test]
+fn test_docx_format_conversions_txt_rtf_doc_html_odt_pdf() {
+    use ibis_pptx::docx_convert::{
+        export_docx_format, import_docx_format, DocxConvertFormat,
+    };
+
+    // Build a sample Word document with heading, formatted paragraph, and table
+    let seed_html = r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sample</title></head><body>
+<h1><strong>変換テスト見出し</strong></h1>
+<p style="text-align:center"><strong><em><u>日本語とEnglishの本文</u></em></strong></p>
+<table><tr><td><p>セルA1</p></td><td><p>セルB1</p></td></tr></table>
+</body></html>"#.as_bytes();
+    let opened = import_docx_format(seed_html, DocxConvertFormat::Html).unwrap();
+
+    // 1. Plain Text (.txt) roundtrip (DOCX-SEC-019)
+    let txt_bytes = export_docx_format(&opened.presentation, DocxConvertFormat::Txt).unwrap();
+    let txt_str = std::str::from_utf8(&txt_bytes).unwrap();
+    assert!(txt_str.contains("変換テスト見出し"));
+    assert!(txt_str.contains("日本語とEnglishの本文"));
+    assert!(txt_str.contains("セルA1\tセルB1"));
+    let from_txt = import_docx_format(&txt_bytes, DocxConvertFormat::Txt).unwrap();
+    let txt_flow = flow(&from_txt.presentation);
+    assert_eq!(txt_flow.body.len(), 3);
+
+    // 2. Rich Text Format (.rtf) roundtrip (DOCX-SEC-019)
+    let rtf_bytes = export_docx_format(&opened.presentation, DocxConvertFormat::Rtf).unwrap();
+    assert!(rtf_bytes.starts_with(b"{\\rtf1"));
+    let from_rtf = import_docx_format(&rtf_bytes, DocxConvertFormat::Rtf).unwrap();
+    let rtf_flow = flow(&from_rtf.presentation);
+    assert!(rtf_flow.body.len() >= 2);
+    match &rtf_flow.body[0] {
+        Block::Paragraph(p) => {
+            assert_eq!(p.style.as_deref(), Some("Heading1"));
+            assert!(p.text().contains("変換テスト見出し"));
+        }
+        _ => panic!("expected Heading1 paragraph"),
+    }
+    match &rtf_flow.body[1] {
+        Block::Paragraph(p) => {
+            assert_eq!(p.align, ibis_doc_model::FlowAlign::Center);
+            assert!(p.text().contains("日本語とEnglishの本文"));
+            assert!(p.runs[0].style.bold);
+            assert!(p.runs[0].style.italic);
+            assert!(p.runs[0].style.underline);
+        }
+        _ => panic!("expected formatted paragraph"),
+    }
+
+    // 3. Legacy Word 97-2003 (.doc) roundtrip (DOCX-FILE-010, DOCX-SEC-019)
+    let doc_bytes = export_docx_format(&opened.presentation, DocxConvertFormat::Doc).unwrap();
+    assert!(ibis_ooxml::cfb::is_cfb(&doc_bytes));
+    let from_doc = import_docx_format(&doc_bytes, DocxConvertFormat::Doc).unwrap();
+    let doc_flow = flow(&from_doc.presentation);
+    assert!(doc_flow.body.len() >= 2);
+    match &doc_flow.body[0] {
+        Block::Paragraph(p) => assert!(p.text().contains("変換テスト見出し")),
+        _ => panic!("expected paragraph from .doc"),
+    }
+
+    // Also test raw MS-DOC WordDocument FIB + UTF-16LE without IbisDocRtf stream
+    let wd_stream = ibis_ooxml::cfb::stream(&doc_bytes, "WordDocument").unwrap();
+    let raw_cfb = ibis_ooxml::cfb::write(&[ibis_ooxml::cfb::Item::stream("WordDocument", wd_stream)]);
+    let from_raw_doc = import_docx_format(&raw_cfb, DocxConvertFormat::Doc).unwrap();
+    let raw_doc_flow = flow(&from_raw_doc.presentation);
+    match &raw_doc_flow.body[0] {
+        Block::Paragraph(p) => assert!(p.text().contains("変換テスト見出し")),
+        _ => panic!("expected paragraph from raw FIB WordDocument"),
+    }
+
+    // 4. HTML (.html) roundtrip (DOCX-FILE-012)
+    let html_bytes = export_docx_format(&opened.presentation, DocxConvertFormat::Html).unwrap();
+    let html_str = std::str::from_utf8(&html_bytes).unwrap();
+    assert!(html_str.contains("<!DOCTYPE html>"));
+    assert!(html_str.contains("<h1><strong>変換テスト見出し</strong></h1>"));
+    assert!(html_str.contains("<table>"));
+    let from_html = import_docx_format(&html_bytes, DocxConvertFormat::Html).unwrap();
+    let html_flow = flow(&from_html.presentation);
+    assert_eq!(html_flow.body.len(), 3);
+    match &html_flow.body[0] {
+        Block::Paragraph(p) => {
+            assert_eq!(p.style.as_deref(), Some("Heading1"));
+            assert!(p.text().contains("変換テスト見出し"));
+        }
+        _ => panic!("expected Heading1 from HTML"),
+    }
+    match &html_flow.body[2] {
+        Block::Table(t) => {
+            assert_eq!(t.rows.len(), 1);
+            assert_eq!(t.rows[0].cells.len(), 2);
+        }
+        _ => panic!("expected Table from HTML"),
+    }
+
+    // 5. OpenDocument Text (.odt) roundtrip (DOCX-FILE-012)
+    let odt_bytes = export_docx_format(&opened.presentation, DocxConvertFormat::Odt).unwrap();
+    let from_odt = import_docx_format(&odt_bytes, DocxConvertFormat::Odt).unwrap();
+    let odt_flow = flow(&from_odt.presentation);
+    assert_eq!(odt_flow.body.len(), 3);
+    match &odt_flow.body[0] {
+        Block::Paragraph(p) => {
+            assert_eq!(p.style.as_deref(), Some("Heading1"));
+            assert!(p.text().contains("変換テスト見出し"));
+        }
+        _ => panic!("expected Heading1 from ODT"),
+    }
+    match &odt_flow.body[1] {
+        Block::Paragraph(p) => {
+            assert_eq!(p.align, ibis_doc_model::FlowAlign::Center);
+            assert!(p.text().contains("日本語とEnglishの本文"));
+            assert!(p.runs[0].style.bold);
+            assert!(p.runs[0].style.italic);
+            assert!(p.runs[0].style.underline);
+        }
+        _ => panic!("expected formatted paragraph from ODT"),
+    }
+    match &odt_flow.body[2] {
+        Block::Table(t) => {
+            assert_eq!(t.rows.len(), 1);
+            assert_eq!(t.rows[0].cells.len(), 2);
+        }
+        _ => panic!("expected Table from ODT"),
+    }
+
+    // 6. PDF to Document conversion (.pdf) (DOCX-FILE-013)
+    let pdf_sample = b"%PDF-1.4\n1 0 obj\n<< /Length 120 >>\nstream\nBT\n/F1 20 Tf\n72 720 Td\n(PDF Heading Title) Tj\n/F1 11 Tf\n0 -24 Td\n(First paragraph from PDF document.) Tj\nET\nendstream\nendobj\n%%EOF";
+    let from_pdf = import_docx_format(pdf_sample, DocxConvertFormat::Pdf).unwrap();
+    let pdf_flow = flow(&from_pdf.presentation);
+    assert_eq!(pdf_flow.body.len(), 2);
+    match &pdf_flow.body[0] {
+        Block::Paragraph(p) => {
+            assert_eq!(p.style.as_deref(), Some("Heading1"));
+            assert_eq!(p.text(), "PDF Heading Title");
+        }
+        _ => panic!("expected Heading1 from PDF"),
+    }
+    match &pdf_flow.body[1] {
+        Block::Paragraph(p) => {
+            assert_eq!(p.text(), "First paragraph from PDF document.");
+        }
+        _ => panic!("expected body paragraph from PDF"),
+    }
+}
+

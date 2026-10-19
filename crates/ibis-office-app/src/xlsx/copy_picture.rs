@@ -5,7 +5,9 @@
 //! or chart as a PNG image and place it onto the system clipboard.
 
 use gpui_kit::*;
-use ibis_doc_model::{CellAlign, CellRange, CellValue, Fill, Geometry, ShapeId, ShapeKind, TextBody};
+use ibis_doc_model::{
+    CellAlign, CellRange, CellValue, Command, EmuRect, Fill, Geometry, Shape, ShapeId, ShapeKind, SlideId, TextBody,
+};
 
 use crate::shell::editor::SlideEditor;
 
@@ -314,102 +316,122 @@ pub(crate) fn rgba_to_png(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Calculate the total size in EMU of a cell range on a sheet.
+pub(crate) fn sheet_range_emu_size(sheet: &ibis_doc_model::Sheet, range: CellRange) -> (i64, i64) {
+    let mut w_emu = 0i64;
+    for col in range.first_column..=range.last_column {
+        let emu = sheet.columns.get(col as usize).copied().unwrap_or(sheet.default_column);
+        w_emu += emu;
+    }
+    let mut h_emu = 0i64;
+    for row in range.first_row..=range.last_row {
+        let emu = sheet.rows.get(row as usize).copied().unwrap_or(sheet.default_row);
+        h_emu += emu;
+    }
+    (w_emu, h_emu)
+}
+
+/// Render a cell range of a worksheet to an in-memory PNG byte vector.
+pub(crate) fn render_sheet_range_to_png(sheet: &ibis_doc_model::Sheet, range: CellRange) -> Option<Vec<u8>> {
+    let mut col_widths = Vec::new();
+    for col in range.first_column..=range.last_column {
+        let emu = sheet.columns.get(col as usize).copied().unwrap_or(sheet.default_column);
+        let px = ((emu as f64) / 9525.0).round().clamp(24.0, 320.0) as u32;
+        col_widths.push(px);
+    }
+    let mut row_heights = Vec::new();
+    for row in range.first_row..=range.last_row {
+        let emu = sheet.rows.get(row as usize).copied().unwrap_or(sheet.default_row);
+        let px = ((emu as f64) / 9525.0).round().clamp(16.0, 160.0) as u32;
+        row_heights.push(px);
+    }
+    let total_w = (col_widths.iter().sum::<u32>() + 1).min(3840);
+    let total_h = (row_heights.iter().sum::<u32>() + 1).min(2160);
+    if total_w == 0 || total_h == 0 {
+        return None;
+    }
+
+    let mut buf = ImageBuffer::new(total_w, total_h, [255, 255, 255, 255]);
+    let grid_color = [218, 222, 228, 255];
+
+    // Draw grid lines
+    let mut cur_y = 0;
+    for &h in &row_heights {
+        buf.draw_hline(0, cur_y, total_w, grid_color, 1, false);
+        cur_y += h;
+    }
+    buf.draw_hline(0, total_h.saturating_sub(1), total_w, grid_color, 1, false);
+
+    let mut cur_x = 0;
+    for &w in &col_widths {
+        buf.draw_vline(cur_x, 0, total_h, grid_color, 1, false);
+        cur_x += w;
+    }
+    buf.draw_vline(total_w.saturating_sub(1), 0, total_h, grid_color, 1, false);
+
+    // Draw cell contents
+    let mut y0 = 0;
+    for (r_idx, row) in (range.first_row..=range.last_row).enumerate() {
+        let cell_h = row_heights[r_idx];
+        let mut x0 = 0;
+        for (c_idx, col) in (range.first_column..=range.last_column).enumerate() {
+            let cell_w = col_widths[c_idx];
+            if let Some(cell) = sheet.cell(row, col) {
+                if let Some(style) = sheet.styles.get(cell.style as usize) {
+                    // Cell fill
+                    if let Some(fill_rgb) = style.fill {
+                        buf.fill_rect(x0 + 1, y0 + 1, cell_w.saturating_sub(1), cell_h.saturating_sub(1), [fill_rgb.r(), fill_rgb.g(), fill_rgb.b(), 255]);
+                    }
+                    // Cell borders
+                    if let Some(border) = &style.top {
+                        buf.draw_hline(x0, y0, cell_w, [border.color.r(), border.color.g(), border.color.b(), 255], 1, false);
+                    }
+                    if let Some(border) = &style.bottom {
+                        buf.draw_hline(x0, (y0 + cell_h).saturating_sub(1), cell_w, [border.color.r(), border.color.g(), border.color.b(), 255], 1, false);
+                    }
+                    if let Some(border) = &style.left {
+                        buf.draw_vline(x0, y0, cell_h, [border.color.r(), border.color.g(), border.color.b(), 255], 1, false);
+                    }
+                    if let Some(border) = &style.right {
+                        buf.draw_vline((x0 + cell_w).saturating_sub(1), y0, cell_h, [border.color.r(), border.color.g(), border.color.b(), 255], 1, false);
+                    }
+                    // Cell text
+                    if !cell.text.is_empty() {
+                        let text_color = [style.color.r(), style.color.g(), style.color.b(), 255];
+                        let tw = buf.text_width(&cell.text);
+                        let tx = match style.align {
+                            CellAlign::Right => {
+                                if cell_w > tw + 6 { x0 + cell_w - tw - 6 } else { x0 + 2 }
+                            }
+                            CellAlign::Center => {
+                                if cell_w > tw { x0 + (cell_w - tw) / 2 } else { x0 + 2 }
+                            }
+                            _ => {
+                                if matches!(cell.value, CellValue::Number(_)) {
+                                    if cell_w > tw + 6 { x0 + cell_w - tw - 6 } else { x0 + 2 }
+                                } else {
+                                    x0 + 5
+                                }
+                            }
+                        };
+                        let ty = y0 + (cell_h.saturating_sub(7)) / 2;
+                        buf.draw_text_clipped(tx, ty, &cell.text, text_color, x0 + 1, y0 + 1, cell_w.saturating_sub(2), cell_h.saturating_sub(2));
+                    }
+                }
+            }
+            x0 += cell_w;
+        }
+        y0 += cell_h;
+    }
+
+    Some(buf.to_png())
+}
+
 impl SlideEditor {
     /// Render selected cell range as a PNG image.
     pub(crate) fn render_range_as_picture(&self, range: CellRange) -> Option<Vec<u8>> {
         let (_, sheet) = self.current_sheet()?;
-        let mut col_widths = Vec::new();
-        for col in range.first_column..=range.last_column {
-            let emu = sheet.columns.get(col as usize).copied().unwrap_or(sheet.default_column);
-            let px = ((emu as f64) / 9525.0).round().clamp(24.0, 320.0) as u32;
-            col_widths.push(px);
-        }
-        let mut row_heights = Vec::new();
-        for row in range.first_row..=range.last_row {
-            let emu = sheet.rows.get(row as usize).copied().unwrap_or(sheet.default_row);
-            let px = ((emu as f64) / 9525.0).round().clamp(16.0, 160.0) as u32;
-            row_heights.push(px);
-        }
-        let total_w = (col_widths.iter().sum::<u32>() + 1).min(3840);
-        let total_h = (row_heights.iter().sum::<u32>() + 1).min(2160);
-        if total_w == 0 || total_h == 0 {
-            return None;
-        }
-
-        let mut buf = ImageBuffer::new(total_w, total_h, [255, 255, 255, 255]);
-        let grid_color = [218, 222, 228, 255];
-
-        // Draw grid lines
-        let mut cur_y = 0;
-        for &h in &row_heights {
-            buf.draw_hline(0, cur_y, total_w, grid_color, 1, false);
-            cur_y += h;
-        }
-        buf.draw_hline(0, total_h.saturating_sub(1), total_w, grid_color, 1, false);
-
-        let mut cur_x = 0;
-        for &w in &col_widths {
-            buf.draw_vline(cur_x, 0, total_h, grid_color, 1, false);
-            cur_x += w;
-        }
-        buf.draw_vline(total_w.saturating_sub(1), 0, total_h, grid_color, 1, false);
-
-        // Draw cell contents
-        let mut y0 = 0;
-        for (r_idx, row) in (range.first_row..=range.last_row).enumerate() {
-            let cell_h = row_heights[r_idx];
-            let mut x0 = 0;
-            for (c_idx, col) in (range.first_column..=range.last_column).enumerate() {
-                let cell_w = col_widths[c_idx];
-                if let Some(cell) = sheet.cell(row, col) {
-                    if let Some(style) = sheet.styles.get(cell.style as usize) {
-                        // Cell fill
-                        if let Some(fill_rgb) = style.fill {
-                            buf.fill_rect(x0 + 1, y0 + 1, cell_w.saturating_sub(1), cell_h.saturating_sub(1), [fill_rgb.r(), fill_rgb.g(), fill_rgb.b(), 255]);
-                        }
-                        // Cell borders
-                        if let Some(border) = &style.top {
-                            buf.draw_hline(x0, y0, cell_w, [border.color.r(), border.color.g(), border.color.b(), 255], 1, false);
-                        }
-                        if let Some(border) = &style.bottom {
-                            buf.draw_hline(x0, (y0 + cell_h).saturating_sub(1), cell_w, [border.color.r(), border.color.g(), border.color.b(), 255], 1, false);
-                        }
-                        if let Some(border) = &style.left {
-                            buf.draw_vline(x0, y0, cell_h, [border.color.r(), border.color.g(), border.color.b(), 255], 1, false);
-                        }
-                        if let Some(border) = &style.right {
-                            buf.draw_vline((x0 + cell_w).saturating_sub(1), y0, cell_h, [border.color.r(), border.color.g(), border.color.b(), 255], 1, false);
-                        }
-                        // Cell text
-                        if !cell.text.is_empty() {
-                            let text_color = [style.color.r(), style.color.g(), style.color.b(), 255];
-                            let tw = buf.text_width(&cell.text);
-                            let tx = match style.align {
-                                CellAlign::Right => {
-                                    if cell_w > tw + 6 { x0 + cell_w - tw - 6 } else { x0 + 2 }
-                                }
-                                CellAlign::Center => {
-                                    if cell_w > tw { x0 + (cell_w - tw) / 2 } else { x0 + 2 }
-                                }
-                                _ => {
-                                    if matches!(cell.value, CellValue::Number(_)) {
-                                        if cell_w > tw + 6 { x0 + cell_w - tw - 6 } else { x0 + 2 }
-                                    } else {
-                                        x0 + 5
-                                    }
-                                }
-                            };
-                            let ty = y0 + (cell_h.saturating_sub(7)) / 2;
-                            buf.draw_text_clipped(tx, ty, &cell.text, text_color, x0 + 1, y0 + 1, cell_w.saturating_sub(2), cell_h.saturating_sub(2));
-                        }
-                    }
-                }
-                x0 += cell_w;
-            }
-            y0 += cell_h;
-        }
-
-        Some(buf.to_png())
+        render_sheet_range_to_png(sheet, range)
     }
 
     /// Render a worksheet shape, picture, or chart as a PNG image.
@@ -566,6 +588,115 @@ impl SlideEditor {
         }
 
         self.status = Some(crate::shell::i18n::text("_xlsx.select-a-cell-or-an-object-to-copy").into());
+        cx.notify();
+    }
+
+    /// 形式を選択して貼り付け > 図 (linked = false) / リンクされた図 (linked = true) (XLSX-IMAGE-020)
+    pub(crate) fn paste_as_picture(&mut self, linked: bool, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        self.commit_cell_edit(cx);
+        let Some((target_col, target_row)) = self.current_cell() else { return };
+        let slide_id = self.current_slide;
+
+        // 1. Determine source range and slide from clipboard clip or selection
+        let (source_range, source_slide) = if let Some(clip) = self.sheet_state().and_then(|s| s.clip.clone()) {
+            (clip.range, clip.slide)
+        } else if let Some(range) = self.selected_range() {
+            (range, slide_id)
+        } else {
+            self.status = Some(crate::shell::i18n::text("_xlsx.to-use-paste-special-copy-cells-first").into());
+            return cx.notify();
+        };
+
+        self.insert_range_as_picture(source_range, source_slide, target_col, target_row, linked, cx);
+    }
+
+    /// カメラ機能 (xlsx.camera-tool):
+    /// 現在の選択範囲をリンクされた図として配置する (XLSX-IMAGE-020)。
+    pub(crate) fn insert_camera_picture(&mut self, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        self.commit_cell_edit(cx);
+        let slide_id = self.current_slide;
+        let Some(source_range) = self.selected_range() else {
+            self.status = Some(crate::shell::i18n::text("_xlsx.select-a-cell-or-an-object-to-copy").into());
+            return cx.notify();
+        };
+        let (target_col, target_row) = self.current_cell().unwrap_or((source_range.last_column + 1, source_range.last_row + 1));
+        self.insert_range_as_picture(source_range, slide_id, target_col, target_row, true, cx);
+    }
+
+    fn insert_range_as_picture(
+        &mut self,
+        source_range: CellRange,
+        source_slide: SlideId,
+        target_col: u32,
+        target_row: u32,
+        linked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let slide_id = self.current_slide;
+
+        // 2. Obtain source sheet and its name
+        let p = self.presentation();
+        let source_sheet_info = p.slides.iter().find(|s| s.id == source_slide).and_then(|s| {
+            let name = s.name.clone();
+            crate::shell::editor::sheet_of(s).map(|(_, sheet)| (name, sheet.clone()))
+        });
+        let Some((source_sheet_name, source_sheet)) = source_sheet_info else { return };
+
+        // 3. Render range to PNG
+        let Some(png) = render_sheet_range_to_png(&source_sheet, source_range) else { return };
+
+        // 4. Calculate frame at destination cell
+        let (x, y) = if let Some((shape, sheet)) = self.current_sheet() {
+            let xs = sheet.column_offsets();
+            let ys = sheet.row_offsets();
+            let left = shape.frame.x + xs.get(target_col as usize).copied().unwrap_or(0);
+            let top = shape.frame.y + ys.get(target_row as usize).copied().unwrap_or(0);
+            (left, top)
+        } else {
+            self.sheet_insertion_origin()
+        };
+        let (w_emu, h_emu) = sheet_range_emu_size(&source_sheet, source_range);
+        let frame = EmuRect::new(x, y, w_emu, h_emu);
+
+        // 5. Register media and shape
+        let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, png.clone());
+        self.resources.add_picture(media, ibis_doc_model::MediaFormat::Png, &png);
+        let shape_id = self.document.ids().new_shape_id();
+        let picture = ibis_doc_model::Picture::new(media);
+        let shape = Shape::new(shape_id, frame, ShapeKind::Picture(picture));
+
+        let mut commands = vec![
+            Command::InsertShape { slide: slide_id, index: self.slide().shapes.len(), shape },
+        ];
+
+        if linked {
+            let start_name = format!("${}${}", super::dedupe_edit::column_name(source_range.first_column), source_range.first_row + 1);
+            let end_name = format!("${}${}", super::dedupe_edit::column_name(source_range.last_column), source_range.last_row + 1);
+            let range_ref = if source_range.first_row == source_range.last_row && source_range.first_column == source_range.last_column {
+                start_name
+            } else {
+                format!("{start_name}:{end_name}")
+            };
+            let formula_str = match (&source_sheet_name, source_slide != slide_id) {
+                (Some(name), true) => format!("={}!{range_ref}", ibis_calc::formula::quote_sheet(name)),
+                _ => format!("={range_ref}"),
+            };
+            commands.push(Command::SetShapeFormula {
+                slide: slide_id,
+                shape: shape_id,
+                formula: Some(formula_str),
+            });
+        }
+
+        self.run_sheet(commands, cx);
+        self.selection = Some(shape_id);
+        self.status = Some(crate::shell::i18n::text(if linked { "xlsx.pasted-linked-picture" } else { "xlsx.pasted-picture" }).into());
         cx.notify();
     }
 }

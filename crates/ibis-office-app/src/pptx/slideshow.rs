@@ -115,6 +115,12 @@ pub(crate) struct Slideshow {
     shown: usize,
     /// The presenter's view, and when the show started (its clock).
     pub(crate) presenter: bool,
+    /// The presenter's view's notes: the text size (pt), the teleprompter (自動スクロール: the speed in pt per second
+    /// while it runs), the scroll the notes are at and the slide they were scrolled for.
+    pub(crate) notes_size: f32,
+    pub(crate) teleprompter: Option<f32>,
+    notes_scroll: ScrollHandle,
+    notes_slide: std::cell::Cell<Option<ibis_doc_model::SlideId>>,
     started: crate::clock::Instant,
     paused_elapsed: Option<std::time::Duration>,
     accumulated: std::time::Duration,
@@ -429,6 +435,10 @@ impl SlideEditor {
             changes: 0,
             shown: 0,
             presenter: false,
+            notes_size: 20.0,
+            teleprompter: None,
+            notes_scroll: ScrollHandle::new(),
+            notes_slide: std::cell::Cell::new(None),
             started: crate::clock::Instant::now(),
             paused_elapsed: None,
             accumulated: std::time::Duration::ZERO,
@@ -598,6 +608,60 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// The presenter's view's notes: the size, whether the teleprompter runs, and how far they are scrolled (for the scenarios).
+    #[cfg(feature = "scenarios")]
+    pub(crate) fn notes_view_state(&self) -> Option<(f32, Option<f32>, f32)> {
+        let show = self.slideshow.as_ref()?;
+        Some((show.notes_size, show.teleprompter, -f32::from(show.notes_scroll.offset().y)))
+    }
+
+    /// 発表者ビューのノートの文字の大きさを変える（8〜72 pt）。
+    pub(crate) fn change_notes_size(&mut self, delta: f32, cx: &mut Context<Self>) {
+        let Some(show) = self.slideshow.as_mut() else { return };
+        show.notes_size = (show.notes_size + delta).clamp(8.0, 72.0);
+        cx.notify();
+    }
+
+    /// 発表者ビューのテレプロンプター: the notes scroll by themselves (on, at 20 pt per second at first; off).
+    pub(crate) fn toggle_teleprompter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(show) = self.slideshow.as_mut() else { return };
+        if show.teleprompter.take().is_some() {
+            cx.notify();
+            return;
+        }
+        show.teleprompter = Some(20.0);
+        cx.spawn_in(window, async move |this, cx| {
+            let step = std::time::Duration::from_millis(50);
+            loop {
+                cx.background_executor().timer(step).await;
+                let going = this.update(cx, |this, cx| {
+                    let Some(show) = this.slideshow.as_ref() else { return false };
+                    let Some(speed) = show.teleprompter else { return false };
+                    let at = show.notes_scroll.offset();
+                    let max = show.notes_scroll.max_offset();
+                    let next = (f32::from(at.y) - speed * step.as_secs_f32()).max(-f32::from(max.y));
+                    show.notes_scroll.set_offset(point(at.x, px(next)));
+                    cx.notify();
+                    true
+                });
+                if !matches!(going, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// テレプロンプターの速さを変える（5〜120 pt 毎秒）。
+    pub(crate) fn change_teleprompter_speed(&mut self, delta: f32, cx: &mut Context<Self>) {
+        let Some(show) = self.slideshow.as_mut() else { return };
+        if let Some(speed) = show.teleprompter.as_mut() {
+            *speed = (*speed + delta).clamp(5.0, 120.0);
+        }
+        cx.notify();
+    }
+
     /// 発表者ビューの経過時間（秒）
     pub(crate) fn presenter_timer_elapsed_secs(&self) -> u64 {
         let Some(show) = self.slideshow.as_ref() else { return 0 };
@@ -705,6 +769,9 @@ impl SlideEditor {
     /// End the slide show, back to the editor on the slide it ended on.
     pub(crate) fn end_slideshow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(show) = self.slideshow.take() else { return };
+        if let Some(state) = self.pptx_mut() {
+            state.slide_popup = None;
+        }
         self.stop_clips(cx);
         self.close_show_windows(show.external.map(|e| e.windows).unwrap_or_default(), cx);
         if show.made_fullscreen && window.is_fullscreen() {
@@ -717,6 +784,105 @@ impl SlideEditor {
         }
         self.focus_handle.focus(window, cx);
         cx.notify();
+    }
+
+    /// Context menu entries for the slide show / presenter view / reading view (PPTX-SHOW-009..017, PPTX-RECORD-008, PPTX-NOTES-015).
+    pub(crate) fn slideshow_context_menu_entries(&self) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem};
+        let Some(show) = self.slideshow.as_ref() else { return Vec::new() };
+        let mode = show.pointer_mode;
+        let has_prev_viewed = show.came_from.is_some();
+        let grid_open = show.grid_open;
+        let zoomed = show.zoom > 1.001;
+        let blank = show.blank;
+        let has_inks = show.slide_inks.get(&self.current_slide).is_some_and(|v| !v.is_empty());
+
+        let mut entries: Vec<MenuEntry> = vec![
+            MenuItem::tr("pptx.links.next-slide").icon("arrow_forward").shortcut("→").on(|e, w, cx| e.step_slideshow(true, w, cx)).into(),
+            MenuItem::tr("pptx.links.previous-slide").icon("arrow_back").shortcut("←").on(|e, w, cx| e.step_slideshow(false, w, cx)).into(),
+            MenuItem::tr("pptx.links.last-slide-viewed").icon("history").disabled(!has_prev_viewed).on(|e, w, cx| e.follow_link_in_show(&ibis_doc_model::SlideLink::LastSlideViewed, w, cx)).into(),
+            MenuItem::tr("pptx.misc.see-all-slides").icon("grid_view").checked(grid_open).on(|e, _, cx| e.toggle_slideshow_grid(cx)).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("_shell.zoom-in").icon("zoom_in").on(|e, _, cx| e.zoom_slideshow(1.25, cx)).into(),
+            MenuItem::tr("_shell.zoom-out").icon("zoom_out").disabled(!zoomed).on(|e, _, cx| e.zoom_slideshow(0.8, cx)).into(),
+            MenuItem::tr("_pptx.100").icon("fit_screen").disabled(!zoomed).on(|e, _, cx| e.reset_slideshow_zoom(cx)).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("_shell.black").icon("contrast").shortcut("B").checked(blank == Some(0x000000)).on(|e, _, cx| e.blank_slideshow(0x000000, cx)).into(),
+            MenuItem::tr("_shell.white").icon("wb_sunny").shortcut("W").checked(blank == Some(0xffffff)).on(|e, _, cx| e.blank_slideshow(0xffffff, cx)).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("_shell.arrow").icon("arrow_selector_tool").checked(mode == PointerMode::Arrow).on(|e, _, cx| e.set_slideshow_pointer_mode(PointerMode::Arrow, cx)).into(),
+            MenuItem::tr("pptx.misc.laser-pointer").icon("center_focus_strong").checked(mode == PointerMode::Laser).on(|e, _, cx| e.set_slideshow_pointer_mode(PointerMode::Laser, cx)).into(),
+            MenuItem::tr("pptx.misc.pen").icon("edit").checked(mode == PointerMode::Pen).on(|e, _, cx| e.set_slideshow_pointer_mode(PointerMode::Pen, cx)).into(),
+            MenuItem::tr("pptx.misc.highlighter").icon("ink_highlighter").checked(mode == PointerMode::Highlighter).on(|e, _, cx| e.set_slideshow_pointer_mode(PointerMode::Highlighter, cx)).into(),
+            MenuItem::tr("pptx.misc.eraser").icon("cleaning_services").checked(mode == PointerMode::Eraser).on(|e, _, cx| e.set_slideshow_pointer_mode(PointerMode::Eraser, cx)).into(),
+            MenuItem::tr("pptx.misc.clear-all-ink-slide").icon("delete_sweep").disabled(!has_inks).on(|e, _, cx| e.clear_current_slide_inks(cx)).into(),
+        ];
+
+        if show.presenter {
+            let is_paused = show.paused_elapsed.is_some();
+            let teleprompter_on = show.teleprompter.is_some();
+            let has_external = show.external.is_some();
+            entries.extend([
+                MenuEntry::Separator,
+                MenuItem::tr(if is_paused { "slideshow.rehearsal.resume" } else { "slideshow.rehearsal.pause" })
+                    .icon(if is_paused { "play_arrow" } else { "pause" })
+                    .on(|e, _, cx| e.toggle_presenter_timer_pause(cx))
+                    .into(),
+                MenuItem::tr("pptx.slideshow.reset")
+                    .icon("restart_alt")
+                    .on(|e, _, cx| e.reset_presenter_timer(cx))
+                    .into(),
+                MenuItem::tr("pptx.slideshow.teleprompter")
+                    .icon("auto_stories")
+                    .checked(teleprompter_on)
+                    .on(|e, w, cx| e.toggle_teleprompter(w, cx))
+                    .into(),
+                MenuItem::tr("pptx.slideshow.notes-larger")
+                    .icon("text_increase")
+                    .on(|e, _, cx| e.change_notes_size(2.0, cx))
+                    .into(),
+                MenuItem::tr("pptx.slideshow.notes-smaller")
+                    .icon("text_decrease")
+                    .on(|e, _, cx| e.change_notes_size(-2.0, cx))
+                    .into(),
+                MenuItem::tr("pptx.slideshow.swap-displays")
+                    .icon("swap_horiz")
+                    .disabled(!has_external)
+                    .on(|e, _, cx| e.swap_show_displays(cx))
+                    .into(),
+            ]);
+        }
+
+        if show.reading_view {
+            entries.extend([
+                MenuEntry::Separator,
+                MenuItem::tr("view.slideshow")
+                    .icon("play_arrow")
+                    .shortcut("⌘↩")
+                    .on(|e, w, cx| {
+                        e.end_slideshow(w, cx);
+                        e.start_slideshow(w, cx);
+                    })
+                    .into(),
+                MenuItem::tr("_pptx.return-to-normal-view")
+                    .icon("view_compact")
+                    .on(|e, w, cx| e.switch_to_normal_view(w, cx))
+                    .into(),
+            ]);
+        }
+
+        entries.push(MenuEntry::Separator);
+        entries.push(MenuItem::tr("pptx.links.end-show").icon("close").shortcut("Esc").on(|e, w, cx| e.request_end_slideshow(w, cx)).into());
+        entries
+    }
+
+    /// Open context menu during the slide show at pointer `position`.
+    pub(crate) fn open_slideshow_context_menu(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.slideshow.is_none() {
+            return;
+        }
+        let entries = self.slideshow_context_menu_entries();
+        self.open_popup_entries(entries, position, window, cx);
     }
 
     /// Request ending slideshow. If there are ink annotations and the confirmation dialog is not open,
@@ -1327,6 +1493,11 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// Returns the colour the slide show is blanked in (`0x000000` or `0xffffff`), or `None`.
+    pub(crate) fn slideshow_blank(&self) -> Option<u32> {
+        self.slideshow.as_ref().and_then(|s| s.blank)
+    }
+
     /// The slide show, filling the window, while it runs.
     pub(crate) fn render_slideshow(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.show_in_main() {
@@ -1349,6 +1520,11 @@ impl SlideEditor {
         let _playing = Playing(&self.resources.animate_pictures);
         let show = self.slideshow.as_ref()?;
         let audience = kind == ShowKind::Audience;
+        let popup = (!audience).then(|| {
+            self.pptx().and_then(|s| s.slide_popup.as_ref()).map(|p| {
+                deferred(anchored().position(p.position).snap_to_window_with_margin(px(8.)).child(p.menu.clone())).with_priority(2)
+            })
+        }).flatten();
         let root = div()
             .id("slideshow")
             .when(kind == ShowKind::Main, |d| d.key_context(SLIDESHOW_CONTEXT).track_focus(&self.focus_handle))
@@ -1361,6 +1537,12 @@ impl SlideEditor {
             .when(show.pointer_mode == PointerMode::Arrow, |d| d.cursor_default())
             .when(show.pointer_mode != PointerMode::Arrow, |d| d.cursor_crosshair())
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, window, cx| this.mouse_down_slideshow(event.position, audience, window, cx)))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                if !audience {
+                    cx.stop_propagation();
+                    this.open_slideshow_context_menu(event.position, window, cx);
+                }
+            }))
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, window, cx| this.mouse_move_slideshow(event.position, audience, window, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(move |this, event: &MouseUpEvent, window, cx| this.mouse_up_slideshow(event.position, audience, window, cx)))
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
@@ -1368,7 +1550,8 @@ impl SlideEditor {
                 for _ in 0..steps.unsigned_abs() {
                     this.step_slideshow(steps > 0, window, cx);
                 }
-            }));
+            }))
+            .children(popup);
         if show.grid_open {
             return Some(root.child(self.slideshow_grid_view(show, window, cx)).into_any_element());
         }
@@ -1575,6 +1758,11 @@ impl SlideEditor {
             picture(self.slide(), vw * 0.6).into_any_element()
         };
         let notes = self.slide().notes.clone();
+        // The notes start from the top when another slide comes.
+        if show.notes_slide.get() != Some(self.current_slide) {
+            show.notes_slide.set(Some(self.current_slide));
+            show.notes_scroll.set_offset(point(px(0.), px(0.)));
+        }
         div()
             .size_full()
             .flex()
@@ -1703,11 +1891,31 @@ impl SlideEditor {
             )
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(notes_button("presenter-notes-smaller", crate::shell::i18n::text("pptx.slideshow.notes-smaller").to_string(), false, cx.listener(|this, _, _, cx| this.change_notes_size(-2.0, cx))))
+                    .child(label(format!("{} pt", show.notes_size)))
+                    .child(notes_button("presenter-notes-larger", crate::shell::i18n::text("pptx.slideshow.notes-larger").to_string(), false, cx.listener(|this, _, _, cx| this.change_notes_size(2.0, cx))))
+                    .child(notes_button("presenter-teleprompter", crate::shell::i18n::text("pptx.slideshow.teleprompter").to_string(), show.teleprompter.is_some(), cx.listener(|this, _, w, cx| this.toggle_teleprompter(w, cx))))
+                    .children(show.teleprompter.map(|speed| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(notes_button("presenter-teleprompter-slower", "−".to_string(), false, cx.listener(|this, _, _, cx| this.change_teleprompter_speed(-5.0, cx))))
+                            .child(label(crate::shell::i18n::format("pptx.slideshow.teleprompter-speed", &[("n", &speed)])))
+                            .child(notes_button("presenter-teleprompter-faster", "+".to_string(), false, cx.listener(|this, _, _, cx| this.change_teleprompter_speed(5.0, cx))))
+                    })),
+            )
+            .child(
+                div()
                     .id("presenter-notes")
                     .flex_1()
                     .min_h(px(vh * 0.1))
                     .overflow_y_scroll()
-                    .text_size(px(20.))
+                    .track_scroll(&show.notes_scroll)
+                    .text_size(px(show.notes_size))
                     .text_color(white())
                     .child(if notes.is_empty() { crate::shell::i18n::text("pptx.slideshow.no-notes").to_string() } else { notes }),
             )
@@ -2298,6 +2506,45 @@ pub(crate) struct ShapeMotion {
     pub(crate) opacity: f32,
     pub(crate) dx: f32,
     pub(crate) dy: f32,
+    /// How far it is turned (degrees, clockwise) by the emphasis effects スピン.
+    pub(crate) turn: f32,
+    /// How much larger it is across and down (1 is its size) by 拡大／収縮.
+    pub(crate) grow: (f32, f32),
+}
+
+impl ShapeMotion {
+    /// Shown, in its place, not turned, at its size.
+    pub(crate) const fn at_rest(opacity: f32) -> Self {
+        Self { opacity, dx: 0.0, dy: 0.0, turn: 0.0, grow: (1.0, 1.0) }
+    }
+
+    /// Whether the shape has to be drawn turned or resized.
+    fn transforms(&self) -> bool {
+        self.turn != 0.0 || self.grow != (1.0, 1.0)
+    }
+}
+
+/// `shape` turned and resized (about its centre) as `motion` says.
+pub(crate) fn transformed(shape: &ibis_doc_model::Shape, motion: ShapeMotion) -> ibis_doc_model::Shape {
+    let mut s = shape.clone();
+    if motion.turn != 0.0 {
+        s.rotation = (f64::from(s.rotation) + f64::from(motion.turn) * 60_000.0).round().rem_euclid(21_600_000.0) as i32;
+    }
+    if motion.grow != (1.0, 1.0) {
+        let f = shape.frame;
+        let (w, h) = ((f.width as f64 * f64::from(motion.grow.0)).round() as i64, (f.height as f64 * f64::from(motion.grow.1)).round() as i64);
+        s.frame = ibis_doc_model::EmuRect::new(f.x + (f.width - w) / 2, f.y + (f.height - h) / 2, w, h);
+        // The text grows with the shape (by the mean of the two factors).
+        let text = match &mut s.kind {
+            ibis_doc_model::ShapeKind::Auto(auto) => auto.text.as_mut(),
+            ibis_doc_model::ShapeKind::TextBox(body) => Some(body),
+            _ => None,
+        };
+        if let Some(body) = text {
+            body.font_scale = (f64::from(body.font_scale) * f64::from(motion.grow.0 + motion.grow.1) / 2.0).round() as u32;
+        }
+    }
+    s
 }
 
 /// The slide's shapes, each as `element` draws it, moved and faded by its
@@ -2315,9 +2562,73 @@ pub(crate) fn animated_shapes<'a>(
     let groups = animation_groups(&slide.animations);
     let step = step.min(groups.len());
     slide.shown_shapes().flat_map(move |shape| {
+        // SmartArt diagram frame itself draws nothing
+        if matches!(shape.kind, ibis_doc_model::ShapeKind::Placeholder(ibis_doc_model::Placeholder::Diagram)) {
+            return vec![];
+        }
+        // Attached shapes of a SmartArt diagram
+        if let Some((&parent_id, children)) = slide.attached.iter().find(|(_, children)| children.contains(&shape.id)) {
+            let dgm_anims: Vec<&ibis_doc_model::Animation> = slide.animations.iter().filter(|a| a.shape == parent_id).collect();
+            if !dgm_anims.is_empty() {
+                let id_str = shape.id.0.to_string();
+                let idx_str = children.iter().position(|&sid| sid == shape.id).map(|idx| idx.to_string());
+                let idx1_str = children.iter().position(|&sid| sid == shape.id).map(|idx| (idx + 1).to_string());
+
+                let matched_elem_id = dgm_anims.iter().filter_map(|a| a.dgm_element.as_ref()).find_map(|d| {
+                    if d.id == id_str
+                        || idx_str.as_ref() == Some(&d.id)
+                        || idx1_str.as_ref() == Some(&d.id)
+                    {
+                        Some(d.id.clone())
+                    } else {
+                        None
+                    }
+                });
+
+                let target = if let Some(element_id) = matched_elem_id {
+                    Target::DiagramElement { parent_id, element_id }
+                } else if dgm_anims.iter().any(|a| a.dgm_element.is_none()) {
+                    Target::DiagramWhole { parent_id }
+                } else {
+                    Target::Whole
+                };
+                return vec![animated_view(slide, shape, target, (size, scale, step, played, triggered_played), &groups, &element)];
+            }
+        }
         let paragraphs = animated_paragraphs(slide, shape.id);
         if paragraphs.is_empty() {
-            return vec![animated_view(slide, shape, Target::Whole, (size, scale, step, played, triggered_played), &groups, &element)];
+            let chart_parts = animated_chart_elements(slide, shape);
+            if !chart_parts.is_empty() {
+                let has_bg_anim = chart_parts.contains(&(-1, -1));
+                let bg_shape = chart_element_view(shape, -1, -1);
+                let mut views = Vec::new();
+                if has_bg_anim {
+                    views.push(animated_view(slide, &bg_shape, Target::ChartElement { series_idx: -1, category_idx: -1 }, (size, scale, step, played, triggered_played), &groups, &element));
+                } else {
+                    views.push(animated_view(slide, &bg_shape, Target::Whole, (size, scale, step, played, triggered_played), &groups, &element));
+                }
+                for &(s_idx, c_idx) in &chart_parts {
+                    if s_idx == -1 && c_idx == -1 {
+                        continue;
+                    }
+                    let part_shape = chart_element_view(shape, s_idx, c_idx);
+                    views.push(animated_view(slide, &part_shape, Target::ChartElement { series_idx: s_idx, category_idx: c_idx }, (size, scale, step, played, triggered_played), &groups, &element));
+                }
+                return views;
+            }
+            let parts = animated_parts(slide, shape);
+            if parts.is_empty() {
+                return vec![animated_view(slide, shape, Target::Whole, (size, scale, step, played, triggered_played), &groups, &element)];
+            }
+            // The text taken in parts (characters, words, letters): the shape with those characters transparent, and each part over
+            // it, alone, with its own effects.
+            let base = chars_view(shape, &|c| parts.iter().any(|(_, (first, last))| (*first..=*last).contains(&c)), false);
+            let mut views = vec![animated_view(slide, &base, Target::Whole, (size, scale, step, played, triggered_played), &groups, &element)];
+            for (target, (first, last)) in parts {
+                let only = chars_view(shape, &|c| !(first..=last).contains(&c), true);
+                views.push(animated_view(slide, &only, target, (size, scale, step, played, triggered_played), &groups, &element));
+            }
+            return views;
         }
         // The text of a shape whose paragraphs come one by one: the shape
         // with those paragraphs transparent, and each of them over it, alone,
@@ -2332,22 +2643,265 @@ pub(crate) fn animated_shapes<'a>(
     })
 }
 
-/// Which effects of a shape move what is drawn: the shape as a whole, or one of its paragraphs.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// The chart element targets (`seriesIdx`, `categoryIdx`) of shape `shape` that effects move, in order.
+fn animated_chart_elements(slide: &ibis_doc_model::Slide, shape: &ibis_doc_model::Shape) -> Vec<(i32, i32)> {
+    if !matches!(shape.kind, ibis_doc_model::ShapeKind::Chart(_)) {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    for a in &slide.animations {
+        if a.shape == shape.id {
+            if let Some(el) = a.chart_element {
+                let pair = (el.series_idx, el.category_idx);
+                if !found.contains(&pair) {
+                    found.push(pair);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// A view of `shape` (a chart) showing either only the background (axes, title, legend, plot area without series)
+/// or only the specified series/category elements.
+pub(crate) fn chart_element_view(shape: &ibis_doc_model::Shape, series_idx: i32, category_idx: i32) -> ibis_doc_model::Shape {
+    use ibis_doc_model::{Fill, ShapeKind};
+    let mut shape = shape.clone();
+    if let ShapeKind::Chart(chart) = &mut shape.kind {
+        if series_idx == -1 && category_idx == -1 {
+            // Background only: clear all series data points
+            for g in &mut chart.groups {
+                g.series.clear();
+            }
+        } else {
+            // Element / series only: remove chart background, border, title, axes, legend
+            chart.background = Fill::None;
+            chart.plot_background = Fill::None;
+            chart.border = None;
+            chart.title = None;
+            chart.axes.clear();
+            chart.legend = None;
+            if series_idx >= 0 && category_idx == -1 {
+                // Keep only series `series_idx`
+                let mut current_idx = 0;
+                for g in &mut chart.groups {
+                    g.series.retain(|_| {
+                        let keep = current_idx == series_idx as usize;
+                        current_idx += 1;
+                        keep
+                    });
+                }
+            } else if series_idx == -1 && category_idx >= 0 {
+                // Keep only category `category_idx` in each series
+                let cat = category_idx as usize;
+                for g in &mut chart.groups {
+                    for s in &mut g.series {
+                        for (ci, val) in s.values.iter_mut().enumerate() {
+                            if ci != cat {
+                                *val = None;
+                            }
+                        }
+                    }
+                }
+            } else if series_idx >= 0 && category_idx >= 0 {
+                // Keep series `series_idx` and category `category_idx`
+                let mut current_idx = 0;
+                let cat = category_idx as usize;
+                for g in &mut chart.groups {
+                    g.series.retain_mut(|s| {
+                        let keep = current_idx == series_idx as usize;
+                        current_idx += 1;
+                        if keep {
+                            for (ci, val) in s.values.iter_mut().enumerate() {
+                                if ci != cat {
+                                    *val = None;
+                                }
+                            }
+                        }
+                        keep
+                    });
+                }
+            }
+        }
+    }
+    shape
+}
+
+/// Which effects of a shape move what is drawn: the shape as a whole, one of its paragraphs, a range of its characters, or one
+/// word or letter of an effect that goes by words or letters (that effect's, `offset` ms later than the first), or a chart element.
+#[derive(Clone, PartialEq, Eq)]
 enum Target {
     Whole,
     Paragraph(usize),
+    Chars(u32, u32),
+    Unit { effect: usize, first: u32, offset: u32 },
+    ChartElement { series_idx: i32, category_idx: i32 },
+    DiagramElement { parent_id: ibis_doc_model::ShapeId, element_id: String },
+    DiagramWhole { parent_id: ibis_doc_model::ShapeId },
 }
 
 impl Target {
-    /// Whether `a` moves this of shape `shape`.
-    fn moves(self, a: &ibis_doc_model::Animation, shape: ibis_doc_model::ShapeId) -> bool {
-        a.shape == shape
-            && match self {
-                Target::Whole => a.paragraph.is_none(),
-                Target::Paragraph(i) => a.paragraph.is_some_and(|(first, last)| (first as usize..=last as usize).contains(&i)),
+    /// Whether animation `index` (`a`) moves this of shape `shape`.
+    fn moves(&self, index: usize, a: &ibis_doc_model::Animation, shape: ibis_doc_model::ShapeId) -> bool {
+        match self {
+            Target::Whole => {
+                a.shape == shape
+                    && a.paragraph.is_none()
+                    && a.chars.is_none()
+                    && a.text_unit.is_none()
+                    && a.chart_element.is_none()
+                    && a.dgm_element.is_none()
             }
+            Target::Paragraph(i) => a.shape == shape && a.paragraph.is_some_and(|(first, last)| (first as usize..=last as usize).contains(i)),
+            Target::Chars(first, last) => a.shape == shape && a.chars == Some((*first, *last)),
+            Target::Unit { effect, .. } => a.shape == shape && index == *effect,
+            Target::ChartElement { series_idx, category_idx } => {
+                a.shape == shape && a.chart_element == Some(ibis_doc_model::ChartAnimationElement { series_idx: *series_idx, category_idx: *category_idx })
+            }
+            Target::DiagramElement { parent_id, element_id } => {
+                a.shape == *parent_id && a.dgm_element.as_ref().is_some_and(|d| &d.id == element_id)
+            }
+            Target::DiagramWhole { parent_id } => {
+                a.shape == *parent_id && a.dgm_element.is_none()
+            }
+        }
     }
+
+    /// How much later than the effect's own time this target's part of it plays (ms).
+    fn offset(&self) -> u32 {
+        match self {
+            Target::Unit { offset, .. } => *offset,
+            _ => 0,
+        }
+    }
+
+    /// A number that tells this target from the others of its shape (for the key of its animation).
+    fn key(&self) -> usize {
+        match self {
+            Target::Whole => 0,
+            Target::Paragraph(i) => 7919 * (*i + 1),
+            Target::Chars(first, last) => 104_729 * (*first as usize + 1) + *last as usize,
+            Target::Unit { effect, first, .. } => 1_299_709 * (*effect + 1) + *first as usize,
+            Target::ChartElement { series_idx, category_idx } => {
+                10_000_019 + (*series_idx + 2) as usize * 1000 + (*category_idx + 2) as usize
+            }
+            Target::DiagramElement { parent_id, element_id } => {
+                20_000_000 + (parent_id.0 as usize % 1000) * 10_000 + element_id.parse::<usize>().unwrap_or(0)
+            }
+            Target::DiagramWhole { parent_id } => {
+                30_000_000 + parent_id.0 as usize
+            }
+        }
+    }
+}
+
+/// The words or letters of `body`'s text, as (first, last) character indices (the text's paragraphs joined by one character each):
+/// a word with the spaces after it, a letter alone; Japanese text goes a character at a time even by words.
+pub(crate) fn text_units(body: &ibis_doc_model::TextBody, unit: ibis_doc_model::TextUnit) -> Vec<(u32, u32)> {
+    let text: Vec<char> = body.paragraphs.iter().map(|p| p.text()).collect::<Vec<_>>().join("\n").chars().collect();
+    let cjk = |c: char| c as u32 >= 0x2E80;
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        if text[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        let first = i;
+        if unit == ibis_doc_model::TextUnit::Word && !cjk(text[i]) {
+            while i < text.len() && !text[i].is_whitespace() && !cjk(text[i]) {
+                i += 1;
+            }
+            while i < text.len() && text[i].is_whitespace() && text[i] != '\n' {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+        out.push((first as u32, i as u32 - 1));
+    }
+    out
+}
+
+/// The parts of shape `shape`'s text that effects play on their own: each character range, and each word or letter of the effects
+/// that go by words or letters (with its delay from the first), as targets with the characters they hold.
+fn animated_parts(slide: &ibis_doc_model::Slide, shape: &ibis_doc_model::Shape) -> Vec<(Target, (u32, u32))> {
+    let mut parts: Vec<(Target, (u32, u32))> = Vec::new();
+    for (index, a) in slide.animations.iter().enumerate().filter(|(_, a)| a.shape == shape.id && a.paragraph.is_none()) {
+        if let Some((first, last)) = a.chars {
+            if !parts.iter().any(|(t, _)| *t == Target::Chars(first, last)) {
+                parts.push((Target::Chars(first, last), (first, last)));
+            }
+        } else if let (Some((unit, gap)), Some(body)) = (a.text_unit, shape.text_body()) {
+            let gap_ms = match gap {
+                ibis_doc_model::UnitGap::Percent(v) => (a.duration.max(1) as f32 * v as f32 / 100_000.0).round() as u32,
+                ibis_doc_model::UnitGap::Millis(v) => v,
+            };
+            for (k, (first, last)) in text_units(body, unit).into_iter().enumerate() {
+                parts.push((Target::Unit { effect: index, first, offset: gap_ms * k as u32 }, (first, last)));
+            }
+        }
+    }
+    parts
+}
+
+/// `shape` with the characters `hidden` says transparent; with `text_only`, nothing else of the shape drawn (the bullets only of the
+/// paragraphs with characters shown).
+/// The characters are counted over the text, its paragraphs one character apart.
+pub(crate) fn chars_view(shape: &ibis_doc_model::Shape, hidden: &dyn Fn(u32) -> bool, text_only: bool) -> ibis_doc_model::Shape {
+    use ibis_doc_model::{Fill, Run, ShapeKind};
+    let mut shape = shape.clone();
+    let hide = |text: &mut ibis_doc_model::TextBody| {
+        let mut at = 0u32;
+        for paragraph in &mut text.paragraphs {
+            let mut runs: Vec<Run> = Vec::new();
+            for run in &paragraph.runs {
+                let mut current = String::new();
+                let mut current_hidden = false;
+                let flush = |text: &mut String, h: bool, runs: &mut Vec<Run>| {
+                    if !text.is_empty() {
+                        let mut style = run.style.clone();
+                        style.invisible = style.invisible || h;
+                        runs.push(Run { text: std::mem::take(text), style });
+                    }
+                };
+                for c in run.text.chars() {
+                    let h = hidden(at);
+                    at += 1;
+                    if h != current_hidden {
+                        flush(&mut current, current_hidden, &mut runs);
+                        current_hidden = h;
+                    }
+                    current.push(c);
+                }
+                flush(&mut current, current_hidden, &mut runs);
+            }
+            at += 1;
+            paragraph.runs = runs;
+            if text_only {
+                // A paragraph with none of the characters shown has no bullet either.
+                if paragraph.runs.iter().all(|r| r.style.invisible) {
+                    paragraph.bullet = None;
+                }
+                paragraph.end_style.invisible = true;
+            }
+        }
+    };
+    match &mut shape.kind {
+        ShapeKind::Auto(auto) => {
+            if let Some(text) = &mut auto.text {
+                hide(text);
+            }
+            if text_only {
+                auto.fill = Fill::None;
+                auto.stroke = None;
+                (auto.shadow, auto.glow, auto.inner_shadow, auto.soft_edge, auto.reflection, auto.bevel) = (None, None, None, None, None, None);
+            }
+        }
+        ShapeKind::TextBox(text) => hide(text),
+        _ => {}
+    }
+    shape
 }
 
 /// The paragraphs of shape `shape` that effects move, in order.
@@ -2402,7 +2956,7 @@ fn animated_view(
     element: &dyn Fn(&ibis_doc_model::Shape) -> AnyElement,
 ) -> AnyElement {
     {
-        let mine: Vec<usize> = slide.animations.iter().enumerate().filter(|(_, a)| target.moves(a, shape.id)).map(|(i, _)| i).collect();
+        let mine: Vec<usize> = slide.animations.iter().enumerate().filter(|(i, a)| target.moves(*i, a, shape.id)).map(|(i, _)| i).collect();
         if mine.is_empty() {
             return element(shape);
         }
@@ -2422,10 +2976,12 @@ fn animated_view(
             },
             dx: 0.0,
             dy: 0.0,
+            turn: 0.0,
+            grow: (1.0, 1.0),
         };
         for group in groups.iter().take(step.saturating_sub(1)) {
             for &(i, _, _) in &group.effects {
-                if target.moves(&slide.animations[i], shape.id) {
+                if target.moves(i, &slide.animations[i], shape.id) {
                     if !slide.animations[i].rewind {
                         base = motion_at(&slide.animations[i], base, 1.0, frame, (w, h));
                         if slide.animations[i].after_effect == ibis_doc_model::AnimationAfterEffect::HideOnNextClick {
@@ -2441,7 +2997,7 @@ fn animated_view(
             if Some(i) == last_triggered {
                 continue;
             }
-            if let Some(a) = slide.animations.get(i).filter(|a| target.moves(a, shape.id)) {
+            if let Some(a) = slide.animations.get(i).filter(|a| target.moves(i, a, shape.id)) {
                 if !a.rewind {
                     base = motion_at(a, base, 1.0, frame, (w, h));
                     if a.after_effect == ibis_doc_model::AnimationAfterEffect::HideOnNextClick {
@@ -2453,16 +3009,20 @@ fn animated_view(
         let mut playing: Vec<(ibis_doc_model::Animation, u32, u32)> = step
             .checked_sub(1)
             .and_then(|g| groups.get(g))
-            .map(|g| g.effects.iter().filter(|(i, _, _)| target.moves(&slide.animations[*i], shape.id)).map(|&(i, b, e)| (slide.animations[i].clone(), b, e)).collect())
+            .map(|g| g.effects.iter().filter(|(i, _, _)| target.moves(*i, &slide.animations[*i], shape.id)).map(|&(i, b, e)| (slide.animations[i].clone(), b + target.offset(), e + target.offset())).collect())
             .unwrap_or_default();
         // If the most recently triggered effect belongs to this shape, play it:
         if let Some(last_i) = last_triggered {
-            if let Some(a) = slide.animations.get(last_i).filter(|a| target.moves(a, shape.id)) {
-                playing.push((a.clone(), 0, a.duration.max(1)));
+            if let Some(a) = slide.animations.get(last_i).filter(|a| target.moves(last_i, a, shape.id)) {
+                playing.push((a.clone(), target.offset(), target.offset() + a.duration.max(1)));
             }
         }
         let place = move |el: Div, m: ShapeMotion| el.opacity(m.opacity).left(px(m.dx)).top(px(m.dy));
-        let holder = div().absolute().top_0().left_0().size_full().child(element(shape));
+        // Turned or resized by an emphasis effect (スピン・拡大／収縮): the shape is drawn again, turned or resized, for each
+        // moment instead of moved as it is drawn.
+        let transforms = base.transforms() || mine.iter().any(|&i| matches!(slide.animations[i].look, ibis_doc_model::AnimationLook::Spin(_) | ibis_doc_model::AnimationLook::Scale(..) | ibis_doc_model::AnimationLook::Zoom));
+        let holder_of = |m: ShapeMotion| div().absolute().top_0().left_0().size_full().child(if transforms { element(&transformed(shape, m)) } else { element(shape) });
+        let holder = holder_of(base);
         if playing.is_empty() {
             return place(holder, base).into_any_element();
         }
@@ -2477,9 +3037,21 @@ fn animated_view(
             }
             m
         };
+        if transforms {
+            const FRAMES: usize = 24;
+            let key = played * 100_000 + (shape.id.0 as usize + target.key()) % 100_000;
+            let mut stack = div().absolute().top_0().left_0().size_full();
+            for k in 0..=FRAMES {
+                let m = state(total as f32 * k as f32 / FRAMES as f32);
+                let opacity = m.opacity;
+                let frame = place(holder_of(m), ShapeMotion { opacity: 1.0, ..m });
+                stack = stack.child(frame.with_animation(("shape-transform", key * 32 + k), Animation::new(std::time::Duration::from_millis(total as u64)), move |el, t| el.opacity(if ((t * FRAMES as f32).round() as usize).min(FRAMES) == k { opacity } else { 0.0 })));
+            }
+            return stack.into_any_element();
+        }
         let start = state(0.0);
         place(holder, start)
-            .with_animation(("shape-animation", played * 100_000 + (shape.id.0 as usize + match target { Target::Whole => 0, Target::Paragraph(i) => 7919 * (i + 1) }) % 100_000), Animation::new(std::time::Duration::from_millis(total as u64)), move |el, t| place(el, state(t * total as f32)))
+            .with_animation(("shape-animation", played * 100_000 + (shape.id.0 as usize + target.key()) % 100_000), Animation::new(std::time::Duration::from_millis(total as u64)), move |el, t| place(el, state(t * total as f32)))
             .into_any_element()
     }
 }
@@ -2519,15 +3091,38 @@ pub(crate) fn motion_at(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32
     };
     let mut res = match (a.class, a.look) {
         (AnimationClass::Entrance, AnimationLook::Fade) => ShapeMotion { opacity: p, ..from },
+        (AnimationClass::Entrance, AnimationLook::Zoom) => ShapeMotion { opacity: p, grow: (from.grow.0 * p, from.grow.1 * p), ..from },
+        (AnimationClass::Entrance, AnimationLook::Float(side)) => {
+            let dy = match side {
+                Side::Top => -30.0 * (1.0 - p),
+                _ => 30.0 * (1.0 - p),
+            };
+            ShapeMotion { opacity: p, dy: from.dy + dy, ..from }
+        }
+        (AnimationClass::Entrance, AnimationLook::Wipe(_)) => ShapeMotion { opacity: p, ..from },
+        (AnimationClass::Entrance, AnimationLook::Replay) => ShapeMotion { opacity: p, ..from },
         (AnimationClass::Entrance, AnimationLook::Fly(side)) => {
             let (x, y) = off(side);
-            ShapeMotion { opacity: 1.0, dx: from.dx + x * (1.0 - p), dy: from.dy + y * (1.0 - p) }
+            ShapeMotion { opacity: 1.0, dx: from.dx + x * (1.0 - p), dy: from.dy + y * (1.0 - p), ..from }
         }
         (AnimationClass::Entrance, _) => ShapeMotion { opacity: 1.0, ..from },
         (AnimationClass::Exit, AnimationLook::Fade) => ShapeMotion { opacity: 1.0 - p, ..from },
+        (AnimationClass::Exit, AnimationLook::Zoom) => {
+            let scale = (1.0 - p).max(0.0);
+            ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { scale }, grow: (from.grow.0 * scale, from.grow.1 * scale), ..from }
+        }
+        (AnimationClass::Exit, AnimationLook::Float(side)) => {
+            let dy = match side {
+                Side::Top => -30.0 * p,
+                _ => 30.0 * p,
+            };
+            ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { 1.0 - p }, dy: from.dy + dy, ..from }
+        }
+        (AnimationClass::Exit, AnimationLook::Wipe(_)) => ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { 1.0 - p }, ..from },
+        (AnimationClass::Exit, AnimationLook::Replay) => ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { 1.0 - p }, ..from },
         (AnimationClass::Exit, AnimationLook::Fly(side)) => {
             let (x, y) = off(side);
-            ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { 1.0 }, dx: from.dx + x * p, dy: from.dy + y * p }
+            ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { 1.0 }, dx: from.dx + x * p, dy: from.dy + y * p, ..from }
         }
         (AnimationClass::Exit, _) => ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { from.opacity }, ..from },
         (AnimationClass::Path, AnimationLook::Motion(x, y)) => {
@@ -2535,6 +3130,8 @@ pub(crate) fn motion_at(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32
             let (x, y) = if a.path.is_empty() { (x as f32 * p, y as f32 * p) } else { point_on_path(&a.path, p, slide) };
             ShapeMotion { dx: from.dx + slide.0 * x / 100_000.0, dy: from.dy + slide.1 * y / 100_000.0, ..from }
         }
+        (AnimationClass::Emphasis, AnimationLook::Spin(by)) => ShapeMotion { turn: from.turn + by as f32 / 60_000.0 * p, ..from },
+        (AnimationClass::Emphasis, AnimationLook::Scale(x, y)) => ShapeMotion { grow: (from.grow.0 * (1.0 + (x as f32 / 100_000.0 - 1.0) * p), from.grow.1 * (1.0 + (y as f32 / 100_000.0 - 1.0) * p)), ..from },
         _ => from,
     };
     if p >= 1.0 {
@@ -2743,4 +3340,20 @@ pub(crate) fn ink_stroke_to_shape(
         &local_points,
         Some(stroke_style),
     ))
+}
+
+/// A small button of the presenter's view (the notes' size and the teleprompter).
+fn notes_button(id: &'static str, text: String, on: bool, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Stateful<Div> {
+    div()
+        .id(id)
+        .px_2()
+        .py_1()
+        .rounded(px(4.))
+        .bg(if on { rgb(0x4a4d52) } else { rgb(0x3c4043) })
+        .cursor_pointer()
+        .text_size(px(13.))
+        .text_color(white())
+        .child(text)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(listener)
 }
