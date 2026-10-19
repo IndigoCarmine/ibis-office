@@ -1897,8 +1897,8 @@ impl<'r> Layouter<'r> {
                             slot_ended = true;
                             break;
                         }
-                        if c == Some(' ') && p.align == FlowAlign::Justify {
-                            give += w * SPACE_GIVE;
+                        if p.align == FlowAlign::Justify {
+                            give += squeezable(&units[i]) * SPACE_GIVE;
                         }
                         x += w;
                         i += 1;
@@ -2419,8 +2419,8 @@ impl<'r> Layouter<'r> {
                 i = at;
                 continue;
             }
-            if c == Some(' ') && p.align == FlowAlign::Justify {
-                give += w * SPACE_GIVE;
+            if p.align == FlowAlign::Justify {
+                give += squeezable(&units[i]) * SPACE_GIVE;
             }
             x += w;
             i += 1;
@@ -2976,6 +2976,18 @@ const MIN_WRAP_ROOM: f32 = 15.0;
 /// 72 % of the font's (1.70 pt for Arial's 2.36 pt at 8.5 pt), none below.
 const SPACE_GIVE: f32 = 0.28;
 
+/// The width of a unit a justified line may narrow (by `SPACE_GIVE` of it): a
+/// space's, or the quarter em after a Japanese character next to a Latin
+/// letter or digit (Word's PDF of a Japanese paper: 1.9 pt of 2.25 pt where a
+/// line's last character needed it).
+fn squeezable(u: &Unit) -> f32 {
+    match u {
+        Unit::Char { c: ' ', width, .. } => *width,
+        Unit::Char { auto_space, .. } => *auto_space,
+        _ => 0.0,
+    }
+}
+
 /// The extra width at each gap of a justified line (negative where the line
 /// is over its room: then only spaces give, see `SPACE_GIVE`), and where.
 fn justify_extra(slice: &[Unit], visible_end: usize, align: FlowAlign, last: bool, room: f32, used: f32) -> (f32, Vec<bool>) {
@@ -2984,7 +2996,7 @@ fn justify_extra(slice: &[Unit], visible_end: usize, align: FlowAlign, last: boo
         return (0.0, Vec::new());
     }
     if used > room + 0.01 && align == FlowAlign::Justify {
-        let spaces: Vec<bool> = (0..visible_end).map(|k| k + 1 < visible_end && slice.get(k).and_then(unit_char) == Some(' ')).collect();
+        let spaces: Vec<bool> = (0..visible_end).map(|k| k + 1 < visible_end && slice.get(k).is_some_and(|u| squeezable(u) > 0.0)).collect();
         let n = spaces.iter().filter(|s| **s).count();
         return if n > 0 { ((room - used) / n as f32, spaces) } else { (0.0, Vec::new()) };
     }
@@ -3363,7 +3375,7 @@ impl<'r> Layouter<'r> {
                 let inner_right = text_right + right.map_or(0.0, |b| pt(b.space));
                 let hide_deleted = self.hides_deleted();
                 let top_shapes: Vec<&Box<ibis_doc_model::Shape>> = p.runs.iter().filter(|r| !run_deleted(r, hide_deleted)).filter_map(|r| match &r.kind {
-                    FlowRunKind::Shape(shape) if shape.floating.as_ref().is_some_and(|f| f.wrap == "topAndBottom") => Some(shape),
+                    FlowRunKind::Shape(shape) if shape.floating.as_ref().is_some_and(|f| f.wrap == "topAndBottom") && !self.deferred_shapes.borrow().contains(&shape.id.0) => Some(shape),
                     _ => None,
                 }).collect();
                 if top_shapes.is_empty() {
@@ -4356,6 +4368,9 @@ impl<'r> Layouter<'r> {
         // Floating shapes put off to the next page's top: the shape, x from
         // the left margin, y from the first of them, width and height.
         let mut deferred: Vec<(Box<ibis_doc_model::Shape>, f32, f32, f32, f32)> = Vec::new();
+        // The same put off to the next column's top (a picture over and under
+        // which the text goes, too low in its paragraph's column).
+        let mut deferred_column: Vec<(Box<ibis_doc_model::Shape>, f32, f32, f32, f32)> = Vec::new();
         // The shapes a first laying out placed above their paragraphs, on the
         // page just begun: there from its start, the text round them.
         macro_rules! seed_page {
@@ -4412,7 +4427,9 @@ impl<'r> Layouter<'r> {
                 placed.clear();
                 page_obstacles.clear();
                 active_obstacle = None;
-                // The shapes put off to this page: at its top, the text round them.
+                // The shapes put off to this page (and those to a next column
+                // the last page did not have): at its top, the text round them.
+                deferred.extend(deferred_column.drain(..));
                 let margin_l = pt(setups[$s].page.left);
                 for (shape, x, dy, w, h) in deferred.drain(..) {
                     let (sx, sy) = (margin_l + x, frame.top + dy);
@@ -4451,6 +4468,27 @@ impl<'r> Layouter<'r> {
                         .filter(|o| o.shape_right > left && o.shape_left < right && o.y_bottom > y)
                         .min_by(|a, b| a.y_top.total_cmp(&b.y_top))
                         .cloned();
+                    // The pictures put off to this column: from its top, the
+                    // text over and under them.
+                    let margin_l = pt(setups[$s].page.left);
+                    for (shape, x, dy, w, h) in deferred_column.drain(..) {
+                        let (sx, sy) = (margin_l + x, col_top + dy);
+                        if let Some(f) = shape.floating.as_ref() {
+                            let obs = WrapObstacle {
+                                shape_left: sx - margin_l - pt(f.dist_l),
+                                shape_right: sx + w - margin_l + pt(f.dist_r),
+                                y_top: sy - pt(f.dist_t),
+                                y_bottom: sy + h + pt(f.dist_b),
+                                wrap_text: "bothSides".to_string(),
+                                wrap_polygon: None,
+                            };
+                            if active_obstacle.is_none() {
+                                active_obstacle = Some(obs.clone());
+                            }
+                            page_obstacles.push(obs);
+                        }
+                        pages.last_mut().expect("a page").items.push(Item::Shape { shape, x: sx, y: sy, w, h });
+                    }
                 } else {
                     new_page!($s);
                 }
@@ -4559,6 +4597,34 @@ impl<'r> Layouter<'r> {
                 }
             }
             self.column_dx.set(frame.left - pt(setups[s].page.left));
+            // A picture the text goes over and under, too low in its paragraph's
+            // column to end in it: put off to the next column's top (or the next
+            // page's), its offset from there (Word's PDF of a two-column paper).
+            if let Block::Paragraph(p) = block
+                && y > col_top + 0.5
+            {
+                let hide = self.hides_deleted();
+                let top = y + self.space_before(p);
+                for r in p.runs.iter().filter(|r| !run_deleted(r, hide)) {
+                    if let FlowRunKind::Shape(shape) = &r.kind
+                        && let Some(f) = shape.floating.as_ref()
+                        && f.wrap == "topAndBottom"
+                        && matches!(f.relative_v.as_str(), "paragraph" | "line")
+                        && f.align_v.is_none()
+                        && !self.deferred_shapes.borrow().contains(&shape.id.0)
+                        && top + pt(f.offset_y) + pt(shape.frame.height) + pt(f.dist_b) > frame.bottom + 0.5
+                        && let Item::Shape { shape: placed, x, w, h, .. } = self.floating_item(shape, 0.0, frame.width, 0.0, number)
+                    {
+                        let entry = (placed, x + (frame.left - pt(setups[s].page.left)), pt(f.offset_y).max(0.0), w, h);
+                        if region_s == s && col + 1 < columns_of(s).len() {
+                            deferred_column.push(entry);
+                        } else {
+                            deferred.push(entry);
+                        }
+                        self.deferred_shapes.borrow_mut().insert(shape.id.0);
+                    }
+                }
+            }
             let obstacle_for_block = if let Block::Paragraph(p) = block {
                 let pad = |b: Option<FlowBorder>| b.map_or(0.0, |b| pt(b.space) + pt(b.total()));
                 let before_pad = self.space_before(p) + pad(p.borders[0]);
@@ -4932,13 +4998,13 @@ impl<'r> Layouter<'r> {
                     let (left, right) = (frame.left - pt(setups[s].page.left), frame.left - pt(setups[s].page.left) + frame.width);
                     let Some(bottom) = page_obstacles
                         .iter()
-                        .filter(|o| o.shape_left - left < MIN_WRAP_ROOM && right - o.shape_right < MIN_WRAP_ROOM && o.y_top < y + piece.height - 0.01 && o.y_bottom > y + 0.01)
+                        .filter(|o| o.shape_left - left < MIN_WRAP_ROOM && right - o.shape_right < MIN_WRAP_ROOM && o.y_top < y + piece.height - piece.space_after - 0.01 && o.y_bottom > y + 0.01)
                         .map(|o| o.y_bottom)
                         .reduce(f32::max)
                     else {
                         break;
                     };
-                    if bottom + piece.height > frame.bottom + 0.01 {
+                    if bottom + piece.height - piece.space_after > frame.bottom + 0.01 {
                         advance!(s);
                     } else {
                         y = bottom;
@@ -4994,7 +5060,9 @@ impl<'r> Layouter<'r> {
                 let new_notes: Vec<u32> = notes_of(&piece).into_iter().filter(|id| !page.notes.contains(id)).collect();
                 let room = notes_room(page);
                 let more = new_notes.iter().map(|id| note_heights.get(id).copied().unwrap_or(0.0)).sum::<f32>() + if page.notes.is_empty() && !new_notes.is_empty() { separator_h } else { 0.0 };
-                if y + piece.height + kept > frame.bottom - room - more + 0.01 && (y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len()) {
+                // (A paragraph's space after need not fit above the page's end,
+                // as in Word: its last line does.)
+                if y + piece.height - piece.space_after + kept > frame.bottom - room - more + 0.01 && (y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len()) {
                     advance!(s);
                     // A table's heading rows start the new page.
                     if !piece.header {
