@@ -134,6 +134,7 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
         };
         f.font = pick("ascii", "asciiTheme");
         f.east_asian_font = pick("eastAsia", "eastAsiaTheme");
+        f.east_asian_hint = wattr(fonts, "hint").map(|h| h == "eastAsia");
         f.cs_font = pick("cs", "cstheme").or_else(|| pick("cs", "csTheme"));
     }
     if let Some(l) = child(rpr, "lang") {
@@ -685,8 +686,8 @@ fn page_setup(sect: Node) -> PageSetup {
             Some("lines") => ibis_doc_model::DocGridType::Lines,
             Some("linesAndChars") => ibis_doc_model::DocGridType::LinesAndChars,
             Some("snapToChars") => ibis_doc_model::DocGridType::SnapToChars,
-            Some("default") => ibis_doc_model::DocGridType::Default,
-            _ => if twips(grid, "linePitch").is_some() { ibis_doc_model::DocGridType::Lines } else { ibis_doc_model::DocGridType::Default },
+            // No w:type is "default": no grid, even with a linePitch (Word keeps one there).
+            _ => ibis_doc_model::DocGridType::Default,
         };
         page.doc_grid_type = grid_type;
         if grid_type != ibis_doc_model::DocGridType::Default {
@@ -1770,7 +1771,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     }
                 }
                 "pict" => {
-                    if let Some(shape) = self.vml_shape(node) {
+                    if let Some(shape) = self.vml_shape(node, rels) {
                         read.in_run(r, node, 1);
                         out.push(make(shape));
                     }
@@ -1796,6 +1797,88 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 _ => {}
             }
         }
+    }
+
+    /// A VML picture (`v:shape` with `v:imagedata`, as Word's picture
+    /// watermark): placed as its style says, turned, and washed out by its
+    /// `gain` and `blacklevel` (Word's 「ウォッシュアウト」 is 0.3 and 0.35).
+    fn vml_picture(&mut self, vml: Node, image: Node, style: &HashMap<String, String>, rels: &Rels) -> Option<FlowRunKind> {
+        let rid = rattr(image, "id").or_else(|| image.attributes().find(|a| a.name() == "relid").map(|a| a.value()))?;
+        let rel = rels.get(rid).filter(|r| !r.external)?;
+        let media = match self.media.get(&rel.target) {
+            Some(id) => *id,
+            None => {
+                let data = self.package.read(&rel.target).ok()?;
+                let id = self.presentation.add_media(MediaFormat::from_path(&rel.target), data);
+                self.media.insert(rel.target.clone(), id);
+                id
+            }
+        };
+        let length = |key: &str| style.get(key).and_then(|v| vml_length(v));
+        let (width, height) = (length("width")?, length("height")?);
+        // A fraction: "19661f" is 19661/65536.
+        let fraction = |key: &str| {
+            image.attribute(key).and_then(|v| {
+                let v = v.trim();
+                match v.strip_suffix('f') {
+                    Some(n) => n.parse::<f64>().ok().map(|n| n / 65536.0),
+                    None => v.parse::<f64>().ok(),
+                }
+            })
+        };
+        // Word draws it lighter towards white, white staying white: each channel
+        // `1 - s (1 - v)` with `s = gain (1 - blacklevel)` (its PDF of a washed-out
+        // watermark: 0.15 to 0.83). As a contrast about the middle (`1 + c = s`)
+        // and a brightness added after it.
+        let luminance = match (fraction("gain"), fraction("blacklevel")) {
+            (None, None) => None,
+            (gain, black) => {
+                let s = (gain.unwrap_or(1.0) * (1.0 - black.unwrap_or(0.0))).clamp(0.0, 1.0);
+                let contrast = ((s - 1.0) * 100_000.0).round() as i32;
+                let bright = ((0.5 - 0.5 * s) * 100_000.0).round() as i32;
+                Some((bright, contrast))
+            }
+        };
+        let rotation = style.get("rotation").and_then(|r| r.trim().parse::<f64>().ok()).map_or(0, |d| (d.rem_euclid(360.0) * 60_000.0) as i32);
+        let align = |key: &str| style.get(key).filter(|v| !matches!(v.as_str(), "absolute" | "")).cloned();
+        let floating = (style.get("position").map(String::as_str) == Some("absolute")).then(|| ibis_doc_model::FloatingAnchor {
+            offset_x: length("margin-left").unwrap_or(0),
+            offset_y: length("margin-top").unwrap_or(0),
+            align_h: align("mso-position-horizontal"),
+            align_v: align("mso-position-vertical"),
+            relative_h: style.get("mso-position-horizontal-relative").cloned().unwrap_or_else(|| "margin".to_string()),
+            relative_v: style.get("mso-position-vertical-relative").cloned().unwrap_or_else(|| "paragraph".to_string()),
+            wrap: "none".to_string(),
+            behind_doc: style.get("z-index").and_then(|z| z.trim().parse::<i64>().ok()).is_some_and(|z| z < 0),
+            ..Default::default()
+        });
+        let look = ibis_doc_model::PictureLook { rotation, luminance, name: vml.attribute("id").unwrap_or("").to_string(), ..Default::default() };
+        let Some(floating) = floating else {
+            return Some(FlowRunKind::Picture { media, size: EmuSize::new(width, height), look });
+        };
+        let picture = ibis_doc_model::Picture {
+            media,
+            crop: look.crop,
+            stroke: None,
+            corner: 0,
+            duotone: None,
+            clear: None,
+            luminance,
+            clip: None,
+            shadow: None,
+            reflection: None,
+            soft_edge: None,
+            alt_text: look.alt_text.clone(),
+            decorative: false,
+            name: look.name.clone(),
+            ole: None,
+            geometry: None,
+            effects: look.effects, tile: None, fill_rect: None,
+            artistic_effect: None,
+        };
+        let frame = EmuRect::new(floating.offset_x, floating.offset_y, width, height);
+        let shape = Shape { id: ShapeId(self.new_id() as u64), frame, rotation, flip_h: false, flip_v: false, kind: ShapeKind::Picture(picture), floating: Some(floating) };
+        Some(FlowRunKind::Shape(Box::new(shape)))
     }
 
     /// `w:object`: the picture of the object (`v:imagedata`, or a
@@ -2318,11 +2401,14 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
 
     /// A VML shape (`w:pict` with a `v:rect`, `v:roundrect`, `v:oval` or `v:line`, the old drawing format), as a shape: its
     /// size, fill, outline, text box and place.
-    fn vml_shape(&mut self, pict: Node) -> Option<FlowRunKind> {
+    fn vml_shape(&mut self, pict: Node, rels: &Rels) -> Option<FlowRunKind> {
         let vml = elements(pict).find(|n| matches!(n.tag_name().name(), "rect" | "roundrect" | "oval" | "line" | "polyline" | "shape"))?;
         let name = vml.tag_name().name();
         let style = vml_style(vml.attribute("style").unwrap_or(""));
         let length = |key: &str| style.get(key).and_then(|v| vml_length(v));
+        if let Some(image) = child(vml, "imagedata") {
+            return self.vml_picture(vml, image, &style, rels);
+        }
         let point = |v: Option<&str>| -> Option<(i64, i64)> {
             let (x, y) = v?.split_once(',')?;
             Some((vml_length(x)?, vml_length(y)?))
@@ -2695,47 +2781,65 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                     Some(ibis_doc_model::LineHeight::Exact(e)) => Some(ibis_doc_model::LineSpacing::Points(hundredths(Some(e)))),
                     _ => None,
                 };
-                let mut runs = Vec::new();
-                for r in elements(p).filter(|n| n.tag_name().name() == "r") {
-                    let rpr = child(r, "rPr");
-                    let mut f = base_run.clone();
-                    if let Some(rpr) = rpr {
-                        f.overlay(&run_format(rpr, self.theme));
-                    }
-                    // The East Asian typeface is the run's (its Latin one for the others).
-                    let (font, fallback_font) = match (f.east_asian_font.clone(), f.font.clone()) {
-                        (Some(ea), latin) => (Some(ea), latin),
-                        (None, latin) => (latin, None),
-                    };
-                    let mut text = String::new();
-                    for t in elements(r).filter(|n| n.tag_name().name() == "t") {
-                        text.push_str(t.text().unwrap_or(""));
-                    }
-                    if !text.is_empty() {
-                        runs.push(Run {
-                            text,
-                            style: RunStyle {
-                                font_size: Some(f.size.unwrap_or(1050)),
-                                bold: Some(f.bold.unwrap_or(false)),
-                                italic: Some(f.italic.unwrap_or(false)),
-                                color: f.color,
-                                font,
-                                fallback_font,
-                                ..Default::default()
-                            },
-                        });
-                    }
-                }
-                if !runs.is_empty() {
-                    paragraphs.push(Paragraph {
-                        runs,
-                        align,
-                        space_before: hundredths(para.before),
-                        space_after: hundredths(para.after),
-                        line_spacing,
+                let style_of = |f: &RunFormat, c: char| {
+                    // Each character in the typeface the body would draw it in
+                    // (CJK in the East Asian one), falling back to the other.
+                    let font = f.style().font_for(c).map(str::to_string);
+                    let fallback_font = if font == f.font { f.east_asian_font.clone() } else { f.font.clone() };
+                    RunStyle {
+                        font_size: Some(f.size.unwrap_or(1050)),
+                        bold: Some(f.bold.unwrap_or(false)),
+                        italic: Some(f.italic.unwrap_or(false)),
+                        color: f.color,
+                        font,
+                        fallback_font,
                         ..Default::default()
-                    });
+                    }
+                };
+                let mut runs: Vec<Run> = Vec::new();
+                // The runs, also inside hyperlinks, content controls and insertions.
+                for r in p.descendants().filter(|n| n.is_element() && n.tag_name().name() == "r" && !n.ancestors().skip(1).any(|a| a.tag_name().name() == "del")) {
+                    let rpr = child(r, "rPr");
+                    let direct = rpr.map(|pr| run_format(pr, self.theme)).unwrap_or_default();
+                    let f = self.styles.run_format(&base_run, rpr.and_then(|pr| wval(pr, "rStyle")), &direct);
+                    let mut text = String::new();
+                    for t in elements(r) {
+                        match t.tag_name().name() {
+                            "t" => text.push_str(t.text().unwrap_or("")),
+                            "tab" => text.push('\t'),
+                            _ => {}
+                        }
+                    }
+                    for c in text.chars() {
+                        let style = style_of(&f, c);
+                        match runs.last_mut() {
+                            Some(last) if last.style == style => last.text.push(c),
+                            _ => runs.push(Run { text: c.to_string(), style }),
+                        }
+                    }
                 }
+                // Its list mark: a bullet's character (numbered lists are not counted here).
+                let level = para.num_id.filter(|id| *id != 0).and_then(|id| self.styles.numbering.level(id, para.level.unwrap_or(0)));
+                let bullet = level.filter(|l| l.format == "bullet" && !l.text.is_empty()).map(|l| ibis_doc_model::Bullet { text: l.text.clone(), picture: None, size: 100_000, color: None, auto: None });
+                let left = para.left.or_else(|| level.and_then(|l| l.para.left)).unwrap_or(0);
+                let first_line = para.first_line.or_else(|| level.and_then(|l| l.para.first_line)).unwrap_or(0);
+                // The paragraph mark's format: the height of an empty paragraph.
+                let mut mark = base_run.clone();
+                if let Some(rpr) = ppr.and_then(|pr| child(pr, "rPr")) {
+                    mark.overlay(&run_format(rpr, self.theme));
+                }
+                paragraphs.push(Paragraph {
+                    runs,
+                    align,
+                    margin_left: left,
+                    indent: first_line,
+                    bullet,
+                    space_before: hundredths(para.before),
+                    space_after: hundredths(para.after),
+                    line_spacing,
+                    end_style: style_of(&mark, 'a'),
+                    ..Default::default()
+                });
             }
         } else if let Some(tb) = tx_body {
             for p in elements(tb).filter(|n| n.tag_name().name() == "p") {

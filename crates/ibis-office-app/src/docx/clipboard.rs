@@ -276,7 +276,7 @@ impl SlideEditor {
 /// Materialize all supported run properties so destination defaults cannot leak.
 pub(super) fn resolved_format(r: &FlowRun) -> RunFormat {
     let s = &r.style;
-    RunFormat { font: s.font.clone(), east_asian_font: s.east_asian_font.clone(), cs_font: s.cs_font.clone(), size: Some(s.size), cs_size: s.cs_size,
+    RunFormat { font: s.font.clone(), east_asian_font: s.east_asian_font.clone(), east_asian_hint: s.east_asian_hint.then_some(true), cs_font: s.cs_font.clone(), size: Some(s.size), cs_size: s.cs_size,
         bold: Some(s.bold), italic: Some(s.italic), underline: Some(s.underline), underline_style: Some(s.underline_style),
         underline_color: Some(s.underline_color), strike: Some(s.strike), double_strike: Some(s.double_strike), caps: Some(s.caps), small_caps: Some(s.small_caps),
         color: Some(s.color), theme_color: r.format.theme_color.clone(), highlight: Some(s.highlight), shd_pattern: None, effects: None, border: Some(s.border.clone()),

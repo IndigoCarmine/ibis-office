@@ -55,7 +55,9 @@ pub(crate) struct RotatedPicture {
 }
 
 /// Wrap a picture drawn in `frame`, rotated clockwise by `rotation`
-/// (60 000ths of a degree) about the frame's centre and flipped as given.
+/// (60 000ths of a degree) about the frame's centre and flipped as given,
+/// with the colour effects of `look`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn rotated_picture(
     data: &[u8],
     encoding: Encoding,
@@ -64,6 +66,7 @@ pub(crate) fn rotated_picture(
     flip_h: bool,
     flip_v: bool,
     crop: Crop,
+    look: &Look,
 ) -> RotatedPicture {
     let degrees = rotation as f64 / 60_000.0;
     let (sin, cos) = degrees.to_radians().sin_cos();
@@ -94,15 +97,23 @@ pub(crate) fn rotated_picture(
     let (ix, iy) = (-frac(crop.left) / visible_w * fw, -frac(crop.top) / visible_h * fh);
     let (iw, ih) = (fw / visible_w, fh / visible_h);
     let (sx, sy) = (if flip_h { -1.0 } else { 1.0 }, if flip_v { -1.0 } else { 1.0 });
+    let primitives = filter_primitives(look);
+    let (filter, filter_attr) = if primitives.is_empty() {
+        (String::new(), "")
+    } else {
+        (format!(r#"<filter id="fx" color-interpolation-filters="sRGB" x="0" y="0" width="1" height="1">{primitives}</filter>"#), r#" filter="url(#fx)""#)
+    };
     let svg = format!(
         concat!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" "#,
             r#"width="{w}" height="{h}" viewBox="{vx:.3} {vy:.3} {bw:.3} {bh:.3}">"#,
-            r#"<defs><clipPath id="frame"><rect x="0" y="0" width="{fw:.3}" height="{fh:.3}"/></clipPath></defs>"#,
+            r#"<defs><clipPath id="frame"><rect x="0" y="0" width="{fw:.3}" height="{fh:.3}"/></clipPath>{filter}</defs>"#,
             // Flip, then rotate, about the frame's centre (OOXML's order).
             r#"<g transform="translate({cx:.3} {cy:.3}) rotate({deg}) scale({sx} {sy}) translate({ncx:.3} {ncy:.3})">"#,
-            r#"<g clip-path="url(#frame)"><image x="{ix:.3}" y="{iy:.3}" width="{iw:.3}" height="{ih:.3}" preserveAspectRatio="none" xlink:href="data:{mime};base64,"#,
+            r#"<g clip-path="url(#frame)"><image{filter_attr} x="{ix:.3}" y="{iy:.3}" width="{iw:.3}" height="{ih:.3}" preserveAspectRatio="none" xlink:href="data:{mime};base64,"#,
         ),
+        filter = filter,
+        filter_attr = filter_attr,
         w = stated(bw.round().max(1.0)),
         h = stated(bh.round().max(1.0)),
         vx = fw / 2.0 - bw / 2.0,
@@ -352,7 +363,7 @@ mod tests {
     #[test]
     fn quarter_turn_swaps_the_bounds() {
         let png = [0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0, 200, 0, 0, 0, 100];
-        let p = rotated_picture(&png, Encoding::Png, EmuRect::new(0, 0, 2000, 1000), 5_400_000, false, false, Crop::default());
+        let p = rotated_picture(&png, Encoding::Png, EmuRect::new(0, 0, 2000, 1000), 5_400_000, false, false, Crop::default(), &Look::default());
         assert_eq!(p.bounds, EmuRect::new(500, -500, 1000, 2000));
         let svg = String::from_utf8(p.svg).unwrap();
         // Rasterized at the picture's width across the frame: 200 px for

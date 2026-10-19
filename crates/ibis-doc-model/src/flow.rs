@@ -1235,6 +1235,9 @@ pub struct FlowRunStyle {
     pub font: Option<String>,
     /// Typeface for East Asian text.
     pub east_asian_font: Option<String>,
+    /// Shared punctuation and symbols take the East Asian typeface
+    /// (`w:rFonts/@w:hint="eastAsia"`).
+    pub east_asian_hint: bool,
     /// Typeface for Complex Script text (Arabic, Hebrew, Thai, Indic, etc.).
     pub cs_font: Option<String>,
     /// Hundredths of a point.
@@ -1300,6 +1303,7 @@ impl Default for FlowRunStyle {
         Self {
             font: None,
             east_asian_font: None,
+            east_asian_hint: false,
             cs_font: None,
             size: 1050,
             cs_size: None,
@@ -1374,10 +1378,16 @@ impl FlowRunStyle {
                 return Some(f);
             }
         }
-        // Punctuation and symbols from U+2010 up take the East Asian font
-        // in a Japanese document, as Word draws them ("―" full-width).
+        // CJK text takes the East Asian font; punctuation and symbols shared
+        // with Latin text (U+00A0 to U+2E7F: "•", "–", "“", "―", "→") only with
+        // `w:hint="eastAsia"`, as Word: without it they are Latin.
         // (not "…" U+2026: Word draws it in the Latin font, as three dots on the baseline: DIDX).
-        let east_asian = c as u32 >= 0x2010 && !matches!(c as u32, 0xff61..=0xff9f | 0x2026);
+        let east_asian = match c as u32 {
+            0xff61..=0xff9f | 0x2026 => false,
+            0x2e80.. => true,
+            0x00a0..=0x2e7f => self.east_asian_hint,
+            _ => false,
+        };
         if east_asian {
             self.east_asian_font.as_deref().or(self.font.as_deref()).or(self.cs_font.as_deref())
         } else {
@@ -2985,6 +2995,9 @@ pub struct RunFormat {
     pub font: Option<String>,
     /// East Asian typeface (`w:rFonts/@w:eastAsia`).
     pub east_asian_font: Option<String>,
+    /// `w:rFonts/@w:hint="eastAsia"`: punctuation and symbols shared by
+    /// Latin and East Asian text take the East Asian typeface.
+    pub east_asian_hint: Option<bool>,
     /// Complex Script typeface (`w:rFonts/@w:cs`).
     pub cs_font: Option<String>,
     /// Hundredths of a point.
@@ -3060,6 +3073,7 @@ impl RunFormat {
         }
         set(&mut self.font, &other.font);
         set(&mut self.east_asian_font, &other.east_asian_font);
+        set(&mut self.east_asian_hint, &other.east_asian_hint);
         set(&mut self.cs_font, &other.cs_font);
         set(&mut self.size, &other.size);
         set(&mut self.cs_size, &other.cs_size);
@@ -3111,6 +3125,7 @@ impl RunFormat {
         let mut f = self.clone();
         clear(&mut f.font, &other.font);
         clear(&mut f.east_asian_font, &other.east_asian_font);
+        clear(&mut f.east_asian_hint, &other.east_asian_hint);
         clear(&mut f.cs_font, &other.cs_font);
         clear(&mut f.size, &other.size);
         clear(&mut f.cs_size, &other.cs_size);
@@ -3158,6 +3173,7 @@ impl RunFormat {
         FlowRunStyle {
             font: self.font.clone(),
             east_asian_font: self.east_asian_font.clone(),
+            east_asian_hint: self.east_asian_hint.unwrap_or(false),
             cs_font: self.cs_font.clone(),
             size: self.size.unwrap_or(d.size),
             cs_size: self.cs_size,

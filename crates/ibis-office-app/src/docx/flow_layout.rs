@@ -1712,6 +1712,11 @@ impl<'r> Layouter<'r> {
                 } else {
                     (shape_left, shape_right, false)
                 };
+                // Only the part of the shape over this line's own range cuts it: a shape
+                // past the column's edge leaves the line its full width, never more.
+                let line_shape_left = line_shape_left.clamp(line_start, line_end.max(line_start));
+                let line_shape_right = line_shape_right.clamp(line_start, line_end.max(line_start));
+                let is_intersecting = is_intersecting && line_shape_right > line_shape_left;
                 let slots = if is_intersecting {
                     let left_w = (line_shape_left - line_start).max(0.0);
                     let right_w = (line_end - line_shape_right).max(0.0);
@@ -1951,10 +1956,10 @@ impl<'r> Layouter<'r> {
                         _ => false,
                     };
                     let has_tab = slice.iter().any(|u| matches!(u, Unit::Tab));
-                    let marks = slice[..visible_end].iter().filter(|u| unit_char(u) == Some('\u{200b}')).count();
-                    let gaps = visible_end.saturating_sub(1 + marks).max(1) as f32;
+                    let expands = justify_gaps(slice, visible_end, p.align == FlowAlign::Distribute);
+                    let gaps = expands.iter().filter(|e| **e).count();
                     let room = seg.slot_w;
-                    let extra = if justify && !has_tab && used < room { (room - used) / gaps } else { 0.0 };
+                    let extra = if justify && !has_tab && used < room && gaps > 0 { (room - used) / gaps as f32 } else { 0.0 };
                     // A displayed formula alone on its line is centred.
                     let align = if slice.iter().any(|u| matches!(u, Unit::Math { display: true, .. })) && slice.iter().all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace())) { FlowAlign::Center } else { p.align };
                     let shift = match align {
@@ -2193,7 +2198,7 @@ impl<'r> Layouter<'r> {
                                 let at = x - r.0 + inset;
                                 r.2.pop();
                                 r.2.push(at);
-                                x += width + if k + 1 < visible_end && *c != '\u{200b}' { extra } else { 0.0 };
+                                x += width + if expands.get(k).copied().unwrap_or(false) { extra } else { 0.0 };
                                 r.2.push(x - r.0);
                             }
                             Unit::ListTab if left > x + 0.01 => {
@@ -2380,9 +2385,9 @@ impl<'r> Layouter<'r> {
                 _ => false,
             };
             let has_tab = slice.iter().any(|u| matches!(u, Unit::Tab));
-            let marks = slice[..visible_end].iter().filter(|u| unit_char(u) == Some('\u{200b}')).count();
-            let gaps = visible_end.saturating_sub(1 + marks).max(1) as f32;
-            let extra = if justify && !has_tab && used < room { (room - used) / gaps } else { 0.0 };
+            let expands = justify_gaps(slice, visible_end, p.align == FlowAlign::Distribute);
+            let gaps = expands.iter().filter(|e| **e).count();
+            let extra = if justify && !has_tab && used < room && gaps > 0 { (room - used) / gaps as f32 } else { 0.0 };
             // A displayed formula alone on its line is centred.
             let align = if slice.iter().any(|u| matches!(u, Unit::Math { display: true, .. })) && slice.iter().all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace())) { FlowAlign::Center } else { p.align };
             let shift = match align {
@@ -2661,7 +2666,7 @@ impl<'r> Layouter<'r> {
                         let at = x - r.0 + inset;
                         r.2.pop();
                         r.2.push(at);
-                        x += width + if k + 1 < visible_end && *c != '\u{200b}' { extra } else { 0.0 };
+                        x += width + if expands.get(k).copied().unwrap_or(false) { extra } else { 0.0 };
                         r.2.push(x - r.0);
                     }
                     Unit::ListTab if left > x + 0.01 => {
@@ -2871,6 +2876,22 @@ fn unit_char(u: &Unit) -> Option<char> {
         Unit::Char { c, .. } => Some(*c),
         _ => None,
     }
+}
+
+/// Which characters of a justified line take extra width after them, as
+/// Word: spaces, and characters with a CJK one on either side (Latin words
+/// keep their letters together); every character for 均等割り付け.
+fn justify_gaps(slice: &[Unit], visible_end: usize, distribute: bool) -> Vec<bool> {
+    (0..visible_end)
+        .map(|k| {
+            let Some(c) = slice.get(k).and_then(unit_char) else { return false };
+            if c == '\u{200b}' || k + 1 >= visible_end {
+                return false;
+            }
+            let next = slice.get(k + 1).and_then(unit_char);
+            distribute || c == ' ' || is_cjk(c) || next.is_some_and(is_cjk)
+        })
+        .collect()
 }
 
 /// A character's line height and ascent with room for its 傍点 above
@@ -3903,11 +3924,52 @@ impl<'r> Layouter<'r> {
             let page = &setups[s].page;
             if page.gutter_at_top { (0, page.gutter) } else { (page.gutter, 0) }
         };
-        let text_frame = |s: usize| {
+        let margin_frame = |s: usize| {
             let page = &setups[s].page;
             let (w, h) = (pt(page.size.width), pt(page.size.height));
             let (gl, gt) = gutters(s);
             Frame { left: pt(page.left + gl), top: pt(page.top + gt), width: w - pt(page.left + gl) - pt(page.right), bottom: h - pt(page.bottom) }
+        };
+        // The header and footer a page has: its section's first-page ones
+        // (表紙), even-page ones, or the default ones.
+        const DEFAULT_PAGE: usize = 0;
+        let page_kind = |s: usize, number: u32, first_in_section: bool| -> usize {
+            if setups[s].title_page && first_in_section {
+                1
+            } else if self.doc.even_and_odd && number % 2 == 0 {
+                2
+            } else {
+                DEFAULT_PAGE
+            }
+        };
+        let header_footer = |s: usize, kind: usize| -> (&Vec<Block>, &Vec<Block>) {
+            match kind {
+                1 => (&parts[s][2], &parts[s][3]),
+                2 => (&parts[s][4], &parts[s][5]),
+                _ => (&parts[s][0], &parts[s][1]),
+            }
+        };
+        // As Word: a header taller than the top margin pushes the body down,
+        // a footer taller than the bottom one pushes its end up.
+        let body_limits: Vec<[(f32, f32); 3]> = (0..setups.len())
+            .map(|s| {
+                let margins = margin_frame(s);
+                let page = &setups[s].page;
+                self.line_pitch.set(page.line_pitch);
+                let height = |blocks: &Vec<Block>| -> f32 { blocks.iter().flat_map(|b| self.pieces(b, margins.width, 1, None, true)).map(|p| p.height).sum() };
+                std::array::from_fn(|kind| {
+                    let (header, footer) = header_footer(s, kind);
+                    let top = if header.is_empty() { margins.top } else { margins.top.max(pt(page.header) + height(header)) };
+                    let bottom = if footer.is_empty() { margins.bottom } else { margins.bottom.min(pt(page.size.height) - pt(page.footer) - height(footer)) };
+                    (top, bottom)
+                })
+            })
+            .collect();
+        // The kind of the page being laid out (its header's and footer's).
+        let kind_now = std::cell::Cell::new(DEFAULT_PAGE);
+        let text_frame = |s: usize| {
+            let (top, bottom) = body_limits[s][kind_now.get()];
+            Frame { top, bottom, ..margin_frame(s) }
         };
         let columns_of = |s: usize| -> Vec<(f32, f32)> {
             let page = &setups[s].page;
@@ -4006,6 +4068,7 @@ impl<'r> Layouter<'r> {
         };
         let notes_room = |page: &Page| -> f32 { if page.notes.is_empty() { 0.0 } else { separator_h + page.notes.iter().map(|id| note_heights.get(id).copied().unwrap_or(0.0)).sum::<f32>() } };
         let mut pages: Vec<Page> = vec![page_of(0, setups[0].page.first_page, true)];
+        kind_now.set(page_kind(0, setups[0].page.first_page, true));
         let mut frame = frame_of(0);
         let mut y = frame.top;
         // Where the last piece placed ended (pages so far, column, y) and the
@@ -4018,6 +4081,7 @@ impl<'r> Layouter<'r> {
             let first = pages.last().is_some_and(|p| p.section != s);
             *number = if first && setups[s].restart_numbering { setups[s].page.first_page } else { *number + 1 };
             pages.push(page_of(s, *number, first));
+            kind_now.set(page_kind(s, *number, first));
             *frame = frame_of(s);
             *y = frame.top;
         };
@@ -4183,7 +4247,11 @@ impl<'r> Layouter<'r> {
                 close_region!();
                 next_page(&mut pages, &mut frame, &mut y, &mut number, $s);
                 region_s = $s;
-                let _ = col;
+                // A new page starts again in its first column.
+                #[allow(unused_assignments)]
+                {
+                    col = 0;
+                }
                 col_top = y;
                 col_fill.clear();
                 placed.clear();
@@ -4211,6 +4279,7 @@ impl<'r> Layouter<'r> {
                 let first = true;
                 number = if setups[s].restart_numbering { setups[s].page.first_page } else { number };
                 *pages.last_mut().expect("a page") = page_of(s, number, first);
+                kind_now.set(page_kind(s, number, first));
                 frame = frame_of(s);
                 y = frame.top;
                 active_obstacle = find_page_obstacle(s, number, &frame);
@@ -4281,6 +4350,9 @@ impl<'r> Layouter<'r> {
             let obstacle_for_block = if let Block::Paragraph(p) = block {
                 let pad = |b: Option<FlowBorder>| b.map_or(0.0, |b| pt(b.space) + pt(b.total()));
                 let before_pad = self.space_before(p) + pad(p.borders[0]);
+                // Obstacles are kept from the left margin; the paragraph's
+                // own x is from its column's left.
+                let col_dx = frame.left - pt(setups[s].page.left);
                 if let Some(shape) = square_shape(p) {
                     let f = shape.floating.as_ref().unwrap();
                     let sw = pt(shape.frame.width);
@@ -4297,7 +4369,7 @@ impl<'r> Layouter<'r> {
                     let margin_r = pt(setups[s].page.right);
                     let margin_t = pt(setups[s].page.top);
                     let margin_b = pt(setups[s].page.bottom);
-                    let content_w = frame.width;
+                    let content_w = text_frame(s).width;
                     let _content_h = frame.bottom - frame.top;
                     let is_even = number % 2 == 0;
 
@@ -4307,7 +4379,8 @@ impl<'r> Layouter<'r> {
                         "rightMargin" => (page_w - margin_r, margin_r),
                         "insideMargin" => if is_even { (page_w - margin_r, margin_r) } else { (0.0, margin_l) },
                         "outsideMargin" => if is_even { (0.0, margin_l) } else { (page_w - margin_r, margin_r) },
-                        _ /* "column" | "margin" */ => (margin_l, content_w),
+                        "column" => (frame.left, frame.width),
+                        _ /* "margin" */ => (margin_l, content_w),
                     };
 
                     let abs_x = if f.relative_h == "character" {
@@ -4367,7 +4440,7 @@ impl<'r> Layouter<'r> {
                     let wrap_poly_rel = matches!(f.wrap.as_str(), "tight" | "through")
                         .then(|| f.wrap_polygon.clone())
                         .flatten()
-                        .map(|poly| (poly, sx, sy, sw, sh, dl, dr));
+                        .map(|poly| (poly, sx - col_dx, sy, sw, sh, dl, dr));
 
                     let obs = WrapObstacle {
                         shape_left: sx - dl,
@@ -4379,13 +4452,13 @@ impl<'r> Layouter<'r> {
                     };
                     active_obstacle = Some(obs.clone());
                     Some(WrapObstacleInPara {
-                        shape_left: obs.shape_left,
-                        shape_right: obs.shape_right,
+                        shape_left: obs.shape_left - col_dx,
+                        shape_right: obs.shape_right - col_dx,
                         rel_top: sy - dt,
                         rel_bottom: sy + sh + db,
                         wrap_text,
                         wrap_polygon: wrap_poly_rel,
-                        shape_to_emit: Some((shape.clone(), sx, sy, sw, sh, f.behind_doc)),
+                        shape_to_emit: Some((shape.clone(), sx - col_dx, sy, sw, sh, f.behind_doc)),
                         drop_cap_to_emit: None,
                     })
                 } else if let Some(ref obs) = active_obstacle {
@@ -4393,11 +4466,11 @@ impl<'r> Layouter<'r> {
                     let rel_bottom = obs.y_bottom - (y + before_pad);
                     if rel_bottom > 0.01 {
                         let wrap_polygon = obs.wrap_polygon.as_ref().map(|(poly, sx, abs_y, sw, sh, dl, dr)| {
-                            (poly.clone(), *sx, *abs_y - (y + before_pad), *sw, *sh, *dl, *dr)
+                            (poly.clone(), *sx - col_dx, *abs_y - (y + before_pad), *sw, *sh, *dl, *dr)
                         });
                         Some(WrapObstacleInPara {
-                            shape_left: obs.shape_left,
-                            shape_right: obs.shape_right,
+                            shape_left: obs.shape_left - col_dx,
+                            shape_right: obs.shape_right - col_dx,
                             rel_top,
                             rel_bottom,
                             wrap_text: obs.wrap_text.clone(),
@@ -4539,6 +4612,12 @@ impl<'r> Layouter<'r> {
                 }
             }
             let headers: Vec<Piece> = pieces.iter().take_while(|p| p.header).cloned().collect();
+            // An empty paragraph that only ends a section, the next going on
+            // on the page in other columns: Word gives it no height (its PDF of
+            // a two-column paper: the columns start right under the space after
+            // the paragraph before).
+            let no_height = matches!(block, Block::Paragraph(p) if p.runs.is_empty() && p.section.is_some() && p.section_break == SectionBreak::Continuous)
+                && columns_of(s).len() != columns_of((s + 1).min(setups.len() - 1)).len();
             let mut queue: std::collections::VecDeque<Piece> = pieces.into();
             let mut popped = 0usize;
             while let Some(mut piece) = queue.pop_front() {
@@ -4548,6 +4627,14 @@ impl<'r> Layouter<'r> {
                     break_before = None;
                 }
                 popped += 1;
+                if no_height {
+                    // Its line stays (for the caret), at the top of its place.
+                    let above = piece.space_before;
+                    piece.items = piece.items.into_iter().map(|it| offset(it, 0.0, -above)).collect();
+                    piece.height = 0.0;
+                    piece.space_before = 0.0;
+                    piece.space_after = 0.0;
+                }
                 // Paragraphs side by side: the larger of the space after one
                 // and before the next, not both.
                 if let Some((pc, c, ye, after)) = prev_end
@@ -4722,6 +4809,7 @@ impl<'r> Layouter<'r> {
                 continue;
             }
             if let Some(pg_idx) = pages.iter().rposition(|p| p.section == s) {
+                kind_now.set(page_kind(s, pages[pg_idx].number, pages[pg_idx].first_in_section));
                 let frame = frame_of(s);
                 let pg = &mut pages[pg_idx];
                 let body_bottom = pg
@@ -4768,6 +4856,7 @@ impl<'r> Layouter<'r> {
             if pg.notes.is_empty() {
                 continue;
             }
+            kind_now.set(page_kind(pg.section, pg.number, pg.first_in_section));
             let frame = frame_of(pg.section);
             let pos = setups.get(pg.section).map_or(self.doc.page.footnotes.position, |s| s.page.footnotes.position);
             let mut y = match pos {
@@ -4808,6 +4897,7 @@ impl<'r> Layouter<'r> {
         // to its swapped margins.
         for pg in &mut pages {
             let page = &setups[pg.section].page;
+            kind_now.set(page_kind(pg.section, pg.number, pg.first_in_section));
             let frame = text_frame(pg.section);
             let used = pg
                 .items
@@ -4943,18 +5033,12 @@ impl<'r> Layouter<'r> {
             self.page_counts.set(Some((total, in_section, pg.section as u32 + 1)));
             let s = pg.section;
             let setup = &setups[s];
-            let mut frame = text_frame(s);
+            let mut frame = margin_frame(s);
             let n = pg.number;
             frame.left += mirror_dx(s, n);
             *self.page_format.borrow_mut() = setup.page_number_format.clone();
             self.line_pitch.set(setup.page.line_pitch);
-            let (header, footer) = if setup.title_page && pg.first_in_section {
-                (&parts[s][2], &parts[s][3])
-            } else if self.doc.even_and_odd && n % 2 == 0 {
-                (&parts[s][4], &parts[s][5])
-            } else {
-                (&parts[s][0], &parts[s][1])
-            };
+            let (header, footer) = header_footer(s, page_kind(s, n, pg.first_in_section));
             let mut y = pt(setup.page.header);
             for block in header {
                 for piece in self.pieces(block, frame.width, n, None, true) {
@@ -4981,7 +5065,7 @@ impl<'r> Layouter<'r> {
             if !page.borders.iter().any(Option::is_some) {
                 continue;
             }
-            let frame = text_frame(pg.section);
+            let frame = margin_frame(pg.section);
             let (page_w, page_h) = (pg.width, pg.height);
             let [top, right, bottom, left] = page.borders;
             let total = |b: Option<FlowBorder>| b.map_or(0.0, |b| pt(b.total()));
