@@ -99,7 +99,7 @@ fn a_picture_put_on_a_layout_comes_with_its_file() {
     let (poster, _, _) = ibis_pptx::clip_poster(false, 16.0 / 9.0);
     let media = document.ids().add_media(MediaFormat::Png, poster.clone());
     let id = document.ids().new_shape_id();
-    let picture = Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: "ロゴ".into(), ole: None };
+    let picture = Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, alpha: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: "ロゴ".into(), ole: None };
     let index = opened.presentation.slides[0].shapes.len();
     document.execute(vec![Command::InsertShape { slide, index, shape: Shape::new(id, EmuRect::new(100_000, 100_000, 800_000, 450_000), ShapeKind::Picture(picture)) }]).unwrap();
     let edited = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();

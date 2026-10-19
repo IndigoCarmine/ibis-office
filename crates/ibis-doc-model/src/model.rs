@@ -353,6 +353,9 @@ pub struct Picture {
     pub clear: Option<crate::Rgb>,
     /// Luminance adjustment (`a:lum`): bright and contrast in 100 000ths (-100 000 to 100 000).
     pub luminance: Option<(i32, i32)>,
+    /// Opacity of the whole picture (`a:alphaModFix/@amt`) in 100 000ths,
+    /// below 100 000; `None` for fully opaque.
+    pub alpha: Option<u32>,
     /// A video or an audio clip this picture is the poster frame (or the
     /// speaker icon) of (`a:videoFile`, `a:audioFile`).
     pub clip: Option<Clip>,
@@ -382,6 +385,7 @@ impl Picture {
             duotone: None,
             clear: None,
             luminance: None,
+            alpha: None,
             clip: None,
             shadow: None,
             reflection: None,

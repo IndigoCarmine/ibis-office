@@ -169,6 +169,7 @@ impl SlideEditor {
                             crop: pic.crop,
                             stroke: pic.stroke.clone(),
                             luminance: pic.luminance,
+                            alpha: pic.alpha,
                             duotone: pic.duotone,
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
@@ -504,6 +505,10 @@ impl SlideEditor {
             l.luminance = (b != 0 || c != 0).then_some((b, c));
         }, cx);
     }
+    /// 透明度: the picture's whole transparency, in percent (0 for opaque).
+    pub(crate) fn set_picture_transparency(&mut self, percent: u32, cx: &mut Context<Self>) {
+        self.change_picture_look(|l| l.alpha = (percent > 0).then(|| 100_000 - percent.min(100) * 1000), cx);
+    }
     /// 色: the picture recoloured (grayscale, sepia) or as it was (`None`).
     pub(crate) fn recolor_picture(&mut self, kind: Option<PictureRecolor>, cx: &mut Context<Self>) {
         self.change_picture_look(|l| {
@@ -691,6 +696,7 @@ impl SlideEditor {
         let decorative = edit.decorative;
         let stroke_now = self.picture_stroke_at_caret();
         let duotone_now = self.picture_look_at_caret().and_then(|l| l.duotone);
+        let alpha_now = self.picture_look_at_caret().and_then(|l| l.alpha);
         let row=|label:&'static str,field:&Entity<InputState>|h_flex().gap_2().child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label))).child(Input::new(field).small());
         let mut body=v_flex().gap_2().px(px(18.)).py(px(8.))
             .child(h_flex().gap_2()
@@ -721,6 +727,11 @@ impl SlideEditor {
                 .child(Button::new("pic-recolor-none").small().label(crate::shell::i18n::text("docx.picture-panel.no-recolor")).selected(duotone_now.is_none()).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(None,cx))))
                 .child(Button::new("pic-recolor-gray").small().label(crate::shell::i18n::text("pptx.print-panel.grayscale")).selected(duotone_now==Some((Rgb(0x000000),Rgb(0xFFFFFF)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Grayscale),cx))))
                 .child(Button::new("pic-recolor-sepia").small().label(crate::shell::i18n::text("docx.picture-panel.sepia")).selected(duotone_now==Some((Rgb(0x3F2300),Rgb(0xFFF3D6)))).on_click(cx.listener(|this,_,_,cx|this.recolor_picture(Some(PictureRecolor::Sepia),cx)))))
+            .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.transparency")))
+            .child(h_flex().gap_1().flex_wrap().children([0u32, 15, 30, 50, 80].map(|percent| {
+                let opacity = (percent > 0).then(|| 100_000 - percent * 1000);
+                Button::new(("pic-transparency", percent as usize)).small().label(format!("{percent}%")).selected(alpha_now == opacity).on_click(cx.listener(move |this,_,_,cx|this.set_picture_transparency(percent,cx)))
+            })))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture.border.label")))
             .child(h_flex().gap_1().flex_wrap()
                 .child(Button::new("pic-border-none").small().label(crate::shell::i18n::text("pptx.chrome.no-border")).selected(stroke_now.is_none()).on_click(cx.listener(|this,_,_,cx|this.clear_picture_border(cx))))

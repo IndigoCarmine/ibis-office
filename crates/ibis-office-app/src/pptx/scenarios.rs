@@ -4000,7 +4000,7 @@ pub(crate) fn chart_style_options() {
 }
 
 /// A tiny PNG: `w` × `h` pixels of one colour.
-fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
+pub(crate) fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
     fn crc(data: &[u8]) -> u32 {
         let mut c = 0xffff_ffffu32;
         for &b in data {
@@ -6730,6 +6730,30 @@ pub(crate) fn picture_luminance_options() {
     let saved_pic2 = saved2.slides[0].shapes.last().unwrap();
     let ShapeKind::Picture(p) = &saved_pic2.kind else { panic!("saved picture 2") };
     assert!(p.luminance.is_none());
+
+    undo_all_and_redo(&mut s);
+}
+
+/// 透明度: a picture's whole transparency (a:alphaModFix) from the presets, undone and redone.
+pub(crate) fn picture_transparency_options() {
+    let mut s = Scenario::new_document(ibis_pptx::Kind::Presentation);
+    s.update(|e, _, cx| e.insert_picture("alpha-photo.png", png(160, 120, [0x44, 0x88, 0xcc]), cx));
+    let alpha = |s: &mut Scenario| s.with(|e, _| match &e.selected_shapes()[0].kind {
+        ShapeKind::Picture(p) => p.alpha,
+        _ => panic!("picture"),
+    });
+    assert_eq!(alpha(&mut s), None);
+
+    s.toolbar_menu("picture-transparency", "pptx.picture.alpha.50");
+    assert_eq!(alpha(&mut s), Some(50_000));
+    s.toolbar_menu("picture-transparency", "pptx.picture.alpha.80");
+    assert_eq!(alpha(&mut s), Some(20_000));
+    s.key("cmd-z");
+    assert_eq!(alpha(&mut s), Some(50_000));
+    s.key("cmd-shift-z");
+    assert_eq!(alpha(&mut s), Some(20_000));
+    s.toolbar_menu("picture-transparency", "pptx.picture.alpha.none");
+    assert_eq!(alpha(&mut s), None);
 
     undo_all_and_redo(&mut s);
 }
@@ -13349,6 +13373,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::picture_crop_to_shape", picture_crop_to_shape),
         ("pptx::picture_color_effects", picture_color_effects),
         ("pptx::picture_luminance_options", picture_luminance_options),
+        ("pptx::picture_transparency_options", picture_transparency_options),
         ("pptx::table_style_options", table_style_options),
         ("pptx::table_cell_fill_range_and_picture", table_cell_fill_range_and_picture),
         ("pptx::chart_title_options", chart_title_options),

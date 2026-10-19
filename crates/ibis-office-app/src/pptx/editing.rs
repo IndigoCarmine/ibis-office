@@ -2275,7 +2275,7 @@ impl SlideEditor {
         let media = self.document.ids().add_media(format, data.clone());
         self.resources.add_picture(media, format, &data);
         let id = self.document.ids().new_shape_id();
-        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name: String::new(), shadow: None, reflection: None, soft_edge: None, ole: None };
+        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, alpha: None, clip: None, alt_text: Default::default(), decorative: false, name: String::new(), shadow: None, reflection: None, soft_edge: None, ole: None };
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let slide = self.current_slide;
         let mut commands = Vec::new();
@@ -2316,7 +2316,7 @@ impl SlideEditor {
         self.resources.add_picture(media, format, &data);
         let id = self.document.ids().new_shape_id();
         let name = format!("Icon: {icon_name}");
-        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, alt_text: Default::default(), decorative: false, name, shadow: None, reflection: None, soft_edge: None, ole: None };
+        let picture = ibis_doc_model::Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, alpha: None, clip: None, alt_text: Default::default(), decorative: false, name, shadow: None, reflection: None, soft_edge: None, ole: None };
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let slide = self.current_slide;
         let mut commands = Vec::new();
@@ -3081,6 +3081,18 @@ impl SlideEditor {
         self.run(commands, cx);
     }
 
+    /// 透明度: the selected pictures' whole opacity (in 100 000ths, below 100 000; `None` for opaque).
+    pub(crate) fn set_selected_pictures_alpha(&mut self, alpha: Option<u32>, cx: &mut Context<Self>) {
+        let commands = self.selected_shapes().into_iter().filter_map(|shape| {
+            let ShapeKind::Picture(picture) = &shape.kind else { return None };
+            if picture.alpha == alpha { return None; }
+            let mut picture = picture.clone();
+            picture.alpha = alpha;
+            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+        }).collect();
+        self.run(commands, cx);
+    }
+
     /// 選択中の SVG 画像を図形（フリーフォーム・Office カスタム図形）に変換する
     pub(crate) fn convert_selected_svg_to_shape(&mut self, cx: &mut Context<Self>) -> bool {
         let selected_svgs: Vec<(ShapeId, EmuRect, std::sync::Arc<[u8]>)> = self.selected_shapes().into_iter().filter_map(|shape| {
@@ -3246,13 +3258,14 @@ impl SlideEditor {
         self.run(commands, cx);
     }
 
-    /// Reset picture formatting (stroke, corner, duotone, clear, luminance, shadow, reflection, soft_edge), keeping crop and frame.
+    /// Reset picture formatting (stroke, corner, duotone, clear, luminance, alpha, shadow, reflection, soft_edge), keeping crop and frame.
     pub(crate) fn reset_picture_effects(&mut self, cx: &mut Context<Self>) {
         let commands = self.selected_shapes().into_iter().filter_map(|shape| {
             let ShapeKind::Picture(picture) = &shape.kind else { return None };
             if picture.duotone.is_none()
                 && picture.clear.is_none()
                 && picture.luminance.is_none()
+                && picture.alpha.is_none()
                 && picture.stroke.is_none()
                 && picture.corner == 0
                 && picture.shadow.is_none()
@@ -3265,6 +3278,7 @@ impl SlideEditor {
             picture.duotone = None;
             picture.clear = None;
             picture.luminance = None;
+            picture.alpha = None;
             picture.stroke = None;
             picture.corner = 0;
             picture.shadow = None;

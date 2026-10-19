@@ -434,7 +434,7 @@ fn add_vml_shape(package: &mut Package, sheet_part: &str, image_part: &str, fram
         package.add_relationship(&part, REL_IMAGE, &super::super::pptx::relative(&part, image_part), false)?
     };
     let shape = format!(
-        "<v:shape id=\"_x0000_s{n}\" type=\"#_x0000_t75\" style='{}' filled=\"t\" fillcolor=\"window [65]\" stroked=\"t\" strokecolor=\"windowText [64]\" o:insetmode=\"auto\">\r\n <v:fill color2=\"window [65]\"/>\r\n <v:imagedata o:relid=\"{image_rel}\" o:title=\"\"/>\r\n <x:ClientData ObjectType=\"Pict\">\r\n  <x:SizeWithCells/>\r\n  <x:Anchor>\r\n   {}</x:Anchor>\r\n  <x:CF>Pict</x:CF>\r\n  <x:AutoPict/>\r\n </x:ClientData>\r\n</v:shape>",
+        "<v:shape id=\"_x0000_s{n}\" type=\"#_x0000_t75\" style='{}' filled=\"f\" stroked=\"f\" o:insetmode=\"auto\">\r\n <v:imagedata o:relid=\"{image_rel}\" o:title=\"\"/>\r\n <x:ClientData ObjectType=\"Pict\">\r\n  <x:SizeWithCells/>\r\n  <x:Anchor>\r\n   {}</x:Anchor>\r\n  <x:CF>Pict</x:CF>\r\n  <x:AutoPict/>\r\n </x:ClientData>\r\n</v:shape>",
         style(frame, n % 1024),
         vml_anchor(from, to),
     );

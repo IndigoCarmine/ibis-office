@@ -756,6 +756,8 @@ pub struct PictureLook {
     pub stroke: Option<Stroke>,
     /// 明るさ・コントラスト (`a:lum`): bright and contrast in 100 000ths (-100 000 to 100 000).
     pub luminance: Option<(i32, i32)>,
+    /// 透明度: opacity of the whole picture (`a:alphaModFix/@amt`) in 100 000ths, below 100 000.
+    pub alpha: Option<u32>,
     /// Recoloured from dark to light between two colours (`a:duotone`; grayscale is black and white).
     pub duotone: Option<(crate::drawing::Rgb, crate::drawing::Rgb)>,
     /// Alternative text (`wp:docPr/@descr`, `@title`).
@@ -772,7 +774,7 @@ impl PictureLook {
     /// Whether the picture has no turn, flips, crop or stroke (it is drawn
     /// as a simple inline picture, not needing a turned shape).
     pub fn is_visual_default(&self) -> bool {
-        self.rotation == 0 && !self.flip_h && !self.flip_v && self.crop == Default::default() && self.stroke.is_none() && self.luminance.is_none() && self.duotone.is_none()
+        self.rotation == 0 && !self.flip_h && !self.flip_v && self.crop == Default::default() && self.stroke.is_none() && self.luminance.is_none() && self.alpha.is_none() && self.duotone.is_none()
     }
 }
 

@@ -2664,6 +2664,18 @@ impl Writer<'_> {
                     }
                 }
             }
+            // 透明度 (a:alphaModFix).
+            let old_alpha = self.doc.child(blip, "alphaModFix").map(|e| self.doc.attr(e, "amt").and_then(|v| v.parse::<u32>().ok()).unwrap_or(100_000)).filter(|&a| a < 100_000);
+            if old_alpha != look.alpha {
+                if let Some(e) = self.doc.child(blip, "alphaModFix") {
+                    self.doc.detach(e);
+                }
+                if let Some(amt) = look.alpha {
+                    let at = self.doc.children(blip).iter().position(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "extLst").unwrap_or_else(|| self.doc.children(blip).len());
+                    let e = self.doc.insert_element(blip, at, "a:alphaModFix");
+                    self.doc.set_attr(e, "amt", &amt.to_string());
+                }
+            }
             let srgb_pair = |doc: &XmlDocument, e: NodeId| -> Option<(ibis_doc_model::Rgb, ibis_doc_model::Rgb)> {
                 let colors: Vec<ibis_doc_model::Rgb> = doc.children(e).iter().filter(|&&c| doc.is_element(c) && doc.local_name(c) == "srgbClr").filter_map(|&c| doc.attr(c, "val").and_then(|v| u32::from_str_radix(v, 16).ok()).map(ibis_doc_model::Rgb)).collect();
                 Some((*colors.first()?, *colors.get(1)?))
@@ -4381,6 +4393,7 @@ impl Writer<'_> {
                             crop: pic.crop,
                             stroke: pic.stroke.clone(),
                             luminance: pic.luminance,
+                            alpha: pic.alpha,
                             duotone: pic.duotone,
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,

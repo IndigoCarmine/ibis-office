@@ -214,6 +214,31 @@ fn picture_correction_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntr
     ]
 }
 
+/// 透明度: presets for the selected pictures' whole transparency.
+fn picture_transparency_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
+    let current = editor.selected_shapes().into_iter().find_map(|s| match &s.kind {
+        ShapeKind::Picture(p) => Some(p.alpha),
+        _ => None,
+    }).flatten();
+    let preset = |id: &'static str, alpha: Option<u32>| -> MenuEntry {
+        MenuItem::tr(id)
+            .disabled(!enabled)
+            .checked(current == alpha)
+            .on(move |e, _, cx| e.set_selected_pictures_alpha(alpha, cx))
+            .into()
+    };
+    let mut items = vec![preset("pptx.picture.alpha.none", None), MenuEntry::Separator];
+    items.extend([
+        ("pptx.picture.alpha.15", 85_000),
+        ("pptx.picture.alpha.30", 70_000),
+        ("pptx.picture.alpha.50", 50_000),
+        ("pptx.picture.alpha.65", 35_000),
+        ("pptx.picture.alpha.80", 20_000),
+        ("pptx.picture.alpha.95", 5_000),
+    ].map(|(id, alpha)| preset(id, Some(alpha))));
+    items
+}
+
 fn wordart_insert_items() -> Vec<MenuEntry> {
     use crate::pptx::editing::WORDART_PRESETS;
     WORDART_PRESETS.iter().enumerate().map(|(idx, preset)| {
@@ -1436,6 +1461,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         .on(|e, _, cx| { e.convert_selected_svg_to_shape(cx); }).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.picture.color", "palette", picture_color_items(has_pic)).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.picture.correction", "tune", picture_correction_items(editor, has_pic)).into());
+    menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.picture.transparency", "filter_none", picture_transparency_items(editor, has_pic)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.picture.reset-colors")
         .disabled(!editor.selected_shapes().iter().any(|s| matches!(&s.kind, ShapeKind::Picture(p) if p.duotone.is_some() || p.clear.is_some() || p.luminance.is_some())))
         .on(|e, _, cx| e.reset_picture_color_effects(cx)).into());
@@ -2534,7 +2560,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                     items.push(ToolButton::new("clip-background", "music_note", crate::shell::i18n::text("pptx.clip.background")).on(opt.is_background_play()).click(|e, _, cx| e.toggle_selected_clip_background(cx)).into());
                 }
             }
-            items.extend([sep(), ToolButton::new("crop", "crop", crate::shell::i18n::text("pptx.chrome.crop-picture")).menu(crop_items()).into(), ToolButton::new("reset-image", "reset_image", crate::shell::i18n::text("pptx.chrome.reset-crop")).click(|e, _, cx| e.crop_selected_pictures(ibis_doc_model::Crop::default(), cx)).into(), ToolButton::new("replace-image", "swap_horiz", crate::shell::i18n::text("pptx.chrome.replace-picture")).click(|e, w, cx| e.pick_replacement_picture(w, cx)).into(), ToolButton::new("picture-color", "palette", crate::shell::i18n::text("pptx.chrome.picture-color")).menu(picture_color_items(true)).into(), ToolButton::new("picture-correction", "tune", crate::shell::i18n::text("pptx.chrome.brightness-contrast")).menu(picture_correction_items(editor, true)).into()]);
+            items.extend([sep(), ToolButton::new("crop", "crop", crate::shell::i18n::text("pptx.chrome.crop-picture")).menu(crop_items()).into(), ToolButton::new("reset-image", "reset_image", crate::shell::i18n::text("pptx.chrome.reset-crop")).click(|e, _, cx| e.crop_selected_pictures(ibis_doc_model::Crop::default(), cx)).into(), ToolButton::new("replace-image", "swap_horiz", crate::shell::i18n::text("pptx.chrome.replace-picture")).click(|e, w, cx| e.pick_replacement_picture(w, cx)).into(), ToolButton::new("picture-color", "palette", crate::shell::i18n::text("pptx.chrome.picture-color")).menu(picture_color_items(true)).into(), ToolButton::new("picture-correction", "tune", crate::shell::i18n::text("pptx.chrome.brightness-contrast")).menu(picture_correction_items(editor, true)).into(), ToolButton::new("picture-transparency", "filter_none", crate::shell::i18n::text("pptx.picture.transparency")).menu(picture_transparency_items(editor, true)).into()]);
             if editor.has_selected_svg_picture() {
                 items.push(ToolButton::new("convert-to-shape", "category", crate::shell::i18n::text("pptx.picture.convert-to-shape")).click(|e, _, cx| { e.convert_selected_svg_to_shape(cx); }).into());
             }

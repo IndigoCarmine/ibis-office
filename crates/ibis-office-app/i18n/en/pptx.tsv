@@ -139,6 +139,14 @@ pptx.picture.lum.contrast-m20	Contrast: -20%
 pptx.picture.lum.contrast-m40	Contrast: -40%
 pptx.picture.lum.bright-contrast-high	Brightness: +20%, Contrast: +20%
 pptx.picture.lum.bright-contrast-low	Brightness: -20%, Contrast: -20%
+pptx.picture.transparency	Transparency
+pptx.picture.alpha.none	No Transparency (0%)
+pptx.picture.alpha.15	Transparency: 15%
+pptx.picture.alpha.30	Transparency: 30%
+pptx.picture.alpha.50	Transparency: 50%
+pptx.picture.alpha.65	Transparency: 65%
+pptx.picture.alpha.80	Transparency: 80%
+pptx.picture.alpha.95	Transparency: 95%
 pptx.reset-slide	Reset Slide
 pptx.reset-placement	Reset Placeholder Position
 pptx.section.add	Add Section…

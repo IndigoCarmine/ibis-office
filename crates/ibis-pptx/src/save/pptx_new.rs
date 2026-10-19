@@ -1157,6 +1157,9 @@ fn picture_xml(x: &Prefixes, picture: &Picture, xfrm: &str, id: u32, shape: ibis
             write!(effects, "<{a}lum{attrs}/>").unwrap();
         }
     }
+    if let Some(amt) = picture.alpha {
+        write!(effects, r#"<{a}alphaModFix amt="{amt}"/>"#).unwrap();
+    }
     let is_svg = is_svg_media(picture.media);
     let blip_ext = if is_svg {
         format!(
