@@ -132,7 +132,7 @@ impl SlideEditor {
         let bytes = if let (Some(password), false, false, false, false) = (&self.protection_password, csv, tsv, ods, xls) { protect(&bytes, password)? } else { bytes };
         write_replacing(&path, &bytes).map_err(|e| crate::shell::i18n::format("file.cannot-write", &[("path", &path.display()), ("error", &e)]))?;
         let name: SharedString = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
-        window.set_window_title(&format!("{name} - ibisOffice"));
+        window.set_window_title(&format!("{name} - Acauda Office"));
         self.file_name = Some(name);
         self.set_file_path(Some(path));
         if self.is_workbook() || self.is_presentation() || self.is_document() {

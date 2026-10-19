@@ -4,7 +4,7 @@
 //! Recently opened files, most recent first, for ファイル > 履歴.
 //!
 //! Kept in a text file with one path per line, under the user's application
-//! data directory (`~/Library/Application Support/ibisOffice/recent-files.txt`
+//! data directory (`~/Library/Application Support/AcaudaOffice/recent-files.txt`
 //! on macOS). A missing or unreadable file is an empty list; a failed write
 //! is logged and otherwise ignored.
 
@@ -22,7 +22,7 @@ fn store_path() -> Option<PathBuf> {
     let base = env("APPDATA");
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
-    Some(base?.join("ibisOffice").join("recent-files.txt"))
+    Some(base?.join("AcaudaOffice").join("recent-files.txt"))
 }
 
 /// The stored list; empty if there is none or it cannot be read.

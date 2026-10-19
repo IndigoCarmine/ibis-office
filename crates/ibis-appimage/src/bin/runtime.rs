@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! The runtime of ibisOffice's AppImage (see the crate's docs): unpacks the
-//! image after it once per version into `~/.cache/ibisOffice/app/<id>/`
+//! image after it once per version into `~/.cache/AcaudaOffice/app/<id>/`
 //! and starts its `AppRun` with the arguments given, as AppImage's own
 //! runtime does (`APPIMAGE`, `APPDIR`, `ARGV0` and `OWD` set).
 //!
@@ -26,7 +26,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("ibisOffice: {err}");
+            eprintln!("AcaudaOffice: {err}");
             ExitCode::FAILURE
         }
     }

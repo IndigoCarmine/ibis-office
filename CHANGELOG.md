@@ -1,14 +1,20 @@
 # Changelog
 
-All notable changes to ibisOffice are recorded in this file.
+All notable changes to Acauda Office (and, before the fork, to ibisOffice) are recorded in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
 ### Added
 
-- A Windows installer, `ibisOffice-<version>-Windows-Setup.exe`. It installs ibisOffice for the current user in `%LOCALAPPDATA%\Programs\ibisOffice` without administrator rights, so the automatic update can still replace it. It adds a Start menu shortcut (and, if you choose, a desktop one), and offers ibisOffice in "Open with" and in Default apps for .docx, .xlsx, .pptx, .docm, .xlsm and .pptm files, without taking them from the app that opens them now. Uninstalling keeps your settings.
+- A Windows installer, `AcaudaOffice-<version>-Windows-Setup.exe`. It installs Acauda Office for the current user in `%LOCALAPPDATA%\Programs\AcaudaOffice` without administrator rights, so the automatic update can still replace it. It adds a Start menu shortcut (and, if you choose, a desktop one), and offers Acauda Office in "Open with" and in Default apps for .docx, .xlsx, .pptx, .docm, .xlsm and .pptm files, without taking them from the app that opens them now. Uninstalling keeps your settings.
 - `scripts/bundle-windows.ps1` builds the Windows release zip, its SHA-256 and the installer.
+
+### Changed
+
+- This fork is now **Acauda Office**, an unofficial fork of ibisOffice: the app's name, its icon and logo (a long-tailed tit, シマエナガ), the files (`AcaudaOffice.exe`, `AcaudaOffice.app`, `AcaudaOffice-<version>-<platform>` releases), the macOS bundle id (`io.github.indigocarmine.acauda`) and the Windows installer's AppId. The About screen still shows "Powered by ibisOffice" with its link, as NOTICE asks.
+- Settings, recent files, AutoRecover and the update's downloads are kept in `AcaudaOffice` folders, apart from ibisOffice's, so both can be installed side by side.
+- The automatic update and the start screen's issue link point to this repository (IndigoCarmine/ibis-office), not to ibisOffice's.
 
 ## [0.8.3] - 2026-10-18
 

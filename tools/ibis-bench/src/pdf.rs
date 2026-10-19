@@ -115,7 +115,7 @@ pub fn run(root: &Path, filter: &str, kind_filter: &str) -> Result<()> {
             let output = work.join(Path::new(file).with_extension("pdf"));
             let mut command = match app {
                 "ibisoffice" => {
-                    let mut c = Command::new(root.join("target/release/ibisOffice.exe"));
+                    let mut c = Command::new(root.join("target/release/AcaudaOffice.exe"));
                     c.args(["--export", "pdf", "--out-dir"])
                         .arg(&work)
                         .arg(&source);

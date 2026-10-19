@@ -4,11 +4,11 @@
 //! Where the update's files go.
 //!
 //! - macOS: unpacked in `~/Library/Caches/jp.ne.ibis.office/Update/<version>/`,
-//!   log `~/Library/Logs/ibisOffice/updater.log`.
-//! - Windows: `%LOCALAPPDATA%\ibisOffice\Update\<version>\`,
-//!   log `%LOCALAPPDATA%\ibisOffice\Logs\updater.log`.
-//! - Linux: `$XDG_CACHE_HOME/ibisOffice/Update/<version>/` (`~/.cache`),
-//!   log `$XDG_STATE_HOME/ibisOffice/updater.log` (`~/.local/state`).
+//!   log `~/Library/Logs/AcaudaOffice/updater.log`.
+//! - Windows: `%LOCALAPPDATA%\AcaudaOffice\Update\<version>\`,
+//!   log `%LOCALAPPDATA%\AcaudaOffice\Logs\updater.log`.
+//! - Linux: `$XDG_CACHE_HOME/AcaudaOffice/Update/<version>/` (`~/.cache`),
+//!   log `$XDG_STATE_HOME/AcaudaOffice/updater.log` (`~/.local/state`).
 //!
 //! `IBIS_UPDATE_DIR` puts both under one folder instead (`Update/`, `Logs/`),
 //! for the tests, which must not touch the real ones.
@@ -25,9 +25,9 @@ pub fn update_root() -> Option<PathBuf> {
         return Some(dir.join("Update"));
     }
     if cfg!(target_os = "windows") {
-        Some(env("LOCALAPPDATA")?.join("ibisOffice").join("Update"))
+        Some(env("LOCALAPPDATA")?.join("AcaudaOffice").join("Update"))
     } else if cfg!(target_os = "linux") {
-        Some(env("XDG_CACHE_HOME").or_else(|| Some(env("HOME")?.join(".cache")))?.join("ibisOffice").join("Update"))
+        Some(env("XDG_CACHE_HOME").or_else(|| Some(env("HOME")?.join(".cache")))?.join("AcaudaOffice").join("Update"))
     } else {
         Some(env("HOME")?.join("Library/Caches/jp.ne.ibis.office/Update"))
     }
@@ -44,10 +44,10 @@ pub fn log_file() -> Option<PathBuf> {
         return Some(dir.join("Logs").join("updater.log"));
     }
     if cfg!(target_os = "windows") {
-        Some(env("LOCALAPPDATA")?.join("ibisOffice").join("Logs").join("updater.log"))
+        Some(env("LOCALAPPDATA")?.join("AcaudaOffice").join("Logs").join("updater.log"))
     } else if cfg!(target_os = "linux") {
-        Some(env("XDG_STATE_HOME").or_else(|| Some(env("HOME")?.join(".local/state")))?.join("ibisOffice").join("updater.log"))
+        Some(env("XDG_STATE_HOME").or_else(|| Some(env("HOME")?.join(".local/state")))?.join("AcaudaOffice").join("updater.log"))
     } else {
-        Some(env("HOME")?.join("Library/Logs/ibisOffice/updater.log"))
+        Some(env("HOME")?.join("Library/Logs/AcaudaOffice/updater.log"))
     }
 }

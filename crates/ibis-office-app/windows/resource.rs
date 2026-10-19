@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-// The Windows resources the build scripts of ibisOffice.exe and
-// ibisOfficeUpdater.exe write (`include!`d by both build.rs): a resource
+// The Windows resources the build scripts of AcaudaOffice.exe and
+// AcaudaOfficeUpdater.exe write (`include!`d by both build.rs): a resource
 // file (.res) made here and handed to the linker, so no resource compiler is
 // needed.
 
@@ -92,13 +92,13 @@ fn push_version_resource(res: &mut Vec<u8>, version: &str, description: &str, fi
         0,
         true,
         &[
-            string("CompanyName", "ibis inc."),
+            string("CompanyName", "IndigoCarmine"),
             string("FileDescription", description),
             string("FileVersion", &file_version),
             string("InternalName", file_name.trim_end_matches(".exe")),
             string("LegalCopyright", "Copyright (c) ibis inc."),
             string("OriginalFilename", file_name),
-            string("ProductName", "ibisOffice"),
+            string("ProductName", "Acauda Office"),
             string("ProductVersion", version),
         ],
     );

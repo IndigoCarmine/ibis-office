@@ -345,9 +345,9 @@ pub fn measure(root: &Path, hwnd: usize, app: &str, scenario: &str, kind: &str) 
 pub fn fixture_run(root: &Path, app: &str, scenario: &str, kind: &str) -> Result<()> {
     let (executable, process, actual_executable) = match app {
         "ibisoffice" => (
-            root.join("target/release/ibisOffice.exe"),
-            "ibisOffice",
-            "ibisOffice.exe",
+            root.join("target/release/AcaudaOffice.exe"),
+            "AcaudaOffice",
+            "AcaudaOffice.exe",
         ),
         "msoffice-word" => (
             "C:/Program Files/Microsoft Office/root/Office16/WINWORD.EXE".into(),

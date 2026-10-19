@@ -1,7 +1,7 @@
 {
   "name": "ibis-office-web",
   "private": true,
-  "description": "Build tooling for the browser version of ibisOffice (www/).",
+  "description": "Build tooling for the browser version of Acauda Office (www/).",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {

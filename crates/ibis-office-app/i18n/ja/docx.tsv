@@ -1,4 +1,4 @@
-# ibisOffice の UI の文字（日本語）：docx 担当。キー<TAB>文字（shell/i18n.rs）。
+# Acauda Office の UI の文字（日本語）：docx 担当。キー<TAB>文字（shell/i18n.rs）。
 docx.cell.border.none	罫線なし
 docx.cell.diagonal.down	選択セルの斜線 ↘
 docx.cell.diagonal.up	選択セルの斜線 ↗

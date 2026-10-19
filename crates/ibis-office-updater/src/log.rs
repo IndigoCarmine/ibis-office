@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! `updater.log`: one line per step, appended by the app (checking and
-//! downloading) and by ibisOfficeUpdater (replacing), so that a customer
+//! downloading) and by AcaudaOfficeUpdater (replacing), so that a customer
 //! whose update keeps failing can send it:
 //!
 //! `2026-10-12T09:40:00Z 0.9.0 install ok moved the old copy aside`
@@ -57,7 +57,7 @@ impl Log {
     pub fn line(&self, step: &str, status: Status, detail: &str) {
         let text = format_line(&timestamp(), &self.version, step, status, detail);
         if let Err(err) = self.append(&text) {
-            eprintln!("ibisOfficeUpdater: cannot write {}: {err}", self.path.display());
+            eprintln!("AcaudaOfficeUpdater: cannot write {}: {err}", self.path.display());
         }
     }
 

@@ -4,7 +4,7 @@
 //! 自動回復 (DOCX-FILE-014/015, XLSX-FILE-014..016, PPTX-FILE-010/012), shared by the formats: the settings
 //! (how often, where, whether the last version is kept), a snapshot of the open file written to the AutoRecover folder
 //! every few minutes while it has unsaved edits, the panel that lists what is there to recover and opens it, and the
-//! banner over a recovered file. The folder is `<data>/ibisOffice/AutoRecover` (not in the browser edition).
+//! banner over a recovered file. The folder is `<data>/AcaudaOffice/AutoRecover` (not in the browser edition).
 
 use std::path::{Path, PathBuf};
 
@@ -52,7 +52,7 @@ pub(crate) fn default_autorecover_dir() -> PathBuf {
     let base = env("APPDATA");
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
-    let dir = base.unwrap_or_else(|| PathBuf::from(".")).join("ibisOffice").join("AutoRecover");
+    let dir = base.unwrap_or_else(|| PathBuf::from(".")).join("AcaudaOffice").join("AutoRecover");
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
@@ -66,7 +66,7 @@ fn config_store_path() -> Option<PathBuf> {
     let base = env("APPDATA");
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
-    Some(base?.join("ibisOffice").join("autorecover-config.tsv"))
+    Some(base?.join("AcaudaOffice").join("autorecover-config.tsv"))
 }
 
 /// Load configuration from disk, or return default.

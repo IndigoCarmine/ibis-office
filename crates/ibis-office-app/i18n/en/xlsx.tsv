@@ -1,4 +1,4 @@
-# ibisOffice UI text (English): xlsx 担当。キー<TAB>文字（shell/i18n.rs）。
+# Acauda Office UI text (English): xlsx 担当。キー<TAB>文字（shell/i18n.rs）。
 xlsx.sort	Sort Range
 xlsx.delete-row	Delete Row
 xlsx.delete-column	Delete Column

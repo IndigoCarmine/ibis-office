@@ -395,7 +395,7 @@ pub fn init(cx: &mut App) {
 pub(crate) fn set_app_menus(cx: &mut App) {
     use crate::shell::i18n::text;
     cx.set_menus([
-        Menu::new("ibisOffice").items([MenuItem::action(text("help.about"), OpenAbout), MenuItem::separator(), MenuItem::action(text("app.settings"), OpenSettings), MenuItem::separator(), MenuItem::action(text("app.quit"), Quit)]),
+        Menu::new("Acauda Office").items([MenuItem::action(text("help.about"), OpenAbout), MenuItem::separator(), MenuItem::action(text("app.settings"), OpenSettings), MenuItem::separator(), MenuItem::action(text("app.quit"), Quit)]),
         Menu::new(text("menu.file")).items([
             MenuItem::action(text("file.start-window"), OpenStartWindow),
             MenuItem::separator(),
@@ -486,7 +486,7 @@ fn open_window_sized(width: f32, cx: &mut App, setup: impl FnOnce(&mut SlideEdit
 /// ibisOffice [--timing] [--quit-after-first-frame] [<file>]
 /// ```
 ///
-/// `--timing` prints to stderr, as `ibisOffice timing: <stage> <ms>`, the
+/// `--timing` prints to stderr, as `AcaudaOffice timing: <stage> <ms>`, the
 /// milliseconds since the process started (as the system recorded it) at
 /// each stage: `main`, `app` (the application running), `window` (the
 /// window made, with an empty document of the file's kind), `first-frame`
@@ -694,7 +694,7 @@ pub(crate) fn read_file_with(path: &std::path::Path, password: Option<&str>) -> 
     let open_ms = open_t0.elapsed().as_secs_f64() * 1000.0;
     timing::mark("parsed");
     let total_file_ms = read_t0.elapsed().as_secs_f64() * 1000.0;
-    eprintln!("ibisOffice timing: read_file total: {total_file_ms:.1} ms (fs::read: {read_fs_ms:.1} ms, open: {open_ms:.1} ms)");
+    eprintln!("AcaudaOffice timing: read_file total: {total_file_ms:.1} ms (fs::read: {read_fs_ms:.1} ms, open: {open_ms:.1} ms)");
     render::preload::Preload::start_for_next(&opened.presentation);
     Ok(Loaded { presentation: opened.presentation, source: std::sync::Arc::new(opened.source), password: used, csv_stream })
 }
@@ -791,13 +791,13 @@ mod timing {
         mark("loaded");
         if let (Some(Some(_)), Some(read_start)) = (START.get(), FILE_READ_START.get()) {
             let ms = crate::clock::system_now().duration_since(*read_start).unwrap_or(Duration::ZERO).as_secs_f64() * 1000.0;
-            eprintln!("ibisOffice timing: read-start to loaded: {ms:.1} ms ({:.3} s)", ms / 1000.0);
+            eprintln!("AcaudaOffice timing: read-start to loaded: {ms:.1} ms ({:.3} s)", ms / 1000.0);
         }
         window.on_next_frame(|window, _| {
             mark("document-frame");
             if let (Some(Some(_)), Some(read_start)) = (START.get(), FILE_READ_START.get()) {
                 let ms = crate::clock::system_now().duration_since(*read_start).unwrap_or(Duration::ZERO).as_secs_f64() * 1000.0;
-                eprintln!("ibisOffice timing: read-start to document-frame (render complete): {ms:.1} ms ({:.3} s)", ms / 1000.0);
+                eprintln!("AcaudaOffice timing: read-start to document-frame (render complete): {ms:.1} ms ({:.3} s)", ms / 1000.0);
             }
             window.on_next_frame(|_, cx| {
                 mark("document-second-frame");
@@ -813,7 +813,7 @@ mod timing {
     pub(crate) fn mark(stage: &str) {
         if let Some(Some(start)) = START.get() {
             let ms = crate::clock::system_now().duration_since(*start).unwrap_or(Duration::ZERO).as_secs_f64() * 1000.0;
-            eprintln!("ibisOffice timing: {stage} {ms:.1}");
+            eprintln!("AcaudaOffice timing: {stage} {ms:.1}");
         }
     }
 
@@ -860,13 +860,13 @@ pub fn run_native() {
     let args = match parse_args() {
         Ok(args) => args,
         Err(err) => {
-            eprintln!("ibisOffice: {err}");
+            eprintln!("AcaudaOffice: {err}");
             std::process::exit(2);
         }
     };
     if let Some(format) = &args.export {
         if let Err(err) = run_export(&args, format) {
-            eprintln!("ibisOffice: {err}");
+            eprintln!("AcaudaOffice: {err}");
             std::process::exit(1);
         }
         // Done: the caches of what was drawn (hundreds of thousands of

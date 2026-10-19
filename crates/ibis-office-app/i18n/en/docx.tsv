@@ -1,4 +1,4 @@
-# ibisOffice UI text (English): docx 担当。キー<TAB>文字（shell/i18n.rs）。
+# Acauda Office UI text (English): docx 担当。キー<TAB>文字（shell/i18n.rs）。
 docx.cell.border.none	No Borders
 docx.cell.diagonal.down	Diagonal Border for Selected Cells ↘
 docx.cell.diagonal.up	Diagonal Border for Selected Cells ↗

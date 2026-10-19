@@ -1,4 +1,4 @@
-# ibisOffice の UI の文字（日本語）：pptx 担当。キー<TAB>文字（shell/i18n.rs）。
+# Acauda Office の UI の文字（日本語）：pptx 担当。キー<TAB>文字（shell/i18n.rs）。
 pptx.text.wrap	図形内で折り返す
 pptx.text.autofit-none	自動調整なし
 pptx.text.autofit-shrink	はみ出すときに縮小

@@ -15,9 +15,9 @@ use std::{
 pub fn measure(root: &Path, app: &str) -> Result<()> {
     let (exe, process, actual) = match app {
         "ibisoffice" => (
-            root.join("target/release/ibisOffice.exe"),
-            "ibisOffice",
-            "ibisOffice.exe",
+            root.join("target/release/AcaudaOffice.exe"),
+            "AcaudaOffice",
+            "AcaudaOffice.exe",
         ),
         "msoffice-word" => (
             "C:/Program Files/Microsoft Office/root/Office16/WINWORD.EXE".into(),

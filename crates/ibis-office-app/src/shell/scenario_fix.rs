@@ -176,7 +176,7 @@ fn fix15_long_menu_scrolls() {
 
 /// #10: ツール > 設定… opens the settings window in the middle of the window
 /// the user is in, its categories at the top of the left column; the app's
-/// own menu ("ibisOffice") has 設定… (⌘,).
+/// own menu ("Acauda Office") has 設定… (⌘,).
 fn fix10_settings_window_centered_and_app_menu() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     let parent = s.update(|_, window, _| window.bounds());
@@ -192,8 +192,8 @@ fn fix10_settings_window_centered_and_app_menu() {
         menus.first().map(|m| (m.name.to_string(), m.items.iter().map(|i| match i { gpui_kit::OwnedMenuItem::Action { name, .. } => name.to_string(), _ => String::new() }).collect::<Vec<_>>()))
     });
     let (name, items) = labels.expect("the app menu");
-    assert_eq!(name, "ibisOffice");
-    assert_eq!(items.first().map(String::as_str), Some("ibisOffice について"), "{items:?}");
+    assert_eq!(name, "Acauda Office");
+    assert_eq!(items.first().map(String::as_str), Some("Acauda Office について"), "{items:?}");
     assert!(items.iter().any(|i| i == "設定…"), "{items:?}");
 }
 
@@ -421,7 +421,7 @@ fn fix_docx_edit014_symbols() {
 /// empty file of their kind (the xlsx one here).
 fn start_view_new_and_select() {
     let mut s = Scenario::start_view();
-    assert_eq!(crate::shell::start_view::start_title(), format!("ibisOffice {}", env!("IBIS_VERSION")));
+    assert_eq!(crate::shell::start_view::start_title(), format!("Acauda Office {}", env!("IBIS_VERSION")));
     s.screenshot("start");
     // 新規作成's second page (xlsx), below the section's title.
     s.click((150.0, 140.0));

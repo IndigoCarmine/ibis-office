@@ -1027,7 +1027,7 @@ pub fn write(presentation: &Presentation) -> Result<Vec<u8>, Error> {
         let _ = write!(manifest, r#"<manifest:file-entry manifest:full-path="{name}" manifest:media-type="{mime}"/>"#);
     }
     manifest += "</manifest:manifest>";
-    let meta = format!(r#"<?xml version="1.0" encoding="UTF-8"?><office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" office:version="1.3"><office:meta><meta:generator>ibisOffice</meta:generator></office:meta></office:document-meta>"#);
+    let meta = format!(r#"<?xml version="1.0" encoding="UTF-8"?><office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" office:version="1.3"><office:meta><meta:generator>Acauda Office</meta:generator></office:meta></office:document-meta>"#);
     let mut zip = ibis_ooxml::zip::Writer::new();
     let entry = ibis_ooxml::zip::EntryMeta::default();
     let mut put = |name: &str, data: &[u8]| zip.add(name, entry.clone(), data).map_err(|e| Error::new(format!("{e}")));

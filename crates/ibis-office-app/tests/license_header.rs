@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Every Rust source of the crates starts with the license lines
 //! (AGPL-3.0-only, the copyright and the additional terms under section
-//! 7(b), which publish/NOTICE states), so that the terms travel with the
+//! 7(b), which NOTICE states), so that the terms travel with the
 //! source. A new file without them fails here.
 
 use std::path::{Path, PathBuf};
@@ -43,7 +43,7 @@ fn every_source_starts_with_the_license_lines() {
 
 #[test]
 fn the_notice_asks_derivatives_for_powered_by_ibisoffice() {
-    let notice = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../publish/NOTICE")).expect("publish/NOTICE");
+    let notice = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../NOTICE")).expect("NOTICE");
     assert!(notice.contains("Powered by ibisOffice"));
     assert!(notice.contains("https://github.com/ibisjp/ibis-office"));
     assert!(notice.contains("7(b)"));

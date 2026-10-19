@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) ibis inc.
 # Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-# Build the desktop version as a macOS app bundle, target/release/ibisOffice.app.
+# Build the desktop version as a macOS app bundle, target/release/AcaudaOffice.app.
 #
 #   scripts/bundle-macos.sh
 #
@@ -10,7 +10,7 @@
 # UI icons and fonts are embedded in the executable; the bundle adds the app icon
 # (crates/ibis-office-app/macos/AppIcon.icns, made by scripts/gen-macos-icon.sh), the
 # third-party licences (Contents/Resources/Licenses), and the automatic update's
-# ibisOfficeUpdater (Contents/MacOS).
+# AcaudaOfficeUpdater (Contents/MacOS).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,14 +26,14 @@ RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build --release --locked -
 VERSION=$(awk -F'\t' '$1 == "macOS" { sub(/\r$/, "", $2); print $2 }' version.txt)
 [[ -n $VERSION ]] || { echo "version.txt has no macOS line" >&2; exit 1; }
 
-APP=target/release/ibisOffice.app
+APP=target/release/AcaudaOffice.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/dist/release/ibisOffice "$APP/Contents/MacOS/ibisOffice"
-# The automatic update (todo-fix #35): ibisOffice starts the ibisOfficeUpdater of
+cp target/dist/release/AcaudaOffice "$APP/Contents/MacOS/AcaudaOffice"
+# The automatic update (todo-fix #35): AcaudaOffice starts the AcaudaOfficeUpdater of
 # the NEW app it downloaded, which swaps the apps. It is inside the signed (and
 # notarized) app, so it cannot be swapped for another.
-cp target/dist/release/ibisOfficeUpdater "$APP/Contents/MacOS/ibisOfficeUpdater"
+cp target/dist/release/AcaudaOfficeUpdater "$APP/Contents/MacOS/AcaudaOfficeUpdater"
 cp crates/ibis-office-app/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # The third-party components in the app and the notices their licences ask
 # for (made afresh from the dependencies), and Carlito's licence on its own
@@ -53,15 +53,15 @@ cat > "$APP/Contents/Info.plist" <<EOF
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>ibisOffice</string>
+	<string>Acauda Office</string>
 	<key>CFBundleDisplayName</key>
-	<string>ibisOffice</string>
+	<string>Acauda Office</string>
 	<key>CFBundleIdentifier</key>
-	<string>jp.ne.ibis.office</string>
+	<string>io.github.indigocarmine.acauda</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleExecutable</key>
-	<string>ibisOffice</string>
+	<string>AcaudaOffice</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleVersion</key>
@@ -162,7 +162,7 @@ EOF
 
 # Ad-hoc signature so Apple Silicon runs the copied executables (the updater is
 # signed on its own first, then the app seals it).
-codesign --force --sign - "$APP/Contents/MacOS/ibisOfficeUpdater"
+codesign --force --sign - "$APP/Contents/MacOS/AcaudaOfficeUpdater"
 codesign --force --sign - "$APP"
 
 # Tell Finder and the Dock the app changed, so they show the current icon
