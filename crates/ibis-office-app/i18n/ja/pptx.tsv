@@ -139,6 +139,14 @@ pptx.picture.lum.contrast-m20	コントラスト: -20%
 pptx.picture.lum.contrast-m40	コントラスト: -40%
 pptx.picture.lum.bright-contrast-high	明るさ: +20%、コントラスト: +20%
 pptx.picture.lum.bright-contrast-low	明るさ: -20%、コントラスト: -20%
+pptx.picture.transparency	透明度
+pptx.picture.alpha.none	透明度なし（0%）
+pptx.picture.alpha.15	透明度: 15%
+pptx.picture.alpha.30	透明度: 30%
+pptx.picture.alpha.50	透明度: 50%
+pptx.picture.alpha.65	透明度: 65%
+pptx.picture.alpha.80	透明度: 80%
+pptx.picture.alpha.95	透明度: 95%
 pptx.reset-slide	スライドをリセット
 pptx.reset-placement	プレースホルダーの配置をリセット
 pptx.section.add	セクションの追加…

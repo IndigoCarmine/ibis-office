@@ -970,6 +970,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         pic.crop = look.crop;
                         pic.stroke = look.stroke;
                         pic.luminance = look.luminance;
+                        pic.alpha = look.alpha;
                         pic.duotone = look.duotone;
                         pic.alt_text = look.alt_text;
                         pic.decorative = look.decorative;
@@ -1258,6 +1259,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             duotone: look.duotone,
                             clear: None,
                             luminance: look.luminance,
+                            alpha: look.alpha,
                             clip: None,
                             shadow: None,
                             reflection: None,
@@ -1291,6 +1293,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             crop: pic.crop,
                             stroke: pic.stroke.clone(),
                             luminance: pic.luminance,
+                            alpha: pic.alpha,
                             duotone: pic.duotone,
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
@@ -1339,6 +1342,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             crop: pic.crop,
                             stroke: pic.stroke.clone(),
                             luminance: pic.luminance,
+                            alpha: pic.alpha,
                             duotone: pic.duotone,
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
@@ -1359,6 +1363,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         duotone: look.duotone,
                         clear: None,
                         luminance: look.luminance,
+                        alpha: look.alpha,
                         clip: None,
                         shadow: None,
                         reflection: None,

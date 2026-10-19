@@ -169,27 +169,94 @@ pub(crate) fn clipped_picture(data: &[u8], encoding: Encoding, width: i64, heigh
     out
 }
 
-/// Wrap a picture recoloured as a duotone: its luminance maps from `dark`
-/// (black) to `light` (white). The SVG has the picture's own size (at most
-/// `MAX_PIXELS`).
-pub(crate) fn duotone_picture(data: &[u8], encoding: Encoding, dark: (u8, u8, u8), light: (u8, u8, u8)) -> Vec<u8> {
+/// Colour adjustments of a picture, drawn through one SVG filter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct Adjustments {
+    /// The colour made transparent (`a:clrChange`): a pixel's opacity falls
+    /// with how near its colour is to it (fully clear at it, opaque from
+    /// three levels off).
+    pub(crate) clear: Option<(u8, u8, u8)>,
+    /// Recoloured as a duotone (`a:duotone`): the luminance maps from the
+    /// first colour (black) to the second (white).
+    pub(crate) duotone: Option<((u8, u8, u8), (u8, u8, u8))>,
+    /// Brightness and contrast (`a:lum`), in 100 000ths.
+    pub(crate) luminance: Option<(i32, i32)>,
+}
+
+impl Adjustments {
+    pub(crate) fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The filter's primitives, each working on the one before. Only the
+    /// colour made clear changes the opacity: brightness and contrast act on
+    /// the colours alone, so a picture's clear parts stay clear.
+    fn primitives(&self) -> String {
+        let mut out = String::new();
+        if let Some(clear) = self.clear {
+            // The distance, summed over the channels, taken towards the side each
+            // channel can move from the clear colour (exact for white, black and
+            // other colours whose channels are all 0 or 255).
+            let k = 85.0;
+            let term = |c: u8| if c >= 128 { (-k, k * c as f64 / 255.0) } else { (k, -k * c as f64 / 255.0) };
+            let (r, g, b) = (term(clear.0), term(clear.1), term(clear.2));
+            out.push_str(&format!(
+                concat!(
+                    r#"<feColorMatrix in="SourceGraphic" type="matrix" result="mask" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 {rk} {gk} {bk} 0 {c}"/>"#,
+                    r#"<feComposite in="SourceGraphic" in2="mask" operator="in"/>"#,
+                ),
+                rk = r.0,
+                gk = g.0,
+                bk = b.0,
+                c = r.1 + g.1 + b.1,
+            ));
+        }
+        if let Some((dark, light)) = self.duotone {
+            let table = |a: u8, b: u8| format!("{:.4} {:.4}", a as f64 / 255.0, b as f64 / 255.0);
+            out.push_str(&format!(
+                concat!(
+                    r#"<feColorMatrix type="matrix" values="0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0 0 0 1 0"/>"#,
+                    r#"<feComponentTransfer><feFuncR type="table" tableValues="{r}"/><feFuncG type="table" tableValues="{g}"/><feFuncB type="table" tableValues="{b}"/></feComponentTransfer>"#,
+                ),
+                r = table(dark.0, light.0),
+                g = table(dark.1, light.1),
+                b = table(dark.2, light.2),
+            ));
+        }
+        if let Some((slope, intercept)) = self.luminance.map(luminance_line) {
+            let f = |c: char| format!(r#"<feFunc{c} type="linear" slope="{slope:.4}" intercept="{intercept:.4}"/>"#);
+            out.push_str(&format!("<feComponentTransfer>{}{}{}</feComponentTransfer>", f('R'), f('G'), f('B')));
+        }
+        out
+    }
+}
+
+/// Brightness and contrast (100 000ths) as one line on each colour channel
+/// (0 to 1): brightness blends towards white or black by its amount, then
+/// contrast stretches (or flattens) about the middle grey.
+fn luminance_line((bright, contrast): (i32, i32)) -> (f64, f64) {
+    let b = (bright as f64 / 100_000.0).clamp(-0.85, 0.85);
+    let (s1, i1) = if b >= 0.0 { (1.0 - b, b) } else { (1.0 + b, 0.0) };
+    let c = (contrast as f64 / 100_000.0).clamp(-1.0, 0.99);
+    let s2 = if c >= 0.0 { 1.0 / (1.0 - c) } else { 1.0 + c };
+    (s2 * s1, s2 * i1 + 0.5 * (1.0 - s2))
+}
+
+/// Wrap a picture with `adjustments` applied. The SVG has the picture's own
+/// size (at most `MAX_PIXELS`).
+pub(crate) fn adjusted_picture(data: &[u8], encoding: Encoding, adjustments: &Adjustments) -> Vec<u8> {
     let (w, h) = own_size(data, encoding);
-    let table = |a: u8, b: u8| format!("{:.4} {:.4}", a as f64 / 255.0, b as f64 / 255.0);
     let svg = format!(
         concat!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{sw}" height="{sh}" viewBox="0 0 {w} {h}">"#,
-            r#"<defs><filter id="duo" color-interpolation-filters="sRGB">"#,
-            r#"<feColorMatrix type="matrix" values="0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0 0 0 1 0"/>"#,
-            r#"<feComponentTransfer><feFuncR type="table" tableValues="{r}"/><feFuncG type="table" tableValues="{g}"/><feFuncB type="table" tableValues="{b}"/></feComponentTransfer>"#,
-            r#"</filter></defs><image filter="url(#duo)" x="0" y="0" width="{w}" height="{h}" preserveAspectRatio="none" xlink:href="data:{mime};base64,"#,
+            r#"<defs><filter id="adjust" color-interpolation-filters="sRGB">{primitives}</filter></defs>"#,
+            r#"<image filter="url(#adjust)" x="0" y="0" width="{w}" height="{h}" preserveAspectRatio="none" xlink:href="data:{mime};base64,"#,
         ),
         w = w,
         h = h,
         sw = stated(w),
         sh = stated(h),
-        r = table(dark.0, light.0),
-        g = table(dark.1, light.1),
-        b = table(dark.2, light.2),
+        primitives = adjustments.primitives(),
         mime = encoding.mime(),
     );
     let mut out = svg.into_bytes();
@@ -234,42 +301,6 @@ pub(crate) fn art_border_picture(png: &[u8], w: u32, h: u32, raster_w: f64, rast
     );
     let mut out = svg.into_bytes();
     base64(png, &mut out);
-    out.extend_from_slice(br#""/></svg>"#);
-    out
-}
-
-/// Wrap a picture with the colour `clear` made transparent: a pixel's
-/// opacity falls with how near its colour is to `clear` (fully clear at
-/// it, opaque from three levels off). The SVG has the picture's own size (at
-/// most `MAX_PIXELS`).
-pub(crate) fn clear_colour_picture(data: &[u8], encoding: Encoding, clear: (u8, u8, u8)) -> Vec<u8> {
-    let (w, h) = own_size(data, encoding);
-    // The distance, summed over the channels, taken towards the side each
-    // channel can move from the clear colour (exact for white, black and
-    // other colours whose channels are all 0 or 255).
-    let k = 85.0;
-    let term = |c: u8| if c >= 128 { (-k, k * c as f64 / 255.0) } else { (k, -k * c as f64 / 255.0) };
-    let (r, g, b) = (term(clear.0), term(clear.1), term(clear.2));
-    let svg = format!(
-        concat!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{sw}" height="{sh}" viewBox="0 0 {w} {h}">"#,
-            r#"<defs><filter id="clear" color-interpolation-filters="sRGB">"#,
-            r#"<feColorMatrix in="SourceGraphic" type="matrix" result="mask" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 {rk} {gk} {bk} 0 {c}"/>"#,
-            r#"<feComposite in="SourceGraphic" in2="mask" operator="in"/>"#,
-            r#"</filter></defs><image filter="url(#clear)" x="0" y="0" width="{w}" height="{h}" preserveAspectRatio="none" xlink:href="data:{mime};base64,"#,
-        ),
-        w = w,
-        h = h,
-        sw = stated(w),
-        sh = stated(h),
-        rk = r.0,
-        gk = g.0,
-        bk = b.0,
-        c = r.1 + g.1 + b.1,
-        mime = encoding.mime(),
-    );
-    let mut out = svg.into_bytes();
-    base64(data, &mut out);
     out.extend_from_slice(br#""/></svg>"#);
     out
 }
@@ -359,6 +390,34 @@ mod tests {
         // 2000 EMU (stated half: GPUI rasterizes an SVG at twice its size).
         assert!(svg.contains(r#"width="50" height="100""#), "{svg}");
         assert!(svg.contains("rotate(90)"));
+    }
+
+    #[test]
+    fn adjustments_share_one_filter() {
+        let png = [0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0, 2, 0, 0, 0, 2];
+        let both = Adjustments { duotone: Some(((0, 0, 0), (255, 255, 255))), luminance: Some((40_000, 0)), ..Default::default() };
+        let svg = String::from_utf8(adjusted_picture(&png, Encoding::Png, &both)).unwrap();
+        assert_eq!(svg.matches("<filter").count(), 1);
+        assert!(svg.contains("tableValues") && svg.contains(r#"type="linear""#), "{svg}");
+        // Brightness and contrast leave the opacity alone.
+        assert!(!svg.contains("feFuncA"));
+        let clear = Adjustments { clear: Some((255, 255, 255)), ..Default::default() };
+        assert!(String::from_utf8(adjusted_picture(&png, Encoding::Png, &clear)).unwrap().contains(r#"operator="in""#));
+    }
+
+    #[test]
+    fn luminance_is_a_line_through_the_channels() {
+        let at = |lum, v: f64| {
+            let (s, i) = luminance_line(lum);
+            s * v + i
+        };
+        // +40% brightness takes black to 0.4 and keeps white.
+        assert!((at((40_000, 0), 0.0) - 0.4).abs() < 1e-9 && (at((40_000, 0), 1.0) - 1.0).abs() < 1e-9);
+        // -40% keeps black and darkens white.
+        assert!(at((-40_000, 0), 0.0).abs() < 1e-9 && (at((-40_000, 0), 1.0) - 0.6).abs() < 1e-9);
+        // Contrast keeps middle grey.
+        assert!((at((0, 50_000), 0.5) - 0.5).abs() < 1e-9 && at((0, 50_000), 0.75) > 0.75);
+        assert_eq!(luminance_line((0, 0)), (1.0, 0.0));
     }
 
     #[test]

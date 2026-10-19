@@ -35,9 +35,9 @@ pub(crate) struct Resources {
     /// Pictures cut to the outlines of shapes they fill, by picture and a
     /// hash of the outline.
     clipped: std::cell::RefCell<HashMap<(MediaId, u64), Arc<Image>>>,
-    /// Pictures recoloured as duotones, by picture and colours (and with a
-    /// colour made clear, by picture and that colour twice).
-    duotones: std::cell::RefCell<HashMap<(MediaId, ibis_doc_model::Rgb, ibis_doc_model::Rgb), Arc<Image>>>,
+    /// Pictures with their colours adjusted (recoloured, a colour made
+    /// clear, brightness and contrast), by picture and adjustments.
+    adjusted: std::cell::RefCell<HashMap<(MediaId, crate::render::picture_svg::Adjustments), Arc<Image>>>,
     /// Those SVG pictures (rotated, cut and recoloured) rasterized ahead,
     /// by the image's id: see `rasterize_svg_pictures`.
     rasters: std::cell::RefCell<HashMap<u64, Arc<RenderImage>>>,
@@ -139,7 +139,7 @@ impl Resources {
             preload,
             rotated: Default::default(),
             clipped: Default::default(),
-            duotones: Default::default(),
+            adjusted: Default::default(),
             rasters: Default::default(),
             formats,
             sizes,
@@ -260,7 +260,7 @@ impl Resources {
     pub(crate) fn rasterize_svg_pictures(&self, renderer: &SvgRenderer) {
         let mut images: Vec<Arc<Image>> = self.rotated.borrow().values().map(|(image, _)| image.clone()).collect();
         images.extend(self.clipped.borrow().values().cloned());
-        images.extend(self.duotones.borrow().values().cloned());
+        images.extend(self.adjusted.borrow().values().cloned());
         images.extend(crate::docx::art_border::all_images());
         let done = self.rasters.borrow();
         images.retain(|image| !done.contains_key(&image.id()));
@@ -3116,53 +3116,38 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
     if turned && let Some((image, bounds)) = rotated_image(shape, picture, frame, res) {
         // The rotated picture covers its bounding box, around the frame.
         return container.child(
-            place(img(res.svg_picture(image)), bounds, scale).object_fit(ObjectFit::Fill),
+            place(img(res.svg_picture(image)), bounds, scale).object_fit(ObjectFit::Fill).opacity(picture.alpha.map_or(1.0, |a| a as f32 / 100_000.0)),
         );
     }
     if !res.has_picture(picture.media) {
         return container;
     }
-    let recoloured = picture.duotone.and_then(|(dark, light)| {
-        let key = (picture.media, dark, light);
-        if let Some(found) = res.duotones.borrow().get(&key) {
+    // Recoloured, with a colour made clear, or brighter or darker: drawn
+    // through an SVG filter, which keeps the picture's transparency.
+    let rgb = |c: ibis_doc_model::Rgb| (c.r(), c.g(), c.b());
+    let adjustments = crate::render::picture_svg::Adjustments {
+        clear: picture.clear.map(rgb),
+        duotone: picture.duotone.map(|(dark, light)| (rgb(dark), rgb(light))),
+        luminance: picture.luminance,
+    };
+    let adjusted = (!adjustments.is_empty()).then(|| {
+        let key = (picture.media, adjustments);
+        if let Some(found) = res.adjusted.borrow().get(&key) {
             return Some(found.clone());
         }
         let (encoding, data) = res.source(picture.media)?;
-        let rgb = |c: ibis_doc_model::Rgb| (c.r(), c.g(), c.b());
-        let image = Arc::new(Image::from_bytes(ImageFormat::Svg, crate::render::picture_svg::duotone_picture(&data, encoding, rgb(dark), rgb(light))));
-        res.duotones.borrow_mut().insert(key, image.clone());
+        let image = Arc::new(Image::from_bytes(ImageFormat::Svg, crate::render::picture_svg::adjusted_picture(&data, encoding, &adjustments)));
+        res.adjusted.borrow_mut().insert(key, image.clone());
         Some(image)
-    });
-    // A colour set transparent (not combined with a duotone).
-    let cleared = picture.clear.filter(|_| recoloured.is_none()).and_then(|clear| {
-        let key = (picture.media, clear, clear);
-        if let Some(found) = res.duotones.borrow().get(&key) {
-            return Some(found.clone());
-        }
-        let (encoding, data) = res.source(picture.media)?;
-        let image = Arc::new(Image::from_bytes(ImageFormat::Svg, crate::render::picture_svg::clear_colour_picture(&data, encoding, (clear.r(), clear.g(), clear.b()))));
-        res.duotones.borrow_mut().insert(key, image.clone());
-        Some(image)
-    });
-    // Recoloured pictures are loaded by GPUI; the picture itself once decoded.
-    let Some(image) = recoloured.or(cleared).map(|image| res.svg_picture(image)).or_else(|| res.picture(picture.media)) else { return container };
+    }).flatten();
+    // Adjusted pictures are loaded by GPUI; the picture itself once decoded.
+    let Some(image) = adjusted.map(|image| res.svg_picture(image)).or_else(|| res.picture(picture.media)) else { return container };
+    // 透明度: the whole picture's opacity (not its outline's).
+    let opacity = picture.alpha.map_or(1.0, |a| a as f32 / 100_000.0);
     let c = picture.crop;
     let frac = |v: i32| v as f32 / 100_000.0;
     let visible_w = (1.0 - frac(c.left) - frac(c.right)).max(0.01);
     let visible_h = (1.0 - frac(c.top) - frac(c.bottom)).max(0.01);
-    // A brightness overlay reflecting luminance.
-    let lum_overlay = picture.luminance.and_then(|(bright, _)| {
-        if bright > 0 {
-            let alpha = ((bright as f32 / 100_000.0).clamp(0.0, 0.85) * 255.0) as u8;
-            Some(div().absolute().size_full().bg(hsla(DocColor { rgb: ibis_doc_model::Rgb(0xffffff), alpha })))
-        } else if bright < 0 {
-            let alpha = (((-bright) as f32 / 100_000.0).clamp(0.0, 0.85) * 255.0) as u8;
-            Some(div().absolute().size_full().bg(hsla(DocColor { rgb: ibis_doc_model::Rgb(0x000000), alpha })))
-        } else {
-            None
-        }
-    });
-
     let mut cont = container.rounded(radius);
     if let Some(s) = picture.shadow {
         let (dx, dy, blur, color) = shadow_parts(s, scale);
@@ -3182,7 +3167,7 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
                 .h(px(h))
                 .rounded(radius)
                 .overflow_hidden()
-                .opacity(0.35)
+                .opacity(0.35 * opacity)
                 .child(
                     img(image.clone())
                         .absolute()
@@ -3199,7 +3184,8 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
         .top(relative(-frac(c.top) / visible_h))
         .w(relative(1.0 / visible_w))
         .h(relative(1.0 / visible_h))
-        .object_fit(ObjectFit::Fill);
+        .object_fit(ObjectFit::Fill)
+        .opacity(opacity);
     // An animated GIF plays in the slide show: an image with an id keeps its
     // frame (GPUI advances it by the frames' delays).
     let animated = res.animate_pictures.get() && matches!(&image, ImageSource::Render(data) if data.frame_count() > 1);
@@ -3208,7 +3194,6 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
     } else {
         cont.overflow_hidden().child(whole)
     }
-    .children(lum_overlay)
     .children(outline)
 }
 

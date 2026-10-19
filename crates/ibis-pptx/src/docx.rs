@@ -1623,6 +1623,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 duotone: look.duotone,
                 clear: None,
                 luminance: look.luminance,
+                alpha: look.alpha,
                 clip: None,
                 shadow: None,
                 reflection: None,
@@ -1672,6 +1673,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 let (bright, contrast) = (value("bright"), value("contrast"));
                 (bright != 0 || contrast != 0).then_some((bright, contrast))
             });
+            look.alpha = blip.and_then(|b| child(b, "alphaModFix")).and_then(crate::reader::picture_alpha);
             look.duotone = blip.and_then(|b| child(b, "duotone")).and_then(|d| {
                 let found: Vec<_> = elements(d).filter_map(|c| colors.resolve(c, None)).collect();
                 Some((found.first()?.rgb, found.get(1)?.rgb))

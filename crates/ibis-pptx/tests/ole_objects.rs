@@ -426,7 +426,7 @@ fn an_object_inserted_on_a_sheet_reads_back() {
     assert!(at("<pageMargins") < at("<legacyDrawing") && at("<legacyDrawing") < at("<oleObjects"), "{xml}");
     let shape_id = xml.split("shapeId=\"").nth(1).unwrap().split('"').next().unwrap();
     let vml = vml_xml(&saved).expect("a VML drawing");
-    assert!(vml.contains(&format!("id=\"_x0000_s{shape_id}\"")) && vml.contains("ObjectType=\"Pict\"") && vml.contains("<x:Anchor>\r\n   1, 0, 2, 0, 3, 0, 6, 0</x:Anchor>"), "{vml}");
+    assert!(vml.contains(&format!("id=\"_x0000_s{shape_id}\"")) && vml.contains("ObjectType=\"Pict\"") && vml.contains("filled=\"f\" stroked=\"f\"") && !vml.contains("<v:fill") && vml.contains("<x:Anchor>\r\n   1, 0, 2, 0, 3, 0, 6, 0</x:Anchor>"), "{vml}");
 
     let package = Package::open(saved.clone()).unwrap();
     assert_eq!(package.content_type("xl/embeddings/oleObject1.bin").unwrap().as_deref(), Some("application/vnd.openxmlformats-officedocument.oleObject"));

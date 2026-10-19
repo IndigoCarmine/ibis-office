@@ -35,6 +35,13 @@ fn drawing_child<'a, 'i>(node: Node<'a, 'i>, name: &str) -> Option<Node<'a, 'i>>
     namespace_child(node,"http://schemas.openxmlformats.org/drawingml/2006/main",name)
 }
 
+/// The opacity an `a:alphaModFix` gives a picture, in 100 000ths; `None`
+/// when it leaves the picture opaque.
+pub(crate) fn picture_alpha(alpha_mod_fix: Node) -> Option<u32> {
+    let amt = attr_i64(alpha_mod_fix, "amt").unwrap_or(100_000).clamp(0, 100_000) as u32;
+    (amt < 100_000).then_some(amt)
+}
+
 /// A parsed part and its relationships.
 struct Part<'d, 'i> {
     /// The part's name, to record where a shape came from.
@@ -1896,6 +1903,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 let contrast = attr_i64(l, "contrast").unwrap_or(0).clamp(-100_000, 100_000) as i32;
                 (bright != 0 || contrast != 0).then_some((bright, contrast))
             });
+            let alpha = child(blip_fill, "blip").and_then(|b| drawing_child(b, "alphaModFix")).and_then(picture_alpha);
             // A video or audio clip: the file a `p14:media` embeds.
             let clip = child(node, "nvPicPr").and_then(|n| child(n, "nvPr")).and_then(|nv| {
                 let media_elem = nv.descendants().find(|n| n.is_element() && n.tag_name().name() == "media");
@@ -1990,7 +1998,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 Some(ibis_doc_model::Clip { media: clip, audio: format.is_audio(), options, link })
             });
             let name = child(node, "nvPicPr").and_then(|n| child(n, "cNvPr")).and_then(|c| attr(c, "name")).unwrap_or("").to_string();
-            ShapeKind::Picture(Picture { media, crop, stroke, corner, duotone, clear, luminance, clip, shadow, reflection, soft_edge, alt_text: Default::default(), decorative: false, name, ole: None })
+            ShapeKind::Picture(Picture { media, crop, stroke, corner, duotone, clear, luminance, alpha, clip, shadow, reflection, soft_edge, alt_text: Default::default(), decorative: false, name, ole: None })
         } else {
             ShapeKind::Placeholder(Placeholder::Picture(format))
         };
@@ -2127,7 +2135,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let (x, y, w, h) = drawing.bounds;
         let frame = transform.rect(x.round() as i64, y.round() as i64, w.round() as i64, h.round() as i64);
         let media = self.presentation.add_media(MediaFormat::Svg, drawing.svg.into_bytes());
-        let kind = ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new(), ole: None });
+        let kind = ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, alpha: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new(), ole: None });
         let id = self.presentation.new_shape_id();
         Some(Shape { id, frame, rotation: 0, flip_h: false, flip_v: false, kind, floating: None })
     }

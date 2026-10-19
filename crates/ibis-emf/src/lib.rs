@@ -5,8 +5,8 @@
 //!
 //! Office often saves pasted pictures as an EMF that does nothing but draw
 //! one bitmap, either with EMF+ (GDI+ records in EMF comments) or with a
-//! GDI `EMR_STRETCHDIBITS`. [`extract_image`] finds that bitmap and returns
-//! it as an ordinary image file. Vector drawing is not interpreted: a
+//! GDI `EMR_STRETCHDIBITS` or `EMR_ALPHABLEND`. [`extract_image`] finds that
+//! bitmap and returns it as an ordinary image file, keeping its transparency. Vector drawing is not interpreted: a
 //! metafile without a bitmap yields `None`.
 
 mod png;
@@ -25,6 +25,10 @@ const EMR_HEADER: u32 = 1;
 const EMR_EOF: u32 = 14;
 const EMR_COMMENT: u32 = 70;
 const EMR_STRETCHDIBITS: u32 = 81;
+const EMR_ALPHABLEND: u32 = 114;
+
+/// `BLENDFUNCTION.AlphaFormat`: the source bitmap has per-pixel alpha.
+const AC_SRC_ALPHA: u8 = 1;
 
 const EMFPLUS_OBJECT: u16 = 0x4008;
 const OBJECT_IMAGE: u16 = 5;
@@ -70,6 +74,7 @@ pub fn extract_image(emf: &[u8]) -> Option<(ImageFormat, Vec<u8>)> {
                 emf_plus.extend_from_slice(record.get(16..(12 + len).min(size))?);
             }
             EMR_STRETCHDIBITS => gdi_bitmaps.extend(stretch_dibits(record)),
+            EMR_ALPHABLEND => gdi_bitmaps.extend(alpha_blend(record)),
             EMR_EOF => break,
             _ => {}
         }
@@ -145,9 +150,48 @@ fn emf_plus_image(body: &[u8]) -> Option<Candidate> {
 
 /// The DIB of an `EMR_STRETCHDIBITS` record.
 fn stretch_dibits(record: &[u8]) -> Option<Candidate> {
-    let bmi_offset = u32_at(record, 48)? as usize;
-    let bits_offset = u32_at(record, 56)? as usize;
-    let bits_size = u32_at(record, 60)? as usize;
+    // GDI itself ignores the fourth byte of 32-bit pixels here, which is
+    // usually 0; a bitmap that does fill it in carries its transparency there.
+    let (width, height, rgba) = dib(record, u32_at(record, 48)?, u32_at(record, 56)?, u32_at(record, 60)?, Alpha::IfPresent)?;
+    Some(png_candidate(width, height, &rgba))
+}
+
+/// The source bitmap of an `EMR_ALPHABLEND` record, with the blend's
+/// per-pixel and constant alpha applied.
+fn alpha_blend(record: &[u8]) -> Option<Candidate> {
+    let blend = record.get(40..44)?;
+    let (constant, per_pixel) = (blend[2], blend[3] & AC_SRC_ALPHA != 0);
+    let alpha = if per_pixel { Alpha::Premultiplied } else { Alpha::Opaque };
+    let (width, height, mut rgba) = dib(record, u32_at(record, 84)?, u32_at(record, 92)?, u32_at(record, 96)?, alpha)?;
+    if constant < 255 {
+        for p in rgba.chunks_exact_mut(4) {
+            p[3] = ((p[3] as u32 * constant as u32 + 127) / 255) as u8;
+        }
+    }
+    Some(png_candidate(width, height, &rgba))
+}
+
+/// `rgba` as a PNG candidate.
+fn png_candidate(width: u32, height: u32, rgba: &[u8]) -> Candidate {
+    (width as u64 * height as u64, (ImageFormat::Png, png::encode(width, height, rgba)))
+}
+
+/// How the fourth byte of a 32-bit DIB pixel is read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Alpha {
+    /// Ignored: every pixel is opaque.
+    Opaque,
+    /// Premultiplied alpha.
+    Premultiplied,
+    /// Alpha when any pixel has some (premultiplied unless a colour exceeds
+    /// its alpha), otherwise ignored.
+    IfPresent,
+}
+
+/// The width, height and straight RGBA pixels of an uncompressed DIB inside
+/// `record`: its `BITMAPINFO` at `bmi_offset` and its pixels at `bits_offset`.
+fn dib(record: &[u8], bmi_offset: u32, bits_offset: u32, bits_size: u32, alpha: Alpha) -> Option<(u32, u32, Vec<u8>)> {
+    let (bmi_offset, bits_offset, bits_size) = (bmi_offset as usize, bits_offset as usize, bits_size as usize);
     let header = record.get(bmi_offset..)?;
     let width = i32_at(header, 4)?;
     let height = i32_at(header, 8)?;
@@ -156,17 +200,27 @@ fn stretch_dibits(record: &[u8]) -> Option<Candidate> {
     if compression != 0 {
         return None;
     }
-    let format = match bit_count {
-        32 => PIXEL_RGB32,
-        24 => PIXEL_RGB24,
-        _ => return None,
-    };
     let stride = ((width.unsigned_abs() * bit_count as u32).div_ceil(32) * 4) as i32;
     let bits = record.get(bits_offset..bits_offset + bits_size)?;
+    let format = match (bit_count, alpha) {
+        (24, _) => PIXEL_RGB24,
+        (32, Alpha::Opaque) => PIXEL_RGB32,
+        (32, Alpha::Premultiplied) => PIXEL_PARGB32,
+        (32, Alpha::IfPresent) => {
+            let pixels = || bits.chunks_exact(4);
+            if !pixels().any(|p| p[3] != 0) {
+                PIXEL_RGB32
+            } else if pixels().any(|p| p[0].max(p[1]).max(p[2]) > p[3]) {
+                PIXEL_ARGB32
+            } else {
+                PIXEL_PARGB32
+            }
+        }
+        _ => return None,
+    };
     // DIB rows run bottom-up unless the height is negative.
     let rgba = to_rgba(bits, width, height.abs(), stride, format, height > 0)?;
-    let area = width.unsigned_abs() as u64 * height.unsigned_abs() as u64;
-    Some((area, (ImageFormat::Png, png::encode(width as u32, height.unsigned_abs(), &rgba))))
+    Some((width as u32, height.unsigned_abs(), rgba))
 }
 
 /// Convert BGR(A) rows to straight RGBA.
@@ -273,6 +327,77 @@ mod tests {
         let jpeg = [0xff, 0xd8, 0xff, 0xe0, 1, 2, 3];
         let emf = emf_with_plus_image(&bitmap_object(1, 1, PIXEL_ARGB32, BITMAP_COMPRESSED, &jpeg));
         assert_eq!(extract_image(&emf), Some((ImageFormat::Jpeg, jpeg.to_vec())));
+    }
+
+    /// A metafile drawing one GDI bitmap record of `kind`: a 32-bit
+    /// bottom-up DIB of `width` × 1 pixels placed after `fixed` bytes, with
+    /// `fill` writing the record's own fields.
+    fn emf_with_gdi_bitmap(kind: u32, fixed: usize, offsets: [usize; 3], width: i32, pixels: &[u8], fill: impl FnOnce(&mut [u8])) -> Vec<u8> {
+        let mut record = vec![0u8; fixed + 40];
+        fill(&mut record);
+        record[fixed..fixed + 4].copy_from_slice(&40u32.to_le_bytes());
+        record[fixed + 4..fixed + 8].copy_from_slice(&width.to_le_bytes());
+        record[fixed + 8..fixed + 12].copy_from_slice(&1i32.to_le_bytes());
+        record[fixed + 12..fixed + 14].copy_from_slice(&1u16.to_le_bytes());
+        record[fixed + 14..fixed + 16].copy_from_slice(&32u16.to_le_bytes());
+        let [bmi, bits, bits_size] = offsets;
+        record[bmi..bmi + 4].copy_from_slice(&(fixed as u32).to_le_bytes());
+        record[bits..bits + 4].copy_from_slice(&(fixed as u32 + 40).to_le_bytes());
+        record[bits_size..bits_size + 4].copy_from_slice(&(pixels.len() as u32).to_le_bytes());
+        record.extend(pixels);
+        record[0..4].copy_from_slice(&kind.to_le_bytes());
+        let size = record.len() as u32;
+        record[4..8].copy_from_slice(&size.to_le_bytes());
+
+        let mut emf = vec![0u8; 88];
+        emf[0..4].copy_from_slice(&EMR_HEADER.to_le_bytes());
+        emf[4..8].copy_from_slice(&88u32.to_le_bytes());
+        emf[40..44].copy_from_slice(b" EMF");
+        emf.extend(record);
+        emf.extend(EMR_EOF.to_le_bytes());
+        emf.extend(20u32.to_le_bytes());
+        emf.extend([0u8; 12]);
+        emf
+    }
+
+    fn stretch_dibits_emf(width: i32, pixels: &[u8]) -> Vec<u8> {
+        emf_with_gdi_bitmap(EMR_STRETCHDIBITS, 80, [48, 56, 60], width, pixels, |_| {})
+    }
+
+    fn pixels_of(emf: &[u8]) -> Vec<u8> {
+        let (format, png) = extract_image(emf).expect("an image");
+        assert_eq!(format, ImageFormat::Png);
+        png::decode_rgba_for_test(&png)
+    }
+
+    #[test]
+    fn dib_without_alpha_is_opaque() {
+        // BGRX with the fourth byte left 0, as GDI usually writes it.
+        assert_eq!(pixels_of(&stretch_dibits_emf(2, &[0, 0, 255, 0, 255, 0, 0, 0])), vec![255, 0, 0, 255, 0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn dib_with_alpha_keeps_its_transparency() {
+        // Opaque red, and a clear pixel.
+        assert_eq!(pixels_of(&stretch_dibits_emf(2, &[0, 0, 255, 255, 0, 0, 0, 0])), vec![255, 0, 0, 255, 0, 0, 0, 0]);
+        // Premultiplied half-transparent blue.
+        assert_eq!(pixels_of(&stretch_dibits_emf(1, &[64, 0, 0, 128])), vec![0, 0, 128, 128]);
+        // A colour brighter than its alpha cannot be premultiplied: straight.
+        assert_eq!(pixels_of(&stretch_dibits_emf(1, &[200, 0, 0, 128])), vec![0, 0, 200, 128]);
+    }
+
+    #[test]
+    fn alpha_blend_applies_pixel_and_constant_alpha() {
+        let blend = |constant: u8, format: u8| move |r: &mut [u8]| r[40..44].copy_from_slice(&[0, 0, constant, format]);
+        let pixels = [64, 0, 0, 128, 0, 0, 255, 255];
+        let emf = emf_with_gdi_bitmap(EMR_ALPHABLEND, 108, [84, 92, 96], 2, &pixels, blend(255, AC_SRC_ALPHA));
+        assert_eq!(pixels_of(&emf), vec![0, 0, 128, 128, 255, 0, 0, 255]);
+        // Half the constant alpha on top.
+        let emf = emf_with_gdi_bitmap(EMR_ALPHABLEND, 108, [84, 92, 96], 2, &pixels, blend(128, AC_SRC_ALPHA));
+        assert_eq!(pixels_of(&emf), vec![0, 0, 128, 64, 255, 0, 0, 128]);
+        // Without per-pixel alpha only the constant counts.
+        let emf = emf_with_gdi_bitmap(EMR_ALPHABLEND, 108, [84, 92, 96], 1, &[0, 0, 255, 0], blend(51, 0));
+        assert_eq!(pixels_of(&emf), vec![255, 0, 0, 51]);
     }
 
     #[test]

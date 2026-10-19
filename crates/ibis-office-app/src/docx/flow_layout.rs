@@ -1062,7 +1062,7 @@ impl<'r> Layouter<'r> {
                     let angle = look.rotation as f32 / 60_000.0 * std::f32::consts::PI / 180.0;
                     let (sin, cos) = (angle.sin().abs(), angle.cos().abs());
                     let (w, h) = (pt(size.width), pt(size.height));
-                    let picture = ibis_doc_model::Picture { media: *media, crop: look.crop, stroke: look.stroke.clone(), corner: 0, duotone: look.duotone, clear: None, luminance: look.luminance, clip: None, alt_text: look.alt_text.clone(), decorative: look.decorative, name: look.name.clone(), shadow: None, reflection: None, soft_edge: None, ole: look.ole };
+                    let picture = ibis_doc_model::Picture { media: *media, crop: look.crop, stroke: look.stroke.clone(), corner: 0, duotone: look.duotone, clear: None, luminance: look.luminance, alpha: look.alpha, clip: None, alt_text: look.alt_text.clone(), decorative: look.decorative, name: look.name.clone(), shadow: None, reflection: None, soft_edge: None, ole: look.ole };
                     let shape = ibis_doc_model::Shape {
                         id: ibis_doc_model::ShapeId(0),
                         frame: ibis_doc_model::EmuRect::new(0, 0, size.width, size.height),

@@ -108,6 +108,7 @@ impl SlideEditor {
             duotone: None,
             clear: None,
             luminance: None,
+            alpha: None,
             clip: None,
             alt_text: Default::default(),
             decorative: false,

@@ -237,6 +237,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::image013_insert_line", image013_insert_line),
         ("docx::merge001_mail_merge", merge001_mail_merge),
         ("docx::image006_picture_corrections", image006_picture_corrections),
+        ("docx::picture_transparency", picture_transparency),
         ("docx::header006_picture_in_header", header006_picture_in_header),
         ("docx::ref012_caption_with_chapter_number", ref012_caption_with_chapter_number),
         ("docx::ref012_update_fields_renumbers_chapters", ref012_update_fields_renumbers_chapters),
@@ -16818,6 +16819,31 @@ fn image006_picture_corrections() {
     let read = body(flow(&saved)).into_iter().find(|p| p.id == id).unwrap().runs.iter().find_map(|r| match &r.kind { FlowRunKind::Picture { look, .. } => Some(look.clone()), _ => None }).expect("the picture");
     assert_eq!((read.luminance, read.duotone), (look_of(&edited).luminance, look_of(&edited).duotone));
     let _ = before;
+}
+
+/// 透明度: the picture panel's transparency buttons set the whole picture's opacity (a:alphaModFix) at the caret,
+/// each one undo step, and the picture is drawn with it.
+fn picture_transparency() {
+    let mut s = Scenario::new_document(ibis_pptx::Kind::Document);
+    let id = body(&s.document())[0].id;
+    s.update(|e, _, cx| e.set_caret(FlowPos::new(id, 0), false, cx));
+    s.update(|e, _, cx| e.doc_insert_picture(crate::pptx::scenarios::png(40, 30, [0x44, 0x88, 0xcc]), ibis_doc_model::MediaFormat::Png, cx));
+    s.update(|e, _, cx| e.set_caret(FlowPos::new(id, 0), false, cx));
+    let alpha = |doc: &FlowDocument| para(doc, id).runs.iter().find_map(|r| match &r.kind { FlowRunKind::Picture { look, .. } => Some(look.alpha), _ => None }).expect("the picture");
+    assert_eq!(alpha(&s.document()), None);
+    s.update(|e, _, cx| e.set_picture_transparency(30, cx));
+    assert_eq!(alpha(&s.document()), Some(70_000));
+    s.update(|e, _, cx| e.set_picture_transparency(80, cx));
+    assert_eq!(alpha(&s.document()), Some(20_000));
+    let drawn = s.with(|e, _| {
+        let doc = e.flow().unwrap().clone();
+        super::flow_layout::pages(&doc, &e.resources).pages.iter().flat_map(|pg| pg.items.iter()).any(|i| matches!(i, super::flow_layout::Item::Shape { shape, .. } if matches!(&shape.kind, ibis_doc_model::ShapeKind::Picture(p) if p.alpha == Some(20_000))))
+    });
+    assert!(drawn, "the picture is drawn with its transparency");
+    s.menu("edit.undo");
+    assert_eq!(alpha(&s.document()), Some(70_000));
+    s.update(|e, _, cx| e.set_picture_transparency(0, cx));
+    assert_eq!(alpha(&s.document()), None);
 }
 
 /// DOCX-HEADER-006: a picture inserted with the caret in the header is saved in the header (a logo): the header

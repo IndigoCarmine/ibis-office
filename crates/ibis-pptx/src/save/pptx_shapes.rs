@@ -608,6 +608,7 @@ fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &
             if b.duotone.is_none() { a.duotone = None; }
             if b.clear.is_none() { a.clear = None; }
             a.luminance = b.luminance;
+            a.alpha = b.alpha;
         },
         (ShapeKind::Line(a), ShapeKind::Line(b)) => *a = b.clone(),
         // A table's cells' text (セルの文字の編集).
@@ -667,6 +668,7 @@ fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &
                 for n in remove { doc.detach(n); }
             }
             if a.luminance != b.luminance { write_picture_luminance(doc, node, b.luminance)?; }
+            if a.alpha != b.alpha { write_picture_alpha(doc, node, b.alpha)?; }
             if a.shadow != b.shadow { write_picture_shadow(doc, node, a, b)?; }
             if a.reflection != b.reflection { write_picture_reflection(doc, node, a, b)?; }
             if a.soft_edge != b.soft_edge { write_picture_soft_edge(doc, node, a, b)?; }
@@ -1006,6 +1008,21 @@ fn write_picture_luminance(doc: &mut XmlDocument, node: NodeId, luminance: Optio
             let lum = x.import(doc, &format!("<{}lum{attrs}/>", x.a))?;
             doc.insert(blip, 0, lum);
         }
+    }
+    Ok(())
+}
+
+/// 透明度: the picture's `a:alphaModFix`.
+fn write_picture_alpha(doc: &mut XmlDocument, node: NodeId, alpha: Option<u32>) -> Result<(), Error> {
+    let blip = doc.path(node, &["blipFill", "blip"]).ok_or_else(|| unsupported("この画像の透明度"))?;
+    let existing: Vec<_> = doc.elements(blip).filter(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "alphaModFix").collect();
+    for n in existing {
+        doc.detach(n);
+    }
+    if let Some(amt) = alpha {
+        let x = Prefixes::at(doc, blip);
+        let e = x.import(doc, &format!(r#"<{}alphaModFix amt="{amt}"/>"#, x.a))?;
+        doc.insert(blip, 0, e);
     }
     Ok(())
 }

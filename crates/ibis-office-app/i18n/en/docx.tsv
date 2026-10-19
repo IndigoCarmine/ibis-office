@@ -1007,6 +1007,7 @@ docx.picture-panel.contrast-10-percent	Contrast −10%
 docx.picture-panel.contrast-plus-10-percent	Contrast +10%
 docx.picture-panel.no-recolor	No Recolor
 docx.picture-panel.sepia	Sepia
+docx.picture-panel.transparency	Transparency
 docx.merge-panel.field-sort	Field to sort by
 docx.merge-panel.field-value-contains-field-value	field=value (contains: field~value)
 docx.merge-panel.filter	Filter

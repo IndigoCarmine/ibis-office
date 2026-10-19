@@ -1009,6 +1009,7 @@ docx.picture-panel.contrast-10-percent	コントラスト −10%
 docx.picture-panel.contrast-plus-10-percent	コントラスト ＋10%
 docx.picture-panel.no-recolor	色の変更なし
 docx.picture-panel.sepia	セピア
+docx.picture-panel.transparency	透明度
 docx.merge-panel.field-sort	並べ替える項目名
 docx.merge-panel.field-value-contains-field-value	項目名=値（含む: 項目名~値）
 docx.merge-panel.filter	抽出
