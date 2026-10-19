@@ -535,6 +535,9 @@ const TYPEFACE_ALIASES: &[(&str, &str)] = &[
     ("Yu Mincho", "YuMincho"),
     // Century is not on macOS; Times New Roman is the nearest serif.
     ("Century", "Times New Roman"),
+    // Helvetica is not on Windows: Word draws it with Arial (Windows' font
+    // substitutes; Word's PDF of a paper embeds Arial as "Helvetica,Bold").
+    ("Helvetica", "Arial"),
     // Calibri is not on macOS; Carlito, bundled (`BUNDLED_FONTS`), has its
     // widths.
     ("Calibri", "Carlito"),

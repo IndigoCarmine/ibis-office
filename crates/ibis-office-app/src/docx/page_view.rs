@@ -18,6 +18,9 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
     let k = scale * EMU_PER_POINT as f32;
     let mut behind_pictures = Vec::new();
     let mut front_pictures = Vec::new();
+    // The floating shapes' order (`relativeHeight`), for drawing them in it;
+    // the others (0) under them.
+    let mut front_z: Vec<u32> = Vec::new();
     let hide_body = res.hide_document_text;
     let page_ref = pagination.pages.get(index);
     let body_items_count = page_ref.map_or(0, |p| p.body_items_count);
@@ -28,6 +31,7 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
         match item {
             Item::Picture { media, x, y, w, h } => {
                 if let Some(image) = res.picture(*media) {
+                    front_z.push(0);
                     front_pictures.push(
                         img(image).absolute().left(px(x * k)).top(px(y * k)).w(px(w * k)).h(px(h * k)).into_any_element(),
                     );
@@ -61,10 +65,12 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                 if is_behind {
                     behind_pictures.push(elem);
                 } else {
+                    front_z.push(shape.floating.as_ref().map_or(0, |f| f.relative_height));
                     front_pictures.push(elem);
                 }
             }
             Item::CommentBubble { x, y, size } if !res.print => {
+                front_z.push(u32::MAX);
                 front_pictures.push(
                     div()
                         .absolute()
@@ -86,6 +92,10 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
             _ => {}
         }
     }
+    // Drawn in that order (stable: the same order as laid out within one).
+    let mut ordered: Vec<(u32, AnyElement)> = front_z.into_iter().zip(front_pictures).collect();
+    ordered.sort_by_key(|(z, _)| *z);
+    let front_pictures: Vec<AnyElement> = ordered.into_iter().map(|(_, e)| e).collect();
     let print = res.print;
     // ページの色: on the screen only (Word for Mac prints none) unless print_backgrounds is enabled.
     let dark = res.dark_page && !print;

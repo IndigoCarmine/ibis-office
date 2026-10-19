@@ -264,13 +264,24 @@ struct WrapObstacleInPara {
     wrap_polygon: Option<(ibis_doc_model::WrapPolygon, f32, f32, f32, f32, f32, f32)>,
     shape_to_emit: Option<(ibis_doc_model::Shape, f32, f32, f32, f32, bool)>,
     drop_cap_to_emit: Option<Item>,
+    /// Other obstacles on the page the lines keep off too (left, right, top,
+    /// bottom; the text wraps round them on both sides).
+    extra: Vec<(f32, f32, f32, f32)>,
 }
 
-fn square_shape(p: &FlowParagraph) -> Option<&ibis_doc_model::Shape> {
-    p.runs.iter().find_map(|r| match &r.kind {
+/// The paragraph's shape the text wraps round (square, tight, through),
+/// but one of deleted text when the view leaves that out (`hide_deleted`).
+fn square_shape(p: &FlowParagraph, hide_deleted: bool) -> Option<&ibis_doc_model::Shape> {
+    p.runs.iter().filter(|r| !run_deleted(r, hide_deleted)).find_map(|r| match &r.kind {
         FlowRunKind::Shape(shape) if shape.floating.as_ref().is_some_and(|f| matches!(f.wrap.as_str(), "square" | "tight" | "through")) => Some(&**shape),
         _ => None,
     })
+}
+
+/// Whether a run is deleted text the view leaves out: when it hides
+/// deletions (Simple, No Markup), and always a hidden reviewer's.
+fn run_deleted(run: &ibis_doc_model::FlowRun, hide_deleted: bool) -> bool {
+    run.revision.as_ref().is_some_and(|r| r.kind.is_delete() && (hide_deleted || !is_reviewer_shown(&r.author)))
 }
 
 pub(crate) struct Layouter<'r> {
@@ -305,6 +316,9 @@ pub(crate) struct Layouter<'r> {
     /// 同じスタイルの段落間にスペースを追加しない: the paragraphs whose
     /// space before (first) or after (second) is not added, by paragraph.
     contextual: std::collections::HashMap<u32, (bool, bool)>,
+    /// Floating shapes put off to the top of the next page (their paragraph's
+    /// place left no room for them): their paragraphs leave them out.
+    deferred_shapes: std::cell::RefCell<std::collections::HashSet<u64>>,
     /// The table and cell coordinate (table_id, row_index, grid_col_index) being laid out, for formula evaluation.
     current_cell: std::cell::Cell<Option<(u32, usize, usize)>>,
     /// The paragraph whose fields are being made into text (a `STYLEREF` in the body looks back from it).
@@ -595,6 +609,11 @@ impl<'r> Layouter<'r> {
         } else {
             markup_display_mode()
         }
+    }
+
+    /// Whether this view leaves deleted text out.
+    fn hides_deleted(&self) -> bool {
+        matches!(self.markup_mode(), MarkupDisplayMode::Simple | MarkupDisplayMode::None)
     }
 
     /// The lines of the text in text boxes on the line grid (`w:docGrid type="lines"`), as Word puts
@@ -1268,6 +1287,10 @@ impl<'r> Layouter<'r> {
             let hidden = (run.style.hidden && !show_hidden) || rev_hidden;
             let show_code = run.is_field_code_shown(self.doc.show_field_codes);
             match &run.kind {
+                // A picture or a shape of deleted (or hidden) text is not drawn,
+                // nor one put off to the next page.
+                FlowRunKind::Picture { .. } | FlowRunKind::PictureControl { .. } | FlowRunKind::Shape(_) if hidden => {}
+                FlowRunKind::Shape(shape) if self.deferred_shapes.borrow().contains(&shape.id.0) => {}
                 FlowRunKind::Text(t) if hidden => push_text(&"\u{200b}".repeat(t.chars().count()), &mut out),
                 FlowRunKind::Text(t) => push_text(t, &mut out),
                 FlowRunKind::CheckBox { checked, checked_char, unchecked_char } => {
@@ -1519,7 +1542,7 @@ impl<'r> Layouter<'r> {
         let default_line_h = self.resolve_line_height(p, mark_metrics.0, mark_metrics.2, in_table);
 
         let default_obs = if obstacle.is_none() {
-            square_shape(p).map(|shape| {
+            square_shape(p, self.hides_deleted()).filter(|s| !self.deferred_shapes.borrow().contains(&s.id.0)).map(|shape| {
                 let f = shape.floating.as_ref().unwrap();
                 let sw = pt(shape.frame.width);
                 let sh = pt(shape.frame.height);
@@ -1610,6 +1633,7 @@ impl<'r> Layouter<'r> {
                     wrap_polygon,
                     shape_to_emit: Some((shape.clone(), sx, sy, sw, sh, f.behind_doc)),
                     drop_cap_to_emit: None,
+                    extra: Vec::new(),
                 }
             })
         } else {
@@ -1661,6 +1685,7 @@ impl<'r> Layouter<'r> {
                         wrap_polygon: None,
                         shape_to_emit: None,
                         drop_cap_to_emit: Some(item),
+                        extra: Vec::new(),
                     })
                 } else {
                     None
@@ -1717,7 +1742,7 @@ impl<'r> Layouter<'r> {
                 let line_shape_left = line_shape_left.clamp(line_start, line_end.max(line_start));
                 let line_shape_right = line_shape_right.clamp(line_start, line_end.max(line_start));
                 let is_intersecting = is_intersecting && line_shape_right > line_shape_left;
-                let slots = if is_intersecting {
+                let mut slots = if is_intersecting {
                     let left_w = (line_shape_left - line_start).max(0.0);
                     let right_w = (line_end - line_shape_right).max(0.0);
                     let min_slot_w = 15.0;
@@ -1747,6 +1772,32 @@ impl<'r> Layouter<'r> {
                 } else {
                     vec![(line_start, full_room)]
                 };
+                // The other obstacles over this line cut its room too.
+                let mut cut = false;
+                for &(l, r, t, b) in &obs.extra {
+                    if cur_y < b - 0.01 && cur_y + default_line_h > t + 0.01 {
+                        let (l, r) = (l.clamp(line_start, line_end.max(line_start)), r.clamp(line_start, line_end.max(line_start)));
+                        if r <= l {
+                            continue;
+                        }
+                        cut = true;
+                        slots = slots
+                            .into_iter()
+                            .flat_map(|(x, w)| {
+                                let mut parts = Vec::new();
+                                if l > x {
+                                    parts.push((x, (l - x).min(w)));
+                                }
+                                if r < x + w {
+                                    parts.push((r.max(x), x + w - r.max(x)));
+                                }
+                                parts
+                            })
+                            .filter(|&(_, w)| w >= 15.0)
+                            .collect();
+                    }
+                }
+                let is_intersecting = is_intersecting || cut;
 
                 let mut phys_line: Vec<Segment> = Vec::new();
                 let mut line_forced_break = false;
@@ -1942,6 +1993,24 @@ impl<'r> Layouter<'r> {
                     }
                     if let Some(item) = &obs.drop_cap_to_emit {
                         line.items.push(item.clone());
+                    }
+                    // The paragraph's other floating shapes than the one the text
+                    // wraps round (pictures over a text box), from its top: with
+                    // its first line, wherever the units fall.
+                    for u in &units {
+                        if let Unit::Shape { shape, .. } = u
+                            && let Some(f) = &shape.floating
+                            && f.wrap != "topAndBottom"
+                            && !obs.shape_to_emit.as_ref().is_some_and(|(s, ..)| s.id == shape.id)
+                            && !square_shape(p, self.hides_deleted()).is_some_and(|s| s.id == shape.id)
+                        {
+                            let item = self.floating_item(shape, 0.0, width, line.height, page_number);
+                            if f.behind_doc {
+                                line.items.insert(0, item);
+                            } else {
+                                line.items.push(item);
+                            }
+                        }
                     }
                 }
 
@@ -2716,86 +2785,7 @@ impl<'r> Layouter<'r> {
                             if f.wrap == "topAndBottom" {
                                 continue;
                             }
-                            let sw = pt(shape.frame.width);
-                            let sh = pt(shape.frame.height);
-                            let page_w = pt(self.doc.page.size.width);
-                            let margin_l = pt(self.doc.page.left);
-                            let margin_r = pt(self.doc.page.right);
-                            let is_even = page_number % 2 == 0;
-
-                            let (base_x0, base_w) = match f.relative_h.as_str() {
-                                "page" => (0.0, page_w),
-                                "leftMargin" => (0.0, margin_l),
-                                "rightMargin" => (page_w - margin_r, margin_r),
-                                "insideMargin" => if is_even { (page_w - margin_r, margin_r) } else { (0.0, margin_l) },
-                                "outsideMargin" => if is_even { (0.0, margin_l) } else { (page_w - margin_r, margin_r) },
-                                "character" => (margin_l + x, (width - x).max(0.0)),
-                                _ /* "column" | "margin" */ => (margin_l, width),
-                            };
-
-                            let abs_x = if f.relative_h == "character" {
-                                match f.align_h.as_deref() {
-                                    Some("center") => margin_l + x - sw / 2.0,
-                                    Some("right") => margin_l + x - sw,
-                                    Some("left") => margin_l + x,
-                                    _ => margin_l + x + pt(f.offset_x),
-                                }
-                            } else {
-                                match f.align_h.as_deref() {
-                                    Some("left") => base_x0,
-                                    Some("center") => base_x0 + (base_w - sw) / 2.0,
-                                    Some("right") => base_x0 + base_w - sw,
-                                    Some("inside") => if is_even { base_x0 + base_w - sw } else { base_x0 },
-                                    Some("outside") => if is_even { base_x0 } else { base_x0 + base_w - sw },
-                                    _ => base_x0 + pt(f.offset_x),
-                                }
-                            };
-                            let abs_x = abs_x.clamp(0.0, (page_w - sw).max(0.0));
-                            let sx = abs_x - margin_l;
-                            let page_h = pt(self.doc.page.size.height);
-                            let margin_t = pt(self.doc.page.top);
-                            let margin_b = pt(self.doc.page.bottom);
-                            let sy = if f.relative_v == "line" {
-                                match f.align_v.as_deref() {
-                                    Some("center") => (line.height - sh) / 2.0,
-                                    Some("bottom") => line.height - sh,
-                                    Some("top") => 0.0,
-                                    _ => pt(f.offset_y),
-                                }
-                            } else if f.relative_v == "paragraph" {
-                                match f.align_v.as_deref() {
-                                    Some("center") => (line.height - sh) / 2.0,
-                                    Some("bottom") => line.height - sh,
-                                    Some("top") => 0.0,
-                                    _ => pt(f.offset_y),
-                                }
-                            } else {
-                                let (base_y0, base_h) = match f.relative_v.as_str() {
-                                    "page" => (0.0, page_h),
-                                    "margin" => (margin_t, (page_h - margin_t - margin_b).max(0.0)),
-                                    "topMargin" => (0.0, margin_t),
-                                    "bottomMargin" => (page_h - margin_b, margin_b),
-                                    "insideMargin" => if is_even { (page_h - margin_b, margin_b) } else { (0.0, margin_t) },
-                                    "outsideMargin" => if is_even { (0.0, margin_t) } else { (page_h - margin_b, margin_b) },
-                                    _ => (margin_t, page_h),
-                                };
-                                let abs_y = match f.align_v.as_deref() {
-                                    Some("top") => base_y0,
-                                    Some("center") => if base_h > 0.0 { base_y0 + (base_h - sh) / 2.0 } else { base_y0 },
-                                    Some("bottom") => if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 },
-                                    Some("inside") => if is_even { if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 } } else { base_y0 },
-                                    Some("outside") => if is_even { base_y0 } else { if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 } },
-                                    _ => base_y0 + pt(f.offset_y),
-                                };
-                                abs_y - margin_t
-                            };
-                            let item = Item::Shape {
-                                shape: shape.clone(),
-                                x: sx,
-                                y: sy,
-                                w: sw,
-                                h: sh,
-                            };
+                            let item = self.floating_item(shape, x, width, line.height, page_number);
                             if f.behind_doc {
                                 line.items.insert(0, item);
                             } else {
@@ -2871,6 +2861,82 @@ fn unit_width(u: &Unit) -> f32 {
     }
 }
 
+impl Layouter<'_> {
+    /// A floating shape of a paragraph placed as its anchor says, from the
+    /// paragraph's line (`x` along it, `width` of text, the line `line_h` tall):
+    /// x from the left margin, y from the line's top (or the top margin).
+    fn floating_item(&self, shape: &ibis_doc_model::Shape, x: f32, width: f32, line_h: f32, page_number: u32) -> Item {
+        let f = shape.floating.as_ref().expect("a floating shape");
+        let sw = pt(shape.frame.width);
+        let sh = pt(shape.frame.height);
+        let page_w = pt(self.doc.page.size.width);
+        let margin_l = pt(self.doc.page.left);
+        let margin_r = pt(self.doc.page.right);
+        let is_even = page_number % 2 == 0;
+
+        let (base_x0, base_w) = match f.relative_h.as_str() {
+            "page" => (0.0, page_w),
+            "leftMargin" => (0.0, margin_l),
+            "rightMargin" => (page_w - margin_r, margin_r),
+            "insideMargin" => if is_even { (page_w - margin_r, margin_r) } else { (0.0, margin_l) },
+            "outsideMargin" => if is_even { (0.0, margin_l) } else { (page_w - margin_r, margin_r) },
+            "character" => (margin_l + x, (width - x).max(0.0)),
+            _ /* "column" | "margin" */ => (margin_l, width),
+        };
+
+        let abs_x = if f.relative_h == "character" {
+            match f.align_h.as_deref() {
+                Some("center") => margin_l + x - sw / 2.0,
+                Some("right") => margin_l + x - sw,
+                Some("left") => margin_l + x,
+                _ => margin_l + x + pt(f.offset_x),
+            }
+        } else {
+            match f.align_h.as_deref() {
+                Some("left") => base_x0,
+                Some("center") => base_x0 + (base_w - sw) / 2.0,
+                Some("right") => base_x0 + base_w - sw,
+                Some("inside") => if is_even { base_x0 + base_w - sw } else { base_x0 },
+                Some("outside") => if is_even { base_x0 } else { base_x0 + base_w - sw },
+                _ => base_x0 + pt(f.offset_x),
+            }
+        };
+        let abs_x = abs_x.clamp(0.0, (page_w - sw).max(0.0));
+        let sx = abs_x - margin_l;
+        let page_h = pt(self.doc.page.size.height);
+        let margin_t = pt(self.doc.page.top);
+        let margin_b = pt(self.doc.page.bottom);
+        let sy = if f.relative_v == "line" || f.relative_v == "paragraph" {
+            match f.align_v.as_deref() {
+                Some("center") => (line_h - sh) / 2.0,
+                Some("bottom") => line_h - sh,
+                Some("top") => 0.0,
+                _ => pt(f.offset_y),
+            }
+        } else {
+            let (base_y0, base_h) = match f.relative_v.as_str() {
+                "page" => (0.0, page_h),
+                "margin" => (margin_t, (page_h - margin_t - margin_b).max(0.0)),
+                "topMargin" => (0.0, margin_t),
+                "bottomMargin" => (page_h - margin_b, margin_b),
+                "insideMargin" => if is_even { (page_h - margin_b, margin_b) } else { (0.0, margin_t) },
+                "outsideMargin" => if is_even { (0.0, margin_t) } else { (page_h - margin_b, margin_b) },
+                _ => (margin_t, page_h),
+            };
+            let abs_y = match f.align_v.as_deref() {
+                Some("top") => base_y0,
+                Some("center") => if base_h > 0.0 { base_y0 + (base_h - sh) / 2.0 } else { base_y0 },
+                Some("bottom") => if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 },
+                Some("inside") => if is_even { if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 } } else { base_y0 },
+                Some("outside") => if is_even { base_y0 } else { if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 } },
+                _ => base_y0 + pt(f.offset_y),
+            };
+            abs_y - margin_t
+        };
+        Item::Shape { shape: Box::new(shape.clone()), x: sx, y: sy, w: sw, h: sh }
+    }
+}
+
 fn unit_char(u: &Unit) -> Option<char> {
     match u {
         Unit::Char { c, .. } => Some(*c),
@@ -2929,6 +2995,11 @@ pub(crate) fn may_break(before: Option<char>, after: Option<char>, kinsoku: bool
         return true;
     }
     if !word_wrap {
+        return true;
+    }
+    // After a hyphen within a word ("well-|known"), but not a minus before
+    // a number (UAX #14's HY and BA classes).
+    if (b == '-' && a.is_alphabetic()) || (matches!(b, '\u{2010}' | '\u{2012}' | '\u{2013}') && a.is_alphanumeric()) {
         return true;
     }
     // Latin words hold together; anything next to CJK may break.
@@ -3238,7 +3309,8 @@ impl<'r> Layouter<'r> {
                 let text_right = width - pt(p.right);
                 let inner_left = text_left - left.map_or(0.0, |b| pt(b.space));
                 let inner_right = text_right + right.map_or(0.0, |b| pt(b.space));
-                let top_shapes: Vec<&Box<ibis_doc_model::Shape>> = p.runs.iter().filter_map(|r| match &r.kind {
+                let hide_deleted = self.hides_deleted();
+                let top_shapes: Vec<&Box<ibis_doc_model::Shape>> = p.runs.iter().filter(|r| !run_deleted(r, hide_deleted)).filter_map(|r| match &r.kind {
                     FlowRunKind::Shape(shape) if shape.floating.as_ref().is_some_and(|f| f.wrap == "topAndBottom") => Some(shape),
                     _ => None,
                 }).collect();
@@ -3347,15 +3419,23 @@ impl<'r> Layouter<'r> {
                     let below = if !has_lines && si + 1 == top_shapes.len() { pad_bottom } else { 0.0 };
                     let dt = pt(f.dist_t);
                     let db = pt(f.dist_b);
+                    // From the paragraph's top by its offset (Word: a logo raised a
+                    // little over its header line), the text going on below it.
+                    let (top, room) = if matches!(f.relative_v.as_str(), "paragraph" | "line") && f.align_v.is_none() {
+                        let oy = pt(f.offset_y);
+                        (oy, (oy + sh + db).max(0.0))
+                    } else {
+                        (dt, dt + sh + db)
+                    };
                     let items = vec![Item::Shape {
                         shape: (*shape).clone(),
                         x: sx,
-                        y: before + above + dt,
+                        y: before + above + top,
                         w: sw,
                         h: sh,
                     }];
                     shape_pieces.push(Piece {
-                        height: before + above + dt + sh + db + below + after,
+                        height: before + above + room + below + after,
                         items,
                         page_break: !has_lines && si + 1 == top_shapes.len() && matches!(p.section_break, SectionBreak::NextPage | SectionBreak::OddPage | SectionBreak::EvenPage),
                         column_break: !has_lines && si + 1 == top_shapes.len() && p.section_break == SectionBreak::NextColumn,
@@ -3965,10 +4045,12 @@ impl<'r> Layouter<'r> {
                 })
             })
             .collect();
-        // The kind of the page being laid out (its header's and footer's).
-        let kind_now = std::cell::Cell::new(DEFAULT_PAGE);
+        // The page being laid out: its section (the one it starts in, whose
+        // header and footer it has) and their kind.
+        let kind_now = std::cell::Cell::new((0usize, DEFAULT_PAGE));
         let text_frame = |s: usize| {
-            let (top, bottom) = body_limits[s][kind_now.get()];
+            let (page_s, kind) = kind_now.get();
+            let (top, bottom) = body_limits[page_s][kind];
             Frame { top, bottom, ..margin_frame(s) }
         };
         let columns_of = |s: usize| -> Vec<(f32, f32)> {
@@ -4068,7 +4150,7 @@ impl<'r> Layouter<'r> {
         };
         let notes_room = |page: &Page| -> f32 { if page.notes.is_empty() { 0.0 } else { separator_h + page.notes.iter().map(|id| note_heights.get(id).copied().unwrap_or(0.0)).sum::<f32>() } };
         let mut pages: Vec<Page> = vec![page_of(0, setups[0].page.first_page, true)];
-        kind_now.set(page_kind(0, setups[0].page.first_page, true));
+        kind_now.set((0, page_kind(0, setups[0].page.first_page, true)));
         let mut frame = frame_of(0);
         let mut y = frame.top;
         // Where the last piece placed ended (pages so far, column, y) and the
@@ -4081,7 +4163,7 @@ impl<'r> Layouter<'r> {
             let first = pages.last().is_some_and(|p| p.section != s);
             *number = if first && setups[s].restart_numbering { setups[s].page.first_page } else { *number + 1 };
             pages.push(page_of(s, *number, first));
-            kind_now.set(page_kind(s, *number, first));
+            kind_now.set((s, page_kind(s, *number, first)));
             *frame = frame_of(s);
             *y = frame.top;
         };
@@ -4091,7 +4173,7 @@ impl<'r> Layouter<'r> {
                     continue;
                 }
                 if let Block::Paragraph(p) = b {
-                    if let Some(shape) = square_shape(p) {
+                    if let Some(shape) = square_shape(p, self.hides_deleted()) {
                         let f = shape.floating.as_ref().unwrap();
                         if f.relative_v != "paragraph" && f.relative_v != "line" {
                             let sw = pt(shape.frame.width);
@@ -4216,6 +4298,12 @@ impl<'r> Layouter<'r> {
             }
         };
         let mut active_obstacle = find_page_obstacle(0, number, &frame);
+        // The obstacles placed on the page so far: one wider than its column
+        // (a figure across both) keeps the text of the next column off it too.
+        let mut page_obstacles: Vec<WrapObstacle> = Vec::new();
+        // Floating shapes put off to the next page's top: the shape, x from
+        // the column, y from the first of them, width and height.
+        let mut deferred: Vec<(Box<ibis_doc_model::Shape>, f32, f32, f32, f32)> = Vec::new();
         // The columns being filled on the page (段組み): the section's, the
         // column, where they start, how far each is filled, and the pieces
         // put in them (their items on the page, top, height and column; to
@@ -4255,6 +4343,30 @@ impl<'r> Layouter<'r> {
                 col_top = y;
                 col_fill.clear();
                 placed.clear();
+                page_obstacles.clear();
+                active_obstacle = None;
+                // The shapes put off to this page: at its top, the text round them.
+                let margin_l = pt(setups[$s].page.left);
+                for (shape, x, dy, w, h) in deferred.drain(..) {
+                    let (sx, sy) = (frame.left + x, frame.top + dy);
+                    if let Some(f) = shape.floating.as_ref()
+                        && matches!(f.wrap.as_str(), "square" | "tight" | "through")
+                    {
+                        let obs = WrapObstacle {
+                            shape_left: sx - margin_l - pt(f.dist_l),
+                            shape_right: sx + w - margin_l + pt(f.dist_r),
+                            y_top: sy - pt(f.dist_t),
+                            y_bottom: sy + h + pt(f.dist_b),
+                            wrap_text: f.wrap_text.clone().unwrap_or_else(|| "bothSides".to_string()),
+                            wrap_polygon: None,
+                        };
+                        if active_obstacle.is_none() {
+                            active_obstacle = Some(obs.clone());
+                        }
+                        page_obstacles.push(obs);
+                    }
+                    pages.last_mut().expect("a page").items.push(Item::Shape { shape, x: sx, y: sy, w, h });
+                }
             }};
         }
         // On in the next column, or the next page after the last.
@@ -4264,6 +4376,13 @@ impl<'r> Layouter<'r> {
                     col += 1;
                     frame = column_frame($s, col);
                     y = col_top;
+                    // An obstacle of the page reaching into this column.
+                    let (left, right) = (frame.left - pt(setups[$s].page.left), frame.left - pt(setups[$s].page.left) + frame.width);
+                    active_obstacle = page_obstacles
+                        .iter()
+                        .filter(|o| o.shape_right > left && o.shape_left < right && o.y_bottom > y)
+                        .min_by(|a, b| a.y_top.total_cmp(&b.y_top))
+                        .cloned();
                 } else {
                     new_page!($s);
                 }
@@ -4279,10 +4398,10 @@ impl<'r> Layouter<'r> {
                 let first = true;
                 number = if setups[s].restart_numbering { setups[s].page.first_page } else { number };
                 *pages.last_mut().expect("a page") = page_of(s, number, first);
-                kind_now.set(page_kind(s, number, first));
+                kind_now.set((s, page_kind(s, number, first)));
                 frame = frame_of(s);
                 y = frame.top;
-                active_obstacle = find_page_obstacle(s, number, &frame);
+                active_obstacle = find_page_obstacle(s, number, &frame).or(active_obstacle.take());
                 (region_s, col, col_top) = (s, 0, y);
                 col_fill.clear();
                 placed.clear();
@@ -4345,7 +4464,26 @@ impl<'r> Layouter<'r> {
                 && !pages.last().is_some_and(|pg| pg.items.iter().all(|it| matches!(it, Item::Line { .. })))
             {
                 new_page!(s);
-                active_obstacle = find_page_obstacle(s, number, &frame);
+                active_obstacle = find_page_obstacle(s, number, &frame).or(active_obstacle.take());
+            }
+            // No block starts inside an obstacle across its column (a figure
+            // over the page's width): below it, or in the next column.
+            loop {
+                let (left, right) = (frame.left - pt(setups[s].page.left), frame.left - pt(setups[s].page.left) + frame.width);
+                let Some(bottom) = page_obstacles
+                    .iter()
+                    .filter(|o| o.shape_left <= left + 0.5 && o.shape_right >= right - 0.5 && o.y_top <= y + 0.5 && o.y_bottom > y + 0.01)
+                    .map(|o| o.y_bottom)
+                    .reduce(f32::max)
+                else {
+                    break;
+                };
+                if bottom >= frame.bottom - 0.01 {
+                    advance!(s);
+                } else {
+                    y = bottom;
+                    break;
+                }
             }
             let obstacle_for_block = if let Block::Paragraph(p) = block {
                 let pad = |b: Option<FlowBorder>| b.map_or(0.0, |b| pt(b.space) + pt(b.total()));
@@ -4353,7 +4491,16 @@ impl<'r> Layouter<'r> {
                 // Obstacles are kept from the left margin; the paragraph's
                 // own x is from its column's left.
                 let col_dx = frame.left - pt(setups[s].page.left);
-                if let Some(shape) = square_shape(p) {
+                // The page's obstacles still below the paragraph's top (but
+                // `main`), from the paragraph's place.
+                let top = y + before_pad;
+                let extra_obstacles = |all: &[WrapObstacle], main: Option<&WrapObstacle>| -> Vec<(f32, f32, f32, f32)> {
+                    all.iter()
+                        .filter(|o| o.y_bottom > top + 0.01 && main.is_none_or(|m| (m.y_top, m.shape_left, m.shape_right) != (o.y_top, o.shape_left, o.shape_right)))
+                        .map(|o| (o.shape_left - col_dx, o.shape_right - col_dx, o.y_top - top, o.y_bottom - top))
+                        .collect()
+                };
+                if let Some(shape) = square_shape(p, self.hides_deleted()) {
                     let f = shape.floating.as_ref().unwrap();
                     let sw = pt(shape.frame.width);
                     let sh = pt(shape.frame.height);
@@ -4433,6 +4580,28 @@ impl<'r> Layouter<'r> {
                     };
                     let sx = abs_x - margin_l;
                     let sy = abs_y - para_top;
+                    // Too tall for what is left of the page below its paragraph
+                    // (Word's PDF of a paper: a figure box of a page's height goes
+                    // to the top of the next page, the paragraph's text staying):
+                    // its paragraph's floating shapes, it and those over it, are
+                    // put off to the next page's top, the paragraph laid out
+                    // without them.
+                    let put_off = matches!(f.relative_v.as_str(), "paragraph" | "line")
+                        && f.align_v.is_none()
+                        && abs_y + sh + db > frame.bottom + 0.5
+                        && y > col_top + 0.5;
+                    if put_off {
+                        for r in p.runs.iter().filter(|r| !run_deleted(r, self.hides_deleted())) {
+                            if let FlowRunKind::Shape(other) = &r.kind
+                                && other.floating.as_ref().is_some_and(|g| matches!(g.relative_v.as_str(), "paragraph" | "line"))
+                                && let Item::Shape { shape: placed, x, y: oy, w, h } = self.floating_item(other, 0.0, frame.width, 0.0, number)
+                            {
+                                deferred.push((placed, x, oy - sy, w, h));
+                                self.deferred_shapes.borrow_mut().insert(other.id.0);
+                            }
+                        }
+                        None
+                    } else {
                     let wrap_poly_abs = matches!(f.wrap.as_str(), "tight" | "through")
                         .then(|| f.wrap_polygon.clone())
                         .flatten()
@@ -4450,7 +4619,9 @@ impl<'r> Layouter<'r> {
                         wrap_text: wrap_text.clone(),
                         wrap_polygon: wrap_poly_abs,
                     };
+                    let extra = extra_obstacles(&page_obstacles, None);
                     active_obstacle = Some(obs.clone());
+                    page_obstacles.push(obs.clone());
                     Some(WrapObstacleInPara {
                         shape_left: obs.shape_left - col_dx,
                         shape_right: obs.shape_right - col_dx,
@@ -4460,7 +4631,9 @@ impl<'r> Layouter<'r> {
                         wrap_polygon: wrap_poly_rel,
                         shape_to_emit: Some((shape.clone(), sx - col_dx, sy, sw, sh, f.behind_doc)),
                         drop_cap_to_emit: None,
+                        extra,
                     })
+                    }
                 } else if let Some(ref obs) = active_obstacle {
                     let rel_top = obs.y_top - (y + before_pad);
                     let rel_bottom = obs.y_bottom - (y + before_pad);
@@ -4477,6 +4650,7 @@ impl<'r> Layouter<'r> {
                             wrap_polygon,
                             shape_to_emit: None,
                             drop_cap_to_emit: None,
+                            extra: extra_obstacles(&page_obstacles, Some(obs)),
                         })
                     } else {
                         active_obstacle = None;
@@ -4569,7 +4743,6 @@ impl<'r> Layouter<'r> {
             {
                 let total: f32 = pieces.iter().map(|p| p.height).sum();
                 if y + total > frame.bottom + 0.01 && (y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len()) && total <= frame.bottom - frame.top {
-                    active_obstacle = None;
                     advance!(s);
                     if obstacle_for_block.is_some() {
                         pieces = self.pieces(block, frame.width, number, None, false);
@@ -4601,7 +4774,6 @@ impl<'r> Layouter<'r> {
                 let can_move = y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len();
                 if fit > 0 && fit < n && can_move {
                     if fit == 1 || (fit == n - 1 && n == 3) {
-                        active_obstacle = None;
                         advance!(s);
                         if obstacle_for_block.is_some() {
                             pieces = self.pieces(block, frame.width, number, None, false);
@@ -4622,7 +4794,6 @@ impl<'r> Layouter<'r> {
             let mut popped = 0usize;
             while let Some(mut piece) = queue.pop_front() {
                 if break_before == Some(popped) {
-                    active_obstacle = None;
                     advance!(s);
                     break_before = None;
                 }
@@ -4646,6 +4817,25 @@ impl<'r> Layouter<'r> {
                 {
                     y -= after.min(piece.space_before);
                 }
+                // A piece laid out before an obstacle of the page was there (a
+                // figure put off to this page) goes below one across its column.
+                while obstacle_for_block.is_none() {
+                    let (left, right) = (frame.left - pt(setups[s].page.left), frame.left - pt(setups[s].page.left) + frame.width);
+                    let Some(bottom) = page_obstacles
+                        .iter()
+                        .filter(|o| o.shape_left <= left + 0.5 && o.shape_right >= right - 0.5 && o.y_top < y + piece.height - 0.01 && o.y_bottom > y + 0.01)
+                        .map(|o| o.y_bottom)
+                        .reduce(f32::max)
+                    else {
+                        break;
+                    };
+                    if bottom + piece.height > frame.bottom + 0.01 {
+                        advance!(s);
+                    } else {
+                        y = bottom;
+                        break;
+                    }
+                }
                 // A table row that does not fit is divided where the page
                 // ends (when a line of each cell fits there), its rest
                 // going on at the top of the next page.
@@ -4666,7 +4856,6 @@ impl<'r> Layouter<'r> {
                         col_fill.resize(col + 1, col_top);
                     }
                     col_fill[col] = frame.bottom;
-                    active_obstacle = None;
                     advance!(s);
                     for h in &headers {
                         pages.last_mut().expect("a page").items.extend(h.items.iter().cloned().map(|it| place_item(it, y, s, number, frame.left)));
@@ -4697,7 +4886,6 @@ impl<'r> Layouter<'r> {
                 let room = notes_room(page);
                 let more = new_notes.iter().map(|id| note_heights.get(id).copied().unwrap_or(0.0)).sum::<f32>() + if page.notes.is_empty() && !new_notes.is_empty() { separator_h } else { 0.0 };
                 if y + piece.height + kept > frame.bottom - room - more + 0.01 && (y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len()) {
-                    active_obstacle = None;
                     advance!(s);
                     // A table's heading rows start the new page.
                     if !piece.header {
@@ -4716,6 +4904,37 @@ impl<'r> Layouter<'r> {
                 let items = piece.items.into_iter().map(|it| place_item(it, y, s, number, frame.left));
                 let start = page.items.len();
                 page.items.extend(items);
+                // A shape the text wraps round, where it landed (its paragraph may
+                // have gone on to another page or column than it was laid out
+                // for): an obstacle of this page there.
+                let margin_l = pt(setups[s].page.left);
+                let landed: Vec<WrapObstacle> = page.items[start..]
+                    .iter()
+                    .filter_map(|it| match it {
+                        Item::Shape { shape, x, y, w, h } => {
+                            let f = shape.floating.as_ref()?;
+                            matches!(f.wrap.as_str(), "square" | "tight" | "through").then(|| WrapObstacle {
+                                shape_left: x - margin_l - pt(f.dist_l),
+                                shape_right: x + w - margin_l + pt(f.dist_r),
+                                y_top: y - pt(f.dist_t),
+                                y_bottom: y + h + pt(f.dist_b),
+                                wrap_text: f.wrap_text.clone().unwrap_or_else(|| "bothSides".to_string()),
+                                wrap_polygon: None,
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                for obs in landed {
+                    let same = |o: &WrapObstacle| (o.y_top - obs.y_top).abs() < 0.5 && (o.shape_left - obs.shape_left).abs() < 0.5;
+                    if !page_obstacles.iter().any(same) {
+                        if active_obstacle.as_ref().is_none_or(|a| !same(a)) {
+                            active_obstacle = Some(obs.clone());
+                        }
+                        page_obstacles.push(obs);
+                    }
+                }
+                let page = pages.last_mut().expect("a page");
                 placed.push((start..page.items.len(), y, piece.height, col));
                 y += piece.height;
                 prev_end = Some((pages.len(), col, y, piece.space_after));
@@ -4738,7 +4957,7 @@ impl<'r> Layouter<'r> {
                     // The page after a section's end is the next section's.
                     let s_next = if ends_section { (s + 1).min(setups.len() - 1) } else { s };
                     new_page!(s_next);
-                    active_obstacle = find_page_obstacle(s_next, number, &frame);
+                    active_obstacle = find_page_obstacle(s_next, number, &frame).or(active_obstacle.take());
                     // An odd- or even-page section break: a blank page
                     // between when the next page has the other parity.
                     let wanted = match block {
@@ -4809,7 +5028,7 @@ impl<'r> Layouter<'r> {
                 continue;
             }
             if let Some(pg_idx) = pages.iter().rposition(|p| p.section == s) {
-                kind_now.set(page_kind(s, pages[pg_idx].number, pages[pg_idx].first_in_section));
+                kind_now.set((pages[pg_idx].section, page_kind(pages[pg_idx].section, pages[pg_idx].number, pages[pg_idx].first_in_section)));
                 let frame = frame_of(s);
                 let pg = &mut pages[pg_idx];
                 let body_bottom = pg
@@ -4856,7 +5075,7 @@ impl<'r> Layouter<'r> {
             if pg.notes.is_empty() {
                 continue;
             }
-            kind_now.set(page_kind(pg.section, pg.number, pg.first_in_section));
+            kind_now.set((pg.section, page_kind(pg.section, pg.number, pg.first_in_section)));
             let frame = frame_of(pg.section);
             let pos = setups.get(pg.section).map_or(self.doc.page.footnotes.position, |s| s.page.footnotes.position);
             let mut y = match pos {
@@ -4897,7 +5116,7 @@ impl<'r> Layouter<'r> {
         // to its swapped margins.
         for pg in &mut pages {
             let page = &setups[pg.section].page;
-            kind_now.set(page_kind(pg.section, pg.number, pg.first_in_section));
+            kind_now.set((pg.section, page_kind(pg.section, pg.number, pg.first_in_section)));
             let frame = text_frame(pg.section);
             let used = pg
                 .items
@@ -5546,6 +5765,7 @@ fn paginate_whole(doc: &FlowDocument, res: &Resources) -> Pagination {
             note_numbers: known_notes.unwrap_or_else(|| note_numbers(doc)),
             current_note: std::cell::RefCell::new(String::new()),
             contextual: contextual_spacing(doc),
+            deferred_shapes: Default::default(),
             current_cell: std::cell::Cell::new(None),
             field_paragraph: std::cell::Cell::new(None),
             comment_runs: map_comment_runs(doc),

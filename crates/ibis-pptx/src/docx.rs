@@ -116,6 +116,25 @@ fn hex(value: &str) -> Option<Rgb> {
 }
 
 /// Run properties, each unset until some level sets it.
+/// Whether a node under `holder` is in a text box's content in it (`wps:txbx`,
+/// `w:txbxContent`, VML `v:textbox`): a picture there is the box's text's, not the drawing's.
+fn in_text_box(n: Node, holder: Node) -> bool {
+    n.ancestors().skip(1).take_while(|a| *a != holder).any(|a| matches!(a.tag_name().name(), "txbx" | "txbxContent" | "textbox"))
+}
+
+/// Whether a node is in deleted text (`w:del`, `w:moveFrom`): gone in the final view.
+fn in_deleted(n: Node) -> bool {
+    n.ancestors().skip(1).any(|a| matches!(a.tag_name().name(), "del" | "moveFrom") && a.tag_name().namespace() == Some("http://schemas.openxmlformats.org/wordprocessingml/2006/main"))
+}
+
+/// The pictures (`w:drawing` with a `pic:pic`) inline in a text box's paragraph, not deleted.
+fn text_box_pictures_of<'a, 'i>(p: Node<'a, 'i>) -> Vec<Node<'a, 'i>> {
+    p.descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "drawing" && !in_deleted(*n))
+        .filter(|d| d.descendants().any(|n| n.is_element() && n.tag_name().name() == "pic" && !in_text_box(n, *d)))
+        .collect()
+}
+
 /// A run's properties as its `w:rPr` (or a style's) sets them.
 fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
     let mut f = RunFormat::default();
@@ -1016,6 +1035,12 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                         _ => RevisionKind::Insert,
                     };
                     let revision = Revision { kind, author: wattr(node, "author").unwrap_or("").to_string(), date: wattr(node, "date").unwrap_or("").to_string() };
+                    // Text inserted inside deleted or moved-away text is gone with it
+                    // (the final view has neither): the outer deletion stays.
+                    let revision = match &self.revision {
+                        Some(outer) if outer.kind.is_delete() && revision.kind.is_insert() => outer.clone(),
+                        _ => revision,
+                    };
                     let outer = self.revision.replace(revision);
                     self.inline(node, rels, base, field, read, out, link);
                     self.revision = outer;
@@ -1942,7 +1967,120 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 return grouped;
             }
         }
-        self.drawing(drawing, rels).into_iter().collect()
+        let mut out: Vec<FlowRunKind> = self.drawing(drawing, rels).into_iter().collect();
+        // A floating text box with pictures in its text (a figure over its caption):
+        // the pictures too, over the box.
+        if let Some(FlowRunKind::Shape(shape)) = out.first()
+            && matches!(shape.kind, ShapeKind::Auto(_))
+            && let Some(floating) = shape.floating.clone()
+            && let Some(wsp) = elements(drawing)
+                .find(|n| matches!(n.tag_name().name(), "inline" | "anchor"))
+                .and_then(|holder| holder.descendants().find(|n| n.is_element() && n.tag_name().name() == "wsp"))
+        {
+            let (frame, z) = (shape.frame, floating.relative_height);
+            let pictures = self.text_box_pictures(wsp, frame, &floating, z, rels);
+            out.extend(pictures);
+        }
+        out
+    }
+
+    /// The pictures inline in a floating text box's paragraphs, each as a
+    /// floating picture over the box where its paragraph puts it (its text
+    /// keeps a line of the picture's height there: see `shape_text`). The
+    /// paragraphs above one are measured roughly (a line of 1.2 × the size,
+    /// half an em a character); a figure is usually the box's first.
+    /// Pictures of deleted text are left out, as Word's final view does.
+    fn text_box_pictures(&mut self, wsp: Node, frame: EmuRect, floating: &ibis_doc_model::FloatingAnchor, z: u32, rels: &Rels) -> Vec<FlowRunKind> {
+        let Some(content) = wsp.descendants().find(|n| n.is_element() && n.tag_name().name() == "txbxContent") else { return Vec::new() };
+        let body_pr = child(wsp, "bodyPr");
+        let inset = |name: &str, default: i64| body_pr.and_then(|b| crate::xml::attr_i64(b, name)).unwrap_or(default);
+        let (left_in, top_in, right_in) = (inset("lIns", 91_440), inset("tIns", 45_720), inset("rIns", 91_440));
+        let inner_w = (frame.width - left_in - right_in).max(0);
+        let mut out = Vec::new();
+        let mut y = top_in;
+        for p in elements(content).filter(|n| n.tag_name().name() == "p") {
+            let ppr = child(p, "pPr");
+            let (mut para, base_run) = self.styles.paragraph_base(ppr.and_then(|pr| wval(pr, "pStyle")), None);
+            if let Some(pr) = ppr {
+                para.overlay(&para_format(pr, self.theme));
+            }
+            y += para.before.unwrap_or(0).max(0);
+            let pictures: Vec<Node> = text_box_pictures_of(p);
+            if pictures.is_empty() {
+                let size = base_run.size.unwrap_or(1050) as i64 * 127;
+                let chars: usize = p.descendants().filter(|n| n.is_element() && n.tag_name().name() == "t" && !in_deleted(*n)).map(|t| t.text().unwrap_or("").chars().count()).sum();
+                let lines = ((chars as i64 * size / 2) / inner_w.max(1) + 1).max(1);
+                let line = match para.line {
+                    Some(LineHeight::Exact(e)) => e,
+                    Some(LineHeight::AtLeast(e)) => e.max(size * 6 / 5),
+                    Some(LineHeight::Auto(n)) => size * 6 / 5 * n as i64 / 240,
+                    None => size * 6 / 5,
+                };
+                y += lines * line;
+            } else {
+                let made: Vec<(ibis_doc_model::MediaId, EmuSize, ibis_doc_model::PictureLook)> = pictures
+                    .iter()
+                    .filter_map(|d| match self.picture(*d, rels) {
+                        Some(FlowRunKind::Picture { media, size, look }) => Some((media, size, look)),
+                        _ => None,
+                    })
+                    .collect();
+                let total: i64 = made.iter().map(|m| m.1.width).sum();
+                let line = made.iter().map(|m| m.1.height).max().unwrap_or(0);
+                let indent = para.left.unwrap_or(0) + para.first_line.unwrap_or(0).max(0);
+                let room = (inner_w - indent - para.right.unwrap_or(0)).max(0);
+                let mut x = left_in
+                    + indent
+                    + match para.align {
+                        Some(FlowAlign::Center) => (room - total) / 2,
+                        Some(FlowAlign::Right) => room - total,
+                        _ => 0,
+                    };
+                for (media, size, look) in made {
+                    let mut anchor = floating.clone();
+                    anchor.offset_x += x;
+                    anchor.offset_y += y + line - size.height;
+                    anchor.wrap = "none".to_string();
+                    anchor.relative_height = z.saturating_add(1);
+                    let picture = ibis_doc_model::Picture {
+                        media,
+                        crop: look.crop,
+                        stroke: look.stroke.clone(),
+                        corner: 0,
+                        duotone: look.duotone,
+                        clear: None,
+                        luminance: look.luminance,
+                        clip: None,
+                        shadow: None,
+                        reflection: None,
+                        soft_edge: look.soft_edge,
+                        alt_text: look.alt_text.clone(),
+                        decorative: look.decorative,
+                        name: look.name.clone(),
+                        ole: look.ole,
+                        geometry: look.geometry.clone(),
+                        effects: look.effects,
+                        tile: None,
+                        fill_rect: None,
+                        artistic_effect: None,
+                    };
+                    let shape = Shape {
+                        id: ShapeId(self.new_id() as u64),
+                        frame: EmuRect::new(anchor.offset_x, anchor.offset_y, size.width, size.height),
+                        rotation: look.rotation,
+                        flip_h: look.flip_h,
+                        flip_v: look.flip_v,
+                        kind: ShapeKind::Picture(picture),
+                        floating: Some(anchor),
+                    };
+                    out.push(FlowRunKind::Shape(Box::new(shape)));
+                    x += size.width;
+                }
+                y += line;
+            }
+            y += para.after.unwrap_or(0).max(0);
+        }
+        out
     }
 
     fn drawing(&mut self, drawing: Node, rels: &Rels) -> Option<FlowRunKind> {
@@ -2160,7 +2298,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         let cx = extent.attribute("cx").and_then(|v| v.parse().ok()).unwrap_or(0);
         let cy = extent.attribute("cy").and_then(|v| v.parse().ok()).unwrap_or(0);
         let size = EmuSize::new(cx, cy);
-        let blip = holder.descendants().find(|n| n.is_element() && n.tag_name().name() == "blip")?;
+        let blip = holder.descendants().find(|n| n.is_element() && n.tag_name().name() == "blip" && !in_text_box(*n, holder))?;
         let rid = blip_embed(blip)?;
         let rel = rels.get(rid).filter(|r| !r.external)?;
         let media = match self.media.get(&rel.target) {
@@ -2242,7 +2380,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
     /// flipH and flipV, `pic:blipFill/a:srcRect` and `pic:spPr/a:ln`.
     fn picture_look(&self, holder: Node, colors: &crate::theme::Colors) -> ibis_doc_model::PictureLook {
         let mut look = ibis_doc_model::PictureLook::default();
-        let pic = holder.descendants().find(|n| n.is_element() && n.tag_name().name() == "pic");
+        let pic = holder.descendants().find(|n| n.is_element() && n.tag_name().name() == "pic" && !in_text_box(*n, holder));
         if let Some(pic) = pic {
             let sp_pr = child(pic, "spPr");
             if let Some(xfrm) = sp_pr.and_then(|p| child(p, "xfrm")) {
@@ -2776,7 +2914,14 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                     _ => TextAlign::Left,
                 });
                 let hundredths = |emu: Option<i64>| emu.map_or(0, |e| (e.max(0) / 127) as u32);
+                // A paragraph of pictures (drawn over the box: `text_box_pictures`)
+                // keeps a line of their height.
+                let picture_height = text_box_pictures_of(p)
+                    .iter()
+                    .filter_map(|d| d.descendants().find(|n| n.is_element() && n.tag_name().name() == "extent").and_then(|e| crate::xml::attr_i64(e, "cy")))
+                    .max();
                 let line_spacing = match para.line {
+                    _ if picture_height.is_some() => Some(ibis_doc_model::LineSpacing::Points(hundredths(picture_height))),
                     Some(ibis_doc_model::LineHeight::Auto(n)) if n != 240 => Some(ibis_doc_model::LineSpacing::Percent(n * 100_000 / 240)),
                     Some(ibis_doc_model::LineHeight::Exact(e)) => Some(ibis_doc_model::LineSpacing::Points(hundredths(Some(e)))),
                     _ => None,
@@ -2790,6 +2935,14 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                         font_size: Some(f.size.unwrap_or(1050)),
                         bold: Some(f.bold.unwrap_or(false)),
                         italic: Some(f.italic.unwrap_or(false)),
+                        underline: f.underline.unwrap_or(false),
+                        highlight: f.highlight.flatten(),
+                        // As PowerPoint's: a third of the size up, a quarter down.
+                        baseline: match f.position {
+                            Some(ibis_doc_model::VerticalPosition::Superscript) => 30_000,
+                            Some(ibis_doc_model::VerticalPosition::Subscript) => -25_000,
+                            _ => 0,
+                        },
                         color: f.color,
                         font,
                         fallback_font,
