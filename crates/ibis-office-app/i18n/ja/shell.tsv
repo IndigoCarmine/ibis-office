@@ -28,6 +28,22 @@ view.zoom-100	100%
 tools.dictionary	辞書
 tools.word-count	文字カウント…
 tools.accessibility	ユーザー補助
+tools.customize-qat	よく使うコマンドの編集…
+qat.add	よく使うコマンドに追加
+qat.remove	よく使うコマンドから外す
+qat.customize	よく使うコマンドの編集
+qat.more-commands	その他のコマンド…
+qat.group.toolbar	ツール バー
+qat.key-tip	Alt, {key}
+qat.dialog.title	よく使うコマンドの編集
+qat.dialog.note	左の一覧のコマンドをクリックすると追加されます。Alt キーを押して離すと各ボタンに番号が表示され、その番号を押すとコマンドを実行できます。
+qat.dialog.search	コマンドを検索
+qat.dialog.available	追加できるコマンド
+qat.dialog.current	よく使うコマンド
+qat.dialog.close	閉じる
+qat.move-up	上へ移動
+qat.move-down	下へ移動
+qat.reset	既定に戻す
 tools.settings	設定…
 help.search	メニューを検索
 help.help	ヘルプ

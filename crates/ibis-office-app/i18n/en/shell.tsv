@@ -28,6 +28,22 @@ view.zoom-100	100%
 tools.dictionary	Dictionary
 tools.word-count	Word Count…
 tools.accessibility	Accessibility
+tools.customize-qat	Edit Favorite Commands…
+qat.add	Add to Favorite Commands
+qat.remove	Remove from Favorite Commands
+qat.customize	Edit Favorite Commands
+qat.more-commands	More Commands…
+qat.group.toolbar	Toolbar
+qat.key-tip	Alt, {key}
+qat.dialog.title	Edit Favorite Commands
+qat.dialog.note	Click a command on the left to add it. Press and release Alt to show a number on each button, then type the number to run the command.
+qat.dialog.search	Search commands
+qat.dialog.available	Available commands
+qat.dialog.current	Favorite Commands
+qat.dialog.close	Close
+qat.move-up	Move Up
+qat.move-down	Move Down
+qat.reset	Reset
 tools.settings	Settings…
 help.search	Search Menus
 help.help	Help

@@ -661,6 +661,8 @@ impl SlideEditor {
                     .child(title_button("undo", "undo", "_shell.undo-z", can_undo.then(|| -> Handler { Rc::new(|this: &mut SlideEditor, window, cx| this.undo(&crate::Undo, window, cx)) }), &editor))
                     .child(title_button("redo", "redo", "_shell.redo-z", can_redo.then(|| -> Handler { Rc::new(|this: &mut SlideEditor, window, cx| this.redo(&crate::Redo, window, cx)) }), &editor)),
             )
+            // The quick access toolbar (shell/quick_access.rs).
+            .child(self.render_quick_access(cx))
             .children(slideshow)
             .child(
                 h_flex()
@@ -751,7 +753,10 @@ impl SlideEditor {
         let items = self.toolbar_items();
         // What fits: the bar is the window less 8 px each side, 6 px padding
         // each side, and ︙ and ^ on the right.
-        let available = f32::from(window.viewport_size().width) - 16.0 - 12.0 - 2.0 * 29.0;
+        let compact = self.chrome_compact;
+        // With the title row hidden, the quick access toolbar is the toolbar's first part.
+        let quick_access = compact.then(|| (self.render_quick_access(cx), crate::shell::quick_access::entries(self.kind()).len() as f32 * 29.0 + 18.0 + 9.0));
+        let available = f32::from(window.viewport_size().width) - 16.0 - 12.0 - 2.0 * 29.0 - quick_access.as_ref().map_or(0.0, |q| q.1);
         let mut used = 0.0;
         let mut shown = Vec::new();
         let mut folded = Vec::new();
@@ -770,7 +775,6 @@ impl SlideEditor {
         while matches!(folded.first(), Some(ToolItem::Separator)) {
             folded.remove(0);
         }
-        let compact = self.chrome_compact;
         let more = (!folded.is_empty()).then(|| {
             let folded = Rc::new(folded);
             let editor = editor.clone();
@@ -795,6 +799,7 @@ impl SlideEditor {
                 .items_center()
                 .rounded(px(18.))
                 .bg(rgb(TOOLBAR_BG))
+                .when_some(quick_access, |d, (qat, _)| d.child(qat).child(tool_item(&ToolItem::Separator, 0, &editor)))
                 .children(shown.iter().enumerate().map(|(i, item)| tool_item(item, i, &editor)))
                 .child(div().flex_1())
                 .children(more)
@@ -908,6 +913,19 @@ fn title_button_icon(id: &'static str, icon: Icon, tooltip: &'static str, handle
 pub(crate) fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<SlideEditor>) -> AnyElement {
     match item {
         ToolItem::Separator => div().w(px(1.)).h(px(20.)).mx(px(4.)).bg(rgb(DIVIDER)).flex_none().into_any_element(),
+        ToolItem::Button(b) if crate::shell::quick_access::can_add(b.id) => {
+            // Right-click: add it to the quick access toolbar.
+            let entry = crate::shell::quick_access::QatEntry::new(b.id, b.icon.unwrap_or(""), &b.tooltip);
+            let editor_for_menu = editor.clone();
+            div()
+                .flex_none()
+                .child(tool_button(b, index, editor))
+                .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                    let entry = entry.clone();
+                    editor_for_menu.update(cx, |this, cx| this.open_quick_access_context(entry, event.position, window, cx)).ok();
+                })
+                .into_any_element()
+        }
         ToolItem::Button(b) => tool_button(b, index, editor),
         ToolItem::Select { id, value, width, tooltip, menu, disabled } => {
             let enabled = !disabled && !menu.is_empty();
@@ -965,7 +983,7 @@ pub(crate) fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<Slide
     }
 }
 
-fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -> AnyElement {
+pub(crate) fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -> AnyElement {
     let enabled = b.enabled();
     let color: Hsla = if !enabled {
         disabled_color()

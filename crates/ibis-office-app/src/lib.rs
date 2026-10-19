@@ -177,6 +177,8 @@ actions!(
         CopyAnimation,
         /// Paste animations onto selected shapes (Animation Painter).
         PasteAnimation,
+        /// Show (or hide) the quick access toolbar's key tips: Alt pressed and let go alone.
+        ShowKeyTips,
     ]
 );
 
@@ -205,6 +207,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("delete", DeleteSelection, context),
         KeyBinding::new("backspace", DeleteSelection, context),
         KeyBinding::new("escape", CancelTool, context),
+        // Alt pressed and let go alone (GPUI's keystroke of a modifier by itself), as Office's key tips.
+        KeyBinding::new("alt", ShowKeyTips, context),
         KeyBinding::new("ctrl-alt-1", ToggleSlideGridView, context),
         KeyBinding::new("ctrl-alt-2", ToggleOutlineView, context),
         KeyBinding::new("ctrl-alt-3", ToggleNotesPageView, context),

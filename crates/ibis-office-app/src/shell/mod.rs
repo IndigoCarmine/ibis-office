@@ -30,6 +30,7 @@ pub(crate) mod about_window;
 pub(crate) mod password_window;
 pub(crate) mod icons;
 pub(crate) mod menu_bar;
+pub(crate) mod quick_access;
 pub(crate) mod input;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod recent_files;

@@ -88,6 +88,7 @@ pub(crate) fn menus(editor: &SlideEditor) -> Menus {
                 item("tools.word-count", "numbers").shortcut("⇧⌘C").into(),
                 SEP,
                 item("tools.accessibility", "accessibility_new").into(),
+                item("tools.customize-qat", "tune").on(|this, window, cx| this.open_quick_access_dialog(window, cx)).into(),
                 item("tools.settings", "settings").shortcut("⌘,").on(|_, window, cx| crate::shell::settings_window::open_over(Some(window.bounds()), window.display(cx).map(|d| d.id()), cx)).into(),
             ],
             MenuId::Help => {

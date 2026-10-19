@@ -463,6 +463,14 @@ pub struct SlideEditor {
     pub(crate) reviewer_filter: Option<std::collections::HashSet<String>>,
     /// The title row and the menu bar are hidden (the toolbar's ^).
     pub(crate) chrome_compact: bool,
+    /// The quick access toolbar's key tips, while shown (Alt pressed and let go).
+    pub(crate) key_tips: Option<crate::shell::quick_access::KeyTips>,
+    /// Where the quick access toolbar's buttons were drawn (a menu opened by its key tip goes under its button).
+    pub(crate) quick_access_bounds: std::rc::Rc<std::cell::RefCell<Vec<Option<Bounds<Pixels>>>>>,
+    /// The quick access toolbar's customize dialog, while open.
+    pub(crate) quick_access_dialog: Option<crate::shell::quick_access::QatDialog>,
+    /// A menu the chrome opened (a toolbar button's right-click menu), while open.
+    pub(crate) chrome_popup: Option<crate::shell::quick_access::ChromePopup>,
     /// Where the open file came from, for saving it (`shell/save.rs`);
     /// `None` for a new document or one that cannot be saved.
     pub(crate) source: Option<std::sync::Arc<ibis_pptx::Source>>,
@@ -624,6 +632,10 @@ impl SlideEditor {
             print_hidden_text: false,
             reviewer_filter: None,
             chrome_compact: false,
+            key_tips: None,
+            quick_access_bounds: Default::default(),
+            quick_access_dialog: None,
+            chrome_popup: None,
             source: None,
             master_view: None,
             notes_format: None,
@@ -2488,6 +2500,11 @@ impl SlideEditor {
     }
 
     pub(crate) fn cancel_tool(&mut self, _: &CancelTool, window: &mut Window, cx: &mut Context<Self>) {
+        // Esc hides the quick access toolbar's key tips first.
+        if self.key_tips.take().is_some() {
+            cx.notify();
+            return;
+        }
         if let Some(show) = self.slideshow.as_mut() {
             if let Some(rehearsal) = show.rehearsal.as_mut() {
                 if rehearsal.dialog_open {
@@ -3214,6 +3231,18 @@ impl Render for SlideEditor {
                 #[cfg(target_family = "wasm")]
                 let _ = (paths, cx);
             }))
+            .on_action(cx.listener(|this, _: &crate::ShowKeyTips, _, cx| this.toggle_key_tips(cx)))
+            // The quick access toolbar's key tips and Alt+digit (shell/quick_access.rs).
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.quick_access_key(&event.keystroke, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                if this.key_tips.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::delete_selection))
@@ -3310,6 +3339,8 @@ impl Render for SlideEditor {
             .when(!self.show_in_main(), |d| self.render_window(d, window, cx))
             .when(self.zoom_dialog_open, |d| d.child(self.render_zoom_dialog(window, cx)))
             .when(self.save_confirm_dialog_open, |d| d.child(self.render_save_confirm_dialog(window, cx)))
+            .children(self.render_quick_access_dialog(cx))
+            .children(self.render_chrome_popup())
     }
 }
 
