@@ -17,6 +17,9 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
     let pagination = pages(document, res);
     let k = scale * EMU_PER_POINT as f32;
     let mut behind_pictures = Vec::new();
+    // The headers' and footers' shapes behind the text: under the body's
+    // (Word draws their layer below the document's).
+    let mut header_behind = Vec::new();
     let mut front_pictures = Vec::new();
     // The floating shapes' order (`relativeHeight`), for drawing them in it;
     // the others (0) under them.
@@ -62,7 +65,9 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                 );
                 let elem = shape_element(shape, s_frame, scale, res, None);
                 let is_behind = shape.floating.as_ref().map_or(false, |f| f.behind_doc);
-                if is_behind {
+                if is_behind && i >= body_items_count {
+                    header_behind.push(elem);
+                } else if is_behind {
                     behind_pictures.push(elem);
                 } else {
                     front_z.push(shape.floating.as_ref().map_or(0, |f| f.relative_height));
@@ -100,7 +105,7 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
     // ページの色: on the screen only (Word for Mac prints none) unless print_backgrounds is enabled.
     let dark = res.dark_page && !print;
     let paper = if dark { DARK_PAPER } else { document.page_color.filter(|_| !print || res.print_backgrounds).map_or(0xffffff, |c| c.0) };
-    div().absolute().left_0().top_0().w(px(w)).h(px(h)).bg(rgb(paper)).children(behind_pictures).child(
+    div().absolute().left_0().top_0().w(px(w)).h(px(h)).bg(rgb(paper)).children(header_behind).children(behind_pictures).child(
         canvas(
             |_, _, _| {},
             move |bounds, _, window, cx| {
