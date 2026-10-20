@@ -685,8 +685,8 @@ fn page_setup(sect: Node) -> PageSetup {
             Some("lines") => ibis_doc_model::DocGridType::Lines,
             Some("linesAndChars") => ibis_doc_model::DocGridType::LinesAndChars,
             Some("snapToChars") => ibis_doc_model::DocGridType::SnapToChars,
-            Some("default") => ibis_doc_model::DocGridType::Default,
-            _ => if twips(grid, "linePitch").is_some() { ibis_doc_model::DocGridType::Lines } else { ibis_doc_model::DocGridType::Default },
+            // No w:type is "default": no grid, even with a linePitch (Word keeps one there).
+            _ => ibis_doc_model::DocGridType::Default,
         };
         page.doc_grid_type = grid_type;
         if grid_type != ibis_doc_model::DocGridType::Default {
@@ -960,6 +960,10 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             field_start: read.field_start.take(),
             field_end: read.field_end,
             subdoc,
+            mark_deleted: ppr
+                .and_then(|p| child(p, "rPr"))
+                .and_then(|r| child(r, "del").or_else(|| child(r, "moveFrom")))
+                .map(|d| wattr(d, "author").unwrap_or("").to_string()),
             section: ppr.and_then(|p| child(p, "sectPr")).map(|s| {
                 self.sections.push(id);
                 Arc::new(section_setup(s))
@@ -1015,6 +1019,12 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                         _ => RevisionKind::Insert,
                     };
                     let revision = Revision { kind, author: wattr(node, "author").unwrap_or("").to_string(), date: wattr(node, "date").unwrap_or("").to_string() };
+                    // Text inserted inside deleted or moved-away text is gone with it
+                    // (the final view has neither): the outer deletion stays.
+                    let revision = match &self.revision {
+                        Some(outer) if outer.kind.is_delete() && revision.kind.is_insert() => outer.clone(),
+                        _ => revision,
+                    };
                     let outer = self.revision.replace(revision);
                     self.inline(node, rels, base, field, read, out, link);
                     self.revision = outer;
@@ -2695,47 +2705,73 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                     Some(ibis_doc_model::LineHeight::Exact(e)) => Some(ibis_doc_model::LineSpacing::Points(hundredths(Some(e)))),
                     _ => None,
                 };
-                let mut runs = Vec::new();
-                for r in elements(p).filter(|n| n.tag_name().name() == "r") {
-                    let rpr = child(r, "rPr");
-                    let mut f = base_run.clone();
-                    if let Some(rpr) = rpr {
-                        f.overlay(&run_format(rpr, self.theme));
-                    }
-                    // The East Asian typeface is the run's (its Latin one for the others).
-                    let (font, fallback_font) = match (f.east_asian_font.clone(), f.font.clone()) {
-                        (Some(ea), latin) => (Some(ea), latin),
-                        (None, latin) => (latin, None),
-                    };
-                    let mut text = String::new();
-                    for t in elements(r).filter(|n| n.tag_name().name() == "t") {
-                        text.push_str(t.text().unwrap_or(""));
-                    }
-                    if !text.is_empty() {
-                        runs.push(Run {
-                            text,
-                            style: RunStyle {
-                                font_size: Some(f.size.unwrap_or(1050)),
-                                bold: Some(f.bold.unwrap_or(false)),
-                                italic: Some(f.italic.unwrap_or(false)),
-                                color: f.color,
-                                font,
-                                fallback_font,
-                                ..Default::default()
-                            },
-                        });
-                    }
-                }
-                if !runs.is_empty() {
-                    paragraphs.push(Paragraph {
-                        runs,
-                        align,
-                        space_before: hundredths(para.before),
-                        space_after: hundredths(para.after),
-                        line_spacing,
+                let style_of = |f: &RunFormat, c: char| {
+                    // Each character in the typeface the body would draw it in
+                    // (CJK in the East Asian one), falling back to the other.
+                    let font = f.style().font_for(c).map(str::to_string);
+                    let fallback_font = if font == f.font { f.east_asian_font.clone() } else { f.font.clone() };
+                    RunStyle {
+                        font_size: Some(f.size.unwrap_or(1050)),
+                        bold: Some(f.bold.unwrap_or(false)),
+                        italic: Some(f.italic.unwrap_or(false)),
+                        underline: f.underline.unwrap_or(false),
+                        highlight: f.highlight.flatten(),
+                        // As PowerPoint's: a third of the size up, a quarter down.
+                        baseline: match f.position {
+                            Some(ibis_doc_model::VerticalPosition::Superscript) => 30_000,
+                            Some(ibis_doc_model::VerticalPosition::Subscript) => -25_000,
+                            _ => 0,
+                        },
+                        color: f.color,
+                        font,
+                        fallback_font,
                         ..Default::default()
-                    });
+                    }
+                };
+                let mut runs: Vec<Run> = Vec::new();
+                // The runs, also inside hyperlinks, content controls and insertions.
+                for r in p.descendants().filter(|n| n.is_element() && n.tag_name().name() == "r" && !n.ancestors().skip(1).any(|a| matches!(a.tag_name().name(), "del" | "moveFrom"))) {
+                    let rpr = child(r, "rPr");
+                    let direct = rpr.map(|pr| run_format(pr, self.theme)).unwrap_or_default();
+                    let f = self.styles.run_format(&base_run, rpr.and_then(|pr| wval(pr, "rStyle")), &direct);
+                    let mut text = String::new();
+                    for t in elements(r) {
+                        match t.tag_name().name() {
+                            "t" => text.push_str(t.text().unwrap_or("")),
+                            "tab" => text.push('\t'),
+                            _ => {}
+                        }
+                    }
+                    for c in text.chars() {
+                        let style = style_of(&f, c);
+                        match runs.last_mut() {
+                            Some(last) if last.style == style => last.text.push(c),
+                            _ => runs.push(Run { text: c.to_string(), style }),
+                        }
+                    }
                 }
+                // Its list mark: a bullet's character (numbered lists are not counted here).
+                let level = para.num_id.filter(|id| *id != 0).and_then(|id| self.styles.numbering.level(id, para.level.unwrap_or(0)));
+                let bullet = level.filter(|l| l.format == "bullet" && !l.text.is_empty()).map(|l| ibis_doc_model::Bullet { text: l.text.clone(), picture: None, size: 100_000, color: None, auto: None });
+                let left = para.left.or_else(|| level.and_then(|l| l.para.left)).unwrap_or(0);
+                let first_line = para.first_line.or_else(|| level.and_then(|l| l.para.first_line)).unwrap_or(0);
+                // The paragraph mark's format: the height of an empty paragraph.
+                let mut mark = base_run.clone();
+                if let Some(rpr) = ppr.and_then(|pr| child(pr, "rPr")) {
+                    mark.overlay(&run_format(rpr, self.theme));
+                }
+                paragraphs.push(Paragraph {
+                    runs,
+                    align,
+                    margin_left: left,
+                    indent: first_line,
+                    bullet,
+                    space_before: hundredths(para.before),
+                    space_after: hundredths(para.after),
+                    line_spacing,
+                    end_style: style_of(&mark, 'a'),
+                    ..Default::default()
+                });
             }
         } else if let Some(tb) = tx_body {
             for p in elements(tb).filter(|n| n.tag_name().name() == "p") {
