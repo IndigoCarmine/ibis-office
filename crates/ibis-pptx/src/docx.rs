@@ -2958,7 +2958,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 };
                 let mut runs: Vec<Run> = Vec::new();
                 // The runs, also inside hyperlinks, content controls and insertions.
-                for r in p.descendants().filter(|n| n.is_element() && n.tag_name().name() == "r" && !n.ancestors().skip(1).any(|a| a.tag_name().name() == "del")) {
+                for r in p.descendants().filter(|n| n.is_element() && n.tag_name().name() == "r" && !n.ancestors().skip(1).any(|a| matches!(a.tag_name().name(), "del" | "moveFrom"))) {
                     let rpr = child(r, "rPr");
                     let direct = rpr.map(|pr| run_format(pr, self.theme)).unwrap_or_default();
                     let f = self.styles.run_format(&base_run, rpr.and_then(|pr| wval(pr, "rStyle")), &direct);
