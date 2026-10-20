@@ -78,6 +78,10 @@ pub(crate) struct Resources {
     pub(crate) print_hidden_text: bool,
     /// 印刷オプション: 変更履歴とコメントを印刷する (DOCX-SEC-014).
     pub(crate) print_markup: bool,
+    /// Word documents: lines and baselines as Word for Windows makes them
+    /// (`font_metrics::word_windows_line_of`), else as Word for Mac does. The
+    /// platform's by default; `--word-metrics` sets it for an export.
+    pub(crate) word_windows_lines: bool,
     /// Word documents: hide document body text during header/footer editing (Word Header & Footer Tools > オプション > 文書内のテキストを表示).
     pub(crate) hide_document_text: bool,
     /// Word documents: the page is shown dark (表示 > ダークモード: a dark paper, the black of text and lines light), on the screen only.
@@ -181,6 +185,7 @@ impl Resources {
             print_backgrounds: false,
             print_hidden_text: false,
             print_markup: true,
+            word_windows_lines: cfg!(target_os = "windows"),
             hide_document_text: false,
             dark_page: false,
             collapsed_headings: Default::default(),
@@ -389,7 +394,7 @@ impl Resources {
     }
 
     /// The ascent and the single-spaced line (ems) Word for Windows gives
-    /// `font` (`font_metrics::word_windows_line`), from its file.
+    /// `font` (`font_metrics::word_windows_font`), from its file.
     pub(crate) fn word_windows_line(&self, font: &Font) -> Option<(f32, f32)> {
         self.word_windows_font(font).map(|(line, _)| line)
     }

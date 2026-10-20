@@ -688,7 +688,7 @@ impl<'r> Layouter<'r> {
                         let font = self.res.font(&TextStyle { font_size: (size * 100.0) as u32, bold: r.style.bold.unwrap_or(false), italic: r.style.italic.unwrap_or(false), font: name.map(str::to_string), ..TextStyle::default() });
                         let (ascent, line) = self.line_metrics(name, &font, size);
                         let mincho = name.map(str::trim).is_some_and(|n| n.starts_with("游明朝") || n.starts_with("Yu Mincho") || n.starts_with("YuMincho")); // i18n-ok（フォント名の判定（游明朝）。訳さない）
-                        let lead = if mincho && !cfg!(target_os = "windows") { 0.143 * size } else { Self::leading(name) * size };
+                        let lead = if mincho && !self.res.word_windows_lines { 0.143 * size } else { self.leading(name) * size };
                         if line + lead > tall.1 + tall.2 {
                             tall = (ascent, line, lead, size);
                         }
@@ -761,7 +761,7 @@ impl<'r> Layouter<'r> {
         // its baseline 0.8 of it down whatever the text (9.61 pt in 12, 14.41
         // in 18, 24.01 in 30); an at-least line taller than the text has the
         // room above it.
-        if cfg!(target_os = "windows") && grid == 0.0 {
+        if self.res.word_windows_lines && grid == 0.0 {
             match p.line {
                 LineHeight::Exact(_) => return WORD_EXACT_BASELINE * height,
                 LineHeight::AtLeast(_) => return (height - (text_line - text_ascent)).max(text_ascent),
@@ -798,7 +798,7 @@ impl<'r> Layouter<'r> {
     fn line_metrics(&self, name: Option<&str>, font: &Font, size: f32) -> (f32, f32) {
         // Word for Windows: GDI's line of a Latin font, 1.3 × the height of
         // an East Asian one (`font_metrics::word_windows_line_of`).
-        if cfg!(target_os = "windows")
+        if self.res.word_windows_lines
             && name.is_none_or(|n| self.res.has_typeface(n.trim()))
             && let Some((ascent, line)) = self.res.word_windows_line(font)
         {
@@ -830,9 +830,9 @@ impl<'r> Layouter<'r> {
     /// Word's PDFs: lines of 10 to 20 pt of a section without a grid in
     /// DSEC, of DBDY with snapToGrid=0 and of DPAR in table cells). On a
     /// grid the line is centred without it (DBDY-00007).
-    fn leading(name: Option<&str>) -> f32 {
+    fn leading(&self, name: Option<&str>) -> f32 {
         // Word for Windows has it in the line already (`line_metrics`).
-        if cfg!(target_os = "windows") {
+        if self.res.word_windows_lines {
             return 0.0;
         }
         match name.map(str::trim) {
@@ -1223,7 +1223,7 @@ impl<'r> Layouter<'r> {
                     ascent += extra * HANGUL_ASCENT_SHARE;
                     line += extra;
                 }
-                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(name) * size, auto_space: 0.0 });
+                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.leading(name) * size, auto_space: 0.0 });
                 positions.push((0, false));
             }
             let suffix = self.doc.styles.numbering.level(list.num_id, list.level).map(|l| l.suffix).unwrap_or_default();
@@ -1236,7 +1236,7 @@ impl<'r> Layouter<'r> {
                     let font = self.font(style, style.font_for(' '));
                     let width = self.res.text_width(" ", &font, size);
                     let (ascent, line) = self.line_metrics(style.font_for(' '), &font, size);
-                    out.push(Unit::Char { c: ' ', width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(style.font_for(' ')) * size, auto_space: 0.0 });
+                    out.push(Unit::Char { c: ' ', width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.leading(style.font_for(' ')) * size, auto_space: 0.0 });
                     positions.push((0, false));
                 }
                 ListSuffix::Nothing => {}
@@ -1261,7 +1261,7 @@ impl<'r> Layouter<'r> {
                 let font = self.font(style, name);
                 let width = self.res.text_width(&c.to_string(), &font, size);
                 let (ascent, line) = self.line_metrics(name, &font, size);
-                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(name) * size, auto_space: 0.0 });
+                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.leading(name) * size, auto_space: 0.0 });
                 positions.push((0, false));
             }
         }
@@ -1295,7 +1295,7 @@ impl<'r> Layouter<'r> {
                     // Japanese in a typeface without it (an East Asian typeface
                     // that is a Latin one: Arial): Word for Windows draws it in
                     // ＭＳ 明朝 (its PDFs), as tall as that.
-                    let name = if cfg!(target_os = "windows")
+                    let name = if self.res.word_windows_lines
                         && is_japanese(c)
                         && !style.east_asian_chinese
                         && name.is_some_and(|n| self.res.has_typeface(n) && !self.res.is_east_asian_font(&self.font_for_size(style, Some(n), char_style_size)))
@@ -1333,7 +1333,7 @@ impl<'r> Layouter<'r> {
                         ascent += 1.2 + pad_v;
                         line += 1.2 + 2.8 + 2.0 * pad_v + 2.0 * extra_bw;
                     }
-                    out.push(Unit::Char { c, width, inset, font, size: char_size, style: index, line, ascent, lead: Self::leading(name) * base_size, auto_space: 0.0 });
+                    out.push(Unit::Char { c, width, inset, font, size: char_size, style: index, line, ascent, lead: self.leading(name) * base_size, auto_space: 0.0 });
                 }
             };
             // Tracked changes visibility: All shows both; Simple and None hide deleted text; Original hides inserted text.
@@ -2939,7 +2939,7 @@ impl Layouter<'_> {
         let name = p.mark.font_for('a');
         let font = self.font(&p.mark, name);
         let (ascent, line) = self.line_metrics(name, &font, size);
-        (line, ascent, Self::leading(name) * size)
+        (line, ascent, self.leading(name) * size)
     }
 
     /// The pictures of text boxes (`OverShape`) where their boxes landed
@@ -3004,7 +3004,7 @@ impl Layouter<'_> {
                 let name = s.font.as_deref();
                 let font = self.font(s, name);
                 text_w += self.res.text_width(text, &font, size);
-                line = line.max(self.line_metrics(name, &font, size).1 + Self::leading(name) * size);
+                line = line.max(self.line_metrics(name, &font, size).1 + self.leading(name) * size);
             };
             for r in &p.runs {
                 measure(&style(&r.style), &r.text);
@@ -3658,7 +3658,10 @@ impl<'r> Layouter<'r> {
                     // top, it takes no room in the text: the lines go on as they
                     // would, those it would be over below it (an obstacle across
                     // the column where it lands; Word's PDFs: a line fits above a
-                    // picture 24 pt down, the next is put right under it).
+                    // picture 24 pt down, the next is put right under it). The two
+                    // ways meet at `oy == dt`: the obstacle then starts at the
+                    // paragraph's top, so its first line goes below the picture,
+                    // where the room kept would have put it.
                     let (top, room) = if matches!(f.relative_v.as_str(), "paragraph" | "line") && f.align_v.is_none() {
                         let oy = pt(f.offset_y);
                         (oy, if oy > dt { 0.0 } else { (oy + sh + db).max(0.0) })

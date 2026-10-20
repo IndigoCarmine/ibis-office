@@ -72,7 +72,7 @@ pub(crate) fn font_file_metrics(data: &[u8], index: u32) -> Option<(f32, f32)> {
 }
 
 /// How much an East Asian font's line is taller than its Windows ascent and
-/// descent in Word for Windows (see [`word_windows_line`]).
+/// descent in Word for Windows (see [`word_windows_line_of`]).
 pub(crate) const WORD_EAST_ASIAN_EXTRA: f32 = 0.3;
 
 /// A single-spaced line of Word for Windows and where its baseline is in
@@ -103,13 +103,8 @@ pub(crate) fn word_windows_line_of(win_ascent: f32, win_descent: f32, hhea_line:
 }
 
 /// [`word_windows_line_of`] for the font in `data` (the `index`th of a
-/// collection): `None` when the file cannot be read.
-pub(crate) fn word_windows_line(data: &[u8], index: u32) -> Option<(f32, f32)> {
-    word_windows_font(data, index).map(|(line, _)| line)
-}
-
-/// [`word_windows_line`] and whether the font is an East Asian one (has a
-/// CJK code page).
+/// collection), and whether the font is an East Asian one (has a CJK code
+/// page): `None` when the file cannot be read.
 pub(crate) fn word_windows_font(data: &[u8], index: u32) -> Option<((f32, f32), bool)> {
     let u16_at = |at: usize| -> Option<u16> { Some(u16::from_be_bytes([*data.get(at)?, *data.get(at + 1)?])) };
     let u32_at = |at: usize| -> Option<u32> { Some(u32::from_be_bytes([*data.get(at)?, *data.get(at + 1)?, *data.get(at + 2)?, *data.get(at + 3)?])) };
