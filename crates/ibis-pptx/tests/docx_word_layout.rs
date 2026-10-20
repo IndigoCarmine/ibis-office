@@ -97,6 +97,23 @@ fn a_deleted_picture_in_a_text_box_is_left_out() {
 }
 
 #[test]
+fn a_text_box_reads_runs_in_hyperlinks_tabs_and_empty_paragraphs() {
+    let flow = document(
+        |_| {
+            text_box(
+                r#"<w:p><w:r><w:t>a</w:t></w:r><w:r><w:tab/></w:r><w:hyperlink w:anchor="x"><w:r><w:t>link</w:t></w:r></w:hyperlink><w:del w:id="1" w:author="A" w:date="2020-01-01T00:00:00Z"><w:r><w:tab/></w:r></w:del></w:p><w:p/><w:p><w:r><w:t>last</w:t></w:r></w:p>"#,
+            )
+        },
+        None,
+    );
+    let shape = shapes(&flow).into_iter().next().expect("the text box");
+    let ShapeKind::Auto(boxed) = &shape.kind else { panic!("a shape with text: {:?}", shape.kind) };
+    let text = boxed.text.as_ref().expect("its text");
+    let lines: Vec<String> = text.paragraphs.iter().map(|p| p.runs.iter().map(|r| r.text.as_str()).collect()).collect();
+    assert_eq!(lines, vec!["a\tlink".to_string(), String::new(), "last".to_string()], "a deleted tab is left out, the empty paragraph kept");
+}
+
+#[test]
 fn a_grid_without_a_type_is_no_grid() {
     let flow = document(|_| String::new(), Some(r#"<w:docGrid w:linePitch="360"/>"#));
     assert_eq!(flow.page.doc_grid_type, DocGridType::Default);

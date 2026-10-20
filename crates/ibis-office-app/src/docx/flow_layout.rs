@@ -2983,7 +2983,9 @@ impl Layouter<'_> {
     /// How far down a text box (`width` points wide) paragraph `k` of its
     /// text starts, its line kept for pictures (a fixed line): the
     /// paragraphs above measured in their typefaces, each line as tall as
-    /// its tallest, the text wrapped at the box's width.
+    /// its tallest. An estimate: a paragraph's lines are its text's width
+    /// over the box's, not broken at words or by kinsoku (close enough for
+    /// the caption or heading a figure box usually has above its picture).
     fn text_box_line_top(&self, shape: &ibis_doc_model::Shape, width: f32, k: usize) -> Option<f32> {
         let ibis_doc_model::ShapeKind::Auto(auto) = &shape.kind else { return None };
         let body = auto.text.as_ref()?;
@@ -3114,10 +3116,11 @@ const MIN_WRAP_ROOM: f32 = 15.0;
 
 /// How much of its width a space of a justified line may give to fit one
 /// more word, in Word 2013 and later (`compatibilityMode` 15; earlier modes
-/// only widen spaces): a quarter (Word's PDFs: Times New Roman and Arial at
-/// 8.5 and 10 pt keep a line's last word with 24.0 to 24.7 % of the spaces'
-/// width to give, not with 24.7 to 25.3 %; the same lines in mode 14 never).
-const SPACE_GIVE: f32 = 0.25;
+/// only widen spaces): just under a quarter (Word's PDFs: Times New Roman and
+/// Arial at 8.5 and 10 pt keep a line's last word with 24.0 to 24.7 % of the
+/// spaces' width to give, not with 24.7 to 25.3 %; the same lines in mode 14
+/// never).
+const SPACE_GIVE: f32 = 0.247;
 
 /// What a space of a justified line of `doc` may give, of its width (see
 /// `SPACE_GIVE`).
@@ -5113,9 +5116,11 @@ impl<'r> Layouter<'r> {
             }
             let headers: Vec<Piece> = pieces.iter().take_while(|p| p.header).cloned().collect();
             // An empty paragraph that only ends a section, the next going on
-            // on the page: Word gives it no room, its spacing neither (its PDFs:
-            // with the same columns or others, 1 → 2, 2 → 1, 2 → 2).
-            let no_height = matches!(block, Block::Paragraph(p) if p.runs.is_empty() && p.section.is_some() && p.section_break == SectionBreak::Continuous);
+            // on the page in columns or after them: Word gives it no room, its
+            // spacing neither (its PDFs: 1 → 2, 2 → 1, 2 → 2). One column on to
+            // one column is not measured: that paragraph keeps its line.
+            let no_height = matches!(block, Block::Paragraph(p) if p.runs.is_empty() && p.section.is_some() && p.section_break == SectionBreak::Continuous)
+                && (columns_of(s).len() > 1 || columns_of((s + 1).min(setups.len() - 1)).len() > 1);
             // A paragraph whose mark is deleted, where the view leaves deleted
             // text out, is one with the next: nothing of it when its text is all
             // deleted too, else no space between the two (their lines are not
@@ -6806,7 +6811,7 @@ mod word_lines_tests {
             doc.compatibility_mode = mode;
             assert_eq!(space_give(&doc), give, "{mode:?}");
         }
-        assert_eq!(SPACE_GIVE, 0.25);
+        assert_eq!(SPACE_GIVE, 0.247);
     }
 
     #[test]
