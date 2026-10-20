@@ -62,6 +62,9 @@ pub(crate) struct Resources {
     text_system: Arc<TextSystem>,
     /// Ascent, descent and line gap of fonts, in ems.
     metrics: std::cell::RefCell<HashMap<Font, (f32, f32, f32)>>,
+    /// Word for Windows' lines of the fonts and whether they are East Asian
+    /// ones (`word_windows_font`).
+    word_lines: std::cell::RefCell<HashMap<Font, Option<((f32, f32), bool)>>>,
     /// Draw as printed: sheets without their grid lines.
     pub(crate) print: bool,
     /// The slide show is drawn: an animated GIF plays (elsewhere it shows its first frame).
@@ -171,6 +174,7 @@ impl Resources {
             fonts,
             text_system,
             metrics: Default::default(),
+            word_lines: Default::default(),
             print: false,
             animate_pictures: std::cell::Cell::new(false),
             live_gifs: Default::default(),
@@ -382,6 +386,32 @@ impl Resources {
         }
         self.metrics.borrow_mut().insert(font.clone(), m);
         m
+    }
+
+    /// The ascent and the single-spaced line (ems) Word for Windows gives
+    /// `font` (`font_metrics::word_windows_line`), from its file.
+    pub(crate) fn word_windows_line(&self, font: &Font) -> Option<(f32, f32)> {
+        self.word_windows_font(font).map(|(line, _)| line)
+    }
+
+    /// Whether `font` is an East Asian one (has a CJK code page), from its file.
+    pub(crate) fn is_east_asian_font(&self, font: &Font) -> bool {
+        self.word_windows_font(font).is_some_and(|(_, east_asian)| east_asian)
+    }
+
+    fn word_windows_font(&self, font: &Font) -> Option<((f32, f32), bool)> {
+        if let Some(&m) = self.word_lines.borrow().get(font) {
+            return m;
+        }
+        let id = self.text_system.resolve_font(font);
+        let m = self.text_system.font_data(id).and_then(|(data, index)| crate::render::font_metrics::word_windows_font(&data, index));
+        self.word_lines.borrow_mut().insert(font.clone(), m);
+        m
+    }
+
+    /// Whether the typeface `name` is installed (else another font stands in for it).
+    pub(crate) fn has_typeface(&self, name: &str) -> bool {
+        self.fonts.available(name).is_some()
     }
 
     /// How far to move a line of `font` at `size` down from where GPUI puts
