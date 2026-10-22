@@ -16,6 +16,13 @@ fn file(name: &str) -> Option<Vec<u8>> {
     fixtures::read(&format!("test/{name}"))
 }
 
+/// The public file `name` under `test/` (in git, so always there): a missing
+/// one is a broken checkout and fails with its path, never a skip.
+fn public(name: &str) -> Vec<u8> {
+    let path = fixtures::repo_root().join("test").join(name);
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
 #[test]
 fn the_pages_are_the_master_and_its_layouts() {
     let Some(data) = file("editing/pptx-plan.pptx") else { return };
@@ -74,7 +81,7 @@ fn a_shape_moved_on_the_page_moves_in_the_layout() {
 
 #[test]
 fn every_page_of_a_real_deck_comes_back() {
-    let Some(data) = file("benchmark/earnings-presentation.pptx") else { return };
+    let data = public("benchmark/earnings-presentation.pptx");
     let original = ibis_pptx::open(data.clone()).unwrap();
     let pages = master_page::pages(&data).unwrap();
     assert!(pages.len() > 2);
@@ -126,8 +133,13 @@ fn a_picture_put_on_a_layout_comes_with_its_file() {
 /// presentation) come back identical.
 #[test]
 fn the_other_parts_are_left_as_they_were() {
-    for name in ["editing/pptx-plan.pptx", "benchmark/earnings-presentation.pptx"] {
-        let Some(data) = file(name) else { continue };
+    for (name, private) in [("editing/pptx-plan.pptx", true), ("benchmark/earnings-presentation.pptx", false)] {
+        let data = if private {
+            let Some(data) = file(name) else { continue };
+            data
+        } else {
+            public(name)
+        };
         let before = ibis_ooxml::Package::open(data.clone()).unwrap();
         for page in master_page::pages(&data).unwrap() {
             let temp = master_page::build(&data, &page.part).unwrap();
