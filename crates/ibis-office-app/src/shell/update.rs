@@ -431,8 +431,7 @@ fn any_unsaved(cx: &mut App) -> bool {
         if let Some(root) = window.downcast::<gpui_kit::component::Root>() {
             let _ = root.update(cx, |root, _, app| {
                 if let Ok(editor) = root.view().clone().downcast::<SlideEditor>() {
-                    let editor = editor.read(app);
-                    unsaved |= editor.has_unsaved_edits();
+                    unsaved |= editor.read(app).has_unsaved_edits(app);
                 }
             });
         }

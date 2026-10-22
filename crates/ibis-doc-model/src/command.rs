@@ -1012,6 +1012,14 @@ impl Document {
         self.last_state
     }
 
+    /// A step that could not be undone or redone was dropped: the
+    /// presentation is left as it was, in the state of no step now, so the
+    /// state below it no longer tells what it is. It is taken as modified
+    /// until it is saved again (the state saved becomes one no step has).
+    fn lose_saved_state(&mut self) {
+        self.saved_state = self.new_state();
+    }
+
     /// Apply `commands` as one undo step. If any command fails, the ones
     /// before it are rolled back and the document is unchanged.
     pub fn execute(&mut self, commands: Vec<Command>) -> Result<(), EditError> {
@@ -1050,7 +1058,11 @@ impl Document {
     /// user abandoned (such as a new text box left empty).
     pub fn retract_last(&mut self) -> bool {
         let Some(step) = self.undo.pop() else { return false };
-        self.apply_all(step.commands).is_ok()
+        let retracted = self.apply_all(step.commands).is_ok();
+        if !retracted {
+            self.lose_saved_state();
+        }
+        retracted
     }
 
     pub fn undo(&mut self) -> bool {
@@ -1060,7 +1072,10 @@ impl Document {
                 self.redo.push(Step { state: step.state, commands: inverses });
                 true
             }
-            Err(_) => false,
+            Err(_) => {
+                self.lose_saved_state();
+                false
+            }
         }
     }
 
@@ -1071,7 +1086,10 @@ impl Document {
                 self.undo.push(Step { state: step.state, commands: inverses });
                 true
             }
-            Err(_) => false,
+            Err(_) => {
+                self.lose_saved_state();
+                false
+            }
         }
     }
 
@@ -1208,6 +1226,33 @@ mod tests {
         let copy = doc.clone();
         doc.mark_saved();
         assert!(copy.is_modified() && !doc.is_modified(), "a copy keeps its own state");
+    }
+
+    /// A step that cannot be undone, redone or retracted is dropped, the
+    /// presentation left as it was: modified until saved again, even when the
+    /// step below it is the one saved.
+    #[test]
+    fn a_step_that_fails_to_undo_leaves_it_modified() {
+        for way in ["undo", "redo", "retract"] {
+            let (mut doc, slide, shape) = doc_with_box();
+            doc.mark_saved();
+            doc.execute(vec![Command::SetText { slide, shape, text: "変更".into() }]).unwrap();
+            if way == "redo" {
+                assert!(doc.undo());
+                assert!(!doc.is_modified());
+            }
+            // The shape the step edits goes behind the history's back.
+            doc.ids().slides[0].shapes.clear();
+            let done = match way {
+                "undo" => doc.undo(),
+                "redo" => doc.redo(),
+                _ => doc.retract_last(),
+            };
+            assert!(!done, "{way} fails");
+            assert!(doc.is_modified(), "{way}: modified after the step failed");
+            doc.mark_saved();
+            assert!(!doc.is_modified(), "{way}: saved again");
+        }
     }
 
     /// What was saved is left behind for good by an edit made after undoing

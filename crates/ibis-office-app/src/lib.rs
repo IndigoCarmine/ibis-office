@@ -432,7 +432,7 @@ pub(crate) fn open_window_with(cx: &mut App, setup: impl FnOnce(&mut SlideEditor
         // Closing the window (its close button, Alt+F4) asks about edits
         // not saved first; an editor already gone has nothing to lose.
         let editor = view.downgrade();
-        window.on_window_should_close(cx, move |_, cx| editor.update(cx, |editor, cx| editor.window_should_close(cx)).unwrap_or(true));
+        window.on_window_should_close(cx, move |window, cx| editor.update(cx, |editor, cx| editor.window_should_close(window, cx)).unwrap_or(true));
         // Root hosts gpui-component's overlays (tooltips, popovers, dialogs).
         cx.new(|cx| Root::new(view, window, cx))
     })
