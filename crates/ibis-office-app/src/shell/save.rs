@@ -23,13 +23,16 @@ pub(crate) enum AfterSave {
     /// Close the file (閉じる's 「保存」): only once it is saved, so a save
     /// that fails, or that waits for a path, never loses the edits.
     Close,
+    /// Close the file, then its window (「保存」 when the window is being
+    /// closed): only once it is saved, as `Close`.
+    CloseWindow,
 }
 
 impl AfterSave {
     /// Whether the file is closed after a save that ended with `result`.
     #[cfg(not(target_family = "wasm"))]
     fn closes(self, result: &Result<(), String>) -> bool {
-        self == AfterSave::Close && result.is_ok()
+        matches!(self, AfterSave::Close | AfterSave::CloseWindow) && result.is_ok()
     }
 }
 
@@ -163,6 +166,9 @@ impl SlideEditor {
         self.report_save(result, cx);
         if close {
             self.force_close_file(window, cx);
+            if after == AfterSave::CloseWindow {
+                window.remove_window();
+            }
         }
     }
 
@@ -233,6 +239,9 @@ mod tests {
         assert!(AfterSave::Close.closes(&saved));
         // A failed save keeps the file open, with its edits and the error shown.
         assert!(!AfterSave::Close.closes(&failed));
+        // So with the window being closed: it stays open when the save fails.
+        assert!(AfterSave::CloseWindow.closes(&saved));
+        assert!(!AfterSave::CloseWindow.closes(&failed));
         // 保存 and 名前を付けて保存… never close it.
         assert!(!AfterSave::Stay.closes(&saved));
         assert!(!AfterSave::Stay.closes(&failed));
