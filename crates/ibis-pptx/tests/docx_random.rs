@@ -11,6 +11,9 @@
 //! one seed (to reproduce a failure), and `IBIS_G4_OUT` keeps every tenth
 //! saved file there for the outside checks.
 
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 use ibis_doc_model::{
     Block, Command, Document, FlowAlign, FlowCommand, FlowDocument, FlowParagraph, FlowPos, LineHeight, ParaChange, Rgb,
     RunChange, VerticalPosition,
@@ -227,10 +230,10 @@ fn random_edits() {
     if let Some(dir) = &out {
         std::fs::create_dir_all(dir).unwrap();
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test");
     let mut failures = Vec::new();
-    for (name, file) in [("report", "editing/docx-report.docx"), ("statement", "benchmark/securities-registration-statement.docx")] {
-        let data = std::fs::read(root.join(file)).unwrap();
+    for (name, file) in [("report", "test/editing/docx-report.docx"), ("statement", "test/benchmark/securities-registration-statement.docx")] {
+        // A missing private file is reported as skipped; the others still run.
+        let Some(data) = fixtures::read(file) else { continue };
         let opened = ibis_pptx::open(data.clone()).unwrap();
         let seeds: Vec<u64> = match only {
             Some(s) => vec![s],
