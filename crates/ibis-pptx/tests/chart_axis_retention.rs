@@ -4,15 +4,20 @@
 //! Axis source retention only: no native crossing/layout support claim.
 use ibis_doc_model::{AxisCrosses, AxisKind, AxisSourceKind, CellEdit, CellInput, CellValue, Command, Document, Presentation, ShapeKind, SheetCommand, Chart, Number};
 use ibis_ooxml::{Package, SaveOptions};
+
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 fn chart_xml(crossing: &str) -> String {
     format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>10</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="111"/><c:axId val="222"/></c:barChart><c:catAx><c:axId val="111"/><c:crossAx val="222"/>{crossing}</c:catAx><c:valAx><c:axId val="222"/><c:crossAx val="111"/></c:valAx><c:dateAx><c:axId val="333"/></c:dateAx><c:serAx><c:axId val="444"/><c:crossAx val="111"/></c:serAx><foreign:serAx xmlns:foreign="urn:foreign"><c:axId val="555"/></foreign:serAx></c:plotArea></c:chart></c:chartSpace>"#)
 }
 fn chart(p: &Presentation) -> &Chart {
     p.slides.iter().flat_map(|s| &s.shapes).find_map(|s| match &s.kind { ShapeKind::Chart(c) => Some(c), _ => None }).unwrap()
 }
-fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
-    let mut package = Package::open(std::fs::read(root.join(if xlsx { "xlsx-sales.xlsx" } else { "pptx-plan.pptx" })).unwrap()).unwrap();
+/// The test file with `xml` as its chart, or `None` (reported as skipped) when
+/// the private test data is not there.
+fn fixture(xlsx: bool, xml: &str) -> Option<(Vec<u8>, &'static str)> {
+    let mut package = Package::open(fixtures::read(if xlsx { "test/editing/xlsx-sales.xlsx" } else { "test/editing/pptx-plan.pptx" })?).unwrap();
     let part = if xlsx { "xl/charts/chart1.xml" } else { "ppt/charts/axis-retention.xml" };
     package.set_bytes(part, xml.as_bytes().to_vec());
     if !xlsx {
@@ -24,14 +29,14 @@ fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
         assert!(xml.contains("</p:spTree>"));
         package.set_bytes(slide, xml.replacen("</p:spTree>", &(frame + "</p:spTree>"), 1).into_bytes());
     }
-    (package.save(SaveOptions::default()).unwrap(), part)
+    Some((package.save(SaveOptions::default()).unwrap(), part))
 }
 
 
 fn check_retention(xlsx: bool) {
     for element in ["", "<c:crosses val=\"autoZero\"/>", "<c:crosses val=\"max\"/>", "<c:crosses val=\"min\"/>", "<c:crossesAt val=\"0\"/>", "<c:crossesAt val=\"-2.5\"/>", "<c:crosses/>", "<c:crossesAt/>", "<c:crossesAt val=\"INF\"/>", "<c:crosses val=\"max\"/><c:crossesAt val=\"bad\"/>", "<c:crosses val=\"max\"/><c:crossesAt val=\"3.25\"/>", "<c:crosses val=\"future\"/><c:crossesAt val=\"NaN\"/>", "<foreign:crosses xmlns:foreign=\"urn:foreign\" val=\"max\"/>"] {
         let xml = chart_xml(element);
-        let (data, part) = fixture(xlsx, &xml);
+        let Some((data, part)) = fixture(xlsx, &xml) else { return };
         let original = Package::open(data.clone()).unwrap().read(part).unwrap();
         let opened = ibis_pptx::open(data.clone()).unwrap();
         let retained = chart(&opened.presentation).clone();
@@ -80,7 +85,7 @@ fn xlsx_crossing_source_survives_save_unrelated_edit_undo_redo() {check_retentio
 #[test]
 fn changed_crossing_is_rejected_not_dropped() {
  for xlsx in [false,true] {
-  let (data,_) = fixture(xlsx, &chart_xml("")); let opened=ibis_pptx::open(data).unwrap();
+  let Some((data,_)) = fixture(xlsx, &chart_xml("")) else { continue }; let opened=ibis_pptx::open(data).unwrap();
   for field in 0..3 {
    if xlsx && field < 2 {
     // crosses and crosses_at are supported for editing/saving in xlsx (see xlsx_edit.rs: chart_axis_orientation_and_crosses_save_and_reopen)
@@ -95,13 +100,15 @@ fn changed_crossing_is_rejected_not_dropped() {
 }
 #[test]
 fn invalid_and_foreign_links_do_not_become_zero_or_typed_links() {
- for xlsx in [false,true] {
+ 'files: for xlsx in [false,true] {
   for value in ["-1","4294967296","bad",""] {
    let xml=chart_xml("").replace("<c:axId val=\"111\"/>",&format!("<c:axId val=\"{value}\"/>" )).replace("<c:crossAx val=\"222\"/>",&format!("<c:crossAx val=\"{value}\"/>"));
-   let p=ibis_pptx::read(&fixture(xlsx,&xml).0).unwrap(); assert_eq!(chart(&p).axes[0].source_id,None); assert_eq!(chart(&p).axes[0].cross_axis_id,None);
+   let Some((data,_))=fixture(xlsx,&xml) else { continue 'files };
+   let p=ibis_pptx::read(&data).unwrap(); assert_eq!(chart(&p).axes[0].source_id,None); assert_eq!(chart(&p).axes[0].cross_axis_id,None);
   }
   let xml=chart_xml("").replace("<c:crossAx val=\"222\"/>","<foreign:crossAx xmlns:foreign=\"urn:foreign\" val=\"999\"/>");
-  let p=ibis_pptx::read(&fixture(xlsx,&xml).0).unwrap(); assert_eq!(chart(&p).axes[0].cross_axis_id,None);
+  let Some((data,_))=fixture(xlsx,&xml) else { continue };
+  let p=ibis_pptx::read(&data).unwrap(); assert_eq!(chart(&p).axes[0].cross_axis_id,None);
  }
 }
 
@@ -129,7 +136,7 @@ fn original_corpus_axis_kinds_crossings_and_links_are_retained() {
 }
 
 fn assert_foreign_source_survives(xlsx: bool, xml: &str, baseline: &Chart) {
-    let (data, part) = fixture(xlsx, xml);
+    let Some((data, part)) = fixture(xlsx, xml) else { return };
     let original = Package::open(data.clone()).unwrap().read(part).unwrap();
     let opened = ibis_pptx::open(data.clone()).unwrap();
     assert_eq!(chart(&opened.presentation), baseline);
@@ -159,17 +166,20 @@ fn assert_foreign_source_survives(xlsx: bool, xml: &str, baseline: &Chart) {
 
 #[test]
 fn foreign_axis_nodes_and_ids_cannot_change_supported_cache_or_links() {
- for xlsx in [false,true] {
+ 'files: for xlsx in [false,true] {
   let xml=chart_xml("").replace("<c:val><c:numLit>","<c:cat><c:strLit><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>A</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit>");
-  let base=ibis_pptx::read(&fixture(xlsx,&xml).0).unwrap();
+  let Some((data,_))=fixture(xlsx,&xml) else { continue };
+  let base=ibis_pptx::read(&data).unwrap();
   for tag in ["catAx","dateAx"] {
    let foreign=format!(r#"<f:{tag} xmlns:f="urn:foreign"><c:axId val="111"/><c:scaling><c:min val="2"/><c:max val="2"/></c:scaling></f:{tag}>"#);
    let injected=xml.replace("</c:plotArea>",&format!("{foreign}</c:plotArea>"));
-   let p=ibis_pptx::read(&fixture(xlsx,&injected).0).unwrap();assert_eq!(chart(&p),chart(&base),"foreign {tag} must not clip supported series cache");assert_foreign_source_survives(xlsx,&injected,chart(&base));
+   let Some((data,_))=fixture(xlsx,&injected) else { continue 'files };
+   let p=ibis_pptx::read(&data).unwrap();assert_eq!(chart(&p),chart(&base),"foreign {tag} must not clip supported series cache");assert_foreign_source_survives(xlsx,&injected,chart(&base));
   }
   let foreign_id=r#"<f:axId xmlns:f="urn:foreign" val="999"/>"#;
   let injected=xml.replace("<c:axId val=\"111\"/>",&format!("{foreign_id}<c:axId val=\"111\"/>"));
-  let p=ibis_pptx::read(&fixture(xlsx,&injected).0).unwrap();assert_eq!(chart(&p),chart(&base),"foreign axis IDs must not supply legacy/source/group linkage");assert_foreign_source_survives(xlsx,&injected,chart(&base));
+  let Some((data,_))=fixture(xlsx,&injected) else { continue };
+  let p=ibis_pptx::read(&data).unwrap();assert_eq!(chart(&p),chart(&base),"foreign axis IDs must not supply legacy/source/group linkage");assert_foreign_source_survives(xlsx,&injected,chart(&base));
  }
 }
 
@@ -179,7 +189,7 @@ fn foreign_val_attributes_do_not_supply_crossings_axis_ids_or_group_ids() {
   let xml=chart_xml(r#"<c:crosses xmlns:f="urn:foreign" f:val="max"/><c:crossesAt xmlns:f="urn:foreign" f:val="7"/>"#)
    .replace("<c:crossAx val=\"222\"/>",r#"<c:crossAx xmlns:f="urn:foreign" f:val="222"/>"#)
    .replace("<c:axId val=\"111\"/>",r#"<c:axId xmlns:f="urn:foreign" f:val="111"/>"#);
-  let(data,part)=fixture(xlsx,&xml);let opened=ibis_pptx::open(data.clone()).unwrap();let c=chart(&opened.presentation);
+  let Some((data,part))=fixture(xlsx,&xml) else { continue };let opened=ibis_pptx::open(data.clone()).unwrap();let c=chart(&opened.presentation);
   assert_eq!(c.axes[0].source_id,None);assert_eq!(c.axes[0].crosses,None);assert_eq!(c.axes[0].crosses_at,None);assert_eq!(c.axes[0].cross_axis_id,None);assert_eq!(c.groups[0].axes,vec![222]);
   assert_eq!(opened.source.save(&opened.presentation,SaveOptions::default()).unwrap(),data);
   let regenerated=opened.source.save(&opened.presentation,SaveOptions{regenerate_xml:true}).unwrap();assert!(ibis_ooxml::canon::diff_packages(&data,&regenerated,&[]).unwrap().is_same());assert_eq!(chart(&ibis_pptx::read(&regenerated).unwrap()),c);assert_eq!(Package::open(regenerated).unwrap().read(part).unwrap(),Package::open(data).unwrap().read(part).unwrap());

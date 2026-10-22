@@ -6,13 +6,17 @@
 use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, Document, Presentation, ShapeKind, SheetCommand};
 use ibis_ooxml::{Package, SaveOptions};
 
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 fn chart_xml(overlay: &str) -> String {
     format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S1</c:v></c:tx><c:cat><c:strLit><c:ptCount val="1"/><c:pt idx="0"><c:v>A</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="1"/><c:pt idx="0"><c:v>10</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea><c:legend><c:legendPos val="b"/>{overlay}</c:legend></c:chart><c:extLst><c:ext uri="urn:ibisOffice:retention-test"><keep:opaque xmlns:keep="urn:ibisOffice:test" keep:attribute="unchanged">unknown payload</keep:opaque></c:ext></c:extLst></c:chartSpace>"#)
 }
 
-fn fixture(xlsx: bool, overlay: &str) -> (Vec<u8>, &'static str) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
-    let mut package = Package::open(std::fs::read(root.join(if xlsx { "xlsx-sales.xlsx" } else { "pptx-plan.pptx" })).unwrap()).unwrap();
+/// The test file with a chart whose legend has `overlay`, or `None` (reported
+/// as skipped) when the private test data is not there.
+fn fixture(xlsx: bool, overlay: &str) -> Option<(Vec<u8>, &'static str)> {
+    let mut package = Package::open(fixtures::read(if xlsx { "test/editing/xlsx-sales.xlsx" } else { "test/editing/pptx-plan.pptx" })?).unwrap();
     let part = if xlsx { "xl/charts/chart1.xml" } else { "ppt/charts/legend-retention.xml" };
     package.set_bytes(part, chart_xml(overlay).into_bytes());
     if !xlsx {
@@ -24,7 +28,7 @@ fn fixture(xlsx: bool, overlay: &str) -> (Vec<u8>, &'static str) {
         assert!(xml.contains("</p:spTree>"));
         package.set_bytes(slide, xml.replacen("</p:spTree>", &(frame + "</p:spTree>"), 1).into_bytes());
     }
-    (package.save(SaveOptions::default()).unwrap(), part)
+    Some((package.save(SaveOptions::default()).unwrap(), part))
 }
 
 fn overlay(p: &Presentation) -> Option<bool> {
@@ -36,7 +40,7 @@ fn overlay(p: &Presentation) -> Option<bool> {
 
 fn check_retention(xlsx: bool) {
     for (xml, expected) in [("", None), ("<c:overlay val=\"0\"/>", Some(false)), ("<c:overlay val=\"1\"/>", Some(true)), ("<c:overlay val=\"false\"/>", Some(false)), ("<c:overlay val=\"true\"/>", Some(true)), ("<c:overlay/>", Some(true)), ("<c:overlay val=\"invalid\"/>", None)] {
-        let (data, part) = fixture(xlsx, xml);
+        let Some((data, part)) = fixture(xlsx, xml) else { return };
         let original_part = Package::open(data.clone()).unwrap().read(part).unwrap();
         let opened = ibis_pptx::open(data.clone()).unwrap();
         assert_eq!(overlay(&opened.presentation), expected, "{xml}");
@@ -79,7 +83,7 @@ fn xlsx_overlay_presence_and_lexical_forms_survive_unrelated_edits() { check_ret
 #[test]
 fn changed_overlay_is_rejected_not_silently_dropped() {
     for xlsx in [false, true] {
-        let (data, _) = fixture(xlsx, "<c:overlay val=\"1\"/>");
+        let Some((data, _)) = fixture(xlsx, "<c:overlay val=\"1\"/>") else { continue };
         let opened = ibis_pptx::open(data.clone()).unwrap();
         let mut current = opened.presentation.clone();
         let chart = current.slides.iter_mut().flat_map(|s| &mut s.shapes).find_map(|s| match &mut s.kind { ShapeKind::Chart(c) => Some(c), _ => None }).unwrap();
