@@ -71,6 +71,72 @@ pub(crate) fn font_file_metrics(data: &[u8], index: u32) -> Option<(f32, f32)> {
     (ascent > 0.0 && descent >= 0.0).then(|| (ascent / em, descent / em))
 }
 
+/// How much an East Asian font's line is taller than its Windows ascent and
+/// descent in Word for Windows (see [`word_windows_line_of`]).
+pub(crate) const WORD_EAST_ASIAN_EXTRA: f32 = 0.3;
+
+/// A single-spaced line of Word for Windows and where its baseline is in
+/// it (ems: the ascent, the line), for a font of Windows ascent and descent
+/// `win_ascent` / `win_descent`, of `hhea` ascent, descent and line gap
+/// `hhea_line` in all, that is or is not an East Asian font. Measured on
+/// Word's PDFs (Word for Microsoft 365, Windows; 22 fonts at 10, 10.5 and
+/// 20 pt, no line grid):
+///
+/// - a Latin font's line is GDI's, its height and external leading:
+///   `max(win, hhea_line)` (Arial 1.150, Times New Roman 1.150, Arial Narrow
+///   1.147, Calibri 1.221, Segoe UI 1.330), the external leading above the
+///   text;
+/// - an East Asian font's (one with a CJK code page) is 1.3 × its Windows
+///   height (ＭＳ 明朝 1.296, 游明朝 1.672, メイリオ 1.948, Arial Unicode MS
+///   1.744), the 0.3 split evenly above and below the text.
+///
+/// Word for Mac differs (游ゴシック 1.43 em: its `hhea` ascent and descent
+/// × 1.3), which is what the other platforms keep.
+pub(crate) fn word_windows_line_of(win_ascent: f32, win_descent: f32, hhea_line: f32, east_asian: bool) -> (f32, f32) {
+    let win = win_ascent + win_descent;
+    if east_asian {
+        (win_ascent + WORD_EAST_ASIAN_EXTRA / 2.0 * win, (1.0 + WORD_EAST_ASIAN_EXTRA) * win)
+    } else {
+        let line = win.max(hhea_line);
+        (win_ascent + line - win, line)
+    }
+}
+
+/// [`word_windows_line_of`] for the font in `data` (the `index`th of a
+/// collection), and whether the font is an East Asian one (has a CJK code
+/// page): `None` when the file cannot be read.
+pub(crate) fn word_windows_font(data: &[u8], index: u32) -> Option<((f32, f32), bool)> {
+    let u16_at = |at: usize| -> Option<u16> { Some(u16::from_be_bytes([*data.get(at)?, *data.get(at + 1)?])) };
+    let u32_at = |at: usize| -> Option<u32> { Some(u32::from_be_bytes([*data.get(at)?, *data.get(at + 1)?, *data.get(at + 2)?, *data.get(at + 3)?])) };
+    let offset = if data.starts_with(b"ttcf") {
+        let count = u32_at(8)?;
+        if index >= count {
+            return None;
+        }
+        u32_at(12 + 4 * index as usize)? as usize
+    } else {
+        0
+    };
+    let tables = u16_at(offset + 4)? as usize;
+    let find = |tag: &[u8; 4]| -> Option<usize> {
+        (0..tables).find_map(|i| {
+            let record = offset + 12 + 16 * i;
+            (data.get(record..record + 4)? == tag).then(|| u32_at(record + 8).map(|o| o as usize)).flatten()
+        })
+    };
+    let em = f32::from(u16_at(find(b"head")? + 18)?);
+    if em <= 0.0 {
+        return None;
+    }
+    let hhea = find(b"hhea")?;
+    let hhea_line = f32::from(u16_at(hhea + 4)? as i16) - f32::from(u16_at(hhea + 6)? as i16) + f32::from(u16_at(hhea + 8)? as i16);
+    let os2 = find(b"OS/2")?;
+    let (ascent, descent) = (f32::from(u16_at(os2 + 74)?), f32::from(u16_at(os2 + 76)?));
+    // JIS, GB 2312, Korean Wansung, Big5, Johab (`ulCodePageRange1` bits 17 to 21, OS/2 version 1 on).
+    let east_asian = u16_at(os2)? >= 1 && u32_at(os2 + 78)? >> 17 & 0x1f != 0;
+    (ascent > 0.0).then(|| (word_windows_line_of(ascent / em, descent / em, hhea_line / em, east_asian), east_asian))
+}
+
 /// The ascent and descent (ems) Office gives the typeface `name` (as a
 /// document names it), from the fonts it ships (`OS/2`); `None` for other
 /// typefaces.
@@ -179,5 +245,22 @@ mod tests {
         let data = include_bytes!("../../fonts/carlito/Carlito-Regular.ttf");
         let (a, d) = font_file_metrics(data, 0).unwrap();
         assert!((a - 0.9521).abs() < 1e-3 && (d - 0.2686).abs() < 1e-3, "{a} {d}");
+    }
+
+    #[test]
+    fn a_word_for_windows_line_is_gdis_or_1_3_times_an_east_asian_fonts() {
+        let near = |(a, l): (f32, f32), (ea, el): (f32, f32)| assert!((a - ea).abs() < 2e-3 && (l - el).abs() < 2e-3, "{a} {l} against {ea} {el}");
+        // Arial: its hhea line gap above the text (1.150 em in Word's PDF).
+        near(word_windows_line_of(0.9053, 0.2119, 1.1499, false), (0.9380, 1.1499));
+        // Calibri: its Windows height (1.221).
+        near(word_windows_line_of(0.9521, 0.2686, 1.2207, false), (0.9521, 1.2207));
+        // ＭＳ 明朝 1.3 (1.296), 游明朝 1.673 (1.672), the 0.3 split above and below.
+        near(word_windows_line_of(0.8594, 0.1406, 1.0, true), (0.8594 + 0.15, 1.3));
+        near(word_windows_line_of(0.9951, 0.2920, 1.6021, true), (0.9951 + 0.15 * 1.2871, 1.6732));
+        // From a file: Carlito, a Latin font.
+        let data = include_bytes!("../../fonts/carlito/Carlito-Regular.ttf");
+        let (line, east_asian) = word_windows_font(data, 0).unwrap();
+        near(line, (0.9521, 1.2207));
+        assert!(!east_asian);
     }
 }

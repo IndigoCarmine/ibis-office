@@ -211,6 +211,15 @@ fn is_cjk(c: char) -> bool {
     c as u32 >= 0x2e80
 }
 
+/// Kana, kanji and full-width forms (not emoji or other symbols past U+2E80).
+fn is_japanese(c: char) -> bool {
+    matches!(c as u32, 0x2e80..=0x9fff | 0xf900..=0xfaff | 0xff00..=0xffef | 0x20000..=0x3ffff)
+}
+
+/// The typeface Word for Windows draws Japanese in when the run's East
+/// Asian typeface has none (see `units`).
+const JAPANESE_FALLBACK: &str = "ＭＳ 明朝"; // i18n-ok（フォント名そのもの。訳さない）
+
 /// One unit of a paragraph's text.
 #[derive(Clone, Debug)]
 enum Unit {
@@ -474,6 +483,10 @@ fn run_border_items(
     out
 }
 
+/// Where Word for Windows puts the baseline in a line of exact height, of
+/// the height (see `baseline_in_line`).
+const WORD_EXACT_BASELINE: f32 = 0.8;
+
 /// The height of a line with Hangul (ems) and how much of what it adds to a Latin or Japanese line is above the text.
 const HANGUL_LINE: f32 = 1.51;
 const HANGUL_ASCENT_SHARE: f32 = 0.8;
@@ -675,7 +688,7 @@ impl<'r> Layouter<'r> {
                         let font = self.res.font(&TextStyle { font_size: (size * 100.0) as u32, bold: r.style.bold.unwrap_or(false), italic: r.style.italic.unwrap_or(false), font: name.map(str::to_string), ..TextStyle::default() });
                         let (ascent, line) = self.line_metrics(name, &font, size);
                         let mincho = name.map(str::trim).is_some_and(|n| n.starts_with("游明朝") || n.starts_with("Yu Mincho") || n.starts_with("YuMincho")); // i18n-ok（フォント名の判定（游明朝）。訳さない）
-                        let lead = if mincho { 0.143 * size } else { Self::leading(name) * size };
+                        let lead = if mincho && !self.res.word_windows_lines { 0.143 * size } else { self.leading(name) * size };
                         if line + lead > tall.1 + tall.2 {
                             tall = (ascent, line, lead, size);
                         }
@@ -743,6 +756,18 @@ impl<'r> Layouter<'r> {
     /// high, in an 18 pt grid line has its baseline 12.0 pt down).
     fn baseline_in_line(&self, p: &FlowParagraph, natural: f32, lead: f32, text_line: f32, text_ascent: f32, in_table: bool) -> f32 {
         let (height, grid) = self.line_height_parts(p, natural, lead, in_table);
+        // Word for Windows, off a grid (its PDFs: Arial, Times New Roman,
+        // Calibri, ＭＳ 明朝, 游明朝 and メイリオ at 9 to 20 pt): an exact line has
+        // its baseline 0.8 of it down whatever the text (9.61 pt in 12, 14.41
+        // in 18, 24.01 in 30); an at-least line taller than the text has the
+        // room above it.
+        if self.res.word_windows_lines && grid == 0.0 {
+            match p.line {
+                LineHeight::Exact(_) => return WORD_EXACT_BASELINE * height,
+                LineHeight::AtLeast(_) => return (height - (text_line - text_ascent)).max(text_ascent),
+                LineHeight::Auto(_) => {}
+            }
+        }
         // An exact line spacing leaves no room for the leading (DSEC-00011:
         // 10 pt 游ゴシック in an exact 15 pt line).
         let text_line = if grid > 0.0 || matches!(p.line, LineHeight::Exact(_)) { text_line } else { text_line + lead };
@@ -771,6 +796,14 @@ impl<'r> Layouter<'r> {
     /// the font drawn's when it is the typeface, else those Office gives the
     /// typeface (another font stands in for it), else the font drawn's.
     fn line_metrics(&self, name: Option<&str>, font: &Font, size: f32) -> (f32, f32) {
+        // Word for Windows: GDI's line of a Latin font, 1.3 × the height of
+        // an East Asian one (`font_metrics::word_windows_line_of`).
+        if self.res.word_windows_lines
+            && name.is_none_or(|n| self.res.has_typeface(n.trim()))
+            && let Some((ascent, line)) = self.res.word_windows_line(font)
+        {
+            return (ascent * size, line * size);
+        }
         let drawn = || {
             let (a, d, _) = self.res.line_metrics(font);
             (a, d)
@@ -797,7 +830,11 @@ impl<'r> Layouter<'r> {
     /// Word's PDFs: lines of 10 to 20 pt of a section without a grid in
     /// DSEC, of DBDY with snapToGrid=0 and of DPAR in table cells). On a
     /// grid the line is centred without it (DBDY-00007).
-    fn leading(name: Option<&str>) -> f32 {
+    fn leading(&self, name: Option<&str>) -> f32 {
+        // Word for Windows has it in the line already (`line_metrics`).
+        if self.res.word_windows_lines {
+            return 0.0;
+        }
         match name.map(str::trim) {
             Some(n) if (n.starts_with("游ゴシック") || n.starts_with("Yu Gothic") || n.starts_with("YuGothic")) && !n.contains("UI") => 0.143, // i18n-ok（フォント名の判定（游ゴシック）。訳さない）
             _ => 0.0,
@@ -1186,7 +1223,7 @@ impl<'r> Layouter<'r> {
                     ascent += extra * HANGUL_ASCENT_SHARE;
                     line += extra;
                 }
-                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(name) * size, auto_space: 0.0 });
+                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.leading(name) * size, auto_space: 0.0 });
                 positions.push((0, false));
             }
             let suffix = self.doc.styles.numbering.level(list.num_id, list.level).map(|l| l.suffix).unwrap_or_default();
@@ -1199,7 +1236,7 @@ impl<'r> Layouter<'r> {
                     let font = self.font(style, style.font_for(' '));
                     let width = self.res.text_width(" ", &font, size);
                     let (ascent, line) = self.line_metrics(style.font_for(' '), &font, size);
-                    out.push(Unit::Char { c: ' ', width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(style.font_for(' ')) * size, auto_space: 0.0 });
+                    out.push(Unit::Char { c: ' ', width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.leading(style.font_for(' ')) * size, auto_space: 0.0 });
                     positions.push((0, false));
                 }
                 ListSuffix::Nothing => {}
@@ -1224,7 +1261,7 @@ impl<'r> Layouter<'r> {
                 let font = self.font(style, name);
                 let width = self.res.text_width(&c.to_string(), &font, size);
                 let (ascent, line) = self.line_metrics(name, &font, size);
-                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(name) * size, auto_space: 0.0 });
+                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.leading(name) * size, auto_space: 0.0 });
                 positions.push((0, false));
             }
         }
@@ -1255,6 +1292,19 @@ impl<'r> Layouter<'r> {
                         (c, base_size)
                     };
                     let name = style.font_for(c);
+                    // Japanese in a typeface without it (an East Asian typeface
+                    // that is a Latin one: Arial): Word for Windows draws it in
+                    // ＭＳ 明朝 (its PDFs), as tall as that.
+                    let name = if self.res.word_windows_lines
+                        && is_japanese(c)
+                        && !style.east_asian_chinese
+                        && name.is_some_and(|n| self.res.has_typeface(n) && !self.res.is_east_asian_font(&self.font_for_size(style, Some(n), char_style_size)))
+                        && self.res.has_typeface(JAPANESE_FALLBACK)
+                    {
+                        Some(JAPANESE_FALLBACK)
+                    } else {
+                        name
+                    };
                     // ＭＳ 明朝's half-width letters are a light serif; the
                     // substitute's are heavier, so they are drawn in one.
                     let mincho_latin = name.is_some_and(|n| fixed_width(n) && n.contains("明朝") || n == "MS Mincho") && c.is_ascii() && !c.is_whitespace(); // i18n-ok（フォント名の判定（明朝体の名前）。訳さない）
@@ -1283,7 +1333,7 @@ impl<'r> Layouter<'r> {
                         ascent += 1.2 + pad_v;
                         line += 1.2 + 2.8 + 2.0 * pad_v + 2.0 * extra_bw;
                     }
-                    out.push(Unit::Char { c, width, inset, font, size: char_size, style: index, line, ascent, lead: Self::leading(name) * base_size, auto_space: 0.0 });
+                    out.push(Unit::Char { c, width, inset, font, size: char_size, style: index, line, ascent, lead: self.leading(name) * base_size, auto_space: 0.0 });
                 }
             };
             // Tracked changes visibility: All shows both; Simple and None hide deleted text; Original hides inserted text.
@@ -2889,7 +2939,7 @@ impl Layouter<'_> {
         let name = p.mark.font_for('a');
         let font = self.font(&p.mark, name);
         let (ascent, line) = self.line_metrics(name, &font, size);
-        (line, ascent, Self::leading(name) * size)
+        (line, ascent, self.leading(name) * size)
     }
 
     /// The pictures of text boxes (`OverShape`) where their boxes landed
@@ -2954,7 +3004,7 @@ impl Layouter<'_> {
                 let name = s.font.as_deref();
                 let font = self.font(s, name);
                 text_w += self.res.text_width(text, &font, size);
-                line = line.max(self.line_metrics(name, &font, size).1 + Self::leading(name) * size);
+                line = line.max(self.line_metrics(name, &font, size).1 + self.leading(name) * size);
             };
             for r in &p.runs {
                 measure(&style(&r.style), &r.text);
@@ -3604,10 +3654,17 @@ impl<'r> Layouter<'r> {
                     let dt = pt(f.dist_t);
                     let db = pt(f.dist_b);
                     // From the paragraph's top by its offset (Word: a logo raised a
-                    // little over its header line), the text going on below it.
+                    // little over its header line). Placed below its paragraph's
+                    // top, it takes no room in the text: the lines go on as they
+                    // would, those it would be over below it (an obstacle across
+                    // the column where it lands; Word's PDFs: a line fits above a
+                    // picture 24 pt down, the next is put right under it). The two
+                    // ways meet at `oy == dt`: the obstacle then starts at the
+                    // paragraph's top, so its first line goes below the picture,
+                    // where the room kept would have put it.
                     let (top, room) = if matches!(f.relative_v.as_str(), "paragraph" | "line") && f.align_v.is_none() {
                         let oy = pt(f.offset_y);
-                        (oy, (oy + sh + db).max(0.0))
+                        (oy, if oy > dt { 0.0 } else { (oy + sh + db).max(0.0) })
                     } else {
                         (dt, dt + sh + db)
                     };
@@ -4554,17 +4611,20 @@ impl<'r> Layouter<'r> {
                 for (shape, x, dy, w, h) in deferred.drain(..) {
                     let (sx, sy) = (margin_l + x, frame.top + dy);
                     if let Some(f) = shape.floating.as_ref()
-                        && matches!(f.wrap.as_str(), "square" | "tight" | "through")
+                        && matches!(f.wrap.as_str(), "square" | "tight" | "through" | "topAndBottom")
                     {
+                        // One the text goes over and under: across the column, the
+                        // lines it would be over below it (see `landed`).
+                        let across = f.wrap == "topAndBottom";
                         let obs = WrapObstacle {
-                            shape_left: sx - margin_l - pt(f.dist_l),
-                            shape_right: sx + w - margin_l + pt(f.dist_r),
+                            shape_left: if across { frame.left - margin_l } else { sx - margin_l - pt(f.dist_l) },
+                            shape_right: if across { frame.left - margin_l + frame.width } else { sx + w - margin_l + pt(f.dist_r) },
                             y_top: sy - pt(f.dist_t),
                             y_bottom: sy + h + pt(f.dist_b),
                             wrap_text: f.wrap_text.clone().unwrap_or_else(|| "bothSides".to_string()),
                             wrap_polygon: None,
                         };
-                        if active_obstacle.is_none() {
+                        if !across && active_obstacle.is_none() {
                             active_obstacle = Some(obs.clone());
                         }
                         page_obstacles.push(obs);
@@ -4594,15 +4654,17 @@ impl<'r> Layouter<'r> {
                     for (shape, x, dy, w, h) in deferred_column.drain(..) {
                         let (sx, sy) = (margin_l + x, col_top + dy);
                         if let Some(f) = shape.floating.as_ref() {
+                            // Across the column, the lines it would be over below it
+                            // (see `landed`).
                             let obs = WrapObstacle {
-                                shape_left: sx - margin_l - pt(f.dist_l),
-                                shape_right: sx + w - margin_l + pt(f.dist_r),
+                                shape_left: if f.wrap == "topAndBottom" { left } else { sx - margin_l - pt(f.dist_l) },
+                                shape_right: if f.wrap == "topAndBottom" { right } else { sx + w - margin_l + pt(f.dist_r) },
                                 y_top: sy - pt(f.dist_t),
                                 y_bottom: sy + h + pt(f.dist_b),
                                 wrap_text: "bothSides".to_string(),
                                 wrap_polygon: None,
                             };
-                            if active_obstacle.is_none() {
+                            if f.wrap != "topAndBottom" && active_obstacle.is_none() {
                                 active_obstacle = Some(obs.clone());
                             }
                             page_obstacles.push(obs);
@@ -5217,27 +5279,34 @@ impl<'r> Layouter<'r> {
                 // have gone on to another page or column than it was laid out
                 // for): an obstacle of this page there.
                 let margin_l = pt(setups[s].page.left);
-                let landed: Vec<WrapObstacle> = page.items[start..]
+                let landed: Vec<(WrapObstacle, bool)> = page.items[start..]
                     .iter()
                     .filter_map(|it| match it {
                         Item::Shape { shape, x, y, w, h } => {
                             let f = shape.floating.as_ref()?;
-                            matches!(f.wrap.as_str(), "square" | "tight" | "through").then(|| WrapObstacle {
-                                shape_left: x - margin_l - pt(f.dist_l),
-                                shape_right: x + w - margin_l + pt(f.dist_r),
+                            // A picture the text goes over and under: across its column.
+                            let (left, right) = if f.wrap == "topAndBottom" {
+                                (frame.left - margin_l, frame.left - margin_l + frame.width)
+                            } else {
+                                (x - margin_l - pt(f.dist_l), x + w - margin_l + pt(f.dist_r))
+                            };
+                            matches!(f.wrap.as_str(), "square" | "tight" | "through" | "topAndBottom").then(|| WrapObstacle {
+                                shape_left: left,
+                                shape_right: right,
                                 y_top: y - pt(f.dist_t),
                                 y_bottom: y + h + pt(f.dist_b),
                                 wrap_text: f.wrap_text.clone().unwrap_or_else(|| "bothSides".to_string()),
                                 wrap_polygon: None,
                             })
+                            .map(|obs| (obs, f.wrap == "topAndBottom"))
                         }
                         _ => None,
                     })
                     .collect();
-                for obs in landed {
+                for (obs, across) in landed {
                     let same = |o: &WrapObstacle| (o.y_top - obs.y_top).abs() < 0.5 && (o.shape_left - obs.shape_left).abs() < 0.5;
                     if !page_obstacles.iter().any(same) {
-                        if active_obstacle.as_ref().is_none_or(|a| !same(a)) {
+                        if !across && active_obstacle.as_ref().is_none_or(|a| !same(a)) {
                             active_obstacle = Some(obs.clone());
                         }
                         page_obstacles.push(obs);
@@ -6682,7 +6751,7 @@ fn turn_page_items(items: Vec<Item>, direction: ibis_doc_model::CellDirection, w
 
 #[cfg(test)]
 mod word_lines_tests {
-    use super::{FlowAlign, FlowDocument, SPACE_GIVE, Unit, justify_extra, keeps_word, may_break, space_give, squeezable};
+    use super::{FlowAlign, FlowDocument, SPACE_GIVE, Unit, is_japanese, justify_extra, keeps_word, may_break, space_give, squeezable};
     use gpui_kit::font;
 
     /// A character `width` wide, `auto_space` of it the space after it.
@@ -6761,6 +6830,16 @@ mod word_lines_tests {
         assert!(!keeps(4.0, 3.0), "more than the spaces give");
         // From its second letter on, the same word.
         assert_eq!(keeps_word(&units, 7, 6, 30.0, 31.0, 5.0, breaks), keeps(4.0, 5.0));
+    }
+
+    #[test]
+    fn japanese_is_kana_kanji_and_full_width_forms() {
+        for c in ['あ', 'ア', '漢', '、', 'Ａ', '\u{20b9f}'] {
+            assert!(is_japanese(c), "{c}");
+        }
+        for c in ['a', '–', '→', '①', '😀'] {
+            assert!(!is_japanese(c), "{c}");
+        }
     }
 
     #[test]

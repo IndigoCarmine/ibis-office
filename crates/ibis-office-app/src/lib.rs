@@ -517,6 +517,8 @@ struct Args {
     print_hidden_text: bool,
     /// 印刷オプション: 変更履歴とコメントを印刷する (DOCX-SEC-014).
     no_print_markup: bool,
+    /// `--word-metrics windows|mac`: Word documents' lines as Word for that platform makes them.
+    word_metrics: Option<String>,
     /// 印刷の設定 (PPTX-RECORD-017): `gray` or `bw`.
     print_color: Option<String>,
     /// 配布資料: slides to a page (PPTX-RECORD-016).
@@ -558,6 +560,7 @@ fn parse_args() -> Result<Args, String> {
             "--print-backgrounds" => args.print_backgrounds = true,
             "--print-hidden-text" => args.print_hidden_text = true,
             "--no-print-markup" => args.no_print_markup = true,
+            "--word-metrics" => args.word_metrics = Some(value()?),
             "--print-color" => args.print_color = Some(value()?),
             "--handout" => args.handout = Some(value()?.parse().ok().filter(|n| matches!(n, 1 | 2 | 3 | 4 | 6 | 8 | 9 | 16)).ok_or_else(|| "--handout needs one of 1, 2, 3, 4, 6, 8, 9 or 16".to_string())?),
             "--print-frame" => args.print_frame = true,
@@ -624,6 +627,12 @@ fn run_export(args: &Args, format: &str) -> Result<(), String> {
             print_backgrounds: args.print_backgrounds,
             print_hidden_text: args.print_hidden_text,
             print_markup: !args.no_print_markup,
+            word_windows_lines: match args.word_metrics.as_deref() {
+                None => None,
+                Some("windows") => Some(true),
+                Some("mac") => Some(false),
+                Some(other) => return Err(format!("--word-metrics takes windows or mac: {other}")),
+            },
             color: match args.print_color.as_deref() {
                 None | Some("color") => export_print::PrintColor::Color,
                 Some("gray") => export_print::PrintColor::Gray,
