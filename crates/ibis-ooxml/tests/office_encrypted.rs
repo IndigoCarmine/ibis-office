@@ -4,16 +4,21 @@
 //! Files Office itself protected with a password (the password of these test
 //! files is `ibis123`): opened, and what ibisOffice writes is made like them.
 
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 use ibis_ooxml::{cfb, encryption, Package};
 
-fn file(name: &str) -> Vec<u8> {
-    std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing").join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
+/// The test file, or `None` (reported as skipped) when the private test data
+/// is not there.
+fn file(name: &str) -> Option<Vec<u8>> {
+    fixtures::read(&format!("test/editing/{name}"))
 }
 
 #[test]
 fn office_files_are_opened() {
     for (name, main_part) in [("xlsx-encrypted.xlsx", "xl/workbook.xml"), ("docx-encrypted.docx", "word/document.xml")] {
-        let data = file(name);
+        let Some(data) = file(name) else { continue };
         assert!(encryption::is_encrypted(&data), "{name}");
         assert_eq!(encryption::decrypt(&data, "ibis124"), Err(encryption::DecryptError::WrongPassword), "{name}");
         let package = encryption::decrypt(&data, "ibis123").unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -25,7 +30,7 @@ fn office_files_are_opened() {
 /// The data space streams are the same in every file Office writes: ours are alike.
 #[test]
 fn data_spaces_are_those_office_writes() {
-    let theirs = file("xlsx-encrypted.xlsx");
+    let Some(theirs) = file("xlsx-encrypted.xlsx") else { return };
     let ours = encryption::encrypt(b"PK", "ibis123", &mut |b: &mut [u8]| b.fill(7));
     for leaf in ["Version", "DataSpaceMap", "StrongEncryptionDataSpace", "\u{6}Primary"] {
         let (a, b) = (cfb::stream(&theirs, leaf).unwrap(), cfb::stream(&ours, leaf).unwrap());
