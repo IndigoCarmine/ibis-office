@@ -384,11 +384,14 @@ pub(crate) fn to_truetype(block1: &[u8], block2: &[u8], block3: &[u8]) -> Result
             b"glyf" | b"loca" | b"hdmx" | b"VDMX" | b"DSIG" => {}
             b"cvt " => out_tables.push((*tag, decode_cvt(data)?)),
             b"head" => {
-                let mut head = data.to_vec();
-                if head.len() >= 54 {
-                    head[8..12].fill(0); // checkSumAdjustment, set below
-                    head[50..52].copy_from_slice(&1u16.to_be_bytes()); // long 'loca'
+                // 'head' is 54 bytes; its fields are written at fixed offsets
+                // here and once the font is laid out (checkSumAdjustment).
+                if data.len() < 54 {
+                    return Err(err("head 表が短すぎます"));
                 }
+                let mut head = data.to_vec();
+                head[8..12].fill(0); // checkSumAdjustment, set below
+                head[50..52].copy_from_slice(&1u16.to_be_bytes()); // long 'loca'
                 out_tables.push((*tag, head));
             }
             b"maxp" => {
@@ -490,5 +493,44 @@ mod tests {
         // 10, then +5, then -(238 + 2) = -240.
         let data = [0, 3, 10, 5, 240, 2];
         assert_eq!(decode_cvt(&data).unwrap(), [10u16, 15, (15i16 - 240) as u16].iter().flat_map(|v| v.to_be_bytes()).collect::<Vec<_>>());
+    }
+
+    /// A first CTF block: an sfnt directory with `tables`, then their data.
+    fn block1(tables: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        be32(&mut out, 0x0001_0000);
+        be16(&mut out, tables.len() as u16);
+        out.extend([0; 6]);
+        let mut offset = 12 + 16 * tables.len();
+        for (tag, data) in tables {
+            out.extend(*tag);
+            be32(&mut out, 0);
+            be32(&mut out, offset as u32);
+            be32(&mut out, data.len() as u32);
+            offset += data.len();
+        }
+        for (_, data) in tables {
+            out.extend(*data);
+        }
+        out
+    }
+
+    #[test]
+    fn a_short_head_is_an_error() {
+        // Empty 'head' and 'maxp', no 'glyf'.
+        assert!(to_truetype(&block1(&[(b"head", &[]), (b"maxp", &[])]), &[], &[]).is_err());
+        // A 'head' too short for its fixed fields, before another table.
+        assert!(to_truetype(&block1(&[(b"head", &[0; 4]), (b"maxp", &[0, 0, 0x50, 0, 0, 0])]), &[], &[]).is_err());
+        assert!(to_truetype(&block1(&[(b"head", &[0; 53]), (b"maxp", &[0; 6])]), &[], &[]).is_err());
+    }
+
+    #[test]
+    fn head_gets_the_checksum_adjustment() {
+        let font = to_truetype(&block1(&[(b"head", &[0xAA; 54]), (b"maxp", &[0, 0, 0x50, 0, 0, 0])]), &[], &[]).unwrap();
+        assert_eq!(checksum(&font), 0xB1B0_AFBA);
+        // Tables sorted by tag: 'head' first, after the two directory entries.
+        let head = &font[12 + 16 * 2..][..54];
+        assert_eq!(head[50..52], [0, 1]);
+        assert_eq!(head[..8], [0xAA; 8]);
     }
 }
