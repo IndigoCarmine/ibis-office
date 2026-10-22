@@ -13,11 +13,15 @@ use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, Documen
 use ibis_ooxml::canon::diff_packages;
 use ibis_pptx::SaveOptions;
 
-fn open(name: &str) -> (Vec<u8>, ibis_pptx::Opened) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing").join(name);
-    let data = std::fs::read(&path).unwrap();
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
+/// The workbook `test/editing/<name>` and what it opens as, or `None`
+/// (reported as skipped) when the private test data is not there.
+fn open(name: &str) -> Option<(Vec<u8>, ibis_pptx::Opened)> {
+    let data = fixtures::read(&format!("test/editing/{name}"))?;
     let opened = ibis_pptx::open(data.clone()).unwrap();
-    (data, opened)
+    Some((data, opened))
 }
 
 fn slide(p: &Presentation, name: &str) -> SlideId {
@@ -73,7 +77,7 @@ fn assert_reads_back(saved: &[u8], edited: &Presentation) {
 
 #[test]
 fn a_number_typed_in_is_saved_and_recalculated() {
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     // B4 feeds E4 (a shared formula SUM(B4:D4)) and the total below.
@@ -99,7 +103,7 @@ fn a_number_typed_in_is_saved_and_recalculated() {
 
 #[test]
 fn text_goes_into_the_shared_strings() {
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "メモ");
     // A new string, and one the workbook already has (reused).
@@ -121,7 +125,7 @@ fn text_goes_into_the_shared_strings() {
 
 #[test]
 fn formulas_are_saved_with_their_values_and_the_calculation_chain() {
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     // A new formula, a newer function (written with _xlfn.), and a
@@ -158,7 +162,7 @@ fn formulas_are_saved_with_their_values_and_the_calculation_chain() {
 
 #[test]
 fn formats_make_new_cell_formats() {
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let range = CellRange { first_row: 3, first_column: 1, last_row: 4, last_column: 2 };
@@ -189,7 +193,7 @@ fn formula(p: &Presentation, sheet: &str, row: u32, column: u32) -> Option<Strin
 #[test]
 fn rows_and_columns_inserted_and_deleted_are_saved() {
     use ibis_doc_model::sheet_command::Axis;
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let total = formula(d.presentation(), "月次売上", 8, 4).unwrap();
@@ -216,7 +220,7 @@ fn rows_and_columns_inserted_and_deleted_are_saved() {
 #[test]
 fn sizes_and_merges_are_saved() {
     use ibis_doc_model::sheet_command::Axis;
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let pt = ibis_doc_model::EMU_PER_POINT;
@@ -247,7 +251,7 @@ fn sizes_and_merges_are_saved() {
 
 #[test]
 fn sheets_added_renamed_and_deleted_are_saved() {
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (new_slide, new_shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "集計".into(), slide: new_slide, shape: new_shape })]).unwrap();
@@ -278,7 +282,7 @@ fn sheets_added_renamed_and_deleted_are_saved() {
 /// calculate the workbook when it opens it; otherwise the flag is not set.
 #[test]
 fn stale_formulas_ask_excel_to_calculate() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let calc_flag = |bytes: &[u8]| String::from_utf8(ibis_ooxml::Package::open(bytes.to_vec()).unwrap().read("xl/workbook.xml").unwrap()).unwrap().contains("fullCalcOnLoad=\"1\"");
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
@@ -310,7 +314,7 @@ fn formula_rule(formula: &str, fill: u32, stop: bool) -> ibis_doc_model::Conditi
 
 #[test]
 fn conditional_create_edit_delete_undo_redo_and_save() {
-    let (original, opened) = open("xlsx-sales.xlsx");
+    let Some((original, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let start = conditional(d.presentation(), s).len();
@@ -351,7 +355,7 @@ fn conditional_create_edit_delete_undo_redo_and_save() {
 #[test]
 fn conditional_mixed_references_follow_insert_and_roundtrip() {
     use ibis_doc_model::sheet_command::Axis;
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     d.execute(vec![Command::Sheet(SheetCommand::AddConditional { slide: s, format: formula_rule("AND(B4>0,$B4>0,B$4>0,$B$4>0)", 0xFFC7CE, true) })]).unwrap();
@@ -372,7 +376,7 @@ fn conditional_mixed_references_follow_insert_and_roundtrip() {
 
 #[test]
 fn adding_conditional_preserves_unknown_original_xml() {
-    let (data, _) = open("xlsx-sales.xlsx");
+    let Some((data, _)) = open("xlsx-sales.xlsx") else { return };
     let mut package = ibis_ooxml::Package::open(data).unwrap();
     let part = "xl/worksheets/sheet1.xml";
     let doc = package.xml_mut(part).unwrap();
@@ -409,7 +413,7 @@ fn adding_conditional_preserves_unknown_original_xml() {
 #[test]
 fn conditional_thresholds_follow_sheet_rename_delete_and_roundtrip() {
     use ibis_doc_model::{CfKind, CfValue, Rgb};
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let reference = "商品!$B4+商品!B$4+商品!$B$4";
@@ -473,7 +477,7 @@ fn conditional_thresholds_follow_sheet_rename_delete_and_roundtrip() {
 
 #[test]
 fn conditional_management_preserves_imported_rule_xml_and_styles() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     d.execute(vec![Command::Sheet(SheetCommand::AddConditional { slide: s, format: formula_rule("B4>0", 0xFFC7CE, true) })]).unwrap();
@@ -528,7 +532,7 @@ fn conditional_management_preserves_imported_rule_xml_and_styles() {
 
 #[test]
 fn adding_identical_conditional_keeps_both_dxf_styles() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let format = formula_rule("B4>0", 0xFFC7CE, false);
@@ -545,7 +549,7 @@ fn adding_identical_conditional_keeps_both_dxf_styles() {
 
 #[test]
 fn conditional_duplicate_and_delete_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let format = formula_rule("B4>1000", 0xFFC7CE, true);
@@ -604,7 +608,7 @@ fn conditional_duplicate_and_delete_save_and_reopen() {
 
 #[test]
 fn managing_equal_unmodelled_rules_keeps_each_original_identity() {
-    let (bytes, _) = open("xlsx-sales.xlsx");
+    let Some((bytes, _)) = open("xlsx-sales.xlsx") else { return };
     let mut package = ibis_ooxml::Package::open(bytes).unwrap();
     let part = "xl/worksheets/sheet1.xml";
     let doc = package.xml_mut(part).unwrap();
@@ -634,7 +638,7 @@ fn managing_equal_unmodelled_rules_keeps_each_original_identity() {
 #[test]
 fn all_border_styles_colors_and_edges_save_and_undo() {
     use ibis_doc_model::{Border, BorderLine, Edge, Rgb};
-    let (original, opened) = open("xlsx-sales.xlsx");
+    let Some((original, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     let edges = [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom, Edge::DiagonalUp, Edge::DiagonalDown];
@@ -673,7 +677,7 @@ fn all_border_styles_colors_and_edges_save_and_undo() {
 #[test]
 fn all_alignment_values_survive_format_save_undo_redo() {
     use ibis_doc_model::{CellAlign, CellVerticalAlign};
-    let (original, opened) = open("xlsx-sales.xlsx");
+    let Some((original, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     let horizontal = [CellAlign::General, CellAlign::Left, CellAlign::Center, CellAlign::Right, CellAlign::Fill, CellAlign::Justify, CellAlign::CenterAcross, CellAlign::Distributed];
@@ -705,7 +709,7 @@ fn all_alignment_values_survive_format_save_undo_redo() {
 #[test]
 fn all_underline_kinds_save_and_undo_redo() {
     use ibis_doc_model::CellUnderline;
-    let (original, opened) = open("xlsx-sales.xlsx");
+    let Some((original, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     let mut commands = vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "下線全値".into(), slide: s, shape })];
@@ -727,7 +731,7 @@ fn all_underline_kinds_save_and_undo_redo() {
 
 #[test]
 fn implicit_and_spill_operators_evaluate_save_and_undo_redo() {
-    let (original, opened) = open("xlsx-sales.xlsx");
+    let Some((original, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     let formulas = [(0,1,"@A1:A3"), (1,1,"@A1:A3"), (2,1,"@A1:A3"), (3,1,"@A1:A3"), (0,3,"SEQUENCE(3)"), (0,4,"SUM(D1#)"), (1,4,"@D1#"), (2,4,"SINGLE(D1#)"), (0,5,"@SEQUENCE(3)")];
@@ -754,7 +758,7 @@ fn implicit_and_spill_operators_evaluate_save_and_undo_redo() {
 
 #[test]
 fn external_functions_keep_cached_values_and_opaque_parts() {
-    let (_, stock) = open("xlsx-sales.xlsx");
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
     let mut initial = Document::new(stock.presentation.clone()); let s = slide(initial.presentation(), "月次売上");
     set(&mut initial,s,vec![(9,0,CellInput::Value(CellValue::Number(1.))),(9,1,CellInput::Formula("7".into())),(10,1,CellInput::Formula("11".into())),(11,1,CellInput::Formula("NA()".into())),(9,2,CellInput::Formula("SUM(B10:B11)".into()))]);
     let mut package=ibis_ooxml::Package::open(stock.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();
@@ -789,7 +793,7 @@ fn external_functions_keep_cached_values_and_opaque_parts() {
 
 #[test]
 fn flatten_array_options_save_and_undo_redo() {
-    let (original, opened)=open("xlsx-sales.xlsx");
+    let Some((original, opened))=open("xlsx-sales.xlsx") else { return };
     let mut d=Document::new(opened.presentation.clone());
     let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let mut edits=vec![];
@@ -816,7 +820,7 @@ fn flatten_array_options_save_and_undo_redo() {
 
 #[test]
 fn weekend_options_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());
     let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];
     for mask in 0u32..128 {
         let text:String=(0..7).map(|day|if mask&(1<<day)==0 {'0'}else{'1'}).collect();
@@ -831,7 +835,7 @@ fn weekend_options_save_and_undo_redo() {
 
 #[test]
 fn datedif_units_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());
     let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];
     let units=[("Y",1.),("M",14.),("D",440.),("MD",14.),("YM",2.),("YD",75.)];
     for (row,(unit,_)) in units.into_iter().enumerate() {edits.push(CellEdit {row:row as u32,column:0,input:CellInput::Formula(format!("DATEDIF(DATE(2001,6,1),DATE(2002,8,15),\"{unit}\")"))});}
@@ -844,7 +848,7 @@ fn datedif_units_save_and_undo_redo() {
 
 #[test]
 fn information_options_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());
     let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let formulas=["INFO(1)","INFO(\"invalid\")","CELL(1,A1)","CELL(\"invalid\",A1)","INFO(\"memavail\")","INFO(\"memused\")","INFO(\"totmem\")"];
     let edits=formulas.iter().enumerate().map(|(row,f)|CellEdit {row:row as u32,column:1,input:CellInput::Formula((*f).into())}).collect();
@@ -857,7 +861,7 @@ fn information_options_save_and_undo_redo() {
 
 #[test]
 fn valid_information_options_keep_imported_cache() {
-    let (_,stock)=open("xlsx-sales.xlsx");let mut initial=Document::new(stock.presentation.clone());let s=slide(initial.presentation(),"月次売上");
+    let Some((_,stock))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(stock.presentation.clone());let s=slide(initial.presentation(),"月次売上");
     set(&mut initial,s,vec![(9,0,CellInput::Value(CellValue::Number(1.))),(9,1,CellInput::Formula("\"F2\"".into())),(10,1,CellInput::Formula("\"cached-version\"".into()))]);
     let mut package=ibis_ooxml::Package::open(stock.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();
     let doc=package.xml_mut("xl/worksheets/sheet1.xml").unwrap();let data=doc.child(doc.root_element().unwrap(),"sheetData").unwrap();
@@ -878,7 +882,7 @@ fn valid_information_options_keep_imported_cache() {
 
 #[test]
 fn sort_options_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];
     let mut row=0;for index in [1,2] {for order in [-1,1] {for by in [false,true] {
         edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("SORT({{4,1;2,3}},{index},{order},{by})"))});row+=3;
     }}}
@@ -891,7 +895,7 @@ fn sort_options_save_and_undo_redo() {
 
 #[test]
 fn sort_errors_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let edits=vec![CellEdit {row:0,column:0,input:CellInput::Formula("SORT({#N/A;#DIV/0!;#VALUE!})".into())},CellEdit {row:0,column:2,input:CellInput::Formula("SORT({#N/A;2;#DIV/0!;1;#VALUE!})".into())}];
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"エラー順".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();
     let bytes=save(&opened,d.presentation(),"sort-errors.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();
@@ -901,7 +905,7 @@ fn sort_errors_save_and_undo_redo() {
 
 #[test]
 fn textsplit_options_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;
     for ignore in [false,true] {for mode in [0,1] {for custom in [false,true] {
         let pad=if custom {",\"pad\""}else{""};edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("TEXTSPLIT(\"aXbxxc|dXe\",\"x\",\"|\",{ignore},{mode}{pad})"))});row+=3;
     }}}
@@ -913,7 +917,7 @@ fn textsplit_options_save_and_undo_redo() {
 
 #[test]
 fn textsplit_shape_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let formulas=[(0,"TEXTSPLIT(\"Hello World\",\"Hello World\",\"Hello World\")"),(3,"TEXTSPLIT(\"a,b,c\",\",\",\",\")"),(6,"TEXTSPLIT(\"m\",\",\",,FALSE,0,{1,2;3,4})"),(9,"TEXTSPLIT(\"a,b|c\",\",\",\"|\",FALSE,0,{9})"),(12,"TEXTSPLIT(\"m\",\",\",,FALSE,0,C1:C3)")];
     let edits=formulas.into_iter().map(|(row,f)|CellEdit {row,column:0,input:CellInput::Formula(f.into())}).collect();d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"分割形状".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();
     let bytes=save(&opened,d.presentation(),"textsplit-shape.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();assert_eq!(value(&p,"分割形状",0,1),CellValue::Text(String::new()));assert_eq!(value(&p,"分割形状",6,0),CellValue::Error(ibis_doc_model::CellError::Value));assert_eq!(value(&p,"分割形状",10,1),CellValue::Number(9.));assert_eq!(value(&p,"分割形状",12,0),CellValue::Text("m".into()));
@@ -922,7 +926,7 @@ fn textsplit_shape_save_and_undo_redo() {
 
 #[test]
 fn unicode_delimiters_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];
     let prefixes=["K","İ","日本","🙂","ΟΣ|"];
     for (i,prefix) in prefixes.into_iter().enumerate() {
         for (row,column,formula) in [(i as u32*4,0,format!("TEXTBEFORE(\"{prefix}Xtail\",\"x\",1,1)")),(i as u32*4,1,format!("TEXTAFTER(\"{prefix}Xtail\",\"x\",1,1)")),(i as u32*4+1,0,format!("TEXTSPLIT(\"{prefix}Xtail\",\"x\",,FALSE,1)"))] {edits.push(CellEdit {row,column,input:CellInput::Formula(formula)});}
@@ -935,7 +939,7 @@ fn unicode_delimiters_save_and_undo_redo() {
 
 #[test]
 fn subtotal_literals_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let source=["LEN(\"SUBTOTAL(\")","LEN(\"AGGREGATE(\")","SUBTOTAL(9,A1:A2)","AGGREGATE(9,0,A1:A2)"];
     let checks=[("SUBTOTAL(9,A1:A4)",19.0),("SUBTOTAL(3,A1:A4)",2.0),("AGGREGATE(9,0,A1:A4)",19.0),("AGGREGATE(3,0,A1:A4)",2.0),("AGGREGATE(9,4,A1:A4)",57.0)];
     let mut edits:Vec<_>=source.into_iter().enumerate().map(|(row,f)|CellEdit {row:row as u32,column:0,input:CellInput::Formula(f.into())}).collect();
@@ -948,7 +952,7 @@ fn subtotal_literals_save_and_undo_redo() {
 
 #[test]
 fn subtotal_count_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let mut edits=vec![CellEdit {row:0,column:0,input:CellInput::Value(CellValue::Error(ibis_doc_model::CellError::NA))},CellEdit {row:1,column:0,input:CellInput::Value(CellValue::Number(7.0))},CellEdit {row:2,column:0,input:CellInput::Value(CellValue::Text("text".into()))}];
     for (row,code) in [2,102,3,103,9].into_iter().enumerate(){edits.push(CellEdit {row:row as u32,column:1,input:CellInput::Formula(format!("SUBTOTAL({code},A1:A3)"))});}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"集計個数".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();
@@ -959,7 +963,7 @@ fn subtotal_count_save_and_undo_redo() {
 
 #[test]
 fn subtotal_hidden_save_and_undo_redo() {
-    let (_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
+    let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let mut edits:Vec<_>=[2.0,4.0,6.0].into_iter().enumerate().map(|(row,n)|CellEdit {row:row as u32,column:0,input:CellInput::Value(CellValue::Number(n))}).collect();
     for (i,code) in (1..=11).chain(101..=111).enumerate(){edits.push(CellEdit {row:(i%11) as u32,column:(1+i/11) as u32,input:CellInput::Formula(format!("SUBTOTAL({code},A1:A3)"))});}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"非表示集計".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();
@@ -971,7 +975,7 @@ fn subtotal_hidden_save_and_undo_redo() {
 
 #[test]
 fn aggregate_enums_save_and_undo_redo() {
-    let (_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
+    let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let mut edits:Vec<_>=[2.0,4.0,4.0,6.0].into_iter().enumerate().map(|(row,n)|CellEdit {row:row as u32,column:0,input:CellInput::Value(CellValue::Number(n))}).collect();
     for function in 1..=19{for option in 0..8{let k=match function{14|15=>",2",16|18=>",0.25",17|19=>",1",_=>""};edits.push(CellEdit {row:function-1,column:option+1,input:CellInput::Formula(format!("AGGREGATE({function},{option},A1:A4{k})"))});}}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"集計全選択肢".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();
@@ -983,7 +987,7 @@ fn aggregate_enums_save_and_undo_redo() {
 
 #[test]
 fn subtotal_filter_save_and_undo_redo() {
-    let (_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
+    let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let mut edits=vec![CellEdit {row:0,column:0,input:CellInput::Value(CellValue::Text("header".into()))}];for (row,n) in [(1,2.0),(2,4.0),(3,6.0)]{edits.push(CellEdit {row,column:0,input:CellInput::Value(CellValue::Number(n))});}
     for (row,code) in [9,109,2,102,3,103].into_iter().enumerate(){edits.push(CellEdit {row:row as u32,column:1,input:CellInput::Formula(format!("SUBTOTAL({code},A2:A4)"))});}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"フィルター集計".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let shown=save(&opened,d.presentation(),"subtotal-filter-shown.xlsx");
@@ -994,7 +998,7 @@ fn subtotal_filter_save_and_undo_redo() {
 
 #[test]
 fn jis_name_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];
     let cases=[("abc","ａｂｃ"),("ｱｲｳ ABC","アイウ　ＡＢＣ"),("ｶﾞﾊﾟｳﾞ","ガパウ゛"),("日本語ＡＢＣ","日本語ＡＢＣ"),("ｶA🙂","カＡ🙂"),("","")];
     for (row,(input,_)) in cases.into_iter().enumerate(){edits.push(CellEdit {row:row as u32,column:0,input:CellInput::Value(CellValue::Text(input.into()))});for (column,name) in [(1,"JIS"),(2,"DBCS")]{edits.push(CellEdit {row:row as u32,column,input:CellInput::Formula(format!("{name}(A{})",row+1))});}}
     for (row,formula) in [(6,"JIS(123)"),(7,"JIS(NA())"),(8,"JIS()"),(9,"JIS(\"a\",\"b\")")]{edits.push(CellEdit {row,column:1,input:CellInput::Formula(formula.into())});}
@@ -1005,7 +1009,7 @@ fn jis_name_save_and_undo_redo() {
 
 #[test]
 fn aggregate_resize_save_and_undo_redo() {
-    let (_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits:Vec<_>=[2.0,4.0,6.0].into_iter().enumerate().map(|(row,n)|CellEdit {row:row as u32,column:0,input:CellInput::Value(CellValue::Number(n))}).collect();
+    let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits:Vec<_>=[2.0,4.0,6.0].into_iter().enumerate().map(|(row,n)|CellEdit {row:row as u32,column:0,input:CellInput::Value(CellValue::Number(n))}).collect();
     for (row,f) in ["SUBTOTAL(9,A1:A3)","SUBTOTAL(109,A1:A3)","AGGREGATE(9,1,A1:A3)","AGGREGATE(9,4,A1:A3)","B2*2","SUM(A1:A3)"].into_iter().enumerate(){edits.push(CellEdit {row:row as u32,column:1,input:CellInput::Formula(f.into())});}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"高さ集計".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let shown=save(&opened,d.presentation(),"aggregate-resize-shown.xlsx");
     d.execute(vec![Command::Sheet(SheetCommand::SetSize {slide:s,axis:ibis_doc_model::sheet_command::Axis::Rows,first:1,last:1,size:0})]).unwrap();let bytes=save(&opened,d.presentation(),"aggregate-resize-hidden.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for (row,n) in [12.0,8.0,8.0,12.0,16.0,12.0].into_iter().enumerate(){assert_eq!(value(&p,"高さ集計",row as u32,1),CellValue::Number(n));}
@@ -1014,7 +1018,7 @@ fn aggregate_resize_save_and_undo_redo() {
 
 #[test]
 fn wrap_count_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut checks=vec![];let mut row=0;
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut checks=vec![];let mut row=0;
     for function in ["WRAPROWS","WRAPCOLS"]{for vector in ["{1,2}","{1;2}"]{for pad in ["",",\"pad\""]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("{function}({vector},5{pad})"))});checks.push((row,if function=="WRAPROWS"{(row,1)}else{(row+1,0)}));row+=3;}}}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"折返し最大数".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"wrap-count.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for (row,(r,c)) in checks{assert_eq!(value(&p,"折返し最大数",row,0),CellValue::Number(1.0));assert_eq!(value(&p,"折返し最大数",r,c),CellValue::Number(2.0));}assert_eq!(sheet_of_slide(p.slide(slide(&p,"折返し最大数")).unwrap()).unwrap().cells.len(),16);
     assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"wrap-count-redo.xlsx"),bytes);
@@ -1022,7 +1026,7 @@ fn wrap_count_save_and_undo_redo() {
 
 #[test]
 fn expand_options_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;
     for rows in [2,3]{for columns in [2,3]{for pad in ["",",0",",\"\"",",\"pad\""]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("EXPAND({{1,2;3,4}},{rows},{columns}{pad})"))});row+=4;}}}
     for f in ["EXPAND({1,2},1E20,2)","EXPAND({1;2},2,1E20)","EXPAND(1,1E20,1E20)"]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(f.into())});row+=1;}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"配列拡張".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"expand-options.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for row in 64..67{assert_eq!(value(&p,"配列拡張",row,0),CellValue::Error(ibis_doc_model::CellError::Num));}
@@ -1031,7 +1035,7 @@ fn expand_options_save_and_undo_redo() {
 
 #[test]
 fn regex_lookup_keeps_imported_cache() {
-    let (_,stock)=open("xlsx-sales.xlsx");let mut initial=Document::new(stock.presentation.clone());let s=slide(initial.presentation(),"月次売上");let mut edits=vec![(9,0,CellInput::Value(CellValue::Text("a.c".into())))];for row in 9..13{edits.push((row,1,CellInput::Formula("77".into())));}set(&mut initial,s,edits);
+    let Some((_,stock))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(stock.presentation.clone());let s=slide(initial.presentation(),"月次売上");let mut edits=vec![(9,0,CellInput::Value(CellValue::Text("a.c".into())))];for row in 9..13{edits.push((row,1,CellInput::Formula("77".into())));}set(&mut initial,s,edits);
     let formulas=["XLOOKUP(A10,{\"abc\",\"a.c\"},{10,20},99,3,1)","XLOOKUP(A10,{\"abc\",\"a.c\"},{10,20},99,3,-1)","XMATCH(A10,{\"abc\",\"a.c\"},3,1)","XMATCH(A10,{\"abc\",\"a.c\"},3,-1)"];
     let mut package=ibis_ooxml::Package::open(stock.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();let xml=package.xml_mut("xl/worksheets/sheet1.xml").unwrap();let data=xml.child(xml.root_element().unwrap(),"sheetData").unwrap();for (i,f) in formulas.iter().enumerate(){let address=format!("B{}",i+10);let c=xml.children_named(data,"row").flat_map(|r|xml.children_named(r,"c")).find(|&c|xml.attr(c,"r")==Some(address.as_str())).unwrap();let node=xml.child(c,"f").unwrap();xml.set_text(node,f);}
     let original=package.save(Default::default()).unwrap();let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let s=slide(d.presentation(),"月次売上");set(&mut d,s,vec![(9,0,CellInput::Value(CellValue::Text("ab.*".into())))]);
@@ -1041,19 +1045,19 @@ fn regex_lookup_keeps_imported_cache() {
 
 #[test]
 fn xlookup_dimension_mismatch_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;for (keys,returns) in [("{1;2}","{10;20;30}"),("{1,2}","{10,20,30}")]{for key in [1,9]{for mode in [-1,0,1]{for search in [-1,1]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("XLOOKUP({key},{keys},{returns},99,{mode},{search})"))});row+=1;}}}}
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;for (keys,returns) in [("{1;2}","{10;20;30}"),("{1,2}","{10,20,30}")]{for key in [1,9]{for mode in [-1,0,1]{for search in [-1,1]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("XLOOKUP({key},{keys},{returns},99,{mode},{search})"))});row+=1;}}}}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"検索寸法".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"xlookup-shape.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for row in 0..24{assert_eq!(value(&p,"検索寸法",row,0),CellValue::Error(ibis_doc_model::CellError::Value));}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"xlookup-shape-redo.xlsx"),bytes);
 }
 
 #[test]
 fn xlookup_empty_key_save_and_undo_redo() {
-    let (_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"空検索".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits:vec![CellEdit {row:0,column:1,input:CellInput::Formula("XLOOKUP(A1,{1;2;3},{2.1;3.9;6.2},99,1,1)".into())}]})]).unwrap();let blank=save(&opened,d.presentation(),"xlookup-empty-blank.xlsx");assert_eq!(value(&ibis_pptx::read(&blank).unwrap(),"空検索",0,1),CellValue::Number(99.0));
+    let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"空検索".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits:vec![CellEdit {row:0,column:1,input:CellInput::Formula("XLOOKUP(A1,{1;2;3},{2.1;3.9;6.2},99,1,1)".into())}]})]).unwrap();let blank=save(&opened,d.presentation(),"xlookup-empty-blank.xlsx");assert_eq!(value(&ibis_pptx::read(&blank).unwrap(),"空検索",0,1),CellValue::Number(99.0));
     set(&mut d,s,vec![(0,0,CellInput::Value(CellValue::Number(0.0)))]);let zero=save(&opened,d.presentation(),"xlookup-empty-zero.xlsx");assert_reads_back(&zero,d.presentation());assert_eq!(value(&ibis_pptx::read(&zero).unwrap(),"空検索",0,1),CellValue::Number(2.1));assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),blank);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"xlookup-empty-redo.xlsx"),zero);
 }
 
 #[test]
 fn sortby_key_shape_and_orders_save() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut checks=vec![];let mut row=0;
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut checks=vec![];let mut row=0;
     for (source,valid,bad) in [("{1;2;3;4}","{1;2;3;4}","{1,2;3,4}"),("{1,2,3,4}","{1,2,3,4}","{1,2;3,4}"),("{1;2;3;4}","{1;2;3;4}","{1,2,3,4}"),("{1,2,3,4}","{1,2,3,4}","{1;2;3;4}")]{for position in 0..3{let keys=(0..3).map(|i|if i==position{bad}else{valid}).collect::<Vec<_>>();edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("SORTBY({source},{},1,{},1,{},1)",keys[0],keys[1],keys[2]))});checks.push((row,0,CellValue::Error(ibis_doc_model::CellError::Value)));row+=1;}}
     for sep in [";",","]{for (a,b,expected) in [(1,1,[4.,2.,1.,3.]),(1,-1,[2.,4.,3.,1.]),(-1,1,[1.,3.,4.,2.]),(-1,-1,[3.,1.,2.,4.])]{let src=format!("{{{}}}",["1","2","3","4"].join(sep));let k1=format!("{{{}}}",["2","1","2","1"].join(sep));let k2=format!("{{{}}}",["1","2","2","1"].join(sep));edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("SORTBY({src},{k1},{a},{k2},{b})"))});for (i,n) in expected.into_iter().enumerate(){checks.push((if sep==";"{row+i as u32}else{row},if sep==";"{0}else{i as u32},CellValue::Number(n)));}row+=5;}}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"複数検索順".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"sortby-shape-orders.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for (r,c,v) in checks{assert_eq!(value(&p,"複数検索順",r,c),v);}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"sortby-shape-orders-redo.xlsx"),bytes);
@@ -1061,18 +1065,18 @@ fn sortby_key_shape_and_orders_save() {
 
 #[test]
 fn filter_empty_include_save_and_undo_redo() {
-    let (_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"空条件".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits:vec![CellEdit {row:0,column:0,input:CellInput::Value(CellValue::Number(10.0))},CellEdit {row:1,column:0,input:CellInput::Value(CellValue::Number(20.0))},CellEdit {row:2,column:0,input:CellInput::Value(CellValue::Number(30.0))},CellEdit {row:0,column:2,input:CellInput::Formula("FILTER(A1:A3,B1:B3,99)".into())}]})]).unwrap();let blank=save(&opened,d.presentation(),"filter-empty-blank.xlsx");assert_eq!(value(&ibis_pptx::read(&blank).unwrap(),"空条件",0,2),CellValue::Number(99.0));set(&mut d,s,vec![(1,1,CellInput::Value(CellValue::Bool(true)))]);let selected=save(&opened,d.presentation(),"filter-empty-selected.xlsx");assert_reads_back(&selected,d.presentation());assert_eq!(value(&ibis_pptx::read(&selected).unwrap(),"空条件",0,2),CellValue::Number(20.0));assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),blank);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"filter-empty-redo.xlsx"),selected);
+    let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"空条件".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits:vec![CellEdit {row:0,column:0,input:CellInput::Value(CellValue::Number(10.0))},CellEdit {row:1,column:0,input:CellInput::Value(CellValue::Number(20.0))},CellEdit {row:2,column:0,input:CellInput::Value(CellValue::Number(30.0))},CellEdit {row:0,column:2,input:CellInput::Formula("FILTER(A1:A3,B1:B3,99)".into())}]})]).unwrap();let blank=save(&opened,d.presentation(),"filter-empty-blank.xlsx");assert_eq!(value(&ibis_pptx::read(&blank).unwrap(),"空条件",0,2),CellValue::Number(99.0));set(&mut d,s,vec![(1,1,CellInput::Value(CellValue::Bool(true)))]);let selected=save(&opened,d.presentation(),"filter-empty-selected.xlsx");assert_reads_back(&selected,d.presentation());assert_eq!(value(&ibis_pptx::read(&selected).unwrap(),"空条件",0,2),CellValue::Number(20.0));assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),blank);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"filter-empty-redo.xlsx"),selected);
 }
 
 #[test]
 fn arraytotext_empty_arrays_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;for source in ["TAKE({1;2},0)","FILTER({1;2},{FALSE;FALSE})"]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(source.into())});for (i,suffix) in ["",",0",",1"].into_iter().enumerate(){edits.push(CellEdit {row,column:i as u32+1,input:CellInput::Formula(format!("ARRAYTOTEXT({source}{suffix})"))});}row+=1;}
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;for source in ["TAKE({1;2},0)","FILTER({1;2},{FALSE;FALSE})"]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(source.into())});for (i,suffix) in ["",",0",",1"].into_iter().enumerate(){edits.push(CellEdit {row,column:i as u32+1,input:CellInput::Formula(format!("ARRAYTOTEXT({source}{suffix})"))});}row+=1;}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"空配列文字".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"arraytotext-empty.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for row in 0..2{assert_eq!(value(&p,"空配列文字",row,0),CellValue::Error(ibis_doc_model::CellError::Calc));for col in 1..4{assert_eq!(value(&p,"空配列文字",row,col),CellValue::Error(ibis_doc_model::CellError::Value));}}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"arraytotext-empty-redo.xlsx"),bytes);
 }
 
 #[test]
 fn choose_lines_options_save_and_undo_redo() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut checks=vec![];let mut row=0;
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut checks=vec![];let mut row=0;
     let cases=[("1",vec![1]),("-1",vec![3]),("2.9",vec![2]),("{3,1,3}",vec![3,1,3]),("{3;1;3}",vec![3,1,3]),("{3,1;2,3}",vec![3,1,2,3])];for name in ["CHOOSEROWS","CHOOSECOLS"]{for (input,lines) in &cases{edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("{name}({{1,2,3;4,5,6;7,8,9}},{input})"))});for (out,line) in lines.iter().enumerate(){for cross in 0..3{let (r,c,n)=if name=="CHOOSEROWS"{(row+out as u32,cross,((*line-1)*3+cross+1) as f64)}else{(row+cross,out as u32,(cross*3+*line) as f64)};checks.push((r,c,CellValue::Number(n)));}}row+=5;}
     for (index,e) in [("0",ibis_doc_model::CellError::Value),("4",ibis_doc_model::CellError::Value),("-4",ibis_doc_model::CellError::Value),("NA()",ibis_doc_model::CellError::NA),("{0,#N/A}",ibis_doc_model::CellError::NA),("{#N/A,0}",ibis_doc_model::CellError::NA)]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(format!("{name}({{1,2,3;4,5,6;7,8,9}},{index})"))});checks.push((row,0,CellValue::Error(e)));row+=1;}}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"選択引数".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"choose-lines-options.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for (r,c,v) in checks{assert_eq!(value(&p,"選択引数",r,c),v);}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"choose-lines-options-redo.xlsx"),bytes);
@@ -1080,7 +1084,7 @@ fn choose_lines_options_save_and_undo_redo() {
 
 #[test]
 fn multi_column_sort_options_save_and_undo_redo() {
-    for header in [false,true]{for ascending in [false,true]{for second in [false,true]{let (_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let data=[("Group",CellValue::Text("Score".into()),"ID"),("b",CellValue::Number(2.),"r1"),("a",CellValue::Number(2.),"r2"),("b",CellValue::Number(1.),"r3"),("a",CellValue::Number(1.),"r4")];for (row,(a,b,id)) in data.into_iter().enumerate(){for (column,v) in [CellValue::Text(a.into()),b,CellValue::Text(id.into())].into_iter().enumerate(){edits.push(CellEdit {row:row as u32,column:column as u32,input:CellInput::Value(v)});}}d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"多段並替".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let before=opened.source.save(d.presentation(),SaveOptions::default()).unwrap();
+    for header in [false,true]{for ascending in [false,true]{for second in [false,true]{let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let data=[("Group",CellValue::Text("Score".into()),"ID"),("b",CellValue::Number(2.),"r1"),("a",CellValue::Number(2.),"r2"),("b",CellValue::Number(1.),"r3"),("a",CellValue::Number(1.),"r4")];for (row,(a,b,id)) in data.into_iter().enumerate(){for (column,v) in [CellValue::Text(a.into()),b,CellValue::Text(id.into())].into_iter().enumerate(){edits.push(CellEdit {row:row as u32,column:column as u32,input:CellInput::Value(v)});}}d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"多段並替".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let before=opened.source.save(d.presentation(),SaveOptions::default()).unwrap();
         let mut expected=match (ascending,second){(true,true)=>vec!["r4","r2","r3","r1"],(true,false)=>vec!["r2","r4","r1","r3"],(false,true)=>vec!["r3","r1","r4","r2"],(false,false)=>vec!["r1","r3","r2","r4"]};if header || !ascending{expected.insert(0,"ID");}else{expected.push("ID");}
         d.execute(vec![Command::Sheet(SheetCommand::Sort {slide:s,range:CellRange {first_row:0,last_row:4,first_column:0,last_column:2},keys:vec![(0,ascending),(1,second)],header})]).unwrap();let name=format!("sort-manage-{header}-{ascending}-{second}.xlsx");let bytes=save(&opened,d.presentation(),&name);assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for (row,id) in expected.iter().enumerate(){assert_eq!(value(&p,"多段並替",row as u32,2),CellValue::Text((*id).into()));}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),before);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
     }}}
@@ -1088,19 +1092,19 @@ fn multi_column_sort_options_save_and_undo_redo() {
 
 #[test]
 fn sort_filtered_rows_retains_applied_state_after_save() {
-    let (_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"並替フィルター".into(),slide:s,shape})]).unwrap();set(&mut d,s,vec![(0,0,CellInput::Value(CellValue::Text("数".into()))),(1,0,CellInput::Value(CellValue::Number(2.))),(2,0,CellInput::Value(CellValue::Number(4.))),(3,0,CellInput::Value(CellValue::Number(6.))),(0,2,CellInput::Formula("SUBTOTAL(9,A2:A4)".into()))]);let range=CellRange {first_row:0,last_row:3,first_column:0,last_column:0};d.execute(vec![Command::Sheet(SheetCommand::SetAutoFilter {slide:s,filter:Some(ibis_doc_model::AutoFilter {range,columns:vec![(0,ibis_doc_model::ColumnFilter::Values(vec!["4".into(),"6".into()]))]})})]).unwrap();let unsorted=opened.source.save(d.presentation(),SaveOptions::default()).unwrap();d.execute(vec![Command::Sheet(SheetCommand::Sort {slide:s,range,keys:vec![(0,false)],header:true})]).unwrap();let bytes=save(&opened,d.presentation(),"sort-filter-state.xlsx");assert_eq!(value(d.presentation(),"並替フィルター",1,0),CellValue::Number(2.0));assert_eq!(value(d.presentation(),"並替フィルター",2,0),CellValue::Number(6.0));assert_eq!(value(d.presentation(),"並替フィルター",3,0),CellValue::Number(4.0));assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),unsorted);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"sort-filter-state-redo.xlsx"),bytes);let p=ibis_pptx::read(&bytes).unwrap();let before=sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();let after=sheet_of_slide(p.slide(slide(&p,"並替フィルター")).unwrap()).unwrap();assert_eq!(before.filtered_rows,after.filtered_rows,"applied filtering must not change merely by saving");
+    let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"並替フィルター".into(),slide:s,shape})]).unwrap();set(&mut d,s,vec![(0,0,CellInput::Value(CellValue::Text("数".into()))),(1,0,CellInput::Value(CellValue::Number(2.))),(2,0,CellInput::Value(CellValue::Number(4.))),(3,0,CellInput::Value(CellValue::Number(6.))),(0,2,CellInput::Formula("SUBTOTAL(9,A2:A4)".into()))]);let range=CellRange {first_row:0,last_row:3,first_column:0,last_column:0};d.execute(vec![Command::Sheet(SheetCommand::SetAutoFilter {slide:s,filter:Some(ibis_doc_model::AutoFilter {range,columns:vec![(0,ibis_doc_model::ColumnFilter::Values(vec!["4".into(),"6".into()]))]})})]).unwrap();let unsorted=opened.source.save(d.presentation(),SaveOptions::default()).unwrap();d.execute(vec![Command::Sheet(SheetCommand::Sort {slide:s,range,keys:vec![(0,false)],header:true})]).unwrap();let bytes=save(&opened,d.presentation(),"sort-filter-state.xlsx");assert_eq!(value(d.presentation(),"並替フィルター",1,0),CellValue::Number(2.0));assert_eq!(value(d.presentation(),"並替フィルター",2,0),CellValue::Number(6.0));assert_eq!(value(d.presentation(),"並替フィルター",3,0),CellValue::Number(4.0));assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),unsorted);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"sort-filter-state-redo.xlsx"),bytes);let p=ibis_pptx::read(&bytes).unwrap();let before=sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();let after=sheet_of_slide(p.slide(slide(&p,"並替フィルター")).unwrap()).unwrap();assert_eq!(before.filtered_rows,after.filtered_rows,"applied filtering must not change merely by saving");
     let mut reopened=Document::new(p);let rs=slide(reopened.presentation(),"並替フィルター");set(&mut d,s,vec![(3,0,CellInput::Value(CellValue::Number(3.)))]);set(&mut reopened,rs,vec![(3,0,CellInput::Value(CellValue::Number(3.)))]);assert_eq!(value(d.presentation(),"並替フィルター",0,2),value(reopened.presentation(),"並替フィルター",0,2),"the same edit must calculate equally before/after save");
 }
 
 #[test]
 fn spill_structure_roundtrip_from_saved_source() {
-    let (_,stock)=open("xlsx-sales.xlsx");let mut initial=Document::new(stock.presentation.clone());let (id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"配列構造".into(),slide:id,shape})]).unwrap();set(&mut initial,id,vec![(1,1,CellInput::Formula("SEQUENCE(3,3)".into())),(5,5,CellInput::Formula("SUM($B$2#)".into()))]);initial.execute(vec![Command::Sheet(SheetCommand::SetFormat {slide:id,ranges:vec![CellRange {first_row:2,last_row:2,first_column:2,last_column:2}],change:StyleChange::Bold(true)})]).unwrap();let original=save(&stock,initial.presentation(),"spill-structure-original.xlsx");
+    let Some((_,stock))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(stock.presentation.clone());let (id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"配列構造".into(),slide:id,shape})]).unwrap();set(&mut initial,id,vec![(1,1,CellInput::Formula("SEQUENCE(3,3)".into())),(5,5,CellInput::Formula("SUM($B$2#)".into()))]);initial.execute(vec![Command::Sheet(SheetCommand::SetFormat {slide:id,ranges:vec![CellRange {first_row:2,last_row:2,first_column:2,last_column:2}],change:StyleChange::Bold(true)})]).unwrap();let original=save(&stock,initial.presentation(),"spill-structure-original.xlsx");
     for axis in [ibis_doc_model::sheet_command::Axis::Rows,ibis_doc_model::sheet_command::Axis::Columns]{for (insert,at) in [(true,0),(true,2),(false,1)]{let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let slide=slide(d.presentation(),"配列構造");let command=if insert{SheetCommand::Insert {slide,axis,at,count:1}}else{SheetCommand::Delete {slide,axis,at,count:1}};d.execute(vec![Command::Sheet(command)]).unwrap();let name=format!("spill-structure-{axis:?}-{insert}-{at}.xlsx");let bytes=save(&opened,d.presentation(),&name);assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();let model=sheet_of_slide(d.presentation().slide(slide).unwrap()).unwrap();let read=sheet_of_slide(p.slide(self::slide(&p,"配列構造")).unwrap()).unwrap();assert_eq!(read.spills,model.spills,"{name}");if !insert{let (r,c)=if axis==ibis_doc_model::sheet_command::Axis::Rows{(1,2)}else{(2,1)};let styled=read.cell(r,c).unwrap();assert_eq!(styled.value,CellValue::Empty);assert!(read.styles[styled.style as usize].bold);for row in 1..4{for col in 1..4{assert!(read.cell(row,col).is_none_or(|c|c.value.is_empty()));}}}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);}}
 }
 
 #[test]
 fn surviving_spill_structure_roundtrip() {
-    let (_,stock)=open("xlsx-sales.xlsx");let mut initial=Document::new(stock.presentation.clone());let (id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"配列構造".into(),slide:id,shape})]).unwrap();set(&mut initial,id,vec![(1,1,CellInput::Formula("SEQUENCE(3,3)".into())),(5,5,CellInput::Formula("SUM($B$2#)".into()))]);initial.execute(vec![Command::Sheet(SheetCommand::SetFormat {slide:id,ranges:vec![CellRange {first_row:2,last_row:2,first_column:2,last_column:2}],change:StyleChange::Bold(true)})]).unwrap();let original=save(&stock,initial.presentation(),"spill-partial-original.xlsx");
+    let Some((_,stock))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(stock.presentation.clone());let (id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"配列構造".into(),slide:id,shape})]).unwrap();set(&mut initial,id,vec![(1,1,CellInput::Formula("SEQUENCE(3,3)".into())),(5,5,CellInput::Formula("SUM($B$2#)".into()))]);initial.execute(vec![Command::Sheet(SheetCommand::SetFormat {slide:id,ranges:vec![CellRange {first_row:2,last_row:2,first_column:2,last_column:2}],change:StyleChange::Bold(true)})]).unwrap();let original=save(&stock,initial.presentation(),"spill-partial-original.xlsx");
     for axis in [ibis_doc_model::sheet_command::Axis::Rows,ibis_doc_model::sheet_command::Axis::Columns] {
         for (insert,count) in [(false,1),(false,2),(true,2)] {
             let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let id=slide(d.presentation(),"配列構造");
@@ -1114,15 +1118,17 @@ fn surviving_spill_structure_roundtrip() {
 
 #[test]
 fn match_options_roundtrip() {
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut commands=vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"検索選択肢".into(),slide:id,shape})];
-    let cases:Vec<_>=include_str!("../../../test/editing/xlsx-match-options.tsv").lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();commands.push(Command::Sheet(SheetCommand::SetCells {slide:id,edits:cases.iter().enumerate().map(|(row,(formula,_))|CellEdit {row:row as u32,column:0,input:CellInput::Formula((*formula).into())}).collect()}));d.execute(commands).unwrap();
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let (id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut commands=vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"検索選択肢".into(),slide:id,shape})];
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-match-options.tsv") else { return };
+    let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();commands.push(Command::Sheet(SheetCommand::SetCells {slide:id,edits:cases.iter().enumerate().map(|(row,(formula,_))|CellEdit {row:row as u32,column:0,input:CellInput::Formula((*formula).into())}).collect()}));d.execute(commands).unwrap();
     for (row,(_,expected))in cases.iter().enumerate(){let expected=expected.parse::<f64>().map(CellValue::Number).unwrap_or_else(|_|CellValue::Error(if *expected=="#N/A"{ibis_doc_model::CellError::NA}else{ibis_doc_model::CellError::Value}));assert_eq!(value(d.presentation(),"検索選択肢",row as u32,0),expected);}
     let bytes=save(&opened,d.presentation(),"match-options.xlsx");assert_reads_back(&bytes,d.presentation());assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
 }
 
 #[test]
 fn unique_options_dependency_roundtrip() {
-    for (case,line) in include_str!("../../../test/editing/xlsx-unique-options.tsv").lines().skip(1).enumerate(){let fields:Vec<_>=line.split('\t').collect();let (_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"一意配列".into(),slide:id,shape})]).unwrap();let mut edits=Vec::new();for(row,values)in [[1.,10.,1.],[2.,20.,2.],[1.,10.,1.]].into_iter().enumerate(){for(column,n)in values.into_iter().enumerate(){edits.push((row as u32,column as u32,CellInput::Value(CellValue::Number(n))));}}edits.push((0,4,CellInput::Formula(fields[0].into())));set(&mut d,id,edits);
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-unique-options.tsv") else { return };
+    for (case,line) in tsv.lines().skip(1).enumerate(){let fields:Vec<_>=line.split('\t').collect();let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"一意配列".into(),slide:id,shape})]).unwrap();let mut edits=Vec::new();for(row,values)in [[1.,10.,1.],[2.,20.,2.],[1.,10.,1.]].into_iter().enumerate(){for(column,n)in values.into_iter().enumerate(){edits.push((row as u32,column as u32,CellInput::Value(CellValue::Number(n))));}}edits.push((0,4,CellInput::Formula(fields[0].into())));set(&mut d,id,edits);
         let check=|p:&Presentation,text:&str|{let rows:Vec<Vec<f64>>=text.split(';').map(|r|r.split(',').map(|v|v.parse().unwrap()).collect()).collect();let sh=sheet_of_slide(p.slide(slide(p,"一意配列")).unwrap()).unwrap();assert_eq!(sh.spills.get(&(0,4)),Some(&CellRange {first_row:0,last_row:rows.len()as u32-1,first_column:4,last_column:4+rows[0].len()as u32-1}));for r in 0..3{for c in 0..3{assert_eq!(value(p,"一意配列",r,c+4),rows.get(r as usize).and_then(|x|x.get(c as usize)).map_or(CellValue::Empty,|n|CellValue::Number(*n)));}}};
         check(d.presentation(),fields[1]);let before=save(&opened,d.presentation(),&format!("unique-options-{case}-before.xlsx"));assert_reads_back(&before,d.presentation());check(&ibis_pptx::read(&before).unwrap(),fields[1]);set(&mut d,id,vec![(2,2,CellInput::Value(CellValue::Number(3.0)))]);check(d.presentation(),fields[2]);let after=save(&opened,d.presentation(),&format!("unique-options-{case}-after.xlsx"));assert_reads_back(&after,d.presentation());check(&ibis_pptx::read(&after).unwrap(),fields[2]);assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),before);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),after);
     }
@@ -1130,34 +1136,37 @@ fn unique_options_dependency_roundtrip() {
 
 #[test]
 fn makearray_dimension_dependency_roundtrip() {
-    for columns in [false,true]{let(_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"配列寸法".into(),slide:id,shape})]).unwrap();let formula=if columns{"MAKEARRAY(3,A1,LAMBDA(r,c,r*10+c))"}else{"MAKEARRAY(A1,3,LAMBDA(r,c,r*10+c))"};set(&mut d,id,vec![(0,0,CellInput::Value(CellValue::Number(2.0))),(2,2,CellInput::Formula(formula.into()))]);let before=save(&opened,d.presentation(),&format!("makearray-dimension-{columns}-before.xlsx"));assert_reads_back(&before,d.presentation());set(&mut d,id,vec![(0,0,CellInput::Value(CellValue::Number(2.9)))]);assert_eq!(value(d.presentation(),"配列寸法",2,2),CellValue::Error(ibis_doc_model::CellError::Value));let after=save(&opened,d.presentation(),&format!("makearray-dimension-{columns}-after.xlsx"));assert_reads_back(&after,d.presentation());let p=ibis_pptx::read(&after).unwrap();for r in 2..5{for c in 2..5{if(r,c)!=(2,2){assert!(value(&p,"配列寸法",r,c).is_empty());}}}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),before);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),after);}
+    for columns in [false,true]{let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"配列寸法".into(),slide:id,shape})]).unwrap();let formula=if columns{"MAKEARRAY(3,A1,LAMBDA(r,c,r*10+c))"}else{"MAKEARRAY(A1,3,LAMBDA(r,c,r*10+c))"};set(&mut d,id,vec![(0,0,CellInput::Value(CellValue::Number(2.0))),(2,2,CellInput::Formula(formula.into()))]);let before=save(&opened,d.presentation(),&format!("makearray-dimension-{columns}-before.xlsx"));assert_reads_back(&before,d.presentation());set(&mut d,id,vec![(0,0,CellInput::Value(CellValue::Number(2.9)))]);assert_eq!(value(d.presentation(),"配列寸法",2,2),CellValue::Error(ibis_doc_model::CellError::Value));let after=save(&opened,d.presentation(),&format!("makearray-dimension-{columns}-after.xlsx"));assert_reads_back(&after,d.presentation());let p=ibis_pptx::read(&after).unwrap();for r in 2..5{for c in 2..5{if(r,c)!=(2,2){assert!(value(&p,"配列寸法",r,c).is_empty());}}}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),before);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),after);}
 }
 
 #[test]
 fn file_lambda_bindings_preserve_source_and_recalculate() {
-    let(_,stock)=open("xlsx-sales.xlsx");let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"束縛保持".into(),slide:id,shape})]).unwrap();set(&mut initial,id,vec![(0,0,CellInput::Value(CellValue::Number(1.0))),(1,0,CellInput::Value(CellValue::Number(2.0))),(0,1,CellInput::Value(CellValue::Number(3.0))),(1,1,CellInput::Value(CellValue::Number(4.0))),(0,2,CellInput::Formula("MAP(A1:A2,B1:B2,LAMBDA(first,second,first+second))".into()))]);
+    let Some((_,stock))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"束縛保持".into(),slide:id,shape})]).unwrap();set(&mut initial,id,vec![(0,0,CellInput::Value(CellValue::Number(1.0))),(1,0,CellInput::Value(CellValue::Number(2.0))),(0,1,CellInput::Value(CellValue::Number(3.0))),(1,1,CellInput::Value(CellValue::Number(4.0))),(0,2,CellInput::Formula("MAP(A1:A2,B1:B2,LAMBDA(first,second,first+second))".into()))]);
     let mut package=ibis_ooxml::Package::open(stock.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();let part=package.names().filter(|n|n.starts_with("xl/worksheets/sheet")&&n.ends_with(".xml")).find(|n|String::from_utf8(package.read(n).unwrap()).unwrap().contains("_xlpm.first")).unwrap().to_string();let xml=package.xml_mut(&part).unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:ibis","urn:ibis:lambda-test");let data=xml.child(root,"sheetData").unwrap();let c=xml.children_named(data,"row").flat_map(|r|xml.children_named(r,"c")).find(|&c|xml.attr(c,"r")==Some("C1")).unwrap();let f=xml.child(c,"f").unwrap();xml.set_text(f,"_xlfn.MAP(A1:A2,B1:B2,_xlfn.LAMBDA(_xlpm.x0,_xlpm.x1,_xlpm.x0+_xlpm.x1))");xml.set_attr(f,"ibis:sentinel","binding");let opaque="xl/ibis-lambda-test.bin";let payload=b"IBIS own synthetic lambda probe".to_vec();package.set_bytes(opaque,payload.clone());package.set_override(opaque,"application/octet-stream").unwrap();let original=package.save(Default::default()).unwrap();std::fs::write(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/xlsx-edit/lambda-binding-original.xlsx"),&original).unwrap();
     let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let id=slide(d.presentation(),"束縛保持");assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert_eq!(cell(d.presentation(),"束縛保持",0,2).formula.as_deref(),Some("MAP(A1:A2,B1:B2,LAMBDA(x0,_xlpm.x1,x0+_xlpm.x1))"));set(&mut d,id,vec![(0,0,CellInput::Value(CellValue::Number(10.0)))]);assert_eq!(value(d.presentation(),"束縛保持",0,2),CellValue::Number(13.0));assert_eq!(value(d.presentation(),"束縛保持",1,2),CellValue::Number(6.0));let bytes=save(&opened,d.presentation(),"lambda-binding-edited.xlsx");assert_reads_back(&bytes,d.presentation());let package=ibis_ooxml::Package::open(bytes.clone()).unwrap();assert_eq!(package.read(opaque).unwrap(),payload);let xml=String::from_utf8(package.read(&part).unwrap()).unwrap();assert!(xml.contains("ibis:sentinel=\"binding\""));assert!(xml.contains("_xlpm.x0,_xlpm.x1,_xlpm.x0+_xlpm.x1"));assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
 }
 
 #[test]
 fn map_shape_options_roundtrip() {
-    let(original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let cases:Vec<_>=include_str!("../../../test/editing/xlsx-map-shapes.tsv").lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"対応座標".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:std::iter::once(CellEdit {row:9,column:9,input:CellInput::Value(CellValue::Number(5.0))}).chain(cases.iter().enumerate().map(|(i,(formula,_))|CellEdit {row:i as u32*3,column:0,input:CellInput::Formula((*formula).into())})).collect()})]).unwrap();let check=|p:&Presentation|{for(i,(formula,expected))in cases.iter().enumerate(){assert_eq!(cell(p,"対応座標",i as u32*3,0).formula.as_deref(),Some(*formula));for(row,values)in expected.split(';').enumerate(){for(col,v)in values.split(',').enumerate(){let expected=v.parse::<f64>().map(CellValue::Number).unwrap_or_else(|_|CellValue::Error(*ibis_doc_model::CellError::ALL.iter().find(|e|e.as_str()==v).unwrap()));assert_eq!(value(p,"対応座標",i as u32*3+row as u32,col as u32),expected);}}}};check(d.presentation());let bytes=save(&opened,d.presentation(),"map-shape-options.xlsx");assert_reads_back(&bytes,d.presentation());check(&ibis_pptx::read(&bytes).unwrap());assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-map-shapes.tsv") else { return };
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"対応座標".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:std::iter::once(CellEdit {row:9,column:9,input:CellInput::Value(CellValue::Number(5.0))}).chain(cases.iter().enumerate().map(|(i,(formula,_))|CellEdit {row:i as u32*3,column:0,input:CellInput::Formula((*formula).into())})).collect()})]).unwrap();let check=|p:&Presentation|{for(i,(formula,expected))in cases.iter().enumerate(){assert_eq!(cell(p,"対応座標",i as u32*3,0).formula.as_deref(),Some(*formula));for(row,values)in expected.split(';').enumerate(){for(col,v)in values.split(',').enumerate(){let expected=v.parse::<f64>().map(CellValue::Number).unwrap_or_else(|_|CellValue::Error(*ibis_doc_model::CellError::ALL.iter().find(|e|e.as_str()==v).unwrap()));assert_eq!(value(p,"対応座標",i as u32*3+row as u32,col as u32),expected);}}}};check(d.presentation());let bytes=save(&opened,d.presentation(),"map-shape-options.xlsx");assert_reads_back(&bytes,d.presentation());check(&ibis_pptx::read(&bytes).unwrap());assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
 }
 
 #[test]
 fn lambda_arity_options_roundtrip() {
-    let(original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let cases:Vec<_>=include_str!("../../../test/editing/xlsx-lambda-arity.tsv").lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"引数数".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:cases.iter().enumerate().map(|(row,(formula,_))|CellEdit {row:row as u32,column:0,input:CellInput::Formula((*formula).into())}).collect()})]).unwrap();for(row,(_,v))in cases.iter().enumerate(){let expected=v.parse::<f64>().map(CellValue::Number).unwrap_or_else(|_|CellValue::Error(*ibis_doc_model::CellError::ALL.iter().find(|e|e.as_str()==*v).unwrap()));assert_eq!(value(d.presentation(),"引数数",row as u32,0),expected);}let bytes=save(&opened,d.presentation(),"lambda-arity-options.xlsx");assert_reads_back(&bytes,d.presentation());assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-lambda-arity.tsv") else { return };
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"引数数".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:cases.iter().enumerate().map(|(row,(formula,_))|CellEdit {row:row as u32,column:0,input:CellInput::Formula((*formula).into())}).collect()})]).unwrap();for(row,(_,v))in cases.iter().enumerate(){let expected=v.parse::<f64>().map(CellValue::Number).unwrap_or_else(|_|CellValue::Error(*ibis_doc_model::CellError::ALL.iter().find(|e|e.as_str()==*v).unwrap()));assert_eq!(value(d.presentation(),"引数数",row as u32,0),expected);}let bytes=save(&opened,d.presentation(),"lambda-arity-options.xlsx");assert_reads_back(&bytes,d.presentation());assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
 }
 
 #[test]
 fn isomitted_binding_options_roundtrip() {
-    let(original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let cases:Vec<_>=include_str!("../../../test/editing/xlsx-isomitted.tsv").lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"省略引数".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:std::iter::once(CellEdit {row:1,column:0,input:CellInput::Value(CellValue::Number(7.0))}).chain(cases.iter().enumerate().map(|(i,(formula,_))|CellEdit {row:i as u32*3,column:3,input:CellInput::Formula((*formula).into())})).collect()})]).unwrap();let check=|p:&Presentation|{for(i,(formula,expected))in cases.iter().enumerate(){assert_eq!(cell(p,"省略引数",i as u32*3,3).formula.as_deref(),Some(*formula));for(row,values)in expected.split(';').enumerate(){for(col,v)in values.split(',').enumerate(){assert_eq!(value(p,"省略引数",i as u32*3+row as u32,col as u32+3),CellValue::Number(v.parse().unwrap()),"{formula}");}}}};check(d.presentation());let bytes=save(&opened,d.presentation(),"isomitted-binding-options.xlsx");assert_reads_back(&bytes,d.presentation());check(&ibis_pptx::read(&bytes).unwrap());assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-isomitted.tsv") else { return };
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"省略引数".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:std::iter::once(CellEdit {row:1,column:0,input:CellInput::Value(CellValue::Number(7.0))}).chain(cases.iter().enumerate().map(|(i,(formula,_))|CellEdit {row:i as u32*3,column:3,input:CellInput::Formula((*formula).into())})).collect()})]).unwrap();let check=|p:&Presentation|{for(i,(formula,expected))in cases.iter().enumerate(){assert_eq!(cell(p,"省略引数",i as u32*3,3).formula.as_deref(),Some(*formula));for(row,values)in expected.split(';').enumerate(){for(col,v)in values.split(',').enumerate(){assert_eq!(value(p,"省略引数",i as u32*3+row as u32,col as u32+3),CellValue::Number(v.parse().unwrap()),"{formula}");}}}};check(d.presentation());let bytes=save(&opened,d.presentation(),"isomitted-binding-options.xlsx");assert_reads_back(&bytes,d.presentation());check(&ibis_pptx::read(&bytes).unwrap());assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
 }
 
 #[test]
 fn cross_sheet_spill_structure_roundtrip() {
-    let (_,stock)=open("xlsx-sales.xlsx");
+    let Some((_,stock))=open("xlsx-sales.xlsx") else { return };
     let mut initial=Document::new(stock.presentation.clone());
     let source=initial.ids().new_slide_id(); let source_shape=initial.ids().new_shape_id();
     let observer=initial.ids().new_slide_id(); let observer_shape=initial.ids().new_shape_id();
@@ -1182,15 +1191,17 @@ fn cross_sheet_spill_structure_roundtrip() {
 
 #[test]
 fn dynamic_reference_options_roundtrip() {
-    let (_,stock)=open("xlsx-sales.xlsx");let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"参照配列".into(),slide:id,shape})]).unwrap();
-    let cases:Vec<_>=include_str!("../../../test/editing/xlsx-dynamic-reference.tsv").lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();let mut edits=vec![(0,0,CellInput::Value(CellValue::Number(3.0))),(1,1,CellInput::Formula("SEQUENCE(A1)".into()))];edits.extend(cases.iter().enumerate().map(|(i,f)|(2,3+i as u32*3,CellInput::Formula(f[0].into()))));set(&mut initial,id,edits);
+    let Some((_,stock))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"参照配列".into(),slide:id,shape})]).unwrap();
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-dynamic-reference.tsv") else { return };
+    let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();let mut edits=vec![(0,0,CellInput::Value(CellValue::Number(3.0))),(1,1,CellInput::Formula("SEQUENCE(A1)".into()))];edits.extend(cases.iter().enumerate().map(|(i,f)|(2,3+i as u32*3,CellInput::Formula(f[0].into()))));set(&mut initial,id,edits);
     let check=|p:&Presentation,col:usize|{for(i,f)in cases.iter().enumerate(){assert_eq!(cell(p,"参照配列",2,3+i as u32*3).formula.as_deref(),Some(f[0]));let expected:Vec<f64>=f[col].split(';').map(|v|v.parse().unwrap()).collect();for r in 0..3{let sh=sheet_of_slide(p.slide(slide(p,"参照配列")).unwrap()).unwrap();assert_eq!(sh.cell(r+2,3+i as u32*3).map(|x|x.value.clone()).unwrap_or_default(),expected.get(r as usize).map_or(CellValue::Empty,|n|CellValue::Number(*n)));}}};check(initial.presentation(),1);
     let original=save(&stock,initial.presentation(),"dynamic-reference-before.xlsx");let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let id=slide(d.presentation(),"参照配列");set(&mut d,id,vec![(0,0,CellInput::Value(CellValue::Number(2.0)))]);check(d.presentation(),2);let bytes=save(&opened,d.presentation(),"dynamic-reference-after.xlsx");assert_reads_back(&bytes,d.presentation());check(&ibis_pptx::read(&bytes).unwrap(),2);assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
 }
 
 #[test]
 fn text_boundary_options_roundtrip() {
-    let(original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let cases:Vec<_>=include_str!("../../../test/editing/xlsx-text-boundary.tsv").lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"文字終端".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:cases.iter().enumerate().map(|(row,(formula,_))|CellEdit {row:row as u32,column:0,input:CellInput::Formula((*formula).into())}).collect()})]).unwrap();for(row,(_,v))in cases.iter().enumerate(){let expected=v.parse::<f64>().map(CellValue::Number).unwrap_or_else(|_|CellValue::Error(*ibis_doc_model::CellError::ALL.iter().find(|e|e.as_str()==*v).unwrap()));assert_eq!(value(d.presentation(),"文字終端",row as u32,0),expected);}let bytes=save(&opened,d.presentation(),"text-boundary-options.xlsx");assert_reads_back(&bytes,d.presentation());assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-text-boundary.tsv") else { return };
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split_once('\t').unwrap()).collect();d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"文字終端".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:cases.iter().enumerate().map(|(row,(formula,_))|CellEdit {row:row as u32,column:0,input:CellInput::Formula((*formula).into())}).collect()})]).unwrap();for(row,(_,v))in cases.iter().enumerate(){let expected=v.parse::<f64>().map(CellValue::Number).unwrap_or_else(|_|CellValue::Error(*ibis_doc_model::CellError::ALL.iter().find(|e|e.as_str()==*v).unwrap()));assert_eq!(value(d.presentation(),"文字終端",row as u32,0),expected);}let bytes=save(&opened,d.presentation(),"text-boundary-options.xlsx");assert_reads_back(&bytes,d.presentation());assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),bytes);
 }
 
 #[test]
@@ -1205,7 +1216,7 @@ fn compatibility_version_len_recalculation_and_retention() {
         ("future", Some(7), VERSION_NS, true),
         ("foreign", Some(2), "urn:ibis:foreign-version-probe", false),
     ] {
-        let (_, stock) = open("xlsx-sales.xlsx");
+        let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
         let mut initial = Document::new(stock.presentation.clone());
         let id = slide(initial.presentation(), "月次売上");
         set(&mut initial, id, vec![(9,0,CellInput::Value(CellValue::Text("abc".into()))),(9,1,CellInput::Formula("LEN(A10)".into()))]);
@@ -1250,9 +1261,10 @@ fn compatibility_version_len_recalculation_and_retention() {
 #[test]
 fn compatibility_version_mid_replace_roundtrip() {
     for (path,version) in [("xlsx-compatibility-v1.xlsx",1),("xlsx-sales.xlsx",2)] {
-        let (original,opened)=open(path);let mut d=Document::new(opened.presentation.clone());
+        let Some((original,opened))=open(path) else { return };let mut d=Document::new(opened.presentation.clone());
         let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
-        let cases:Vec<_>=include_str!("../../../test/editing/xlsx-compatibility-slice.tsv").lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();
+        let Some(tsv) = fixtures::read_text("test/editing/xlsx-compatibility-slice.tsv") else { return };
+        let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();
         d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"版切取".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:cases.iter().enumerate().map(|(row,f)|CellEdit {row:row as u32,column:0,input:CellInput::Formula(f[0].into())}).collect()})]).unwrap();
         for(row,f)in cases.iter().enumerate() {
             let text=f[version as usize];let expected=ibis_doc_model::CellError::ALL.iter().find(|e|e.as_str()==text).map_or_else(||CellValue::Text(text.into()),|e|CellValue::Error(*e));
@@ -1270,9 +1282,10 @@ fn compatibility_version_mid_replace_roundtrip() {
 #[test]
 fn compatibility_version_find_search_roundtrip() {
     for (path,version) in [("xlsx-compatibility-v1.xlsx",1),("xlsx-sales.xlsx",2)] {
-        let (original,opened)=open(path);let mut d=Document::new(opened.presentation.clone());
+        let Some((original,opened))=open(path) else { return };let mut d=Document::new(opened.presentation.clone());
         let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
-        let cases:Vec<_>=include_str!("../../../test/editing/xlsx-compatibility-search.tsv").lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();
+        let Some(tsv) = fixtures::read_text("test/editing/xlsx-compatibility-search.tsv") else { return };
+        let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();
         d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"版検索".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:cases.iter().enumerate().map(|(row,f)|CellEdit {row:row as u32,column:0,input:CellInput::Formula(f[0].into())}).collect()})]).unwrap();
         for(row,f)in cases.iter().enumerate() {
             let text=f[version as usize];let expected=text.parse::<f64>().map(CellValue::Number).unwrap_or_else(|_|CellValue::Error(*ibis_doc_model::CellError::ALL.iter().find(|e|e.as_str()==text).unwrap()));
@@ -1289,8 +1302,9 @@ fn compatibility_version_find_search_roundtrip() {
 
 #[test]
 fn compatibility_selection_save_and_undo_redo() {
-    let(_,stock)=open("xlsx-sales.xlsx");let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());
-    let cases:Vec<_>=include_str!("../../../test/editing/xlsx-compatibility-toggle.tsv").lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();
+    let Some((_,stock))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-compatibility-toggle.tsv") else { return };
+    let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();
     initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"版選択".into(),slide:id,shape}),Command::Sheet(SheetCommand::SetCells {slide:id,edits:cases.iter().enumerate().map(|(i,f)|CellEdit {row:i as u32*3,column:0,input:CellInput::Formula(f[0].into())}).collect()})]).unwrap();
     let original=save(&stock,initial.presentation(),"compatibility-toggle-before.xlsx");let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());
     d.execute(vec![Command::Sheet(SheetCommand::SetCompatibilityVersion {version:ibis_doc_model::CalculationCompatibilityVersion::V1})]).unwrap();
@@ -1302,11 +1316,12 @@ fn compatibility_selection_save_and_undo_redo() {
 
 #[test]
 fn single_cell_dynamic_reopens_and_grows_without_promoting_legacy() {
-    let (_, stock) = open("xlsx-sales.xlsx");
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
     let mut initial = Document::new(stock.presentation.clone());
     let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id());
     initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "再開配列".into(), slide: id, shape })]).unwrap();
-    let cases: Vec<_> = include_str!("../../../test/editing/xlsx-dynamic-reopen.tsv").lines().skip(1).map(|line| line.split('\t').collect::<Vec<_>>()).collect();
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-dynamic-reopen.tsv") else { return };
+    let cases: Vec<_> = tsv.lines().skip(1).map(|line| line.split('\t').collect::<Vec<_>>()).collect();
     let mut edits = vec![(0, 0, CellInput::Value(CellValue::Number(1.))), (1, 1, CellInput::Formula("SEQUENCE(A1)".into()))];
     edits.extend(cases.iter().enumerate().map(|(i, f)| (2, 3 + i as u32 * 3, CellInput::Formula(f[0].into()))));
     edits.push((2, 30, CellInput::Formula("B2:B4*2".into())));
@@ -1364,10 +1379,11 @@ fn single_cell_dynamic_reopens_and_grows_without_promoting_legacy() {
 
 #[test]
 fn week_return_types_save_and_recalculate_after_reopening() {
-    let (_, stock) = open("xlsx-sales.xlsx"); let mut initial = Document::new(stock.presentation.clone());
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return }; let mut initial = Document::new(stock.presentation.clone());
     let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id());
     initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "週番号引数".into(), slide: id, shape })]).unwrap();
-    let cases: Vec<_> = include_str!("../../../test/editing/xlsx-week-return-types.tsv").lines().skip(1).map(|line| line.split('\t').collect::<Vec<_>>()).collect();
+    let Some(tsv) = fixtures::read_text("test/editing/xlsx-week-return-types.tsv") else { return };
+    let cases: Vec<_> = tsv.lines().skip(1).map(|line| line.split('\t').collect::<Vec<_>>()).collect();
     let mut edits = vec![(0, 1, CellInput::Formula("DATE(2021,1,1)".into()))];
     edits.extend(cases.iter().enumerate().map(|(r, f)| (r as u32, 0, CellInput::Formula(f[0].into())))); set(&mut initial, id, edits);
     let check = |p: &Presentation, col: usize| { for (r, f) in cases.iter().enumerate() { let expected = f[col].parse::<f64>().map(CellValue::Number).unwrap_or(CellValue::Error(ibis_doc_model::CellError::Num)); assert_eq!(value(p, "週番号引数", r as u32, 0), expected, "{}", f[0]); assert_eq!(cell(p, "週番号引数", r as u32, 0).formula.as_deref(), Some(f[0])); } };
@@ -1383,13 +1399,14 @@ fn week_return_types_save_and_recalculate_after_reopening() {
 #[test]
 fn day_count_basis_and_method_save_in_both_date_bases() {
     for date1904 in [false, true] {
-        let (input, _) = open("xlsx-sales.xlsx"); let mut package = ibis_ooxml::Package::open(input).unwrap();
+        let Some((input, _)) = open("xlsx-sales.xlsx") else { return }; let mut package = ibis_ooxml::Package::open(input).unwrap();
         let xml = package.xml_mut("xl/workbook.xml").unwrap(); let root = xml.root_element().unwrap();
         let properties = xml.child(root, "workbookPr").unwrap(); xml.set_attr(properties, "date1904", if date1904 { "1" } else { "0" });
         let stock = ibis_pptx::open(package.save(Default::default()).unwrap()).unwrap();
         let mut initial = Document::new(stock.presentation.clone()); let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id());
         initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "日数基準".into(), slide: id, shape })]).unwrap();
-        let cases: Vec<_> = include_str!("../../../test/editing/xlsx-day-count-options.tsv").lines().skip(1).map(|line| line.split('\t').collect::<Vec<_>>()).collect();
+        let Some(tsv) = fixtures::read_text("test/editing/xlsx-day-count-options.tsv") else { return };
+        let cases: Vec<_> = tsv.lines().skip(1).map(|line| line.split('\t').collect::<Vec<_>>()).collect();
         let mut edits = vec![(0, 1, CellInput::Formula("DATE(2019,1,1)".into())), (0, 2, CellInput::Formula("DATE(2020,1,1)".into()))];
         edits.extend(cases.iter().enumerate().map(|(r, f)| (r as u32, 0, CellInput::Formula(f[0].into())))); set(&mut initial, id, edits);
         let check = |p: &Presentation, col: usize| { assert_eq!(p.workbook.as_deref().unwrap().date1904, date1904); for (r, f) in cases.iter().enumerate() { let expected = f[col].parse::<f64>().map(CellValue::Number).unwrap_or(CellValue::Error(ibis_doc_model::CellError::Num)); assert_eq!(value(p, "日数基準", r as u32, 0), expected, "{}", f[0]); assert_eq!(cell(p, "日数基準", r as u32, 0).formula.as_deref(), Some(f[0])); } };
@@ -1407,7 +1424,7 @@ fn day_count_basis_and_method_save_in_both_date_bases() {
 fn dynamic_growth_preserves_composite_metadata_and_unknown_formula_attributes() {
     for order in [[1,2], [2,1]] {
     for plain in [true, false] {
-    let (_, stock) = open("xlsx-sales.xlsx"); let mut initial = Document::new(stock.presentation.clone());
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return }; let mut initial = Document::new(stock.presentation.clone());
     let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id());
     initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "複合保持".into(), slide: id, shape })]).unwrap();
     set(&mut initial, id, vec![(0,0,CellInput::Value(CellValue::Number(1.))), (1,1,CellInput::Formula("SEQUENCE(A1)".into())), (2,3,CellInput::Formula("B2#*2".into()))]);
@@ -1501,7 +1518,7 @@ fn dynamic_growth_preserves_composite_metadata_and_unknown_formula_attributes() 
 #[test]
 fn dynamic_metadata_requires_standard_namespace_and_unambiguous_lists() {
     for variant in ["valid","prefixed","shadow-types","shadow-cells","foreign-root","foreign-types","foreign-cells","foreign-type","foreign-bk","foreign-rc","duplicate-types","missing-name"] {
-        let (_,stock)=open("xlsx-sales.xlsx"); let mut initial=Document::new(stock.presentation.clone()); let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());
+        let Some((_,stock))=open("xlsx-sales.xlsx") else { return }; let mut initial=Document::new(stock.presentation.clone()); let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());
         initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"metadata境界".into(),slide:id,shape})]).unwrap();
         set(&mut initial,id,vec![(0,0,CellInput::Value(CellValue::Number(1.))),(1,1,CellInput::Formula("SEQUENCE(A1)".into()))]);
         let mut package=ibis_ooxml::Package::open(stock.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();
@@ -1536,7 +1553,7 @@ fn dynamic_metadata_requires_standard_namespace_and_unambiguous_lists() {
 #[test]
 fn dynamic_mode_requires_referenced_xldapr_future_flag() {
     for (variant, dynamic) in [("valid",true),("true",true),("cm-leading-zero",true),("false",false),("zero",false),("missing-flag",false),("bad-flag",false),("cm-zero",false),("cm-outside",false),("v-outside",false),("other-type",false),("foreign-root",false),("foreign-properties",false),("wrong-uri",false)] {
-        let (_,stock)=open("xlsx-sales.xlsx");let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"dynamic識別".into(),slide:id,shape})]).unwrap();
+        let Some((_,stock))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"dynamic識別".into(),slide:id,shape})]).unwrap();
         set(&mut initial,id,vec![(0,0,CellInput::Value(CellValue::Number(1.))),(1,1,CellInput::Formula("SEQUENCE(A1)".into()))]);
         let mut package=ibis_ooxml::Package::open(stock.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();
         let xml=package.xml_mut("xl/metadata.xml").unwrap();let root=xml.root_element().unwrap();let prop=xml.descendants(root).into_iter().find(|&n|xml.local_name(n)=="dynamicArrayProperties").unwrap();
@@ -1561,7 +1578,7 @@ fn dynamic_mode_requires_referenced_xldapr_future_flag() {
 #[test]
 fn newly_typed_dynamic_formulas_do_not_reuse_non_dynamic_future_records() {
     for (flag, dynamic) in [(Some("1"),true),(Some("0"),false),(Some("false"),false),(None,false)] {
-        let label=flag.unwrap_or("absent");let (_,stock)=open("xlsx-sales.xlsx");let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"新dynamic保持".into(),slide:id,shape})]).unwrap();
+        let label=flag.unwrap_or("absent");let Some((_,stock))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(stock.presentation.clone());let(id,shape)=(initial.ids().new_slide_id(),initial.ids().new_shape_id());initial.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"新dynamic保持".into(),slide:id,shape})]).unwrap();
         set(&mut initial,id,vec![(0,0,CellInput::Value(CellValue::Number(1.))),(1,1,CellInput::Formula("SEQUENCE(A1)".into()))]);let mut package=ibis_ooxml::Package::open(stock.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();
         let xml=package.xml_mut("xl/metadata.xml").unwrap();let root=xml.root_element().unwrap();let prop=xml.descendants(root).into_iter().find(|&n|xml.local_name(n)=="dynamicArrayProperties").unwrap();if let Some(flag)=flag {xml.set_attr(prop,"fDynamic",flag);} else {xml.remove_attr(prop,"fDynamic");}
         if dynamic {let xml=package.xml_mut("xl/worksheets/sheet4.xml").unwrap();let root=xml.root_element().unwrap();let c=xml.descendants(root).into_iter().find(|&n|xml.local_name(n)=="c"&&xml.attr(n,"r")==Some("B2")).unwrap();xml.set_attr(c,"cm","01");let xml=package.xml_mut("xl/metadata.xml").unwrap();let root=xml.root_element().unwrap();let cells=xml.child(root,"cellMetadata").unwrap();let bk=xml.child(cells,"bk").unwrap();let rc=xml.child(bk,"rc").unwrap();xml.set_attr(rc,"t","01");xml.set_attr(rc,"v","00");}
@@ -1582,7 +1599,7 @@ fn newly_typed_dynamic_formulas_do_not_reuse_non_dynamic_future_records() {
 
 #[test]
 fn dynamic_metadata_attributes_are_unqualified_and_order_independent() {
-    let (_, stock) = open("xlsx-sales.xlsx");
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
     let mut initial = Document::new(stock.presentation.clone());
     let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id());
     initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "属性境界".into(), slide: id, shape })]).unwrap();
@@ -1642,7 +1659,7 @@ fn dynamic_metadata_attributes_are_unqualified_and_order_independent() {
 fn dynamic_metadata_boolean_uses_xml_schema_lexical_values() {
     for order in ["plain", "foreign-first", "proper-first"] {
     for (flag, dynamic) in [(Some("1"), true), (Some("true"), true), (Some("0"), false), (Some("false"), false), (Some("on"), false), (Some("off"), false), (Some("yes"), false), (None, false), (Some(" true "), true), (Some(" 0 "), false), (Some("\u{a0}true\u{a0}"), false)] {
-        let (_, stock) = open("xlsx-sales.xlsx"); let mut initial = Document::new(stock.presentation.clone());
+        let Some((_, stock)) = open("xlsx-sales.xlsx") else { return }; let mut initial = Document::new(stock.presentation.clone());
         let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id());
         initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "Boolean境界".into(), slide: id, shape })]).unwrap();
         set(&mut initial, id, vec![(0, 0, CellInput::Value(CellValue::Number(1.))), (1, 1, CellInput::Formula("SEQUENCE(A1)".into()))]);
@@ -1671,7 +1688,7 @@ fn dynamic_metadata_boolean_uses_xml_schema_lexical_values() {
 
 #[test]
 fn dynamic_formula_elements_keep_foreign_shadows_and_hidden_modes() {
-    let (_, stock) = open("xlsx-sales.xlsx"); let mut initial = Document::new(stock.presentation.clone());
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return }; let mut initial = Document::new(stock.presentation.clone());
     let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id());
     initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "要素境界".into(), slide: id, shape })]).unwrap();
     set(&mut initial, id, vec![(0, 0, CellInput::Value(CellValue::Number(1.))), (1, 1, CellInput::Formula("SEQUENCE(A1)".into()))]);
@@ -1712,7 +1729,7 @@ fn dynamic_formula_elements_keep_foreign_shadows_and_hidden_modes() {
 
 #[test]
 fn dynamic_metadata_indices_accept_xml_whitespace_without_losing_references() {
-    let (_, stock) = open("xlsx-sales.xlsx"); let mut initial = Document::new(stock.presentation.clone());
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return }; let mut initial = Document::new(stock.presentation.clone());
     let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id()); initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "数値境界".into(), slide: id, shape })]).unwrap();
     set(&mut initial, id, vec![(0, 0, CellInput::Value(CellValue::Number(1.))), (1, 1, CellInput::Formula("SEQUENCE(A1)".into()))]);
     let seed = stock.source.save(initial.presentation(), SaveOptions::default()).unwrap();
@@ -1753,7 +1770,7 @@ fn dynamic_metadata_indices_accept_xml_whitespace_without_losing_references() {
 
 #[test]
 fn adding_metadata_does_not_resolve_orphan_cell_indices_in_any_sheet_state() {
-    let (_, stock) = open("xlsx-sales.xlsx"); let mut initial = Document::new(stock.presentation.clone());
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return }; let mut initial = Document::new(stock.presentation.clone());
     let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id()); initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "cm孤立境界".into(), slide: id, shape })]).unwrap();
     set(&mut initial, id, vec![(0, 0, CellInput::Value(CellValue::Number(1.))), (1, 1, CellInput::Formula("SEQUENCE(A1)".into()))]);
     let seed = stock.source.save(initial.presentation(), SaveOptions::default()).unwrap();
@@ -1796,7 +1813,7 @@ fn adding_metadata_does_not_resolve_orphan_cell_indices_in_any_sheet_state() {
 
 #[test]
 fn literal_metadata_preserves_plain_control_and_refuses_opaque_or_colliding_blocks() {
-    let seed=std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-composite-metadata.xlsx")).unwrap();
+    let Some(seed)=fixtures::read("test/editing/xlsx-composite-metadata.xlsx") else { return };
     for variant in ["composite", "plain", "opaque-attribute", "opaque-child", "bad-rc", "orphan-cm"] {
         let mut package=ibis_ooxml::Package::open(seed.clone()).unwrap();
         let xml=package.xml_mut("xl/metadata.xml").unwrap(); let root=xml.root_element().unwrap(); let cells=xml.child(root,"cellMetadata").unwrap(); let blocks:Vec<_>=xml.children_named(cells,"bk").collect(); let block=blocks[1];
@@ -1828,7 +1845,7 @@ fn literal_metadata_preserves_plain_control_and_refuses_opaque_or_colliding_bloc
 
 #[test]
 fn reactivating_literal_formula_retains_its_unrelated_metadata() {
-    let seed=std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-composite-metadata.xlsx")).unwrap();
+    let Some(seed)=fixtures::read("test/editing/xlsx-composite-metadata.xlsx") else { return };
     let opened=ibis_pptx::open(seed).unwrap(); let mut d=Document::new(opened.presentation.clone()); let id=slide(d.presentation(),"複合保持");
     set(&mut d,id,vec![(1,1,CellInput::Value(CellValue::Number(42.)))]);
     let literal=opened.source.save(d.presentation(),SaveOptions::default()).unwrap();
@@ -1849,7 +1866,7 @@ fn reactivating_literal_formula_retains_its_unrelated_metadata() {
 
 #[test]
 fn reactivating_metadata_refuses_opaque_records_and_orphan_collisions() {
-    let seed=std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-composite-metadata.xlsx")).unwrap();
+    let Some(seed)=fixtures::read("test/editing/xlsx-composite-metadata.xlsx") else { return };
     let source=ibis_pptx::open(seed).unwrap();let mut d=Document::new(source.presentation.clone());let id=slide(d.presentation(),"複合保持");set(&mut d,id,vec![(1,1,CellInput::Value(CellValue::Number(42.)))]);
     let literal=source.source.save(d.presentation(),SaveOptions::default()).unwrap();
     for variant in ["opaque-child","bad-rc","existing-xldapr","orphan-cm"] {
@@ -1869,7 +1886,7 @@ fn reactivating_metadata_refuses_opaque_records_and_orphan_collisions() {
 #[test]
 fn aggregate_count_options_save_and_recalculate_after_reopening() {
     use ibis_calc::formula::Axis;
-    let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let(s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
+    let Some((original,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let(s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
     let mut edits=vec![];for(row,input)in[(0,CellInput::Value(CellValue::Number(5.))),(1,CellInput::Formula("NA()".into())),(2,CellInput::Value(CellValue::Text("text".into()))),(3,CellInput::Formula("\"\"".into())),(4,CellInput::Formula("SUBTOTAL(3,A1:A4)".into())),(5,CellInput::Value(CellValue::Bool(true))),(7,CellInput::Value(CellValue::Number(8.)))] {edits.push(CellEdit {row,column:0,input});}
     for f in 2..=3 {for o in 0..8 {edits.push(CellEdit {row:o,column:f-1,input:CellInput::Formula(format!("AGGREGATE({f},{o},A1:A8)"))});}}
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"集計count options".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();
@@ -1882,7 +1899,7 @@ fn aggregate_count_options_save_and_recalculate_after_reopening() {
 #[test]
 fn conditional_cell_is_operators_keep_mixed_references_through_row_insertion() {
     use ibis_doc_model::{ConditionalFormat,CfRule,CfKind,CfStyle,Rgb,sheet_command::Axis};
-    let(_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let(s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"セル値比較参照".into(),slide:s,shape})]).unwrap();
+    let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let(s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"セル値比較参照".into(),slide:s,shape})]).unwrap();
     for(i,op)in ["lessThan","lessThanOrEqual","equal","notEqual","greaterThanOrEqual","greaterThan","between","notBetween"].into_iter().enumerate(){let mut formulas=vec!["B2+$B2+B$2+$B$2".into()];if i>=6 {formulas.push("B3+$B3+B$3+$B$3".into());}let format=ConditionalFormat {source_index:None,ranges:vec![CellRange {first_row:1,last_row:2,first_column:0,last_column:0}],rules:vec![CfRule {kind:CfKind::CellIs {operator:op.into(),formulas},priority:1,stop:i%2==0,style:Some(CfStyle {fill:Some(Rgb(0xFFC7CE)),..Default::default()})}]};d.execute(vec![Command::Sheet(SheetCommand::AddConditional {slide:s,format})]).unwrap();}
     let original=save(&opened,d.presentation(),"conditional-cellis-before-insert.xlsx");let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let s=slide(d.presentation(),"セル値比較参照");let before=conditional(d.presentation(),s);
     d.execute(vec![Command::Sheet(SheetCommand::Insert {slide:s,axis:Axis::Rows,at:1,count:1})]).unwrap();let changed=conditional(d.presentation(),s);assert_eq!(changed.len(),8);
@@ -1894,7 +1911,7 @@ fn conditional_cell_is_operators_keep_mixed_references_through_row_insertion() {
 fn conditional_threshold_range_edit_retains_opaque_rule_and_unchanged_dxf() {
     use ibis_doc_model::{CfKind,ConditionalFormat,CfRule,CfStyle,Rgb};
     for kind in ["expression","cellIs"] {
-        let(_,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let(s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let format=ConditionalFormat {source_index:None,ranges:vec![CellRange {first_row:0,last_row:2,first_column:0,last_column:0}],rules:vec![CfRule {kind:if kind=="expression" {CfKind::Expression("A1>10".into())}else{CfKind::CellIs {operator:"greaterThan".into(),formulas:vec!["10".into()]}},priority:1,stop:false,style:Some(CfStyle {fill:Some(Rgb(0xFFC7CE)),..Default::default()})}]};
+        let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut d=Document::new(opened.presentation.clone());let(s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let format=ConditionalFormat {source_index:None,ranges:vec![CellRange {first_row:0,last_row:2,first_column:0,last_column:0}],rules:vec![CfRule {kind:if kind=="expression" {CfKind::Expression("A1>10".into())}else{CfKind::CellIs {operator:"greaterThan".into(),formulas:vec!["10".into()]}},priority:1,stop:false,style:Some(CfStyle {fill:Some(Rgb(0xFFC7CE)),..Default::default()})}]};
         d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"未知規則保持".into(),slide:s,shape}),Command::Sheet(SheetCommand::AddConditional {slide:s,format})]).unwrap();let mut pkg=ibis_ooxml::Package::open(opened.source.save(d.presentation(),SaveOptions::default()).unwrap()).unwrap();let xml=pkg.xml_mut("xl/worksheets/sheet4.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:probe","urn:ibis:cf-opaque");let cf=xml.child(root,"conditionalFormatting").unwrap();xml.set_attr(cf,"probe:scope","keep-scope");let r=xml.child(cf,"cfRule").unwrap();xml.set_attr(r,"probe:token","keep-rule");let id=xml.attr(r,"dxfId").unwrap().parse::<usize>().unwrap();let f=xml.child(r,"formula").unwrap();xml.set_attr(f,"probe:formula","keep-formula");let payload=xml.append_element(r,"probe:payload");xml.set_text(payload,"owned unknown payload");
         let xml=pkg.xml_mut("xl/styles.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:probe","urn:ibis:cf-opaque");let list=xml.child(root,"dxfs").unwrap();let dxf=xml.children_named(list,"dxf").nth(id).unwrap();xml.set_attr(dxf,"probe:token","keep-dxf");let font=xml.append_element(dxf,"font");let va=xml.append_element(font,"vertAlign");xml.set_attr(va,"val","superscript");let styles=pkg.read("xl/styles.xml").unwrap();
         let original=pkg.save(Default::default()).unwrap();let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let s=slide(d.presentation(),"未知規則保持");let mut format=conditional(d.presentation(),s)[0].clone();format.ranges[0].first_row=1;format.rules[0].stop=true;format.rules[0].kind=if kind=="expression" {CfKind::Expression("A2>20".into())}else{CfKind::CellIs {operator:"greaterThanOrEqual".into(),formulas:vec!["20".into()]}};
@@ -1908,7 +1925,7 @@ fn conditional_threshold_range_edit_retains_opaque_rule_and_unchanged_dxf() {
 fn conditional_origins_do_not_transfer_opaque_payload_to_new_rules() {
     let base=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/xlsx-edit/conditional-opaque-expression-source.xlsx");
     // Generate independently, so this probe does not require another test's ordering.
-    let(_,opened)=open("xlsx-sales.xlsx");let mut initial=Document::new(opened.presentation.clone());let id=slide(initial.presentation(),"月次売上");initial.execute(vec![Command::Sheet(SheetCommand::AddConditional {slide:id,format:formula_rule("B4>10",0xFFC7CE,false)})]).unwrap();let mut pkg=ibis_ooxml::Package::open(opened.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();let xml=pkg.xml_mut("xl/worksheets/sheet1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:probe","urn:ibis:cf-origin");let cf=xml.children_named(root,"conditionalFormatting").last().unwrap();let rule=xml.child(cf,"cfRule").unwrap();xml.set_attr(rule,"probe:token","owned-original-only");let original=pkg.save(Default::default()).unwrap();
+    let Some((_,opened))=open("xlsx-sales.xlsx") else { return };let mut initial=Document::new(opened.presentation.clone());let id=slide(initial.presentation(),"月次売上");initial.execute(vec![Command::Sheet(SheetCommand::AddConditional {slide:id,format:formula_rule("B4>10",0xFFC7CE,false)})]).unwrap();let mut pkg=ibis_ooxml::Package::open(opened.source.save(initial.presentation(),SaveOptions::default()).unwrap()).unwrap();let xml=pkg.xml_mut("xl/worksheets/sheet1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:probe","urn:ibis:cf-origin");let cf=xml.children_named(root,"conditionalFormatting").last().unwrap();let rule=xml.child(cf,"cfRule").unwrap();xml.set_attr(rule,"probe:token","owned-original-only");let original=pkg.save(Default::default()).unwrap();
     for variant in ["add-clone","replace-identical","update-wrong-id"] {
         let opened=ibis_pptx::open(original.clone()).unwrap();let mut d=Document::new(opened.presentation.clone());let id=slide(d.presentation(),"月次売上");let formats=conditional(d.presentation(),id);let at=formats.len()-1;let mut format=formats[at].clone();let imported=format.source_index;
         match variant {
@@ -1925,7 +1942,7 @@ fn conditional_origins_do_not_transfer_opaque_payload_to_new_rules() {
 #[test]
 fn conditional_fill_edit_keeps_opaque_dxf_and_shared_original() {
     for color_node in ["bgColor", "fgColor"] {
-        let source=std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-conditional-opaque.xlsx")).unwrap();
+        let Some(source)=fixtures::read("test/editing/xlsx-conditional-opaque.xlsx") else { return };
         let mut pkg=ibis_ooxml::Package::open(source).unwrap();
         let xml=pkg.xml_mut("xl/worksheets/sheet4.xml").unwrap();let root=xml.root_element().unwrap();let cf=xml.child(root,"conditionalFormatting").unwrap();let rule=xml.child(cf,"cfRule").unwrap();let old_id=xml.attr(rule,"dxfId").unwrap().parse::<usize>().unwrap();let copy=xml.deep_clone(cf);let n=xml.children(root).len();xml.insert(root,n,copy);xml.set_attr(copy,"sqref","B1:B3");
         let xml=pkg.xml_mut("xl/styles.xml").unwrap();let root=xml.root_element().unwrap();let list=xml.child(root,"dxfs").unwrap();let dxf=xml.children_named(list,"dxf").nth(old_id).unwrap();let fill=xml.child(dxf,"fill").unwrap();let pat=xml.child(fill,"patternFill").unwrap();let bg=xml.child(pat,"bgColor").unwrap();if color_node=="fgColor" {xml.detach(bg);let fg=xml.append_element(pat,"fgColor");xml.set_attr(fg,"rgb","FFFFC7CE");}let color=xml.child(pat,color_node).unwrap();xml.set_attr(color,"probe:token","keep-color");xml.set_attr(fill,"probe:token","keep-fill");xml.set_attr(pat,"probe:token","keep-pattern");
@@ -1940,14 +1957,14 @@ fn conditional_fill_edit_keeps_opaque_dxf_and_shared_original() {
 #[test]
 fn conditional_fill_edit_refuses_unmodeled_fill_combinations() {
     for variant in ["gradient", "pattern", "two-colors"] {
-        let source=std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-conditional-opaque.xlsx")).unwrap();let mut pkg=ibis_ooxml::Package::open(source).unwrap();let xml=pkg.xml("xl/worksheets/sheet4.xml").unwrap();let root=xml.root_element().unwrap();let rule=xml.child(xml.child(root,"conditionalFormatting").unwrap(),"cfRule").unwrap();let id=xml.attr(rule,"dxfId").unwrap().parse::<usize>().unwrap();let xml=pkg.xml_mut("xl/styles.xml").unwrap();let root=xml.root_element().unwrap();let dxf=xml.children_named(xml.child(root,"dxfs").unwrap(),"dxf").nth(id).unwrap();let fill=xml.child(dxf,"fill").unwrap();let pat=xml.child(fill,"patternFill").unwrap();match variant {"gradient"=>{xml.detach(pat);let gradient=xml.append_element(fill,"gradientFill");xml.set_attr(gradient,"degree","45");},"pattern"=>xml.set_attr(pat,"patternType","darkGrid"),_=>{let fg=xml.append_element(pat,"fgColor");xml.set_attr(fg,"rgb","FF000000");}}
+        let Some(source)=fixtures::read("test/editing/xlsx-conditional-opaque.xlsx") else { return };let mut pkg=ibis_ooxml::Package::open(source).unwrap();let xml=pkg.xml("xl/worksheets/sheet4.xml").unwrap();let root=xml.root_element().unwrap();let rule=xml.child(xml.child(root,"conditionalFormatting").unwrap(),"cfRule").unwrap();let id=xml.attr(rule,"dxfId").unwrap().parse::<usize>().unwrap();let xml=pkg.xml_mut("xl/styles.xml").unwrap();let root=xml.root_element().unwrap();let dxf=xml.children_named(xml.child(root,"dxfs").unwrap(),"dxf").nth(id).unwrap();let fill=xml.child(dxf,"fill").unwrap();let pat=xml.child(fill,"patternFill").unwrap();match variant {"gradient"=>{xml.detach(pat);let gradient=xml.append_element(fill,"gradientFill");xml.set_attr(gradient,"degree","45");},"pattern"=>xml.set_attr(pat,"patternType","darkGrid"),_=>{let fg=xml.append_element(pat,"fgColor");xml.set_attr(fg,"rgb","FF000000");}}
         let original=pkg.save(Default::default()).unwrap();let opened=ibis_pptx::open(original.clone()).unwrap();assert_eq!(opened.source.save(&opened.presentation,SaveOptions::default()).unwrap(),original);let mut d=Document::new(opened.presentation.clone());let s=slide(d.presentation(),"未知規則保持");let mut format=conditional(d.presentation(),s)[0].clone();format.rules[0].style.as_mut().unwrap().fill=Some(ibis_doc_model::Rgb(0x00B050));d.execute(vec![Command::Sheet(SheetCommand::UpdateConditional {slide:s,index:0,format})]).unwrap();assert!(opened.source.save(d.presentation(),SaveOptions::default()).is_err(),"{variant}");assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert!(opened.source.save(d.presentation(),SaveOptions::default()).is_err(),"{variant} redo");
     }
 }
 
 #[test]
 fn conditional_fill_edit_refuses_missing_source_dxf_reference() {
-    let source = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-conditional-opaque.xlsx")).unwrap();
+    let Some(source) = fixtures::read("test/editing/xlsx-conditional-opaque.xlsx") else { return };
     let mut pkg = ibis_ooxml::Package::open(source).unwrap();
     let xml = pkg.xml_mut("xl/worksheets/sheet4.xml").unwrap();
     let root = xml.root_element().unwrap();
@@ -1969,7 +1986,7 @@ fn conditional_fill_edit_refuses_missing_source_dxf_reference() {
 
 #[test]
 fn conditional_fill_edit_inserts_fill_before_border_when_source_lacks_fill() {
-    let source = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-conditional-opaque.xlsx")).unwrap();
+    let Some(source) = fixtures::read("test/editing/xlsx-conditional-opaque.xlsx") else { return };
     let mut pkg = ibis_ooxml::Package::open(source).unwrap();
     let xml = pkg.xml_mut("xl/styles.xml").unwrap();
     let root = xml.root_element().unwrap();
@@ -1995,7 +2012,7 @@ fn conditional_fill_edit_inserts_fill_before_border_when_source_lacks_fill() {
 
 #[test]
 fn extended_calc_functions_save_and_reopen() {
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
 
@@ -2046,7 +2063,7 @@ fn extended_calc_functions_save_and_reopen() {
 fn cell_comments_roundtrip_and_editing() {
     use ibis_doc_model::SheetComment;
 
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
 
@@ -2151,7 +2168,7 @@ fn cell_comments_roundtrip_and_editing() {
 /// it, and changing the position names it unless it is the default.
 #[test]
 fn whether_the_vertical_position_is_named_survives_saving() {
-    let (_, opened) = open("xlsx-vertical.xlsx");
+    let Some((_, opened)) = open("xlsx-vertical.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "縦位置");
     let named = |p: &Presentation, row: u32| {
@@ -2177,7 +2194,7 @@ fn whether_the_vertical_position_is_named_survives_saving() {
 /// the column, the row's own `[@Qty]*2`, and the totals row's SUBTOTAL.
 #[test]
 fn structured_references_follow_the_table() {
-    let (_, opened) = open("xlsx-table.xlsx");
+    let Some((_, opened)) = open("xlsx-table.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "表");
     set(&mut d, s, vec![(1, 1, CellInput::Value(CellValue::Number(10.0)))]);
@@ -2205,7 +2222,7 @@ fn structured_references_follow_the_table() {
 #[test]
 fn sparklines_are_read_and_kept() {
     use ibis_doc_model::{Rgb, SparklineAxis, SparklineEmpty, SparklineKind};
-    let (_, opened) = open("xlsx-sparkline.xlsx");
+    let Some((_, opened)) = open("xlsx-sparkline.xlsx") else { return };
     let groups = |p: &Presentation| sheet_of_slide(p.slide(slide(p, "縦位置")).unwrap()).unwrap().sparklines.clone();
     let g = groups(&opened.presentation);
     assert_eq!(g.len(), 2);
@@ -2241,7 +2258,7 @@ fn sparklines_are_read_and_kept() {
 #[test]
 fn sparklines_create_and_save_roundtrip() {
     use ibis_doc_model::{CellRange, Command, Rgb, SheetCommand, Sparkline, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind};
-    let (_, opened) = open("xlsx-sparkline.xlsx");
+    let Some((_, opened)) = open("xlsx-sparkline.xlsx") else { return };
     let s = slide(&opened.presentation, "縦位置");
     let mut d = Document::new(opened.presentation.clone());
 
@@ -2349,7 +2366,7 @@ fn sparklines_create_and_save_roundtrip() {
 #[test]
 fn sparklines_styles_and_display_hidden_roundtrip() {
     use ibis_doc_model::{Command, Rgb, SheetCommand, SparklineEmpty};
-    let (_, opened) = open("xlsx-sparkline.xlsx");
+    let Some((_, opened)) = open("xlsx-sparkline.xlsx") else { return };
     let s = slide(&opened.presentation, "縦位置");
     let mut d = Document::new(opened.presentation.clone());
     let groups = |p: &Presentation| sheet_of_slide(p.slide(s).unwrap()).unwrap().sparklines.clone();
@@ -2405,7 +2422,7 @@ fn sparklines_styles_and_display_hidden_roundtrip() {
 #[test]
 fn sparklines_date_axis_roundtrip() {
     use ibis_doc_model::{Command, SheetCommand};
-    let (_, opened) = open("xlsx-sparkline.xlsx");
+    let Some((_, opened)) = open("xlsx-sparkline.xlsx") else { return };
     let s = slide(&opened.presentation, "縦位置");
     let mut d = Document::new(opened.presentation.clone());
     let groups = |p: &Presentation| sheet_of_slide(p.slide(s).unwrap()).unwrap().sparklines.clone();
@@ -2447,7 +2464,7 @@ fn sparklines_date_axis_roundtrip() {
 #[test]
 fn every_kind_of_filter_is_saved() {
     use ibis_doc_model::{AutoFilter, ColumnFilter, DateGroup};
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     let mut edits = Vec::new();
@@ -2492,7 +2509,7 @@ fn every_kind_of_filter_is_saved() {
 #[test]
 fn threaded_comments_are_read_and_follow_the_rows() {
     use ibis_doc_model::sheet_command::Axis;
-    let (_, opened) = open("xlsx-threads.xlsx");
+    let Some((_, opened)) = open("xlsx-threads.xlsx") else { return };
     let threads = |p: &Presentation| sheet_of_slide(p.slide(slide(p, "縦位置")).unwrap()).unwrap().threads.clone();
     let t = threads(&opened.presentation);
     assert_eq!(t.len(), 2);
@@ -2520,7 +2537,7 @@ fn threaded_comments_are_read_and_follow_the_rows() {
 #[test]
 fn threaded_comments_create_reply_resolve_delete_roundtrip() {
     use ibis_doc_model::{ThreadPost, ThreadedComment};
-    let (_, opened) = open("xlsx-threads.xlsx");
+    let Some((_, opened)) = open("xlsx-threads.xlsx") else { return };
     let threads = |p: &Presentation| sheet_of_slide(p.slide(slide(p, "縦位置")).unwrap()).unwrap().threads.clone();
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "縦位置");
@@ -2616,7 +2633,7 @@ fn threaded_comments_create_reply_resolve_delete_roundtrip() {
 fn tables_made_and_grown_are_saved() {
     use ibis_doc_model::sheet_command::PutCell;
     use ibis_doc_model::{SheetTable, TableStyleInfo};
-    let (_, opened) = open("xlsx-table.xlsx");
+    let Some((_, opened)) = open("xlsx-table.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "表");
     let mut grown = sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap().tables[0].clone();
@@ -2657,7 +2674,7 @@ fn tables_made_and_grown_are_saved() {
 /// cell references (the values kept), and the saved file has no table.
 #[test]
 fn a_table_converted_to_a_range() {
-    let (_, opened) = open("xlsx-table.xlsx");
+    let Some((_, opened)) = open("xlsx-table.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "表");
     let before: Vec<CellValue> = [(0, 4), (1, 2), (5, 1)].iter().map(|&(r, c)| value(d.presentation(), "表", r, c)).collect();
@@ -2678,7 +2695,7 @@ fn a_table_converted_to_a_range() {
 #[cfg(target_os = "macos")]
 #[test]
 fn kanji_text_sorts_by_its_reading() {
-    let (_, opened) = open("xlsx-sales.xlsx"); let mut d = Document::new(opened.presentation.clone());
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return }; let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "読み順".into(), slide: s, shape })]).unwrap();
     let names = ["地域", "北海道", "九州", "東北", "関東", "関西"];
@@ -2694,7 +2711,7 @@ fn kanji_text_sorts_by_its_reading() {
 
 #[test]
 fn the_readings_of_shared_strings_are_read_and_sorting_uses_them() {
-    let (_, stock) = open("xlsx-sales.xlsx");
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
     let bytes = stock.source.save(&stock.presentation, SaveOptions::default()).unwrap();
     let mut package = ibis_ooxml::Package::open(bytes).unwrap();
     let xml = package.xml_mut("xl/sharedStrings.xml").unwrap(); let root = xml.root_element().unwrap();
@@ -2710,7 +2727,7 @@ fn the_readings_of_shared_strings_are_read_and_sorting_uses_them() {
 #[test]
 fn theme_colours_of_text_and_fill_are_saved_as_theme_and_tint() {
     use ibis_doc_model::ThemeColor;
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let range = CellRange { first_row: 3, first_column: 1, last_row: 3, last_column: 1 };
@@ -2740,7 +2757,7 @@ fn theme_colours_of_text_and_fill_are_saved_as_theme_and_tint() {
 
 #[test]
 fn a_sheet_chart_switches_rows_and_columns_and_takes_a_new_range() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -2775,7 +2792,7 @@ fn a_sheet_chart_switches_rows_and_columns_and_takes_a_new_range() {
 #[test]
 fn chart_axis_titles_save_and_reopen() {
     use ibis_doc_model::chart::{AxisKind, ChartText, ChartTitle};
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -2838,7 +2855,7 @@ fn chart_axis_titles_save_and_reopen() {
 #[test]
 fn chart_data_labels_save_and_reopen() {
     use ibis_doc_model::chart::{DataLabels, LabelPosition};
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -2906,7 +2923,7 @@ fn chart_data_labels_save_and_reopen() {
 fn chart_axis_orientation_and_crosses_save_and_reopen() {
     use ibis_doc_model::chart::AxisCrosses;
     use ibis_doc_model::Number;
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -2966,7 +2983,7 @@ fn chart_axis_orientation_and_crosses_save_and_reopen() {
 #[test]
 fn chart_minor_and_cat_gridlines_save_and_reopen() {
     use ibis_doc_model::{Color, Rgb, Stroke};
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -3014,7 +3031,7 @@ fn chart_minor_and_cat_gridlines_save_and_reopen() {
 #[test]
 fn chart_axis_units_and_disp_units_save_and_reopen() {
     use ibis_doc_model::Number;
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -3073,7 +3090,7 @@ fn chart_axis_units_and_disp_units_save_and_reopen() {
 
 #[test]
 fn chart_gap_width_and_overlap_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -3126,7 +3143,7 @@ fn chart_gap_width_and_overlap_save_and_reopen() {
 #[test]
 fn chart_log_scale_axis_save_and_reopen() {
     use ibis_doc_model::Number;
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -3183,7 +3200,7 @@ fn chart_log_scale_axis_save_and_reopen() {
 #[test]
 fn chart_disp_blanks_as_and_plot_vis_only_save_and_reopen() {
     use ibis_doc_model::DispBlanksAs;
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -3269,7 +3286,7 @@ fn chart_disp_blanks_as_and_plot_vis_only_save_and_reopen() {
 fn chart_series_marker_and_stroke_save_and_reopen() {
     use ibis_doc_model::chart::{Marker, MarkerSymbol};
     use ibis_doc_model::{Color, Fill, Rgb, Stroke};
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -3358,7 +3375,7 @@ fn chart_series_marker_and_stroke_save_and_reopen() {
 #[test]
 fn rich_text_runs_are_read_kept_through_a_format_change_and_set() {
     use ibis_doc_model::{CellRun, Rgb};
-    let (_, stock) = open("xlsx-sales.xlsx");
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
     let bytes = stock.source.save(&stock.presentation, SaveOptions::default()).unwrap();
     let mut package = ibis_ooxml::Package::open(bytes).unwrap();
     let xml = package.xml_mut("xl/sharedStrings.xml").unwrap(); let root = xml.root_element().unwrap();
@@ -3404,7 +3421,7 @@ fn rich_text_runs_are_read_kept_through_a_format_change_and_set() {
 #[test]
 fn a_data_table_is_made_saved_as_a_data_table_and_read_back() {
     use ibis_doc_model::DataTable;
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "データテーブル".into(), slide: s, shape })]).unwrap();
@@ -3439,7 +3456,7 @@ fn a_data_table_is_made_saved_as_a_data_table_and_read_back() {
 #[test]
 fn one_input_data_tables_are_saved_and_read_back() {
     use ibis_doc_model::DataTable;
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "1入力テーブル".into(), slide: s, shape })]).unwrap();
@@ -3478,7 +3495,7 @@ fn one_input_data_tables_are_saved_and_read_back() {
 
 #[test]
 fn custom_cell_style_save_and_reopen() {
-    let (_, opened) = open("xlsx-formats.xlsx");
+    let Some((_, opened)) = open("xlsx-formats.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let custom_style = ibis_doc_model::CustomCellStyle {
         name: "強調 1".into(),
@@ -3515,7 +3532,7 @@ fn custom_cell_style_save_and_reopen() {
 /// saved with type="timePeriod" and timePeriod attribute and read back into CfKind::TimePeriod.
 #[test]
 fn time_period_conditional_save_and_reopen() {
-    let (_, opened) = open("xlsx-formats.xlsx");
+    let Some((_, opened)) = open("xlsx-formats.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "表示形式");
     let format = ibis_doc_model::ConditionalFormat {
@@ -3556,7 +3573,7 @@ fn time_period_conditional_save_and_reopen() {
 /// for colorScale, dataBar, and iconSet rules saved into OOXML cfvo and read back faithfully.
 #[test]
 fn conditional_format_threshold_types_save_and_reopen() {
-    let (_, opened) = open("xlsx-formats.xlsx");
+    let Some((_, opened)) = open("xlsx-formats.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "表示形式");
 
@@ -3700,7 +3717,7 @@ fn conditional_format_threshold_types_save_and_reopen() {
 
 #[test]
 fn case_sensitive_sort_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "大小区別並替".into(), slide: s, shape })]).unwrap();
@@ -3741,7 +3758,7 @@ fn case_sensitive_sort_save_and_reopen() {
 
 #[test]
 fn custom_list_sort_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (s, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "カスタム並替".into(), slide: s, shape })]).unwrap();
@@ -3788,7 +3805,7 @@ fn custom_list_sort_save_and_reopen() {
 
 #[test]
 fn calc_mode_roundtrip_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     assert_eq!(d.presentation().workbook.as_deref().unwrap().calc_mode, ibis_doc_model::CalcMode::Auto);
 
@@ -3816,7 +3833,7 @@ fn calc_mode_roundtrip_save_and_reopen() {
 
 #[test]
 fn precision_as_displayed_save_and_reopen_roundtrip() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     assert!(d.presentation().workbook.as_deref().unwrap().full_precision);
 
@@ -3839,7 +3856,7 @@ fn precision_as_displayed_save_and_reopen_roundtrip() {
 
 #[test]
 fn iterative_calculation_save_and_reopen_roundtrip() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     assert!(!d.presentation().workbook.as_deref().unwrap().iterate);
 
@@ -3873,7 +3890,7 @@ fn iterative_calculation_save_and_reopen_roundtrip() {
 
 #[test]
 fn named_formulas_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
 
@@ -3911,7 +3928,7 @@ fn named_formulas_save_and_reopen() {
 
 #[test]
 fn scenarios_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
 
@@ -3970,7 +3987,7 @@ fn scenarios_save_and_reopen() {
 
 #[test]
 fn subtotals_apply_and_save_roundtrip() {
-    let (_, stock) = open("xlsx-sales.xlsx");
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
     let mut initial = Document::new(stock.presentation.clone());
     let (id, shape) = (initial.ids().new_slide_id(), initial.ids().new_shape_id());
     initial.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "小計テスト".into(), slide: id, shape })]).unwrap();
@@ -4020,7 +4037,7 @@ fn subtotals_apply_and_save_roundtrip() {
 
 #[test]
 fn workbook_protection_save_and_reopen_roundtrip() {
-    let (_, stock) = open("xlsx-sales.xlsx");
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
     let mut initial = Document::new(stock.presentation.clone());
 
     // 1. Initially unprotected
@@ -4075,7 +4092,7 @@ fn workbook_protection_save_and_reopen_roundtrip() {
 
 #[test]
 fn protected_ranges_save_and_reopen_roundtrip() {
-    let (_, stock) = open("xlsx-sales.xlsx");
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
     let mut initial = Document::new(stock.presentation.clone());
     let id = slide(initial.presentation(), "月次売上");
 
@@ -4141,7 +4158,7 @@ fn protected_ranges_save_and_reopen_roundtrip() {
 
 #[test]
 fn pivot_options_save_and_reopen_roundtrip() {
-    let (_data, opened) = open("xlsx-pivot-not-refreshed.xlsx");
+    let Some((_data, opened)) = open("xlsx-pivot-not-refreshed.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let id = opened.presentation.slides[0].id;
     let s = d.presentation().slide(id).unwrap();
@@ -4193,7 +4210,7 @@ fn pivot_options_save_and_reopen_roundtrip() {
 
 #[test]
 fn pivot_calculated_field_save_and_reopen_roundtrip() {
-    let (_data, opened) = open("xlsx-pivot-not-refreshed.xlsx");
+    let Some((_data, opened)) = open("xlsx-pivot-not-refreshed.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let id = opened.presentation.slides[0].id;
     let s = d.presentation().slide(id).unwrap();
@@ -4229,7 +4246,7 @@ fn pivot_calculated_field_save_and_reopen_roundtrip() {
 
 #[test]
 fn pivot_calculated_item_save_and_reopen_roundtrip() {
-    let (_, opened) = open("xlsx-pivot-not-refreshed.xlsx");
+    let Some((_, opened)) = open("xlsx-pivot-not-refreshed.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let id = slide(d.presentation(), "ピボット");
     let mut sheet = (**sheet_of_slide(d.presentation().slide(id).unwrap()).unwrap()).clone();
@@ -4265,7 +4282,7 @@ fn pivot_calculated_item_save_and_reopen_roundtrip() {
 
 #[test]
 fn pivot_manual_grouping_save_and_reopen_roundtrip() {
-    let (_, opened) = open("xlsx-pivot-not-refreshed.xlsx");
+    let Some((_, opened)) = open("xlsx-pivot-not-refreshed.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let id = slide(d.presentation(), "ピボット");
     let mut sheet = (**sheet_of_slide(d.presentation().slide(id).unwrap()).unwrap()).clone();
@@ -4301,7 +4318,7 @@ fn pivot_manual_grouping_save_and_reopen_roundtrip() {
 
 #[test]
 fn pivot_sort_by_value_save_and_reopen_roundtrip() {
-    let (_, opened) = open("xlsx-pivot-not-refreshed.xlsx");
+    let Some((_, opened)) = open("xlsx-pivot-not-refreshed.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let id = slide(d.presentation(), "ピボット");
     let mut sheet = (**sheet_of_slide(d.presentation().slide(id).unwrap()).unwrap()).clone();
@@ -4336,7 +4353,7 @@ fn pivot_sort_by_value_save_and_reopen_roundtrip() {
 
 #[test]
 fn pivot_table_source_and_defined_name_source_roundtrip() {
-    let (_data, opened) = open("xlsx-pivot-not-refreshed.xlsx");
+    let Some((_data, opened)) = open("xlsx-pivot-not-refreshed.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
 
     let pivot_slide_id = d.presentation().slides.iter().find(|s| {
@@ -4448,7 +4465,7 @@ fn pivot_table_source_and_defined_name_source_roundtrip() {
 #[test]
 fn tables_with_row_and_column_inserts_and_deletes_save_and_reopen() {
     use ibis_doc_model::sheet_command::Axis;
-    let (original, opened) = open("xlsx-table.xlsx");
+    let Some((original, opened)) = open("xlsx-table.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "表");
 
@@ -4537,7 +4554,7 @@ fn tables_with_row_and_column_inserts_and_deletes_save_and_reopen() {
 fn test_workbook_doc_properties_edit_and_roundtrip() {
     use ibis_doc_model::DocProperties;
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
 
     let mut props = DocProperties::default();
@@ -4597,7 +4614,7 @@ fn test_workbook_doc_properties_edit_and_roundtrip() {
 #[test]
 fn chart_date_axis_save_and_reopen() {
     use ibis_doc_model::chart::{AxisKind, AxisSourceKind};
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -4661,7 +4678,7 @@ fn chart_date_axis_save_and_reopen() {
 fn test_workbook_custom_properties_edit_and_roundtrip() {
     use ibis_doc_model::{CustomProperty, CustomPropertyValue, DocProperties};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
 
     let mut props = DocProperties::default();
@@ -4732,7 +4749,7 @@ fn chart_secondary_and_series_axis_save_and_reopen() {
     use ibis_doc_model::chart::{AxisKind, ChartTitle, ChartText};
     use ibis_doc_model::{Number, Stroke, Color, Rgb};
 
-    let (_, stock) = open("xlsx-sales.xlsx");
+    let Some((_, stock)) = open("xlsx-sales.xlsx") else { return };
     let bytes = stock.source.save(&stock.presentation, SaveOptions::default()).unwrap();
     let mut package = ibis_ooxml::Package::open(bytes).unwrap();
     let mut xml = String::from_utf8(package.read("xl/charts/chart1.xml").unwrap()).unwrap();
@@ -4822,7 +4839,7 @@ fn chart_secondary_and_series_axis_save_and_reopen() {
 fn test_sheet_shape_alt_text_edit_and_roundtrip() {
     use ibis_doc_model::AltText;
 
-    let (_original, opened) = open("xlsx-sales.xlsx");
+    let Some((_original, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
 
     // シート1（グラフ）とシート2（画像）を取得
@@ -4914,7 +4931,7 @@ fn test_sheet_shape_alt_text_edit_and_roundtrip() {
 fn test_sheet_shape_placement_and_print_roundtrip() {
     use ibis_doc_model::{ObjectPlacement, ShapeKind};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s0 = d.presentation().slides[0].id;
     let s1 = d.presentation().slides[1].id;
@@ -4988,7 +5005,7 @@ fn test_sheet_shape_placement_and_print_roundtrip() {
 fn chart_series_fill_and_outline_save_and_reopen() {
     use ibis_doc_model::{Color, Fill, Rgb, Stroke};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -5056,7 +5073,7 @@ fn chart_series_fill_and_outline_save_and_reopen() {
 
 #[test]
 fn formula_array_constant_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let (id, shape) = (d.ids().new_slide_id(), d.ids().new_shape_id());
     d.execute(vec![Command::Sheet(SheetCommand::AddSheet {
@@ -5158,7 +5175,7 @@ fn formula_array_constant_save_and_reopen() {
 fn pivot_field_layout_save_and_reopen_roundtrip() {
     use ibis_doc_model::PivotAxis;
 
-    let (_data, opened) = open("xlsx-pivot-not-refreshed.xlsx");
+    let Some((_data, opened)) = open("xlsx-pivot-not-refreshed.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let id = opened.presentation.slides[0].id;
     let s = d.presentation().slide(id).unwrap();
@@ -5238,7 +5255,7 @@ fn pivot_field_layout_save_and_reopen_roundtrip() {
 
 #[test]
 fn formula_3d_reference_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
 
     // 1. 3枚の連続するシートを追加
@@ -5329,7 +5346,7 @@ fn formula_3d_reference_save_and_reopen() {
 
 #[test]
 fn formula_operator_precedence_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
 
     // 1. 新規シート「Precedence」を追加
@@ -5462,7 +5479,7 @@ fn test_save_template_xltx() {
     assert_eq!(ibis_pptx::Kind::from_extension("xlk"), Some(ibis_pptx::Kind::Workbook));
     assert_eq!(ibis_pptx::Kind::from_extension("XLK"), Some(ibis_pptx::Kind::Workbook));
 
-    let (_, opened) = open("xlsx-formats.xlsx");
+    let Some((_, opened)) = open("xlsx-formats.xlsx") else { return };
     assert_eq!(ibis_pptx::Kind::of(&opened.presentation), ibis_pptx::Kind::Workbook);
 
     let saved = opened.source.save_template(&opened.presentation, SaveOptions::default()).expect("save_template succeeds");
@@ -5489,7 +5506,7 @@ fn test_save_template_xltx() {
 
 #[test]
 fn formula_implicit_intersection_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
 
     // 1. 新規シート「Implicit」を追加
@@ -5601,7 +5618,7 @@ fn formula_implicit_intersection_save_and_reopen() {
 /// preserving quoted text strings, cascade recalculation, OOXML save and reopen roundtrip, Undo/Redo.
 #[test]
 fn cell_long_number_precision_save_and_reopen() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
 
     // 1. 新規シートを追加
@@ -5711,7 +5728,7 @@ fn cell_long_number_precision_save_and_reopen() {
 
 #[test]
 fn pivot_options_and_field_settings_roundtrip() {
-    let (_data, opened) = open("xlsx-pivot-not-refreshed.xlsx");
+    let Some((_data, opened)) = open("xlsx-pivot-not-refreshed.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let id = opened.presentation.slides[0].id;
     let s = d.presentation().slide(id).unwrap();
@@ -5784,7 +5801,7 @@ fn pivot_options_and_field_settings_roundtrip() {
 fn cell_pattern_color_and_gradient_fill_save_and_reopen_roundtrip() {
     use ibis_doc_model::{CellGradient, CellRange, GradientPath, Rgb, StyleChange};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
 
@@ -5905,7 +5922,7 @@ fn workbook_theme_palette_change_and_save_roundtrip() {
     use ibis_doc_model::sheet_command::{SheetCommand, StyleChange};
     use ibis_doc_model::{CellRange, Command, Document, Rgb, ThemeColor};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
 
@@ -6006,7 +6023,7 @@ fn workbook_theme_palette_change_and_save_roundtrip() {
 #[test]
 fn chart_data_table_save_and_reopen_roundtrip() {
     use ibis_doc_model::{ChartDataTable, Command, ShapeKind};
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let s = slide(&opened.presentation, "月次売上");
     let shape_id = opened.presentation.slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind {
         ShapeKind::Chart(_) => Some(sh.id),
@@ -6121,7 +6138,7 @@ fn chart_trendline_save_and_reopen_roundtrip() {
     use ibis_doc_model::chart::{Trendline, TrendlineType};
     use ibis_doc_model::{Command, ShapeKind};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let s = slide(&opened.presentation, "月次売上");
     let shape_id = opened.presentation.slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind {
         ShapeKind::Chart(_) => Some(sh.id),
@@ -6256,7 +6273,7 @@ fn chart_error_bars_save_and_reopen_roundtrip() {
     use ibis_doc_model::chart::{ErrorBarDirection, ErrorBarType, ErrorBarValueType, ErrorBars, Number};
     use ibis_doc_model::{Command, ShapeKind};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let s = slide(&opened.presentation, "月次売上");
     let shape_id = opened.presentation.slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind {
         ShapeKind::Chart(_) => Some(sh.id),
@@ -6397,7 +6414,7 @@ fn chart_error_bars_save_and_reopen_roundtrip() {
 fn chart_style_and_palette_save_and_reopen_roundtrip() {
     use ibis_doc_model::{Color, Fill, Rgb, ShapeKind, Stroke};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind {
@@ -6525,7 +6542,7 @@ fn chart_style_and_palette_save_and_reopen_roundtrip() {
 fn test_sheet_shape_change_geometry_roundtrip() {
     use ibis_doc_model::{Geometry, ShapeKind};
 
-    let (data, _) = open("xlsx-sales.xlsx");
+    let Some((data, _)) = open("xlsx-sales.xlsx") else { return };
     let mut pkg = ibis_ooxml::Package::open(data).unwrap();
     {
         let doc = pkg.xml_mut("xl/drawings/drawing1.xml").unwrap();
@@ -6604,7 +6621,7 @@ fn test_sheet_shape_change_geometry_roundtrip() {
 
 #[test]
 fn test_sheet_shape_formula_textlink_roundtrip() {
-    let (data, _) = open("xlsx-sales.xlsx");
+    let Some((data, _)) = open("xlsx-sales.xlsx") else { return };
     let mut pkg = ibis_ooxml::Package::open(data).unwrap();
 
     let sheet_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -6702,7 +6719,7 @@ fn test_sheet_shape_formula_textlink_roundtrip() {
 
 #[test]
 fn test_sheet_shape_warp_roundtrip() {
-    let (data, _) = open("xlsx-sales.xlsx");
+    let Some((data, _)) = open("xlsx-sales.xlsx") else { return };
     let mut pkg = ibis_ooxml::Package::open(data).unwrap();
 
     let sheet_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -6785,7 +6802,7 @@ fn test_sheet_shape_warp_roundtrip() {
 fn conditional_databar_negative_and_axis_roundtrip() {
     use ibis_doc_model::{CellRange, CfKind, CfRule, CfValue, ConditionalFormat, DataBarAxisPosition, Rgb, SheetCommand};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = opened.presentation.slides[0].id;
     let base_len = sheet_of_slide(&opened.presentation.slides[0]).unwrap().conditional.len();
@@ -6888,7 +6905,7 @@ fn conditional_databar_negative_and_axis_roundtrip() {
 fn conditional_iconset_custom_no_icon_and_reverse_roundtrip() {
     use ibis_doc_model::{CellRange, CfIcon, CfKind, CfRule, CfValue, Command, ConditionalFormat, Document, SheetCommand};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = opened.presentation.slides[0].id;
     let base_len = sheet_of_slide(&opened.presentation.slides[0]).unwrap().conditional.len();
@@ -7036,7 +7053,7 @@ fn csv_shift_jis_utf8_and_tsv_roundtrip() {
 fn custom_views_save_and_reopen_roundtrip() {
     use ibis_doc_model::{CustomSheetView, CustomWorkbookView};
 
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = d.presentation().slides[0].id;
 
@@ -7102,7 +7119,7 @@ fn custom_views_save_and_reopen_roundtrip() {
 
 #[test]
 fn window_hidden_save_and_reopen_roundtrip() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     assert!(!opened.presentation.is_workbook_window_hidden());
 
     let mut d = Document::new(opened.presentation.clone());
@@ -7142,7 +7159,7 @@ fn chart_move_to_existing_sheet_and_new_sheet_roundtrip() {
     use ibis_doc_model::{ChartMoveTarget, ShapeId, ShapeKind};
 
     // --- Scenario 1: Move chart to existing sheet ---
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let sales_slide = slide(d.presentation(), "月次売上");
     let memo_slide = slide(d.presentation(), "メモ");
@@ -7198,7 +7215,7 @@ fn chart_move_to_existing_sheet_and_new_sheet_roundtrip() {
     assert_eq!(opened.source.save(d.presentation(), SaveOptions::default()).unwrap(), saved_existing);
 
     // --- Scenario 2: Move chart to new sheet ---
-    let (data2, opened2) = open("xlsx-sales.xlsx");
+    let Some((data2, opened2)) = open("xlsx-sales.xlsx") else { return };
     let mut d2 = Document::new(opened2.presentation.clone());
     let sales_slide2 = slide(d2.presentation(), "月次売上");
     let (chart_shape_id2, chart_obj2) = d2
@@ -7258,7 +7275,7 @@ fn chart_move_to_existing_sheet_and_new_sheet_roundtrip() {
 
 #[test]
 fn chart_series_add_delete_and_reorder_roundtrip() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (shape, chart) = d.presentation().slide(s).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
@@ -7321,7 +7338,7 @@ fn chart_series_add_delete_and_reorder_roundtrip() {
     assert_eq!(curr.groups[0].series.len(), 3);
 }#[test]
 fn test_chart_template_crtx_roundtrip() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     let (_, chart) = d
@@ -7430,7 +7447,7 @@ fn test_surface_and_contour_charts_roundtrip() {
         </c:chart>
     </c:chartSpace>"#;
 
-    let original = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-sales.xlsx")).unwrap();
+    let Some(original) = fixtures::read("test/editing/xlsx-sales.xlsx") else { return };
     let bytes = ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", surface_3d_xml);
 
     // 2. 読込: surface3DChart が ChartType::Surface { is_3d: true, wireframe: false } としてパースされることを検証
@@ -7497,7 +7514,7 @@ fn test_pivot_chart_source_and_roundtrip() {
         </c:chart>
     </c:chartSpace>"#;
 
-    let original = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-sales.xlsx")).unwrap();
+    let Some(original) = fixtures::read("test/editing/xlsx-sales.xlsx") else { return };
     let bytes = ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", pivot_chart_xml);
 
     // 1. 読込: pivotSource がパースされ、chart.pivot_source に格納される
@@ -7556,7 +7573,7 @@ fn test_pivot_chart_source_and_roundtrip() {
 
 #[test]
 fn test_cell_phonetic_and_roundtrip() {
-    let (_, opened) = open("xlsx-sales.xlsx");
+    let Some((_, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = d.presentation().slides[0].id;
 
@@ -7622,7 +7639,7 @@ fn slicers(p: &Presentation) -> Vec<(ibis_doc_model::EmuRect, ibis_doc_model::sl
 
 #[test]
 fn slicers_made_by_excel_are_read_with_their_items_and_kept_by_the_save() {
-    let (data, opened) = open("xlsx-slicers-excel.xlsx");
+    let Some((data, opened)) = open("xlsx-slicers-excel.xlsx") else { return };
     let found = slicers(&opened.presentation);
     assert_eq!(found.len(), 2);
     for (frame, _) in &found {
@@ -7647,7 +7664,7 @@ fn slicers_made_by_excel_are_read_with_their_items_and_kept_by_the_save() {
 
 #[test]
 fn deleted_slicers_leave_the_drawing_and_their_parts() {
-    let (_data, opened) = open("xlsx-slicers-excel.xlsx");
+    let Some((_data, opened)) = open("xlsx-slicers-excel.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let remove = |d: &mut Document, name: &str| {
         let (slide, shape) = d.presentation().slides.iter().find_map(|s| s.shapes.iter().find(|sh| matches!(&sh.kind, ibis_doc_model::ShapeKind::Slicer(x) if x.name == name)).map(|sh| (s.id, sh.id))).unwrap();
@@ -7683,7 +7700,7 @@ fn deleted_slicers_leave_the_drawing_and_their_parts() {
 
 #[test]
 fn external_workbook_references_show_the_cache_and_save_by_number() {
-    let (data, opened) = open("xlsx-external-link.xlsx");
+    let Some((data, opened)) = open("xlsx-external-link.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let sheet = slide(d.presentation(), "ピボット");
     // Read: the formulas name the workbook as Excel shows it; the cached value stays.
@@ -7726,7 +7743,7 @@ fn external_workbook_references_show_the_cache_and_save_by_number() {
 #[test]
 fn external_links_are_updated_and_broken_and_saved() {
     use ibis_doc_model::{ExternalSheet, SheetCommand};
-    let (_data, opened) = open("xlsx-external-link.xlsx");
+    let Some((_data, opened)) = open("xlsx-external-link.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let books = d.presentation().workbook.as_ref().unwrap().external_books.clone();
     assert_eq!((books[0].name.as_str(), books[1].name.as_str()), ("予算.xlsx", "actual.xlsx"));
@@ -7765,7 +7782,7 @@ fn external_links_are_updated_and_broken_and_saved() {
 #[test]
 fn ignored_errors_are_saved_and_read_back() {
     use ibis_doc_model::error_check::{ErrorKind, flagged_cells};
-    let (_data, opened) = open("xlsx-sales.xlsx");
+    let Some((_data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let sheet = slide(d.presentation(), "月次売上");
     set(&mut d, sheet, vec![(20, 0, CellInput::Value(CellValue::Text("123".into()))), (21, 0, CellInput::Value(CellValue::Text("45".into())))]);
@@ -7786,7 +7803,7 @@ fn ignored_errors_are_saved_and_read_back() {
 
 #[test]
 fn a_pivot_slicers_selection_is_saved_in_its_cache() {
-    let (_data, opened) = open("xlsx-slicers-excel.xlsx");
+    let Some((_data, opened)) = open("xlsx-slicers-excel.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let slide_id = d.presentation().slides.iter().find(|s| sheet_of_slide(s).is_some_and(|sh| !sh.pivots.is_empty())).unwrap().id;
     // A hidden in the pivot table (what the slicer's button does): the slicer follows.
@@ -7806,7 +7823,7 @@ fn a_pivot_slicers_selection_is_saved_in_its_cache() {
 
 #[test]
 fn a_rewritten_pivot_cache_keeps_its_extensions() {
-    let (_data, opened) = open("xlsx-slicers-excel.xlsx");
+    let Some((_data, opened)) = open("xlsx-slicers-excel.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let slide_id = d.presentation().slides.iter().find(|s| sheet_of_slide(s).is_some_and(|sh| !sh.pivots.is_empty())).unwrap().id;
     // A shared item the cache did not have (and the table's field showing it): only added to the cache's, the records stay.
@@ -7836,11 +7853,7 @@ fn a_rewritten_pivot_cache_keeps_its_extensions() {
 #[test]
 fn pictures_in_cells_are_drawn_in_their_cells() {
     // The workbook Excel made (セルに配置 twice); skipped while the file is not in the tree.
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-cell-images-excel.xlsx");
-    if !path.exists() {
-        return;
-    }
-    let (data, opened) = open("xlsx-cell-images-excel.xlsx");
+    let Some((data, opened)) = open("xlsx-cell-images-excel.xlsx") else { return };
     let slide_ids: Vec<_> = opened.presentation.slides.iter().map(|s| s.id).collect();
     let mut found = 0;
     for id in slide_ids {
@@ -7863,7 +7876,7 @@ fn pictures_in_cells_are_drawn_in_their_cells() {
 #[test]
 fn an_old_xls_workbook_is_read() {
     // Excel's own .xls (test 担当, 架空の内容): 2 sheets, formats, a merge, a frozen pane, formulas.
-    let (_data, opened) = open("xlsx-legacy-sample.xls");
+    let Some((_data, opened)) = open("xlsx-legacy-sample.xls") else { return };
     let p = &opened.presentation;
     assert_eq!(p.slides.iter().filter_map(|s| s.name.as_deref()).collect::<Vec<_>>(), ["売上", "集計"]);
     assert_eq!(value(p, "売上", 0, 0), CellValue::Text("架空商店 月次売上表".into()));
@@ -7926,7 +7939,7 @@ fn shapes_of(p: &Presentation, sheet: &str) -> Vec<ibis_doc_model::Shape> {
 #[test]
 fn shapes_added_to_a_sheet_are_saved_in_its_drawing() {
     use ibis_doc_model::{AutoShape, Color, EmuRect, Fill, Geometry, Picture, Rgb, Shape, ShapeKind, Stroke};
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let sheet = slide(d.presentation(), "月次売上");
     let before = shapes_of(d.presentation(), "月次売上").len();
@@ -7979,7 +7992,7 @@ fn shapes_added_to_a_sheet_are_saved_in_its_drawing() {
 
 #[test]
 fn shapes_and_charts_removed_from_a_sheet_leave_the_drawing() {
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let sheet = slide(d.presentation(), "月次売上");
     let all = shapes_of(d.presentation(), "月次売上");
@@ -7999,7 +8012,7 @@ fn shapes_and_charts_removed_from_a_sheet_leave_the_drawing() {
 
 #[test]
 fn a_shape_added_to_a_sheet_without_a_drawing_makes_the_drawing() {
-    let (data, opened) = open("xlsx-table.xlsx");
+    let Some((data, opened)) = open("xlsx-table.xlsx") else { return };
     assert!(!ibis_ooxml::Package::open(data.clone()).unwrap().names().any(|n| n.starts_with("xl/drawings/drawing")), "the file has no drawing");
     let mut d = Document::new(opened.presentation.clone());
     let sheet = d.presentation().slides[0].id;
@@ -8020,7 +8033,7 @@ fn a_shape_added_to_a_sheet_without_a_drawing_makes_the_drawing() {
 fn a_chart_inserted_over_cells_is_saved_with_references_to_them() {
     use ibis_doc_model::{CellRange, EmuRect, ShapeKind};
     use ibis_pptx::NewChartKind;
-    let (data, opened) = open("xlsx-sales.xlsx");
+    let Some((data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let sheet = slide(d.presentation(), "月次売上");
     // A3:D8: the stores down the side, the months across the top.
@@ -8065,7 +8078,7 @@ fn a_chart_inserted_over_cells_is_saved_with_references_to_them() {
 fn a_new_chart_edited_after_insertion_saves_the_edit() {
     use ibis_doc_model::chart::{AxisKind, ChartText, ChartTitle};
     use ibis_doc_model::{CellRange, EmuRect, ShapeKind};
-    let (_data, opened) = open("xlsx-sales.xlsx");
+    let Some((_data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let sheet = slide(d.presentation(), "月次売上");
     let range = CellRange { first_row: 2, first_column: 0, last_row: 7, last_column: 3 };
@@ -8089,7 +8102,7 @@ fn a_new_chart_edited_after_insertion_saves_the_edit() {
 #[test]
 fn a_scatter_chart_over_numbers_is_saved_with_x_and_y_references() {
     use ibis_doc_model::{CellRange, EmuRect, ShapeKind};
-    let (_data, opened) = open("xlsx-sales.xlsx");
+    let Some((_data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let sheet = slide(d.presentation(), "月次売上");
     // B3:D8: the 4月 column as X, 5月 and 6月 as Y, headings in the first row.
@@ -8119,7 +8132,7 @@ fn a_scatter_chart_over_numbers_is_saved_with_x_and_y_references() {
 #[test]
 fn an_old_xls_keeps_conditional_formats_validations_links_and_notes() {
     // Excel's own .xls (test 担当, 架空の内容): 条件付き書式 (値・数式・データ バー), 入力規則 (リスト・整数), ハイパーリンク (Web・シート内), メモ 2 つ.
-    let (_data, opened) = open("xlsx-legacy-features.xls");
+    let Some((_data, opened)) = open("xlsx-legacy-features.xls") else { return };
     let p = &opened.presentation;
     let sheet = sheet_of_slide(p.slide(slide(p, "売上")).unwrap()).unwrap();
     assert_eq!(sheet.conditional.len(), 3);
@@ -8155,7 +8168,7 @@ fn an_old_xls_keeps_conditional_formats_validations_links_and_notes() {
 #[test]
 fn a_bubble_chart_over_three_columns_is_saved_with_x_y_and_size_references() {
     use ibis_doc_model::{CellRange, EmuRect, ShapeKind};
-    let (_data, opened) = open("xlsx-sales.xlsx");
+    let Some((_data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let sheet = slide(d.presentation(), "月次売上");
     // B3:D8: 4月 as X, 5月 as Y, 6月 as the size, headings in the first row.
@@ -8184,7 +8197,7 @@ fn a_bubble_chart_over_three_columns_is_saved_with_x_y_and_size_references() {
 
 #[test]
 fn groupby_and_pivotby_spill_and_a_function_by_its_name_is_saved_as_the_file_has_it() {
-    let (_data, opened) = open("xlsx-sales.xlsx");
+    let Some((_data, opened)) = open("xlsx-sales.xlsx") else { return };
     let mut d = Document::new(opened.presentation.clone());
     let s = slide(d.presentation(), "月次売上");
     // 店舗 (A4:A8) with their 4月 (B4:B8): one group each, then the total.
