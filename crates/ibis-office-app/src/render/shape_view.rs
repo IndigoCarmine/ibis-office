@@ -62,6 +62,9 @@ pub(crate) struct Resources {
     text_system: Arc<TextSystem>,
     /// Ascent, descent and line gap of fonts, in ems.
     metrics: std::cell::RefCell<HashMap<Font, (f32, f32, f32)>>,
+    /// Word for Windows' lines of the fonts and whether they are East Asian
+    /// ones (`word_windows_font`).
+    word_lines: std::cell::RefCell<HashMap<Font, Option<((f32, f32), bool)>>>,
     /// Draw as printed: sheets without their grid lines.
     pub(crate) print: bool,
     /// The slide show is drawn: an animated GIF plays (elsewhere it shows its first frame).
@@ -75,6 +78,10 @@ pub(crate) struct Resources {
     pub(crate) print_hidden_text: bool,
     /// 印刷オプション: 変更履歴とコメントを印刷する (DOCX-SEC-014).
     pub(crate) print_markup: bool,
+    /// Word documents: lines and baselines as Word for Windows makes them
+    /// (`font_metrics::word_windows_line_of`), else as Word for Mac does. The
+    /// platform's by default; `--word-metrics` sets it for an export.
+    pub(crate) word_windows_lines: bool,
     /// Word documents: hide document body text during header/footer editing (Word Header & Footer Tools > オプション > 文書内のテキストを表示).
     pub(crate) hide_document_text: bool,
     /// Word documents: the page is shown dark (表示 > ダークモード: a dark paper, the black of text and lines light), on the screen only.
@@ -171,12 +178,14 @@ impl Resources {
             fonts,
             text_system,
             metrics: Default::default(),
+            word_lines: Default::default(),
             print: false,
             animate_pictures: std::cell::Cell::new(false),
             live_gifs: Default::default(),
             print_backgrounds: false,
             print_hidden_text: false,
             print_markup: true,
+            word_windows_lines: cfg!(target_os = "windows"),
             hide_document_text: false,
             dark_page: false,
             collapsed_headings: Default::default(),
@@ -384,6 +393,32 @@ impl Resources {
         m
     }
 
+    /// The ascent and the single-spaced line (ems) Word for Windows gives
+    /// `font` (`font_metrics::word_windows_font`), from its file.
+    pub(crate) fn word_windows_line(&self, font: &Font) -> Option<(f32, f32)> {
+        self.word_windows_font(font).map(|(line, _)| line)
+    }
+
+    /// Whether `font` is an East Asian one (has a CJK code page), from its file.
+    pub(crate) fn is_east_asian_font(&self, font: &Font) -> bool {
+        self.word_windows_font(font).is_some_and(|(_, east_asian)| east_asian)
+    }
+
+    fn word_windows_font(&self, font: &Font) -> Option<((f32, f32), bool)> {
+        if let Some(&m) = self.word_lines.borrow().get(font) {
+            return m;
+        }
+        let id = self.text_system.resolve_font(font);
+        let m = self.text_system.font_data(id).and_then(|(data, index)| crate::render::font_metrics::word_windows_font(&data, index));
+        self.word_lines.borrow_mut().insert(font.clone(), m);
+        m
+    }
+
+    /// Whether the typeface `name` is installed (else another font stands in for it).
+    pub(crate) fn has_typeface(&self, name: &str) -> bool {
+        self.fonts.available(name).is_some()
+    }
+
     /// How far to move a line of `font` at `size` down from where GPUI puts
     /// it in a line box `line` high (GPUI centres the font's height in the
     /// box) to where PowerPoint does (`rich_text::baseline`).
@@ -535,6 +570,9 @@ const TYPEFACE_ALIASES: &[(&str, &str)] = &[
     ("Yu Mincho", "YuMincho"),
     // Century is not on macOS; Times New Roman is the nearest serif.
     ("Century", "Times New Roman"),
+    // Helvetica is not on Windows: Word draws it with Arial (Windows' font
+    // substitutes; Word's PDF of a paper embeds Arial as "Helvetica,Bold").
+    ("Helvetica", "Arial"),
     // Calibri is not on macOS; Carlito, bundled (`BUNDLED_FONTS`), has its
     // widths.
     ("Calibri", "Carlito"),

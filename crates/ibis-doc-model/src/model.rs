@@ -960,6 +960,24 @@ pub struct FloatingAnchor {
     pub wrap_polygon: Option<WrapPolygon>,
     /// For a connector: the shapes its ends are attached to.
     pub glue: Glue,
+    /// Drawn over another shape (a picture in a text box's text): placed
+    /// wherever that shape is.
+    pub over: Option<OverShape>,
+}
+
+/// Where a shape drawn over another one is on it (`FloatingAnchor::over`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverShape {
+    /// The shape it is over.
+    pub shape: u64,
+    /// From that shape's top-left.
+    pub dx: Emu,
+    pub dy: Emu,
+    /// The paragraph of that shape's text it is in (a line of its height
+    /// there), and how far down in that line: `dy` again where the text is
+    /// measured.
+    pub paragraph: usize,
+    pub down: Emu,
 }
 
 /// A 2D point (in EMUs or local coordinates) used in a text wrapping polygon (`wp:wrapPolygon`).
@@ -1212,6 +1230,7 @@ impl Default for FloatingAnchor {
             relative_height: Self::DEFAULT_RELATIVE_HEIGHT,
             wrap_polygon: None,
             glue: Glue::default(),
+            over: None,
         }
     }
 }

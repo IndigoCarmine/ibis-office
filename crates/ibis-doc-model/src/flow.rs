@@ -1235,6 +1235,12 @@ pub struct FlowRunStyle {
     pub font: Option<String>,
     /// Typeface for East Asian text.
     pub east_asian_font: Option<String>,
+    /// Shared punctuation and symbols take the East Asian typeface
+    /// (`w:rFonts/@w:hint="eastAsia"`).
+    pub east_asian_hint: bool,
+    /// The East Asian text is Chinese (`w:lang/@w:eastAsia` zh-…): with the
+    /// hint, accented Latin letters take the East Asian typeface too.
+    pub east_asian_chinese: bool,
     /// Typeface for Complex Script text (Arabic, Hebrew, Thai, Indic, etc.).
     pub cs_font: Option<String>,
     /// Hundredths of a point.
@@ -1300,6 +1306,8 @@ impl Default for FlowRunStyle {
         Self {
             font: None,
             east_asian_font: None,
+            east_asian_hint: false,
+            east_asian_chinese: false,
             cs_font: None,
             size: 1050,
             cs_size: None,
@@ -1374,10 +1382,23 @@ impl FlowRunStyle {
                 return Some(f);
             }
         }
-        // Punctuation and symbols from U+2010 up take the East Asian font
-        // in a Japanese document, as Word draws them ("―" full-width).
-        // (not "…" U+2026: Word draws it in the Latin font, as three dots on the baseline: DIDX).
-        let east_asian = c as u32 >= 0x2010 && !matches!(c as u32, 0xff61..=0xff9f | 0x2026);
+        // As Word picks the typeface (measured on its PDFs, as docx4j's
+        // RunFontSelector has it): CJK text takes the East Asian one; the
+        // symbols shared with Latin text only with `w:hint="eastAsia"`
+        // (whatever `w:lang` says), else the Latin one.
+        let hint = self.east_asian_hint;
+        let east_asian = match c as u32 {
+            0xff61..=0xff9f => false,
+            0x2e80.. => true,
+            0x2000..=0x2e7f | 0x02b0..=0x04ff => hint,
+            // ¡ § ° ± × ÷…; à é ì ò ù ü only for Chinese.
+            0x00a0..=0x00ff => {
+                hint && (matches!(c as u32, 0xa1 | 0xa4 | 0xa7 | 0xa8 | 0xaa | 0xad | 0xaf | 0xb0..=0xb4 | 0xb6..=0xba | 0xbc..=0xbf | 0xd7 | 0xf7)
+                    || self.east_asian_chinese && matches!(c as u32, 0xe0 | 0xe1 | 0xe8..=0xea | 0xec | 0xed | 0xf2 | 0xf3 | 0xf9 | 0xfa | 0xfc))
+            }
+            0x0100..=0x02af => hint && self.east_asian_chinese,
+            _ => false,
+        };
         if east_asian {
             self.east_asian_font.as_deref().or(self.font.as_deref()).or(self.cs_font.as_deref())
         } else {
@@ -2989,6 +3010,9 @@ pub struct RunFormat {
     pub font: Option<String>,
     /// East Asian typeface (`w:rFonts/@w:eastAsia`).
     pub east_asian_font: Option<String>,
+    /// `w:rFonts/@w:hint="eastAsia"`: punctuation and symbols shared by
+    /// Latin and East Asian text take the East Asian typeface.
+    pub east_asian_hint: Option<bool>,
     /// Complex Script typeface (`w:rFonts/@w:cs`).
     pub cs_font: Option<String>,
     /// Hundredths of a point.
@@ -3064,6 +3088,7 @@ impl RunFormat {
         }
         set(&mut self.font, &other.font);
         set(&mut self.east_asian_font, &other.east_asian_font);
+        set(&mut self.east_asian_hint, &other.east_asian_hint);
         set(&mut self.cs_font, &other.cs_font);
         set(&mut self.size, &other.size);
         set(&mut self.cs_size, &other.cs_size);
@@ -3115,6 +3140,7 @@ impl RunFormat {
         let mut f = self.clone();
         clear(&mut f.font, &other.font);
         clear(&mut f.east_asian_font, &other.east_asian_font);
+        clear(&mut f.east_asian_hint, &other.east_asian_hint);
         clear(&mut f.cs_font, &other.cs_font);
         clear(&mut f.size, &other.size);
         clear(&mut f.cs_size, &other.cs_size);
@@ -3162,6 +3188,8 @@ impl RunFormat {
         FlowRunStyle {
             font: self.font.clone(),
             east_asian_font: self.east_asian_font.clone(),
+            east_asian_hint: self.east_asian_hint.unwrap_or(false),
+            east_asian_chinese: self.lang_east_asia.as_deref().is_some_and(|l| l.to_ascii_lowercase().starts_with("zh")),
             cs_font: self.cs_font.clone(),
             size: self.size.unwrap_or(d.size),
             cs_size: self.cs_size,

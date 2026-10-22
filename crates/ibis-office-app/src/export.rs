@@ -79,6 +79,9 @@ pub struct Options {
     pub print_hidden_text: bool,
     /// 印刷オプション: 変更履歴とコメントを印刷する (DOCX-SEC-014).
     pub print_markup: bool,
+    /// Word documents: lines as Word for Windows (`true`) or Mac makes them;
+    /// `None`: the platform's (`Resources::word_windows_lines`).
+    pub word_windows_lines: Option<bool>,
     /// 印刷の設定: the colour of the pictures (`PdfImage`).
     pub color: crate::export_print::PrintColor,
     /// 配布資料: slides to a page (`PdfImage`).
@@ -511,6 +514,9 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
         resources.print_backgrounds = options.print_backgrounds;
         resources.print_hidden_text = options.print_hidden_text;
         resources.print_markup = options.print_markup;
+        if let Some(windows) = options.word_windows_lines {
+            resources.word_windows_lines = windows;
+        }
         // Shapes where they are meant to be, as PDF rasterizers draw them.
         // A presentation's picture (PNG, a picture per PDF page) stays on
         // whole pixels as the screen draws it; its vector PDF is exact, its
