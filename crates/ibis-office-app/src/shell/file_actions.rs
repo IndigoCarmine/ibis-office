@@ -165,7 +165,10 @@ impl SlideEditor {
             Some(path) => {
                 let result = self.save_to(path, window);
                 let message = match result {
-                    Ok(()) => i18n_status(on),
+                    Ok(()) => {
+                        self.share_saved_with_other_windows(cx);
+                        i18n_status(on)
+                    }
                     Err(err) => crate::shell::i18n::format("file.save-failed", &[("error", &err)]),
                 };
                 self.set_status(message, cx);

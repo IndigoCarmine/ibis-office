@@ -78,18 +78,13 @@ impl SlideEditor {
         }
         #[cfg(not(target_family = "wasm"))]
         {
-            let directory = self
-                .path
-                .as_deref()
-                .and_then(|p| p.parent())
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| {
-                    if self.is_workbook() {
-                        crate::xlsx::backup_save::effective_default_save_location()
-                    } else {
-                        std::env::var_os("HOME").map(Into::into).unwrap_or_else(|| ".".into())
-                    }
-                });
+            let directory = save_as_directory(self.path.as_deref(), self.save_as_folder.as_deref()).unwrap_or_else(|| {
+                if self.is_workbook() {
+                    crate::xlsx::backup_save::effective_default_save_location()
+                } else {
+                    std::env::var_os("HOME").map(Into::into).unwrap_or_else(|| ".".into())
+                }
+            });
             let name = self.file_name.clone().unwrap_or_default();
             let picked = cx.prompt_for_new_path(&directory, Some(&name));
             cx.spawn_in(window, async move |this, cx| {
@@ -150,6 +145,14 @@ impl SlideEditor {
         window.set_window_title(&format!("{name} - ibisOffice"));
         self.file_name = Some(name);
         self.path = Some(path);
+        // What is open is now what its file holds, so closing it asks
+        // nothing until it is edited again (Save As too: the file is the new
+        // one, as in Word and Excel). Not when saved as CSV or text, which
+        // keep the values of one sheet only: Excel asks again then too, and
+        // the other sheets and the formats are not saved.
+        if !(csv || tsv) {
+            self.document.mark_saved();
+        }
         if self.is_workbook() || self.is_presentation() {
             self.cleanup_active_autorecover_file();
             self.is_recovered = false;
@@ -163,6 +166,9 @@ impl SlideEditor {
     #[cfg(not(target_family = "wasm"))]
     fn finish_save(&mut self, result: Result<(), String>, after: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
         let close = after.closes(&result);
+        if result.is_ok() {
+            self.share_saved_with_other_windows(cx);
+        }
         self.report_save(result, cx);
         if close {
             self.force_close_file(window, cx);
@@ -170,6 +176,15 @@ impl SlideEditor {
                 window.remove_window();
             }
         }
+    }
+
+    /// The other windows of the file (a workbook's or a document's
+    /// 新しいウィンドウ) share its document, so they are saved with it too:
+    /// the last one closed asks nothing.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn share_saved_with_other_windows(&self, cx: &mut Context<Self>) {
+        self.sync_workbook_peers(cx);
+        self.sync_document_peers(cx);
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -180,6 +195,14 @@ impl SlideEditor {
         });
         cx.notify();
     }
+}
+
+/// The folder 名前を付けて保存… starts in: the file's own folder, else the
+/// folder kept for a file with no path yet (`save_as_folder`); `None` when
+/// there is neither, for the usual default.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn save_as_directory(path: Option<&std::path::Path>, save_as_folder: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    path.and_then(|p| p.parent()).or(save_as_folder).map(std::path::Path::to_path_buf)
 }
 
 /// `package` protected with `password`: an OOXML package kept encrypted in a compound file.

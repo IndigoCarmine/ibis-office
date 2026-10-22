@@ -1817,6 +1817,53 @@ mod tests {
     }
 
     #[test]
+    fn test_seriessum_mirr_use_all_inputs() {
+        // SERIESSUM must use the coefficients and MIRR the cash flows, whatever x/n/m or the rates are.
+        let mut book = MockBook::new(false);
+        let cases: &[((usize, u32, u32), &str)] = &[
+            ((0, 0, 5), "SERIESSUM(5, -2.5, 0.5, {1})"),
+            ((0, 1, 5), "SERIESSUM(5, 12, 1E-15, {1})"),
+            ((0, 2, 5), "SERIESSUM(5, -2.5, 0.5, {0, 0, 0, 0, 0, 1})"),
+            ((0, 3, 5), "MIRR({-100, 10, 20, 30, 40, 50, 60, 70, 80, 90}, 1E15, 5)"),
+            ((0, 4, 5), "MIRR({-100, 90, 80, 70, 60, 50, 40, 30, 20, 10}, 1E15, 5)"),
+        ];
+        let mut formula_cells = Vec::new();
+        for (cell, formula) in cases {
+            book.formulas.insert(*cell, formula.to_string());
+            formula_cells.push(*cell);
+        }
+        let res = recalculate(&book, &formula_cells, &formula_cells);
+        let num = |cell: (usize, u32, u32)| match res.iter().find(|r| r.cell == cell).map(|r| &r.value) {
+            Some(CellValue::Number(n)) => *n,
+            other => panic!("expected number at {cell:?}, got {other:?}"),
+        };
+
+        // a single coefficient: x^n
+        let s1 = num((0, 0, 5));
+        let expected_s1 = 1.0 / (25.0 * 5f64.sqrt());
+        assert!((s1 / expected_s1 - 1.0).abs() < 1e-12, "SERIESSUM(5,-2.5,0.5,{{1}}) = {s1}");
+        let s2 = num((0, 1, 5));
+        assert_eq!(s2, 244140625.0, "SERIESSUM(5,12,1E-15,{{1}}) = {s2}");
+        // only the sixth coefficient: x^(n + 5m) = 5^0
+        let s3 = num((0, 2, 5));
+        assert_eq!(s3, 1.0, "SERIESSUM(5,-2.5,0.5,{{0,0,0,0,0,1}}) = {s3}");
+
+        // one outflow at period 0, so MIRR = (FV of the inflows at 1 + 5 / 100)^(1/9) - 1
+        let mirr = |v: &[f64]| {
+            let pos: f64 = v.iter().enumerate().map(|(i, x)| x * 6f64.powi((v.len() - 1 - i) as i32)).sum();
+            (pos / 100.0).powf(1.0 / 9.0) - 1.0
+        };
+        let ascending: Vec<f64> = (1..10).map(|i| (i * 10) as f64).collect();
+        let descending: Vec<f64> = ascending.iter().rev().copied().collect();
+        let (m1, m2) = (num((0, 3, 5)), num((0, 4, 5)));
+        let (expected_m1, expected_m2) = (mirr(&[&[0.0], &ascending[..]].concat()), mirr(&[&[0.0], &descending[..]].concat()));
+        assert!((m1 / expected_m1 - 1.0).abs() < 1e-12, "MIRR(-100,10..90) = {m1}, expected {expected_m1}");
+        assert!((m2 / expected_m2 - 1.0).abs() < 1e-12, "MIRR(-100,90..10) = {m2}, expected {expected_m2}");
+        // earlier inflows earn the reinvestment rate for longer
+        assert!(m2 > m1, "MIRR must change with the cash flows: {m1} vs {m2}");
+    }
+
+    #[test]
     fn test_excel_15_digits_and_zero_subtraction() {
         let mut book = MockBook::new(false);
         book.sheets.push("Sheet1".to_string());

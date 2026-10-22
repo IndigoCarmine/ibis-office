@@ -404,12 +404,14 @@ impl SlideEditor {
     }
 
     /// On close without saving, preserve the recovery file as Unsaved_... if configured.
-    pub(crate) fn preserve_or_cleanup_autorecover_on_discard(&mut self) {
+    pub(crate) fn preserve_or_cleanup_autorecover_on_discard(&mut self, cx: &App) {
+        #[cfg(target_family = "wasm")]
+        let _ = cx;
         #[cfg(not(target_family = "wasm"))]
         {
             let config = load_autorecover_config();
             if let Some(path) = self.active_autorecover_file.take() {
-                if config.keep_last_unsaved && self.document.can_undo() && path.exists() {
+                if config.keep_last_unsaved && self.has_unsaved_edits(cx) && path.exists() {
                     let dir = path.parent().unwrap_or(Path::new("."));
                     let (stem, _) = self.name_parts();
                     let now = crate::clock::unix_millis();
