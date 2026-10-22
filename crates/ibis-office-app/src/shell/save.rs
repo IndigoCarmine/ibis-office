@@ -138,15 +138,11 @@ impl SlideEditor {
         } else {
             source.save(self.presentation(), ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?
         };
-        if self.is_workbook() {
-            let override_opt = self.sheet_state().and_then(|s| s.always_create_backup);
-            if let Ok(Some(backup_path)) = crate::xlsx::backup_save::create_backup_copy_if_enabled(&path, override_opt) {
-                log::info!("Created backup copy at: {}", backup_path.display());
-            }
-        }
         // Protected with the password the file has (パスワードを使用して暗号化).
         let bytes = if let (Some(password), false, false) = (&self.protection_password, csv, tsv) { protect(&bytes, password)? } else { bytes };
-        write_replacing(&path, &bytes).map_err(|e| crate::shell::i18n::format("file.cannot-write", &[("path", &path.display()), ("error", &e)]))?;
+        // A workbook's backup (バックアップと保存先の設定): its setting, or the workbook's own.
+        let backup = self.is_workbook().then(|| (crate::xlsx::backup_save::load_backup_save_config(), self.sheet_state().and_then(|s| s.always_create_backup)));
+        back_up_and_write(&path, &bytes, backup.as_ref().map(|(config, workbook)| (config, *workbook)))?;
         let name: SharedString = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
         window.set_window_title(&format!("{name} - ibisOffice"));
         self.file_name = Some(name);
@@ -197,6 +193,24 @@ pub(crate) fn protect(package: &[u8], password: &str) -> Result<Vec<u8>, String>
     Ok(encrypted)
 }
 
+/// Back up what `path` holds as `backup` says (a workbook's backup setting
+/// and its own override), then replace it with `bytes`. A backup that
+/// cannot be made stops the save with an error that says why, so `path` is
+/// never replaced without the backup that was asked for (as in Excel).
+#[cfg(not(target_family = "wasm"))]
+fn back_up_and_write(
+    path: &std::path::Path,
+    bytes: &[u8],
+    backup: Option<(&crate::xlsx::backup_save::BackupSaveConfig, Option<bool>)>,
+) -> Result<(), String> {
+    if let Some((config, workbook_override)) = backup {
+        if let Some(backup_path) = crate::xlsx::backup_save::create_backup_copy(path, config, workbook_override)? {
+            log::info!("Created backup copy at: {}", backup_path.display());
+        }
+    }
+    write_replacing(path, bytes).map_err(|e| crate::shell::i18n::format("file.cannot-write", &[("path", &path.display()), ("error", &e)]))
+}
+
 /// Write `bytes` to a new file next to `path`, then move it over `path`.
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn write_replacing(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -222,5 +236,68 @@ mod tests {
         // 保存 and 名前を付けて保存… never close it.
         assert!(!AfterSave::Stay.closes(&saved));
         assert!(!AfterSave::Stay.closes(&failed));
+    }
+
+    /// A folder of its own under the system's temporary folder.
+    fn temporary_folder(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ibisoffice-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn always_back_up_to(folder: std::path::PathBuf) -> crate::xlsx::backup_save::BackupSaveConfig {
+        use crate::xlsx::backup_save::{BackupLocation, BackupSaveConfig};
+        BackupSaveConfig { always_create_backup: true, backup_location: BackupLocation::Custom(folder), ..BackupSaveConfig::default() }
+    }
+
+    #[test]
+    fn a_backup_that_cannot_be_made_stops_the_save() {
+        let dir = temporary_folder("backup-fails");
+        let file = dir.join("Book.xlsx");
+        std::fs::write(&file, b"previous version").unwrap();
+        // The backup folder cannot be made: a file is where its parent would be.
+        let blocker = dir.join("not-a-folder");
+        std::fs::write(&blocker, b"").unwrap();
+        let config = always_back_up_to(blocker.join("backups"));
+
+        let result = super::back_up_and_write(&file, b"new version", Some((&config, None)));
+
+        let error = result.expect_err("the save stops when its backup cannot be made");
+        assert!(error.contains(&blocker.join("backups").display().to_string()), "the error names the backup folder: {error}");
+        assert_eq!(std::fs::read(&file).unwrap(), b"previous version", "the file is not replaced");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_backup_keeps_the_previous_version() {
+        let dir = temporary_folder("backup-made");
+        let file = dir.join("Book.xlsx");
+        std::fs::write(&file, b"previous version").unwrap();
+        let backups = dir.join("backups");
+        let config = always_back_up_to(backups.clone());
+
+        super::back_up_and_write(&file, b"new version", Some((&config, None))).expect("saved");
+
+        assert_eq!(std::fs::read(&file).unwrap(), b"new version");
+        let backup = std::fs::read_dir(&backups).unwrap().next().expect("a backup was made").unwrap().path();
+        assert_eq!(std::fs::read(backup).unwrap(), b"previous version");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_workbook_setting_turns_the_backup_off() {
+        let dir = temporary_folder("backup-off");
+        let file = dir.join("Book.xlsx");
+        std::fs::write(&file, b"previous version").unwrap();
+        // Off for this workbook: the folder that could not be made is never tried.
+        let blocker = dir.join("not-a-folder");
+        std::fs::write(&blocker, b"").unwrap();
+        let config = always_back_up_to(blocker.join("backups"));
+
+        super::back_up_and_write(&file, b"new version", Some((&config, Some(false)))).expect("saved without a backup");
+
+        assert_eq!(std::fs::read(&file).unwrap(), b"new version");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
