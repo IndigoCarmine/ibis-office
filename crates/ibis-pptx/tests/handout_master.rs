@@ -8,13 +8,18 @@ use ibis_doc_model::{Command, Document, EmuRect};
 use ibis_pptx::handout_master::{self, Mark};
 use ibis_pptx::SaveOptions;
 
-fn file(name: &str) -> Vec<u8> {
-    std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test").join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
+/// The file `name` under `test/`, or `None` (reported as skipped) when the
+/// private test data is not there.
+fn file(name: &str) -> Option<Vec<u8>> {
+    fixtures::read(&format!("test/{name}"))
 }
 
 #[test]
 fn a_file_without_a_handout_master_has_the_usual_places() {
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let layout = handout_master::layout(&data).unwrap();
     assert_eq!(layout.page, (6_858_000, 9_144_000));
     assert_eq!(layout.places.iter().map(|p| p.mark).collect::<Vec<_>>(), [Mark::Header, Mark::Date, Mark::Footer, Mark::Number]);
@@ -24,7 +29,7 @@ fn a_file_without_a_handout_master_has_the_usual_places() {
 
 #[test]
 fn the_places_are_a_slide_and_come_back_edited() {
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let temp = handout_master::build(&data).unwrap();
     let opened = ibis_pptx::open(temp).unwrap();
     assert_eq!(opened.presentation.slides.len(), 1);
@@ -68,7 +73,7 @@ fn the_places_are_a_slide_and_come_back_edited() {
 
 #[test]
 fn nothing_edited_keeps_the_places() {
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let temp = handout_master::build(&data).unwrap();
     let opened = ibis_pptx::open(temp).unwrap();
     let edited = opened.source.save(&opened.presentation, SaveOptions::default()).unwrap();
