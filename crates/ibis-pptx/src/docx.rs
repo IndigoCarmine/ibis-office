@@ -19,13 +19,13 @@ use ibis_doc_model::{
     SectionSetup, ShadingPattern, Shape, ShapeId, ShapeKind, Slide, Stroke, StyleKind, TabAlign, TabChange, TabStop, TextBody, TextAlign, TextStyle, UnderlineStyle, VerticalAnchor,
     VerticalMerge, VerticalPosition,
 };
-use roxmltree::{Document, Node};
+use roxmltree::Node;
 
 use crate::Error;
 use crate::save::docx::{AtomSource, ParaSource, SourceMap, TableSource};
 use crate::package::{Package, REL_OFFICE_DOCUMENT, Relationship};
 use crate::theme::Theme;
-use crate::xml::{attr, attr_bool, attr_i64, child, children, elements};
+use crate::xml::{attr, attr_bool, attr_i64, child, children, elements, parse};
 
 type Rels = HashMap<String, Relationship>;
 
@@ -2371,11 +2371,6 @@ pub(crate) fn is_document(package: &Package) -> Result<bool, Error> {
     Ok(package.related("", REL_OFFICE_DOCUMENT)?.is_some_and(|main| main.ends_with("document.xml")))
 }
 
-fn parse<'i>(name: &str, text: &'i str) -> Result<Document<'i>, Error> {
-    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
-    Document::parse_with_options(text, options).map_err(|e| Error::xml(name, e))
-}
-
 /// Read a `.docx` document: one slide holding its first page; the viewer
 /// lays out the rest (`Presentation::flow`).
 pub(crate) fn read(data: &[u8]) -> Result<Presentation, Error> {
@@ -2820,6 +2815,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
 #[cfg(test)]
 mod namespace_tests {
     use super::*;
+    use roxmltree::Document;
 
     #[test]
     fn story_references_require_relationship_namespace() {

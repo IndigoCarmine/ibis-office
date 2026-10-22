@@ -20,7 +20,7 @@ use crate::package::{REL_CHART_USER_SHAPES,
 };
 use crate::style::{BulletProps, ListStyle, ParaProps, RunProps, Spacing, auto_number, bullet_glyph};
 use crate::theme::{Colors, Theme, bg_fill_style, fill_style, line_style};
-use crate::xml::{attr, attr_bool, attr_i64, child, children, elements, path};
+use crate::xml::{attr, attr_bool, attr_i64, child, children, elements, parse, path};
 
 type Rels = HashMap<String, Relationship>;
 
@@ -725,11 +725,6 @@ fn image_pixels(data: &[u8]) -> Option<(u32, u32)> {
         }
     }
     None
-}
-
-fn parse<'i>(name: &str, text: &'i str) -> Result<Document<'i>, Error> {
-    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
-    Document::parse_with_options(text, options).map_err(|e| Error::xml(name, e))
 }
 
 struct Reader<'p, 'd, 'i> {
