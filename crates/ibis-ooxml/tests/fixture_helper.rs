@@ -18,6 +18,19 @@ use std::process::{Command, Output};
 const MISSING: &str = "test/editing/fixture-helper-probe-missing.xlsx";
 /// A fixture that is in the public repository.
 const PRESENT: &str = "test/benchmark/README.md";
+/// Set by [`run_probe`] on the child: a probe run otherwise (`--ignored` or
+/// `--include-ignored`, maybe with `IBIS_REQUIRE_FIXTURES` set) checks nothing.
+const PROBE_VAR: &str = "IBIS_FIXTURE_HELPER_PROBE";
+
+/// Whether this probe was started by [`run_probe`]; if so it says so, for the
+/// parent to see that the probe ran.
+fn probing(name: &str) -> bool {
+    let probing = std::env::var_os(PROBE_VAR).is_some();
+    if probing {
+        println!("probe started: {name}");
+    }
+    probing
+}
 
 #[test]
 fn required_only_when_set_to_something_but_zero() {
@@ -48,6 +61,9 @@ fn a_skipped_payload_is_told_apart() {
 #[test]
 #[ignore = "run by find_skips_unless_required in a child process"]
 fn probe_find() {
+    if !probing("probe_find") {
+        return;
+    }
     assert_eq!(fixtures::find(MISSING), None);
     assert_eq!(fixtures::read(MISSING), None);
 }
@@ -55,6 +71,9 @@ fn probe_find() {
 #[test]
 #[ignore = "run by find_or_skip_skips_unless_required in a child process"]
 fn probe_find_or_skip() {
+    if !probing("probe_find_or_skip") {
+        return;
+    }
     let caught = std::panic::catch_unwind(|| fixtures::find_or_skip(MISSING));
     assert_eq!(fixtures::skipped(&*caught.unwrap_err()), Some(format!("{MISSING} が無い").as_str()));
 }
@@ -63,15 +82,16 @@ fn probe_find_or_skip() {
 fn run_probe(name: &str, require: Option<&str>) -> (bool, String) {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command.args([name, "--ignored", "--exact", "--nocapture", "--test-threads=1"]);
+    command.env(PROBE_VAR, "1");
     match require {
         Some(value) => command.env(fixtures::REQUIRE_VAR, value),
         None => command.env_remove(fixtures::REQUIRE_VAR),
     };
     let Output { status, stdout, stderr } = command.output().unwrap();
     let output = format!("{}{}", String::from_utf8_lossy(&stdout), String::from_utf8_lossy(&stderr));
-    // The probe ran, whatever its outcome (an `--exact` filter matching
-    // nothing would pass with no test run).
-    assert!(output.contains("running 1 test"), "{name} did not run:\n{output}");
+    // The probe ran past its check, whatever its outcome (an `--exact` filter
+    // matching nothing, or a probe returning early, would pass checking nothing).
+    assert!(output.contains(&format!("probe started: {name}")), "{name} did not run:\n{output}");
     (status.success(), output)
 }
 
@@ -88,6 +108,9 @@ fn find_skips_unless_required() {
 
 #[test]
 fn find_or_skip_skips_unless_required() {
+    let (passed, output) = run_probe("probe_find_or_skip", None);
+    assert!(passed, "{output}");
+
     let (passed, output) = run_probe("probe_find_or_skip", Some("0"));
     assert!(passed, "{output}");
 
