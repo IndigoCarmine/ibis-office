@@ -478,6 +478,10 @@ pub struct SlideEditor {
     pub(crate) window_number: Option<usize>,
     /// Whether the save confirmation dialog is open (shown when closing the last window with unsaved edits).
     pub(crate) save_confirm_dialog_open: bool,
+    /// The save confirmation dialog asks because the window is being closed
+    /// (`window_should_close`): once the edits are saved or discarded, the
+    /// window closes too, not only the file.
+    pub(crate) save_confirm_closes_window: bool,
     /// Whether side-by-side comparison mode (並べて比較 / XLSX-VIEW-013) is active.
     pub(crate) side_by_side: bool,
     /// Whether synchronous scrolling (同期スクロール / XLSX-VIEW-014) is active.
@@ -628,6 +632,7 @@ impl SlideEditor {
             document_id: NEXT_DOCUMENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             window_number: None,
             save_confirm_dialog_open: false,
+            save_confirm_closes_window: false,
             side_by_side: false,
             sync_scrolling: false,
             side_by_side_peer: None,
@@ -971,10 +976,46 @@ impl SlideEditor {
         // saved are asked about before they are closed.
         if self.document.can_undo() {
             self.save_confirm_dialog_open = true;
+            self.save_confirm_closes_window = false;
             cx.notify();
             return;
         }
         self.force_close_file(window, cx);
+    }
+
+    /// The window is being closed (its close button, Alt+F4, the red
+    /// button): whether it may close now. Edits not saved are asked about
+    /// first in the save confirmation dialog, as ファイル > 閉じる asks, and
+    /// the window closes once they are saved or discarded.
+    pub(crate) fn window_should_close(&mut self, cx: &mut Context<Self>) -> bool {
+        let shown_in_other_window = self.shown_in_other_window(cx);
+        match window_close(self.has_document, shown_in_other_window, self.document.can_undo(), self.save_confirm_dialog_open) {
+            WindowClose::Close => true,
+            WindowClose::Ask => {
+                self.save_confirm_dialog_open = true;
+                self.save_confirm_closes_window = true;
+                cx.notify();
+                false
+            }
+            // The dialog stays as it is; its answer now closes the window too.
+            WindowClose::KeepAsking => {
+                self.save_confirm_closes_window = true;
+                false
+            }
+        }
+    }
+
+    /// Another window shows this window's file (a workbook's or a
+    /// document's 新しいウィンドウ), so closing this one loses nothing.
+    fn shown_in_other_window(&self, cx: &mut Context<Self>) -> bool {
+        let me = cx.entity_id();
+        if self.is_workbook() {
+            !Self::find_other_matching_windows(self.workbook_id, me, cx).is_empty()
+        } else if self.is_document() {
+            !Self::find_other_matching_document_windows(self.document_id, me, cx).is_empty()
+        } else {
+            false
+        }
     }
 
     pub(crate) fn force_close_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1979,13 +2020,19 @@ impl SlideEditor {
 
     pub(crate) fn close_save_confirm_dialog(&mut self, cx: &mut Context<Self>) {
         self.save_confirm_dialog_open = false;
+        self.save_confirm_closes_window = false;
         cx.notify();
     }
 
     pub(crate) fn confirm_save_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_confirm_dialog_open = false;
+        let after = if std::mem::take(&mut self.save_confirm_closes_window) {
+            crate::shell::save::AfterSave::CloseWindow
+        } else {
+            crate::shell::save::AfterSave::Close
+        };
         // Closed once saved: not when the save fails, nor before a new file's path is picked.
-        self.save_then(crate::shell::save::AfterSave::Close, window, cx);
+        self.save_then(after, window, cx);
     }
 
     pub(crate) fn confirm_discard_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1996,7 +2043,11 @@ impl SlideEditor {
         } else if self.is_presentation() {
             self.preserve_or_cleanup_pptx_autorecover_on_discard();
         }
+        let closes_window = std::mem::take(&mut self.save_confirm_closes_window);
         self.force_close_file(window, cx);
+        if closes_window {
+            window.remove_window();
+        }
     }
 
     pub(crate) fn render_save_confirm_dialog(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3361,9 +3412,34 @@ pub(crate) fn wheel_zoom_listener(cx: &Context<SlideEditor>) -> impl IntoElement
     .size_full()
 }
 
+/// What closing an editor window does (`SlideEditor::window_should_close`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WindowClose {
+    /// Close it now: nothing would be lost.
+    Close,
+    /// Keep it open and ask about the edits not saved (the save confirmation dialog).
+    Ask,
+    /// Keep it open: the save confirmation dialog is already asking.
+    KeepAsking,
+}
+
+/// What closing a window does: one with a file whose edits are not saved
+/// (`unsaved`) asks first, as ファイル > 閉じる does (`close_file`), unless
+/// another window still shows the file; a dialog already asking (`asking`)
+/// is not opened twice.
+pub(crate) fn window_close(has_document: bool, shown_in_other_window: bool, unsaved: bool, asking: bool) -> WindowClose {
+    if asking {
+        WindowClose::KeepAsking
+    } else if has_document && !shown_in_other_window && unsaved {
+        WindowClose::Ask
+    } else {
+        WindowClose::Close
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MAX_ZOOM, MIN_ZOOM, parse_percent, wheel_zooms, zoom_axis_offset, zoom_levels};
+    use super::{MAX_ZOOM, MIN_ZOOM, WindowClose, parse_percent, wheel_zooms, window_close, zoom_axis_offset, zoom_levels};
     use gpui_kit::Modifiers;
 
     #[test]
@@ -3415,5 +3491,19 @@ mod tests {
         assert!(wheel_zooms(&ctrl, false));
         assert!(!wheel_zooms(&cmd, false));
         assert!(!wheel_zooms(&Modifiers::default(), false));
+    }
+
+    #[test]
+    fn closing_a_window_asks_about_edits_not_saved() {
+        // A file with edits not saved: asked about, the window kept open.
+        assert_eq!(window_close(true, false, true, false), WindowClose::Ask);
+        // No edits, or no file (the start view): closed at once, as before.
+        assert_eq!(window_close(true, false, false, false), WindowClose::Close);
+        assert_eq!(window_close(false, false, false, false), WindowClose::Close);
+        // Another window still shows the file: this one closes without asking.
+        assert_eq!(window_close(true, true, true, false), WindowClose::Close);
+        // Closed again while the dialog asks: the one dialog stays, the window open.
+        assert_eq!(window_close(true, false, true, true), WindowClose::KeepAsking);
+        assert_eq!(window_close(true, true, true, true), WindowClose::KeepAsking);
     }
 }
