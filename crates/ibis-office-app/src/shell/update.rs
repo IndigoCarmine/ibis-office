@@ -432,7 +432,7 @@ fn any_unsaved(cx: &mut App) -> bool {
             let _ = root.update(cx, |root, _, app| {
                 if let Ok(editor) = root.view().clone().downcast::<SlideEditor>() {
                     let editor = editor.read(app);
-                    unsaved |= editor.has_document && editor.document.can_undo();
+                    unsaved |= editor.has_unsaved_edits();
                 }
             });
         }

@@ -974,7 +974,7 @@ impl SlideEditor {
         // The last window showing the file, whatever its kind (a
         // presentation's 新しいウィンドウ is a copy of its own): edits not
         // saved are asked about before they are closed.
-        if self.document.can_undo() {
+        if self.has_unsaved_edits() {
             self.save_confirm_dialog_open = true;
             self.save_confirm_closes_window = false;
             cx.notify();
@@ -989,7 +989,7 @@ impl SlideEditor {
     /// the window closes once they are saved or discarded.
     pub(crate) fn window_should_close(&mut self, cx: &mut Context<Self>) -> bool {
         let shown_in_other_window = self.shown_in_other_window(cx);
-        match window_close(self.has_document, shown_in_other_window, self.document.can_undo(), self.save_confirm_dialog_open) {
+        match window_close(self.has_document, shown_in_other_window, self.has_unsaved_edits(), self.save_confirm_dialog_open) {
             WindowClose::Close => true,
             WindowClose::Ask => {
                 self.save_confirm_dialog_open = true;
@@ -1003,6 +1003,12 @@ impl SlideEditor {
                 false
             }
         }
+    }
+
+    /// The open file has edits not saved (`has_unsaved_edits`): what closing
+    /// the file or its window, and updating the program, ask about first.
+    pub(crate) fn has_unsaved_edits(&self) -> bool {
+        has_unsaved_edits(self.has_document, &self.document)
     }
 
     /// Another window shows this window's file (a workbook's or a
@@ -3423,6 +3429,13 @@ pub(crate) enum WindowClose {
     KeepAsking,
 }
 
+/// Whether a file is open (`has_document`) and edited since it was last
+/// saved, or opened (`Document::is_modified`). Not whether there are steps
+/// to undo: they stay after a save, and an edit undone leaves nothing to save.
+pub(crate) fn has_unsaved_edits(has_document: bool, document: &Document) -> bool {
+    has_document && document.is_modified()
+}
+
 /// What closing a window does: one with a file whose edits are not saved
 /// (`unsaved`) asks first, as ファイル > 閉じる does (`close_file`), unless
 /// another window still shows the file; a dialog already asking (`asking`)
@@ -3505,5 +3518,51 @@ mod tests {
         // Closed again while the dialog asks: the one dialog stays, the window open.
         assert_eq!(window_close(true, false, true, true), WindowClose::KeepAsking);
         assert_eq!(window_close(true, true, true, true), WindowClose::KeepAsking);
+    }
+
+    /// An edit of the `n`th kind in an empty file of `kind`, as the editor makes them.
+    fn an_edit(kind: ibis_pptx::Kind, document: &mut ibis_doc_model::Document, n: u32) -> ibis_doc_model::Command {
+        use ibis_doc_model::{Block, CellEdit, CellInput, Command, EmuRect, FlowCommand, FlowPos, Shape, SheetCommand};
+        let slide = document.presentation().slides[0].id;
+        match kind {
+            ibis_pptx::Kind::Workbook => Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row: n, column: 0, input: CellInput::Formula("1+1".into()) }] }),
+            ibis_pptx::Kind::Document => {
+                let flow = document.presentation().flow.as_deref().expect("a flow document");
+                let Block::Paragraph(p) = &flow.body[0] else { panic!("a paragraph") };
+                Command::Flow(FlowCommand::InsertText { at: FlowPos::new(p.id, 0), text: format!("文{n}"), format: None })
+            }
+            ibis_pptx::Kind::Presentation => {
+                let shape = document.ids().new_shape_id();
+                Command::InsertShape { slide, index: 0, shape: Shape::text_box(shape, EmuRect::new(0, 0, 100, 50), &format!("箱{n}")) }
+            }
+        }
+    }
+
+    /// Edits saved are not asked about again (I-042), in a workbook, a
+    /// document and a presentation alike: they are told against what was
+    /// saved, not by the steps to undo, which stay after a save.
+    #[test]
+    fn edits_are_unsaved_only_until_they_are_saved() {
+        use super::has_unsaved_edits;
+        use ibis_doc_model::Document;
+        for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+            let opened = ibis_pptx::open(ibis_pptx::blank_file(kind).unwrap()).unwrap();
+            let mut document = Document::new(opened.presentation);
+            assert!(!has_unsaved_edits(true, &document), "{kind:?}: as opened");
+            let edit = an_edit(kind, &mut document, 1);
+            document.execute(vec![edit]).unwrap();
+            assert!(has_unsaved_edits(true, &document), "{kind:?}: edited");
+            assert!(!has_unsaved_edits(false, &document), "{kind:?}: no file open (the start view)");
+            document.mark_saved();
+            assert!(document.can_undo(), "{kind:?}: the edit can still be undone");
+            assert!(!has_unsaved_edits(true, &document), "{kind:?}: saved");
+            let edit = an_edit(kind, &mut document, 2);
+            document.execute(vec![edit]).unwrap();
+            assert!(has_unsaved_edits(true, &document), "{kind:?}: edited after the save");
+            assert!(document.undo());
+            assert!(!has_unsaved_edits(true, &document), "{kind:?}: undone back to what was saved");
+            assert!(document.undo());
+            assert!(has_unsaved_edits(true, &document), "{kind:?}: undone past what was saved");
+        }
     }
 }

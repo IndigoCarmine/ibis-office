@@ -409,7 +409,7 @@ impl SlideEditor {
         {
             let config = load_autorecover_config();
             if let Some(path) = self.active_autorecover_file.take() {
-                if config.keep_last_unsaved && self.document.can_undo() && path.exists() {
+                if config.keep_last_unsaved && self.has_unsaved_edits() && path.exists() {
                     let dir = path.parent().unwrap_or(Path::new("."));
                     let (stem, _) = self.name_parts();
                     let now = crate::clock::unix_millis();
