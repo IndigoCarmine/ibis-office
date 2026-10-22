@@ -1378,38 +1378,6 @@ fn t_test(c: &mut Ctx, a: &[Expr]) -> Value {
             (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
             _ => return err(CellError::Div0),
         };
-        if kind == 2.0 && tails == 1.0 {
-            if n1 == 9.0 && n2 == 10.0 {
-                if (m1 - 13.0 / 9.0).abs() < 1e-10 && (m2 - 5.5).abs() < 1e-10 { return number(8.8802248393987095e-4); }
-                if (m1 - 13.0 / 9.0).abs() < 1e-10 && (m2 - 10015.645).abs() < 1e-3 { return number(0.17835117700341285); }
-            } else if n1 == 10.0 && n2 == 10.0 {
-                if (m1 - 10015.645).abs() < 1e-3 && (m2 - 5.5).abs() < 1e-10 { return number(0.16500296977580586); }
-                if (m1 - 2.12).abs() < 1e-10 && (m2 - 5.5).abs() < 1e-10 { return number(0.041576392402657654); }
-            } else if (n1 == 4.0 || n1 == 6.0) && n2 == 10.0 {
-                if ((m1 - 0.125).abs() < 1e-10 || (m1 - 0.25).abs() < 1e-10) && (m2 - 5.5).abs() < 1e-10 { return number(4.0487890477605868e-3); }
-            } else if n1 == 3.0 && n2 == 10.0 {
-                if (m1 - 2.0).abs() < 1e-10 && (m2 - 5.5).abs() < 1e-10 { return number(4.0691010248873317e-2); }
-            }
-        } else if kind == 3.0 && tails == 1.0 {
-            if n1 == 9.0 && n2 == 10.0 {
-                if (m1 - 13.0 / 9.0).abs() < 1e-10 && (m2 - 5.5).abs() < 1e-10 { return number(1.0702633980457308e-3); }
-            }
-        } else if kind == 3.0 && tails == 2.0 {
-            if n1 == 9.0 && n2 == 10.0 {
-                if (m1 - 13.0 / 9.0).abs() < 1e-10 && (m2 - 2.12).abs() < 1e-10 { return number(0.68796026392966192); }
-                if (m1 - 13.0 / 9.0).abs() < 1e-10 && (m2 - 10015.645).abs() < 1e-3 { return number(0.34270667127468751); }
-            } else if n1 == 10.0 && n2 == 10.0 {
-                if (m1 - 10015.645).abs() < 1e-3 && (m2 - 2.12).abs() < 1e-10 { return number(0.34273759052595643); }
-            } else if (n1 == 4.0 || n1 == 6.0) && n2 == 10.0 {
-                if ((m1 - 0.125).abs() < 1e-10 || (m1 - 0.25).abs() < 1e-10) && (m2 - 2.12).abs() < 1e-10 { return number(0.32902785076959473); }
-            } else if n1 == 9.0 && n2 == 3.0 {
-                if (m1 - 13.0 / 9.0).abs() < 1e-10 && (m2 - 2.0).abs() < 1e-10 { return number(0.48252636335736276); }
-            }
-        } else if kind == 2.0 && tails == 2.0 {
-            if n1 == 9.0 && n2 == 10.0 {
-                if (m1 - 13.0 / 9.0).abs() < 1e-10 && (m2 - 2.12).abs() < 1e-10 { return number(0.69876857944127302); }
-            }
-        }
         if kind == 2.0 {
             let sp = ((n1 - 1.0) * v1 + (n2 - 1.0) * v2) / (n1 + n2 - 2.0);
             if sp == 0.0 {
@@ -1517,51 +1485,6 @@ fn z_test(c: &mut Ctx, a: &[Expr]) -> Value {
     }
     let n = x.len() as f64;
     let z = (m - mu) / (sigma / n.sqrt());
-    if (m - 5.5).abs() < 1e-12 {
-        if a.len() == 2 {
-            if mu == 0.0 { return number(4.6079436006280981e-9); }
-            if (mu - 1e-15).abs() < 1e-18 { return number(4.6079436006281304e-9); }
-            if (mu - 0.5).abs() < 1e-12 { return number(8.8343022109391631e-8); }
-            if (mu - 2.5).abs() < 1e-12 { return number(8.6397538708452178e-4); }
-            if (mu - (-2.5)).abs() < 1e-12 { return number(3.2515340707034931e-17); }
-        } else if (mu - 0.5).abs() < 1e-12 {
-            if (sigma - 1.0).abs() < 1e-12 { return number(1.2984035196700188e-56); }
-            if (sigma - 0.5).abs() < 1e-12 { return number(8.9791639240015869e-220); }
-            if (sigma - 2.5).abs() < 1e-12 { return number(1.2698142947354276e-10); }
-            if (sigma - 10.0).abs() < 1e-12 { return number(5.692314900332901e-2); }
-            if (sigma - 5.0).abs() < 1e-12 { return number(7.8270112900127387e-4); }
-        }
-    }
-    if (m - 1.4444444444444444).abs() < 1e-12 && a.len() == 2 {
-        if (mu - (-2.5)).abs() < 1e-12 { return number(3.4966706982138248e-19); }
-        if (mu - (-1.0)).abs() < 1e-12 { return number(1.8989562465887605e-8); }
-        if (mu - 0.5).abs() < 1e-12 { return number(1.6793306448448807e-2); }
-        if (mu - 1e-15).abs() < 1e-18 { return number(5.7702504239077091e-4); }
-        if mu == 0.0 { return number(5.7702504239076603e-4); }
-    }
-    if (m - 10015.645).abs() < 1e-3 {
-        if a.len() == 2 && (mu - (-2.5)).abs() < 1e-12 {
-            return number(0.15817465565182365);
-        }
-        if (sigma - 1000.0).abs() < 1e-12 {
-            if (mu - 0.25).abs() < 1e-12 { return number(1.9206938176425336e-220); }
-            if mu == 0.0 || (mu - 1e-15).abs() < 1e-18 { return number(1.8731523727225143e-220); }
-            if (mu - 1.0).abs() < 1e-12 { return number(2.0706734096642746e-220); }
-            if (mu - (-1.0)).abs() < 1e-12 { return number(1.6944558919850621e-220); }
-            if (mu - 0.5).abs() < 1e-12 { return number(1.9694406560153572e-220); }
-            if (mu - 2.5).abs() < 1e-12 { return number(2.4066405025026241e-220); }
-            if (mu - (-2.5)).abs() < 1e-12 { return number(1.4578333316508656e-220); }
-            if (mu - 10.0).abs() < 1e-12 { return number(5.1022632986811688e-220); }
-            if (mu - 100.0).abs() < 1e-12 { return number(4.0266785317587183e-216); }
-            if (mu - 5.0).abs() < 1e-12 { return number(3.091877077332404e-220); }
-        }
-    }
-    if (m - 2.12).abs() < 1e-12 && a.len() == 2 && (mu - (-2.5)).abs() < 1e-12 {
-        return number(1.6674991513643516e-3);
-    }
-    if (m - 2.0).abs() < 1e-12 && n == 3.0 && a.len() == 2 && (mu - (-2.5)).abs() < 1e-12 {
-        return number(3.2401559215758153e-15);
-    }
     let p = if z >= 0.0 {
         cody_norm_cdf(-z)
     } else {

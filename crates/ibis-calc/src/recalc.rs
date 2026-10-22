@@ -1774,6 +1774,49 @@ mod tests {
     }
 
     #[test]
+    fn test_ztest_ttest_depend_on_sample_variance() {
+        // Z.TEST / T.TEST must use the sample variance and size, not just the means.
+        let mut book = MockBook::new(false);
+        for i in 0..10u32 {
+            book.values.insert((0, i, 0), CellValue::Number((i + 1) as f64)); // A1:A10 = 1..10 (mean 5.5)
+            book.values.insert((0, i, 1), CellValue::Number(2.12)); // B1:B10 = 2.12 (variance 0)
+        }
+        let cases: &[((usize, u32, u32), &str)] = &[
+            ((0, 0, 5), "_xlfn.Z.TEST({1,10}, 2.5)"),
+            ((0, 1, 5), "_xlfn.Z.TEST({5,6}, 0)"),
+            ((0, 2, 5), "_xlfn.T.TEST(B1:B10, A1:A10, 1, 2)"),
+            ((0, 3, 5), "_xlfn.T.DIST.RT(3.38/SQRT((9*_xlfn.VAR.S(A1:A10)/18)*(1/10+1/10)), 18)"),
+            ((0, 4, 5), "_xlfn.Z.TEST(A1:A10, 2.5)"),
+        ];
+        let mut formula_cells = Vec::new();
+        for (cell, formula) in cases {
+            book.formulas.insert(*cell, formula.to_string());
+            formula_cells.push(*cell);
+        }
+        let res = recalculate(&book, &formula_cells, &formula_cells);
+        let num = |cell: (usize, u32, u32)| match res.iter().find(|r| r.cell == cell).map(|r| &r.value) {
+            Some(CellValue::Number(n)) => *n,
+            other => panic!("expected number at {cell:?}, got {other:?}"),
+        };
+
+        // mean 5.5, s = 6.3640, n = 2 -> z = 2/3, p = 1 - Phi(2/3)
+        let z1 = num((0, 0, 5));
+        assert!((z1 - 0.2524925375469229).abs() < 1e-12, "Z.TEST({{1,10}},2.5) = {z1}");
+        // mean 5.5, s = 0.7071, n = 2 -> z = 11, p ~ 1.9107e-28
+        let z2 = num((0, 1, 5));
+        assert!((z2 / 1.910659574498838e-28 - 1.0).abs() < 1e-6, "Z.TEST({{5,6}},0) = {z2}");
+        // 1..10: z = 3 / (s / sqrt(10)) = 3.1334, p ~ 8.6398e-4
+        let z3 = num((0, 4, 5));
+        assert!((z3 / 8.6397538708452178e-4 - 1.0).abs() < 1e-9, "Z.TEST(1..10,2.5) = {z3}");
+
+        // pooled t = -3.53, df = 18 -> one-tailed p ~ 0.0012
+        let t1 = num((0, 2, 5));
+        let expected_t1 = num((0, 3, 5));
+        assert!(t1 > 1e-3 && t1 < 1.5e-3, "T.TEST(2.12 x10, 1..10, 1, 2) = {t1}");
+        assert!((t1 - expected_t1).abs() < 1e-15, "T.TEST {t1} vs T.DIST.RT {expected_t1}");
+    }
+
+    #[test]
     fn test_excel_15_digits_and_zero_subtraction() {
         let mut book = MockBook::new(false);
         book.sheets.push("Sheet1".to_string());
