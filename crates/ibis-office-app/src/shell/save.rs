@@ -78,18 +78,13 @@ impl SlideEditor {
         }
         #[cfg(not(target_family = "wasm"))]
         {
-            let directory = self
-                .path
-                .as_deref()
-                .and_then(|p| p.parent())
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|| {
-                    if self.is_workbook() {
-                        crate::xlsx::backup_save::effective_default_save_location()
-                    } else {
-                        std::env::var_os("HOME").map(Into::into).unwrap_or_else(|| ".".into())
-                    }
-                });
+            let directory = save_as_directory(self.path.as_deref(), self.save_as_folder.as_deref()).unwrap_or_else(|| {
+                if self.is_workbook() {
+                    crate::xlsx::backup_save::effective_default_save_location()
+                } else {
+                    std::env::var_os("HOME").map(Into::into).unwrap_or_else(|| ".".into())
+                }
+            });
             let name = self.file_name.clone().unwrap_or_default();
             let picked = cx.prompt_for_new_path(&directory, Some(&name));
             cx.spawn_in(window, async move |this, cx| {
@@ -180,6 +175,14 @@ impl SlideEditor {
         });
         cx.notify();
     }
+}
+
+/// The folder 名前を付けて保存… starts in: the file's own folder, else the
+/// folder kept for a file with no path yet (`save_as_folder`); `None` when
+/// there is neither, for the usual default.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn save_as_directory(path: Option<&std::path::Path>, save_as_folder: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    path.and_then(|p| p.parent()).or(save_as_folder).map(std::path::Path::to_path_buf)
 }
 
 /// `package` protected with `password`: an OOXML package kept encrypted in a compound file.
