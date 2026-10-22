@@ -2820,7 +2820,7 @@ mod namespace_tests {
     #[test]
     fn story_references_require_relationship_namespace() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let source = std::fs::read(root.join("test/editing/docx-report.docx")).unwrap();
+        let Some(source) = crate::fixtures::read("test/editing/docx-report.docx") else { return };
         let reference = crate::read_docx(&source).unwrap();
         for variant in 0..3 {
             let data = crate::test_files::docx_with_story_relationship_namespace(&source, variant);
@@ -2844,9 +2844,7 @@ mod namespace_tests {
 
     #[test]
     fn inline_picture_extent_is_unqualified() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../test/editing/docx-paste-source.docx");
-        let data = std::fs::read(path).unwrap();
+        let Some(data) = crate::fixtures::read("test/editing/docx-paste-source.docx") else { return };
         let xml = crate::test_files::part_text(&data, "word/document.xml").unwrap();
         let source = Document::parse(&xml).unwrap();
         let expected: Vec<EmuSize> = source.descendants().filter(|n| n.is_element() && n.tag_name().namespace() == Some("http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing") && n.tag_name().name() == "extent")

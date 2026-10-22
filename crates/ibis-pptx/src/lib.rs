@@ -37,6 +37,9 @@ mod chart;
 mod chart_ex;
 pub mod csv;
 mod docx;
+#[cfg(test)]
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
 mod geometry;
 mod new_file;
 mod package;
