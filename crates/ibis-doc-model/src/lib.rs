@@ -33,6 +33,11 @@ pub mod slicer;
 pub mod table;
 pub mod text;
 
+/// Private test data that may be missing (see the file's own documentation).
+#[cfg(test)]
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 pub use chart::{
     Axis, AxisCrosses, AxisKind, AxisSourceKind, BoxStats, Chart, ChartDataTable, ChartEx, TreeNode, ChartGroup, ChartText, ChartTitle, ChartType, DataLabels, DispBlanksAs, FractionRect, Grouping,
     LabelPiece, LabelPosition, Legend, LegendPosition, Marker, MarkerSource, MarkerSourceSymbol, MarkerSymbol, Number, OfPieKind, OfPieSettings, OfPieSplit, PointLabel, RadarStyle, Series, Side, TimeScale, TimeUnit,
