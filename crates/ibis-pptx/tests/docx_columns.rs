@@ -6,14 +6,19 @@
 
 use ibis_doc_model::{Block, FlowRunKind, PageColumns, SectionBreak};
 
-fn path(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test").join(name)
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
+/// The report (`test/editing/docx-report.docx`), or `None` (reported as
+/// skipped) when the private test data is not there.
+fn report() -> Option<Vec<u8>> {
+    fixtures::read("test/editing/docx-report.docx")
 }
 
-/// The report with `body` (paragraphs) before its last section, whose
+/// The `report` with `body` (paragraphs) before its last section, whose
 /// `w:cols` becomes `cols`.
-fn with(body: &str, cols: &str) -> Vec<u8> {
-    let mut package = ibis_ooxml::Package::open(std::fs::read(path("editing/docx-report.docx")).unwrap()).unwrap();
+fn with(report: &[u8], body: &str, cols: &str) -> Vec<u8> {
+    let mut package = ibis_ooxml::Package::open(report).unwrap();
     let mut xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
     let at = xml.rfind("<w:sectPr").unwrap();
     xml.insert_str(at, body);
@@ -35,7 +40,8 @@ fn with(body: &str, cols: &str) -> Vec<u8> {
 
 #[test]
 fn columns_and_column_breaks() {
-    let data = with(r#"<w:p><w:r><w:t>左</w:t></w:r><w:r><w:br w:type="column"/></w:r><w:r><w:t>右</w:t></w:r></w:p>"#, r#"<w:cols w:num="2" w:space="720" w:sep="1"/>"#);
+    let Some(report) = report() else { return };
+    let data = with(&report, r#"<w:p><w:r><w:t>左</w:t></w:r><w:r><w:br w:type="column"/></w:r><w:r><w:t>右</w:t></w:r></w:p>"#, r#"<w:cols w:num="2" w:space="720" w:sep="1"/>"#);
     let opened = ibis_pptx::open(data.clone()).unwrap();
     let flow = opened.presentation.flow.as_deref().unwrap();
     let c = flow.page.columns;
@@ -52,7 +58,8 @@ fn columns_and_column_breaks() {
 
 #[test]
 fn columns_of_their_own_widths() {
-    let data = with("", r#"<w:cols w:num="2" w:equalWidth="0" w:space="425"><w:col w:w="3000" w:space="425"/><w:col w:w="6000"/></w:cols>"#);
+    let Some(report) = report() else { return };
+    let data = with(&report, "", r#"<w:cols w:num="2" w:equalWidth="0" w:space="425"><w:col w:w="3000" w:space="425"/><w:col w:w="6000"/></w:cols>"#);
     let flow = ibis_pptx::read(&data).unwrap().flow.unwrap();
     let c = flow.page.columns;
     assert_eq!(c.count, 2);
@@ -63,7 +70,8 @@ fn columns_of_their_own_widths() {
 #[test]
 fn next_column_section_break() {
     // The break after a section is how the next one starts (its w:type).
-    let data = with(r#"<w:p><w:pPr><w:sectPr><w:type w:val="continuous"/><w:cols w:num="2"/></w:sectPr></w:pPr><w:r><w:t>段</w:t></w:r></w:p>"#, r#"<w:type w:val="nextColumn"/><w:cols w:num="2"/>"#);
+    let Some(report) = report() else { return };
+    let data = with(&report, r#"<w:p><w:pPr><w:sectPr><w:type w:val="continuous"/><w:cols w:num="2"/></w:sectPr></w:pPr><w:r><w:t>段</w:t></w:r></w:p>"#, r#"<w:type w:val="nextColumn"/><w:cols w:num="2"/>"#);
     let flow = ibis_pptx::read(&data).unwrap().flow.unwrap();
     assert!(flow.body.iter().any(|b| matches!(b, Block::Paragraph(p) if p.section_break == SectionBreak::NextColumn)));
 }
@@ -74,10 +82,12 @@ fn next_column_section_break() {
 /// unchanged, the same file.
 #[test]
 fn charts_in_documents() {
-    let source = ibis_ooxml::Package::open(std::fs::read(path("editing/pptx-chart-inserted-by-powerpoint.pptx")).unwrap()).unwrap();
+    let Some(pptx) = fixtures::read("test/editing/pptx-chart-inserted-by-powerpoint.pptx") else { return };
+    let Some(report) = report() else { return };
+    let source = ibis_ooxml::Package::open(pptx).unwrap();
     let chart_name = source.names().find(|n| n.starts_with("ppt/charts/chart") && n.ends_with(".xml")).unwrap().to_string();
     let chart = source.read(&chart_name).unwrap();
-    let mut package = ibis_ooxml::Package::open(std::fs::read(path("editing/docx-report.docx")).unwrap()).unwrap();
+    let mut package = ibis_ooxml::Package::open(report).unwrap();
     package.set_bytes("word/charts/chart1.xml", chart);
     let rels = String::from_utf8(package.read("word/_rels/document.xml.rels").unwrap()).unwrap();
     let at = rels.rfind("</Relationships>").unwrap();
@@ -105,7 +115,8 @@ fn with_package(mut package: ibis_ooxml::Package, body: &str) -> Vec<u8> {
 /// 行番号 (w:lnNumType) and w:suppressLineNumbers read.
 #[test]
 fn line_numbers_read() {
-    let data = with(r#"<w:p><w:pPr><w:suppressLineNumbers/></w:pPr><w:r><w:t>番号なし</w:t></w:r></w:p>"#, r#"<w:lnNumType w:countBy="5" w:start="9" w:distance="720" w:restart="newSection"/><w:cols w:space="425"/>"#);
+    let Some(report) = report() else { return };
+    let data = with(&report, r#"<w:p><w:pPr><w:suppressLineNumbers/></w:pPr><w:r><w:t>番号なし</w:t></w:r></w:p>"#, r#"<w:lnNumType w:countBy="5" w:start="9" w:distance="720" w:restart="newSection"/><w:cols w:space="425"/>"#);
     let flow = ibis_pptx::read(&data).unwrap().flow.unwrap();
     let n = flow.page.line_numbers.expect("line numbers");
     assert_eq!((n.count_by, n.start, n.distance, n.restart), (5, 10, 720 * 635, ibis_doc_model::LineNumberRestart::NewSection));
@@ -116,7 +127,8 @@ fn line_numbers_read() {
 /// (displayBackgroundShape), and saved unchanged.
 #[test]
 fn page_color_read() {
-    let mut package = ibis_ooxml::Package::open(std::fs::read(path("editing/docx-report.docx")).unwrap()).unwrap();
+    let Some(report) = report() else { return };
+    let mut package = ibis_ooxml::Package::open(report).unwrap();
     let xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
     let at = xml.find("<w:body").unwrap();
     package.set_bytes("word/document.xml", format!(r#"{}<w:background w:color="FFF2CC"/>{}"#, &xml[..at], &xml[at..]).into_bytes());
@@ -135,7 +147,7 @@ fn page_color_read() {
 
 #[test]
 fn page_color_change_save_reopen() {
-    let plain_bytes = std::fs::read(path("editing/docx-report.docx")).unwrap();
+    let Some(plain_bytes) = report() else { return };
     let opened = ibis_pptx::open(plain_bytes).unwrap();
     assert_eq!(opened.presentation.flow.as_deref().unwrap().page_color, None);
 
@@ -164,14 +176,15 @@ fn page_color_change_save_reopen() {
 /// 縦書き (w:textDirection in the section) read.
 #[test]
 fn section_text_direction_read() {
-    let data = with("", r#"<w:textDirection w:val="tbRl"/><w:cols w:space="425"/>"#);
+    let Some(report) = report() else { return };
+    let data = with(&report, "", r#"<w:textDirection w:val="tbRl"/><w:cols w:space="425"/>"#);
     let flow = ibis_pptx::read(&data).unwrap().flow.unwrap();
     assert_eq!(flow.page.direction, ibis_doc_model::CellDirection::TbRl);
 }
 
 #[test]
 fn page_number_start_save_reopen() {
-    let plain_bytes = std::fs::read(path("editing/docx-report.docx")).unwrap();
+    let Some(plain_bytes) = report() else { return };
     let opened = ibis_pptx::open(plain_bytes).unwrap();
     assert_eq!(opened.presentation.flow.as_deref().unwrap().page.first_page, 1);
     assert!(!opened.presentation.flow.as_deref().unwrap().restart_numbering);
@@ -206,7 +219,7 @@ fn page_number_start_save_reopen() {
 
 #[test]
 fn columns_change_save_reopen() {
-    let plain_bytes = std::fs::read(path("editing/docx-report.docx")).unwrap();
+    let Some(plain_bytes) = report() else { return };
     let opened = ibis_pptx::open(plain_bytes).unwrap();
     let initial_cols = opened.presentation.flow.as_deref().unwrap().page.columns;
     assert_eq!(initial_cols.count, 1);

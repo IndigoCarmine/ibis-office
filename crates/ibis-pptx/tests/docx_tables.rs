@@ -7,13 +7,18 @@
 
 use ibis_doc_model::{Block, FlowTable};
 
-fn path(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test").join(name)
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
+/// The report (`test/editing/docx-report.docx`), or `None` (reported as
+/// skipped) when the private test data is not there.
+fn report() -> Option<Vec<u8>> {
+    fixtures::read("test/editing/docx-report.docx")
 }
 
-/// The report with `table` (the XML of a `w:tbl`) at the end of its body.
-fn with_table(table: &str) -> Vec<u8> {
-    let mut package = ibis_ooxml::Package::open(std::fs::read(path("editing/docx-report.docx")).unwrap()).unwrap();
+/// The `report` with `table` (the XML of a `w:tbl`) at the end of its body.
+fn with_table(report: &[u8], table: &str) -> Vec<u8> {
+    let mut package = ibis_ooxml::Package::open(report).unwrap();
     let xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
     let at = xml.rfind("<w:sectPr").unwrap();
     package.set_bytes("word/document.xml", format!("{}{}<w:p/>{}", &xml[..at], table, &xml[at..]).into_bytes());
@@ -34,27 +39,30 @@ fn cell(width: &str, span: u32) -> String {
 
 #[test]
 fn columns_from_cell_widths_without_a_grid() {
+    let Some(report) = report() else { return };
     let row = format!("<w:tr>{}{}{}</w:tr>", cell(r#"<w:tcW w:w="2000" w:type="dxa"/>"#, 1), cell(r#"<w:tcW w:w="3000" w:type="dxa"/>"#, 1), cell(r#"<w:tcW w:w="1000" w:type="dxa"/>"#, 1));
-    let table = last_table(&with_table(&format!("<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>{row}</w:tbl>")));
+    let table = last_table(&with_table(&report, &format!("<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>{row}</w:tbl>")));
     assert_eq!(table.columns, vec![2000 * TWIP, 3000 * TWIP, 1000 * TWIP]);
 }
 
 #[test]
 fn spans_percentages_and_a_short_grid() {
+    let Some(report) = report() else { return };
     // A grid of one column (the first's), a row of 3 grid columns: 50 %
     // of a 4000-twip table spanning two, then 1000 twips.
     let row1 = format!("<w:tr>{}{}</w:tr>", cell(r#"<w:tcW w:w="2500" w:type="pct"/>"#, 2), cell(r#"<w:tcW w:w="1000" w:type="dxa"/>"#, 1));
     let row2 = format!("<w:tr>{}{}{}</w:tr>", cell(r#"<w:tcW w:w="0" w:type="auto"/>"#, 1), cell(r#"<w:tcW w:w="0" w:type="auto"/>"#, 1), cell("", 1));
     let xml = format!(r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1200"/></w:tblGrid>{row1}{row2}</w:tbl>"#);
-    let table = last_table(&with_table(&xml));
+    let table = last_table(&with_table(&report, &xml));
     assert_eq!(table.columns, vec![1200 * TWIP, 1800 * TWIP, 1000 * TWIP], "the grid's first column kept, the span's rest from its width");
 }
 
 #[test]
 fn a_full_grid_is_kept() {
+    let Some(report) = report() else { return };
     let row = format!("<w:tr>{}{}</w:tr>", cell(r#"<w:tcW w:w="9999" w:type="dxa"/>"#, 1), cell(r#"<w:tcW w:w="9999" w:type="dxa"/>"#, 1));
     let xml = format!(r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="2500"/></w:tblGrid>{row}</w:tbl>"#);
-    assert_eq!(last_table(&with_table(&xml)).columns, vec![1500 * TWIP, 2500 * TWIP]);
+    assert_eq!(last_table(&with_table(&report, &xml)).columns, vec![1500 * TWIP, 2500 * TWIP]);
 }
 
 /// 自動調整 tables are laid out from their content when the grid does not
@@ -64,17 +72,18 @@ fn a_full_grid_is_kept() {
 #[test]
 fn autofit_when_the_grid_does_not_say_the_widths() {
     use ibis_doc_model::PreferredWidth;
+    let Some(report) = report() else { return };
     let grid = r#"<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#;
     let row = |w: &str| format!("<w:tr>{}{}</w:tr>", cell(w, 1), cell(w, 1));
     let auto = r#"<w:tcW w:w="0" w:type="auto"/>"#;
-    let t = last_table(&with_table(&format!(r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>{grid}{}</w:tbl>"#, row(auto))));
+    let t = last_table(&with_table(&report, &format!(r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>{grid}{}</w:tbl>"#, row(auto))));
     assert_eq!(t.autofit.map(|f| (f.width, f.cells)), Some((PreferredWidth::Auto, vec![vec![PreferredWidth::Auto; 2]])));
-    let t = last_table(&with_table(&format!(r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="fixed"/></w:tblPr>{grid}{}</w:tbl>"#, row(auto))));
+    let t = last_table(&with_table(&report, &format!(r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="fixed"/></w:tblPr>{grid}{}</w:tbl>"#, row(auto))));
     assert!(t.autofit.is_none(), "fixed");
     let dxa = r#"<w:tcW w:w="2000" w:type="dxa"/>"#;
-    let t = last_table(&with_table(&format!(r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>{grid}{}</w:tbl>"#, row(dxa))));
+    let t = last_table(&with_table(&report, &format!(r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>{grid}{}</w:tbl>"#, row(dxa))));
     assert!(t.autofit.is_none(), "the widths agree with the grid");
-    let t = last_table(&with_table(&format!(r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>{grid}{}</w:tbl>"#, row(dxa))));
+    let t = last_table(&with_table(&report, &format!(r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>{grid}{}</w:tbl>"#, row(dxa))));
     assert_eq!(t.autofit.map(|f| f.width), Some(PreferredWidth::Percent(5000)));
 }
 
@@ -84,7 +93,8 @@ fn autofit_when_the_grid_does_not_say_the_widths() {
 #[test]
 fn table_style_conditional_formatting() {
     let style = r#"<w:style w:type="table" w:styleId="Cond"><w:name w:val="Cond"/><w:tblPr><w:tblStyleRowBandSize w:val="1"/></w:tblPr><w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr></w:tblStylePr><w:tblStylePr w:type="band1Horz"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="E2EFDA"/></w:tcPr></w:tblStylePr><w:tblStylePr w:type="firstCol"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="FFC000"/></w:tcPr></w:tblStylePr></w:style>"#;
-    let mut package = ibis_ooxml::Package::open(std::fs::read(path("editing/docx-report.docx")).unwrap()).unwrap();
+    let Some(report) = report() else { return };
+    let mut package = ibis_ooxml::Package::open(report).unwrap();
     let styles = String::from_utf8(package.read("word/styles.xml").unwrap()).unwrap();
     let at = styles.rfind("</w:styles>").unwrap();
     package.set_bytes("word/styles.xml", format!("{}{style}{}", &styles[..at], &styles[at..]).into_bytes());
@@ -106,8 +116,9 @@ fn table_style_conditional_formatting() {
 /// A floating table (w:tblpPr): its anchors, offset and specs read.
 #[test]
 fn floating_table_read() {
+    let Some(report) = report() else { return };
     let row = format!("<w:tr>{}</w:tr>", cell(r#"<w:tcW w:w="1200" w:type="dxa"/>"#, 1));
-    let t = last_table(&with_table(&format!(r#"<w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:topFromText="120" w:bottomFromText="120" w:vertAnchor="margin" w:horzAnchor="page" w:tblpX="1440" w:tblpYSpec="center"/><w:tblW w:w="1200" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1200"/></w:tblGrid>{row}</w:tbl>"#)));
+    let t = last_table(&with_table(&report, &format!(r#"<w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:topFromText="120" w:bottomFromText="120" w:vertAnchor="margin" w:horzAnchor="page" w:tblpX="1440" w:tblpYSpec="center"/><w:tblW w:w="1200" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1200"/></w:tblGrid>{row}</w:tbl>"#)));
     let f = t.floating.expect("floating");
     assert_eq!((f.horz_anchor, f.vert_anchor), (ibis_doc_model::TableAnchor::Page, ibis_doc_model::TableAnchor::Margin));
     assert_eq!((f.x, f.x_align, f.y_align), (1440 * TWIP, None, Some(ibis_doc_model::TableAlign::Center)));
@@ -117,8 +128,9 @@ fn floating_table_read() {
 /// A floating table (w:tblpPr) read, saved unchanged, modified, and saved.
 #[test]
 fn floating_table_read_and_save() {
+    let Some(report) = report() else { return };
     let row = format!("<w:tr>{}</w:tr>", cell(r#"<w:tcW w:w="1200" w:type="dxa"/>"#, 1));
-    let data = with_table(&format!(r#"<w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:topFromText="120" w:bottomFromText="120" w:vertAnchor="margin" w:horzAnchor="page" w:tblpX="1440" w:tblpYSpec="center"/><w:tblW w:w="1200" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1200"/></w:tblGrid>{row}</w:tbl>"#));
+    let data = with_table(&report, &format!(r#"<w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:topFromText="120" w:bottomFromText="120" w:vertAnchor="margin" w:horzAnchor="page" w:tblpX="1440" w:tblpYSpec="center"/><w:tblW w:w="1200" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1200"/></w:tblGrid>{row}</w:tbl>"#));
     let opened = ibis_pptx::open(data.clone()).unwrap();
     // Saved unchanged
     assert_eq!(opened.source.save(&opened.presentation, ibis_pptx::SaveOptions::default()).unwrap(), data);
@@ -162,8 +174,9 @@ fn last_table_from_pres(presentation: &ibis_doc_model::Presentation) -> &ibis_do
 #[test]
 fn cell_text_direction_read() {
     use ibis_doc_model::CellDirection;
+    let Some(report) = report() else { return };
     let cells: String = ["tbRl", "btLr", "lrTbV", "tbLrV", "tbRlV"].iter().map(|d| format!(r#"<w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/><w:textDirection w:val="{d}"/></w:tcPr><w:p><w:r><w:t>縦</w:t></w:r></w:p></w:tc>"#)).collect();
-    let data = with_table(&format!(r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/></w:tblPr><w:tblGrid>{}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl>"#, r#"<w:gridCol w:w="1000"/>"#.repeat(5)));
+    let data = with_table(&report, &format!(r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/></w:tblPr><w:tblGrid>{}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl>"#, r#"<w:gridCol w:w="1000"/>"#.repeat(5)));
     let t = last_table(&data);
     let d: Vec<CellDirection> = t.rows[0].cells.iter().map(|c| c.direction).collect();
     assert_eq!(d, vec![CellDirection::TbRl, CellDirection::BtLr, CellDirection::LrTbV, CellDirection::TbLrV, CellDirection::TbRl]);
@@ -174,9 +187,10 @@ fn cell_text_direction_read() {
 /// A table's cell spacing (w:tblCellSpacing) read and saved.
 #[test]
 fn table_cell_spacing_read_and_save() {
+    let Some(report) = report() else { return };
     let row = format!("<w:tr>{}</w:tr>", cell(r#"<w:tcW w:w="2000" w:type="dxa"/>"#, 1));
     let xml = format!(r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/><w:tblCellSpacing w:w="120" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>{row}</w:tbl>"#);
-    let data = with_table(&xml);
+    let data = with_table(&report, &xml);
     let t = last_table(&data);
     assert_eq!(t.cell_spacing, Some(120 * TWIP));
 
@@ -190,9 +204,10 @@ fn table_cell_spacing_read_and_save() {
 /// A cell's noWrap property (w:noWrap) read and saved.
 #[test]
 fn cell_no_wrap_read_and_save() {
+    let Some(report) = report() else { return };
     let row = format!("<w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:noWrap/></w:tcPr><w:p><w:r><w:t> nowrap </w:t></w:r></w:p></w:tc></w:tr>");
     let xml = format!(r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>{row}</w:tbl>"#);
-    let data = with_table(&xml);
+    let data = with_table(&report, &xml);
     let t = last_table(&data);
     assert_eq!(t.rows[0].cells[0].no_wrap, true);
 
@@ -206,9 +221,10 @@ fn cell_no_wrap_read_and_save() {
 /// A table's style (w:tblStyle) read, updated, cleared, and saved.
 #[test]
 fn table_style_apply_and_save() {
+    let Some(report) = report() else { return };
     let row = format!("<w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>styled</w:t></w:r></w:p></w:tc></w:tr>");
     let xml = format!(r#"<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>{row}</w:tbl>"#);
-    let data = with_table(&xml);
+    let data = with_table(&report, &xml);
 
     // 1. Initial read: style id is TableGrid
     let opened = ibis_pptx::open(data.clone()).unwrap();
