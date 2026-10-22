@@ -5,9 +5,18 @@
 //! pptx-comments-modern.pptx: threaded comments; -legacy.pptx: the older
 //! ones), with their authors, answers, resolved state and shape.
 
-fn read(name: &str) -> ibis_doc_model::Presentation {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing").join(name);
-    ibis_pptx::read(&std::fs::read(path).unwrap()).unwrap()
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
+/// The test file, or `None` (reported as skipped) when the private test data
+/// is not there.
+fn file(name: &str) -> Option<Vec<u8>> {
+    fixtures::read(&format!("test/editing/{name}"))
+}
+
+/// The test file read, or `None` as in [`file`].
+fn read(name: &str) -> Option<ibis_doc_model::Presentation> {
+    Some(ibis_pptx::read(&file(name)?).unwrap())
 }
 
 /// (author, text, resolved, answers as (author, text)) of a slide's comments.
@@ -21,7 +30,7 @@ fn s(v: &str) -> String {
 
 #[test]
 fn threaded_comments_are_read() {
-    let p = read("pptx-comments-modern.pptx");
+    let Some(p) = read("pptx-comments-modern.pptx") else { return };
     assert_eq!(
         summary(&p.slides[0]),
         vec![
@@ -38,7 +47,7 @@ fn threaded_comments_are_read() {
 
 #[test]
 fn older_comments_are_read_with_their_answers() {
-    let p = read("pptx-comments-legacy.pptx");
+    let Some(p) = read("pptx-comments-legacy.pptx") else { return };
     assert_eq!(
         summary(&p.slides[0]),
         vec![
@@ -52,8 +61,7 @@ fn older_comments_are_read_with_their_answers() {
 #[test]
 fn comments_stay_when_saved_untouched() {
     for name in ["pptx-comments-modern.pptx", "pptx-comments-legacy.pptx"] {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing").join(name);
-        let data = std::fs::read(path).unwrap();
+        let Some(data) = file(name) else { continue };
         let opened = ibis_pptx::open(data.clone()).unwrap();
         let saved = opened.source.save(&opened.presentation, ibis_pptx::SaveOptions::default()).unwrap();
         assert_eq!(saved, data, "{name}: untouched, the same file");

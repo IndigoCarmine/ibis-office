@@ -7,6 +7,9 @@ use ibis_doc_model::{
 };
 use ibis_ooxml::{Package, SaveOptions};
 
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 fn stock_hlc_xml(drop_lines: bool, hi_low_lines: bool) -> String {
     let dl = if drop_lines { "<c:dropLines/>" } else { "" };
     let hl = if hi_low_lines { "<c:hiLowLines/>" } else { "" };
@@ -49,9 +52,10 @@ fn stock_vohlc_xml(drop_lines: bool, hi_low_lines: bool, up_down_bars: bool) -> 
     )
 }
 
-fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
-    let mut package = Package::open(std::fs::read(root.join(if xlsx { "xlsx-sales.xlsx" } else { "pptx-plan.pptx" })).unwrap()).unwrap();
+/// The test file with `xml` as its chart, or `None` (reported as skipped) when
+/// the private test data is not there.
+fn fixture(xlsx: bool, xml: &str) -> Option<(Vec<u8>, &'static str)> {
+    let mut package = Package::open(fixtures::read(if xlsx { "test/editing/xlsx-sales.xlsx" } else { "test/editing/pptx-plan.pptx" })?).unwrap();
     let part = if xlsx { "xl/charts/chart1.xml" } else { "ppt/charts/stock-retention.xml" };
     package.set_bytes(part, xml.as_bytes().to_vec());
     if !xlsx {
@@ -63,7 +67,7 @@ fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
         assert!(xml.contains("</p:spTree>"));
         package.set_bytes(slide, xml.replacen("</p:spTree>", &(frame + "</p:spTree>"), 1).into_bytes());
     }
-    (package.save(SaveOptions::default()).unwrap(), part)
+    Some((package.save(SaveOptions::default()).unwrap(), part))
 }
 
 fn chart_group(p: &Presentation) -> &ChartGroup {
@@ -79,7 +83,7 @@ fn chart_group(p: &Presentation) -> &ChartGroup {
 
 #[test]
 fn stock_chart_hlc_reading_and_retention() {
-    let (data, _part) = fixture(true, &stock_hlc_xml(false, true));
+    let Some((data, _part)) = fixture(true, &stock_hlc_xml(false, true)) else { return };
     let opened = ibis_pptx::open(data.clone()).unwrap();
     let g = chart_group(&opened.presentation);
     assert_eq!(
@@ -103,7 +107,7 @@ fn stock_chart_hlc_reading_and_retention() {
 
 #[test]
 fn stock_chart_ohlc_reading_and_retention() {
-    let (data, _part) = fixture(true, &stock_ohlc_xml(true, true, true));
+    let Some((data, _part)) = fixture(true, &stock_ohlc_xml(true, true, true)) else { return };
     let opened = ibis_pptx::open(data.clone()).unwrap();
     let g = chart_group(&opened.presentation);
     assert_eq!(
@@ -126,7 +130,7 @@ fn stock_chart_ohlc_reading_and_retention() {
 
 #[test]
 fn stock_chart_settings_edit_and_save() {
-    let (data, part) = fixture(true, &stock_hlc_xml(false, true));
+    let Some((data, part)) = fixture(true, &stock_hlc_xml(false, true)) else { return };
     let opened = ibis_pptx::open(data).unwrap();
     let mut doc = Document::new(opened.presentation.clone());
     let (slide_id, shape_id, mut modified) = doc
@@ -187,7 +191,7 @@ fn get_chart(p: &Presentation) -> &ibis_doc_model::Chart {
 
 #[test]
 fn stock_chart_vhlc_reading_and_retention() {
-    let (data, _part) = fixture(true, &stock_vhlc_xml(false, true));
+    let Some((data, _part)) = fixture(true, &stock_vhlc_xml(false, true)) else { return };
     let opened = ibis_pptx::open(data.clone()).unwrap();
     let c = get_chart(&opened.presentation);
     assert_eq!(c.groups.len(), 2);
@@ -233,7 +237,7 @@ fn stock_chart_vhlc_reading_and_retention() {
 
 #[test]
 fn stock_chart_vohlc_reading_and_retention() {
-    let (data, _part) = fixture(true, &stock_vohlc_xml(true, true, true));
+    let Some((data, _part)) = fixture(true, &stock_vohlc_xml(true, true, true)) else { return };
     let opened = ibis_pptx::open(data.clone()).unwrap();
     let c = get_chart(&opened.presentation);
     assert_eq!(c.groups.len(), 2);
@@ -268,7 +272,7 @@ fn stock_chart_vohlc_reading_and_retention() {
 
 #[test]
 fn stock_chart_volume_settings_edit_and_save() {
-    let (data, part) = fixture(true, &stock_vhlc_xml(false, true));
+    let Some((data, part)) = fixture(true, &stock_vhlc_xml(false, true)) else { return };
     let opened = ibis_pptx::open(data).unwrap();
     let mut doc = Document::new(opened.presentation.clone());
     let (slide_id, shape_id, mut modified) = doc
