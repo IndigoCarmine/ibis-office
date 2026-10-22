@@ -13,6 +13,7 @@
 use ibis_doc_model::Chart;
 use roxmltree::Node;
 
+use crate::chart::{points_by_index, MAX_POINTS};
 use crate::theme::Colors;
 use crate::xml::{attr, child, children, elements};
 
@@ -39,15 +40,8 @@ fn dims(data: Node) -> Vec<Dim> {
             let kind = attr(d, "type").unwrap_or("").to_string();
             let read_level = |lvl: Node| {
                 let count = attr(lvl, "ptCount").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-                let mut points = vec![None; count];
-                for pt in children(lvl, "pt") {
-                    let idx = attr(pt, "idx").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-                    if idx >= points.len() {
-                        points.resize(idx + 1, None);
-                    }
-                    points[idx] = pt.text().map(str::to_string);
-                }
-                points
+                let pts = children(lvl, "pt").map(|pt| (attr(pt, "idx").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0), pt.text().map(str::to_string)));
+                points_by_index(count, MAX_POINTS, pts)
             };
             let levels: Vec<Vec<Option<String>>> = children(d, "lvl").map(read_level).collect();
             let lvl = child(d, "lvl");
@@ -784,5 +778,14 @@ mod tests {
         let share: Vec<f64> = chart.groups[1].series[0].values.iter().map(|v| v.unwrap().0).collect();
         assert_eq!(share, vec![0.6, 0.9, 1.0]);
         assert_eq!(chart.groups[1].kind, ChartType::Line);
+    }
+
+    #[test]
+    fn a_level_keeps_its_blank_points_and_drops_an_index_past_the_limit() {
+        let xml = r#"<cx:data xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex" id="0"><cx:strDim type="cat"><cx:lvl ptCount="4"><cx:pt idx="0">A</cx:pt><cx:pt idx="2">C</cx:pt></cx:lvl></cx:strDim><cx:numDim type="val"><cx:lvl ptCount="2" formatCode="General"><cx:pt idx="0">10</cx:pt><cx:pt idx="9223372036854775807">20</cx:pt></cx:lvl></cx:numDim></cx:data>"#;
+        let doc = roxmltree::Document::parse(xml).unwrap();
+        let dims = dims(doc.root_element());
+        assert_eq!(dims[0].points, vec![Some("A".to_string()), None, Some("C".to_string()), None]);
+        assert_eq!(dims[1].points, vec![Some("10".to_string()), None]);
     }
 }
