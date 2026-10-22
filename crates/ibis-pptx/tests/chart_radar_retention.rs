@@ -5,14 +5,18 @@
 use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, Document, Presentation, ShapeKind, SheetCommand, ChartType, RadarStyle, ChartGroup, Number};
 use ibis_ooxml::{Package, SaveOptions};
 
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 fn chart_xml(style: &str) -> String {
     format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:radarChart>{style}<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S1</c:v></c:tx><c:cat><c:strLit><c:ptCount val="1"/><c:pt idx="0"><c:v>A</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="1"/><c:pt idx="0"><c:v>10</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="111"/><c:axId val="222"/></c:radarChart></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend></c:chart><c:extLst><c:ext uri="urn:ibisOffice:retention-test"><keep:opaque xmlns:keep="urn:ibisOffice:test" keep:attribute="unchanged">unknown payload</keep:opaque></c:ext></c:extLst></c:chartSpace>"#)
 }
 
 
-fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
-    let mut package = Package::open(std::fs::read(root.join(if xlsx { "xlsx-sales.xlsx" } else { "pptx-plan.pptx" })).unwrap()).unwrap();
+/// The test file with `xml` as its chart, or `None` (reported as skipped) when
+/// the private test data is not there.
+fn fixture(xlsx: bool, xml: &str) -> Option<(Vec<u8>, &'static str)> {
+    let mut package = Package::open(fixtures::read(if xlsx { "test/editing/xlsx-sales.xlsx" } else { "test/editing/pptx-plan.pptx" })?).unwrap();
     let part = if xlsx { "xl/charts/chart1.xml" } else { "ppt/charts/radar-retention.xml" };
     package.set_bytes(part, xml.as_bytes().to_vec());
     if !xlsx {
@@ -24,7 +28,7 @@ fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
         assert!(xml.contains("</p:spTree>"));
         package.set_bytes(slide, xml.replacen("</p:spTree>", &(frame + "</p:spTree>"), 1).into_bytes());
     }
-    (package.save(SaveOptions::default()).unwrap(), part)
+    Some((package.save(SaveOptions::default()).unwrap(), part))
 }
 
 
@@ -38,7 +42,7 @@ fn radar_group(p: &Presentation) -> &ChartGroup {
 fn check_retention(xlsx: bool) {
     for (element, expected) in [("", None), ("<c:radarStyle val=\"standard\"/>", Some(RadarStyle::Standard)), ("<c:radarStyle val=\"marker\"/>", Some(RadarStyle::Marker)), ("<c:radarStyle val=\"filled\"/>", Some(RadarStyle::Filled)), ("<c:radarStyle/>", None), ("<c:radarStyle val=\"future\"/>", None)] {
         let xml = chart_xml(element);
-        let (data, part) = fixture(xlsx, &xml);
+        let Some((data, part)) = fixture(xlsx, &xml) else { return };
         let original = Package::open(data.clone()).unwrap().read(part).unwrap();
         let opened = ibis_pptx::open(data.clone()).unwrap();
         let group = radar_group(&opened.presentation);
@@ -84,16 +88,18 @@ fn xlsx_radar_values_caches_and_opaque_xml_survive_unrelated_edit_undo_save() { 
 #[test]
 fn changed_radar_style_pptx_rejected_and_xlsx_saved() {
     // PPTX: editing radar style is not supported yet, rejected.
-    let (data, _) = fixture(false, &chart_xml("<c:radarStyle val=\"standard\"/>"));
-    let opened = ibis_pptx::open(data.clone()).unwrap();
-    let mut current = opened.presentation.clone();
-    let chart = current.slides.iter_mut().flat_map(|s| &mut s.shapes).find_map(|s| match &mut s.kind { ShapeKind::Chart(c) => Some(c), _ => None }).unwrap();
-    chart.groups[0].kind = ChartType::Radar { style: Some(RadarStyle::Filled) };
-    assert!(opened.source.save(&current, SaveOptions::default()).is_err());
-    assert_eq!(opened.source.save(&opened.presentation, SaveOptions::default()).unwrap(), data);
+    // (each part is skipped on its own when its test file is missing)
+    if let Some((data, _)) = fixture(false, &chart_xml("<c:radarStyle val=\"standard\"/>")) {
+        let opened = ibis_pptx::open(data.clone()).unwrap();
+        let mut current = opened.presentation.clone();
+        let chart = current.slides.iter_mut().flat_map(|s| &mut s.shapes).find_map(|s| match &mut s.kind { ShapeKind::Chart(c) => Some(c), _ => None }).unwrap();
+        chart.groups[0].kind = ChartType::Radar { style: Some(RadarStyle::Filled) };
+        assert!(opened.source.save(&current, SaveOptions::default()).is_err());
+        assert_eq!(opened.source.save(&opened.presentation, SaveOptions::default()).unwrap(), data);
+    }
 
     // XLSX: editing radar style is supported and updates <c:radarStyle val="filled"/>
-    let (data_xlsx, part) = fixture(true, &chart_xml("<c:radarStyle val=\"standard\"/>"));
+    let Some((data_xlsx, part)) = fixture(true, &chart_xml("<c:radarStyle val=\"standard\"/>")) else { return };
     let opened_xlsx = ibis_pptx::open(data_xlsx.clone()).unwrap();
     let initial_chart = opened_xlsx.presentation.slides.iter().flat_map(|s| &s.shapes).find_map(|s| match &s.kind { ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
     let mut current_xlsx = opened_xlsx.presentation.clone();
@@ -137,8 +143,10 @@ fn retained_radar_does_not_advance_supported_series_fallback_palette_or_name() {
         let pure=radar.replace(group,&supported);
         let mixed=radar.replace(group,&format!("{group}{supported}"));
         let find=|p:Presentation|p.slides.iter().flat_map(|s|&s.shapes).find_map(|s|match &s.kind {ShapeKind::Chart(c)=>c.groups.iter().find(|g|matches!(g.kind,ChartType::Bar {..})).cloned(),_=>None}).unwrap();
-        let pure=find(ibis_pptx::read(&fixture(xlsx,&pure).0).unwrap());
-        let mixed=find(ibis_pptx::read(&fixture(xlsx,&mixed).0).unwrap());
+        let Some((pure,_))=fixture(xlsx,&pure) else { continue };
+        let Some((mixed,_))=fixture(xlsx,&mixed) else { continue };
+        let pure=find(ibis_pptx::read(&pure).unwrap());
+        let mixed=find(ibis_pptx::read(&mixed).unwrap());
         assert_eq!(mixed,pure,"supported group remains exactly unchanged");
     }
 }
@@ -165,7 +173,8 @@ fn retained_radar_cache_is_not_cut_by_cartesian_category_viewport() {
     let axes = r#"<c:catAx><c:axId val="111"/><c:scaling><c:min val="2"/><c:max val="2"/></c:scaling><c:crossAx val="222"/></c:catAx><c:valAx><c:axId val="222"/><c:crossAx val="111"/></c:valAx>"#;
     let xml=chart_xml("<c:radarStyle val=\"standard\"/>").replace("</c:plotArea>",&format!("{axes}</c:plotArea>"));
     for xlsx in [false,true] {
-        let presentation=ibis_pptx::read(&fixture(xlsx,&xml).0).unwrap();
+        let Some((data,_))=fixture(xlsx,&xml) else { continue };
+        let presentation=ibis_pptx::read(&data).unwrap();
         let group=radar_group(&presentation);
         assert_eq!(group.series[0].values,vec![Some(Number(10.0))]);
         assert_eq!(group.series[0].categories,vec!["A"]);
