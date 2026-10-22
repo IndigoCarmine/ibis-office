@@ -5,14 +5,18 @@
 use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, Document, Presentation, ShapeKind, SheetCommand, ChartType, OfPieKind, OfPieSplit, OfPieSettings, ChartGroup, Number, Stroke, Color, Rgb};
 use ibis_ooxml::{Package, SaveOptions};
 
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 fn chart_xml(settings: &str) -> String {
     format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:ofPieChart>{settings}<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S1</c:v></c:tx><c:cat><c:strLit><c:ptCount val="1"/><c:pt idx="0"><c:v>A</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="1"/><c:pt idx="0"><c:v>10</c:v></c:pt></c:numLit></c:val></c:ser></c:ofPieChart></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend></c:chart><c:extLst><c:ext uri="urn:ibisOffice:retention-test"><keep:opaque xmlns:keep="urn:ibisOffice:test" keep:attribute="unchanged">unknown payload</keep:opaque></c:ext></c:extLst></c:chartSpace>"#)
 }
 
 
-fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
-    let mut package = Package::open(std::fs::read(root.join(if xlsx { "xlsx-sales.xlsx" } else { "pptx-plan.pptx" })).unwrap()).unwrap();
+/// The test file with `xml` as its chart, or `None` (reported as skipped) when
+/// the private test data is not there.
+fn fixture(xlsx: bool, xml: &str) -> Option<(Vec<u8>, &'static str)> {
+    let mut package = Package::open(fixtures::read(if xlsx { "test/editing/xlsx-sales.xlsx" } else { "test/editing/pptx-plan.pptx" })?).unwrap();
     let part = if xlsx { "xl/charts/chart1.xml" } else { "ppt/charts/of-pie-retention.xml" };
     package.set_bytes(part, xml.as_bytes().to_vec());
     if !xlsx {
@@ -24,7 +28,7 @@ fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
         assert!(xml.contains("</p:spTree>"));
         package.set_bytes(slide, xml.replacen("</p:spTree>", &(frame + "</p:spTree>"), 1).into_bytes());
     }
-    (package.save(SaveOptions::default()).unwrap(), part)
+    Some((package.save(SaveOptions::default()).unwrap(), part))
 }
 
 
@@ -52,7 +56,7 @@ fn cases() -> Vec<(String,Option<OfPieKind>,OfPieSettings)> {
 }
 fn check(xlsx: bool) {
     for (settings,kind,expected) in cases() {
-        let (data,part)=fixture(xlsx,&chart_xml(&settings));let original=Package::open(data.clone()).unwrap().read(part).unwrap();let opened=ibis_pptx::open(data.clone()).unwrap();
+        let Some((data,part))=fixture(xlsx,&chart_xml(&settings)) else { return };let original=Package::open(data.clone()).unwrap().read(part).unwrap();let opened=ibis_pptx::open(data.clone()).unwrap();
         let g=group(&opened.presentation);assert_eq!(g.kind,ChartType::OfPie {kind});assert_eq!(g.of_pie.as_ref(),Some(&expected));assert_eq!(g.series[0].values,vec![Some(Number(10.0))]);assert_eq!(g.series[0].categories,vec!["A"]);let retained=g.clone();
         assert_eq!(opened.source.save(&opened.presentation,SaveOptions::default()).unwrap(),data);
         let regenerated=opened.source.save(&opened.presentation,SaveOptions {regenerate_xml:true}).unwrap();assert!(ibis_ooxml::canon::diff_packages(&data,&regenerated,&[]).unwrap().is_same());assert_eq!(group(&ibis_pptx::read(&regenerated).unwrap()),&retained);
@@ -69,16 +73,18 @@ fn check(xlsx: bool) {
 #[test] fn xlsx_of_pie_all_enum_values_presence_and_opaque_source_survive_edit_undo_save() {check(true);}
 #[test] fn changed_of_pie_settings_pptx_rejected_and_xlsx_saved() {
     // 1. PPTX: ofPie edits are rejected
-    let (data, _) = fixture(false, &chart_xml("<c:ofPieType val=\"pie\"/>"));
-    let opened = ibis_pptx::open(data.clone()).unwrap();
-    let mut current = opened.presentation.clone();
-    let chart = current.slides.iter_mut().flat_map(|s| &mut s.shapes).find_map(|s| match &mut s.kind { ShapeKind::Chart(c) => Some(c), _ => None }).unwrap();
-    chart.groups[0].of_pie.as_mut().unwrap().split = Some(OfPieSplit::Custom);
-    assert!(opened.source.save(&current, SaveOptions::default()).is_err());
-    assert_eq!(opened.source.save(&opened.presentation, SaveOptions::default()).unwrap(), data);
+    // (each part is skipped on its own when its test file is missing)
+    if let Some((data, _)) = fixture(false, &chart_xml("<c:ofPieType val=\"pie\"/>")) {
+        let opened = ibis_pptx::open(data.clone()).unwrap();
+        let mut current = opened.presentation.clone();
+        let chart = current.slides.iter_mut().flat_map(|s| &mut s.shapes).find_map(|s| match &mut s.kind { ShapeKind::Chart(c) => Some(c), _ => None }).unwrap();
+        chart.groups[0].of_pie.as_mut().unwrap().split = Some(OfPieSplit::Custom);
+        assert!(opened.source.save(&current, SaveOptions::default()).is_err());
+        assert_eq!(opened.source.save(&opened.presentation, SaveOptions::default()).unwrap(), data);
+    }
 
     // 2. XLSX: ofPie edits (kind and split settings) are saved, roundtripped, and support undo/redo
-    let (data, part) = fixture(true, &chart_xml("<c:ofPieType val=\"pie\"/><c:splitType val=\"pos\"/><c:splitPos val=\"2\"/><c:secondPieSize val=\"75\"/><c:gapWidth val=\"100\"/>"));
+    let Some((data, part)) = fixture(true, &chart_xml("<c:ofPieType val=\"pie\"/><c:splitType val=\"pos\"/><c:splitPos val=\"2\"/><c:secondPieSize val=\"75\"/><c:gapWidth val=\"100\"/>")) else { return };
     let opened = ibis_pptx::open(data.clone()).unwrap();
     let mut doc = Document::new(opened.presentation.clone());
     let (slide_id, shape_id, mut modified) = doc.presentation().slides.iter().flat_map(|s| s.shapes.iter().map(move |sh| (s.id, sh.id, sh.kind.clone()))).find_map(|(s, id, kind)| match kind {
@@ -122,7 +128,7 @@ fn check(xlsx: bool) {
 #[test] fn retained_of_pie_does_not_advance_supported_palette_or_name() {
     let ofpie=chart_xml("<c:ofPieType val=\"pie\"/>");let source=ofpie.split("<c:plotArea>").nth(1).unwrap().split("</c:plotArea>").next().unwrap();let supported=source.replace("ofPieChart","barChart").replace("<c:ofPieType val=\"pie\"/>","<c:barDir val=\"col\"/>").replace("<c:idx val=\"0\"/>","").replace("<c:tx><c:v>S1</c:v></c:tx>","");
     for xlsx in [false,true] {
-        let find=|p:Presentation|p.slides.iter().flat_map(|s|&s.shapes).find_map(|s|match &s.kind {ShapeKind::Chart(c)=>c.groups.iter().find(|g|matches!(g.kind,ChartType::Bar {..})).cloned(),_=>None}).unwrap();let pure=find(ibis_pptx::read(&fixture(xlsx,&ofpie.replace(source,&supported)).0).unwrap());let mixed=find(ibis_pptx::read(&fixture(xlsx,&ofpie.replace(source,&format!("{source}{supported}"))).0).unwrap());assert_eq!(pure,mixed);
+        let find=|p:Presentation|p.slides.iter().flat_map(|s|&s.shapes).find_map(|s|match &s.kind {ShapeKind::Chart(c)=>c.groups.iter().find(|g|matches!(g.kind,ChartType::Bar {..})).cloned(),_=>None}).unwrap();let Some((pure,_))=fixture(xlsx,&ofpie.replace(source,&supported)) else { continue };let Some((mixed,_))=fixture(xlsx,&ofpie.replace(source,&format!("{source}{supported}"))) else { continue };let pure=find(ibis_pptx::read(&pure).unwrap());let mixed=find(ibis_pptx::read(&mixed).unwrap());assert_eq!(pure,mixed);
     }
 }
 #[test]
