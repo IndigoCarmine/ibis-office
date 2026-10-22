@@ -595,16 +595,37 @@ fn cache_points(node: Node) -> (Vec<Option<String>>, Option<String>) {
         return (vec![child(node, "v").and_then(|v| v.text()).map(str::to_string)], None);
     };
     let count = val_f64(cache, "ptCount").unwrap_or(0.0).max(0.0) as usize;
-    let mut points = vec![None; count];
-    for pt in children(cache, "pt") {
+    let pts = children(cache, "pt").map(|pt| {
         let idx = attr_i64(pt, "idx").unwrap_or(0).max(0) as usize;
+        (idx, child(pt, "v").and_then(|v| v.text()).map(str::to_string))
+    });
+    let points = points_by_index(count, MAX_POINTS, pts);
+    let format = child(cache, "formatCode").and_then(|f| f.text()).map(str::to_string);
+    (points, format)
+}
+
+/// The most points read for one series or level: 1,048,576, a worksheet's
+/// rows, the longest range a series can refer to in Excel (a row is shorter,
+/// 16,384 columns). A cache's `ptCount` and `pt/@idx` are numbers written in
+/// the file, not elements counted, so they are bounded by this before they
+/// size an allocation.
+pub(crate) const MAX_POINTS: usize = 1 << 20;
+
+/// Points by index: `count` slots, then each `(idx, value)` at `idx`, more
+/// slots following for an `idx` past `count`. Neither goes past `limit`: the
+/// slots stop there and a point at or past it is dropped.
+pub(crate) fn points_by_index(count: usize, limit: usize, pts: impl IntoIterator<Item = (usize, Option<String>)>) -> Vec<Option<String>> {
+    let mut points = vec![None; count.min(limit)];
+    for (idx, value) in pts {
+        if idx >= limit {
+            continue;
+        }
         if idx >= points.len() {
             points.resize(idx + 1, None);
         }
-        points[idx] = child(pt, "v").and_then(|v| v.text()).map(str::to_string);
+        points[idx] = value;
     }
-    let format = child(cache, "formatCode").and_then(|f| f.text()).map(str::to_string);
-    (points, format)
+    points
 }
 
 fn default_color(index: usize, colors: &Colors) -> Color {
@@ -1058,5 +1079,41 @@ fn read_axis(node: Node, base: &ChartText, colors: &Colors, legacy: bool, legacy
             (!text.trim().is_empty()).then_some(ChartTitle { text, style, at })
         }),
         stagger_labels: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cache(xml: &str) -> Vec<Option<String>> {
+        let xml = format!(r#"<c:val xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">{xml}</c:val>"#);
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        cache_points(doc.root_element()).0
+    }
+
+    fn s(v: &str) -> Option<String> {
+        Some(v.to_string())
+    }
+
+    #[test]
+    fn a_cache_keeps_its_blank_points() {
+        let points = cache(r#"<c:numCache><c:ptCount val="5"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt><c:pt idx="3"><c:v>4</c:v></c:pt></c:numCache>"#);
+        assert_eq!(points, vec![s("1"), s("2"), None, s("4"), None]);
+    }
+
+    #[test]
+    fn a_cache_point_index_past_the_limit_is_dropped() {
+        let points = cache(r#"<c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="9223372036854775807"><c:v>2</c:v></c:pt></c:numCache>"#);
+        assert_eq!(points, vec![s("1"), None]);
+    }
+
+    #[test]
+    fn points_stop_at_the_limit() {
+        let pts = [(0, s("a")), (3, s("d")), (4, s("e")), (usize::MAX, s("z"))];
+        // A count far past the limit gives only the limit's slots.
+        assert_eq!(points_by_index(1_000_000_000, 4, pts.clone()), vec![s("a"), None, None, s("d")]);
+        // Points past the count add slots, up to the limit.
+        assert_eq!(points_by_index(0, 4, pts), vec![s("a"), None, None, s("d")]);
     }
 }
