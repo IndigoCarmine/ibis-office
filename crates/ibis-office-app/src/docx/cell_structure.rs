@@ -147,7 +147,8 @@ impl SlideEditor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // Not `super::*`: that brings in gpui_kit's own `test` attribute.
+    use super::{SlideEditor,FlowTable,VerticalMerge};
     use ibis_doc_model::{FlowCell,FlowRow};
     use VerticalMerge::{None as N,Start as S,Continue as C};
     fn table(rows:&[&[(u32,VerticalMerge)]])->FlowTable {
@@ -159,12 +160,15 @@ mod tests {
         let all=Some(vec![(0,0),(1,0),(2,0)]);
         assert_eq!(SlideEditor::vertical_merge_cells(&t,2,0),all);
         assert_eq!(SlideEditor::vertical_merge_cells(&t,0,0),all);
+        // A wider cell above starting at the same column is the merge's first.
+        let t=table(&[&[(2,N)],&[(1,C),(1,N)]]);
+        assert_eq!(SlideEditor::vertical_merge_cells(&t,1,0),Some(vec![(0,0),(1,0)]));
     }
     #[test]
     fn vertical_merge_cells_without_a_cell_above_at_their_column_are_none() {
-        // The row above spans the column with one cell.
-        let t=table(&[&[(2,N)],&[(1,C),(1,N)]]);
-        assert_eq!(SlideEditor::vertical_merge_cells(&t,1,0),None);
+        // A cell above spans the column but starts left of it.
+        let t=table(&[&[(2,N)],&[(1,N),(1,C)]]);
+        assert_eq!(SlideEditor::vertical_merge_cells(&t,1,1),None);
         // The row above has fewer cells.
         let t=table(&[&[(1,N)],&[(1,N),(1,C)]]);
         assert_eq!(SlideEditor::vertical_merge_cells(&t,1,1),None);
