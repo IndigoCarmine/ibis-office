@@ -7,13 +7,16 @@ use ibis_calc::{CellValue, eval::{Stored, evaluate_cell}};
 use ibis_doc_model::sheet_calc::BookView;
 use ibis_pptx::SaveOptions;
 
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const VERSION: &str = "http://schemas.microsoft.com/office/spreadsheetml/2024/workbookCompatibilityVersion";
 const URI: &str = "{D14903EA-33C4-47F7-8F05-3474C54BE107}";
 
 #[test]
 fn compatibility_requires_correct_ancestors_uri_and_attributes() {
-    let stock=std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-sales.xlsx")).unwrap();
+    let Some(stock)=fixtures::read("test/editing/xlsx-sales.xlsx") else { return };
     for (kind, expected) in [("absent",None),("valid1",Some(1)),("valid2",Some(2)),("future7",Some(7)),("foreign_list",None),("foreign_ext",None),("wrong_uri",None),("foreign_version",None),("warn3_set2",None),("warn0_set2",None),("duplicate",None),("foreign_root",None),("wrong_ext_name",None),("shadow_foreign_list",Some(2))] {
         let mut package=ibis_ooxml::Package::open(stock.clone()).unwrap();
         let doc=package.xml_mut("xl/workbook.xml").unwrap();let root=doc.root_element().unwrap();
@@ -59,7 +62,7 @@ fn compatibility_requires_correct_ancestors_uri_and_attributes() {
 
 #[test]
 fn compatibility_selection_preserves_foreign_payload_and_validates_minimum() {
-    let stock=std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-sales.xlsx")).unwrap();
+    let Some(stock)=fixtures::read("test/editing/xlsx-sales.xlsx") else { return };
     for kind in ["absent","foreign_list","foreign_ext","wrong_uri","future7","warn3_set2","warn0_set2","duplicate"] {
         let mut package=ibis_ooxml::Package::open(stock.clone()).unwrap();let doc=package.xml_mut("xl/workbook.xml").unwrap();let root=doc.root_element().unwrap();
         let old:Vec<_>=doc.elements(root).filter(|&n|doc.local_name(n)=="extLst" && doc.namespace(n)==Some(MAIN)).collect();for n in old{doc.detach(n);}
@@ -95,7 +98,7 @@ fn compatibility_selection_preserves_foreign_payload_and_validates_minimum() {
 
 #[test]
 fn compatibility_attributes_ignore_foreign_shadows_in_both_orders() {
-    let stock = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-sales.xlsx")).unwrap();
+    let Some(stock) = fixtures::read("test/editing/xlsx-sales.xlsx") else { return };
     for field in ["uri", "setVersion", "warnBelowVersion"] {
         for order in ["foreign-only", "foreign-first", "proper-first"] {
             let label = format!("{field}-{order}");
@@ -134,7 +137,7 @@ fn compatibility_attributes_ignore_foreign_shadows_in_both_orders() {
 
 #[test]
 fn compatibility_integer_attributes_use_xml_whitespace_without_rewriting_opaque_values() {
-    let stock=std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-sales.xlsx")).unwrap();
+    let Some(stock)=fixtures::read("test/editing/xlsx-sales.xlsx") else { return };
     for field in ["setVersion","warnBelowVersion"] {
         for (label,text,valid) in [("plain","2",true),("leading","002",true),("space"," 2 ",true),("tab","\t2\n",true),("nbsp","\u{a0}2\u{a0}",false),("internal","2 0",false),("overflow","4294967296",false),("zero","0",false),("negative","-1",false)] {
             let mut package=ibis_ooxml::Package::open(stock.clone()).unwrap();let doc=package.xml_mut("xl/workbook.xml").unwrap();let root=doc.root_element().unwrap();let old:Vec<_>=doc.children_named(root,"extLst").collect();for n in old {doc.detach(n);}

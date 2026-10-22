@@ -7,13 +7,25 @@
 use ibis_doc_model::{Command, Document, EmuRect};
 use ibis_pptx::{master_page, SaveOptions};
 
-fn file(name: &str) -> Vec<u8> {
-    std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test").join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
+/// The file `name` under `test/`, or `None` (reported as skipped) when the
+/// private test data is not there.
+fn file(name: &str) -> Option<Vec<u8>> {
+    fixtures::read(&format!("test/{name}"))
+}
+
+/// The public file `name` under `test/` (in git, so always there): a missing
+/// one is a broken checkout and fails with its path, never a skip.
+fn public(name: &str) -> Vec<u8> {
+    let path = fixtures::repo_root().join("test").join(name);
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 #[test]
 fn the_pages_are_the_master_and_its_layouts() {
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let pages = master_page::pages(&data).unwrap();
     assert!(pages[0].master, "{pages:?}");
     assert!(pages.len() > 1 && pages[1..].iter().all(|p| !p.master && p.of == pages[0].part), "{pages:?}");
@@ -22,7 +34,7 @@ fn the_pages_are_the_master_and_its_layouts() {
 
 #[test]
 fn a_layout_is_a_slide_and_comes_back() {
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let original = ibis_pptx::open(data.clone()).unwrap();
     let pages = master_page::pages(&data).unwrap();
     for page in pages.iter() {
@@ -44,7 +56,7 @@ fn a_layout_is_a_slide_and_comes_back() {
 
 #[test]
 fn a_shape_moved_on_the_page_moves_in_the_layout() {
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let pages = master_page::pages(&data).unwrap();
     let layout = pages.iter().skip(1).find(|p| p.name.contains("タイトル")).unwrap_or(&pages[1]).clone();
     let before = ibis_pptx::open(data.clone()).unwrap();
@@ -69,7 +81,7 @@ fn a_shape_moved_on_the_page_moves_in_the_layout() {
 
 #[test]
 fn every_page_of_a_real_deck_comes_back() {
-    let data = file("benchmark/earnings-presentation.pptx");
+    let data = public("benchmark/earnings-presentation.pptx");
     let original = ibis_pptx::open(data.clone()).unwrap();
     let pages = master_page::pages(&data).unwrap();
     assert!(pages.len() > 2);
@@ -89,7 +101,7 @@ fn every_page_of_a_real_deck_comes_back() {
 #[test]
 fn a_picture_put_on_a_layout_comes_with_its_file() {
     use ibis_doc_model::{MediaFormat, Picture, Shape, ShapeKind};
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let pages = master_page::pages(&data).unwrap();
     let layout = pages[1].clone();
     let temp = master_page::build(&data, &layout.part).unwrap();
@@ -121,8 +133,13 @@ fn a_picture_put_on_a_layout_comes_with_its_file() {
 /// presentation) come back identical.
 #[test]
 fn the_other_parts_are_left_as_they_were() {
-    for name in ["editing/pptx-plan.pptx", "benchmark/earnings-presentation.pptx"] {
-        let data = file(name);
+    for (name, private) in [("editing/pptx-plan.pptx", true), ("benchmark/earnings-presentation.pptx", false)] {
+        let data = if private {
+            let Some(data) = file(name) else { continue };
+            data
+        } else {
+            public(name)
+        };
         let before = ibis_ooxml::Package::open(data.clone()).unwrap();
         for page in master_page::pages(&data).unwrap() {
             let temp = master_page::build(&data, &page.part).unwrap();
@@ -146,7 +163,7 @@ fn the_other_parts_are_left_as_they_were() {
 #[test]
 fn the_text_styles_of_a_master_are_read_and_changed() {
     use master_page::{LevelStyle, StyleKind};
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let master = master_page::pages(&data).unwrap()[0].part.clone();
     let styles = master_page::text_styles(&data, &master).unwrap();
     let title = styles.iter().find(|s| s.0 == StyleKind::Title && s.1 == 1).unwrap();
@@ -179,7 +196,7 @@ fn the_text_styles_of_a_master_are_read_and_changed() {
 #[test]
 fn a_notes_page_is_a_slide_and_comes_back_with_its_formatting() {
     use ibis_doc_model::{Command, Document};
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let original = ibis_pptx::open(data.clone()).unwrap();
     let index = original.presentation.slides.iter().position(|s| !s.notes.is_empty()).unwrap();
     let temp = ibis_pptx::notes_page::build(&data, index).unwrap();
@@ -213,7 +230,7 @@ fn a_notes_page_is_a_slide_and_comes_back_with_its_formatting() {
 #[test]
 fn a_slide_without_notes_gets_a_notes_page_from_the_edited_one() {
     use ibis_doc_model::{Command, Document};
-    let data = file("editing/pptx-plan.pptx");
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
     let original = ibis_pptx::open(data.clone()).unwrap();
     let index = original.presentation.slides.iter().position(|s| s.notes.is_empty()).unwrap();
     let temp = ibis_pptx::notes_page::build(&data, index).unwrap();
