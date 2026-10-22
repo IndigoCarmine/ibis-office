@@ -960,8 +960,9 @@ impl PivotTable {
             let item_recs: Vec<&Vec<CellValue>> = col_recs.iter().copied().filter(|r| key(r, level) == Some(item_ix)).collect();
             let agg = self.aggregate_of(d, data, &item_recs);
             let num = match agg {
-                CellValue::Number(n) => n,
-                _ => 0.0,
+                CellValue::Number(n) => Ok(n),
+                CellValue::Error(e) => Err(e),
+                _ => Ok(0.0),
             };
             item_values.insert(item_name.to_lowercase(), num);
         }
@@ -985,7 +986,10 @@ impl PivotTable {
         for (f_idx, f) in self.fields.iter().enumerate() {
             if f.formula.is_none() {
                 if let Some(c) = self.data_column(f_idx, data) {
-                    let sum: f64 = recs.iter().filter_map(|r| r.get(c)).filter_map(|v| if let CellValue::Number(n) = v { Some(*n) } else { None }).sum();
+                    let sum = match first_error(recs.iter().filter_map(|r| r.get(c))) {
+                        Some(e) => Err(e),
+                        None => Ok(recs.iter().filter_map(|r| r.get(c)).filter_map(|v| if let CellValue::Number(n) = v { Some(*n) } else { None }).sum::<f64>()),
+                    };
                     field_values.insert(f.name.to_lowercase(), sum);
                 }
             }
@@ -1013,6 +1017,10 @@ impl PivotTable {
             return CellValue::Empty;
         }
         let values: Vec<&CellValue> = recs.iter().filter_map(|r| r.get(c)).collect();
+        // As Excel: an error value among the records makes the summary that error, whatever the function.
+        if let Some(e) = first_error(values.iter().copied()) {
+            return CellValue::Error(e);
+        }
         let numbers: Vec<f64> = values.iter().filter_map(|v| if let CellValue::Number(n) = v { Some(*n) } else { None }).collect();
         let n = numbers.len() as f64;
         let mean = numbers.iter().sum::<f64>() / n;
@@ -1241,23 +1249,23 @@ impl PivotTable {
                     && (col_levels.is_empty() || col_leafs.iter().any(|p| p.iter().enumerate().all(|(lv, &ix)| key(r, &col_levels[lv]) == Some(ix))))
         };
         let all_shown: Vec<&&Vec<CellValue>> = records.iter().filter(|r| shown(r)).collect();
-        let grand_totals: Vec<Option<f64>> = (0..data_count)
-            .map(|d| match aggregate(d, &all_shown) {
-                CellValue::Number(n) => Some(n),
+        // A total's number, or the error it summarizes to (which the shares of it then show).
+        let total_of = |v: CellValue| -> Option<Result<f64, CellError>> {
+            match v {
+                CellValue::Number(n) => Some(Ok(n)),
+                CellValue::Error(e) => Some(Err(e)),
                 _ => None,
-            })
-            .collect();
-        let col_totals: Vec<Option<f64>> = col_keys
+            }
+        };
+        let grand_totals: Vec<Option<Result<f64, CellError>>> = (0..data_count).map(|d| total_of(aggregate(d, &all_shown))).collect();
+        let col_totals: Vec<Option<Result<f64, CellError>>> = col_keys
             .iter()
             .map(|(cline, d)| {
                 let col_recs: Vec<&&Vec<CellValue>> = match cline {
                     Some(cl) => all_shown.iter().copied().filter(|r| cl.path.iter().enumerate().all(|(lv, &ix)| key(r, &col_levels[lv]) == Some(ix))).collect(),
                     None => all_shown.clone(),
                 };
-                match aggregate(*d, &col_recs) {
-                    CellValue::Number(n) => Some(n),
-                    _ => None,
-                }
+                total_of(aggregate(*d, &col_recs))
             })
             .collect();
         let first_body = top + header_rows;
@@ -1293,12 +1301,7 @@ impl PivotTable {
                 continue;
             }
             let row_recs: Vec<&&Vec<CellValue>> = records.iter().filter(|r| shown(r) && line.path.iter().enumerate().all(|(lv, &ix)| key(r, &rows_levels[lv]) == Some(ix))).collect();
-            let row_totals: Vec<Option<f64>> = (0..data_count)
-                .map(|d| match aggregate(d, &row_recs) {
-                    CellValue::Number(n) => Some(n),
-                    _ => None,
-                })
-                .collect();
+            let row_totals: Vec<Option<Result<f64, CellError>>> = (0..data_count).map(|d| total_of(aggregate(d, &row_recs))).collect();
             let calc_item: Option<(&PivotCalculatedItem, usize)> = rows_levels.iter().enumerate().find_map(|(lv, l)| {
                 let ix = line.path.get(lv).copied()?;
                 let item_val = l.items.get(ix)?;
@@ -1332,8 +1335,9 @@ impl PivotTable {
                             _ => None,
                         };
                         v = match denominator {
-                            Some(den) if den != 0.0 => CellValue::Number(num / den),
-                            Some(_) => CellValue::Error(crate::sheet::CellError::Div0),
+                            Some(Ok(den)) if den != 0.0 => CellValue::Number(num / den),
+                            Some(Ok(_)) => CellValue::Error(crate::sheet::CellError::Div0),
+                            Some(Err(e)) => CellValue::Error(e),
                             None => v,
                         };
                     }
@@ -2236,7 +2240,13 @@ impl PivotTable {
     }
 }
 
-fn eval_calc_expr(expr: &ibis_calc::formula::Expr, fields: &std::collections::HashMap<String, f64>) -> Result<f64, CellError> {
+/// The first error value among `values`, in their order.
+fn first_error<'a>(values: impl IntoIterator<Item = &'a CellValue>) -> Option<CellError> {
+    values.into_iter().find_map(|v| if let CellValue::Error(e) = v { Some(*e) } else { None })
+}
+
+/// `fields` holds each name's value, or the error it summarizes to.
+fn eval_calc_expr(expr: &ibis_calc::formula::Expr, fields: &std::collections::HashMap<String, Result<f64, CellError>>) -> Result<f64, CellError> {
     use ibis_calc::formula::{BinaryOp, Expr};
     match expr {
         Expr::Number(n) => Ok(*n),
@@ -2245,7 +2255,7 @@ fn eval_calc_expr(expr: &ibis_calc::formula::Expr, fields: &std::collections::Ha
         Expr::Error(e) => Err(*e),
         Expr::Name { name, .. } => {
             let key = name.trim().trim_matches('\'').trim_matches('[').trim_matches(']').to_lowercase();
-            Ok(fields.get(&key).copied().unwrap_or(0.0))
+            fields.get(&key).copied().unwrap_or(Ok(0.0))
         }
         Expr::Neg(inner) => Ok(-eval_calc_expr(inner, fields)?),
         Expr::Plus(inner) => eval_calc_expr(inner, fields),
@@ -2890,6 +2900,62 @@ mod tests {
         for c in ["x", "--", "N/A", "(空白)"] {
             assert!(matches!(missing_caption_value(c), CellValue::Text(ref t) if t == c), "{c:?}");
         }
+    }
+
+    #[test]
+    fn source_error_values_make_their_summaries_errors() {
+        use crate::sheet::CellError;
+        let t = |s: &str| CellValue::Text(s.into());
+        let n = CellValue::Number;
+        let na = CellValue::Error(CellError::NA);
+        let test_data = PivotData {
+            headings: vec!["地域".into(), "金額".into()],
+            records: vec![vec![t("関東"), n(100.0)], vec![t("関東"), na.clone()], vec![t("関西"), n(200.0)]],
+        };
+        let row_of = |b: &super::PivotBuilt, label: &str| b.cells.iter().find(|c| c.column == 0 && c.value == t(label)).map(|c| c.row).unwrap_or_else(|| panic!("{label} row"));
+        let mut p = PivotTable::new("ピボットテーブル1", PivotSource::default(), &test_data, 2, 0);
+        p.place(0, Some(PivotAxis::Row), 0); // 地域 to Row
+        p.place(1, Some(PivotAxis::Values), 0); // 金額 to Values
+
+        // Every summary of records with an error is that error, as Excel shows it.
+        for f in ["sum", "count", "countNums", "average", "max", "min", "product", "stdDev", "stdDevp", "var", "varp"] {
+            p.set_function(0, f);
+            let b = p.build(&test_data);
+            assert_eq!(text(&b, row_of(&b, "関東"), 1), Some(na.clone()), "{f}: 関東");
+            assert_eq!(text(&b, row_of(&b, "総計"), 1), Some(na.clone()), "{f}: 総計");
+            assert_ne!(text(&b, row_of(&b, "関西"), 1), Some(na.clone()), "{f}: 関西 has no error");
+        }
+        p.set_function(0, "sum");
+        let b = p.build(&test_data);
+        assert_eq!(text(&b, row_of(&b, "関西"), 1), Some(n(200.0)));
+
+        // エラー値に表示する値.
+        p.error_caption = Some("ERR".into());
+        let b = p.build(&test_data);
+        assert_eq!(text(&b, row_of(&b, "関東"), 1), Some(t("ERR")));
+        assert_eq!(text(&b, row_of(&b, "総計"), 1), Some(t("ERR")));
+        assert_eq!(text(&b, row_of(&b, "関西"), 1), Some(n(200.0)));
+        p.error_caption = None;
+
+        // A share of a total that is an error is that error.
+        p.set_show_as(0, Some("percentOfTotal".into()));
+        let b = p.build(&test_data);
+        assert_eq!(text(&b, row_of(&b, "関西"), 1), Some(na.clone()));
+        p.set_show_as(0, None);
+
+        // A calculated field over the field with the error.
+        p.add_calculated_field("倍額", "= 金額 * 2").expect("add 倍額");
+        let b = p.build(&test_data);
+        assert_eq!(text(&b, row_of(&b, "関東"), 2), Some(na.clone()));
+        assert_eq!(text(&b, row_of(&b, "関西"), 2), Some(n(400.0)));
+        p.delete_calculated_field("倍額").expect("delete 倍額");
+
+        // A calculated item naming the item with the error, and one not naming it.
+        p.add_calculated_item(0, "東西", "= 関東 + 関西").expect("add 東西");
+        p.add_calculated_item(0, "西", "= 関西 * 2").expect("add 西");
+        let b = p.build(&test_data);
+        assert_eq!(text(&b, row_of(&b, "東西"), 1), Some(na.clone()));
+        assert_eq!(text(&b, row_of(&b, "西"), 1), Some(n(400.0)));
     }
 
     #[test]
