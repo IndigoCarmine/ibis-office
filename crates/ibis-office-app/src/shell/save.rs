@@ -15,22 +15,46 @@ use gpui_kit::*;
 use crate::shell::editor::SlideEditor;
 use crate::{Save, SaveAs};
 
+/// What is done once a save has written the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AfterSave {
+    /// Nothing: the file stays open (保存, 名前を付けて保存…).
+    Stay,
+    /// Close the file (閉じる's 「保存」): only once it is saved, so a save
+    /// that fails, or that waits for a path, never loses the edits.
+    Close,
+}
+
+impl AfterSave {
+    /// Whether the file is closed after a save that ended with `result`.
+    #[cfg(not(target_family = "wasm"))]
+    fn closes(self, result: &Result<(), String>) -> bool {
+        self == AfterSave::Close && result.is_ok()
+    }
+}
+
 impl SlideEditor {
     /// ⌘S: save to the file it was opened from (or ask where, for a file
     /// that has no path yet).
     pub(crate) fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_then(AfterSave::Stay, window, cx);
+    }
+
+    /// `save`, then `after` once the file is saved. A file with no path yet
+    /// is saved only once a path is picked, so `after` waits for that.
+    pub(crate) fn save_then(&mut self, after: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(window, cx);
         #[cfg(not(target_family = "wasm"))]
         match self.path.clone() {
             Some(path) => {
                 let result = self.save_to(path, window);
-                self.report_save(result, cx);
+                self.finish_save(result, after, window, cx);
             }
-            None => self.save_as(&SaveAs, window, cx),
+            None => self.save_as_then(after, window, cx),
         }
         #[cfg(target_family = "wasm")]
         {
-            let _ = window;
+            let _ = (window, after);
             self.status = Some(crate::shell::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
             cx.notify();
         }
@@ -38,6 +62,12 @@ impl SlideEditor {
 
     /// ⌘⇧S: ask where, and save there.
     pub(crate) fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_as_then(AfterSave::Stay, window, cx);
+    }
+
+    /// `save_as`, then `after` once the file is saved there: not when the
+    /// dialog is cancelled or the save fails.
+    fn save_as_then(&mut self, after: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(window, cx);
         if self.source.is_none() {
             self.status = Some(crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").into());
@@ -63,7 +93,7 @@ impl SlideEditor {
                 let Ok(Ok(Some(path))) = picked.await else { return };
                 this.update_in(cx, |this, window, cx| {
                     let result = this.save_to(path, window);
-                    this.report_save(result, cx);
+                    this.finish_save(result, after, window, cx);
                 })
                 .ok();
             })
@@ -71,7 +101,7 @@ impl SlideEditor {
         }
         #[cfg(target_family = "wasm")]
         {
-            let _ = window;
+            let _ = (window, after);
             self.status = Some(crate::shell::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
             cx.notify();
         }
@@ -129,6 +159,17 @@ impl SlideEditor {
         Ok(())
     }
 
+    /// Report how a save ended, then do `after` if it saved: a failed save
+    /// leaves the file open, with its edits and the error in the status bar.
+    #[cfg(not(target_family = "wasm"))]
+    fn finish_save(&mut self, result: Result<(), String>, after: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
+        let close = after.closes(&result);
+        self.report_save(result, cx);
+        if close {
+            self.force_close_file(window, cx);
+        }
+    }
+
     #[cfg(not(target_family = "wasm"))]
     fn report_save(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
         self.status = Some(match result {
@@ -165,4 +206,21 @@ pub(crate) fn write_replacing(path: &std::path::Path, bytes: &[u8]) -> std::io::
     std::fs::rename(&temporary, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&temporary);
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AfterSave;
+
+    #[test]
+    fn the_file_is_closed_only_after_it_is_saved() {
+        let saved: Result<(), String> = Ok(());
+        let failed: Result<(), String> = Err("cannot write".into());
+        assert!(AfterSave::Close.closes(&saved));
+        // A failed save keeps the file open, with its edits and the error shown.
+        assert!(!AfterSave::Close.closes(&failed));
+        // 保存 and 名前を付けて保存… never close it.
+        assert!(!AfterSave::Stay.closes(&saved));
+        assert!(!AfterSave::Stay.closes(&failed));
+    }
 }

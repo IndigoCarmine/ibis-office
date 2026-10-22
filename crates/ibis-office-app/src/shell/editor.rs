@@ -1984,8 +1984,8 @@ impl SlideEditor {
 
     pub(crate) fn confirm_save_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_confirm_dialog_open = false;
-        self.save(&crate::Save, window, cx);
-        self.force_close_file(window, cx);
+        // Closed once saved: not when the save fails, nor before a new file's path is picked.
+        self.save_then(crate::shell::save::AfterSave::Close, window, cx);
     }
 
     pub(crate) fn confirm_discard_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
