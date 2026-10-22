@@ -936,6 +936,7 @@ impl SlideEditor {
         if !self.has_document {
             return;
         }
+        self.commit_typing(window, cx);
         if self.is_workbook() && self.workbook_id != 0 {
             let my_id = self.workbook_id;
             let my_entity_id = cx.entity_id();
@@ -974,7 +975,7 @@ impl SlideEditor {
         // The last window showing the file, whatever its kind (a
         // presentation's 新しいウィンドウ is a copy of its own): edits not
         // saved are asked about before they are closed.
-        if self.document.can_undo() {
+        if self.has_unsaved_edits(cx) {
             self.save_confirm_dialog_open = true;
             self.save_confirm_closes_window = false;
             cx.notify();
@@ -987,9 +988,12 @@ impl SlideEditor {
     /// button): whether it may close now. Edits not saved are asked about
     /// first in the save confirmation dialog, as ファイル > 閉じる asks, and
     /// the window closes once they are saved or discarded.
-    pub(crate) fn window_should_close(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn window_should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.has_document {
+            self.commit_typing(window, cx);
+        }
         let shown_in_other_window = self.shown_in_other_window(cx);
-        match window_close(self.has_document, shown_in_other_window, self.document.can_undo(), self.save_confirm_dialog_open) {
+        match window_close(self.has_document, shown_in_other_window, self.has_unsaved_edits(cx), self.save_confirm_dialog_open) {
             WindowClose::Close => true,
             WindowClose::Ask => {
                 self.save_confirm_dialog_open = true;
@@ -1003,6 +1007,37 @@ impl SlideEditor {
                 false
             }
         }
+    }
+
+    /// The open file has edits not saved (`has_unsaved_edits`), typing not
+    /// yet put into it included: what closing the file or its window, and
+    /// updating the program, ask about first.
+    pub(crate) fn has_unsaved_edits(&self, cx: &App) -> bool {
+        has_unsaved_edits(self.has_document, &self.document, self.is_typing(cx))
+    }
+
+    /// Typing not yet put into the file: into a cell (counted even when it
+    /// is what the cell has, as entering it is an edit: `commit_cell_edit`
+    /// makes it a step), or into a shape's text in place (`editing`) that
+    /// changes it (`commit_edit` makes a step of it only then).
+    fn is_typing(&self, cx: &App) -> bool {
+        let in_cell = self.sheet_state().is_some_and(|s| s.cell_edit.is_some());
+        let in_shape = self.editing.as_ref().is_some_and(|edit| {
+            let text = edit.state.read(cx).value().to_string();
+            if edit.is_new {
+                !text.trim().is_empty()
+            } else {
+                self.slide().shape(edit.shape).and_then(|s| s.text_body()).map(|b| b.text()).as_deref() != Some(text.as_str())
+            }
+        });
+        in_cell || in_shape
+    }
+
+    /// The typing is put into the file (a cell's entry, a shape's text in
+    /// place), so that closing asks about it and 「保存」 saves it.
+    fn commit_typing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        self.commit_edit(window, cx);
     }
 
     /// Another window shows this window's file (a workbook's or a
@@ -2039,7 +2074,7 @@ impl SlideEditor {
         // The snapshot is kept as Unsaved_… (自動回復の設定) before
         // force_close_file would delete it.
         if self.is_workbook() {
-            self.preserve_or_cleanup_autorecover_on_discard();
+            self.preserve_or_cleanup_autorecover_on_discard(cx);
         } else if self.is_presentation() {
             self.preserve_or_cleanup_pptx_autorecover_on_discard();
         }
@@ -3423,6 +3458,15 @@ pub(crate) enum WindowClose {
     KeepAsking,
 }
 
+/// Whether a file is open (`has_document`) and edited since it was last
+/// saved, or opened (`Document::is_modified`), or being typed into
+/// (`typing`: not in the document yet, so not saved either). Not whether
+/// there are steps to undo: they stay after a save, and an edit undone
+/// leaves nothing to save.
+pub(crate) fn has_unsaved_edits(has_document: bool, document: &Document, typing: bool) -> bool {
+    has_document && (document.is_modified() || typing)
+}
+
 /// What closing a window does: one with a file whose edits are not saved
 /// (`unsaved`) asks first, as ファイル > 閉じる does (`close_file`), unless
 /// another window still shows the file; a dialog already asking (`asking`)
@@ -3505,5 +3549,55 @@ mod tests {
         // Closed again while the dialog asks: the one dialog stays, the window open.
         assert_eq!(window_close(true, false, true, true), WindowClose::KeepAsking);
         assert_eq!(window_close(true, true, true, true), WindowClose::KeepAsking);
+    }
+
+    /// An edit of the `n`th kind in an empty file of `kind`, as the editor makes them.
+    fn an_edit(kind: ibis_pptx::Kind, document: &mut ibis_doc_model::Document, n: u32) -> ibis_doc_model::Command {
+        use ibis_doc_model::{Block, CellEdit, CellInput, Command, EmuRect, FlowCommand, FlowPos, Shape, SheetCommand};
+        let slide = document.presentation().slides[0].id;
+        match kind {
+            ibis_pptx::Kind::Workbook => Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row: n, column: 0, input: CellInput::Formula("1+1".into()) }] }),
+            ibis_pptx::Kind::Document => {
+                let flow = document.presentation().flow.as_deref().expect("a flow document");
+                let Block::Paragraph(p) = &flow.body[0] else { panic!("a paragraph") };
+                Command::Flow(FlowCommand::InsertText { at: FlowPos::new(p.id, 0), text: format!("文{n}"), format: None })
+            }
+            ibis_pptx::Kind::Presentation => {
+                let shape = document.ids().new_shape_id();
+                Command::InsertShape { slide, index: 0, shape: Shape::text_box(shape, EmuRect::new(0, 0, 100, 50), &format!("箱{n}")) }
+            }
+        }
+    }
+
+    /// Edits saved are not asked about again (I-042), in a workbook, a
+    /// document and a presentation alike: they are told against what was
+    /// saved, not by the steps to undo, which stay after a save.
+    #[test]
+    fn edits_are_unsaved_only_until_they_are_saved() {
+        use super::has_unsaved_edits;
+        use ibis_doc_model::Document;
+        for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+            let opened = ibis_pptx::open(ibis_pptx::blank_file(kind).unwrap()).unwrap();
+            let mut document = Document::new(opened.presentation);
+            assert!(!has_unsaved_edits(true, &document, false), "{kind:?}: as opened");
+            let edit = an_edit(kind, &mut document, 1);
+            document.execute(vec![edit]).unwrap();
+            assert!(has_unsaved_edits(true, &document, false), "{kind:?}: edited");
+            assert!(!has_unsaved_edits(false, &document, false), "{kind:?}: no file open (the start view)");
+            document.mark_saved();
+            assert!(document.can_undo(), "{kind:?}: the edit can still be undone");
+            assert!(!has_unsaved_edits(true, &document, false), "{kind:?}: saved");
+            // Saved, then typed into a cell or a shape's text and not yet
+            // entered: that typing is not saved (I-046).
+            assert!(has_unsaved_edits(true, &document, true), "{kind:?}: typing after the save");
+            assert!(!has_unsaved_edits(false, &document, true), "{kind:?}: no file open");
+            let edit = an_edit(kind, &mut document, 2);
+            document.execute(vec![edit]).unwrap();
+            assert!(has_unsaved_edits(true, &document, false), "{kind:?}: edited after the save");
+            assert!(document.undo());
+            assert!(!has_unsaved_edits(true, &document, false), "{kind:?}: undone back to what was saved");
+            assert!(document.undo());
+            assert!(has_unsaved_edits(true, &document, false), "{kind:?}: undone past what was saved");
+        }
     }
 }

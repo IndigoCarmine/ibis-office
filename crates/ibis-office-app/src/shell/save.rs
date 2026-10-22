@@ -150,6 +150,14 @@ impl SlideEditor {
         window.set_window_title(&format!("{name} - ibisOffice"));
         self.file_name = Some(name);
         self.path = Some(path);
+        // What is open is now what its file holds, so closing it asks
+        // nothing until it is edited again (Save As too: the file is the new
+        // one, as in Word and Excel). Not when saved as CSV or text, which
+        // keep the values of one sheet only: Excel asks again then too, and
+        // the other sheets and the formats are not saved.
+        if !(csv || tsv) {
+            self.document.mark_saved();
+        }
         if self.is_workbook() || self.is_presentation() {
             self.cleanup_active_autorecover_file();
             self.is_recovered = false;
@@ -163,6 +171,9 @@ impl SlideEditor {
     #[cfg(not(target_family = "wasm"))]
     fn finish_save(&mut self, result: Result<(), String>, after: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
         let close = after.closes(&result);
+        if result.is_ok() {
+            self.share_saved_with_other_windows(cx);
+        }
         self.report_save(result, cx);
         if close {
             self.force_close_file(window, cx);
@@ -170,6 +181,15 @@ impl SlideEditor {
                 window.remove_window();
             }
         }
+    }
+
+    /// The other windows of the file (a workbook's or a document's
+    /// 新しいウィンドウ) share its document, so they are saved with it too:
+    /// the last one closed asks nothing.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn share_saved_with_other_windows(&self, cx: &mut Context<Self>) {
+        self.sync_workbook_peers(cx);
+        self.sync_document_peers(cx);
     }
 
     #[cfg(not(target_family = "wasm"))]
