@@ -44,8 +44,14 @@ pub fn stream(data: &[u8], name: &str) -> Result<Vec<u8>, Error> {
     if !is_cfb(data) {
         return Err(bad());
     }
-    let sector_size = 1usize << u16_at(data, 30).ok_or_else(bad)?;
-    let mini_size = 1usize << u16_at(data, 32).ok_or_else(bad)?;
+    // Sectors of 512 bytes (version 3) or 4096 (version 4), mini sectors of 64 (MS-CFB 2.2).
+    let sector_shift = u16_at(data, 30).ok_or_else(bad)?;
+    let mini_shift = u16_at(data, 32).ok_or_else(bad)?;
+    if !matches!(sector_shift, 9 | 12) || mini_shift != 6 {
+        return Err(bad());
+    }
+    let sector_size = 1usize << sector_shift;
+    let mini_size = 1usize << mini_shift;
     let dir_start = u32_at(data, 48).ok_or_else(bad)?;
     let mini_cutoff = u32_at(data, 56).ok_or_else(bad)? as u64;
     let mini_fat_start = u32_at(data, 60).ok_or_else(bad)?;
@@ -54,16 +60,36 @@ pub fn stream(data: &[u8], name: &str) -> Result<Vec<u8>, Error> {
         let at = (i as usize + 1).checked_mul(sector_size)?;
         data.get(at..at + sector_size)
     };
+    // Each FAT or DIFAT sector is a sector of its own in the file: one met a
+    // second time (a DIFAT chain that loops, a FAT sector listed twice) is a
+    // damaged file, and following it would not end or would grow the FAT past
+    // what the file holds.
+    let mut seen = vec![false; (data.len() / sector_size).saturating_sub(1)];
+    let mut first_visit = |s: u32| -> Result<(), Error> {
+        match seen.get_mut(s as usize) {
+            Some(v) if !*v => {
+                *v = true;
+                Ok(())
+            }
+            _ => Err(bad()),
+        }
+    };
     // The sectors of the FAT: 109 in the header, then the DIFAT's chain.
-    let mut fat_sectors: Vec<u32> = (0..109).filter_map(|i| u32_at(data, 76 + i * 4)).filter(|&s| s < FREE).collect();
+    let mut fat_sectors: Vec<u32> = Vec::new();
+    for s in (0..109).filter_map(|i| u32_at(data, 76 + i * 4)).filter(|&s| s < FREE) {
+        first_visit(s)?;
+        fat_sectors.push(s);
+    }
     let mut next = difat_start;
-    let mut guard = 0;
-    while next < FREE && guard < 100_000 {
+    while next < FREE {
+        first_visit(next)?;
         let s = sector(next).ok_or_else(bad)?;
         let per = sector_size / 4;
-        fat_sectors.extend((0..per - 1).filter_map(|i| u32_at(s, i * 4)).filter(|&x| x < FREE));
+        for x in (0..per - 1).filter_map(|i| u32_at(s, i * 4)).filter(|&x| x < FREE) {
+            first_visit(x)?;
+            fat_sectors.push(x);
+        }
         next = u32_at(s, (per - 1) * 4).ok_or_else(bad)?;
-        guard += 1;
     }
     let mut fat: Vec<u32> = Vec::new();
     for s in fat_sectors {
@@ -411,5 +437,93 @@ mod tests {
         for n in names {
             assert_eq!(stream(&file, n).unwrap().len(), 10, "{n}");
         }
+    }
+
+    #[test]
+    fn sectors_of_4096_bytes_are_read() {
+        // Version 4: the header in a sector of 4096 bytes, then the FAT (sector 0), the directory (1), a stream (2).
+        let size = 4096;
+        let mut file = vec![0u8; 4 * size];
+        file[..8].copy_from_slice(&MAGIC);
+        file[26..28].copy_from_slice(&4u16.to_le_bytes());
+        file[28..30].copy_from_slice(&0xFFFEu16.to_le_bytes());
+        file[30..32].copy_from_slice(&12u16.to_le_bytes());
+        file[32..34].copy_from_slice(&6u16.to_le_bytes());
+        file[44..48].copy_from_slice(&1u32.to_le_bytes());
+        file[48..52].copy_from_slice(&1u32.to_le_bytes());
+        file[56..60].copy_from_slice(&4096u32.to_le_bytes());
+        file[60..64].copy_from_slice(&END.to_le_bytes());
+        file[68..72].copy_from_slice(&END.to_le_bytes());
+        file[76..80].copy_from_slice(&0u32.to_le_bytes());
+        file[80..512].fill(0xFF);
+        let fat_at = size;
+        file[fat_at..fat_at + size].fill(0xFF);
+        for (i, v) in [FATSECT, END, END].into_iter().enumerate() {
+            file[fat_at + i * 4..fat_at + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        let entry = |dir: &mut [u8], name: &str, kind: u8, start: u32, len: u64| {
+            let units: Vec<u16> = name.encode_utf16().collect();
+            for (i, u) in units.iter().enumerate() {
+                dir[i * 2..i * 2 + 2].copy_from_slice(&u.to_le_bytes());
+            }
+            dir[64..66].copy_from_slice(&(((units.len() + 1) * 2) as u16).to_le_bytes());
+            dir[66] = kind;
+            dir[116..120].copy_from_slice(&start.to_le_bytes());
+            dir[120..128].copy_from_slice(&len.to_le_bytes());
+        };
+        let dir_at = 2 * size;
+        entry(&mut file[dir_at..dir_at + 128], "Root Entry", 5, END, 0);
+        entry(&mut file[dir_at + 128..dir_at + 256], "S", 2, 2, 4096);
+        let data = bytes(4096, 3);
+        file[3 * size..].copy_from_slice(&data);
+        assert_eq!(stream(&file, "S").unwrap(), data);
+    }
+
+    #[test]
+    fn a_sector_size_other_than_512_or_4096_is_refused() {
+        let file = write(&[Item::stream("S", bytes(5000, 1))]);
+        for shift in [0u16, 1, 2, 8, 10, 13, 64, 0xFFFF] {
+            let mut bad = file.clone();
+            bad[30..32].copy_from_slice(&shift.to_le_bytes());
+            // A DIFAT that starts at sector 0, so that the DIFAT is read with this sector size.
+            bad[68..72].copy_from_slice(&0u32.to_le_bytes());
+            assert!(stream(&bad, "S").is_err(), "sector shift {shift}");
+        }
+        for shift in [0u16, 5, 7, 64] {
+            let mut bad = file.clone();
+            bad[32..34].copy_from_slice(&shift.to_le_bytes());
+            assert!(stream(&bad, "S").is_err(), "mini sector shift {shift}");
+        }
+    }
+
+    #[test]
+    fn a_difat_that_loops_is_refused() {
+        // One more sector at the end, a DIFAT sector that lists no FAT sector and names itself as the next.
+        let mut file = write(&[Item::stream("S", bytes(5000, 1))]);
+        let own = (file.len() / SECTOR - 1) as u32;
+        let mut difat = [0xFFu8; SECTOR];
+        difat[SECTOR - 4..].copy_from_slice(&own.to_le_bytes());
+        file.extend_from_slice(&difat);
+        file[68..72].copy_from_slice(&own.to_le_bytes());
+        file[72..76].copy_from_slice(&1u32.to_le_bytes());
+        assert!(stream(&file, "S").is_err());
+    }
+
+    #[test]
+    fn a_fat_sector_listed_twice_is_refused() {
+        // In the header, and again in a DIFAT sector that lists it 127 times.
+        let file = write(&[Item::stream("S", bytes(5000, 1))]);
+        let first = file[76..80].to_vec();
+        let mut twice = file.clone();
+        twice[80..84].copy_from_slice(&first);
+        assert!(stream(&twice, "S").is_err());
+        let mut difat_lists = file.clone();
+        let own = (difat_lists.len() / SECTOR - 1) as u32;
+        let mut difat: Vec<u8> = first.iter().copied().cycle().take(SECTOR - 4).collect();
+        difat.extend_from_slice(&END.to_le_bytes());
+        difat_lists.extend_from_slice(&difat);
+        difat_lists[68..72].copy_from_slice(&own.to_le_bytes());
+        difat_lists[72..76].copy_from_slice(&1u32.to_le_bytes());
+        assert!(stream(&difat_lists, "S").is_err());
     }
 }
