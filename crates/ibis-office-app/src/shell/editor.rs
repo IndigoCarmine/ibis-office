@@ -470,6 +470,10 @@ pub struct SlideEditor {
     /// The file's path, for ⌘S (none in the browser, or for a new document).
     #[cfg(not(target_family = "wasm"))]
     pub(crate) path: Option<std::path::PathBuf>,
+    /// The folder 名前を付けて保存… starts in while the file has no path
+    /// (a repaired workbook: the damaged file's folder, `xlsx/repair.rs`).
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) save_as_folder: Option<std::path::PathBuf>,
     /// A unique identifier for the workbook session, shared across windows viewing the same workbook.
     pub(crate) workbook_id: u64,
     /// A unique identifier for the document session, shared across windows viewing the same document.
@@ -628,6 +632,8 @@ impl SlideEditor {
             notes_format: None,
             #[cfg(not(target_family = "wasm"))]
             path: None,
+            #[cfg(not(target_family = "wasm"))]
+            save_as_folder: None,
             workbook_id: NEXT_WORKBOOK_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             document_id: NEXT_DOCUMENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             window_number: None,
@@ -685,6 +691,7 @@ impl SlideEditor {
         #[cfg(not(target_family = "wasm"))]
         {
             self.path = None;
+            self.save_as_folder = None;
             self.protection_password = None;
         }
         self.zoom = with_format!(self, initial_zoom(self));
@@ -1635,6 +1642,18 @@ impl SlideEditor {
         #[cfg(target_family = "wasm")]
         {
             let _ = path;
+        }
+    }
+
+    /// Remember where 名前を付けて保存… starts while the file has no path (nothing in the browser).
+    pub(crate) fn set_save_as_folder(&mut self, folder: Option<std::path::PathBuf>) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.save_as_folder = folder;
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = folder;
         }
     }
 
