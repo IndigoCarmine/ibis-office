@@ -221,8 +221,7 @@ impl SlideEditor {
         let dir = effective_autorecover_dir(&config);
         let _ = std::fs::create_dir_all(&dir);
         let now = crate::clock::unix_millis();
-        let target_name = format!("{stem}_autorecover_{}.pptx", self.document_id);
-        let target_path = dir.join(&target_name);
+        let target_path = crate::xlsx::autorecover::autorecover_snapshot_path(&dir, &stem, self.document_id, "pptx", self.active_autorecover_file.as_deref());
 
         self.copy_to(&target_path)?;
 

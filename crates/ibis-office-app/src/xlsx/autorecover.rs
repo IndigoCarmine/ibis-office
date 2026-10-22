@@ -130,6 +130,37 @@ pub(crate) fn effective_autorecover_dir(config: &AutoRecoverConfig) -> PathBuf {
     default_autorecover_dir()
 }
 
+/// This run of the app, as it appears in AutoRecover file names: the time
+/// it started and its process ID. The editors' IDs start again from 1 in
+/// every run, so a name made of them alone is the same as a file a run that
+/// crashed left behind.
+#[cfg(not(target_family = "wasm"))]
+fn autorecover_session() -> &'static str {
+    static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SESSION.get_or_init(|| format!("{}-{}", crate::clock::unix_millis(), std::process::id()))
+}
+
+/// The file the AutoRecover snapshot of the editor with `id` goes to:
+/// `{stem}_autorecover_{session}_{id}.{extension}`, the same file for every
+/// snapshot of one document in one run. A file of that name that is not this
+/// editor's own snapshot (`active`) is never written over.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn autorecover_snapshot_path(dir: &Path, stem: &str, id: u64, extension: &str, active: Option<&Path>) -> PathBuf {
+    snapshot_path_in_session(dir, autorecover_session(), stem, id, extension, active)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn snapshot_path_in_session(dir: &Path, session: &str, stem: &str, id: u64, extension: &str, active: Option<&Path>) -> PathBuf {
+    let base = format!("{stem}_autorecover_{session}_{id}");
+    let mut candidate = dir.join(format!("{base}.{extension}"));
+    let mut n = 2u64;
+    while candidate.exists() && active != Some(candidate.as_path()) {
+        candidate = dir.join(format!("{base}_{n}.{extension}"));
+        n += 1;
+    }
+    candidate
+}
+
 /// Format file size for human display.
 pub(crate) fn format_file_size(bytes: u64) -> String {
     if bytes < 1024 {
@@ -351,8 +382,7 @@ impl SlideEditor {
         let dir = effective_autorecover_dir(&config);
         let _ = std::fs::create_dir_all(&dir);
         let now = crate::clock::unix_millis();
-        let target_name = format!("{stem}_autorecover_{}.xlsx", self.workbook_id);
-        let target_path = dir.join(&target_name);
+        let target_path = autorecover_snapshot_path(&dir, &stem, self.workbook_id, "xlsx", self.active_autorecover_file.as_deref());
 
         self.copy_to(&target_path)?;
 
@@ -935,5 +965,69 @@ impl SlideEditor {
             title: text("xlsx.recover.title").into(),
             body: body.into_any_element(),
         })
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    // Not `super::*`: that brings in gpui_kit's own `test` attribute.
+    use super::{autorecover_session, snapshot_path_in_session};
+    use std::path::PathBuf;
+
+    /// A new empty folder of its own under the system's temporary folder.
+    fn temporary_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ibisOffice-autorecover-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn snapshot_name_differs_from_the_files_an_earlier_run_left() {
+        let dir = temporary_dir("earlier-run");
+        // What a run that crashed left: its first workbook, Book1, under the
+        // old name (the editor's ID alone) and under a name of this kind.
+        std::fs::write(dir.join("Book1_autorecover_1.xlsx"), b"earlier").unwrap();
+        std::fs::write(dir.join("Book1_autorecover_1000-42_1.xlsx"), b"earlier").unwrap();
+
+        let path = snapshot_path_in_session(&dir, "2000-42", "Book1", 1, "xlsx", None);
+        assert!(!path.exists(), "{} is a file another run wrote", path.display());
+        assert_eq!(path.parent(), Some(dir.as_path()));
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("xlsx"));
+        assert_eq!(std::fs::read(dir.join("Book1_autorecover_1.xlsx")).unwrap(), b"earlier");
+        assert_eq!(std::fs::read(dir.join("Book1_autorecover_1000-42_1.xlsx")).unwrap(), b"earlier");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_of_the_same_name_that_is_not_this_editors_is_not_written_over() {
+        let dir = temporary_dir("same-name");
+        let first = snapshot_path_in_session(&dir, "3000-7", "Book1", 1, "pptx", None);
+        std::fs::write(&first, b"not ours").unwrap();
+
+        let path = snapshot_path_in_session(&dir, "3000-7", "Book1", 1, "pptx", None);
+        assert_ne!(path, first);
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(&first).unwrap(), b"not ours");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_snapshot_of_one_editor_goes_to_the_same_file() {
+        let dir = temporary_dir("same-editor");
+        std::fs::write(dir.join("Book1_autorecover_4000-9_3.xlsx"), b"not ours").unwrap();
+        let first = snapshot_path_in_session(&dir, "4000-9", "Book1", 3, "xlsx", None);
+        std::fs::write(&first, b"snapshot 1").unwrap();
+
+        let again = snapshot_path_in_session(&dir, "4000-9", "Book1", 3, "xlsx", Some(&first));
+        assert_eq!(again, first);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_session_is_the_same_for_the_whole_run_and_names_this_process() {
+        let session = autorecover_session();
+        assert_eq!(session, autorecover_session());
+        assert!(session.ends_with(&format!("-{}", std::process::id())), "{session}");
     }
 }
