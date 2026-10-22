@@ -73,27 +73,36 @@ impl SlideEditor {
         table.rows[top].cells[tc].merge=VerticalMerge::Start;
         table.resolve_borders();self.replace_structure_table(table,cx);
     }
+    /// The cells of the vertical merge the cell `cell` of row `row` is in,
+    /// as (row, index), from its first (its text stays there) to its last.
+    /// None when it has no first cell: a row above has no cell starting at
+    /// its grid column (an irregular grid read from a file), or its top row
+    /// continues a merge.
+    fn vertical_merge_cells(table:&FlowTable,row:usize,cell:usize)->Option<Vec<(usize,usize)>> {
+        let col=*Self::grid_starts(table.rows.get(row)?).get(cell)?;
+        let at=|r:usize|Self::grid_starts(&table.rows[r]).iter().position(|s|*s==col);
+        let mut first=row;let mut i=cell;
+        while table.rows[first].cells[i].merge==VerticalMerge::Continue {
+            if first==0 {return None;}
+            first-=1;i=at(first)?;
+        }
+        let mut cells=vec![(first,i)];
+        for r in first+1..table.rows.len() {
+            match at(r) {Some(j) if table.rows[r].cells[j].merge==VerticalMerge::Continue=>cells.push((r,j)),_=>break}
+        }
+        Some(cells)
+    }
     pub(crate) fn can_unmerge_below_cell(&self)->bool {
         let Some((t,row,cell))=self.structure_table() else{return false};
         t.rows.get(row).and_then(|r|r.cells.get(cell)).is_some_and(|c|c.merge!=VerticalMerge::None)
+            && Self::vertical_merge_cells(t,row,cell).is_some()
     }
     pub(crate) fn unmerge_below_cell(&mut self,cx:&mut Context<Self>) {
         if !self.can_unmerge_below_cell() {return;}
-        let Some((t,row,cell))=self.structure_table() else{return};let mut table=t.clone();
-        let col=Self::grid_starts(&table.rows[row])[cell];
-        // The merge's rows: the first (its text stays there) to the last.
-        let mut first=row;
-        while table.rows[first].cells[Self::grid_starts(&table.rows[first]).iter().position(|s|*s==col).unwrap()].merge==VerticalMerge::Continue {
-            if first==0 {return;}first-=1;
-        }
-        let mut r=first;
-        loop {
-            let i=Self::grid_starts(&table.rows[r]).iter().position(|s|*s==col).unwrap();
-            table.rows[r].cells[i].merge=VerticalMerge::None;
-            r+=1;
-            let Some(next)=table.rows.get(r) else{break};
-            match Self::grid_starts(next).iter().position(|s|*s==col) {Some(j) if next.cells[j].merge==VerticalMerge::Continue=>{},_=>break}
-        }
+        let Some((t,row,cell))=self.structure_table() else{return};
+        let Some(cells)=Self::vertical_merge_cells(t,row,cell) else{return};
+        let mut table=t.clone();
+        for (r,i) in cells {table.rows[r].cells[i].merge=VerticalMerge::None;}
         table.resolve_borders();self.replace_structure_table(table,cx);
     }
     pub(crate) fn merge_right_cell(&mut self,cx:&mut Context<Self>) {
@@ -133,5 +142,38 @@ impl SlideEditor {
             }
         }
         self.run_flow(vec![command],cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Not `super::*`: that brings in gpui_kit's own `test` attribute.
+    use super::{SlideEditor,FlowTable,VerticalMerge};
+    use ibis_doc_model::{FlowCell,FlowRow};
+    use VerticalMerge::{None as N,Start as S,Continue as C};
+    fn table(rows:&[&[(u32,VerticalMerge)]])->FlowTable {
+        FlowTable {rows:rows.iter().map(|r|FlowRow {cells:r.iter().map(|&(span,merge)|FlowCell {span,merge,..Default::default()}).collect(),..Default::default()}).collect(),..Default::default()}
+    }
+    #[test]
+    fn vertical_merge_cells_run_from_first_to_last_row() {
+        let t=table(&[&[(1,S),(1,N)],&[(1,C),(1,N)],&[(1,C),(1,N)],&[(1,N),(1,N)]]);
+        let all=Some(vec![(0,0),(1,0),(2,0)]);
+        assert_eq!(SlideEditor::vertical_merge_cells(&t,2,0),all);
+        assert_eq!(SlideEditor::vertical_merge_cells(&t,0,0),all);
+        // A wider cell above starting at the same column is the merge's first.
+        let t=table(&[&[(2,N)],&[(1,C),(1,N)]]);
+        assert_eq!(SlideEditor::vertical_merge_cells(&t,1,0),Some(vec![(0,0),(1,0)]));
+    }
+    #[test]
+    fn vertical_merge_cells_without_a_cell_above_at_their_column_are_none() {
+        // A cell above spans the column but starts left of it.
+        let t=table(&[&[(2,N)],&[(1,N),(1,C)]]);
+        assert_eq!(SlideEditor::vertical_merge_cells(&t,1,1),None);
+        // The row above has fewer cells.
+        let t=table(&[&[(1,N)],&[(1,N),(1,C)]]);
+        assert_eq!(SlideEditor::vertical_merge_cells(&t,1,1),None);
+        // A merge continued in the top row.
+        let t=table(&[&[(1,C)],&[(1,C)]]);
+        assert_eq!(SlideEditor::vertical_merge_cells(&t,1,0),None);
     }
 }
