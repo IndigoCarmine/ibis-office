@@ -953,10 +953,6 @@ impl SlideEditor {
                 window.remove_window();
                 Self::renumber_workbook_windows(my_id, cx);
                 return;
-            } else if self.document.can_undo() {
-                self.save_confirm_dialog_open = true;
-                cx.notify();
-                return;
             }
         } else if self.is_document() && self.document_id != 0 {
             let my_id = self.document_id;
@@ -968,11 +964,15 @@ impl SlideEditor {
                 window.remove_window();
                 Self::renumber_document_windows(my_id, cx);
                 return;
-            } else if self.document.can_undo() {
-                self.save_confirm_dialog_open = true;
-                cx.notify();
-                return;
             }
+        }
+        // The last window showing the file, whatever its kind (a
+        // presentation's 新しいウィンドウ is a copy of its own): edits not
+        // saved are asked about before they are closed.
+        if self.document.can_undo() {
+            self.save_confirm_dialog_open = true;
+            cx.notify();
+            return;
         }
         self.force_close_file(window, cx);
     }
@@ -1989,8 +1989,12 @@ impl SlideEditor {
     }
 
     pub(crate) fn confirm_discard_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The snapshot is kept as Unsaved_… (自動回復の設定) before
+        // force_close_file would delete it.
         if self.is_workbook() {
             self.preserve_or_cleanup_autorecover_on_discard();
+        } else if self.is_presentation() {
+            self.preserve_or_cleanup_pptx_autorecover_on_discard();
         }
         self.force_close_file(window, cx);
     }
