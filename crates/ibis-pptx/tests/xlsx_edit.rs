@@ -1261,7 +1261,7 @@ fn compatibility_version_len_recalculation_and_retention() {
 #[test]
 fn compatibility_version_mid_replace_roundtrip() {
     for (path,version) in [("xlsx-compatibility-v1.xlsx",1),("xlsx-sales.xlsx",2)] {
-        let Some((original,opened))=open(path) else { return };let mut d=Document::new(opened.presentation.clone());
+        let Some((original,opened))=open(path) else { continue };let mut d=Document::new(opened.presentation.clone());
         let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
         let Some(tsv) = fixtures::read_text("test/editing/xlsx-compatibility-slice.tsv") else { return };
         let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();
@@ -1282,7 +1282,7 @@ fn compatibility_version_mid_replace_roundtrip() {
 #[test]
 fn compatibility_version_find_search_roundtrip() {
     for (path,version) in [("xlsx-compatibility-v1.xlsx",1),("xlsx-sales.xlsx",2)] {
-        let Some((original,opened))=open(path) else { return };let mut d=Document::new(opened.presentation.clone());
+        let Some((original,opened))=open(path) else { continue };let mut d=Document::new(opened.presentation.clone());
         let(id,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());
         let Some(tsv) = fixtures::read_text("test/editing/xlsx-compatibility-search.tsv") else { return };
         let cases:Vec<_>=tsv.lines().skip(1).map(|line|line.split('\t').collect::<Vec<_>>()).collect();
