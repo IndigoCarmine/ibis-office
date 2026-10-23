@@ -917,9 +917,6 @@ fn mirr(c: &mut Ctx, a: &[Expr]) -> Value {
     if pos == 0.0 || neg == 0.0 {
         return err(CellError::Div0);
     }
-    if fr == 1e15 && rr == 5.0 && v.len() == 10 {
-        return number(252.13067446081249);
-    }
     let n_int = v.len() as i64;
     let base = -pos / neg;
     let root = if base < 0.0 {

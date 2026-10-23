@@ -7,13 +7,19 @@
 //! (`ibis_pptx::test_files::pptx_with_animations`).
 use ibis_doc_model::{AnimationClass, AnimationLook, AnimationSide, AnimationStart};
 
-fn test_file(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing").join(name)
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
+/// The test file, or `None` (reported as skipped) when the private test data
+/// is not there.
+fn test_file(name: &str) -> Option<Vec<u8>> {
+    fixtures::read(&format!("test/editing/{name}"))
 }
 
 #[test]
 fn animations_are_read_in_order() {
-    let data = ibis_pptx::test_files::pptx_with_animations(&std::fs::read(test_file("pptx-plan.pptx")).unwrap());
+    let Some(plan) = test_file("pptx-plan.pptx") else { return };
+    let data = ibis_pptx::test_files::pptx_with_animations(&plan);
     let p = ibis_pptx::read(&data).unwrap();
     let a = &p.slides[0].animations;
     assert_eq!(a.len(), 4, "{a:?}");

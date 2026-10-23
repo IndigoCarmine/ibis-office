@@ -1580,7 +1580,7 @@ mod tests {
 
     #[test]
     fn slide_size_without_original_node_preserves_child_order_and_notes() {
-        let data = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/pptx-plan.pptx")).unwrap();
+        let Some(data) = crate::fixtures::read("test/editing/pptx-plan.pptx") else { return };
         let mut package = Package::open(data).unwrap();
         let map = SourceMap { presentation: "ppt/presentation.xml".into(), ..Default::default() };
         let doc = package.xml_mut(&map.presentation).unwrap();

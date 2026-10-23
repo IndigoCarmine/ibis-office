@@ -19,13 +19,13 @@ use ibis_doc_model::{
     SectionSetup, ShadingPattern, Shape, ShapeId, ShapeKind, Slide, Stroke, StyleKind, TabAlign, TabChange, TabStop, TextBody, TextAlign, TextStyle, UnderlineStyle, VerticalAnchor,
     VerticalMerge, VerticalPosition,
 };
-use roxmltree::{Document, Node};
+use roxmltree::Node;
 
 use crate::Error;
 use crate::save::docx::{AtomSource, ParaSource, SourceMap, TableSource};
 use crate::package::{Package, REL_OFFICE_DOCUMENT, Relationship};
 use crate::theme::Theme;
-use crate::xml::{attr, attr_bool, attr_i64, child, children, elements};
+use crate::xml::{attr, attr_bool, attr_i64, child, children, elements, parse};
 
 type Rels = HashMap<String, Relationship>;
 
@@ -3161,6 +3161,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         }
         let row_nodes: Vec<Node> = children(tbl, "tr").collect();
         let columns = grid_columns(tbl, tbl_pr, &row_nodes);
+        let limit = grid_limit(tbl);
         // The style's conditional formatting (w:tblStylePr): which parts
         // of the table each cell is in, by the table's options (w:tblLook;
         // Word's new tables' 04A0 without it) and the bands' sizes.
@@ -3198,7 +3199,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         let mut shifted = false;
         for (row_index, tr) in row_nodes.into_iter().enumerate() {
             let row_id = self.new_id();
-            let mut grid_at = child(tr, "trPr").and_then(|p| wval(p, "gridBefore")).and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+            let mut grid_at = grid_before(tr, limit);
             preferred.push(Vec::new());
             shifted |= child(tr, "trPr").is_some_and(|p| child(p, "gridBefore").is_some() || child(p, "gridAfter").is_some());
             let tr_pr = child(tr, "trPr");
@@ -3218,21 +3219,21 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             let mut cells = Vec::new();
             for tc in cell_nodes {
                 let tc_pr = child(tc, "tcPr");
-                let span = tc_pr.and_then(|p| wval(p, "gridSpan")).and_then(|v| v.parse().ok()).unwrap_or(1u32).max(1);
+                let span = grid_span(tc_pr, limit);
                 // Only a style with conditional formatting puts its cells
                 // in parts.
                 let regions = if !style_nodes.iter().any(|st| children(*st, "tblStylePr").next().is_some()) {
                     Vec::new()
                 } else {
                     // A cell spanning to the last column is in it.
-                    let last = (grid_at + span as usize).min(column_count).max(1) - 1;
+                    let last = grid_at.saturating_add(span as usize).min(column_count).max(1) - 1;
                     let mut r = ibis_doc_model::TableRegion::of_cell(row_index, grid_at, row_count, column_count, look, bands, row_band, col_band);
                     if last != grid_at && look.last_column && last + 1 == column_count && !r.contains(&ibis_doc_model::TableRegion::LastCol) {
                         r = ibis_doc_model::TableRegion::of_cell(row_index, last, row_count, column_count, look, bands, row_band, col_band);
                     }
                     r
                 };
-                grid_at += span as usize;
+                grid_at = grid_at.saturating_add(span as usize);
                 let cond = conditional_tc(&regions);
                 let merge = match tc_pr.and_then(|p| child(p, "vMerge")) {
                     Some(m) if wattr(m, "val") == Some("restart") => VerticalMerge::Start,
@@ -3390,6 +3391,29 @@ fn fits_content(columns: &[i64], width: PreferredWidth, rows: &[FlowRow], prefer
     false
 }
 
+/// Word's most columns in a table (its tables stop at 63).
+const MAX_GRID_COLUMNS: usize = 63;
+
+/// The most grid columns a table's rows reach: Word's most, or the columns
+/// its `w:tblGrid` writes when other programs write more (each of those is
+/// in the file). A row's `w:gridBefore` and its cells' `w:gridSpan` stop
+/// there: past it they are not a table's, and a crafted
+/// `w:gridSpan="4294967295"` would make a grid of 4 billion columns.
+fn grid_limit(tbl: Node) -> usize {
+    child(tbl, "tblGrid").map_or(0, |g| children(g, "gridCol").count()).max(MAX_GRID_COLUMNS)
+}
+
+/// A cell's `w:gridSpan` (1 when unset), at most `limit` columns.
+fn grid_span(tc_pr: Option<Node>, limit: usize) -> u32 {
+    let span = tc_pr.and_then(|p| wval(p, "gridSpan")).and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).max(1);
+    span.min(u32::try_from(limit).unwrap_or(u32::MAX))
+}
+
+/// A row's `w:gridBefore` (0 when unset), at most `limit` columns.
+fn grid_before(tr: Node, limit: usize) -> usize {
+    child(tr, "trPr").and_then(|p| wval(p, "gridBefore")).and_then(|v| v.parse::<usize>().ok()).unwrap_or(0).min(limit)
+}
+
 /// A table's column widths (EMU): its `w:tblGrid`, with the columns it
 /// lacks or leaves without a width taken from the cells' widths
 /// (`w:tcW`, in twentieths of a point or fiftieths of a percent of the
@@ -3397,6 +3421,7 @@ fn fits_content(columns: &[i64], width: PreferredWidth, rows: &[FlowRow], prefer
 /// with a short one) by other programs. A column still without a width
 /// gets an equal share of what `w:tblW` leaves, or an inch.
 fn grid_columns(tbl: Node, tbl_pr: Option<Node>, rows: &[Node]) -> Vec<i64> {
+    let limit = grid_limit(tbl);
     let mut columns: Vec<i64> = child(tbl, "tblGrid").into_iter().flat_map(|g| children(g, "gridCol")).map(|c| twips(c, "w").unwrap_or(0)).collect();
     let table_width = tbl_pr.and_then(|p| child(p, "tblW")).filter(|w| matches!(wattr(*w, "type"), None | Some("dxa"))).and_then(|w| twips(w, "w")).filter(|&w| w > 0);
     let cells = |tr: Node| -> Vec<(u32, Option<i64>)> {
@@ -3405,7 +3430,7 @@ fn grid_columns(tbl: Node, tbl_pr: Option<Node>, rows: &[Node]) -> Vec<i64> {
             .flat_map(|n| if n.has_tag_name("sdt") { child(n, "sdtContent").map(|c| children(c, "tc").collect::<Vec<_>>()).unwrap_or_default() } else { vec![n] })
             .map(|tc| {
                 let pr = child(tc, "tcPr");
-                let span = pr.and_then(|p| wval(p, "gridSpan")).and_then(|v| v.parse().ok()).unwrap_or(1u32).max(1);
+                let span = grid_span(pr, limit);
                 let width = pr.and_then(|p| child(p, "tcW")).and_then(|w| match wattr(w, "type") {
                     None | Some("dxa") => twips(w, "w"),
                     Some("pct") => {
@@ -3422,16 +3447,17 @@ fn grid_columns(tbl: Node, tbl_pr: Option<Node>, rows: &[Node]) -> Vec<i64> {
             })
             .collect()
     };
-    let before = |tr: Node| child(tr, "trPr").and_then(|p| wval(p, "gridBefore")).and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-    let count = rows.iter().map(|&tr| before(tr) + cells(tr).iter().map(|c| c.0 as usize).sum::<usize>()).max().unwrap_or(0);
+    let count = rows.iter().map(|&tr| cells(tr).iter().fold(grid_before(tr, limit), |at, c| at.saturating_add(c.0 as usize))).max().unwrap_or(0).min(limit);
     if count <= columns.len() && columns.iter().all(|&w| w > 0) {
         return columns;
     }
     columns.resize(columns.len().max(count), 0);
     for &tr in rows {
-        let mut at = before(tr);
+        let mut at = grid_before(tr, limit);
         for (span, width) in cells(tr) {
-            let range = at..(at + span as usize).min(columns.len());
+            // A row reaching past the limit has cells past the grid.
+            let end = at.saturating_add(span as usize).min(columns.len());
+            let range = at.min(end)..end;
             if let Some(w) = width
                 && columns[range.clone()].iter().all(|&c| c == 0)
             {
@@ -3440,7 +3466,7 @@ fn grid_columns(tbl: Node, tbl_pr: Option<Node>, rows: &[Node]) -> Vec<i64> {
                     *c = w / n;
                 }
             }
-            at += span as usize;
+            at = at.saturating_add(span as usize);
         }
     }
     let unknown = columns.iter().filter(|&&w| w == 0).count() as i64;
@@ -3582,11 +3608,6 @@ struct FieldState {
 /// Whether the package's main part is a Word document.
 pub(crate) fn is_document(package: &Package) -> Result<bool, Error> {
     Ok(package.related("", REL_OFFICE_DOCUMENT)?.is_some_and(|main| main.ends_with("document.xml")))
-}
-
-fn parse<'i>(name: &str, text: &'i str) -> Result<Document<'i>, Error> {
-    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
-    Document::parse_with_options(text, options).map_err(|e| Error::xml(name, e))
 }
 
 /// Read a `.docx` document: one slide holding its first page; the viewer
@@ -4179,11 +4200,12 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
 #[cfg(test)]
 mod namespace_tests {
     use super::*;
+    use roxmltree::Document;
 
     #[test]
     fn story_references_require_relationship_namespace() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let source = std::fs::read(root.join("test/editing/docx-report.docx")).unwrap();
+        let Some(source) = crate::fixtures::read("test/editing/docx-report.docx") else { return };
         let reference = crate::read_docx(&source).unwrap();
         for variant in 0..3 {
             let data = crate::test_files::docx_with_story_relationship_namespace(&source, variant);
@@ -4207,9 +4229,7 @@ mod namespace_tests {
 
     #[test]
     fn inline_picture_extent_is_unqualified() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../test/editing/docx-paste-source.docx");
-        let data = std::fs::read(path).unwrap();
+        let Some(data) = crate::fixtures::read("test/editing/docx-paste-source.docx") else { return };
         let xml = crate::test_files::part_text(&data, "word/document.xml").unwrap();
         let source = Document::parse(&xml).unwrap();
         let expected: Vec<EmuSize> = source.descendants().filter(|n| n.is_element() && n.tag_name().namespace() == Some("http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing") && n.tag_name().name() == "extent")
@@ -4604,6 +4624,95 @@ mod namespace_tests {
         assert_eq!(anchor.relative_v, "paragraph");
         assert_eq!(anchor.offset_y, 127000);
         assert_eq!(anchor.wrap, "square");
+    }
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::*;
+
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    /// The table read from a minimal `.docx` whose body is `table`.
+    fn read_table(table: &str) -> FlowTable {
+        let types = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>"#;
+        let rels = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = format!(r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="{W}"><w:body>{table}<w:p/></w:body></w:document>"#);
+        let data = crate::zip::stored_archive(&[
+            ("[Content_Types].xml", types.as_bytes()),
+            ("_rels/.rels", rels.as_bytes()),
+            ("word/document.xml", document.as_bytes()),
+        ]);
+        let flow = crate::read_docx(&data).unwrap().flow.unwrap();
+        flow.body.iter().find_map(|b| match b {
+            Block::Table(t) => Some(t.clone()),
+            _ => None,
+        }).expect("a table")
+    }
+
+    fn grid(widths: &[u32]) -> String {
+        let cols: String = widths.iter().map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#)).collect();
+        format!("<w:tblGrid>{cols}</w:tblGrid>")
+    }
+
+    fn cell(span: &str) -> String {
+        format!(r#"<w:tc><w:tcPr><w:gridSpan w:val="{span}"/><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p/></w:tc>"#)
+    }
+
+    fn spans(t: &FlowTable) -> Vec<Vec<u32>> {
+        t.rows.iter().map(|r| r.cells.iter().map(|c| c.span).collect()).collect()
+    }
+
+    /// A row skipping `usize::MAX` columns and a cell spanning `u32::MAX`
+    /// are read within Word's 63 columns (they overflowed the row's end, or
+    /// sized a grid of 4 billion columns).
+    #[test]
+    fn crafted_grid_before_and_span_stop_at_the_column_limit() {
+        let table = format!(
+            r#"<w:tbl>{}<w:tr><w:trPr><w:gridBefore w:val="{}"/></w:trPr>{}</w:tr><w:tr>{}{}</w:tr></w:tbl>"#,
+            grid(&[1000, 1000]),
+            usize::MAX,
+            cell("1"),
+            cell("1"),
+            cell(&u32::MAX.to_string()),
+        );
+        let t = read_table(&table);
+        assert_eq!(t.columns.len(), MAX_GRID_COLUMNS);
+        assert_eq!(spans(&t), vec![vec![1], vec![1, MAX_GRID_COLUMNS as u32]]);
+    }
+
+    #[test]
+    fn a_span_past_the_grid_stops_at_the_column_limit() {
+        let t = read_table(&format!("<w:tbl>{}<w:tr>{}</w:tr></w:tbl>", grid(&[1000, 1000]), cell("100000")));
+        assert_eq!(t.columns.len(), MAX_GRID_COLUMNS);
+        assert_eq!(spans(&t), vec![vec![MAX_GRID_COLUMNS as u32]]);
+    }
+
+    /// Spans within the grid, or within Word's 63 columns, or a wider grid
+    /// another program writes, are read as written.
+    #[test]
+    fn spans_within_the_grid_are_read_as_written() {
+        let twips = EMU_PER_TWIP;
+        let t = read_table(&format!(
+            r#"<w:tbl>{}<w:tr><w:trPr><w:gridBefore w:val="1"/></w:trPr>{}</w:tr><w:tr>{}{}{}</w:tr></w:tbl>"#,
+            grid(&[1000, 2000, 3000]),
+            cell("2"),
+            cell("1"),
+            cell("1"),
+            cell("1"),
+        ));
+        assert_eq!(t.columns, vec![1000 * twips, 2000 * twips, 3000 * twips]);
+        assert_eq!(spans(&t), vec![vec![2], vec![1, 1, 1]]);
+
+        // No grid: the cells' widths over the 63 columns they span.
+        let t = read_table(&format!("<w:tbl><w:tr>{}{}</w:tr></w:tbl>", cell("62"), cell("1")));
+        assert_eq!(t.columns.len(), 63);
+        assert_eq!(spans(&t), vec![vec![62, 1]]);
+        assert_eq!(t.columns[62], 1000 * twips);
+
+        let t = read_table(&format!("<w:tbl>{}<w:tr>{}</w:tr></w:tbl>", grid(&[100; 70]), cell("70")));
+        assert_eq!(t.columns.len(), 70);
+        assert_eq!(spans(&t), vec![vec![70]]);
     }
 }
 

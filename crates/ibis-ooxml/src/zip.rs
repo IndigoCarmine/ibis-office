@@ -128,6 +128,12 @@ impl Archive {
             let extra_len = f16(30)? as usize;
             let comment_len = f16(32)? as usize;
             let local = f32(42)? as usize;
+            // The whole record, comment included, must lie in the data: it is
+            // copied as is when the part is saved unchanged.
+            let central_len = 46 + name_len + extra_len + comment_len;
+            if at + central_len > d.len() {
+                return Err(bad());
+            }
             let name = d.get(at + 46..at + 46 + name_len).ok_or_else(bad)?;
             let name = String::from_utf8_lossy(name).into_owned();
             if u32_at(d, local) != Some(LOCAL_FILE_HEADER) {
@@ -137,10 +143,11 @@ impl Archive {
             let local_name = u16_at(d, local + 26).ok_or_else(bad)? as usize;
             let local_extra = u16_at(d, local + 28).ok_or_else(bad)? as usize;
             let data_offset = local + 30 + local_name + local_extra;
-            let data_end = data_offset + compressed_size;
-            if data_end > d.len() {
-                return Err(Error::new(format!("{name} が途中で切れています")));
-            }
+            // Checked: the sizes are 32-bit and so is usize on wasm32.
+            let data_end = match data_offset.checked_add(compressed_size) {
+                Some(end) if end <= d.len() => end,
+                _ => return Err(Error::new(format!("{name} が途中で切れています"))),
+            };
             // A data descriptor: CRC and sizes, with or without its signature.
             let descriptor_len = if meta.flags & FLAG_DATA_DESCRIPTOR == 0 {
                 0
@@ -149,7 +156,6 @@ impl Archive {
             } else {
                 12
             };
-            let central_len = 46 + name_len + extra_len + comment_len;
             entries.push(Entry {
                 name,
                 method,
@@ -424,6 +430,67 @@ mod tests {
         w.set_comment(a.comment());
         w.copy(&a, &a.entries()[0]).unwrap();
         assert_eq!(w.finish().unwrap(), z);
+    }
+
+    /// One stored entry "a" whose central record has the extra field and
+    /// comment given, `comment_len` as its declared comment length, and
+    /// `compressed_size` as the declared size of its 5 bytes of data.
+    fn one_entry(central_extra: &[u8], central_comment: &[u8], comment_len: u16, compressed_size: u32) -> Vec<u8> {
+        let body = b"hello";
+        let crc = crc32(body);
+        let mut z = Vec::new();
+        z.extend(LOCAL_FILE_HEADER.to_le_bytes());
+        z.extend([20, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // version, flags, method, time, date
+        z.extend(crc.to_le_bytes());
+        z.extend(compressed_size.to_le_bytes());
+        z.extend(5u32.to_le_bytes());
+        z.extend(1u16.to_le_bytes());
+        z.extend(0u16.to_le_bytes());
+        z.extend(b"a");
+        z.extend(body);
+        let cd = z.len() as u32;
+        z.extend(CENTRAL_DIRECTORY_HEADER.to_le_bytes());
+        z.extend([20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        z.extend(crc.to_le_bytes());
+        z.extend(compressed_size.to_le_bytes());
+        z.extend(5u32.to_le_bytes());
+        z.extend(1u16.to_le_bytes());
+        z.extend((central_extra.len() as u16).to_le_bytes());
+        z.extend(comment_len.to_le_bytes());
+        z.extend([0; 8]); // disk, internal and external attributes
+        z.extend(0u32.to_le_bytes());
+        z.extend(b"a");
+        z.extend(central_extra);
+        z.extend(central_comment);
+        let cd_len = z.len() as u32 - cd;
+        z.extend(END_OF_CENTRAL_DIRECTORY.to_le_bytes());
+        z.extend([0, 0, 0, 0, 1, 0, 1, 0]);
+        z.extend(cd_len.to_le_bytes());
+        z.extend(cd.to_le_bytes());
+        z.extend(0u16.to_le_bytes());
+        z
+    }
+
+    #[test]
+    fn verbatim_copy_keeps_central_extra_field_and_comment() {
+        let z = one_entry(&[0xfe, 0xca, 0, 0], b"note", 4, 5);
+        let a = Archive::new(z.clone().into()).unwrap();
+        assert_eq!(a.read(&a.entries()[0]).unwrap(), b"hello");
+        let mut w = Writer::new();
+        w.copy(&a, &a.entries()[0]).unwrap();
+        assert_eq!(w.finish().unwrap(), z);
+    }
+
+    #[test]
+    fn rejects_central_record_past_the_end() {
+        // The last record's comment would run past the end of the file.
+        assert!(Archive::new(one_entry(&[], &[], 0xffff, 5).into()).is_err());
+    }
+
+    #[test]
+    fn rejects_data_past_the_end() {
+        assert!(Archive::new(one_entry(&[], &[], 0, 1000).into()).is_err());
+        assert!(Archive::new(one_entry(&[], &[], 0, u32::MAX).into()).is_err());
     }
 
     #[test]

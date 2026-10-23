@@ -51,6 +51,27 @@ pub(crate) fn damaged_workbook() -> Option<PathBuf> {
     DAMAGED_WORKBOOK.lock().ok().and_then(|d| d.clone())
 }
 
+/// Where a repaired workbook is saved.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RepairedSaveTarget {
+    /// The file's path, which ⌘S writes to.
+    pub(crate) path: Option<PathBuf>,
+    /// The folder 名前を付けて保存… starts in.
+    pub(crate) save_as_folder: Option<PathBuf>,
+}
+
+/// Where the workbook repaired from `damaged` is saved: it has no path, so
+/// ⌘S asks for a name as for a recovered file, and the damaged original
+/// (which other tools may still recover more from, and whose formulas
+/// 値のみ抽出 drops) is never replaced by the repair. The save dialog
+/// starts in the original's folder.
+pub(crate) fn save_target_after_repair(damaged: &std::path::Path) -> RepairedSaveTarget {
+    RepairedSaveTarget {
+        path: None,
+        save_as_folder: damaged.parent().filter(|folder| !folder.as_os_str().is_empty()).map(std::path::Path::to_path_buf),
+    }
+}
+
 /// Panel state for opening and repairing a damaged workbook.
 pub(crate) struct RepairWorkbookPanel {
     pub(crate) file_path: Option<PathBuf>,
@@ -180,7 +201,9 @@ impl SlideEditor {
 
                 self.load(repaired.presentation, doc_name, window, cx);
                 self.source = Some(Arc::new(repaired.source));
-                self.set_file_path(Some(path.clone()));
+                let target = save_target_after_repair(&path);
+                self.set_file_path(target.path);
+                self.set_save_as_folder(target.save_as_folder);
                 self.is_repaired = true;
                 self.repair_summary = Some(report.summary_text());
                 self.repair_report = Some(report.clone());
@@ -430,5 +453,41 @@ impl SlideEditor {
             title: text("xlsx.repair.title").into(),
             body,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::save_target_after_repair;
+    use crate::shell::save::save_as_directory;
+
+    #[test]
+    fn a_repaired_workbook_is_saved_under_a_new_name_next_to_the_original() {
+        let damaged = Path::new("/Users/someone/Reports/Book.xlsx");
+        let target = save_target_after_repair(damaged);
+        // No path: ⌘S asks for a name instead of replacing the damaged original.
+        assert_eq!(target.path, None);
+        // The save dialog starts in the original's folder.
+        assert_eq!(
+            save_as_directory(target.path.as_deref(), target.save_as_folder.as_deref()),
+            Some(PathBuf::from("/Users/someone/Reports"))
+        );
+    }
+
+    #[test]
+    fn a_repaired_workbook_without_a_folder_uses_the_usual_default() {
+        let target = save_target_after_repair(Path::new("Book.xlsx"));
+        assert_eq!(target.path, None);
+        assert_eq!(save_as_directory(target.path.as_deref(), target.save_as_folder.as_deref()), None);
+    }
+
+    #[test]
+    fn a_saved_file_starts_the_dialog_in_its_own_folder() {
+        let path = Path::new("/Users/someone/Saved/Book (repaired).xlsx");
+        let kept = Path::new("/Users/someone/Reports");
+        assert_eq!(save_as_directory(Some(path), Some(kept)), Some(PathBuf::from("/Users/someone/Saved")));
+        assert_eq!(save_as_directory(None, None), None);
     }
 }

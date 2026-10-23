@@ -4,14 +4,19 @@
 //! Source marker metadata only; native geometry/defaults and editable markers remain unproven.
 use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, Document, Presentation, ShapeKind, SheetCommand, Chart, MarkerSource, MarkerSourceSymbol as S, Number};
 use ibis_ooxml::{Package, SaveOptions};
+
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 fn chart_xml(marker: &str) -> String {
  format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:lineChart><c:ser><c:idx val="0"/><c:tx><c:v>S1</c:v></c:tx>{marker}<c:cat><c:strLit><c:ptCount val="1"/><c:pt idx="0"><c:v>A</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>10</c:v></c:pt></c:numLit></c:val></c:ser></c:lineChart></c:plotArea></c:chart></c:chartSpace>"#)
 }
 fn chart(p: &Presentation) -> &Chart {p.slides.iter().flat_map(|s|&s.shapes).find_map(|s|match &s.kind {ShapeKind::Chart(c)=>Some(c),_=>None}).unwrap()}
 fn parse_symbol(s: &str) -> Option<S> {Some(match s {"auto"=>S::Auto,"circle"=>S::Circle,"dash"=>S::Dash,"diamond"=>S::Diamond,"dot"=>S::Dot,"none"=>S::None,"picture"=>S::Picture,"plus"=>S::Plus,"square"=>S::Square,"star"=>S::Star,"triangle"=>S::Triangle,"x"=>S::Cross,_=>return None})}
-fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
-    let mut package = Package::open(std::fs::read(root.join(if xlsx { "xlsx-sales.xlsx" } else { "pptx-plan.pptx" })).unwrap()).unwrap();
+/// The test file with `xml` as its chart, or `None` (reported as skipped) when
+/// the private test data is not there.
+fn fixture(xlsx: bool, xml: &str) -> Option<(Vec<u8>, &'static str)> {
+    let mut package = Package::open(fixtures::read(if xlsx { "test/editing/xlsx-sales.xlsx" } else { "test/editing/pptx-plan.pptx" })?).unwrap();
     let part = if xlsx { "xl/charts/chart1.xml" } else { "ppt/charts/marker-retention.xml" };
     package.set_bytes(part, xml.as_bytes().to_vec());
     if !xlsx {
@@ -23,12 +28,12 @@ fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
         assert!(xml.contains("</p:spTree>"));
         package.set_bytes(slide, xml.replacen("</p:spTree>", &(frame + "</p:spTree>"), 1).into_bytes());
     }
-    (package.save(SaveOptions::default()).unwrap(), part)
+    Some((package.save(SaveOptions::default()).unwrap(), part))
 }
 
 
 fn check(xlsx: bool, marker: &str, expected: Option<MarkerSource>) {
- let xml=chart_xml(marker);let (data,part)=fixture(xlsx,&xml);let original=Package::open(data.clone()).unwrap().read(part).unwrap();let opened=ibis_pptx::open(data.clone()).unwrap();
+ let xml=chart_xml(marker);let Some((data,part))=fixture(xlsx,&xml) else { return };let original=Package::open(data.clone()).unwrap().read(part).unwrap();let opened=ibis_pptx::open(data.clone()).unwrap();
  let retained=chart(&opened.presentation).clone();assert_eq!(retained.groups[0].series[0].marker.as_ref().and_then(|m|m.source.clone()),expected);
  assert_eq!(retained.groups[0].series[0].values,vec![Some(Number(10.0))]);assert_eq!(retained.groups[0].series[0].categories,vec!["A"]);
  assert_eq!(opened.source.save(&opened.presentation,SaveOptions::default()).unwrap(),data);
@@ -60,7 +65,7 @@ fn all_values(xlsx: bool) {
  // (see xlsx_edit.rs and pptx_edit.rs: chart_series_marker_and_stroke_save_and_reopen).
 }
 #[test] fn implicit_scatter_marker_is_separate_from_explicit_auto() {
- for xlsx in [false,true] {let implicit=chart_xml("").replace("lineChart","scatterChart");let explicit=chart_xml("<c:marker><c:symbol val=\"auto\"/></c:marker>").replace("lineChart","scatterChart");let a=ibis_pptx::read(&fixture(xlsx,&implicit).0).unwrap();let b=ibis_pptx::read(&fixture(xlsx,&explicit).0).unwrap();assert_eq!(chart(&a).groups[0].series[0].marker.as_ref().unwrap().source,None);assert_eq!(chart(&b).groups[0].series[0].marker.as_ref().unwrap().source.as_ref().unwrap().symbol,Some(S::Auto));}
+ for xlsx in [false,true] {let implicit=chart_xml("").replace("lineChart","scatterChart");let explicit=chart_xml("<c:marker><c:symbol val=\"auto\"/></c:marker>").replace("lineChart","scatterChart");let Some((implicit,_))=fixture(xlsx,&implicit) else { continue };let Some((explicit,_))=fixture(xlsx,&explicit) else { continue };let a=ibis_pptx::read(&implicit).unwrap();let b=ibis_pptx::read(&explicit).unwrap();assert_eq!(chart(&a).groups[0].series[0].marker.as_ref().unwrap().source,None);assert_eq!(chart(&b).groups[0].series[0].marker.as_ref().unwrap().source.as_ref().unwrap().symbol,Some(S::Auto));}
 }
 
 #[test]

@@ -50,6 +50,9 @@ pub mod progress;
 mod docx;
 pub mod docx_convert;
 pub(crate) mod drawing_table_style;
+#[cfg(test)]
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
 pub mod geometry;
 pub mod math_xml;
 mod new_file;

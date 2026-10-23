@@ -137,7 +137,7 @@ pub(crate) fn load_backup_save_config() -> BackupSaveConfig {
 pub(crate) fn save_backup_save_config(config: &BackupSaveConfig) -> std::io::Result<()> {
     let Some(path) = config_store_path() else { return Ok(()) };
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)?;
     }
     let def_loc_str = config.default_save_location.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     let loc_str = match &config.backup_location {
@@ -196,40 +196,42 @@ pub(crate) fn generate_backup_file_name(target_path: &Path, format: BackupFormat
 }
 
 /// 上書き保存前にバックアップ コピーを作成（条件を満たす場合）.
-pub(crate) fn create_backup_copy_if_enabled(
+///
+/// `workbook_override` (the workbook's own setting) wins over `config`'s
+/// 「常にバックアップを作成する」. A backup that cannot be made is an `Err`
+/// that says why, so the save that asked for it stops before it replaces
+/// the file (as Excel does).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn create_backup_copy(
     target_path: &Path,
+    config: &BackupSaveConfig,
     workbook_override: Option<bool>,
 ) -> Result<Option<PathBuf>, String> {
-    #[cfg(target_family = "wasm")]
-    {
-        let _ = (target_path, workbook_override);
-        Ok(None)
+    if !target_path.exists() || !workbook_override.unwrap_or(config.always_create_backup) {
+        return Ok(None);
     }
-    #[cfg(not(target_family = "wasm"))]
-    {
-        if !target_path.exists() {
-            return Ok(None);
-        }
-        let config = load_backup_save_config();
-        let should_backup = workbook_override.unwrap_or(config.always_create_backup);
-        if !should_backup {
-            return Ok(None);
-        }
+    let backup_path = copy_to_backup(target_path, config).map_err(|e| crate::shell::i18n::format("_xlsx.could-not-create-the-backup-e", &[("e", &e)]))?;
+    Ok(Some(backup_path))
+}
 
-        let dest_dir = match &config.backup_location {
-            BackupLocation::SameFolder => target_path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(".")),
-            BackupLocation::Custom(dir) => {
-                let _ = std::fs::create_dir_all(dir);
-                dir.clone()
-            }
-        };
-
-        let backup_name = generate_backup_file_name(target_path, config.backup_format);
-        let backup_path = dest_dir.join(backup_name);
-
-        std::fs::copy(target_path, &backup_path).map_err(|e| crate::shell::i18n::format("_xlsx.could-not-create-the-backup-e", &[("e", &e)]))?;
-        Ok(Some(backup_path))
+/// Copy `target_path` to its backup in the folder `config` names (a custom
+/// folder is created if it is not there yet), and return the backup's path.
+/// An error names the folder or file that could not be made.
+#[cfg(not(target_family = "wasm"))]
+fn copy_to_backup(target_path: &Path, config: &BackupSaveConfig) -> std::io::Result<PathBuf> {
+    fn at(path: &Path, e: std::io::Error) -> std::io::Error {
+        std::io::Error::new(e.kind(), format!("{}: {e}", path.display()))
     }
+    let dest_dir = match &config.backup_location {
+        BackupLocation::SameFolder => target_path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(".")),
+        BackupLocation::Custom(dir) => {
+            std::fs::create_dir_all(dir).map_err(|e| at(dir, e))?;
+            dir.clone()
+        }
+    };
+    let backup_path = dest_dir.join(generate_backup_file_name(target_path, config.backup_format));
+    std::fs::copy(target_path, &backup_path).map_err(|e| at(&backup_path, e))?;
+    Ok(backup_path)
 }
 
 // ----------------------------------------------------------------------------
@@ -384,18 +386,8 @@ impl SlideEditor {
                     if let Some(p) = self.wb().panels.backup_save.as_ref() {
                         config.backup_format = p.backup_format;
                     }
-                    let dest_dir = match &config.backup_location {
-                        BackupLocation::SameFolder => path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(".")),
-                        BackupLocation::Custom(dir) => {
-                            let _ = std::fs::create_dir_all(dir);
-                            dir.clone()
-                        }
-                    };
-                    let backup_name = generate_backup_file_name(&path, config.backup_format);
-                    let backup_path = dest_dir.join(backup_name);
-
-                    match std::fs::copy(&path, &backup_path) {
-                        Ok(_) => {
+                    match copy_to_backup(&path, &config) {
+                        Ok(backup_path) => {
                             let fname = backup_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                             if let Some(panel) = self.wb_mut().panels.backup_save.as_mut() {
                                 panel.message = Some(format!("{} ({fname})", text("xlsx.backupsave.backup-now-done")));

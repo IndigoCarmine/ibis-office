@@ -484,6 +484,10 @@ pub struct SlideEditor {
     /// The file's path, for ⌘S (none in the browser, or for a new document).
     #[cfg(not(target_family = "wasm"))]
     pub(crate) path: Option<std::path::PathBuf>,
+    /// The folder 名前を付けて保存… starts in while the file has no path
+    /// (a repaired workbook: the damaged file's folder, `xlsx/repair.rs`).
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) save_as_folder: Option<std::path::PathBuf>,
     /// A unique identifier for the workbook session, shared across windows viewing the same workbook.
     pub(crate) workbook_id: u64,
     /// A unique identifier for the document session, shared across windows viewing the same document.
@@ -492,6 +496,10 @@ pub struct SlideEditor {
     pub(crate) window_number: Option<usize>,
     /// Whether the save confirmation dialog is open (shown when closing the last window with unsaved edits).
     pub(crate) save_confirm_dialog_open: bool,
+    /// The save confirmation dialog asks because the window is being closed
+    /// (`window_should_close`): once the edits are saved or discarded, the
+    /// window closes too, not only the file.
+    pub(crate) save_confirm_closes_window: bool,
     /// Whether side-by-side comparison mode (並べて比較 / XLSX-VIEW-013) is active.
     pub(crate) side_by_side: bool,
     /// Whether synchronous scrolling (同期スクロール / XLSX-VIEW-014) is active.
@@ -657,10 +665,13 @@ impl SlideEditor {
             notes_format: None,
             #[cfg(not(target_family = "wasm"))]
             path: None,
+            #[cfg(not(target_family = "wasm"))]
+            save_as_folder: None,
             workbook_id: NEXT_WORKBOOK_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             document_id: NEXT_DOCUMENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             window_number: None,
             save_confirm_dialog_open: false,
+            save_confirm_closes_window: false,
             side_by_side: false,
             sync_scrolling: false,
             side_by_side_peer: None,
@@ -727,6 +738,7 @@ impl SlideEditor {
         #[cfg(not(target_family = "wasm"))]
         {
             self.path = None;
+            self.save_as_folder = None;
             self.protection_password = None;
         }
         self.zoom = with_format!(self, initial_zoom(self));
@@ -1056,6 +1068,7 @@ impl SlideEditor {
         if !self.has_document {
             return;
         }
+        self.commit_typing(window, cx);
         if self.is_workbook() && self.workbook_id != 0 {
             let my_id = self.workbook_id;
             let my_entity_id = cx.entity_id();
@@ -1077,10 +1090,6 @@ impl SlideEditor {
                 self.window_number = None;
                 window.remove_window();
                 Self::renumber_workbook_windows(my_id, cx);
-                return;
-            } else if self.document.can_undo() {
-                self.save_confirm_dialog_open = true;
-                cx.notify();
                 return;
             }
         } else if self.is_document() && self.document_id != 0 {
@@ -1105,13 +1114,87 @@ impl SlideEditor {
                 window.remove_window();
                 Self::renumber_document_windows(my_id, cx);
                 return;
-            } else if self.document.can_undo() {
-                self.save_confirm_dialog_open = true;
-                cx.notify();
-                return;
             }
         }
+        // The last window showing the file, whatever its kind (a
+        // presentation's 新しいウィンドウ is a copy of its own): edits not
+        // saved are asked about before they are closed.
+        if self.has_unsaved_edits(cx) {
+            self.save_confirm_dialog_open = true;
+            self.save_confirm_closes_window = false;
+            cx.notify();
+            return;
+        }
         self.force_close_file(window, cx);
+    }
+
+    /// The window is being closed (its close button, Alt+F4, the red
+    /// button): whether it may close now. Edits not saved are asked about
+    /// first in the save confirmation dialog, as ファイル > 閉じる asks, and
+    /// the window closes once they are saved or discarded.
+    pub(crate) fn window_should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.has_document {
+            self.commit_typing(window, cx);
+        }
+        let shown_in_other_window = self.shown_in_other_window(cx);
+        match window_close(self.has_document, shown_in_other_window, self.has_unsaved_edits(cx), self.save_confirm_dialog_open) {
+            WindowClose::Close => true,
+            WindowClose::Ask => {
+                self.save_confirm_dialog_open = true;
+                self.save_confirm_closes_window = true;
+                cx.notify();
+                false
+            }
+            // The dialog stays as it is; its answer now closes the window too.
+            WindowClose::KeepAsking => {
+                self.save_confirm_closes_window = true;
+                false
+            }
+        }
+    }
+
+    /// The open file has edits not saved (`has_unsaved_edits`), typing not
+    /// yet put into it included: what closing the file or its window, and
+    /// updating the program, ask about first.
+    pub(crate) fn has_unsaved_edits(&self, cx: &App) -> bool {
+        has_unsaved_edits(self.has_document, &self.document, self.is_typing(cx))
+    }
+
+    /// Typing not yet put into the file: into a cell (counted even when it
+    /// is what the cell has, as entering it is an edit: `commit_cell_edit`
+    /// makes it a step), or into a shape's text in place (`editing`) that
+    /// changes it (`commit_edit` makes a step of it only then).
+    fn is_typing(&self, cx: &App) -> bool {
+        let in_cell = self.sheet_state().is_some_and(|s| s.cell_edit.is_some());
+        let in_shape = self.editing.as_ref().is_some_and(|edit| {
+            let text = edit.state.read(cx).value().to_string();
+            if edit.is_new {
+                !text.trim().is_empty()
+            } else {
+                self.slide().shape(edit.shape).and_then(|s| s.text_body()).map(|b| b.text()).as_deref() != Some(text.as_str())
+            }
+        });
+        in_cell || in_shape
+    }
+
+    /// The typing is put into the file (a cell's entry, a shape's text in
+    /// place), so that closing asks about it and 「保存」 saves it.
+    fn commit_typing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        self.commit_edit(window, cx);
+    }
+
+    /// Another window shows this window's file (a workbook's or a
+    /// document's 新しいウィンドウ), so closing this one loses nothing.
+    fn shown_in_other_window(&self, cx: &mut Context<Self>) -> bool {
+        let me = cx.entity_id();
+        if self.is_workbook() {
+            !Self::find_other_matching_windows(self.workbook_id, me, cx).is_empty()
+        } else if self.is_document() {
+            !Self::find_other_matching_document_windows(self.document_id, me, cx).is_empty()
+        } else {
+            false
+        }
     }
 
     pub(crate) fn force_close_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1733,6 +1816,18 @@ impl SlideEditor {
         }
     }
 
+    /// Remember where 名前を付けて保存… starts while the file has no path (nothing in the browser).
+    pub(crate) fn set_save_as_folder(&mut self, folder: Option<std::path::PathBuf>) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.save_as_folder = folder;
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = folder;
+        }
+    }
+
     pub(crate) fn find_other_matching_windows(
         workbook_id: u64,
         my_entity_id: gpui::EntityId,
@@ -2191,18 +2286,30 @@ impl SlideEditor {
 
     pub(crate) fn close_save_confirm_dialog(&mut self, cx: &mut Context<Self>) {
         self.save_confirm_dialog_open = false;
+        self.save_confirm_closes_window = false;
         cx.notify();
     }
 
     pub(crate) fn confirm_save_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_confirm_dialog_open = false;
-        self.save(&crate::Save, window, cx);
-        self.force_close_file(window, cx);
+        let after = if std::mem::take(&mut self.save_confirm_closes_window) {
+            crate::shell::save::AfterSave::CloseWindow
+        } else {
+            crate::shell::save::AfterSave::Close
+        };
+        // Closed once saved: not when the save fails, nor before a new file's path is picked.
+        self.save_then(after, window, cx);
     }
 
     pub(crate) fn confirm_discard_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.preserve_or_cleanup_autorecover_on_discard();
+        // The snapshot is kept as Unsaved_… (自動回復の設定) before
+        // force_close_file would delete it.
+        self.preserve_or_cleanup_autorecover_on_discard(cx);
+        let closes_window = std::mem::take(&mut self.save_confirm_closes_window);
         self.force_close_file(window, cx);
+        if closes_window {
+            window.remove_window();
+        }
     }
 
     pub(crate) fn render_save_confirm_dialog(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3764,9 +3871,43 @@ pub(crate) fn wheel_zoom_listener(cx: &Context<SlideEditor>) -> impl IntoElement
     .size_full()
 }
 
+/// What closing an editor window does (`SlideEditor::window_should_close`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WindowClose {
+    /// Close it now: nothing would be lost.
+    Close,
+    /// Keep it open and ask about the edits not saved (the save confirmation dialog).
+    Ask,
+    /// Keep it open: the save confirmation dialog is already asking.
+    KeepAsking,
+}
+
+/// Whether a file is open (`has_document`) and edited since it was last
+/// saved, or opened (`Document::is_modified`), or being typed into
+/// (`typing`: not in the document yet, so not saved either). Not whether
+/// there are steps to undo: they stay after a save, and an edit undone
+/// leaves nothing to save.
+pub(crate) fn has_unsaved_edits(has_document: bool, document: &Document, typing: bool) -> bool {
+    has_document && (document.is_modified() || typing)
+}
+
+/// What closing a window does: one with a file whose edits are not saved
+/// (`unsaved`) asks first, as ファイル > 閉じる does (`close_file`), unless
+/// another window still shows the file; a dialog already asking (`asking`)
+/// is not opened twice.
+pub(crate) fn window_close(has_document: bool, shown_in_other_window: bool, unsaved: bool, asking: bool) -> WindowClose {
+    if asking {
+        WindowClose::KeepAsking
+    } else if has_document && !shown_in_other_window && unsaved {
+        WindowClose::Ask
+    } else {
+        WindowClose::Close
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MAX_ZOOM, MIN_ZOOM, parse_percent, wheel_zooms, zoom_axis_offset, zoom_levels};
+    use super::{MAX_ZOOM, MIN_ZOOM, WindowClose, parse_percent, wheel_zooms, window_close, zoom_axis_offset, zoom_levels};
     use gpui_kit::Modifiers;
 
     #[test]
@@ -3819,6 +3960,70 @@ mod tests {
         assert!(wheel_zooms(&cmd, false));
         assert!(!wheel_zooms(&Modifiers::default(), false));
         assert!(!wheel_zooms(&Modifiers::default(), true));
+    }
+
+    #[test]
+    fn closing_a_window_asks_about_edits_not_saved() {
+        // A file with edits not saved: asked about, the window kept open.
+        assert_eq!(window_close(true, false, true, false), WindowClose::Ask);
+        // No edits, or no file (the start view): closed at once, as before.
+        assert_eq!(window_close(true, false, false, false), WindowClose::Close);
+        assert_eq!(window_close(false, false, false, false), WindowClose::Close);
+        // Another window still shows the file: this one closes without asking.
+        assert_eq!(window_close(true, true, true, false), WindowClose::Close);
+        // Closed again while the dialog asks: the one dialog stays, the window open.
+        assert_eq!(window_close(true, false, true, true), WindowClose::KeepAsking);
+        assert_eq!(window_close(true, true, true, true), WindowClose::KeepAsking);
+    }
+
+    /// An edit of the `n`th kind in an empty file of `kind`, as the editor makes them.
+    fn an_edit(kind: ibis_pptx::Kind, document: &mut ibis_doc_model::Document, n: u32) -> ibis_doc_model::Command {
+        use ibis_doc_model::{Block, CellEdit, CellInput, Command, EmuRect, FlowCommand, FlowPos, Shape, SheetCommand};
+        let slide = document.presentation().slides[0].id;
+        match kind {
+            ibis_pptx::Kind::Workbook => Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row: n, column: 0, input: CellInput::Formula("1+1".into()) }] }),
+            ibis_pptx::Kind::Document => {
+                let flow = document.presentation().flow.as_deref().expect("a flow document");
+                let Block::Paragraph(p) = &flow.body[0] else { panic!("a paragraph") };
+                Command::Flow(FlowCommand::InsertText { at: FlowPos::new(p.id, 0), text: format!("文{n}"), format: None })
+            }
+            ibis_pptx::Kind::Presentation => {
+                let shape = document.ids().new_shape_id();
+                Command::InsertShape { slide, index: 0, shape: Shape::text_box(shape, EmuRect::new(0, 0, 100, 50), &format!("箱{n}")) }
+            }
+        }
+    }
+
+    /// Edits saved are not asked about again (I-042), in a workbook, a
+    /// document and a presentation alike: they are told against what was
+    /// saved, not by the steps to undo, which stay after a save.
+    #[test]
+    fn edits_are_unsaved_only_until_they_are_saved() {
+        use super::has_unsaved_edits;
+        use ibis_doc_model::Document;
+        for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+            let opened = ibis_pptx::open(ibis_pptx::blank_file(kind).unwrap()).unwrap();
+            let mut document = Document::new(opened.presentation);
+            assert!(!has_unsaved_edits(true, &document, false), "{kind:?}: as opened");
+            let edit = an_edit(kind, &mut document, 1);
+            document.execute(vec![edit]).unwrap();
+            assert!(has_unsaved_edits(true, &document, false), "{kind:?}: edited");
+            assert!(!has_unsaved_edits(false, &document, false), "{kind:?}: no file open (the start view)");
+            document.mark_saved();
+            assert!(document.can_undo(), "{kind:?}: the edit can still be undone");
+            assert!(!has_unsaved_edits(true, &document, false), "{kind:?}: saved");
+            // Saved, then typed into a cell or a shape's text and not yet
+            // entered: that typing is not saved (I-046).
+            assert!(has_unsaved_edits(true, &document, true), "{kind:?}: typing after the save");
+            assert!(!has_unsaved_edits(false, &document, true), "{kind:?}: no file open");
+            let edit = an_edit(kind, &mut document, 2);
+            document.execute(vec![edit]).unwrap();
+            assert!(has_unsaved_edits(true, &document, false), "{kind:?}: edited after the save");
+            assert!(document.undo());
+            assert!(!has_unsaved_edits(true, &document, false), "{kind:?}: undone back to what was saved");
+            assert!(document.undo());
+            assert!(has_unsaved_edits(true, &document, false), "{kind:?}: undone past what was saved");
+        }
     }
 }
 

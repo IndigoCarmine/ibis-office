@@ -4,11 +4,16 @@
 //! Legend source position only; TopRight painting/native meaning is separate.
 use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, Document, Presentation, ShapeKind, SheetCommand, Chart, LegendPosition as P, Side};
 use ibis_ooxml::{Package, SaveOptions};
+
+#[path = "../../../test/fixtures.rs"]
+mod fixtures;
+
 fn chart_xml(legend: &str) -> String {format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:ser><c:idx val="0"/><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>10</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea>{legend}</c:chart></c:chartSpace>"#)}
 fn chart(p: &Presentation) -> &Chart {p.slides.iter().flat_map(|s|&s.shapes).find_map(|s|match &s.kind {ShapeKind::Chart(c)=>Some(c),_=>None}).unwrap()}
-fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
-    let mut package = Package::open(std::fs::read(root.join(if xlsx { "xlsx-sales.xlsx" } else { "pptx-plan.pptx" })).unwrap()).unwrap();
+/// The test file with `xml` as its chart, or `None` (reported as skipped) when
+/// the private test data is not there.
+fn fixture(xlsx: bool, xml: &str) -> Option<(Vec<u8>, &'static str)> {
+    let mut package = Package::open(fixtures::read(if xlsx { "test/editing/xlsx-sales.xlsx" } else { "test/editing/pptx-plan.pptx" })?).unwrap();
     let part = if xlsx { "xl/charts/chart1.xml" } else { "ppt/charts/legend-position-retention.xml" };
     package.set_bytes(part, xml.as_bytes().to_vec());
     if !xlsx {
@@ -20,12 +25,12 @@ fn fixture(xlsx: bool, xml: &str) -> (Vec<u8>, &'static str) {
         assert!(xml.contains("</p:spTree>"));
         package.set_bytes(slide, xml.replacen("</p:spTree>", &(frame + "</p:spTree>"), 1).into_bytes());
     }
-    (package.save(SaveOptions::default()).unwrap(), part)
+    Some((package.save(SaveOptions::default()).unwrap(), part))
 }
 
 
 fn check(xlsx: bool, legend: &str, expected: Option<Option<P>>) {
- let (data,part)=fixture(xlsx,&chart_xml(legend));let original=Package::open(data.clone()).unwrap().read(part).unwrap();let opened=ibis_pptx::open(data.clone()).unwrap();let retained=chart(&opened.presentation).clone();
+ let Some((data,part))=fixture(xlsx,&chart_xml(legend)) else { return };let original=Package::open(data.clone()).unwrap().read(part).unwrap();let opened=ibis_pptx::open(data.clone()).unwrap();let retained=chart(&opened.presentation).clone();
  assert_eq!(retained.legend.as_ref().map(|l|l.source_position),expected);
  assert_eq!(opened.source.save(&opened.presentation,SaveOptions::default()).unwrap(),data);let regenerated=opened.source.save(&opened.presentation,SaveOptions{regenerate_xml:true}).unwrap();assert!(ibis_ooxml::canon::diff_packages(&data,&regenerated,&[]).unwrap().is_same());assert_eq!(chart(&ibis_pptx::read(&regenerated).unwrap()),&retained);
  let mut doc=Document::new(opened.presentation.clone());
@@ -50,7 +55,7 @@ fn all_values(xlsx: bool) {
 #[test] fn pptx_all_positions_overlay_presence_opaque_xml_save_undo() {all_values(false);}
 #[test] fn xlsx_all_positions_overlay_presence_opaque_xml_save_undo() {all_values(true);}
 #[test] fn changed_source_position_save_is_rejected_without_dropping_it() {
- for xlsx in [false,true] {let(data,_)=fixture(xlsx,&chart_xml("<c:legend><c:legendPos val=\"tr\"/></c:legend>"));let opened=ibis_pptx::open(data).unwrap();assert_eq!(chart(&opened.presentation).legend.as_ref().unwrap().side,Side::Top,"legacy drawing remains unchanged until native calibration");let mut p=opened.presentation.clone();let c=p.slides.iter_mut().flat_map(|s|&mut s.shapes).find_map(|s|match &mut s.kind {ShapeKind::Chart(c)=>Some(c),_=>None}).unwrap();c.legend.as_mut().unwrap().source_position=Some(P::Right);
+ for xlsx in [false,true] {let Some((data,_))=fixture(xlsx,&chart_xml("<c:legend><c:legendPos val=\"tr\"/></c:legend>")) else { continue };let opened=ibis_pptx::open(data).unwrap();assert_eq!(chart(&opened.presentation).legend.as_ref().unwrap().side,Side::Top,"legacy drawing remains unchanged until native calibration");let mut p=opened.presentation.clone();let c=p.slides.iter_mut().flat_map(|s|&mut s.shapes).find_map(|s|match &mut s.kind {ShapeKind::Chart(c)=>Some(c),_=>None}).unwrap();c.legend.as_mut().unwrap().source_position=Some(P::Right);
   // A workbook's chart takes the change (グラフの書式, 2026-10-07); a presentation's still refuses it.
   if xlsx {let saved=opened.source.save(&p,SaveOptions::default()).unwrap();assert_eq!(chart(&ibis_pptx::read(&saved).unwrap()).legend.as_ref().unwrap().source_position,Some(P::Right));} else {assert!(opened.source.save(&p,SaveOptions::default()).is_err());}}
 }

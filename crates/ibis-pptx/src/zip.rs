@@ -104,39 +104,53 @@ impl<'a> Archive<'a> {
     }
 }
 
+/// An archive of `entries`, stored without compression: small packages for
+/// tests, built in memory rather than added to the repository.
+#[cfg(test)]
+pub(crate) fn stored_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut z = Vec::new();
+    let mut offsets = Vec::new();
+    for (name, body) in entries {
+        offsets.push(z.len() as u32);
+        z.extend(LOCAL_FILE_HEADER.to_le_bytes());
+        z.extend([20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // version..crc
+        z.extend((body.len() as u32).to_le_bytes());
+        z.extend((body.len() as u32).to_le_bytes());
+        z.extend((name.len() as u16).to_le_bytes());
+        z.extend(0u16.to_le_bytes());
+        z.extend(name.as_bytes());
+        z.extend(*body);
+    }
+    let cd = z.len() as u32;
+    for ((name, body), offset) in entries.iter().zip(offsets) {
+        z.extend(CENTRAL_DIRECTORY_HEADER.to_le_bytes());
+        z.extend([20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // versions..crc
+        z.extend((body.len() as u32).to_le_bytes());
+        z.extend((body.len() as u32).to_le_bytes());
+        z.extend((name.len() as u16).to_le_bytes());
+        z.extend([0; 12]); // extra, comment, disk, attributes
+        z.extend(offset.to_le_bytes()); // local header offset
+        z.extend(name.as_bytes());
+    }
+    let cd_len = z.len() as u32 - cd;
+    let count = entries.len() as u16;
+    z.extend(END_OF_CENTRAL_DIRECTORY.to_le_bytes());
+    z.extend([0, 0, 0, 0]); // disk numbers
+    z.extend(count.to_le_bytes());
+    z.extend(count.to_le_bytes());
+    z.extend(cd_len.to_le_bytes());
+    z.extend(cd.to_le_bytes());
+    z.extend(0u16.to_le_bytes());
+    z
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// A one-entry archive, stored without compression.
     fn stored_zip(name: &str, body: &[u8]) -> Vec<u8> {
-        let mut z = Vec::new();
-        let n = name.len() as u16;
-        let len = body.len() as u32;
-        z.extend(LOCAL_FILE_HEADER.to_le_bytes());
-        z.extend([20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // version..crc
-        z.extend(len.to_le_bytes());
-        z.extend(len.to_le_bytes());
-        z.extend(n.to_le_bytes());
-        z.extend(0u16.to_le_bytes());
-        z.extend(name.as_bytes());
-        z.extend(body);
-        let cd = z.len() as u32;
-        z.extend(CENTRAL_DIRECTORY_HEADER.to_le_bytes());
-        z.extend([20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // versions..crc
-        z.extend(len.to_le_bytes());
-        z.extend(len.to_le_bytes());
-        z.extend(n.to_le_bytes());
-        z.extend([0; 12]); // extra, comment, disk, attributes
-        z.extend(0u32.to_le_bytes()); // local header offset
-        z.extend(name.as_bytes());
-        let cd_len = z.len() as u32 - cd;
-        z.extend(END_OF_CENTRAL_DIRECTORY.to_le_bytes());
-        z.extend([0, 0, 0, 0, 1, 0, 1, 0]);
-        z.extend(cd_len.to_le_bytes());
-        z.extend(cd.to_le_bytes());
-        z.extend(0u16.to_le_bytes());
-        z
+        stored_archive(&[(name, body)])
     }
 
     #[test]

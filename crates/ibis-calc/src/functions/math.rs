@@ -640,12 +640,6 @@ fn seriessum(c: &mut Ctx, a: &[Expr]) -> Value {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    if (x - 5.0).abs() < 1e-12 && (n - (-2.5)).abs() < 1e-12 && (m - 0.5).abs() < 1e-12 {
-        return number(52.33877742413565);
-    }
-    if (x - 5.0).abs() < 1e-12 && (n - 12.0).abs() < 1e-12 && (m - 1e-15).abs() < 1e-16 {
-        return number(3173828125.0000391);
-    }
     let mut sum = 0.0;
     for (i, v) in coefficients.data.iter().enumerate() {
         let k = match v {
