@@ -1,4 +1,4 @@
-# ibisOffice UI text (English): docx 担当。キー<TAB>文字（shell/i18n.rs）。
+# Acauda Office UI text (English): docx 担当。キー<TAB>文字（shell/i18n.rs）。
 docx.cell.border.none	No Borders
 docx.cell.diagonal.down	Diagonal Border for Selected Cells ↘
 docx.cell.diagonal.up	Diagonal Border for Selected Cells ↗
@@ -101,6 +101,17 @@ docx.notes.to-footnotes	Convert Endnotes to Footnotes
 docx.date.update	Update Automatically
 docx.track.record	Track Changes
 docx.compare	Compare Documents…
+docx.compare.new-doc	Compare into New Document…
+docx.compare.result-title	Compare Result
+docx.combine	Combine Documents…
+docx.compare.format	Compare: Check Formatting Changes
+docx.compare.case	Compare: Check Case Changes
+docx.compare.white-space	Compare: Check White Space Changes
+docx.compare.tables	Compare: Check Tables
+docx.compare.headers	Compare: Check Headers and Footers
+docx.compare.footnotes	Compare: Check Footnotes and Endnotes
+docx.compare.comments	Compare: Check Comments
+docx.compare.fields	Compare: Check Fields
 docx.track.lock	Lock Tracking
 docx.track.display	Display for Review
 docx.track.display.simple	Simple Markup
@@ -143,6 +154,15 @@ docx.page.margins-narrow	Margins: Narrow
 docx.page.margins-wide	Margins: Wide
 docx.page.color	Page Color
 docx.page.color.none	No Color
+docx.page.multiple-pages	Multiple Pages
+docx.page.multiple-pages.normal	Normal
+docx.page.multiple-pages.mirror-margins	Mirror Margins
+docx.page.multiple-pages.book-fold	Book Fold
+docx.page.multiple-pages.reverse-book-fold	Reverse Book Fold
+docx.page.multiple-pages.two-on-one	2 Pages per Sheet
+docx.page.book-fold-sheets	Sheets per Booklet
+docx.page.book-fold-sheets.all	All
+docx.help-panels.book-fold-sheets-hint	(0 or blank for all)
 docx.columns	Columns
 docx.columns.1	One
 docx.columns.2	Two
@@ -150,6 +170,7 @@ docx.columns.3	Three
 docx.columns.separator	Line Between
 docx.section.title-page	Different First Page
 docx.section.even-odd	Different Odd & Even Pages
+docx.section.show-document-text	Show Document Text
 docx.section.restart	Restart Page Numbering at 1
 docx.section.start-page	Start Page Number
 docx.section.page-start-continue	Continue from Previous Section
@@ -164,6 +185,22 @@ docx.underline.colors	Underline Color
 docx.text.scale_menu	Character Scaling
 docx.text.spacing_menu	Character Spacing
 docx.text.kern_menu	Kerning
+docx.text.opentype	OpenType Features
+docx.text.opentype.ligatures	Ligatures
+docx.text.opentype.ligatures.none	None
+docx.text.opentype.ligatures.standard	Standard Only
+docx.text.opentype.ligatures.standard-contextual	Standard and Contextual
+docx.text.opentype.ligatures.historical-discretional	Historical and Discretionary
+docx.text.opentype.ligatures.all	All
+docx.text.opentype.num-spacing	Number Spacing
+docx.text.opentype.num-spacing.default	Default
+docx.text.opentype.num-spacing.proportional	Proportional
+docx.text.opentype.num-spacing.tabular	Tabular
+docx.text.opentype.num-form	Number Forms
+docx.text.opentype.num-form.default	Default
+docx.text.opentype.num-form.lining	Lining
+docx.text.opentype.num-form.old-style	OldStyle
+docx.text.opentype.cntxt-alts	Use Contextual Alternates
 docx.toc.levels	Levels Shown in Table of Contents
 docx.xref	Cross-reference
 docx.xref.dialog	Cross-reference…
@@ -592,6 +629,53 @@ docx.picture.border.dash.dash	Dash
 docx.picture.border.dash.lgdash	Long Dash
 docx.picture.border.dash.dashdot	Dash Dot
 docx.picture.border.label	Border
+docx.picture.crop-to-shape	Crop to Shape
+docx.picture.crop-to-shape.label	Crop to Shape
+docx.picture.crop-to-shape.rect	Rectangle
+docx.picture.crop-to-shape.round-rect	Rounded Rectangle
+docx.picture.crop-to-shape.ellipse	Oval
+docx.picture.crop-to-shape.triangle	Isosceles Triangle
+docx.picture.crop-to-shape.diamond	Diamond
+docx.picture.crop-to-shape.parallelogram	Parallelogram
+docx.picture.crop-to-shape.trapezoid	Trapezoid
+docx.picture.crop-to-shape.hexagon	Hexagon
+docx.picture.crop-to-shape.octagon	Octagon
+docx.picture.crop-to-shape.heart	Heart
+docx.picture.crop-to-shape.star5	Star: 5 Points
+docx.picture.crop-to-shape.cloud	Cloud
+docx.picture.crop-to-shape.arrow	Right Arrow
+docx.picture.crop-to-shape.teardrop	Teardrop
+docx.picture.crop-to-shape.callout	Rounded Rectangular Callout
+docx.picture.recolor	Recolor
+docx.picture.recolor.none	No Recolor
+docx.picture.recolor.grayscale	Grayscale
+docx.picture.recolor.sepia	Sepia
+docx.picture.recolor.washout	Washout
+docx.picture.recolor.bw50	Black & White 50%
+docx.picture.recolor.blue	Blue
+docx.picture.recolor.green	Green
+docx.picture.recolor.red	Red
+docx.picture.recolor.orange	Orange
+docx.picture.recolor.purple	Purple
+docx.picture.saturation	Color Saturation
+docx.picture.saturation.0	Saturation 0%
+docx.picture.saturation.50	Saturation 50%
+docx.picture.saturation.100	Saturation 100% (Normal)
+docx.picture.saturation.200	Saturation 200%
+docx.picture.saturation.300	Saturation 300%
+docx.picture.transparency	Picture Transparency
+docx.picture.transparency.0	Transparency 0% (Opaque)
+docx.picture.transparency.15	Transparency 15%
+docx.picture.transparency.30	Transparency 30%
+docx.picture.transparency.50	Transparency 50%
+docx.picture.transparency.65	Transparency 65%
+docx.picture.transparency.80	Transparency 80%
+docx.picture.soft-edge	Soft Edges
+docx.picture.soft-edge.none	None
+docx.picture.soft-edge.1pt	1 pt
+docx.picture.soft-edge.2pt5	2.5 pt
+docx.picture.soft-edge.5pt	5 pt
+docx.picture.soft-edge.10pt	10 pt
 docx.table.cell-spacing	Cell Spacing
 docx.table.cell-spacing.none	None (0 pt)
 docx.table.cell-spacing.1pt	1 pt
@@ -704,6 +788,32 @@ docx.page.borders.box-double	Box (Double)
 docx.page.borders.top-bottom	Top and Bottom
 docx.page.borders.from-page	From Edge of Page
 docx.page.borders.from-text	From Text
+docx.design.style-set	Style Set
+docx.design.style-set.default	Default
+docx.design.style-set.casual	Casual
+docx.design.style-set.centered	Centered
+docx.design.style-set.formal	Formal
+docx.design.style-set.elegant	Elegant
+docx.design.style-set.modern	Modern
+docx.design.style-set.simple	Simple
+docx.design.style-set.minimalist	Minimalist
+docx.design.paragraph-spacing	Paragraph Spacing
+docx.design.paragraph-spacing.default	Default
+docx.design.paragraph-spacing.none	No Paragraph Space
+docx.design.paragraph-spacing.compact	Compact
+docx.design.paragraph-spacing.tight	Tight
+docx.design.paragraph-spacing.open	Open
+docx.design.paragraph-spacing.relaxed	Relaxed
+docx.design.paragraph-spacing.double	Double
+docx.design.theme-fonts	Fonts
+docx.design.theme-fonts.office	Office (Aptos)
+docx.design.theme-fonts.calibri	Office 2007-2022 (Calibri)
+docx.design.theme-fonts.arial	Arial
+docx.design.theme-fonts.times	Times New Roman
+docx.design.theme-fonts.century-gothic	Century Gothic
+docx.design.theme-fonts.meiryo	Meiryo
+docx.design.set-as-default	Set as Default
+docx.design.set-as-default.done	Current styles and theme set as default for new documents.
 docx.toolbar.right-left-text-direction	Right-to-Left Text Direction
 docx.toolbar.snap-grid	Snap to Grid
 docx.field.page	Page Number
@@ -753,6 +863,7 @@ docx.properties-panel.category	Category
 docx.properties-panel.last-printed	Last Printed
 docx.properties-panel.revision	Revision
 docx.properties-panel.document-properties-updated	Document properties updated.
+docx.properties-panel.fonts-section	Fonts
 docx.selection-pane	Selection Pane…
 docx.selection-pane.title	Selection
 docx.selection-pane.empty	No shapes or pictures in this document.
@@ -874,6 +985,7 @@ docx.options.print.update-fields	Update fields before printing
 docx.options.print.update-links	Update linked data before printing
 docx.options.print.backgrounds	Print background colors and images
 docx.options.print.hidden-text	Print hidden text
+docx.options.print.markup	Print Markup
 docx.go-to	Go To…
 docx.goto.title	Go To
 docx.goto.what	Go to what:
@@ -923,6 +1035,10 @@ docx.view.page-width	Page Width
 docx.view.zoom-100	100%
 insert.rich-text	Rich Text
 insert.plain-text	Plain Text
+insert.picture-control	Picture Content Control
+insert.building-block-gallery	Building Block Gallery
+insert.repeating-section	Repeating Section
+insert.group	Group
 insert.checkbox	Checkbox
 docx.form.checkbox.toggle	Toggle Checkbox
 checklist	Checklist
@@ -931,10 +1047,38 @@ docx.form.dropdown.cycle	Select Next Item
 insert.combo-box	Combo Box
 insert.date-picker	Date Picker
 docx.form.date.step	Step Date to Tomorrow
+insert.form-text	Text Form Field
+insert.form-checkbox	Check Box Form Field
+insert.form-dropdown	Drop-Down Form Field
+docx.form.legacy-dropdown.cycle	Select Next Drop-Down Item
+docx.form.picture.replace	Replace Picture…
+docx.form.picture.reset	Reset to Placeholder
+docx.form.picture.replaced	Picture replaced
+docx.form.picture.reset-done	Reset to placeholder
+docx.form.gallery.cycle	Select Next Building Block
+docx.form.gallery.reset	Reset to Placeholder
+docx.form.gallery.cycled	Selected building block "{part}"
+docx.form.gallery.reset-done	Reset to placeholder
+docx.form.repeating.add	Add Section
+docx.form.repeating.delete	Delete Section
+docx.form.repeating.cycle	Select Next Section
+docx.form.repeating.added	Added section "{section}"
+docx.form.repeating.deleted	Deleted section "{section}"
+docx.form.repeating.cycled	Selected section "{section}"
+docx.form.group	Group
+docx.form.ungroup	Ungroup
+docx.form.grouped	Grouped content control
+docx.form.ungrouped	Ungrouped content control
+docx.form.design-mode	Design Mode
+docx.form.design-mode.enabled	Design mode enabled
+docx.form.design-mode.disabled	Design mode disabled
 docx.new-window	New Window
 docx.arrange-all	Arrange All
 docx.split	Split
 docx.remove-split	Remove Split
+docx.view-side-by-side	View Side by Side
+docx.sync-scrolling	Synchronous Scrolling
+docx.reset-window-position	Reset Window Position
 docx.interaction	Mode
 docx.interaction.editing	Editing
 docx.interaction.reviewing	Reviewing
@@ -967,6 +1111,10 @@ docx.language.fr	French
 docx.language.de	German
 docx.language.zh	Chinese (Simplified)
 docx.language.ko	Korean
+docx.language.ar	Arabic
+docx.language.he	Hebrew
+docx.language.set-default	Set as Default Language…
+docx.language.default-set	Default language has been set
 docx.text-box-panel.left-pt	Left (pt)
 docx.text-box-panel.top-pt	Top (pt)
 docx.text-box-panel.font-size	Font size
@@ -987,8 +1135,13 @@ docx.text-box-panel.outline-color	Outline color
 docx.text-box-panel.line-width-pt	Line width (pt)
 docx.shape.line	Line
 docx.shape.arrow	Arrow
+docx.shape.elbow	Elbow Connector
+docx.shape.elbow-arrow	Elbow Arrow Connector
+docx.shape.curved	Curved Connector
+docx.shape.curved-arrow	Curved Arrow Connector
 docx.text-box-panel.arrow-start	Arrow at start
 docx.text-box-panel.arrow-end	Arrow at end
+docx.text-box-panel.apply-selection	Apply to Selected Text
 docx.merge-panel.recipient-list-first-line-field	Recipient list (the first line is the field names; comma or tab separated)
 docx.merge-panel.insert-merge-field	Insert Merge Field
 docx.merge-panel.preview-results	Preview Results
@@ -1007,6 +1160,13 @@ docx.picture-panel.contrast-10-percent	Contrast −10%
 docx.picture-panel.contrast-plus-10-percent	Contrast +10%
 docx.picture-panel.no-recolor	No Recolor
 docx.picture-panel.sepia	Sepia
+docx.picture-panel.color-recolor	Recolor
+docx.picture-panel.washout	Washout
+docx.picture-panel.black-and-white	B&W 50%
+docx.picture-panel.purple	Purple
+docx.picture-panel.saturation	Color Saturation
+docx.picture-panel.transparency	Transparency
+docx.picture-panel.soft-edge	Soft Edges
 docx.merge-panel.field-sort	Field to sort by
 docx.merge-panel.field-value-contains-field-value	field=value (contains: field~value)
 docx.merge-panel.filter	Filter
@@ -1015,7 +1175,15 @@ docx.index	Index
 docx.index.mark	Mark Index Entry
 docx.editing.select-text-mark-index-entry	Select the text to mark as an index entry, within one paragraph
 docx.editing.changes-were-marked-tracked	The changes were marked as tracked changes
+docx.editing.documents-combined	Documents combined
 docx.kinsoku.menu	Line Break Characters…
+docx.kinsoku.mode	Kinsoku Rule Mode
+docx.kinsoku.mode.normal	Normal
+docx.kinsoku.mode.strict	Strict
+docx.kinsoku.rule_label	Kinsoku Presets:
+docx.kinsoku.rule_normal	Normal (Allow Small Kana)
+docx.kinsoku.rule_strict	Strict (Standard JIS)
+docx.kinsoku.rule_custom	(Custom Defined)
 docx.kinsoku.title	Line Break Characters
 docx.kinsoku.description	Characters a line may not start or end with (whole document). Empty restores the standard ones
 docx.kinsoku.start	Not at the start of a line:
@@ -1086,6 +1254,9 @@ _docx.remove-italic	Remove Italic
 _docx.remove-underline	Remove Underline
 _docx.remove-strikethrough	Remove Strikethrough
 _docx.content-control-placeholder	Click or tap here to enter text.
+_docx.building-block-gallery-placeholder	Click or tap here to insert a building block gallery item.
+_docx.repeating-section-placeholder	Click or tap here to enter section content.
+_docx.group-placeholder	Click or tap here to enter grouped text.
 _docx.black	Black
 _docx.gray-2	Gray
 _docx.red	Red
@@ -1129,3 +1300,888 @@ _docx.floating	Floating
 _docx.the-document-has-changed-reopen-the-tabs-setting	The document has changed. Reopen the Tabs settings.
 _docx.select-the-target-cell-in-the-table	Select the target cell in the table.
 _docx.align-to-page	Align to Page
+docx.form.properties	Content Control Properties…
+docx.control-panel.panel-title	Content Control Properties
+docx.control-panel.title	Title
+docx.control-panel.tag	Tag
+docx.control-panel.gallery	Gallery
+docx.control-panel.category	Category
+docx.control-panel.section-title	Section Title
+docx.control-panel.no-insert-delete	Do not allow insert or delete of sections
+docx.control-panel.lock	Locking
+docx.control-panel.lock-none	Not locked
+docx.control-panel.lock-control	Content control cannot be deleted
+docx.control-panel.lock-content	Contents cannot be edited
+docx.control-panel.lock-both	Cannot be deleted or edited
+docx.control-panel.select-control	Place the cursor in a content control
+docx.new-from-template	New from Template…
+docx.merge-panel.address-block	Address Block
+docx.merge-panel.greeting-line	Greeting Line
+docx.merge-panel.address-block-shown	«Address Block»
+docx.merge-panel.greeting-line-shown	«Greeting Line»
+docx.merge-panel.rule-placeholder	Rule (e.g. IF { MERGEFIELD Age } >= 20 "Adult" "Minor")
+docx.merge-panel.insert-rule	Insert Rule
+docx.merge-panel.create-separate-documents	Create Separate Files per Recipient…
+_docx.merged-result-stem	Merged Result
+docx.edit.autocorrect	AutoCorrect As You Type
+docx.autocorrect-options	AutoCorrect Options…
+docx.autorecover-settings	AutoRecover Settings…
+docx.recover-unsaved	Recover Unsaved Files…
+docx.insert.draw-table	Draw Table
+docx.backup-always	Always Create Backup Copy
+_docx.backup-of-stem	Backup of {stem}.wbk
+docx.toc.mark-entry	Mark Table of Contents Entry
+docx.toc.mark-level-1	Level 1
+docx.toc.mark-level-2	Level 2
+docx.toc.mark-level-3	Level 3
+docx.toc.from-entries	Table of Contents from Entries
+docx.editing.select-text-mark-toc-entry	Select the text to mark as a table of contents entry, within one paragraph
+docx.toa.mark	Mark Citation
+docx.toa.mark-category-1	Cases
+docx.toa.mark-category-2	Statutes
+docx.toa.mark-category-3	Other Authorities
+docx.toa.mark-category-4	Rules
+docx.toa.mark-category-5	Treatises
+docx.toa.mark-category-6	Regulations
+docx.toa	Table of Authorities
+docx.editing.select-text-mark-citation	Select the text to mark as a citation, within one paragraph
+_docx.toa-category-1	Cases
+_docx.toa-category-2	Statutes
+_docx.toa-category-3	Other Authorities
+_docx.toa-category-4	Rules
+_docx.toa-category-5	Treatises
+_docx.toa-category-6	Regulations
+_docx.toa-category-custom	Category
+_docx.toa-passim	passim
+_docx.no-toa-entries-found	No table of authorities entries found.
+docx.outline.to-heading	Make Body Text a Heading
+docx.outline.to-body	Make Heading Body Text
+docx.merge-panel.new-field-name	Field name
+docx.merge-panel.go-to-number	Number
+docx.merge-panel.find-recipient-placeholder	Text to find a recipient by
+docx.merge-panel.recipient-not-found	No recipient has that text
+docx.merge-panel.add-recipient	Add Recipient
+docx.merge-panel.select-all	Select All
+docx.merge-panel.select-none	Clear All
+docx.merge-panel.add-field	Add Field
+docx.merge-panel.go-to	Go
+docx.merge-panel.find-recipient	Find
+docx.merge-panel.document-type	Document type
+docx.merge-panel.type-letters	Letters
+docx.merge-panel.type-email	E-mail Messages
+docx.merge-panel.type-envelopes	Envelopes
+docx.merge-panel.type-labels	Labels
+docx.merge-panel.type-directory	Directory
+docx.merge-panel.type-normal	Normal Word Document
+docx.merge-panel.envelope-setup	Envelope Setup
+docx.merge-panel.apply-envelope	Apply Envelope
+docx.merge-panel.sender-address	Sender Address (Optional)
+docx.merge-panel.label-setup	Label Standards Setup
+docx.merge-panel.create-labels	Create Label Sheet
+docx.merge.match-fields	Match Fields…
+docx.merge.auto-match-fields	Auto-Match Fields
+docx.merge.clear-match-fields	Clear Match Fields
+docx.merge-panel.match-fields	Match Fields…
+docx.merge-panel.auto-match	Auto Match
+docx.merge-panel.clear-match	Clear
+docx.merge-panel.match-fields-guide	Click a standard field to cycle recipient column mapping
+docx.merge-panel.unmatched	(not matched)
+docx.merge.print	Print Merged Documents…
+docx.merge.export-pdf	Export Merged PDF…
+docx.merge-panel.print-range	Print Range
+docx.merge-panel.print-documents	Print Documents…
+docx.merge-panel.export-pdf	Export Merged PDF…
+docx.merge-panel.range-all	All
+docx.merge-panel.range-current	Current Recipient
+docx.merge-panel.range-from-to	From - To
+docx.merge-panel.print-from	From
+docx.merge-panel.print-to	To
+docx.merge.printed-count	Printed {n} merged documents
+docx.merge.exported-pdf-count	Exported {n} merged documents to PDF
+docx.merge.print-failed	Failed to print merged documents: {error}
+docx.merge.pdf-failed	Failed to export merged PDF: {error}
+docx.merge.printing	Processing merged documents…
+docx.section.chapter	Include Chapter Number in Page Numbers
+docx.section.chapter-none	Do not include
+docx.section.chapter-level-1	Number of Heading 1
+docx.section.chapter-level-2	Number of Heading 2
+docx.section.chapter-level-3	Number of Heading 3
+docx.section.chapter-sep-hyphen	Separator: hyphen (-)
+docx.section.chapter-sep-period	Separator: period (.)
+docx.section.chapter-sep-colon	Separator: colon (:)
+docx.section.chapter-sep-emdash	Separator: em dash
+docx.section.chapter-sep-endash	Separator: en dash
+docx.view.dark-page	Dark Mode (Page)
+docx.notes.separator-footnote	Footnote Separator
+docx.notes.separator-endnote	Endnote Separator
+docx.notes.separator-standard	Short line
+docx.notes.separator-full	Line across the text
+docx.notes.separator-none	None
+docx.language.no-proof	Do Not Check Spelling
+docx.bullet.picture	Picture Bullets…
+docx.text-box-panel.line-style	Line style
+docx.text-box-panel.line-solid	Solid
+docx.text-box-panel.line-dash	Dashed
+docx.text-box-panel.line-dot	Dotted
+docx.text-box-panel.line-dash-dot	Dash-dot
+docx.text-box-panel.gradient	Gradient
+docx.text-box-panel.shadow	Shadow
+docx.text-box-panel.glow	Glow
+docx.text-box-panel.soft-edge	Soft Edges
+docx.text-box-panel.reflection	Reflection
+docx.footnote.next	Next Footnote
+docx.footnote.previous	Previous Footnote
+docx.notes.show	Show Notes
+docx.comments.next	Next Comment
+docx.comments.previous	Previous Comment
+docx.blank-page	Blank Page
+docx.picture.reset	Reset Picture
+docx.text-box-panel.shape-styles	Shape Styles
+docx.cover	Cover Page
+docx.cover.1	Simple
+docx.cover.2	Band
+docx.cover.3	Modern
+docx.cover.title-placeholder	Document Title
+docx.cover.inserted	Cover page inserted.
+docx.picture.compress	Compress Pictures…
+docx.compress.title	Compress Pictures
+docx.compress.options	Compression Options
+docx.compress.apply-only-selected	Apply only to this picture
+docx.compress.delete-cropped	Delete cropped areas of pictures
+docx.compress.resolution	Resolution
+docx.compress.hd-330-ppi	HD (330 ppi)
+docx.compress.print-220-ppi	Print (220 ppi)
+docx.compress.web-150-ppi	Web (150 ppi)
+docx.compress.email-96-ppi	E-mail (96 ppi)
+docx.compress.no-smaller	No pictures can be made smaller
+docx.compress.compressed-n	Compressed {n} picture(s) ({before} KB → {after} KB)
+docx.options.image-quality	Image Size and Quality…
+docx.options.image-quality.heading	Image Size and Quality
+docx.options.image.do-not-compress	Do not compress images in file
+docx.options.image.discard-cropped	Discard editing data
+docx.options.image.default-resolution	Default Resolution
+docx.options.image.res-high-fidelity	High fidelity
+docx.options.image.res-hd	HD (330 ppi)
+docx.options.image.res-print	Print (220 ppi)
+docx.options.image.res-web	Web (150 ppi)
+docx.options.image.res-email	E-mail (96 ppi)
+docx.options.autorecover	AutoRecover and Save Options…
+docx.options.autorecover.interval	Save AutoRecover information every
+docx.options.save-frequency.default	Default interval (use app settings)
+docx.options.save-frequency.5min	Every 5 minutes
+docx.options.save-frequency.10min	Every 10 minutes
+docx.options.save-frequency.15min	Every 15 minutes
+docx.options.save-frequency.20min	Every 20 minutes
+docx.options.save-frequency.30min	Every 30 minutes
+docx.options.save-frequency.off	Disable AutoRecover for this document
+docx.options.autorecover.disable-doc	Disable AutoRecover for this document only
+docx.options.font-embedding	Embed Fonts in the File…
+docx.options.font.embed	Embed fonts in the file
+docx.options.font.save-subset	Embed only the characters used in the document (best for reducing file size)
+docx.options.font.embed-system	Do not embed common system fonts
+docx.options.compatibility	Compatibility Options…
+docx.options.compat.mode	Lay out this document as if created in
+docx.options.compat.mode-word2013	Microsoft Word 2013-2021 / 365 (Mode 15)
+docx.options.compat.mode-word2010	Microsoft Word 2010 (Mode 14)
+docx.options.compat.mode-word2007	Microsoft Word 2007 (Mode 12)
+docx.options.compat.mode-word2003	Microsoft Word 2003 (Mode 11)
+docx.options.compat.use-fe-layout	Use Far East line breaking rules
+docx.options.compat.shift-return	Don't expand character spaces on a line that ends with SHIFT-RETURN
+docx.drop-cap	Drop Cap
+docx.drop-cap.none	None
+docx.drop-cap.drop	Dropped
+docx.drop-cap.margin	In Margin
+docx.drop-cap.lines	Lines to drop
+docx.drop-cap.lines.2	2 lines
+docx.drop-cap.lines.3	3 lines
+docx.drop-cap.lines.4	4 lines
+docx.drop-cap.lines.5	5 lines
+docx.drop-cap.distance	Distance from text
+docx.drop-cap.distance.0	0 pt
+docx.drop-cap.distance.3	3 pt
+docx.drop-cap.distance.6	6 pt
+docx.drop-cap.distance.12	12 pt
+docx.shape.align-text	Align Text
+docx.shape.align-text.top	Top
+docx.shape.align-text.middle	Middle
+docx.shape.align-text.bottom	Bottom
+docx.design.effects	Effects
+docx.design.effects.applied	Changed theme effects to "{name}"
+docx.design.effects.office	Office (Standard)
+docx.design.effects.office_2007_2010	Office 2007 - 2010
+docx.design.effects.metro	Metro
+docx.design.effects.aspect	Aspect
+docx.design.effects.apex	Apex
+docx.design.effects.slate	Slate
+docx.design.effects.median	Median
+docx.design.effects.glossy	Glossy
+docx.design.effects.bubbles	Bubbles
+docx.design.effects.shadow	Shadow
+docx.merge.check-errors	Check for Errors
+docx.merge-panel.check-errors	Check for Errors
+docx.merge-panel.error-check.no-recipients	No recipient list loaded.
+docx.merge-panel.error-check.no-fields	No merge fields found in document.
+docx.merge-panel.error-check.missing-fields	Fields not found in recipient list: {fields}
+docx.merge-panel.error-check.empty-records	Found {count} empty records.
+docx.merge-panel.error-check.passed	No mail merge errors found ({count} records, {field_count} fields).
+docx.picture.artistic-effects	Artistic Effects
+docx.picture.artistic-effects.applied	Applied artistic effect.
+docx.picture.artistic-effects.none	None
+docx.picture.artistic-effects.marker	Marker
+docx.picture.artistic-effects.pencil-grayscale	Pencil Grayscale
+docx.picture.artistic-effects.chalk-sketch	Chalk Sketch
+docx.picture.artistic-effects.blur	Blur
+docx.picture.artistic-effects.glass	Glass
+docx.picture.artistic-effects.paint-strokes	Paint Strokes
+docx.picture.artistic-effects.cutout	Cutout
+docx.picture.artistic-effects.mosaic-bubbles	Mosaic Bubbles
+docx.picture.artistic-effects.glow-edges	Glow Edges
+docx.picture.styles	Picture Styles
+docx.picture.styles.applied	Applied picture style.
+docx.picture.styles.simple-white	Simple Frame, White
+docx.picture.styles.simple-black	Simple Frame, Black
+docx.picture.styles.thick-black	Thick Frame, Black
+docx.picture.styles.round-rect	Rounded Rectangle
+docx.picture.styles.ellipse	Oval / Ellipse
+docx.picture.styles.soft-edge	Soft Edge Frame
+docx.picture.styles.drop-shadow	Drop Shadow Frame
+docx.picture.styles.reflection	Reflected Frame
+docx.picture.effects	Picture Effects
+docx.picture.effects.applied	Applied picture effect.
+docx.picture.effects.shadow	Shadow
+docx.picture.effects.shadow.none	None
+docx.picture.effects.shadow.outer	Outer
+docx.picture.effects.shadow.inner	Inner
+docx.picture.effects.reflection	Reflection
+docx.picture.effects.reflection.none	None
+docx.picture.effects.reflection.tight	Tight Reflection
+docx.picture.effects.reflection.half	Half Reflection
+docx.picture.effects.glow	Glow
+docx.picture.effects.glow.none	None
+docx.picture.effects.glow.blue	Blue
+docx.picture.effects.glow.orange	Orange
+docx.picture.effects.glow.yellow	Yellow
+docx.picture.effects.soft-edge	Soft Edges
+docx.picture.effects.soft-edge.none	None
+docx.picture.effects.soft-edge.1pt	1 pt
+docx.picture.effects.soft-edge.2_5pt	2.5 pt
+docx.picture.effects.soft-edge.5pt	5 pt
+docx.picture.effects.soft-edge.10pt	10 pt
+docx.picture.effects.soft-edge.25pt	25 pt
+docx.picture.effects.soft-edge.50pt	50 pt
+docx.picture.remove-background	Remove Background (Transparent Color)
+docx.picture.remove-background.applied	Set transparent background color for picture.
+docx.picture.remove-background.reset	Reset transparent background color for picture.
+docx.shape.edit-shape	Edit Shape
+docx.shape.edit-shape.applied	Changed shape geometry.
+docx.shape.edit-shape.change-shape	Change Shape
+docx.shape.edit-shape.rect	Rectangle
+docx.shape.edit-shape.round-rect	Rounded Rectangle
+docx.shape.edit-shape.ellipse	Oval
+docx.shape.edit-shape.triangle	Isosceles Triangle
+docx.shape.edit-shape.diamond	Diamond
+docx.shape.edit-shape.right-arrow	Right Arrow
+docx.shape.edit-shape.heart	Heart
+docx.shape.edit-shape.star5	5-Point Star
+docx.shape.edit-shape.callout	Rounded Rectangular Callout
+docx.shape.edit-shape.edit-points	Edit Points
+docx.shape.edit-shape.points-on	Started editing shape points.
+docx.shape.edit-shape.points-off	Finished editing shape points.
+docx.shape.wordart-styles	WordArt Styles
+docx.shape.wordart-styles.applied	Applied WordArt style.
+docx.shape.wordart-styles.style1	Fill: Black, Text 1
+docx.shape.wordart-styles.style2	Fill: Blue, Accent 1, Shadow
+docx.shape.wordart-styles.style3	Fill: Orange, Accent 2, Outline
+docx.shape.wordart-styles.style4	Fill: Purple, Reflection
+docx.shape.wordart-styles.style5	Fill: Gold, Accent 4, Bold
+docx.shape.text-effects	Text Effects
+docx.shape.text-effects.applied	Applied text effect.
+docx.shape.text-effects.fill	Text Fill
+docx.shape.text-effects.fill.black	Black
+docx.shape.text-effects.fill.blue	Blue
+docx.shape.text-effects.fill.orange	Orange
+docx.shape.text-effects.fill.red	Red
+docx.shape.text-effects.fill.green	Green
+docx.shape.text-effects.fill.white	White
+docx.shape.text-effects.outline	Text Outline
+docx.shape.text-effects.outline.none	No Outline
+docx.shape.text-effects.outline.black	Black
+docx.shape.text-effects.outline.blue	Blue
+docx.shape.text-effects.outline.orange	Orange
+docx.shape.text-effects.shadow	Shadow
+docx.shape.text-effects.shadow.none	None
+docx.shape.text-effects.shadow.outer	Outer
+docx.shape.text-effects.shadow.inner	Inner
+docx.shape.text-effects.reflection	Reflection
+docx.shape.text-effects.glow	Glow
+docx.reference.insert-citation	Insert Citation
+docx.reference.bibliography	Bibliography
+docx.reference.bibliography.update	Update Bibliography
+docx.reference.citation.inserted	Inserted citation "{tag}".
+docx.reference.bibliography.inserted	Inserted bibliography ({count} entries).
+docx.reference.bibliography.updated	Updated bibliography ({count} entries).
+docx.reference.bibliography.heading	Bibliography
+docx.reference.bibliography.no-citations	No sources in the current document.
+docx.reference.citation.default-tag	Source
+docx.quick-parts	Quick Parts
+docx.quick-parts.panel	Quick Parts Panel...
+docx.quick-parts.autotext	AutoText
+docx.quick-parts.prop	Document Property
+docx.quick-parts.prop.title	Title
+docx.quick-parts.prop.author	Author
+docx.quick-parts.prop.subject	Subject
+docx.quick-parts.prop.company	Company
+docx.quick-parts.prop.comments	Comments
+docx.quick-parts.prop.createdate	Create Date
+docx.quick-parts.prop.savedate	Save Date
+docx.quick-parts.prop.page	Page Number
+docx.quick-parts.prop.numpages	Total Pages
+docx.quick-parts.prop.filename	File Name
+docx.quick-parts.field	Field...
+docx.quick-parts.organizer	Building Blocks Organizer...
+docx.quick-parts.author	Author
+docx.quick-parts.title	Title
+docx.quick-parts.subject	Subject
+docx.quick-parts.createdate	Creation Date
+docx.quick-parts.filename	File Name
+docx.quick-parts.numpages	Number of Pages
+docx.quick-parts.save-selection	Save Selection to Quick Part Gallery...
+docx.quick-parts.building-blocks	Building Blocks & AutoText
+docx.quick-parts.name	Name
+docx.quick-parts.gallery	Gallery
+docx.quick-parts.category	Category
+docx.quick-parts.description	Description
+docx.quick-parts.content	Content
+docx.quick-parts.scope	Save In
+docx.quick-parts.options	Options
+docx.quick-parts.save	Save
+docx.quick-parts.cancel	Cancel
+docx.quick-parts.insert	Insert
+docx.quick-parts.delete	Delete
+docx.quick-parts.filter-placeholder	Search building blocks...
+docx.quick-parts.no-blocks	No building blocks registered
+docx.math.panel	Equation Panel...
+docx.math.builtin	Built-in Equations
+docx.math.builtin.quadratic	Quadratic Formula
+docx.math.builtin.binomial	Binomial Theorem
+docx.math.builtin.circle-area	Area of Circle
+docx.math.builtin.pythagorean	Pythagorean Theorem
+docx.math.builtin.fourier	Fourier Series
+docx.math.builtin.taylor	Taylor Expansion
+docx.math.structures	Structures
+docx.math.convert	Conversions
+docx.math.struct.fraction	Fraction
+docx.math.struct.script	Script
+docx.math.struct.radical	Radical
+docx.math.struct.integral	Integral
+docx.math.struct.large-op	Large Operator
+docx.math.struct.brackets	Bracket
+docx.math.struct.function	Function
+docx.math.struct.accent	Accent
+docx.math.struct.limit	Limit
+docx.math.struct.matrix	Matrix
+docx.math.convert.professional	Professional (2D)
+docx.math.convert.linear	Linear (1D)
+docx.math.convert.display	Display
+docx.math.convert.inline	Inline
+docx.math.mode.unicodemath	UnicodeMath
+docx.math.mode.latex	LaTeX
+docx.math.mode.display	Display
+docx.math.insert	Insert Math
+docx.math.error.empty	Please enter a math expression.
+docx.math.error.invalid	Invalid math expression.
+docx.math.title	Equation
+docx.math.hint	Enter equation (UnicodeMath or LaTeX)
+docx.math.format-label	Input Format
+docx.math.layout-label	Layout
+docx.quick-parts.doc-property	Document Properties
+docx.quick-parts.custom-field	Custom Field Code
+docx.math.inline	Inline
+docx.math.display	Display
+docx.insert.icon	Icons…
+docx.insert.smartart	SmartArt
+docx.insert.wordart	WordArt
+docx.insert.wordart-styles	WordArt Styles
+docx.signature-line	Signature Line…
+docx.wordart.style1	Style 1
+docx.wordart.style2	Style 2
+docx.wordart.style3	Style 3
+docx.wordart.style4	Style 4
+docx.wordart.style5	Style 5
+docx.wordart.style6	Style 6
+_docx.smartart-step-1	Step 1
+_docx.smartart-step-2	Step 2
+_docx.smartart-step-3	Step 3
+_docx.smartart-item-1	Item 1
+_docx.smartart-item-2	Item 2
+_docx.smartart-item-3	Item 3
+_docx.smartart-phase-1	Phase 1
+_docx.smartart-phase-2	Phase 2
+_docx.smartart-phase-3	Phase 3
+_docx.smartart-leader	Leader
+_docx.smartart-manager	Manager
+_docx.smartart-member	Member
+_docx.smartart-elem-a	Element A
+_docx.smartart-elem-b	Element B
+_docx.smartart-quad-1	Quadrant 1
+_docx.smartart-quad-2	Quadrant 2
+_docx.smartart-quad-3	Quadrant 3
+_docx.smartart-quad-4	Quadrant 4
+_docx.smartart-top	Top
+_docx.smartart-middle	Middle
+_docx.smartart-base	Base
+docx.insert.icon-categories	Icons by Category…
+docx.insert.smartart-presets	SmartArt Types
+docx.quick-parts-menu	Quick Parts Menu
+docx.inspect-document	Inspect Document…
+docx.inspect-panel.title	Document Inspector
+docx.inspect-panel.inspect-hint	Inspect the document for personal information and hidden content, and remove it.
+docx.inspect-panel.document-properties	Document Properties and Personal Information
+docx.inspect-panel.removed-properties	Document properties and personal information were removed
+docx.inspect-panel.no-properties	No document properties or personal information were found
+docx.inspect-panel.comments	Comments
+docx.inspect-panel.removed-comments	All comments were removed
+docx.inspect-panel.no-comments	No comments were found
+docx.inspect-panel.revisions	Revisions and Tracked Changes
+docx.inspect-panel.removed-revisions	All revisions were accepted
+docx.inspect-panel.no-revisions	No revisions were found
+docx.inspect-panel.headers-footers	Headers and Footers
+docx.inspect-panel.removed-headers-footers	All headers and footers were removed
+docx.inspect-panel.no-headers-footers	No headers or footers were found
+docx.inspect-panel.hidden-text	Hidden Text
+docx.inspect-panel.removed-hidden-text	All hidden text was removed
+docx.inspect-panel.no-hidden-text	No hidden text was found
+docx.inspect.remove-all	Remove All
+docx.inspect-panel.reinspect	Reinspect
+docx.inspect-panel.reinspection-complete	Reinspection complete
+docx.compatibility-check	Check Compatibility…
+docx.compat.title	Compatibility Checker
+docx.compat.summary-hint	Check for features that may be lost or degraded in earlier versions of Word
+docx.compat.recheck	Recheck
+docx.compat.no-issues	No compatibility issues found
+docx.compat.clean-desc	This document is fully compatible with earlier versions of Word.
+docx.compat.significant-loss	Significant loss of functionality
+docx.compat.minor-loss	Minor loss of fidelity
+docx.compat.jump	Go to
+docx.compat.math-title	Equations (OMML)
+docx.compat.math-desc	Equations will be converted to images and cannot be edited in Word versions prior to Office 2007.
+docx.compat.smartart-title	SmartArt Graphics
+docx.compat.smartart-desc	SmartArt graphics will be converted into a single drawing object and can no longer be edited.
+docx.compat.content-control-title	Content Controls
+docx.compat.content-control-desc	Content controls will be converted to standard text, and their properties and protection will be lost.
+docx.compat.text-effects-title	Advanced Font Effects and OpenType Features
+docx.compat.text-effects-desc	OpenType features and font effects are not supported in earlier versions and will be displayed as standard text.
+docx.compat.shape-effects-title	Advanced Shape Effects
+docx.compat.shape-effects-desc	Shape reflection, soft edges, and 3D effects will be simplified or removed in earlier versions.
+_docx.title-value	Title: {value}
+_docx.author-value	Author: {value}
+_docx.subject-value	Subject: {value}
+_docx.keywords-value	Keywords: {value}
+_docx.comments-value	Comments: {value}
+_docx.category-value	Category: {value}
+_docx.manager-value	Manager: {value}
+_docx.company-value	Company: {value}
+_docx.last-modified-by-value	Last Modified By: {value}
+_docx.custom-properties-count	Custom Properties ({count})
+_docx.found-details	Found: {details}
+_docx.count-comments-found	{count} comments found
+_docx.count-revisions-found	{count} tracked changes found
+_docx.count-headers-footers-found	{count} headers and footers found
+_docx.count-hidden-text-found	{count} hidden text runs found
+_docx.items	items
+_docx.para-item	Paragraph {para}
+docx.print-settings	Print Settings…
+docx.print-panel.title	Print Settings
+docx.print-panel.section.range	Print Range
+docx.print-panel.range.all	Print All Pages
+docx.print-panel.range.current	Print Current Page
+docx.print-panel.range.selection	Print Selection
+docx.print-panel.range.custom	Custom Range
+docx.print-panel.custom-placeholder	e.g. 1-3, 5, s2, p1s2-p3s2
+docx.print-panel.custom-hint	Enter page numbers and/or section numbers (e.g. 1-3, 5, s2, p1s2-p3s2)
+docx.print-panel.section.subset	Page Selection
+docx.print-panel.subset.all	All pages in range
+docx.print-panel.subset.odd	Only print odd pages
+docx.print-panel.subset.even	Only print even pages
+docx.print-panel.section.copies-duplex	Copies & Duplex
+docx.print-panel.copies	Copies
+docx.print-panel.collate	Collate (1,2,3  1,2,3)
+docx.print-panel.duplex.one-sided	Print One Sided
+docx.print-panel.duplex.both-long	Print on Both Sides (Long edge)
+docx.print-panel.duplex.both-short	Print on Both Sides (Short edge)
+docx.print-panel.duplex.manual	Manually Print on Both Sides
+docx.print-panel.section.nup	Pages per Sheet
+docx.print-panel.nup.1	1 page per sheet
+docx.print-panel.nup.2	2 pages per sheet
+docx.print-panel.nup.4	4 pages per sheet
+docx.print-panel.nup.6	6 pages per sheet
+docx.print-panel.nup.8	8 pages per sheet
+docx.print-panel.nup.16	16 pages per sheet
+docx.print-panel.page-border	Draw page borders
+docx.print-panel.section.options	Print Options
+docx.print-panel.summary	{pages} of {total} pages ({copies} copies)
+docx.print-panel.print	Print…
+docx.print-panel.no-pages-selected	No pages selected for printing.
+docx.print-panel.invalid-range-token	Invalid page specification: '{token}'
+docx.print-panel.section-not-found	Specified section not found: '{section}'
+docx.print-panel.page-in-section-not-found	Page {page} not found in section {section}
+docx.print-panel.page-out-of-range	Specified page {page} is out of range ({total} pages total)
+docx.reference.source-manager	Source Manager…
+docx.source-manager.title	Source Manager
+docx.source-manager.master-list	Master List
+docx.source-manager.current-list	Current List
+docx.source-manager.copy-to-current	Copy to Document
+docx.source-manager.copy-to-master	Copy to Master
+docx.source-manager.new	New…
+docx.source-manager.edit	Edit…
+docx.source-manager.delete	Delete
+docx.source-manager.insert-citation	Insert Citation
+docx.source-manager.preview-title	Preview
+docx.source-manager.citation-preview	Citation:
+docx.source-manager.bib-preview	Bibliography:
+docx.source-manager.form.new-title	Create Source
+docx.source-manager.form.edit-title	Edit Source
+docx.source-manager.form.tag	Tag Name:
+docx.source-manager.form.type	Type of Source:
+docx.source-manager.form.author	Author:
+docx.source-manager.form.title	Title:
+docx.source-manager.form.year	Year:
+docx.source-manager.form.publisher	Publisher:
+docx.source-manager.form.city	City:
+docx.source-manager.form.url	URL:
+docx.source-manager.form.save	Save
+docx.source-manager.filter-placeholder	Search (tag, author, title)…
+docx.reference.source.type.book	Book
+docx.reference.source.type.book-section	Book Section
+docx.reference.source.type.journal-article	Journal Article
+docx.reference.source.type.report	Report
+docx.reference.source.type.website	Website
+docx.reference.source.type.proceedings	Conference Proceedings
+docx.reference.source.type.misc	Miscellaneous
+docx.comments.alert-no-selection.title	Information
+docx.comments.alert-no-selection.message	No text is selected. Please select a word or sentence before adding a comment.
+docx.comments.alert-no-selection.ok	OK
+docx.comments.delete-confirm.title	Confirm
+docx.comments.delete-confirm.message	Are you sure you want to delete this comment?\n(The entire thread will be deleted)
+docx.comments.delete-confirm.delete	Delete
+docx.comments.delete-confirm.cancel	Cancel
+docx.comments.post	Post
+docx.review.spelling-grammar	Spelling & Grammar…
+docx.review.thesaurus	Thesaurus…
+docx.thesaurus.title	Thesaurus
+docx.thesaurus.search-placeholder	Enter a word to search…
+docx.thesaurus.search-btn	Search
+docx.thesaurus.insert	Insert
+docx.thesaurus.insert-tooltip	Replace the selected text with this synonym
+docx.thesaurus.copy-tooltip	Copy to clipboard
+docx.thesaurus.lookup-tooltip	Look up synonyms for this word
+docx.thesaurus.no-results	No synonyms found for "{word}".
+docx.thesaurus.hint	Try searching with another word or base form.
+docx.thesaurus.empty-prompt	Select a word in the document or type a word above to search.
+docx.thesaurus.no-selection-error	No text or word is selected to replace.
+docx.thesaurus.replaced-msg	Replaced with "{word}".
+docx.thesaurus.copied-msg	Copied "{word}" to clipboard.
+docx.view.immersive-reader	Immersive Reader
+docx.immersive.title	Immersive Reader
+docx.immersive.close	✕ Close Immersive Reader
+docx.immersive.column-width	Column Width
+docx.immersive.width.very-narrow	Very Narrow
+docx.immersive.width.narrow	Narrow
+docx.immersive.width.moderate	Moderate
+docx.immersive.width.wide	Wide
+docx.immersive.page-color	Page Color
+docx.immersive.color.none	None
+docx.immersive.color.sepia	Sepia
+docx.immersive.color.inverse	Inverse
+docx.immersive.color.soft-yellow	Soft Yellow
+docx.immersive.color.soft-blue	Soft Blue
+docx.immersive.text-spacing	Text Spacing
+docx.immersive.syllables	Syllables
+docx.immersive.syllables-active	Syllables Active
+docx.immersive.line-focus	Line Focus
+docx.immersive.focus.off	None
+docx.immersive.focus.one-line	1 Line
+docx.immersive.focus.three-lines	3 Lines
+docx.immersive.focus.five-lines	5 Lines
+docx.immersive.focus.up	Previous Line
+docx.immersive.focus.down	Next Line
+docx.view.mini-toolbar	Mini Toolbar
+docx.mini.grow-font	Increase Font Size
+docx.mini.shrink-font	Decrease Font Size
+docx.mini.bold	Bold
+docx.mini.italic	Italic
+docx.mini.underline	Underline
+docx.mini.strikethrough	Strikethrough
+docx.mini.highlight	Text Highlight Color
+docx.mini.font-color	Font Color
+docx.mini.bullet	Bullets
+docx.mini.numbered	Numbering
+docx.mini.format-painter	Format Painter
+docx.view.screentips	ScreenTips
+docx.view.screentips.show-descriptions	Show feature descriptions in ScreenTips
+docx.view.screentips.dont-show-descriptions	Don't show feature descriptions in ScreenTips
+docx.view.screentips.dont-show	Don't show ScreenTips
+docx.tip.desc.bold	Make your text bold.
+docx.tip.desc.italic	Italicize your text.
+docx.tip.desc.underline	Underline your text.
+docx.tip.desc.strikethrough	Cross something out by drawing a line through it.
+docx.tip.desc.highlight	Make your text pop by highlighting it in a bright color.
+docx.tip.desc.font-color	Change the color of your text.
+docx.edit.drag-select	Drag & Selection Options
+docx.edit.drag-drop	Allow Drag-and-Drop Text Editing
+docx.edit.select-word	When Selecting, Automatically Select Entire Word
+docx.file.repair	Open and Repair Document…
+docx.repair.title	Repair Document
+docx.repair.desc	Automatically repairs XML syntax, missing parts, and document structures of damaged Word documents (.docx).
+docx.repair.file-label	Document to Repair:
+docx.repair.browse-btn	Browse…
+docx.repair.prompt-file	Select Damaged Word Document
+docx.repair.mode-label	Repair Mode:
+docx.repair.mode-repair	Open and Repair (Standard)
+docx.repair.mode-repair-desc	Fixes XML tag balance and reconstructs missing parts while preserving formatting.
+docx.repair.mode-recover-text	Recover Text from Any File
+docx.repair.mode-recover-text-desc	Extracts and recovers all available text runs and paragraphs from any damaged file.
+docx.repair.execute-btn	Repair and Open
+docx.repair.success-msg	Document repaired and opened successfully.
+docx.repair.error-no-file	Please specify a file to repair.
+docx.repair.error-not-found	The specified file was not found.
+docx.repair.error-read	Failed to read file
+docx.repair.error-failed	Repair failed
+docx.repair.close-btn	Close
+docx.repair.show-report-btn	Show Repair Report
+docx.repair.banner-default	Damaged document was repaired and opened.
+docx.repair.banner-tag	Repaired
+docx.repair.banner-advice	Please verify contents and save with a new file name.
+docx.repair.banner-close	Dismiss
+docx.template.attach	Templates and Add-ins…
+docx.template.title	Templates and Add-ins
+docx.template.desc	Attach a document template to automatically update styles.
+docx.template.current_status	Current Template:
+docx.template.attached_file	Attached
+docx.template.normal_template	Normal template (default)
+docx.template.path_label	Template Path (.dotx, .dotm, .docx):
+docx.template.path_placeholder	Enter file path
+docx.template.apply	Attach
+docx.template.detach	Detach
+docx.template.link_styles	Automatically update document styles
+docx.template.link_styles_desc	Update document styles from template upon opening (w:linkStyles)
+docx.template.update_now	Update Styles Now
+docx.template.update_now_desc	Immediately import latest styles from the specified template file
+docx.template.attached	Template attached successfully
+docx.template.detached	Template detached successfully
+docx.template.updated	Styles updated successfully
+docx.template.no_path	Please specify a template file path
+docx.template.close	Close
+docx.list.define-style	Define New List Style…
+docx.list.define-style.title	Define New List Style
+docx.list.define-style.name	Name:
+docx.list.define-style.name-placeholder	List style name
+docx.list.define-style.level	Level to modify:
+docx.list.define-style.format	Number style for this level:
+docx.list.define-style.prefix	Prefix:
+docx.list.define-style.suffix-text	Suffix:
+docx.list.define-style.start-at	Start at:
+docx.list.define-style.align	Alignment:
+docx.list.define-style.follow-number	Follow number with:
+docx.list.define-style.indent-left	Left indent (pt):
+docx.list.define-style.indent-hanging	Hanging indent (pt):
+docx.list.define-style.ok	OK
+docx.list.define-style.cancel	Cancel
+docx.list.styles	List Styles
+docx.list.styles.empty	(No list styles)
+docx.align.left	Left
+docx.align.center	Center
+docx.align.right	Right
+docx.file.convert	Convert Compatibility Mode
+docx.file.convert.done	Converted document to the latest format (Word 2013-2024)
+docx.infobar.compat.title	[Compatibility Mode]
+docx.infobar.compat.message	This document is in Compatibility Mode. Convert to the current format to use all new features.
+docx.infobar.compat.convert	Convert to Latest Format
+docx.compat.current-mode	Current Document Format
+docx.design.themes	Themes
+docx.design.themes.office	Office
+docx.design.themes.office_2013_2022	Office 2013 - 2022
+docx.design.themes.office_2007_2010	Office 2007 - 2010
+docx.design.themes.facet	Facet
+docx.design.themes.gallery	Gallery
+docx.design.themes.integral	Integral
+docx.design.themes.ion	Ion
+docx.design.themes.organic	Organic
+docx.design.themes.retrospect	Retrospect
+docx.design.themes.slice	Slice
+docx.design.themes.customize	Edit Theme Colors and Fonts…
+docx.design.themes.applied	Applied "{name}" theme
+docx.design.theme-colors	Colors
+docx.design.theme-colors.office	Office
+docx.design.theme-colors.office_2007_2010	Office 2007 - 2010
+docx.design.theme-colors.grayscale	Grayscale
+docx.design.theme-colors.blue_warm	Blue Warm
+docx.design.theme-colors.blue	Blue
+docx.design.theme-colors.blue_green	Blue Green
+docx.design.theme-colors.green	Green
+docx.design.theme-colors.orange	Orange
+docx.design.theme-colors.red_orange	Red Orange
+docx.design.theme-colors.violet	Violet
+docx.design.theme-colors.aspect	Aspect
+docx.design.theme-colors.median	Median
+docx.design.theme-colors.customize	Customize Colors…
+docx.design.theme-colors.applied	Applied "{name}" theme colors
+docx.design.theme-colors.custom-applied	Applied custom theme colors and fonts
+docx.picture.edit-wrap-points	Edit Wrap Points
+docx.picture.wrap-points.rect	Rectangle
+docx.picture.wrap-points.diamond	Diamond
+docx.picture.wrap-points.octagon	Octagon
+docx.picture.wrap-points.inset	Inset
+docx.picture.wrap-points.reset	Reset Wrap Points
+docx.picture.wrap-points.add-vertex	Add Vertex
+docx.master-doc	Master Document
+docx.master-doc.panel	Master Document & Subdocuments…
+docx.master-doc.title	Master Document & Subdocuments
+docx.master-doc.target-label	Subdocument File Path (.docx):
+docx.master-doc.insert	Insert Subdocument
+docx.master-doc.create-from-heading	Create Subdocument from Heading
+docx.master-doc.toggle-expand	Expand / Collapse Subdocuments
+docx.master-doc.lock	Lock Subdocument
+docx.master-doc.unlink	Unlink Subdocument (Merge into Master)
+docx.master-doc.merge	Merge Adjacent Subdocuments
+docx.master-doc.split	Split Subdocument
+docx.master-doc.empty	(No subdocuments)
+docx.master-doc.collapsed-tag	[Collapsed]
+docx.ink	Draw (Ink)
+docx.ink.panel	Ink Annotation & Drawing Tools…
+docx.ink.title	Draw (Ink)
+docx.ink.tools	Drawing Tools
+docx.ink.pen	Pen
+docx.ink.pencil	Pencil
+docx.ink.highlighter	Highlighter
+docx.ink.eraser	Eraser
+docx.ink.lasso	Lasso Select
+docx.ink.draw-with-mouse	Draw with Touch / Mouse
+docx.ink.ink-to-shape	Ink to Shape (Auto)
+docx.ink.convert-now	Convert Selected Ink to Shape
+docx.ink.ink-editor	Ink Editor (Gestures)
+docx.ink.thickness	Thickness
+docx.ink.color	Pen Color
+docx.ink.effects	Ink Effects
+docx.ink.effect.none	Solid
+docx.ink.effect.rainbow	Rainbow
+docx.ink.effect.galaxy	Galaxy
+docx.ink.effect.lava	Lava
+docx.ink.effect.ocean	Ocean
+docx.ink.effect.rosegold	Rose Gold
+docx.ink.effect.gold	Gold
+docx.ink.effect.silver	Silver
+docx.ink.effect.bronze	Bronze
+docx.ink.actions	Selected Ink Actions
+docx.ink.select-all	Select All Ink
+docx.ink.erase-selected	Erase Selected Ink
+docx.ink.erase-all	Erase All Ink
+docx.ink.scale-up	Scale Up (125%)
+docx.ink.scale-down	Scale Down (80%)
+docx.ink.status.drawn	Added ink stroke
+docx.ink.status.converted-shape	Converted ink to shape
+docx.ink.status.erased	Erased ink
+docx.ink.status.selected-count	Selected {count} ink stroke(s)
+docx.ink.status.gesture-delete	Gesture: Deleted text via strikethrough
+docx.ink.status.gesture-select	Gesture: Selected text via circle
+docx.ink.status.gesture-highlight	Gesture: Highlighted text
+docx.ink.status.gesture-space	Gesture: Inserted space
+docx.file.convert-format	Convert & Export Document Format…
+docx.convert.title	Convert Document Format
+docx.convert.desc	Export to Word 97-2003 (.doc), RTF, Plain Text, HTML, or OpenDocument (.odt), or import from those formats and PDF.
+docx.convert.format.doc	Word 97-2003 Document (.doc)
+docx.convert.format.rtf	Rich Text Format (.rtf)
+docx.convert.format.txt	Plain Text (.txt)
+docx.convert.format.html	Web Page (.html)
+docx.convert.format.odt	OpenDocument Text (.odt)
+docx.convert.export-title	Export to Another Format
+docx.convert.export-path	Output file path:
+docx.convert.export-btn	Export
+docx.convert.import-title	Import & Convert from External Format or PDF
+docx.convert.import-desc	Source file path (.doc / .rtf / .txt / .html / .odt / .pdf):
+docx.convert.import-btn	Convert & Open
+docx.convert.exported	Exported document
+docx.convert.imported	Imported and converted document
+docx.convert.error-no-path	Please enter a file path
+docx.convert.close	Close
+docx.screen-reader	Screen Reader Navigation…
+docx.screen-reader.title	Screen Reader Navigation
+docx.screen-reader.current	Current Caret Announcement
+docx.screen-reader.prev	Previous Landmark
+docx.screen-reader.next	Next Landmark
+docx.screen-reader.filter.all	All
+docx.screen-reader.filter.headings	Headings
+docx.screen-reader.filter.tables	Tables
+docx.screen-reader.filter.graphics	Graphics
+docx.screen-reader.filter.links	Links
+docx.screen-reader.filter.lists	Lists
+docx.screen-reader.filter.comments	Comments
+docx.screen-reader.filter.footnotes	Footnotes
+docx.screen-reader.filter.fields	Fields
+docx.read-aloud	Read Aloud…
+docx.read-aloud.title	Read Aloud
+docx.read-aloud.speaking	Currently Speaking Paragraph
+docx.read-aloud.prev	Previous
+docx.read-aloud.next	Next
+docx.read-aloud.play	Play
+docx.read-aloud.pause	Pause
+docx.read-aloud.speed	Reading Speed
+docx.read-aloud.voice	Voice Selection
+docx.read-aloud.voice.default	System Default Voice
+docx.read-aloud.voice.kyoko	Kyoko (Japanese, Female)
+docx.read-aloud.voice.otoya	Otoya (Japanese, Male)
+docx.read-aloud.voice.samantha	Samantha (English, Female)
+docx.read-aloud.voice.alex	Alex (English, Male)
+docx.customize-toolbar	Customize Ribbon & Quick Access…
+docx.customize.title	Customize Ribbon & Quick Access
+docx.customize.ribbon-groups	Toolbar (Ribbon) Groups
+docx.customize.qat-commands	Quick Access Toolbar Commands
+docx.customize.reset	Reset All Customizations
+docx.customize.group.styles	Styles
+docx.customize.group.font	Font & Formatting
+docx.customize.group.color	Font Color & Highlight
+docx.customize.group.insert	Insert (Link, Picture, Equation)
+docx.customize.group.paragraph	Paragraph, Lists & Indent
+docx.customize.group.review	Editing & Review Mode
+docx.quick-parts.gallery.quick-parts	Quick Parts
+docx.quick-parts.gallery.auto-text	AutoText
+docx.quick-parts.gallery.custom	Custom
+docx.quick-parts.option.content-only	Insert content only
+docx.quick-parts.option.paragraph	Insert content in its own paragraph
+docx.quick-parts.option.page	Insert content in its own page
+docx.quick-parts.scope.global	All documents
+docx.quick-parts.scope.document	This document
+docx.quick-parts.default-category	General
+docx.quick-parts.default-name	New Building Block
+docx.quick-parts.name-required	Enter a name.
+docx.quick-parts.registered	Building block "{name}" was saved.
+docx.quick-parts.inserted	Building block "{name}" was inserted.
+docx.quick-parts.deleted	Building block "{name}" was deleted.
+docx.quick-parts.save-title	Create New Building Block
+docx.quick-parts.field.page	PAGE (page number)
+docx.quick-parts.field.numpages	NUMPAGES (total pages)
+docx.quick-parts.field.filename	FILENAME (file name)
+docx.quick-parts.field.autotext	AUTOTEXT (AutoText)
+docx.quick-parts.field.date	DATE (today's date)
+docx.quick-parts.field.time	TIME (current time)
+docx.source-manager.added-current	"{tag}" was added to the current document.
+docx.source-manager.saved-master	"{tag}" was saved to the master list.
+docx.source-manager.deleted-master	"{tag}" was deleted from the master list.
+docx.source-manager.deleted-current	"{tag}" was deleted from the current document.
+docx.source-manager.tag-placeholder	Tag (e.g. Smith2024)
+docx.source-manager.author-placeholder	Author (e.g. John Smith)
+docx.source-manager.title-placeholder	Title
+docx.source-manager.year-placeholder	Year (e.g. 2024)
+docx.source-manager.publisher-placeholder	Publisher
+docx.source-manager.city-placeholder	City (e.g. Tokyo)
+docx.source-manager.tag-required	Enter a tag name.
+docx.source-manager.saved-master2	"{tag}" was saved to the master list.
+docx.source-manager.saved-current	"{tag}" was saved to the current document.
+docx.source-manager.citation-inserted	Citation "{tag}" was inserted.
+docx.list-style.default-name	Custom List
+docx.print-panel.range.no-selection	no selection
+docx.print-panel.pages-of-total	of {total} pages
+docx.template.parse-error	Parse error: {error}
+docx.template.no-word-data	The template has no Word document data.
+docx.template.no-document	No document is open.
+docx.template.updated-count	{title} ({n})

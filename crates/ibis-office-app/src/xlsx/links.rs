@@ -8,7 +8,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{Sizable as _, v_flex};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, Hyperlink, Rgb, SheetCommand, StyleChange};
 
@@ -20,6 +20,8 @@ const LINK_COLOR: u32 = 0x0563C1;
 
 pub(crate) struct LinkPanel {
     pub(crate) address: Entity<InputState>,
+    pub(crate) display_text: Entity<InputState>,
+    pub(crate) tooltip: Entity<InputState>,
 }
 
 impl SlideEditor {
@@ -32,40 +34,55 @@ impl SlideEditor {
 
     pub(crate) fn open_link_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let address = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_xlsx.https-or-sheet1-a1")));
+        let display_text = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("xlsx.link-display-text")));
+        let tooltip = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("xlsx.link-tooltip")));
+        if let Some((col, row)) = self.current_cell()
+            && let Some((_, sheet)) = self.current_sheet()
+            && let Some(cell) = sheet.cell(row, col)
+            && !cell.text.is_empty()
+        {
+            let cur_text = cell.text.clone();
+            display_text.update(cx, |d, cx| d.set_value(cur_text, window, cx));
+        }
         if let Some(link) = self.current_link() {
             let text = link.target.clone().unwrap_or_else(|| format!("#{}", link.location.clone().unwrap_or_default()));
             address.update(cx, |a, cx| a.set_value(text, window, cx));
+            if let Some(tip) = link.tooltip.clone() {
+                tooltip.update(cx, |t, cx| t.set_value(tip, window, cx));
+            }
         }
         address.update(cx, |a, cx| a.focus(window, cx));
         if let Some(s) = self.sheet_state_mut() {
             s.names = None;
             s.validation = None;
             s.find = None;
-            s.link = Some(LinkPanel { address });
-        }
-        if let Some(s) = self.sheet_state_mut() {
+            s.link = Some(LinkPanel { address, display_text, tooltip });
             s.page_setup = false;
-        }
-        if let Some(s) = self.sheet_state_mut() {
             s.custom_format = None;
         }
         self.sidebar_open = true;
         cx.notify();
     }
 
-    /// Link the selected cells to `address` (`#…` a place in the workbook):
-    /// one step with the link's style, and the address as the text of an
-    /// empty cell.
-    pub(crate) fn insert_cell_link(&mut self, address: &str, cx: &mut Context<Self>) {
+    /// Link the selected cells to `address` (`#…` a place in the workbook),
+    /// optionally setting display text and ScreenTip (`tooltip`), in one undo step.
+    pub(crate) fn insert_cell_link_full(
+        &mut self,
+        address: &str,
+        display_text: Option<&str>,
+        tooltip: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
         self.commit_cell_edit(cx);
         let address = address.trim();
         let Some(range) = self.selected_range() else { return };
         if address.is_empty() {
             return;
         }
+        let tip = tooltip.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
         let link = match address.strip_prefix('#') {
-            Some(place) => Hyperlink { range, target: None, location: Some(place.to_string()), tooltip: None },
-            None => Hyperlink { range, target: Some(address.to_string()), location: None, tooltip: None },
+            Some(place) => Hyperlink { range, target: None, location: Some(place.to_string()), tooltip: tip },
+            None => Hyperlink { range, target: Some(address.to_string()), location: None, tooltip: tip },
         };
         let slide = self.current_slide;
         let mut commands = vec![
@@ -73,14 +90,40 @@ impl SlideEditor {
             Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::Color(Rgb(LINK_COLOR)) }),
             Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::Underline(true) }),
         ];
-        if self.current_sheet().is_some_and(|(_, s)| s.cell(range.first_row, range.first_column).is_none_or(|c| c.value.is_empty() && c.formula.is_none())) {
-            let edits = vec![CellEdit { row: range.first_row, column: range.first_column, input: CellInput::Value(CellValue::Text(address.trim_start_matches('#').to_string())) }];
+        if let Some(disp) = display_text.map(str::trim).filter(|s| !s.is_empty()) {
+            if self.current_sheet().is_some_and(|(_, s)| {
+                s.cell(range.first_row, range.first_column)
+                    .is_none_or(|c| c.formula.is_none() && c.text != disp)
+            }) {
+                let edits = vec![CellEdit {
+                    row: range.first_row,
+                    column: range.first_column,
+                    input: CellInput::Value(CellValue::Text(disp.to_string())),
+                }];
+                commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
+            }
+        } else if self.current_sheet().is_some_and(|(_, s)| {
+            s.cell(range.first_row, range.first_column)
+                .is_none_or(|c| c.value.is_empty() && c.formula.is_none())
+        }) {
+            let edits = vec![CellEdit {
+                row: range.first_row,
+                column: range.first_column,
+                input: CellInput::Value(CellValue::Text(address.trim_start_matches('#').to_string())),
+            }];
             commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
         }
         if let Err(err) = self.document.execute(commands) {
             log::warn!("link rejected: {err}");
         }
         cx.notify();
+    }
+
+    /// Link the selected cells to `address` (`#…` a place in the workbook):
+    /// one step with the link's style, and the address as the text of an
+    /// empty cell.
+    pub(crate) fn insert_cell_link(&mut self, address: &str, cx: &mut Context<Self>) {
+        self.insert_cell_link_full(address, None, None, cx);
     }
 
     /// Take the links off the selected cells (Excel leaves the text and its format).
@@ -114,20 +157,85 @@ impl SlideEditor {
     }
 
     pub(crate) fn cell_link_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let address = self.sheet_state()?.link.as_ref()?.address.clone();
-        let a2 = address.clone();
-        let current: SharedString = self.current_link().map_or(crate::shell::i18n::text("_xlsx.no-link").into(), |l| l.target.unwrap_or_else(|| format!("#{}", l.location.unwrap_or_default())).into());
-        let body = v_flex()
+        let panel = self.sheet_state()?.link.as_ref()?;
+        let (address, display_text, tooltip) = (panel.address.clone(), panel.display_text.clone(), panel.tooltip.clone());
+        let (a2, d2, t2) = (address.clone(), display_text.clone(), tooltip.clone());
+        let current: SharedString = self.current_link().map_or(
+            crate::shell::i18n::text("_xlsx.no-link").into(),
+            |l| {
+                let target = l.target.unwrap_or_else(|| format!("#{}", l.location.unwrap_or_default()));
+                match l.tooltip {
+                    Some(tip) if !tip.is_empty() => format!("{target} ({tip})").into(),
+                    _ => target.into(),
+                }
+            },
+        );
+
+        let mut places: Vec<(String, String)> = Vec::new();
+        if let Some(w) = self.presentation().workbook.as_ref() {
+            for s in w.sheets.iter().filter(|s| s.slide.is_some()) {
+                let ref_str = format!("#{}!A1", ibis_calc::formula::quote_sheet(&s.name));
+                places.push((s.name.clone(), ref_str));
+            }
+            for n in w.names.iter().filter(|n| !n.hidden && !n.name.starts_with("_xlnm.")).take(6) {
+                places.push((n.name.clone(), format!("#{}", n.name)));
+            }
+        }
+
+        let mut body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
             .child(div().text_size(px(12.)).child(current))
             .child(Input::new(&address).small())
-            .child(Button::new("link-insert").primary().small().label(crate::shell::i18n::text("_shell.insert-link")).on_click(cx.listener(move |this, _, _, cx| {
-                let text = a2.read(cx).value().to_string();
-                this.insert_cell_link(&text, cx);
-            })))
-            .child(Button::new("link-remove").small().ghost().label(crate::shell::i18n::text("_shell.remove-link")).on_click(cx.listener(|this, _, _, cx| this.remove_cell_link(cx))));
+            .child(div().text_size(px(11.)).text_color(rgb(0x666666)).child(crate::shell::i18n::text("xlsx.link-display-text")))
+            .child(Input::new(&display_text).small())
+            .child(div().text_size(px(11.)).text_color(rgb(0x666666)).child(crate::shell::i18n::text("xlsx.link-tooltip")))
+            .child(Input::new(&tooltip).small());
+
+        if !places.is_empty() {
+            let mut place_row = h_flex().gap_1().flex_wrap();
+            for (idx, (label, target_ref)) in places.into_iter().enumerate() {
+                let a_target = address.clone();
+                place_row = place_row.child(
+                    Button::new(("link-place", idx))
+                        .small()
+                        .ghost()
+                        .label(label)
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            let val = target_ref.clone();
+                            a_target.update(cx, |a, cx| a.set_value(val, window, cx));
+                            cx.notify();
+                        })),
+                );
+            }
+            body = body
+                .child(div().text_size(px(11.)).text_color(rgb(0x666666)).child(crate::shell::i18n::text("xlsx.link-places-in-workbook")))
+                .child(place_row);
+        }
+
+        body = body
+            .child(
+                Button::new("link-insert")
+                    .primary()
+                    .small()
+                    .label(crate::shell::i18n::text("_shell.insert-link"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let text = a2.read(cx).value().to_string();
+                        let disp_str = d2.read(cx).value().to_string();
+                        let tip_str = t2.read(cx).value().to_string();
+                        let disp = (!disp_str.trim().is_empty()).then_some(disp_str.as_str());
+                        let tip = (!tip_str.trim().is_empty()).then_some(tip_str.as_str());
+                        this.insert_cell_link_full(&text, disp, tip, cx);
+                    })),
+            )
+            .child(
+                Button::new("link-remove")
+                    .small()
+                    .ghost()
+                    .label(crate::shell::i18n::text("_shell.remove-link"))
+                    .on_click(cx.listener(|this, _, _, cx| this.remove_cell_link(cx))),
+            );
         Some(SidebarPanel { title: crate::shell::i18n::text("insert.link").into(), body: body.into_any_element() })
     }
 }

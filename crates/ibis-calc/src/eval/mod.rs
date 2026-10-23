@@ -28,6 +28,19 @@ pub use convert::{number_to_text, parse_number_text};
 pub use step::*;
 
 /// A workbook as the calculation sees it.
+/// What `CELL` asks of a cell's format and its column.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CellInfo {
+    /// The number format code (`General`, `#,##0.00`).
+    pub number_format: String,
+    /// Whether the cell is locked (`protection/@locked`; the default).
+    pub locked: bool,
+    /// The horizontal alignment: `'` left (also General text), `"` right, `^` centre, `\` fill, or none.
+    pub prefix: Option<char>,
+    /// The width of the cell's column in characters.
+    pub column_width: f64,
+}
+
 /// A table, as a structured reference sees it: rows and columns are the
 /// book's (from 0).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -56,6 +69,17 @@ pub trait Book {
     /// `[Book.xlsx]Sheet1!`) has in this book, where its cached cells are read
     /// from; past `sheet_count`. `None`: not known.
     fn external_sheet(&self, _book: &str, _sheet: &str) -> Option<usize> {
+        None
+    }
+    /// The range of sheet indices for a 3D reference across an external workbook's sheets
+    /// (`[Book.xlsx]Sheet1:Sheet3!A1`).
+    fn external_sheets(&self, book: &str, first: &str, last: &str) -> Option<(usize, usize)> {
+        let f = self.external_sheet(book, first)?;
+        let l = self.external_sheet(book, last)?;
+        Some((f.min(l), f.max(l)))
+    }
+    /// The format of a cell and the width of its column, for `CELL`; `None` where the book does not know.
+    fn cell_info(&self, _sheet: usize, _row: u32, _column: u32) -> Option<CellInfo> {
         None
     }
     /// The value a cell holds now.
@@ -124,6 +148,19 @@ pub trait Book {
     }
     /// The phonetic guide (ふりがな, `rPh`) a cell holds, if any.
     fn phonetic(&self, _sheet: usize, _row: u32, _column: u32) -> Option<&str> {
+        None
+    }
+    /// Retrieve data from a pivot table on `sheet` covering `(row, column)`,
+    /// for GETPIVOTDATA. Returns `None` if the cell is not in a pivot table
+    /// or the requested field/item does not exist (resulting in `#REF!`).
+    fn pivot_data(
+        &self,
+        _sheet: usize,
+        _row: u32,
+        _column: u32,
+        _data_field: &str,
+        _fields: &[(&str, &str)],
+    ) -> Option<CellValue> {
         None
     }
 }
@@ -387,7 +424,8 @@ pub fn compare(a: &Value, b: &Value) -> std::cmp::Ordering {
         }
         match other {
             Value::Text(_) => Value::Text(String::new()),
-            Value::Bool(_) => Value::Bool(false),
+            // In Excel, empty cells compared against Booleans (or numbers/empty) behave as 0.0,
+            // NOT as false. Thus `A1=FALSE` is false (since 0 != FALSE), and `A1<FALSE` is true.
             _ => Value::Number(0.0),
         }
     };
@@ -430,6 +468,29 @@ pub fn evaluate_cell(book: &dyn Book, cells: &dyn Cells, sheet: usize, row: u32,
     ctx.cell_result(v)
 }
 
+/// The picture IMAGE(source, [alt_text], [sizing], [height], [width]) asks for: fetched and drawn in the cell by
+/// the application (the calculation does not reach the network).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImageSpec {
+    pub source: String,
+    pub alt_text: Option<String>,
+    /// 0 fit the cell keeping the proportions, 1 fill the cell, 2 the picture's own size, 3 the height and width given.
+    pub sizing: u8,
+    /// For sizing 3, in pixels.
+    pub height: u32,
+    pub width: u32,
+}
+
+/// The picture a formula's IMAGE asks for in the cell (`None`: it does not call IMAGE, or it is an error).
+pub fn evaluate_image(book: &dyn Book, cells: &dyn Cells, sheet: usize, row: u32, column: u32, expr: &Expr) -> Option<ImageSpec> {
+    let mut ctx = Ctx::new(book, cells, sheet, row, column);
+    let v = ctx.eval(expr);
+    if matches!(v, Value::Error(_)) {
+        return None;
+    }
+    ctx.image
+}
+
 /// The context of one formula's evaluation.
 pub struct Ctx<'a> {
     pub book: &'a dyn Book,
@@ -444,6 +505,8 @@ pub struct Ctx<'a> {
     /// result is not to be trusted (the recalculation then keeps the value
     /// Excel last calculated).
     pub unsupported: bool,
+    /// What IMAGE was asked to show (the last call), for the picture to be fetched and drawn in the cell.
+    pub image: Option<ImageSpec>,
     /// Whether evaluation is within an array argument context.
     pub in_array_context: bool,
     /// Whether this is the root operation of the cell's formula.
@@ -454,7 +517,7 @@ pub struct Ctx<'a> {
 
 impl<'a> Ctx<'a> {
     pub fn new(book: &'a dyn Book, cells: &'a dyn Cells, sheet: usize, row: u32, column: u32) -> Self {
-        Self { book, cells, sheet, row, column, locals: Vec::new(), unsupported: false, in_array_context: false, is_root: true, depth: 0 }
+        Self { book, cells, sheet, row, column, locals: Vec::new(), unsupported: false, image: None, in_array_context: false, is_root: true, depth: 0 }
     }
 
     pub fn date1904(&self) -> bool {
@@ -847,12 +910,16 @@ impl<'a> Ctx<'a> {
             None => Ok((self.sheet, self.sheet)),
             Some(s) if s.book.is_some() => {
                 let book = s.book.as_deref().unwrap_or("");
-                let first = self.book.external_sheet(book, &s.first).ok_or(CellError::Ref)?;
-                // A 3D reference across an external book's sheets is not read.
-                if s.last.as_ref().is_some_and(|l| !l.eq_ignore_ascii_case(&s.first)) {
-                    return Err(CellError::Ref);
-                }
-                Ok((first, first))
+                let (first, last) = match &s.last {
+                    Some(l) if !l.eq_ignore_ascii_case(&s.first) => {
+                        self.book.external_sheets(book, &s.first, l).ok_or(CellError::Ref)?
+                    }
+                    _ => {
+                        let idx = self.book.external_sheet(book, &s.first).ok_or(CellError::Ref)?;
+                        (idx, idx)
+                    }
+                };
+                Ok((first, last))
             }
             Some(s) => {
                 let first = self.book.sheet_index(&s.first).ok_or(CellError::Ref)?;

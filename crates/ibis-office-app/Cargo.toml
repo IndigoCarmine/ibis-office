@@ -10,7 +10,7 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "ibisOffice"
+name = "AcaudaOffice"
 path = "src/main.rs"
 
 [dependencies]
@@ -26,10 +26,13 @@ log = "0.4"
 # version GPUI's tree already has (MIT): HarfBuzz in Rust, reading the
 # font's kern table and GPOS pair adjustments.
 harfrust = "=0.5.2"
+# A maths font's OpenType MATH table and glyph shapes, for typesetting formulas (render/math_font.rs). Already in the tree
+# (MIT OR Apache-2.0).
+ttf-parser = "0.25"
 
 # For the `export` feature: GPUI's headless renderer is part of its test
 # support, which also turns on GPUI's entity leak tracking (a small cost).
-[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 gpui-pre-platform = { version = "=0.3.6", features = ["test-support"], optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg"], optional = true }
 miniz_oxide = { version = "0.8", optional = true }
@@ -45,9 +48,11 @@ skrifa = { version = "=0.42.1", optional = true }
 # uses; MIT OR Apache-2.0): a font it cannot subset is drawn as outlines.
 subsetter = { version = "=0.2.6", optional = true }
 
-# Automatic update (shell/update.rs): the log, paths and versions it shares with ibisOfficeUpdater.
+# Automatic update (shell/update.rs): the log, paths and versions it shares with AcaudaOfficeUpdater.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 ibis-office-updater = { path = "../ibis-office-updater" }
+# 埋め込みオブジェクトの外部エディタ (shell/embed.rs).
+ibis-embed-protocol = { workspace = true, features = ["host"] }
 
 # macOS only.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -74,9 +79,14 @@ default = ["export"]
 # The scenario tests' driver (`src/shell/scenario.rs`), for tests/scenarios.rs;
 # turned on for this crate's own tests by the dev-dependency below.
 scenarios = ["export"]
-# `--export png|pdf|pdf-image|ui` on the command line (macOS and Windows;
+# `--export png|pdf|pdf-image|ui` on the command line (macOS, Windows and Linux;
 # build.rs sets `cfg(headless_export)` for it).
-export = ["dep:gpui-pre-platform", "dep:gpui-pre-windows", "dep:image", "dep:miniz_oxide", "dep:krilla", "dep:skrifa", "dep:subsetter", "dep:gpui-pre-macos"]
+export = ["dep:gpui-pre-platform", "dep:gpui-pre-windows", "dep:gpui-pre-wgpu", "dep:image", "dep:miniz_oxide", "dep:krilla", "dep:skrifa", "dep:subsetter", "dep:gpui-pre-macos"]
+
+# For the `export` feature on Linux: the headless renderer of ibisOffice's
+# fork of GPUI's wgpu renderer (GPUI has none for Linux).
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui-pre-wgpu = { version = "=0.3.6", features = ["test-support"], optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 # Reading a fetched response's body (the art borders' pictures); the version

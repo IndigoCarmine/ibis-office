@@ -34,6 +34,7 @@ pub(crate) struct PivotGroupPanel {
     pub(crate) date_end: Entity<InputState>,
     pub(crate) date_auto_start: bool,
     pub(crate) date_auto_end: bool,
+    #[allow(dead_code)]
     pub(crate) message: String,
 }
 

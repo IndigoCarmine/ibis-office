@@ -13,8 +13,9 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use ibis_doc_model::{CharacterFormat, Command, EmuPoint, ShapeId, SlideId, SlideLink};
+use ibis_doc_model::{CharacterFormat, Command, EmuPoint, ShapeId, ShapeKind, SlideId, SlideLink};
 
+use crate::pptx::interaction;
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 
@@ -23,6 +24,8 @@ use crate::shell::editor::SlideEditor;
 pub(crate) enum LinkTarget {
     /// Characters `start..end` of a shape's text.
     Text { shape: ShapeId, start: usize, end: usize },
+    /// Characters `start..end` of a table cell's text.
+    CellText { shape: ShapeId, row: usize, col: usize, start: usize, end: usize },
     Shape(ShapeId),
 }
 
@@ -45,7 +48,13 @@ pub(crate) fn link_of_shape(slide: &ibis_doc_model::Slide, shape: ShapeId) -> Op
     if let Some(l) = slide.shape_links.get(&shape) {
         return Some(l.clone());
     }
-    let body = slide.shape(shape)?.text_body()?;
+    let sh = slide.shape(shape)?;
+    if let ShapeKind::Table(t) = &sh.kind {
+        let mut links = t.rows.iter().flat_map(|r| r.cells.iter()).flat_map(|c| c.text.paragraphs.iter()).flat_map(|p| p.runs.iter()).filter_map(|r| r.style.link.clone());
+        let first = links.next()?;
+        return links.all(|l| l == first).then_some(first);
+    }
+    let body = sh.text_body()?;
     let mut links = body.paragraphs.iter().flat_map(|p| p.runs.iter()).filter_map(|r| r.style.link.clone());
     let first = links.next()?;
     links.all(|l| l == first).then_some(first)
@@ -56,8 +65,30 @@ pub(crate) fn link_tooltip_of_shape(slide: &ibis_doc_model::Slide, shape: ShapeI
     if let Some(t) = slide.shape_link_tooltips.get(&shape) {
         return Some(t.clone());
     }
-    let body = slide.shape(shape)?.text_body()?;
+    let sh = slide.shape(shape)?;
+    if let ShapeKind::Table(t) = &sh.kind {
+        return t.rows.iter().flat_map(|r| r.cells.iter()).flat_map(|c| c.text.paragraphs.iter()).flat_map(|p| p.runs.iter()).find_map(|r| r.style.link_tooltip.clone());
+    }
+    let body = sh.text_body()?;
     body.paragraphs.iter().flat_map(|p| p.runs.iter()).find_map(|r| r.style.link_tooltip.clone())
+}
+
+/// The link of table cell `(row, col)` in `shape` on `slide`.
+pub(crate) fn link_of_cell(slide: &ibis_doc_model::Slide, shape: ShapeId, row: usize, col: usize) -> Option<SlideLink> {
+    let sh = slide.shape(shape)?;
+    let ShapeKind::Table(t) = &sh.kind else { return None };
+    let cell = t.rows.get(row)?.cells.get(col)?;
+    let mut links = cell.text.paragraphs.iter().flat_map(|p| p.runs.iter()).filter_map(|r| r.style.link.clone());
+    let first = links.next()?;
+    links.all(|l| l == first).then_some(first)
+}
+
+/// The link tooltip of table cell `(row, col)` in `shape` on `slide`.
+pub(crate) fn link_tooltip_of_cell(slide: &ibis_doc_model::Slide, shape: ShapeId, row: usize, col: usize) -> Option<String> {
+    let sh = slide.shape(shape)?;
+    let ShapeKind::Table(t) = &sh.kind else { return None };
+    let cell = t.rows.get(row)?.cells.get(col)?;
+    cell.text.paragraphs.iter().flat_map(|p| p.runs.iter()).find_map(|r| r.style.link_tooltip.clone())
 }
 
 impl SlideEditor {
@@ -65,22 +96,30 @@ impl SlideEditor {
     pub(crate) fn slide_open_link_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let slide = self.current_slide;
         let target = match self.text_editing() {
-            Some(e) if e.cell.is_none() && !e.range().is_empty() => LinkTarget::Text { shape: e.shape, start: e.range().start, end: e.range().end },
-            Some(e) if e.cell.is_none() => LinkTarget::Shape(e.shape),
-            Some(_) => return self.set_status(crate::shell::i18n::text("pptx.links.links-text-table-cells-not").to_string(), cx),
+            Some(e) => match e.cell {
+                None if !e.range().is_empty() => LinkTarget::Text { shape: e.shape, start: e.range().start, end: e.range().end },
+                None => LinkTarget::Shape(e.shape),
+                Some((row, col)) if !e.range().is_empty() => {
+                    LinkTarget::CellText { shape: e.shape, row, col, start: e.range().start, end: e.range().end }
+                }
+                Some((row, col)) => {
+                    let len = self.edited_body().map(|b| b.text().len()).unwrap_or(0);
+                    LinkTarget::CellText { shape: e.shape, row, col, start: 0, end: len }
+                }
+            },
             None => match self.selected_ids().as_slice() {
                 [one] => LinkTarget::Shape(*one),
                 _ => return,
             },
         };
+        let (existing, existing_tooltip) = match &target {
+            LinkTarget::Shape(shape) => (link_of_shape(self.slide(), *shape), link_tooltip_of_shape(self.slide(), *shape)),
+            LinkTarget::Text { shape, .. } => (link_of_shape(self.slide(), *shape), link_tooltip_of_shape(self.slide(), *shape)),
+            LinkTarget::CellText { shape, row, col, .. } => (link_of_cell(self.slide(), *shape, *row, *col), link_tooltip_of_cell(self.slide(), *shape, *row, *col)),
+        };
         if self.text_editing().is_some() {
             self.end_text_edit(window, cx);
         }
-        let shape = match &target {
-            LinkTarget::Text { shape, .. } | LinkTarget::Shape(shape) => *shape,
-        };
-        let existing = link_of_shape(self.slide(), shape);
-        let existing_tooltip = link_tooltip_of_shape(self.slide(), shape);
         let url_text = match &existing {
             Some(SlideLink::Url(u)) => u.clone(),
             _ => String::new(),
@@ -179,6 +218,46 @@ impl SlideEditor {
                     self.run(vec![Command::SetKind { slide, shape, kind: Box::new(kind) }], cx);
                 }
             }
+            LinkTarget::CellText { shape, row, col, start, end } => {
+                let Some(mut changed) = self.presentation().slide(slide).and_then(|s| s.shape(shape)).cloned() else { return };
+                let ShapeKind::Table(ref mut table) = changed.kind else { return };
+                let Some(cell) = table.rows.get_mut(row).and_then(|r| r.cells.get_mut(col)) else { return };
+                let format = match &link {
+                    Some(l) => CharacterFormat {
+                        link: Some(Some(l.clone())),
+                        link_tooltip: Some(tooltip),
+                        underline: Some(true),
+                        ..Default::default()
+                    },
+                    None => CharacterFormat {
+                        link: Some(None),
+                        link_tooltip: Some(None),
+                        underline: Some(false),
+                        color: Some(cell.text.style.color),
+                        ..Default::default()
+                    },
+                };
+                cell.text.format_runs(start, end, &format);
+                let kind = match &self.source {
+                    Some(source) => {
+                        let mut p = self.presentation().clone();
+                        if let Some(t) = p.slides.iter_mut().find(|s| s.id == slide).and_then(|s| s.shapes.iter_mut().find(|x| x.id == shape)) {
+                            *t = changed.clone();
+                        }
+                        match source.as_read(&p, slide, shape) {
+                            Ok(read) => read.kind,
+                            Err(err) => {
+                                log::warn!("Could not add the link: {err}");
+                                changed.kind
+                            }
+                        }
+                    }
+                    None => changed.kind,
+                };
+                if self.presentation().slide(slide).and_then(|s| s.shape(shape)).is_some_and(|s| s.kind != kind) {
+                    self.run(vec![Command::SetKind { slide, shape, kind: Box::new(kind) }], cx);
+                }
+            }
         }
         self.slide_close_link_panel(window, cx);
     }
@@ -215,6 +294,18 @@ impl SlideEditor {
     pub(crate) fn slide_shape_and_link_at(&self, p: EmuPoint) -> Option<(ibis_doc_model::ShapeId, SlideLink)> {
         let slide = self.slide();
         let shape = slide.hit_test(p)?;
+        if let Some(target_shape) = slide.shape(shape) {
+            if let ShapeKind::Table(t) = &target_shape.kind {
+                if let Some((r, c)) = interaction::table_cell_at(target_shape, interaction::P::of(p)) {
+                    if let Some(cell) = t.rows.get(r).and_then(|row| row.cells.get(c)) {
+                        let mut links = cell.text.paragraphs.iter().flat_map(|para| para.runs.iter()).filter_map(|run| run.style.link.clone());
+                        if let Some(first) = links.next() {
+                            return Some((shape, first));
+                        }
+                    }
+                }
+            }
+        }
         let link = link_of_shape(slide, shape)?;
         Some((shape, link))
     }

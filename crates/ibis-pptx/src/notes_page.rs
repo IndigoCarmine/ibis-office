@@ -6,7 +6,8 @@
 //! (its size the notes page's, its body the slide's text, as the notes master
 //! styles it), which the ordinary editor opens; `apply` puts the paragraphs of
 //! its body, as edited, back into the notes page of the file (made if the slide
-//! had none). What else the notes page holds is left as it was.
+//! had none), and the frames of its slide image and body, and its other
+//! shapes (pictures, boxes, lines). What else the notes page holds is left as it was.
 
 use ibis_ooxml::{NodeId, Package, SaveOptions, XmlDocument};
 
@@ -325,12 +326,76 @@ pub fn apply(data: &[u8], edited: &[u8], index: usize) -> Result<Vec<u8>, Error>
             }
         }
     }
+    // The slide image's and the body's places as edited, and the other shapes (pictures, boxes, lines) as edited.
+    let ph_of = |d: &XmlDocument, node: NodeId| -> Option<String> {
+        if d.local_name(node) != "sp" {
+            return None;
+        }
+        d.path(node, &["nvSpPr", "nvPr", "ph"]).and_then(|ph| d.attr(ph, "type")).map(str::to_string)
+    };
+    let is_page_part = |d: &XmlDocument, node: NodeId| matches!(ph_of(d, node).as_deref(), Some("sldImg" | "body"));
+    for esp in edoc.children(etree).to_vec() {
+        if !edoc.is_element(esp) || !is_page_part(&edoc, esp) {
+            continue;
+        }
+        let kind = ph_of(&edoc, esp).unwrap_or_default();
+        let Some(exfrm) = edoc.path(esp, &["spPr", "xfrm"]) else { continue };
+        let Some(sp) = doc.children_named(tree, "sp").find(|&n| ph_of(&doc, n).as_deref() == Some(kind.as_str())) else { continue };
+        let sppr = match doc.child(sp, "spPr") {
+            Some(s) => s,
+            None => {
+                let x = Prefixes::at(&doc, sp);
+                let node = x.import(&mut doc, &format!("<{p}spPr/>", p = x.p))?;
+                let at = doc.children(sp).iter().position(|&c| doc.is_element(c) && doc.local_name(c) == "txBody").unwrap_or(doc.children(sp).len());
+                doc.insert(sp, at, node);
+                node
+            }
+        };
+        if let Some(old) = doc.child(sppr, "xfrm") {
+            doc.detach(old);
+        }
+        let copy = doc.import(&edoc, exfrm);
+        doc.insert(sppr, 0, copy);
+    }
+    for node in doc.children(tree).to_vec() {
+        if doc.is_element(node) && !matches!(doc.local_name(node), "nvGrpSpPr" | "grpSpPr" | "extLst") && !is_page_part(&doc, node) {
+            doc.detach(node);
+        }
+    }
+    let at = doc.children(tree).iter().position(|&c| doc.is_element(c) && doc.local_name(c) == "extLst").unwrap_or(doc.children(tree).len());
+    let mut put = 0;
+    for shape in edoc.children(etree).to_vec() {
+        if !edoc.is_element(shape) || matches!(edoc.local_name(shape), "nvGrpSpPr" | "grpSpPr" | "extLst") || is_page_part(&edoc, shape) {
+            continue;
+        }
+        let copy = doc.import(&edoc, shape);
+        doc.insert(tree, at + put, copy);
+        put += 1;
+        for node in std::iter::once(copy).chain(doc.descendants(copy)) {
+            if !doc.is_element(node) {
+                continue;
+            }
+            let names: Vec<(String, String)> = doc.attributes(node).iter().filter(|a| a.name.rsplit_once(':').is_some_and(|(pre, _)| doc.resolve_prefix(node, Some(pre)) == Some(NS_R))).map(|a| (a.name.clone(), a.value.clone())).collect();
+            for (name, value) in names {
+                let Some(rel) = erels.iter().find(|r| r.id == value) else { continue };
+                let id = mapped.entry(value.clone()).or_insert_with(|| {
+                    let id = format!("ibis-new-{}", added.len());
+                    added.push((id.clone(), rel.kind.clone(), if rel.external { rel.target.clone() } else { rel.target_part(&eslide).unwrap_or_default() }, rel.external));
+                    id
+                });
+                let id = id.clone();
+                doc.set_attr(node, &name, &id);
+            }
+        }
+    }
     package.set_xml(&notes, doc);
     // A link in the text: related to what it names (outside links only; a link to a slide or part is kept as the part's).
     if !added.is_empty() {
         let mut real = std::collections::HashMap::new();
         for (placeholder, kind, target, external) in added {
-            let id = if external { package.add_relationship(&notes, &kind, &target, true)? } else if package.contains(&target) { package.add_relationship(&notes, &kind, &relative(&notes, &target), false)? } else { continue };
+            // The relationship the page already has to the same thing is kept (not made again at each closing).
+            let existing = package.relationships(&notes)?.into_iter().find(|r| r.kind == kind && r.external == external && if external { r.target == target } else { r.target_part(&notes).as_deref() == Some(target.as_str()) });
+            let id = if let Some(r) = existing { r.id } else if external { package.add_relationship(&notes, &kind, &target, true)? } else if package.contains(&target) { package.add_relationship(&notes, &kind, &relative(&notes, &target), false)? } else { continue };
             real.insert(placeholder, id);
         }
         let doc = package.xml_mut(&notes)?;

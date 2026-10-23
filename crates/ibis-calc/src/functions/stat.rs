@@ -1698,8 +1698,95 @@ fn linest(c: &mut Ctx, a: &[Expr], log: bool) -> Value {
         let n = row.len();
         return array_value(1, n, row.into_iter().map(number).collect());
     }
-    // Statistics rows (standard errors, r², F…) are not done yet.
-    c.unsupported = true;
-    let n = row.len();
-    array_value(1, n, row.into_iter().map(number).collect())
+    // The statistics rows: standard errors, r² and the standard error of y, F and the degrees of freedom, the
+    // regression and residual sums of squares. For LOGEST the same are worked out on ln y.
+    let n = y.len();
+    let p = k + usize::from(constant);
+    let cols = k + 1;
+    let na = || err(CellError::NA);
+    let Some(inverse) = normal_inverse(&xs, n, constant) else {
+        c.unsupported = true;
+        return array_value(1, cols, row.into_iter().map(number).collect());
+    };
+    let predicted: Vec<f64> = (0..n)
+        .map(|i| {
+            let mut v: f64 = (0..k).map(|j| b[j] * xs[j][i]).sum();
+            if constant {
+                v += b[k];
+            }
+            v
+        })
+        .collect();
+    let ss_resid: f64 = y.iter().zip(&predicted).map(|(a, p)| (a - p) * (a - p)).sum();
+    let ss_total: f64 = if constant {
+        let mean = y.iter().sum::<f64>() / n as f64;
+        y.iter().map(|a| (a - mean) * (a - mean)).sum()
+    } else {
+        y.iter().map(|a| a * a).sum()
+    };
+    let ss_reg = ss_total - ss_resid;
+    let df = n as f64 - p as f64;
+    if df < 0.0 {
+        return err(CellError::Num);
+    }
+    let r2 = if ss_total == 0.0 { 1.0 } else { ss_reg / ss_total };
+    let (se_y, f_stat) = if df > 0.0 {
+        let se_y = (ss_resid / df).sqrt();
+        (number(se_y), if ss_resid == 0.0 { err(CellError::Num) } else { number((ss_reg / k as f64) / (ss_resid / df)) })
+    } else {
+        (number(0.0), err(CellError::Num))
+    };
+    let se_scale = if df > 0.0 { (ss_resid / df).sqrt() } else { 0.0 };
+    let mut se_row: Vec<Value> = (0..k).rev().map(|i| number(se_scale * inverse[i * p + i].max(0.0).sqrt())).collect();
+    se_row.push(if constant { number(se_scale * inverse[k * p + k].max(0.0).sqrt()) } else { na() });
+    let mut grid: Vec<Value> = row.into_iter().map(number).collect();
+    grid.extend(se_row);
+    let pad = |mut v: Vec<Value>| {
+        while v.len() < cols {
+            v.push(na());
+        }
+        v
+    };
+    grid.extend(pad(vec![number(r2), se_y]));
+    grid.extend(pad(vec![f_stat, number(df)]));
+    grid.extend(pad(vec![number(ss_reg), number(ss_resid)]));
+    array_value(5, cols, grid)
+}
+
+/// (XᵀX)⁻¹ of the design matrix made of the x columns (and a column of ones when there is a constant), row by
+/// row; `None` when it is singular.
+fn normal_inverse(xs: &[Vec<f64>], n: usize, constant: bool) -> Option<Vec<f64>> {
+    let p = xs.len() + usize::from(constant);
+    let column = |j: usize, i: usize| if j < xs.len() { xs[j][i] } else { 1.0 };
+    let mut m = vec![0.0; p * 2 * p];
+    for r in 0..p {
+        for q in 0..p {
+            m[r * 2 * p + q] = (0..n).map(|i| column(r, i) * column(q, i)).sum();
+        }
+        m[r * 2 * p + p + r] = 1.0;
+    }
+    for col in 0..p {
+        let pivot = (col..p).max_by(|&a, &b| m[a * 2 * p + col].abs().total_cmp(&m[b * 2 * p + col].abs()))?;
+        if m[pivot * 2 * p + col].abs() < 1e-300 {
+            return None;
+        }
+        for q in 0..2 * p {
+            m.swap(col * 2 * p + q, pivot * 2 * p + q);
+        }
+        let d = m[col * 2 * p + col];
+        for q in 0..2 * p {
+            m[col * 2 * p + q] /= d;
+        }
+        for r in 0..p {
+            if r != col {
+                let f = m[r * 2 * p + col];
+                if f != 0.0 {
+                    for q in 0..2 * p {
+                        m[r * 2 * p + q] -= f * m[col * 2 * p + q];
+                    }
+                }
+            }
+        }
+    }
+    Some((0..p).flat_map(|r| (0..p).map(move |q| (r, q))).map(|(r, q)| m[r * 2 * p + p + q]).collect())
 }

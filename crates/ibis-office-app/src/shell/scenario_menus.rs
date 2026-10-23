@@ -23,10 +23,9 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 
 /// Submenus that have no items yet (a feature that is not made): the menu
 /// leaves them out. Take an id out of here when its items are made.
-/// Word has no chart or spelling here; Excel has no table menu (it is the
-/// item 表), spelling, nor list and spacing for cells.
-const DOCX_HIDDEN: &[&str] = &["insert.chart", "tools.spelling"];
-const XLSX_HIDDEN: &[&str] = &["insert.table", "tools.spelling", "format.spacing", "format.lists"];
+/// Excel has no table menu (it is the item 表), nor list and spacing for cells.
+const DOCX_HIDDEN: &[&str] = &[];
+const XLSX_HIDDEN: &[&str] = &["insert.table", "format.spacing", "format.lists"];
 const PPTX_HIDDEN: &[&str] = &[];
 
 fn is_blank(entries: &[MenuEntry]) -> bool {

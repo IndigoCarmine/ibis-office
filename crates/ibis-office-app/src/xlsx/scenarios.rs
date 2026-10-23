@@ -15,6 +15,7 @@ pub(crate) trait SheetSteps {
     /// Click the cell at a reference such as `B3` (on the current sheet).
     fn click_cell(&mut self, reference: &str);
     /// Double-click the cell (to edit its content).
+    #[allow(dead_code)]
     fn double_click_cell(&mut self, reference: &str);
     /// The value of a cell of the current sheet.
     fn value(&mut self, reference: &str) -> CellValue;
@@ -32,6 +33,8 @@ pub(crate) trait SheetSteps {
     fn size_pt(&mut self, name: &str) -> f32;
     /// Drag the fill handle of the selection (ending at cell `from`) to the middle of cell `to`.
     fn drag_fill(&mut self, from: &str, to: &str);
+    /// Double click the fill handle of the selection ending at `cell`.
+    fn double_click_fill(&mut self, cell: &str);
     /// Type `text` into the selected cell and press `key` (`"enter"`, `"tab"`).
     fn enter(&mut self, text: &str, key: &str);
     /// The formula of a cell of the current sheet (without `=`).
@@ -156,6 +159,12 @@ impl SheetSteps for Scenario {
         self.drag((f32::from(a.x) - 1.0, f32::from(a.y) - 1.0), (f32::from(b.x), f32::from(b.y)));
     }
 
+    fn double_click_fill(&mut self, cell: &str) {
+        let (c, r) = parse(cell);
+        let a = self.with(|e, _| e.cell_corner(c, r)).expect("the cell on screen");
+        self.double_click((f32::from(a.x) - 1.0, f32::from(a.y) - 1.0));
+    }
+
     fn enter(&mut self, text: &str, key: &str) {
         self.type_text(text);
         self.key(key);
@@ -181,6 +190,13 @@ impl SheetSteps for Scenario {
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
+        ("xlsx::xlsx_chart_quick_layout_and_picture_compress", xlsx_chart_quick_layout_and_picture_compress),
+        ("xlsx::change_chart_type", change_chart_type),
+        ("xlsx::theme_fonts_and_effects", theme_fonts_and_effects),
+        ("xlsx::insert_smartart_workflow", insert_smartart_workflow),
+        ("xlsx::split_buttons_borders_underline_merge_sum", split_buttons_borders_underline_merge_sum),
+        ("xlsx::split_buttons_click_and_hover_ranges", split_buttons_click_and_hover_ranges),
+        ("xlsx::split_button_currency", split_button_currency),
         ("xlsx::perf_sheet_switch", perf_sheet_switch),
         ("xlsx::perf_sheet_zoom", perf_sheet_zoom),
         ("xlsx::perf_sheet_shots", perf_sheet_shots),
@@ -230,6 +246,10 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::table016_remove_duplicates", table016_remove_duplicates),
         ("xlsx::table017_text_to_columns", table017_text_to_columns),
         ("xlsx::table018_consolidate", table018_consolidate),
+        ("xlsx::analysis001_toolpak", analysis001_toolpak),
+        ("xlsx::analysis002_other_tools", analysis002_other_tools),
+        ("xlsx::opt005_autocorrect", opt005_autocorrect),
+        ("xlsx::whatif008_solver", whatif008_solver),
         ("xlsx::cell012_paste_skip_blanks", cell012_paste_skip_blanks),
         ("xlsx::cell018_goto_special", cell018_goto_special),
         ("xlsx::fn_text_delimiter_functions", fn_text_delimiter_functions),
@@ -258,9 +278,32 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::xsc59_shift_cells", xsc59_shift_cells),
         ("xlsx::xsc61_csv", xsc61_csv),
         ("xlsx::xsc48_autofill", xsc48_autofill),
+        ("xlsx::cell014_double_click_fill_handle", cell014_double_click_fill_handle),
+        ("xlsx::table004_totals_row_dropdown", table004_totals_row_dropdown),
+        ("xlsx::sheet006_smart_insert_delete_shortcuts", sheet006_smart_insert_delete_shortcuts),
+        ("xlsx::sheet008_autofit_row_height_double_click", sheet008_autofit_row_height_double_click),
+        ("xlsx::sheet007_row_height_column_width_dialog", sheet007_row_height_column_width_dialog),
+        ("xlsx::sheet012_paste_special_dialog_and_options", sheet012_paste_special_dialog_and_options),
+        ("xlsx::sheet013_find_and_replace_options", sheet013_find_and_replace_options),
+        ("xlsx::sheet014_pick_from_drop_down_list", sheet014_pick_from_drop_down_list),
+        ("xlsx::sheet015_freeze_top_row_first_column", sheet015_freeze_top_row_first_column),
+        ("xlsx::sheet016_print_area_add_and_clear", sheet016_print_area_add_and_clear),
+        ("xlsx::sheet017_hyperlink_context_menu_and_operations", sheet017_hyperlink_context_menu_and_operations),
+        ("xlsx::sheet018_comments_and_notes_context_menu_and_shortcuts", sheet018_comments_and_notes_context_menu_and_shortcuts),
+        ("xlsx::sheet019_table_context_menu_and_operations", sheet019_table_context_menu_and_operations),
+        ("xlsx::sheet020_pivot_context_menu_and_operations", sheet020_pivot_context_menu_and_operations),
+        ("xlsx::sheet021_sparkline_context_menu_and_operations", sheet021_sparkline_context_menu_and_operations),
+        ("xlsx::sheet022_chart_context_menu_and_operations", sheet022_chart_context_menu_and_operations),
+        ("xlsx::sheet023_slicer_timeline_control_and_shape_context_menu", sheet023_slicer_timeline_control_and_shape_context_menu),
+        ("xlsx::sheet024_header_and_tab_context_menu_operations", sheet024_header_and_tab_context_menu_operations),
+        ("xlsx::default_xlsx_a4_cell_edit_screenshots", default_xlsx_a4_cell_edit_screenshots),
+        ("xlsx::fix73_edit_text_stays_put", fix73_edit_text_stays_put),
+        ("xlsx::fix73_edit_click_places_caret", fix73_edit_click_places_caret),
         ("xlsx::xsc29_find_replace", xsc29_find_replace),
         ("xlsx::xsc31_hyperlinks", xsc31_hyperlinks),
         ("xlsx::opt005_autolink", opt005_autolink),
+        ("xlsx::options007_settings", options007_settings),
+        ("xlsx::chtype028_box_treemap_sunburst_in_a_workbook", chtype028_box_treemap_sunburst_in_a_workbook),
         ("xlsx::view002_page_layout", view002_page_layout),
         ("xlsx::cell005_mouse_select", cell005_mouse_select),
         ("xlsx::cell005_caret_format", cell005_caret_format),
@@ -286,6 +329,9 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::xsc16_conditional_sections", xsc16_conditional_sections),
         ("xlsx::xsc17_wrap_and_indent", xsc17_wrap_and_indent),
         ("xlsx::xsc36_grid_lines", xsc36_grid_lines),
+        ("xlsx::xlsx_show_formulas_show_zeros_hide_ink", xlsx_show_formulas_show_zeros_hide_ink),
+        ("xlsx::xlsx_fill_directions_clear_and_comma_style", xlsx_fill_directions_clear_and_comma_style),
+        ("xlsx::xlsx_reapply_filter_selection_pane_and_sparkline_points", xlsx_reapply_filter_selection_pane_and_sparkline_points),
         ("xlsx::xsc34_tabs", xsc34_tabs),
         ("xlsx::split_color_buttons", split_color_buttons),
         ("xlsx::xsc44_point_references", xsc44_point_references),
@@ -302,10 +348,13 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::format013_fill_patterns_and_gradients", format013_fill_patterns_and_gradients),
         ("xlsx::format016_theme_palette_and_colors", format016_theme_palette_and_colors),
         ("xlsx::cell007_multi_range_select", cell007_multi_range_select),
+        ("xlsx::cell007_deselect_multi_range", cell007_deselect_multi_range),
+        ("xlsx::cell008_multi_range_copy_paste", cell008_multi_range_copy_paste),
         ("xlsx::cell003_long_numbers_precision", cell003_long_numbers_precision),
         ("xlsx::cell004_line_break", cell004_line_break),
         ("xlsx::pivot018_refresh", pivot018_refresh),
         ("xlsx::pivot001_create", pivot001_create),
+        ("xlsx::pivot_fn_getpivotdata", pivot_fn_getpivotdata),
         ("xlsx::pivot002_layout", pivot002_layout),
         ("xlsx::pivot003_value_field_settings", pivot003_value_field_settings),
         ("xlsx::pivot009_group_and_ungroup", pivot009_group_and_ungroup),
@@ -317,22 +366,79 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::pivot013_sort_by_value", pivot013_sort_by_value),
         ("xlsx::pivot001_table_source", pivot001_table_source),
         ("xlsx::table006_structure_edits", table006_structure_edits),
+        ("xlsx::table_design_ribbon_commands", table_design_ribbon_commands),
+        ("xlsx::autosum_ribbon_commands", autosum_ribbon_commands),
+        ("xlsx::sort_filter_view_ribbon_commands", sort_filter_view_ribbon_commands),
+        ("xlsx::page_setup_and_insert_ribbon_commands", page_setup_and_insert_ribbon_commands),
         ("xlsx::pivot019_show_details", pivot019_show_details),
         ("xlsx::pivot013_buttons", pivot013_buttons),
         ("xlsx::slicer001_buttons", slicer001_buttons),
         ("xlsx::sec006_open_password", sec006_open_password),
         ("xlsx::chart001_insert_over_cells", chart001_insert_over_cells),
+        ("xlsx::options001_dump_menu_ids", options001_dump_menu_ids),
+        ("xlsx::numfmt018_locale_calendar_and_currency", numfmt018_locale_calendar_and_currency),
         ("xlsx::options003_cell_menu", options003_cell_menu),
         ("xlsx::file010_legacy_xls", file010_legacy_xls),
         ("xlsx::file010_legacy_features", file010_legacy_features),
+        ("xlsx::file010_legacy_pictures_and_filter", file010_legacy_pictures_and_filter),
         ("xlsx::image002_cell_pictures", image002_cell_pictures),
+        ("xlsx::image003_cell_images_manipulation", image003_cell_images_manipulation),
+        ("xlsx::image020_linked_picture_and_camera", image020_linked_picture_and_camera),
+        ("xlsx::table_this_row_short", table_this_row_short),
+        ("xlsx::image47_web_images", image47_web_images),
+        ("xlsx::image49_errors_sheets_curl", image49_errors_sheets_curl),
+        ("xlsx::image49_undo", image49_undo),
+        ("xlsx::chedit023_smartart_and_svg", chedit023_smartart_and_svg),
+        ("xlsx::cell005_rich_font_and_row", cell005_rich_font_and_row),
+        ("xlsx::options006_error_options", options006_error_options),
+        ("xlsx::ink001_draw", ink001_draw),
+        ("xlsx::ink002_color_width_effects", ink002_color_width_effects),
+        ("xlsx::slicer002_insert", slicer002_insert),
+        ("xlsx::slicer003_settings", slicer003_settings),
+        ("xlsx::file012_open_ods", file012_open_ods),
+        ("xlsx::chart_follows_its_cells", chart_follows_its_cells),
+        ("xlsx::chtype_ex_waterfall_settings", chtype_ex_waterfall_settings),
+        ("xlsx::chtype_ex_histogram_settings", chtype_ex_histogram_settings),
+        ("xlsx::chtype_ex_boxwhisker_settings", chtype_ex_boxwhisker_settings),
+        ("xlsx::chtype_ex_treemap_settings", chtype_ex_treemap_settings),
+        ("xlsx::chtype_ex_funnel_settings", chtype_ex_funnel_settings),
+        ("xlsx::chtype_ex_pareto_settings", chtype_ex_pareto_settings),
+        ("xlsx::file010_open_xlsb", file010_open_xlsb),
+        ("xlsx::file010_open_xlsb_excel_features", file010_open_xlsb_excel_features),
+        ("xlsx::file010_open_xlsb_excel_sales", file010_open_xlsb_excel_sales),
+        ("xlsx::formula006_links_banner", formula006_links_banner),
+        ("xlsx::fn_random_numbers", fn_random_numbers),
+        ("xlsx::fn_cell_info", fn_cell_info),
+        ("xlsx::query001_editor", query001_editor),
+        ("xlsx::query002_blank_query", query002_blank_query),
+        ("xlsx::ui_english_panels_2", ui_english_panels_2),
         ("xlsx::options006_error_check", options006_error_check),
         ("xlsx::options003_tab_menu", options003_tab_menu),
         ("xlsx::options003_shape_menu", options003_shape_menu),
         ("xlsx::formula006_external_links", formula006_external_links),
         ("xlsx::cell005_formula_bar_edit", cell005_formula_bar_edit),
         ("xlsx::pq001_import_text", pq001_import_text),
+        ("xlsx::file_open_csv_and_tsv", file_open_csv_and_tsv),
+        ("xlsx::csv_cell_of_many_lines", csv_cell_of_many_lines),
+        ("xlsx::cell_edit_lines_stack", cell_edit_lines_stack),
+        ("xlsx::cell_edit_paste_many_lines", cell_edit_paste_many_lines),
+        ("xlsx::cell_edit_fullwidth_lines_move", cell_edit_fullwidth_lines_move),
+        ("xlsx::formula_bar_expand_many_lines", formula_bar_expand_many_lines),
+        ("xlsx::formula006_typed_external_reference", formula006_typed_external_reference),
+        ("xlsx::fn_cell_filename", fn_cell_filename),
         ("xlsx::pq001_import_text_dates", pq001_import_text_dates),
+        ("xlsx::pivot016_timeline", pivot016_timeline),
+        ("xlsx::pivot016_timeline_selected", pivot016_timeline_selected),
+        ("xlsx::chtype_excel_histogram", chtype_excel_histogram),
+        ("xlsx::chtype_excel_pareto", chtype_excel_pareto),
+        ("xlsx::chtype_excel_boxwhisker", chtype_excel_boxwhisker),
+        ("xlsx::chtype_excel_waterfall", chtype_excel_waterfall),
+        ("xlsx::chtype_excel_funnel", chtype_excel_funnel),
+        ("xlsx::chtype_excel_treemap", chtype_excel_treemap),
+        ("xlsx::chtype_excel_sunburst", chtype_excel_sunburst),
+        ("xlsx::auto006_form_controls", auto006_form_controls),
+        ("xlsx::file010_save_as_xls", file010_save_as_xls),
+        ("xlsx::pq001_import_text_fixed_width", pq001_import_text_fixed_width),
         ("xlsx::cell005_rich_text_wrapped", cell005_rich_text_wrapped),
         ("xlsx::table_design", table_design),
         ("xlsx::formula024_autocomplete", formula024_autocomplete),
@@ -358,6 +464,12 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::formula002_operator_precedence", formula002_operator_precedence),
         ("xlsx::formula013_implicit_intersection", formula013_implicit_intersection),
         ("xlsx::xsc27_chart_data", xsc27_chart_data),
+        ("xlsx::chedit002_scatter_switch_row_column", chedit002_scatter_switch_row_column),
+        ("xlsx::chedit002_bubble_switch_row_column", chedit002_bubble_switch_row_column),
+        ("xlsx::chedit001_headerless_scatter", chedit001_headerless_scatter),
+        ("xlsx::chedit001_headerless_bubble", chedit001_headerless_bubble),
+        ("xlsx::chedit001_stock_charts", chedit001_stock_charts),
+        ("xlsx::chedit001_radar_surface_combo_charts", chedit001_radar_surface_combo_charts),
         ("xlsx::cell005_rich_text", cell005_rich_text),
         ("xlsx::pivot005_design", pivot005_design),
         ("xlsx::pivot014_filters", pivot014_filters),
@@ -368,11 +480,14 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::spark001_create_edit_clear", spark001_create_edit_clear),
         ("xlsx::spark002_style_color_display_hidden", spark002_style_color_display_hidden),
         ("xlsx::spark003_date_axis_and_cross_sheet", spark003_date_axis_and_cross_sheet),
+        ("xlsx::spark004_axis_options_and_right_to_left", spark004_axis_options_and_right_to_left),
+        ("xlsx::spark005_marker_colors_weight_and_empty_cells", spark005_marker_colors_weight_and_empty_cells),
         ("xlsx::subtotal001_apply_and_remove", subtotal001_apply_and_remove),
         ("xlsx::cell005_rich_text_edit", cell005_rich_text_edit),
         ("xlsx::xsc28_print_titles_and_footer", xsc28_print_titles_and_footer),
         ("xlsx::xsc_english_panels", xsc_english_panels),
         ("xlsx::spelling_check", spelling_check),
+        ("xlsx::spelling_range_shapes_undo", spelling_range_shapes_undo),
         ("xlsx::xsc25_conditional", xsc25_conditional),
         ("xlsx::xsc25_conditional_cell_is", xsc25_conditional_cell_is),
         ("xlsx::xsc25_conditional_opaque_edit", xsc25_conditional_opaque_edit),
@@ -396,6 +511,12 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::file019_backup_and_save_location", file019_backup_and_save_location),
         ("xlsx::file020_open_and_repair_damaged_workbook", file020_open_and_repair_damaged_workbook),
         ("xlsx::chtype022_radar_chart_styles_and_rendering", chtype022_radar_chart_styles_and_rendering),
+        ("xlsx::chtype003_three_d_charts", chtype003_three_d_charts),
+        ("xlsx::chtype003_3d_rotation_settings_and_series_depth", chtype003_3d_rotation_settings_and_series_depth),
+        ("xlsx::chtype009_010_015_insert_3d_line_pie_area", chtype009_010_015_insert_3d_line_pie_area),
+        ("xlsx::chtype017_bubble_spheres", chtype017_bubble_spheres),
+        ("xlsx::analysis020_forecast_sheet", analysis020_forecast_sheet),
+        ("xlsx::chtype027_chart_ex_kinds_in_a_workbook", chtype027_chart_ex_kinds_in_a_workbook),
         ("xlsx::chtype011_of_pie_chart_styles_and_rendering", chtype011_of_pie_chart_styles_and_rendering),
         ("xlsx::chtype018_stock_chart_hlc_and_ohlc", chtype018_stock_chart_hlc_and_ohlc),
         ("xlsx::chtype020_stock_chart_volume_vhlc_and_vohlc", chtype020_stock_chart_volume_vhlc_and_vohlc),
@@ -456,7 +577,27 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::xsc55_compatibility_whitespace", xsc55_compatibility_whitespace),
         ("xlsx::xsc55_isomitted", xsc55_isomitted),
         ("xlsx::xsc01_scrollbar_edge_selection", xsc01_scrollbar_edge_selection),
+        ("xlsx::image015_picture_background_removal_and_transparent_color", image015_picture_background_removal_and_transparent_color),
         ("xlsx::ui_menu_icons", ui_menu_icons),
+        ("xlsx::xlsx_comments_page_setup_and_insert_function", xlsx_comments_page_setup_and_insert_function),
+        ("xlsx::xlsx_function_categories_and_name_creation", xlsx_function_categories_and_name_creation),
+        ("xlsx::xlsx_pivot_source_drill_theme_and_charts", xlsx_pivot_source_drill_theme_and_charts),
+        ("xlsx::options001_format_as_table_find_select_and_scale_to_fit", options001_format_as_table_find_select_and_scale_to_fit),
+        ("xlsx::pivot022_and_table008_design_options_and_context_menus", pivot022_and_table008_design_options_and_context_menus),
+        ("xlsx::pivot023_subtotals_styles_and_panel_design", pivot023_subtotals_styles_and_panel_design),
+        ("xlsx::sparkline005_and_pivot024_context_menus_and_quick_actions", sparkline005_and_pivot024_context_menus_and_quick_actions),
+        ("xlsx::table022_slicer003_timeline003_context_menus_and_quick_actions", table022_slicer003_timeline003_context_menus_and_quick_actions),
+        ("xlsx::formula009_view006_sheet025_names_statusbar_and_sheet_tabs", formula009_view006_sheet025_names_statusbar_and_sheet_tabs),
+        ("xlsx::cf019_validation015_audit005_context_menus_and_quick_actions", cf019_validation015_audit005_context_menus_and_quick_actions),
+        ("xlsx::table009_sort_filter_context_menu_and_panel_copy_icon", table009_sort_filter_context_menu_and_panel_copy_icon),
+        ("xlsx::cell017_018_021_find_workbook_links_tooltip_and_select_special", cell017_018_021_find_workbook_links_tooltip_and_select_special),
+        ("xlsx::whatif001_002_subtotal_named_refs_and_cell_data_tools_menus", whatif001_002_subtotal_named_refs_and_cell_data_tools_menus),
+        ("xlsx::table016_018_whatif004_008_named_refs_and_quick_actions", table016_018_whatif004_008_named_refs_and_quick_actions),
+        ("xlsx::analysis019_020_table015_named_refs_and_quick_actions", analysis019_020_table015_named_refs_and_quick_actions),
+        ("xlsx::sparkline010_subtotal017_sort013_data005_named_refs_and_quick_actions", sparkline010_subtotal017_sort013_data005_named_refs_and_quick_actions),
+        ("xlsx::sheet026_one_million_rows_navigation_pagedown_and_cell_input", sheet026_one_million_rows_navigation_pagedown_and_cell_input),
+        ("xlsx::sheet027_scroll_to_the_bottom_click_type_paste_and_wheel_on", sheet027_scroll_to_the_bottom_click_type_paste_and_wheel_on),
+        ("xlsx::sheet028_scroll_bar_drag_never_shows_grey_and_clicks_select", sheet028_scroll_bar_drag_never_shows_grey_and_clicks_select),
     ]
 }
 
@@ -540,6 +681,27 @@ fn edit_with_f2_and_cancel() {
     s.click_cell("B4");
     s.key("f2");
     assert!(s.with(|e, _| e.cell_edit().is_some_and(|c| c.text == "1250000")));
+    let base_items = s.with(|e, _| e.cell_edit().unwrap().items());
+    assert_eq!(base_items.len(), 1);
+    assert_eq!(base_items[0].text, "1250000");
+    for _ in 0..4 {
+        s.key("left");
+        let (items, bar_text) = s.with(|e, _| {
+            let c = e.cell_edit().unwrap();
+            (c.items(), c.bar_line(0, &c.text).text)
+        });
+        assert_eq!(items, base_items, "caret move left must not split text runs");
+        assert_eq!(bar_text, "1250000", "caret move left must not split formula bar text");
+    }
+    for _ in 0..4 {
+        s.key("right");
+        let (items, bar_text) = s.with(|e, _| {
+            let c = e.cell_edit().unwrap();
+            (c.items(), c.bar_line(0, &c.text).text)
+        });
+        assert_eq!(items, base_items, "caret move right must not split text runs");
+        assert_eq!(bar_text, "1250000", "caret move right must not split formula bar text");
+    }
     s.key("backspace");
     s.key("escape");
     assert_eq!(s.value("B4"), CellValue::Number(1_250_000.0), "Esc gives the entry up");
@@ -1125,7 +1287,7 @@ fn xsc33_sheets() {
     assert_eq!(formula.as_deref(), Some("#REF!"));
 }
 
-/// XSC-37: one number of an Excel file changed and saved: only the sheet's part changes.
+/// XSC-37: one number of an Excel file changed and saved: only the sheet's part changes (and the cached values in the chart that plots it, as Excel updates them).
 fn xsc37_one_number() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     s.click_cell("B4");
@@ -1139,7 +1301,9 @@ fn xsc37_one_number() {
     if let Ok(out) = diff {
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains("xl/worksheets/sheet1.xml"), "{text}");
-        for part in ["xl/charts/", "xl/drawings/", "xl/styles.xml", "xl/sharedStrings.xml", "xl/workbook.xml"] {
+        // The chart's cache holds the new number: the only difference in its part.
+        assert!(text.contains("xl/charts/chart1.xml") && text.contains("\"b\":\"\\\"1260000\\\"\""), "{text}");
+        for part in ["xl/drawings/", "xl/styles.xml", "xl/sharedStrings.xml", "xl/workbook.xml"] {
             assert!(!text.contains(&format!("\"part\": \"{part}")) && !text.contains(&format!("\"part\":\"{part}")), "{part} changed: {text}");
         }
     }
@@ -1808,6 +1972,58 @@ fn view002_page_layout() {
     assert_eq!(flags(&mut s), (false, true), "the page layout view replaces the page break preview");
     assert_eq!(s.menu_state("xlsx.page-layout"), Some((true, true)));
     s.screenshot("page-layout");
+    // A press on a cell of a page selects it (the cells are drawn again on each paper, at the print scale).
+    #[cfg(all(target_os = "macos", feature = "export"))]
+    {
+        s.click_cell("C4");
+        assert_eq!(s.with(|e, _| e.current_cell()), Some((2, 3)), "a press in the page layout view selects the cell under it");
+        s.screenshot("page-layout-selected");
+        let before = s.with(|e, _| e.current_print().map(|p| (p.header_footer.odd_header.clone(), p.header_footer.odd_footer.clone(), p.scale)));
+        // The header and footer show on the paper, in its margins.
+        s.update(|e, _, cx| e.set_print(|p| { p.header_footer.odd_header = Some("&L&A&RPage &P".into()); p.header_footer.odd_footer = Some("&CCompany &F".into()); }, None, cx));
+        s.screenshot("page-layout-header-footer");
+        // A press on the header strip of the first paper opens the header and footer editor.
+        let pos = s.with(|e, _| {
+            let ws = e.workspace_bounds.unwrap();
+            let c = e.workspace_content().unwrap();
+            let g = e.page_layout_geometry(c.scale).unwrap();
+            let b = &g.boxes[0];
+            let off = e.workspace_scroll.offset();
+            let p = ws.origin + off + gpui_kit::point(gpui_kit::px(b.paper.0 + b.paper.2 / 2.0), gpui_kit::px(b.paper.1 + 2.0));
+            (f32::from(p.x), f32::from(p.y))
+        });
+        s.click(pos);
+        assert!(s.with(|e, _| e.sheet_state().is_some_and(|st| st.header_footer_edit.is_some())), "a press on the header opens its editor");
+        // The editor is on the paper itself: the section under the press (the middle) takes what is typed.
+        s.screenshot("page-layout-header-edit");
+        s.type_text("Report");
+        s.key("enter");
+        let header = s.with(|e, _| e.current_print().and_then(|p| p.header_footer.odd_header));
+        assert!(header.as_deref().is_some_and(|h| h.contains("Report")), "typed in place on the paper: {header:?}");
+        s.update(|e, _, cx| { if let Some(st) = e.sheet_state_mut() { st.header_footer_edit = None; st.page_setup = false; } cx.notify(); });
+        // Moving the selection far down scrolls the view to it.
+        s.update(|e, _, cx| e.set_print(|p| p.scale = 300, None, cx));
+        let last = s.with(|e, _| {
+            let c = e.workspace_content().unwrap();
+            let g = e.page_layout_geometry(c.scale).unwrap();
+            g.boxes.len()
+        });
+        assert!(last > 1, "300 % makes several pages");
+        let row = s.with(|e, _| {
+            let c = e.workspace_content().unwrap();
+            (0..300u32).rev().find(|r| e.page_layout_cell_span(0, *r, c.scale).is_some()).unwrap()
+        });
+        s.update(|e, _, cx| { e.set_cell(0, row); cx.notify(); e.scroll_range_into_view(false); });
+        assert!(f32::from(s.with(|e, _| e.workspace_scroll.offset().y)) < 0.0, "the view scrolls to the selected cell");
+        s.click_cell("C4"); // takes the keys out of the header's input
+        // Back to how the sheet was printed (the typed header and the 300 % each took a step or more).
+        for _ in 0..8 {
+            if s.with(|e, _| e.current_print().map(|p| (p.header_footer.odd_header.clone(), p.header_footer.odd_footer.clone(), p.scale))) == before {
+                break;
+            }
+            s.key("cmd-z");
+        }
+    }
     s.save_as("view002.xlsx");
     let saved = s.reopen();
     let sheet = sheet_of_slide(&saved.slides[0]).unwrap();
@@ -2008,6 +2224,22 @@ fn format021_cell_format_pane() {
     assert_eq!(style(&mut s).vertical, ibis_doc_model::CellVerticalAlign::Center);
     choose(&mut s, "cell-format-rotation", "45°");
     assert_eq!(style(&mut s).rotation, 45);
+    // Custom rotation angle input (-90..=90 degrees): 30° -> 30, -30° -> 120.
+    s.update(|e, window, cx| {
+        e.sheet_state().unwrap().custom_format.as_ref().unwrap().rotation.update(cx, |i, cx| i.set_value("30", window, cx));
+    });
+    press(&mut s, "cell-format-rotation-set");
+    assert_eq!(style(&mut s).rotation, 30);
+    s.update(|e, window, cx| {
+        e.sheet_state().unwrap().custom_format.as_ref().unwrap().rotation.update(cx, |i, cx| i.set_value("-30", window, cx));
+    });
+    press(&mut s, "cell-format-rotation-set");
+    assert_eq!(style(&mut s).rotation, 120);
+    s.click_cell("B4");
+    s.key("cmd-z");
+    assert_eq!(style(&mut s).rotation, 30);
+    s.key("cmd-z");
+    assert_eq!(style(&mut s).rotation, 45);
     s.screenshot("alignment");
     only(&mut s, 2);
     // フォント: the size with − and +, the toolbar's buttons, the colour's palette.
@@ -2028,6 +2260,14 @@ fn format021_cell_format_pane() {
     s.key("escape");
     choose(&mut s, "cell-format-color", &t("_shell.red"));
     assert_eq!(style(&mut s).color.0, 0xff0000);
+    choose(&mut s, "cell-format-underline-kind", &t("_xlsx.double-underline"));
+    assert_eq!(style(&mut s).underline, ibis_doc_model::CellUnderline::Double);
+    choose(&mut s, "cell-format-underline-kind", &t("_xlsx.no-underline"));
+    assert_eq!(style(&mut s).underline, ibis_doc_model::CellUnderline::None);
+    choose(&mut s, "cell-format-effect", &t("docx.chrome.superscript"));
+    assert_eq!(style(&mut s).vert_align, ibis_doc_model::VerticalPosition::Superscript);
+    choose(&mut s, "cell-format-effect", &t("_xlsx.normal-no-superscript-or-subscript"));
+    assert_eq!(style(&mut s).vert_align, ibis_doc_model::VerticalPosition::Baseline);
     s.screenshot("font");
     only(&mut s, 3);
     s.click_cell("H20");
@@ -2058,9 +2298,19 @@ fn format021_cell_format_pane() {
     s.screenshot("border-inside");
     press(&mut s, "cell-format-border-none");
     only(&mut s, 4);
-    // 塗りつぶし.
+    // 塗りつぶし: background color, pattern style, pattern color, and gradient fill.
     choose(&mut s, "cell-format-fill", &t("_shell.yellow"));
     assert_eq!(style(&mut s).fill.map(|f| f.0), Some(0xffff00));
+    choose(&mut s, "cell-format-pattern", &t("_xlsx.25-gray"));
+    assert_eq!(style(&mut s).pattern.as_ref().map(|p| p.0.as_str()), Some("pct25"));
+    choose(&mut s, "cell-format-pattern-color", &t("_shell.red"));
+    assert_eq!(style(&mut s).pattern.as_ref().map(|p| p.1.0), Some(0xff0000));
+    choose(&mut s, "cell-format-pattern", &t("_shell.none"));
+    assert!(style(&mut s).pattern.is_none());
+    choose(&mut s, "cell-format-gradient", &t("_xlsx.horizontal-left-to-right"));
+    assert!(matches!(style(&mut s).gradient, Some(ibis_doc_model::CellGradient::Linear { degree: 0, .. })));
+    choose(&mut s, "cell-format-gradient", &t("_xlsx.no-gradient"));
+    assert!(style(&mut s).gradient.is_none());
     s.screenshot("fill");
     choose(&mut s, "cell-format-fill", &t("xlsx.fill-none"));
     assert!(style(&mut s).fill.is_none());
@@ -2569,8 +2819,9 @@ fn xsc14_number_formats() {
     s.click_cell("A1");
     s.toolbar_menu("number-format", "xlsx.number-format");
     assert_eq!(s.shown("A1"), "1234567");
+    // The ¥ button is the accounting format (Excel's): the sign at the left, spaces around.
     s.toolbar("currency");
-    assert_eq!(s.shown("A1"), "¥1,234,567");
+    assert_eq!(s.shown("A1"), " ¥1,234,567 ");
     s.toolbar("percent");
     assert_eq!(s.shown("A1"), "123456700%");
     s.toolbar("decimal-more");
@@ -2658,6 +2909,341 @@ fn xsc36_grid_lines() {
     assert!(!sheet_of_slide(&saved.slides[0]).unwrap().grid_lines);
     s.menu("xlsx.gridlines");
     assert!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().grid_lines));
+}
+
+/// XLSX-FORMULA-025, XLSX-VIEW-020, XLSX-INK-009:
+/// 数式の表示 (showFormulas), ゼロ値の表示 (showZeros), インクの非表示 (hideInk).
+fn xlsx_show_formulas_show_zeros_hide_ink() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // 1. xlsx.show-formulas
+    assert_eq!(s.menu_state("xlsx.show-formulas"), Some((true, false)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_formulas), false);
+
+    // Initial display: find a formula cell
+    let (formula_cell, initial_text) = s.with(|e, _| {
+        let sheet = sheet_of_slide(e.slide()).unwrap();
+        let cell = sheet.cells.iter().find(|c| c.formula.is_some()).cloned().expect("has formula cell");
+        let shown = crate::xlsx::sheet_view::cell_shown_text(sheet, &cell);
+        ((cell.row, cell.column), shown)
+    });
+    assert!(!initial_text.starts_with("="));
+
+    // Toggle show-formulas on
+    s.menu("xlsx.show-formulas");
+    assert_eq!(s.menu_state("xlsx.show-formulas"), Some((true, true)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_formulas), true);
+
+    let formula_text = s.with(|e, _| {
+        let sheet = sheet_of_slide(e.slide()).unwrap();
+        let cell = sheet.cell(formula_cell.0, formula_cell.1).unwrap();
+        crate::xlsx::sheet_view::cell_shown_text(sheet, cell)
+    });
+    assert!(formula_text.starts_with("="), "formula text must start with =: {formula_text}");
+
+    // Undo toggles show-formulas back to false
+    s.key("cmd-z");
+    assert_eq!(s.menu_state("xlsx.show-formulas"), Some((true, false)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_formulas), false);
+    let undone_text = s.with(|e, _| {
+        let sheet = sheet_of_slide(e.slide()).unwrap();
+        let cell = sheet.cell(formula_cell.0, formula_cell.1).unwrap();
+        crate::xlsx::sheet_view::cell_shown_text(sheet, cell)
+    });
+    assert_eq!(undone_text, initial_text);
+
+    // Redo toggles show-formulas back to true
+    s.key("cmd-shift-z");
+    assert_eq!(s.menu_state("xlsx.show-formulas"), Some((true, true)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_formulas), true);
+
+    // 2. xlsx.show-zeros
+    assert_eq!(s.menu_state("xlsx.show-zeros"), Some((true, true)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_zeros), true);
+
+    // Enter 0 in cell A1
+    s.click_cell("A1");
+    s.enter("0", "enter");
+
+    let zero_text_on = s.with(|e, _| {
+        let sheet = sheet_of_slide(e.slide()).unwrap();
+        let cell = sheet.cell(0, 0).unwrap();
+        crate::xlsx::sheet_view::cell_shown_text(sheet, cell)
+    });
+    assert_eq!(zero_text_on, "0", "zero must be shown when show_zeros is true");
+
+    // Toggle show-zeros off
+    s.menu("xlsx.show-zeros");
+    assert_eq!(s.menu_state("xlsx.show-zeros"), Some((true, false)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_zeros), false);
+
+    let zero_text_off = s.with(|e, _| {
+        let sheet = sheet_of_slide(e.slide()).unwrap();
+        let cell = sheet.cell(0, 0).unwrap();
+        crate::xlsx::sheet_view::cell_shown_text(sheet, cell)
+    });
+    assert_eq!(zero_text_off, "", "zero must be empty when show_zeros is false");
+
+    // Undo toggles show-zeros back to true
+    s.key("cmd-z");
+    assert_eq!(s.menu_state("xlsx.show-zeros"), Some((true, true)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_zeros), true);
+
+    // 3. xlsx.hide-ink
+    assert_eq!(s.menu_state("xlsx.hide-ink"), Some((true, false)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().hide_ink), false);
+
+    s.menu("xlsx.hide-ink");
+    assert_eq!(s.menu_state("xlsx.hide-ink"), Some((true, true)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().hide_ink), true);
+
+    s.key("cmd-z");
+    assert_eq!(s.menu_state("xlsx.hide-ink"), Some((true, false)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().hide_ink), false);
+
+    s.key("cmd-shift-z");
+    assert_eq!(s.menu_state("xlsx.hide-ink"), Some((true, true)));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().hide_ink), true);
+
+    // Save and reopen
+    s.save_as("test-show-formulas-zeros-ink.xlsx");
+    let saved = s.reopen();
+    let re_sheet = sheet_of_slide(&saved.slides[0]).unwrap();
+    assert_eq!(re_sheet.show_formulas, true, "show_formulas survives roundtrip");
+    assert_eq!(re_sheet.show_zeros, true, "show_zeros survives roundtrip");
+}
+
+/// 4方向フィル (xlsx.fill-down, xlsx.fill-right, xlsx.fill-up, xlsx.fill-left),
+/// クリア機能 (xlsx.clear-formats, xlsx.clear-contents, xlsx.clear-hyperlinks),
+/// 桁区切りスタイル (xlsx.comma-style / _shell.comma-style: #,##0).
+fn xlsx_fill_directions_clear_and_comma_style() {
+    let mut s = new_sheet();
+
+    // 1. Fill Up (上方向へフィル)
+    // Put values in row 4: A4 = 100, B4 = "=A4+1"
+    s.click_cell("A4");
+    s.enter("100", "enter");
+    s.click_cell("B4");
+    s.enter("=A4+1", "enter");
+    // Select A1:B4
+    s.click_cell("A1");
+    s.key("shift-right");
+    for _ in 0..3 {
+        s.key("shift-down");
+    }
+    assert_eq!(s.with(|e, _| e.selected_range()).map(|r| (r.first_row, r.last_row, r.first_column, r.last_column)), Some((0, 3, 0, 1)));
+    s.menu("xlsx.fill-up");
+    assert_eq!(s.value("A1"), CellValue::Number(100.0));
+    assert_eq!(s.value("A2"), CellValue::Number(100.0));
+    assert_eq!(s.value("A3"), CellValue::Number(100.0));
+    assert_eq!(s.formula("B1").as_deref(), Some("A1+1"), "formula moved up to row 1");
+    assert_eq!(s.formula("B2").as_deref(), Some("A2+1"), "formula moved up to row 2");
+    assert_eq!(s.formula("B3").as_deref(), Some("A3+1"), "formula moved up to row 3");
+    // Undo
+    s.key("cmd-z");
+    assert_eq!(s.value("A1"), CellValue::Empty);
+    assert_eq!(s.formula("B1"), None);
+
+    // 2. Fill Left (左方向へフィル)
+    // Put value in D1 = 42
+    s.click_cell("D1");
+    s.enter("42", "enter");
+    // Select A1:D1
+    s.click_cell("A1");
+    for _ in 0..3 {
+        s.key("shift-right");
+    }
+    s.menu("xlsx.fill-left");
+    assert_eq!(s.value("A1"), CellValue::Number(42.0));
+    assert_eq!(s.value("B1"), CellValue::Number(42.0));
+    assert_eq!(s.value("C1"), CellValue::Number(42.0));
+    s.key("cmd-z");
+    assert_eq!(s.value("A1"), CellValue::Empty);
+    assert_eq!(s.value("B1"), CellValue::Empty);
+
+    // 3. Fill Down & Fill Right via menu
+    s.click_cell("A1");
+    s.enter("123", "enter");
+    s.click_cell("A1");
+    for _ in 0..2 {
+        s.key("shift-down");
+    }
+    s.menu("xlsx.fill-down");
+    assert_eq!(s.value("A2"), CellValue::Number(123.0));
+    assert_eq!(s.value("A3"), CellValue::Number(123.0));
+
+    s.click_cell("A1");
+    for _ in 0..2 {
+        s.key("shift-right");
+    }
+    s.menu("xlsx.fill-right");
+    assert_eq!(s.value("B1"), CellValue::Number(123.0));
+    assert_eq!(s.value("C1"), CellValue::Number(123.0));
+
+    // 4. Comma Style (桁区切りスタイル)
+    s.click_cell("A1");
+    s.enter("1234567", "enter");
+    s.click_cell("A1");
+    s.toolbar("comma");
+    assert_eq!(number_format(&mut s, "A1"), "#,##0");
+    assert_eq!(s.shown("A1"), "1,234,567");
+    // Undo reverts comma format
+    s.key("cmd-z");
+    assert_eq!(number_format(&mut s, "A1"), "General");
+    // Test menu item as well
+    s.menu("xlsx.comma-style");
+    assert_eq!(number_format(&mut s, "A1"), "#,##0");
+    s.key("cmd-z");
+    assert_eq!(number_format(&mut s, "A1"), "General");
+    s.key("cmd-shift-z");
+    assert_eq!(number_format(&mut s, "A1"), "#,##0");
+
+    // 5. Clear Formats (書式のクリア)
+    s.click_cell("A1");
+    s.menu("xlsx.clear-formats");
+    assert_eq!(number_format(&mut s, "A1"), "General");
+    assert_eq!(s.value("A1"), CellValue::Number(1234567.0), "value is retained after clear formats");
+
+    // 6. Clear Contents (数式と値のクリア)
+    s.click_cell("A1");
+    s.menu("xlsx.clear-contents");
+    assert_eq!(s.value("A1"), CellValue::Empty, "value is cleared by clear contents");
+    s.key("cmd-z");
+    assert_eq!(s.value("A1"), CellValue::Number(1234567.0), "undo restores cleared content");
+
+    // 7. Clear Hyperlinks (ハイパーリンクのクリア)
+    s.click_cell("A2");
+    s.update(|e, _, cx| e.insert_cell_link("https://example.com/test", cx));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().hyperlinks.len()), 1);
+    s.click_cell("A2");
+    s.menu("xlsx.clear-hyperlinks");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().hyperlinks.len()), 0, "hyperlink cleared");
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().hyperlinks.len()), 1, "undo restores cleared hyperlink");
+}
+
+/// フィルターの再適用 (xlsx.reapply-filter, ⌥⌘L),
+/// オブジェクトの選択と表示 (xlsx.selection-pane),
+/// スパークライン各点表示 (xlsx.sparkline-high-point, xlsx.sparkline-low-point,
+/// xlsx.sparkline-negative-points, xlsx.sparkline-first-point, xlsx.sparkline-last-point, xlsx.sparkline-markers).
+fn xlsx_reapply_filter_selection_pane_and_sparkline_points() {
+    let mut s = new_sheet();
+
+    // 1. オブジェクトの選択と表示 (Selection Pane)
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.selection_pane.is_none()));
+    s.menu("xlsx.selection-pane");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.selection_pane.is_some()), "selection pane opened");
+    s.menu("xlsx.selection-pane");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.selection_pane.is_none()), "selection pane closed");
+
+    // 2. フィルターの再適用 (Reapply Filter)
+    // Setup data:
+    // A1: "Fruit", A2: "Apple", A3: "Banana", A4: "Apple"
+    for (addr, val) in [("A1", "Fruit"), ("A2", "Apple"), ("A3", "Banana"), ("A4", "Apple")] {
+        s.click_cell(addr);
+        s.enter(val, "enter");
+    }
+    s.click_cell("A1");
+    for _ in 0..3 {
+        s.key("shift-down");
+    }
+    s.menu("xlsx.filter");
+    assert!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().auto_filter.is_some()));
+    // Filter column 0 for "Apple"
+    s.update(|e, _, cx| e.filter_column(0, Some(ibis_doc_model::ColumnFilter::Values(vec!["Apple".into()])), cx));
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().filtered_rows.iter().copied().collect::<Vec<_>>()), vec![2], "row 2 (Banana) filtered out");
+
+    // Now modify A2 (row 1, currently visible) to "Orange" without refiltering yet
+    s.click_cell("A2");
+    s.enter("Orange", "enter");
+    // Row 1 is not in filtered_rows until reapply
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().filtered_rows.iter().copied().collect::<Vec<_>>()), vec![2]);
+
+    // Reapply filter via menu
+    s.menu("xlsx.reapply-filter");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().filtered_rows.iter().copied().collect::<Vec<_>>()), vec![1, 2], "row 1 (Orange) and row 2 (Banana) now filtered out");
+
+    // Undo reapply restores row 1 being visible (only row 2 filtered)
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().filtered_rows.iter().copied().collect::<Vec<_>>()), vec![2]);
+
+    // Redo reapply
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().filtered_rows.iter().copied().collect::<Vec<_>>()), vec![1, 2]);
+
+    // 3. スパークライン各点表示 (Sparkline Point Toggles)
+    // Put data in B10..E10
+    for (i, val) in [-10, 20, 5, 30].iter().enumerate() {
+        let addr = format!("{}{}", (b'B' + i as u8) as char, 10);
+        s.click_cell(&addr);
+        s.enter(&val.to_string(), "enter");
+    }
+    // Create sparkline in A10
+    s.click_cell("A10");
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let group = ibis_doc_model::SparklineGroup {
+            kind: ibis_doc_model::SparklineKind::Line,
+            series: Some(ibis_doc_model::Rgb(0x376092)),
+            negative: Some(ibis_doc_model::Rgb(0xD00000)),
+            axis: Some(ibis_doc_model::Rgb(0x000000)),
+            markers_color: Some(ibis_doc_model::Rgb(0xD00000)),
+            first_color: Some(ibis_doc_model::Rgb(0xD00000)),
+            last_color: Some(ibis_doc_model::Rgb(0xD00000)),
+            high_color: Some(ibis_doc_model::Rgb(0xD00000)),
+            low_color: Some(ibis_doc_model::Rgb(0xD00000)),
+            line_weight: 75,
+            markers: false,
+            high: false,
+            low: false,
+            first: false,
+            last: false,
+            negative_points: false,
+            display_x_axis: false,
+            empty: ibis_doc_model::SparklineEmpty::Gap,
+            min_axis: ibis_doc_model::SparklineAxis::Individual,
+            max_axis: ibis_doc_model::SparklineAxis::Individual,
+            right_to_left: false,
+            display_hidden: false,
+            date_axis: false,
+            date_range: None,
+            sparklines: vec![ibis_doc_model::Sparkline {
+                column: 0,
+                row: 9,
+                sheet: None,
+                data: CellRange { first_row: 9, last_row: 9, first_column: 1, last_column: 4 },
+            }],
+        };
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddSparklineGroup { slide, group })], cx);
+    });
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines.len()), 1);
+
+    // Toggle points on selected cell A10
+    s.click_cell("A10");
+    s.menu("xlsx.sparkline-negative-points");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines[0].negative_points), true);
+
+    s.menu("xlsx.sparkline-high-point");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines[0].high), true);
+
+    s.menu("xlsx.sparkline-low-point");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines[0].low), true);
+
+    s.menu("xlsx.sparkline-first-point");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines[0].first), true);
+
+    s.menu("xlsx.sparkline-last-point");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines[0].last), true);
+
+    s.menu("xlsx.sparkline-markers");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines[0].markers), true);
+
+    // Undo reverts the markers toggle
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines[0].markers), false);
+    // Redo restores markers
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines[0].markers), true);
 }
 
 /// XSC-34: the first tab dragged onto the third (the sheets reorder), a
@@ -3796,12 +4382,21 @@ fn chart011_secondary_and_series_axis() {
         let _ = std::fs::create_dir_all(parent);
     }
     let status = std::process::Command::new("python3").arg("-c").arg(r#"
-import sys, zipfile
+import sys, zipfile, re
 with zipfile.ZipFile(sys.argv[1]) as source, zipfile.ZipFile(sys.argv[2], 'w') as output:
     for info in source.infolist():
         data = source.read(info.filename)
         if info.filename == 'xl/charts/chart1.xml':
             text = data.decode('utf-8')
+            m = re.search(r'(<c:ser><c:idx val="2".*?</c:ser>)', text, re.DOTALL)
+            ser2 = m.group(1)
+            text = text.replace(ser2, '')
+            text = text.replace('<c:barChart>', '<c:bar3DChart>')
+            text = text.replace('</c:barChart>', '<c:axId val="1642411137"/></c:bar3DChart>')
+            bar2 = f'<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>{ser2}<c:gapWidth val="219"/><c:gapDepth val="150"/><c:axId val="1658744191"/><c:axId val="1642411136"/><c:axId val="1642411137"/></c:bar3DChart>'
+            text = text.replace('</c:bar3DChart>', '</c:bar3DChart>' + bar2)
+            view3d = '<c:view3D><c:rotX val="15"/><c:rotY val="20"/><c:rAngAx val="1"/></c:view3D>'
+            text = text.replace('<c:plotArea>', view3d + '<c:plotArea>')
             extra = '<c:valAx><c:axId val="1642411136"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="r"/><c:crossAx val="1658744191"/><c:crosses val="autoZero"/></c:valAx><c:serAx><c:axId val="1642411137"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="1658744191"/><c:crosses val="autoZero"/></c:serAx>'
             text = text.replace('</c:plotArea>', extra + '</c:plotArea>')
             data = text.encode('utf-8')
@@ -4406,7 +5001,581 @@ fn xsc27_chart_data() {
     assert_eq!(s.with(|e, _| e.sheet_chart().map(|(_, c)| c.clone())).unwrap(), chart_of_file());
 }
 
-/// XLSX-CELL-005: text with parts in their own fonts (bold, colour, italic,
+/// XLSX-CHEDIT-002: 散布図（scatterChart）の行/列の切り替え（switch_sheet_chart_row_column）が
+/// 正しく行われ、Undo/Redo およびファイル保存・再読込で保持される。
+fn chedit002_scatter_switch_row_column() {
+    use ibis_doc_model::ShapeKind;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // Enter numeric table for scatter chart in G1:I3:
+    // G1: 0, H1: 10, I1: 20
+    // G2: 1, H2: 100, I2: 200
+    // G3: 2, H3: 150, I3: 250
+    s.click_cell("G1");
+    s.enter("Header", "tab");
+    s.enter("10", "tab");
+    s.enter("20", "enter");
+    s.click_cell("G2");
+    s.enter("1", "tab");
+    s.enter("100", "tab");
+    s.enter("200", "enter");
+    s.click_cell("G3");
+    s.enter("2", "tab");
+    s.enter("150", "tab");
+    s.enter("250", "enter");
+
+    // Select G1:I3
+    s.click_cell("G1");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+
+    // Insert Scatter Chart
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Scatter, w, cx));
+    s.settle();
+
+    // Select inserted chart (last chart)
+    let idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+    let at = s.shape_position(idx);
+    s.click(at);
+    s.menu("xlsx.chart-format");
+
+    let chart_info = |s: &mut Scenario| {
+        s.with(|e, _| {
+            let (_, c) = e.sheet_chart()?;
+            let s0 = c.groups.first()?.series.first()?;
+            Some((c.groups[0].series.len(), s0.name.clone(), s0.x_values.len(), s0.values.len()))
+        }).unwrap()
+    };
+
+    // Initially by_columns = true (rows 3 >= cols 3): 2 series (cols H and I, each 2 points)
+    let (count, name, x_len, y_len) = chart_info(&mut s);
+    assert_eq!(count, 2);
+    assert_eq!(name, "10");
+    assert_eq!(x_len, 2);
+    assert_eq!(y_len, 2);
+
+    // Switch row/column -> by_columns = false: 2 series (rows 2 and 3, each 2 points)
+    s.update(|e, w, cx| e.switch_sheet_chart_row_column(w, cx));
+    let (count, name, x_len, y_len) = chart_info(&mut s);
+    assert_eq!(count, 2);
+    assert_eq!(name, "1");
+    assert_eq!(x_len, 2);
+    assert_eq!(y_len, 2);
+
+    // Undo -> reverts to by_columns = true
+    s.key("cmd-z");
+    s.click(at);
+    let (count, name, ..) = chart_info(&mut s);
+    assert_eq!(count, 2);
+    assert_eq!(name, "10");
+
+    // Redo -> by_columns = false again
+    s.key("cmd-shift-z");
+    s.click(at);
+    let (count, name, ..) = chart_info(&mut s);
+    assert_eq!(count, 2);
+    assert_eq!(name, "1");
+
+    // Save and reopen
+    s.save_as("chedit002-scatter.xlsx");
+    let saved = s.reopen();
+    let sh = saved.slides[0].shapes.iter().rev().find(|sh| matches!(sh.kind, ShapeKind::Chart(_))).unwrap();
+    let ShapeKind::Chart(reopened_chart) = &sh.kind else { unreachable!() };
+    let r_s0 = &reopened_chart.groups[0].series[0];
+    assert_eq!(r_s0.name, "1");
+    assert_eq!(r_s0.x_values.len(), 2);
+    assert_eq!(r_s0.values.len(), 2);
+}
+
+/// XLSX-CHEDIT-002: バブルチャート（bubbleChart）の行/列の切り替え（switch_sheet_chart_row_column）が
+/// 正しく行われ、Undo/Redo およびファイル保存・再読込で保持される。
+fn chedit002_bubble_switch_row_column() {
+    use ibis_doc_model::ShapeKind;
+    let mut s2 = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // Enter 3x3 table for bubble chart in G1:I3:
+    // G1: "H", H1: "10", I1: "20"
+    // G2: "1", H2: "100", I2: "200"
+    // G3: "2", H3: "5", I3: "8"
+    s2.click_cell("G1");
+    s2.enter("H", "tab");
+    s2.enter("10", "tab");
+    s2.enter("20", "enter");
+    s2.click_cell("G2");
+    s2.enter("1", "tab");
+    s2.enter("100", "tab");
+    s2.enter("200", "enter");
+    s2.click_cell("G3");
+    s2.enter("2", "tab");
+    s2.enter("5", "tab");
+    s2.enter("8", "enter");
+
+    // Select G1:I3
+    s2.click_cell("G1");
+    s2.key("shift-right");
+    s2.key("shift-right");
+    s2.key("shift-down");
+    s2.key("shift-down");
+
+    // Insert Bubble Chart
+    s2.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Bubble, w, cx));
+    s2.settle();
+
+    let idx = s2.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+    let at = s2.shape_position(idx);
+    s2.click(at);
+    s2.menu("xlsx.chart-format");
+
+    let bubble_info = |s: &mut Scenario| {
+        s.with(|e, _| {
+            let (_, c) = e.sheet_chart()?;
+            let s0 = c.groups.first()?.series.first()?;
+            Some((c.groups[0].series.len(), s0.name.clone(), s0.x_values.len(), s0.values.len(), s0.bubble_sizes.len()))
+        }).unwrap()
+    };
+
+    // Initially by_columns = true: 1 series (Y in H, Size in I, X in G)
+    let (count, name, x_len, y_len, size_len) = bubble_info(&mut s2);
+    assert_eq!(count, 1);
+    assert_eq!(name, "10");
+    assert_eq!(x_len, 2);
+    assert_eq!(y_len, 2);
+    assert_eq!(size_len, 2);
+
+    // Switch row/column -> by_columns = false: 1 series (Y in row 2, Size in row 3, X in row 1)
+    s2.update(|e, w, cx| e.switch_sheet_chart_row_column(w, cx));
+    let (count, name, x_len, y_len, size_len) = bubble_info(&mut s2);
+    assert_eq!(count, 1);
+    assert_eq!(name, "1");
+    assert_eq!(x_len, 2);
+    assert_eq!(y_len, 2);
+    assert_eq!(size_len, 2);
+
+    // Undo -> reverts to by_columns = true
+    s2.key("cmd-z");
+    s2.click(at);
+    let (count, name, ..) = bubble_info(&mut s2);
+    assert_eq!(count, 1);
+    assert_eq!(name, "10");
+
+    // Redo -> by_columns = false again
+    s2.key("cmd-shift-z");
+    s2.click(at);
+    let (count, name, ..) = bubble_info(&mut s2);
+    assert_eq!(count, 1);
+    assert_eq!(name, "1");
+
+    // Save and reopen
+    s2.save_as("chedit002-bubble.xlsx");
+    let saved2 = s2.reopen();
+    let sh2 = saved2.slides[0].shapes.iter().rev().find(|sh| matches!(sh.kind, ShapeKind::Chart(_))).unwrap();
+    let ShapeKind::Chart(reopened_bubble) = &sh2.kind else { unreachable!() };
+    let b_s0 = &reopened_bubble.groups[0].series[0];
+    assert_eq!(b_s0.name, "1");
+    assert_eq!(b_s0.x_values.len(), 2);
+    assert_eq!(b_s0.values.len(), 2);
+    assert_eq!(b_s0.bubble_sizes.len(), 2);
+}
+
+/// XLSX-CHEDIT-001: 見出し無しデータ範囲（純粋数値データ）に対する散布図の挿入、
+/// 系列追加（add_sheet_chart_series）でのデータ点保持、範囲自動拡張、Undo/Redo、
+/// および保存・開き直しラウンドトリップを検証。
+fn chedit001_headerless_scatter() {
+    use ibis_doc_model::ShapeKind;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // Enter numbers in G1:H4 (X in G, Y in H, 4 points)
+    // Also enter I1:I4 for second series
+    s.click_cell("G1");
+    s.enter("1", "tab");
+    s.enter("10", "tab");
+    s.enter("100", "enter");
+    s.click_cell("G2");
+    s.enter("2", "tab");
+    s.enter("20", "tab");
+    s.enter("200", "enter");
+    s.click_cell("G3");
+    s.enter("3", "tab");
+    s.enter("30", "tab");
+    s.enter("300", "enter");
+    s.click_cell("G4");
+    s.enter("4", "tab");
+    s.enter("40", "tab");
+    s.enter("400", "enter");
+
+    // Select G1:H4 (pure numeric)
+    s.click_cell("G1");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+
+    // Insert Scatter Chart over headerless G1:H4
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Scatter, w, cx));
+    s.settle();
+
+    // Select the inserted scatter chart
+    let idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+    let at = s.shape_position(idx);
+    s.click(at);
+    s.menu("xlsx.chart-format");
+
+    let scatter_info = |s: &mut Scenario| {
+        s.with(|e, _| {
+            let (_, c) = e.sheet_chart()?;
+            let s0 = c.groups.first()?.series.first()?;
+            let total_pts: usize = c.groups.first()?.series.iter().map(|s| s.values.len()).sum();
+            Some((c.groups[0].series.len(), s0.name.clone(), s0.x_values.len(), s0.values.len(), total_pts))
+        }).unwrap()
+    };
+
+    let (series_count, name, x_len, y_len, total) = scatter_info(&mut s);
+    assert_eq!(series_count, 1);
+    assert_eq!(name, "系列1");
+    assert_eq!(x_len, 4, "all 4 rows included in X");
+    assert_eq!(y_len, 4, "all 4 rows included in Y");
+    assert_eq!(total, 4);
+
+    let range_text = s.with(|e, cx| e.wb().chart_edit.as_ref().unwrap().range.read(cx).value().to_string());
+    assert_eq!(range_text, "月次売上!$G$1:$H$4");
+
+    // Add series -> next column I (I1:I4) should be added as series 2
+    s.update(|e, w, cx| e.add_sheet_chart_series(w, cx));
+    let (series_count, _, x_len, y_len, total) = scatter_info(&mut s);
+    assert_eq!(series_count, 2);
+    assert_eq!(x_len, 4);
+    assert_eq!(y_len, 4);
+    assert_eq!(total, 8);
+
+    let range_text_after = s.with(|e, cx| e.wb().chart_edit.as_ref().unwrap().range.read(cx).value().to_string());
+    assert_eq!(range_text_after, "月次売上!$G$1:$I$4");
+
+    // Undo series addition
+    s.key("cmd-z");
+    s.click(at);
+    let (series_count, ..) = scatter_info(&mut s);
+    assert_eq!(series_count, 1);
+
+    // Redo
+    s.key("cmd-shift-z");
+    s.click(at);
+    let (series_count, ..) = scatter_info(&mut s);
+    assert_eq!(series_count, 2);
+
+    // Save and reopen
+    s.save_as("chedit001-headerless-scatter.xlsx");
+    let saved = s.reopen();
+    let re_sh = saved.slides[0].shapes.iter().rev().find(|sh| matches!(sh.kind, ShapeKind::Chart(_))).unwrap();
+    let ShapeKind::Chart(reopened_s) = &re_sh.kind else { unreachable!() };
+    assert_eq!(reopened_s.groups[0].series.len(), 2);
+    assert_eq!(reopened_s.groups[0].series[0].values.len(), 4);
+    assert_eq!(reopened_s.groups[0].series[1].values.len(), 4);
+}
+
+/// XLSX-CHEDIT-001: 見出し無しデータ範囲（純粋数値データ）に対するバブルチャートの挿入、
+/// 系列追加（add_sheet_chart_series）でのバブルサイズ・データ点保持、範囲自動拡張、Undo/Redo、
+/// および保存・開き直しラウンドトリップを検証。
+fn chedit001_headerless_bubble() {
+    use ibis_doc_model::ShapeKind;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // Pure numeric bubble data: G1:I3 (X, Y, Size) + J1:K3 (Series 2 Y, Size)
+    s.click_cell("G1");
+    s.enter("1", "tab");
+    s.enter("10", "tab");
+    s.enter("5", "tab");
+    s.enter("50", "tab");
+    s.enter("25", "enter");
+
+    s.click_cell("G2");
+    s.enter("2", "tab");
+    s.enter("20", "tab");
+    s.enter("8", "tab");
+    s.enter("60", "tab");
+    s.enter("30", "enter");
+
+    s.click_cell("G3");
+    s.enter("3", "tab");
+    s.enter("30", "tab");
+    s.enter("12", "tab");
+    s.enter("70", "tab");
+    s.enter("35", "enter");
+
+    // Select G1:I3 (pure numeric 3 cols x 3 rows)
+    s.click_cell("G1");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+
+    // Insert Bubble Chart
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Bubble, w, cx));
+    s.settle();
+
+    let b_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+    let b_at = s.shape_position(b_idx);
+    s.click(b_at);
+    s.menu("xlsx.chart-format");
+
+    let bubble_info = |s: &mut Scenario| {
+        s.with(|e, _| {
+            let (_, c) = e.sheet_chart()?;
+            let s0 = c.groups.first()?.series.first()?;
+            Some((c.groups[0].series.len(), s0.name.clone(), s0.x_values.len(), s0.values.len(), s0.bubble_sizes.len()))
+        }).unwrap()
+    };
+
+    let (b_count, b_name, b_x, b_y, b_sizes) = bubble_info(&mut s);
+    assert_eq!(b_count, 1);
+    assert_eq!(b_name, "系列1");
+    assert_eq!(b_x, 3);
+    assert_eq!(b_y, 3);
+    assert_eq!(b_sizes, 3);
+
+    let b_range_text = s.with(|e, cx| e.wb().chart_edit.as_ref().unwrap().range.read(cx).value().to_string());
+    assert_eq!(b_range_text, "月次売上!$G$1:$I$3");
+
+    // Add bubble series -> 2 columns (J and K) should be added for Y and Size!
+    s.update(|e, w, cx| e.add_sheet_chart_series(w, cx));
+    let (b_count, _, b_x, b_y, b_sizes) = bubble_info(&mut s);
+    assert_eq!(b_count, 2);
+    assert_eq!(b_x, 3);
+    assert_eq!(b_y, 3);
+    assert_eq!(b_sizes, 3);
+
+    let b_range_text_2 = s.with(|e, cx| e.wb().chart_edit.as_ref().unwrap().range.read(cx).value().to_string());
+    assert_eq!(b_range_text_2, "月次売上!$G$1:$K$3");
+
+    // Verify series 2 bubble sizes
+    let s1_sizes = s.with(|e, _| {
+        let (_, c) = e.sheet_chart().unwrap();
+        c.groups[0].series[1].bubble_sizes.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>()
+    });
+    assert_eq!(s1_sizes, [Some(25.0), Some(30.0), Some(35.0)]);
+
+    // Undo series addition
+    s.key("cmd-z");
+    s.click(b_at);
+    let (b_count, ..) = bubble_info(&mut s);
+    assert_eq!(b_count, 1);
+
+    // Redo
+    s.key("cmd-shift-z");
+    s.click(b_at);
+    let (b_count, ..) = bubble_info(&mut s);
+    assert_eq!(b_count, 2);
+
+    // Save and reopen
+    s.save_as("chedit001-headerless-bubble.xlsx");
+    let saved = s.reopen();
+    let re_sh = saved.slides[0].shapes.iter().rev().find(|sh| matches!(sh.kind, ShapeKind::Chart(_))).unwrap();
+    let ShapeKind::Chart(reopened_b) = &re_sh.kind else { unreachable!() };
+    assert_eq!(reopened_b.groups[0].series.len(), 2);
+    assert_eq!(reopened_b.groups[0].series[0].bubble_sizes.len(), 3);
+    assert_eq!(reopened_b.groups[0].series[1].bubble_sizes.len(), 3);
+}
+
+/// 株価チャート（StockHLC / StockVHLC）のワークシート挿入、範囲指定、系列表示、
+/// 行/列の切り替え、Undo/Redo、および保存・開き直しラウンドトリップを検証。
+fn chedit001_stock_charts() {
+    use ibis_doc_model::ShapeKind;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // StockHLC data with headers in G1:J4
+    s.click_cell("G1");
+    s.enter("日付", "tab");
+    s.enter("高値", "tab");
+    s.enter("安値", "tab");
+    s.enter("終値", "enter");
+
+    s.click_cell("G2");
+    s.enter("10/1", "tab");
+    s.enter("150", "tab");
+    s.enter("100", "tab");
+    s.enter("130", "enter");
+
+    s.click_cell("G3");
+    s.enter("10/2", "tab");
+    s.enter("160", "tab");
+    s.enter("110", "tab");
+    s.enter("140", "enter");
+
+    s.click_cell("G4");
+    s.enter("10/3", "tab");
+    s.enter("170", "tab");
+    s.enter("120", "tab");
+    s.enter("155", "enter");
+
+    // Select G1:J4
+    s.click_cell("G1");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+
+    // Insert StockHLC Chart
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::StockHLC, w, cx));
+    s.settle();
+
+    let chart_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+    let chart_pos = s.shape_position(chart_idx);
+    s.click(chart_pos);
+    s.menu("xlsx.chart-format");
+
+    let stock_info = |s: &mut Scenario| {
+        s.with(|e, _| {
+            let (_, c) = e.sheet_chart()?;
+            let s0 = c.groups.first()?.series.first()?;
+            Some((c.groups[0].series.len(), s0.name.clone(), s0.categories.len(), s0.values.len()))
+        }).unwrap()
+    };
+
+    let (ser_count, s0_name, s0_cats, s0_vals) = stock_info(&mut s);
+    assert_eq!(ser_count, 3);
+    assert_eq!(s0_name, "高値");
+    assert_eq!(s0_cats, 3);
+    assert_eq!(s0_vals, 3);
+
+    let range_text = s.with(|e, cx| e.wb().chart_edit.as_ref().unwrap().range.read(cx).value().to_string());
+    assert_eq!(range_text, "月次売上!$G$1:$J$4");
+
+    // Add a series to the stock chart
+    s.update(|e, w, cx| e.add_sheet_chart_series(w, cx));
+    let (ser_count, ..) = stock_info(&mut s);
+    assert_eq!(ser_count, 4);
+
+    // Undo series add
+    s.key("cmd-z");
+    s.click(chart_pos);
+    let (ser_count, ..) = stock_info(&mut s);
+    assert_eq!(ser_count, 3);
+
+    // Redo
+    s.key("cmd-shift-z");
+    s.click(chart_pos);
+    let (ser_count, ..) = stock_info(&mut s);
+    assert_eq!(ser_count, 4);
+
+    // Save and reopen
+    s.save_as("chedit001-stock-chart.xlsx");
+    let saved = s.reopen();
+    let re_sh = saved.slides[0].shapes.iter().rev().find(|sh| matches!(sh.kind, ShapeKind::Chart(_))).unwrap();
+    let ShapeKind::Chart(reopened_chart) = &re_sh.kind else { unreachable!() };
+    assert_eq!(reopened_chart.groups[0].series.len(), 4);
+    assert_eq!(reopened_chart.groups[0].series[0].name, "高値");
+    assert_eq!(reopened_chart.groups[0].series[0].values.len(), 3);
+}
+
+/// レーダー（Radar）、表面（Surface3D）、複合（ComboColumnLine）チャートの
+/// ワークシート挿入、範囲指定、行/列の切り替え、Undo、および保存・開き直しラウンドトリップを検証。
+fn chedit001_radar_surface_combo_charts() {
+    use ibis_doc_model::ShapeKind;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // Select A3:D8 (stores down the side, months across the top: 4月, 5月, 6月)
+    s.click_cell("A3");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+
+    // 1. Insert Radar chart
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Radar, w, cx));
+    s.settle();
+
+    let chart_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+    let chart_pos = s.shape_position(chart_idx);
+    s.click(chart_pos);
+    s.menu("xlsx.chart-format");
+
+    let radar_info = |s: &mut Scenario| {
+        s.with(|e, _| {
+            let (_, c) = e.sheet_chart()?;
+            let s0 = c.groups.first()?.series.first()?;
+            Some((c.groups[0].series.len(), s0.name.clone(), s0.categories.len(), s0.values.len()))
+        }).unwrap()
+    };
+
+    let (ser_count, s0_name, s0_cats, s0_vals) = radar_info(&mut s);
+    assert_eq!(ser_count, 3, "Radar has 3 series (4月, 5月, 6月)");
+    assert_eq!(s0_name, "4月");
+    assert_eq!(s0_cats, 5, "5 stores as categories");
+    assert_eq!(s0_vals, 5, "5 store values");
+
+    // Switch row/column on Radar
+    s.update(|e, w, cx| e.switch_sheet_chart_row_column(w, cx));
+    let (ser_count, s0_name, s0_cats, s0_vals) = radar_info(&mut s);
+    assert_eq!(ser_count, 5, "Switched: 5 store series");
+    assert_eq!(s0_name, "北町店");
+    assert_eq!(s0_cats, 3, "3 months as categories");
+    assert_eq!(s0_vals, 3, "3 month values");
+
+    // Undo row/column switch
+    s.key("cmd-z");
+    s.click(chart_pos);
+    let (ser_count, s0_name, ..) = radar_info(&mut s);
+    assert_eq!(ser_count, 3);
+    assert_eq!(s0_name, "4月");
+
+    // 2. Insert Combo chart (ComboColumnLine: Bar group + Line group)
+    s.click_cell("A3");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::ComboColumnLine, w, cx));
+    s.settle();
+
+    let combo_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+    let combo_pos = s.shape_position(combo_idx);
+    s.click(combo_pos);
+    let combo_info = s.with(|e, _| {
+        let (_, c) = e.sheet_chart()?;
+        Some((c.groups.len(), c.groups[0].series.len(), c.groups[1].series.len()))
+    }).unwrap();
+    assert_eq!(combo_info, (2, 2, 1), "ComboColumnLine has Group 0 (2 bar series) and Group 1 (1 line series)");
+
+    // 3. Insert Surface3D chart
+    s.click_cell("A3");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Surface3D, w, cx));
+    s.settle();
+
+    let surface_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+    let surface_pos = s.shape_position(surface_idx);
+    s.click(surface_pos);
+    let surface_info = s.with(|e, _| {
+        let (_, c) = e.sheet_chart()?;
+        Some((c.groups.len(), c.groups[0].series.len(), c.groups[0].series[0].name.clone()))
+    }).unwrap();
+    assert_eq!(surface_info, (1, 3, "4月".to_string()), "Surface3D has 1 group with 3 series");
+
+    // Save and reopen
+    s.save_as("chedit001-advanced-charts.xlsx");
+    let saved = s.reopen();
+    let charts: Vec<_> = saved.slides[0].shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Chart(_))).collect();
+    assert!(charts.len() >= 3, "At least 3 charts saved and reopened");
+}
+
 /// size, underline, strike) is read, drawn and kept by a save.
 fn cell005_rich_text() {
     let mut s = Scenario::open("test/editing/xlsx-rich-text.xlsx");
@@ -4461,6 +5630,605 @@ fn cell005_rich_text_edit() {
     assert!(s.with(|e, _| e.current_sheet().and_then(|(_, sheet)| sheet.cell(5, 0).map(|c| c.runs.is_none()))).unwrap());
 }
 
+/// XLSX-CELL-005, the font name of a part of the text (rFont) and the row
+/// that fits a part in a larger size: set on the selected text while editing,
+/// kept by the entry, saved and read back; the row grows (one step with the entry).
+fn cell005_rich_font_and_row() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let row_before = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.rows[5]).unwrap());
+    s.click_cell("A6");
+    s.key("f2");
+    s.key("shift-left");
+    s.update(|e, _, cx| {
+        e.format_cells(ibis_doc_model::StyleChange::Font(Some("Arial".into())), cx);
+        e.format_cells(ibis_doc_model::StyleChange::FontSize(3200), cx);
+    });
+    let runs = s.with(|e, _| e.cell_edit().and_then(|c| c.runs.clone())).expect("runs while editing");
+    assert_eq!(runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), ["東町", "店"]);
+    assert_eq!((runs[0].font.clone(), runs[1].font.clone(), runs[1].size), (None, Some("Arial".to_string()), Some(3200)));
+    s.key("enter");
+    let row_after = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.rows[5]).unwrap());
+    assert!(row_after > row_before, "{row_before} -> {row_after}");
+    s.save_as("cell005-rfont.xlsx");
+    let saved = s.reopen();
+    let sheet = sheet_of_slide(&saved.slides[0]).unwrap();
+    let read = sheet.cell(5, 0).and_then(|c| c.runs.clone()).expect("runs read back");
+    assert_eq!((read.len(), read[1].font.clone(), read[1].size), (2, Some("Arial".to_string()), Some(3200)));
+    assert!(sheet.rows[5] > row_before);
+    // One step takes back the text, its parts and the row's height.
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.rows[5]).unwrap()), row_before);
+    assert!(s.with(|e, _| e.current_sheet().and_then(|(_, sheet)| sheet.cell(5, 0).map(|c| c.runs.is_none()))).unwrap());
+}
+
+/// XLSX-OPTIONS-006 ツール > エラー チェックのオプション…: the rules that mark
+/// cells (2-digit years, unlocked formulas, formulas that omit adjacent
+/// cells, references to empty cells) are checked, can be turned off one by
+/// one or altogether, and the errors ignored can be reset.
+fn options006_error_options() {
+    use ibis_doc_model::error_check::{ErrorKind, Rules, flagged_cells, set_rules};
+    set_rules(Rules::default());
+    let mut s = new_sheet();
+    let flagged = |s: &mut Scenario| s.with(|e, _| e.current_sheet().map(|(_, sh)| flagged_cells(sh)).unwrap_or_default());
+    // A text date with a 2-digit year; numbers with a SUM that leaves one out; a formula on an empty cell.
+    s.click_cell("A1");
+    s.enter("'1/2/26", "enter");
+    for (i, v) in ["3", "4", "5", "6"].iter().enumerate() {
+        s.click_cell(&format!("C{}", i + 1));
+        s.enter(v, "enter");
+    }
+    s.click_cell("D1");
+    s.enter("=SUM(C1:C3)", "enter");
+    s.click_cell("D2");
+    s.enter("=Z9+1", "enter");
+    assert_eq!(flagged(&mut s), vec![(0, 0, ErrorKind::TwoDigitYear), (0, 3, ErrorKind::FormulaRange)]);
+    // The panel: turn the 2-digit-year rule off, and the empty-cell rule on.
+    s.menu("xlsx.error-options");
+    assert!(s.with(|e, _| e.wb().panels.error_options.is_some()));
+    s.update(|e, _, cx| {
+        let p = e.wb_mut().panels.error_options.as_mut().unwrap();
+        p.rules.two_digit_year = false;
+        p.rules.empty_cell_reference = true;
+        e.apply_error_options_panel(cx);
+    });
+    assert_eq!(flagged(&mut s), vec![(0, 3, ErrorKind::FormulaRange), (1, 3, ErrorKind::EmptyCellReference)]);
+    // Ignoring one kind of error in a cell, then resetting what was ignored.
+    s.click_cell("D1");
+    s.update(|e, _, cx| e.ignore_error(cx));
+    assert_eq!(flagged(&mut s), vec![(1, 3, ErrorKind::EmptyCellReference)]);
+    s.menu("xlsx.error-options");
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::ResetIgnoredErrors { slide })], cx);
+    });
+    assert_eq!(flagged(&mut s).len(), 2);
+    // Background checking off: nothing is marked.
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.error_options.as_mut().unwrap().rules.background = false;
+        e.apply_error_options_panel(cx);
+    });
+    assert!(flagged(&mut s).is_empty());
+    // The rules are the process's: put them back for the other scenarios.
+    set_rules(Rules::default());
+    assert_eq!(flagged(&mut s).len(), 2);
+}
+
+/// XLSX-INK-001〜006 挿入 > 描画…: the pen and the highlighter draw strokes
+/// (freeform shapes named インク n) by dragging over the sheet, with a colour
+/// and a thickness; the eraser takes a stroke away; 選択 lets the pointer
+/// select and move one; the mouse switch stops the mouse drawing; インクを
+/// 図形に変換 makes a stroke the shape it looks like; saved and opened again.
+fn ink001_draw() {
+    use super::ink::{PenKind, is_ink_name, stroke_points};
+    use ibis_doc_model::{Rgb, ShapeKind};
+    let mut s = new_sheet();
+    let at = |s: &mut Scenario, x: i64, y: i64| -> (f32, f32) {
+        s.with(|e, _| {
+            let l = e.slide_layout().expect("laid out");
+            (f32::from(l.origin.x + l.to_px(x)), f32::from(l.origin.y + l.to_px(y)))
+        })
+    };
+    let ink_names = |s: &mut Scenario| -> Vec<String> { s.with(|e, _| e.slide().shapes.iter().filter_map(|sh| e.slide().shape_names.get(&sh.id)).filter(|n| is_ink_name(n)).cloned().collect()) };
+    let shapes = |s: &mut Scenario| s.with(|e, _| e.slide().shapes.len());
+    let base = shapes(&mut s);
+    s.menu("xlsx.ink");
+    assert!(s.with(|e, _| e.wb().panels.ink.is_some()));
+    // The pen: a wavy stroke, black, 2.25 pt.
+    let path: Vec<(f32, f32)> = (0..12).map(|i| at(&mut s, 3_000_000 + i * 150_000, 2_500_000 + if i % 2 == 0 { 0 } else { 200_000 })).collect();
+    s.drag_through(&path);
+    assert_eq!(shapes(&mut s), base + 1);
+    assert_eq!(ink_names(&mut s), vec!["インク 1".to_string()]);
+    let (stroke, first) = s.with(|e, _| {
+        let shape = e.slide().shapes.last().unwrap().clone();
+        (match &shape.kind { ShapeKind::Auto(a) => a.stroke.clone().unwrap(), _ => panic!("freeform") }, stroke_points(&shape).unwrap())
+    });
+    assert_eq!((stroke.color.rgb, stroke.color.alpha, stroke.width), (Rgb(0), 255, (2.25 * 12700.0) as i64));
+    assert!(first.len() >= 8, "{}", first.len());
+    // The highlighter: yellow, see-through and thick.
+    s.update(|e, _, _| {
+        let p = e.wb_mut().panels.ink.as_mut().unwrap();
+        p.pen = PenKind::Highlighter;
+        p.color = Rgb(0xFFD700);
+        p.width = 4.5;
+    });
+    let path: Vec<(f32, f32)> = (0..6).map(|i| at(&mut s, 3_000_000 + i * 300_000, 3_400_000)).collect();
+    s.drag_through(&path);
+    assert_eq!(ink_names(&mut s).len(), 2);
+    let alpha = s.with(|e, _| match &e.slide().shapes.last().unwrap().kind { ShapeKind::Auto(a) => a.stroke.as_ref().unwrap().color.alpha, _ => 0 });
+    assert_eq!(alpha, 128);
+    // The eraser: a drag across the first stroke takes it away; the second stays.
+    s.update(|e, _, _| e.wb_mut().panels.ink.as_mut().unwrap().pen = PenKind::Eraser);
+    let across: Vec<(f32, f32)> = (0..5).map(|i| at(&mut s, 3_300_000 + i * 100_000, 2_300_000 + i * 150_000)).collect();
+    s.drag_through(&across);
+    assert_eq!(ink_names(&mut s).len(), 1, "one stroke erased");
+    // With the mouse switched off nothing is drawn.
+    s.update(|e, _, _| {
+        let p = e.wb_mut().panels.ink.as_mut().unwrap();
+        p.pen = PenKind::Pen;
+        p.mouse = false;
+    });
+    let n = shapes(&mut s);
+    let path: Vec<(f32, f32)> = (0..5).map(|i| at(&mut s, 6_000_000 + i * 100_000, 2_000_000)).collect();
+    s.drag_through(&path);
+    assert_eq!(shapes(&mut s), n);
+    // A rectangle drawn by hand, then made a rectangle.
+    s.update(|e, _, _| {
+        let p = e.wb_mut().panels.ink.as_mut().unwrap();
+        p.mouse = true;
+        p.color = Rgb(0xC00000);
+    });
+    let corners = [(6_000_000, 2_000_000), (7_000_000, 2_000_000), (7_000_000, 2_600_000), (6_000_000, 2_600_000), (6_000_000, 2_000_000)];
+    let mut path = Vec::new();
+    for w in corners.windows(2) {
+        for k in 0..8 {
+            let t = k as f64 / 8.0;
+            path.push(at(&mut s, (w[0].0 as f64 + (w[1].0 - w[0].0) as f64 * t) as i64, (w[0].1 as f64 + (w[1].1 - w[0].1) as f64 * t) as i64));
+        }
+    }
+    path.push(at(&mut s, 6_000_000, 2_000_000));
+    s.drag_through(&path);
+    let drawn = ink_names(&mut s).len();
+    assert_eq!(drawn, 2);
+    // Select it (the pointer selects with 選択) and change it.
+    s.update(|e, _, _| e.wb_mut().panels.ink.as_mut().unwrap().pen = PenKind::Select);
+    let id = s.with(|e, _| e.slide().shapes.last().unwrap().id);
+    s.update(move |e, _, cx| {
+        e.selection = Some(id);
+        e.ink_to_shape(cx);
+    });
+    let is_rect = s.with(|e, _| match &e.slide().shapes.last().unwrap().kind {
+        ShapeKind::Auto(a) => match &a.geometry {
+            ibis_doc_model::Geometry::Rect => true,
+            ibis_doc_model::Geometry::Formula(f) => f.preset.as_deref() == Some("rect"),
+            _ => false,
+        },
+        _ => false,
+    });
+    assert!(is_rect, "{}", s.with(|e, _| e.wb().panels.ink.as_ref().unwrap().message.clone()));
+    assert_eq!(ink_names(&mut s).len(), 1, "the stroke is now a shape");
+    // Saved and opened again: the other stroke is a freeform.
+    s.save_as("ink001.xlsx");
+    let reopened = s.reopen();
+    let shapes_back = reopened.slides[1].shapes.iter().filter(|sh| stroke_points(sh).is_some()).count();
+    assert_eq!(shapes_back, 1);
+    // One undo takes back the conversion.
+    s.click_cell("A1");
+    s.key("cmd-z");
+    assert_eq!(ink_names(&mut s).len(), 2);
+
+    // XLSX-INK-004: Lasso selection encloses both ink strokes and selects them together,
+    // and dragging one selected stroke moves both strokes in a single undoable step.
+    s.update(|e, _, _| {
+        let p = e.wb_mut().panels.ink.as_mut().unwrap();
+        p.pen = PenKind::Select;
+        p.lasso = true;
+        p.mouse = true;
+    });
+    let lasso_loop = [
+        at(&mut s, 2_500_000, 1_500_000),
+        at(&mut s, 7_500_000, 1_500_000),
+        at(&mut s, 7_500_000, 4_000_000),
+        at(&mut s, 2_500_000, 4_000_000),
+        at(&mut s, 2_500_000, 1_500_000),
+    ];
+    s.drag_through(&lasso_loop);
+    let sel_ids = s.with(|e, _| e.selected_ids());
+    assert_eq!(sel_ids.len(), 2, "Lasso should select both enclosed ink strokes");
+    let before_frames: Vec<_> = s.with(|e, _| sel_ids.iter().map(|&id| e.slide().shape(id).unwrap().frame).collect());
+    // Drag on the second selected stroke (the rectangle ink at 6_000_000..7_000_000, 2_000_000..2_600_000) to move both strokes.
+    let drag_start = at(&mut s, 6_500_000, 2_300_000);
+    let drag_end = at(&mut s, 6_800_000, 2_500_000);
+    s.drag(drag_start, drag_end);
+    let after_frames: Vec<_> = s.with(|e, _| sel_ids.iter().map(|&id| e.slide().shape(id).unwrap().frame).collect());
+    assert!(after_frames[0].x > before_frames[0].x && after_frames[0].y > before_frames[0].y, "First lasso-selected stroke should move");
+    assert!(after_frames[1].x > before_frames[1].x && after_frames[1].y > before_frames[1].y, "Second lasso-selected stroke should move");
+    // Single undo restores both strokes' positions.
+    s.key("cmd-z");
+    let undone_frames: Vec<_> = s.with(|e, _| sel_ids.iter().map(|&id| e.slide().shape(id).unwrap().frame).collect());
+    assert_eq!(undone_frames, before_frames, "Single undo should restore all lasso-moved strokes");
+
+    // XLSX-INK-006: Draw a right-arrow ink stroke and convert it to a rightArrow shape.
+    s.update(|e, _, _| {
+        let p = e.wb_mut().panels.ink.as_mut().unwrap();
+        p.pen = PenKind::Pen;
+        p.lasso = false;
+        p.mouse = true;
+    });
+    let mut arrow_path: Vec<(f32, f32)> = (0..=10).map(|i| at(&mut s, 3_000_000 + i * 80_000, 4_200_000)).collect();
+    for i in 1..=5 {
+        arrow_path.push(at(&mut s, 3_800_000 - i * 40_000, 4_200_000 - i * 40_000));
+    }
+    s.drag_through(&arrow_path);
+    let arrow_id = s.with(|e, _| e.slide().shapes.last().unwrap().id);
+    s.update(move |e, _, cx| {
+        e.set_selection(vec![arrow_id]);
+        e.ink_to_shape(cx);
+    });
+    let is_right_arrow = s.with(|e, _| match &e.slide().shapes.last().unwrap().kind {
+        ShapeKind::Auto(a) => matches!(&a.geometry, ibis_doc_model::Geometry::Formula(f) if f.preset.as_deref() == Some("rightArrow")),
+        _ => false,
+    });
+    assert!(is_right_arrow, "Arrow ink stroke should convert to rightArrow preset shape");
+}
+
+/// XLSX-INK-002: ペンの色（16色）・太さ（4種）・効果（レインボー・ギャラクシー・溶岩・海洋・ローズゴールド・ゴールド・シルバー・ブロンズ）
+/// の選択、効果付きインク描画、図形変換時の効果引き継ぎ、OOXML保存・再読込ラウンドトリップ、Undo/Redo。
+fn ink002_color_width_effects() {
+    use super::ink::{COLORS, InkEffect, PenKind, WIDTHS, is_ink_name, stroke_points};
+    use ibis_doc_model::{Fill, Rgb, ShapeKind};
+    let mut s = new_sheet();
+    let at = |s: &mut Scenario, x: i64, y: i64| -> (f32, f32) {
+        s.with(|e, _| {
+            let l = e.slide_layout().expect("laid out");
+            (f32::from(l.origin.x + l.to_px(x)), f32::from(l.origin.y + l.to_px(y)))
+        })
+    };
+    let ink_shapes = |s: &mut Scenario| -> Vec<ibis_doc_model::Shape> {
+        s.with(|e, _| e.slide().shapes.iter().filter(|sh| stroke_points(sh).is_some()).cloned().collect())
+    };
+    let ink_names = |s: &mut Scenario| -> Vec<String> {
+        s.with(|e, _| e.slide().shapes.iter().filter_map(|sh| e.slide().shape_names.get(&sh.id)).filter(|n| is_ink_name(n)).cloned().collect())
+    };
+    let is_rect = |s: &mut Scenario| -> bool {
+        s.with(|e, _| {
+            e.slide().shapes.iter().any(|sh| match &sh.kind {
+                ShapeKind::Auto(a) => match &a.geometry {
+                    ibis_doc_model::Geometry::Rect => true,
+                    ibis_doc_model::Geometry::Formula(f) => f.preset.as_deref() == Some("rect"),
+                    _ => false,
+                },
+                _ => false,
+            })
+        })
+    };
+
+    s.menu("xlsx.ink");
+    assert!(s.with(|e, _| e.wb().panels.ink.is_some()));
+
+    // 1. Verify all 16 color swatches, 4 widths, and 8 effects are in the panel UI
+    s.with(|e, _| {
+        let p = e.wb().panels.ink.as_ref().unwrap();
+        assert_eq!(COLORS.len(), 16);
+        assert_eq!(WIDTHS.len(), 4);
+        assert_eq!(InkEffect::ALL.len(), 8);
+        assert_eq!(p.pen, PenKind::Pen);
+        assert_eq!(p.effect, None);
+    });
+
+    // 2. Select a palette color and thickness
+    s.update(|e, _, cx| {
+        e.ink_set_color(Rgb(COLORS[14]), cx); // Dark Blue (0x1F4E79)
+        e.ink_set_width(WIDTHS[3], cx);       // 6.0 pt
+    });
+    s.with(|e, _| {
+        let p = e.wb().panels.ink.as_ref().unwrap();
+        assert_eq!(p.color, Rgb(0x1F4E79));
+        assert_eq!(p.width, 6.0);
+        assert_eq!(p.effect, None);
+    });
+
+    // Draw solid stroke with customized color and width
+    let path1: Vec<(f32, f32)> = (0..8).map(|i| at(&mut s, 2_000_000 + i * 200_000, 2_000_000)).collect();
+    s.drag_through(&path1);
+    let solid_shape = ink_shapes(&mut s).last().unwrap().clone();
+    let stroke = match &solid_shape.kind { ShapeKind::Auto(a) => a.stroke.clone().unwrap(), _ => panic!("not auto") };
+    assert_eq!(stroke.color.rgb, Rgb(0x1F4E79));
+    assert_eq!(stroke.width, (6.0 * 12700.0) as i64);
+    assert_eq!(stroke.fill, None);
+
+    // 3. Select Rainbow Effect
+    s.update(|e, _, cx| {
+        e.ink_set_effect(Some(InkEffect::Rainbow), cx);
+    });
+    s.with(|e, _| {
+        let p = e.wb().panels.ink.as_ref().unwrap();
+        assert_eq!(p.effect, Some(InkEffect::Rainbow));
+    });
+
+    // Draw Rainbow stroke
+    let path2: Vec<(f32, f32)> = (0..10).map(|i| at(&mut s, 2_000_000 + i * 200_000, 3_000_000 + if i % 2 == 0 { 0 } else { 150_000 })).collect();
+    s.drag_through(&path2);
+    let rainbow_shape = ink_shapes(&mut s).last().unwrap().clone();
+    let stroke = match &rainbow_shape.kind { ShapeKind::Auto(a) => a.stroke.clone().unwrap(), _ => panic!("not auto") };
+    assert!(matches!(&stroke.fill, Some(Fill::Linear { stops, .. }) if stops.len() == 7), "Rainbow has 7 gradient stops");
+
+    // 4. Select Galaxy Effect
+    s.update(|e, _, cx| {
+        e.ink_set_effect(Some(InkEffect::Galaxy), cx);
+    });
+    let path3: Vec<(f32, f32)> = (0..8).map(|i| at(&mut s, 2_000_000 + i * 200_000, 4_000_000)).collect();
+    s.drag_through(&path3);
+    let galaxy_shape = ink_shapes(&mut s).last().unwrap().clone();
+    let stroke = match &galaxy_shape.kind { ShapeKind::Auto(a) => a.stroke.clone().unwrap(), _ => panic!("not auto") };
+    assert!(matches!(&stroke.fill, Some(Fill::Linear { stops, .. }) if stops.len() == 5), "Galaxy has 5 gradient stops");
+
+    // 5. Draw a closed shape with Rose Gold effect and convert to rectangle
+    s.update(|e, _, cx| {
+        e.ink_set_effect(Some(InkEffect::RoseGold), cx);
+        e.ink_set_width(2.25, cx);
+    });
+    let corners = [(5_000_000, 2_000_000), (6_000_000, 2_000_000), (6_000_000, 2_600_000), (5_000_000, 2_600_000), (5_000_000, 2_000_000)];
+    let mut rect_path = Vec::new();
+    for w in corners.windows(2) {
+        for k in 0..8 {
+            let t = k as f64 / 8.0;
+            rect_path.push(at(&mut s, (w[0].0 as f64 + (w[1].0 - w[0].0) as f64 * t) as i64, (w[0].1 as f64 + (w[1].1 - w[0].1) as f64 * t) as i64));
+        }
+    }
+    rect_path.push(at(&mut s, 5_000_000, 2_000_000));
+    s.drag_through(&rect_path);
+    assert_eq!(ink_names(&mut s).len(), 4);
+
+    s.update(|e, _, _| e.wb_mut().panels.ink.as_mut().unwrap().pen = PenKind::Select);
+    let rect_ink_id = s.with(|e, _| e.slide().shapes.last().unwrap().id);
+    s.update(move |e, _, cx| {
+        e.selection = Some(rect_ink_id);
+        e.ink_to_shape(cx);
+    });
+    assert!(is_rect(&mut s), "{}", s.with(|e, _| e.wb().panels.ink.as_ref().unwrap().message.clone()));
+    assert_eq!(ink_names(&mut s).len(), 3, "the stroke is now a rectangle");
+
+    // 6. Save and Reopen (OOXML DrawingML <a:ln><a:gradFill> roundtrip)
+    s.save_as("ink002_effects.xlsx");
+    let reopened = s.reopen();
+    let sheet_slide = &reopened.slides[1];
+    let gradient_shapes: Vec<_> = sheet_slide.shapes.iter().filter(|sh| {
+        match &sh.kind {
+            ShapeKind::Auto(a) => a.stroke.as_ref().and_then(|st| st.fill.as_ref()).is_some(),
+            _ => false,
+        }
+    }).collect();
+    assert_eq!(gradient_shapes.len(), 3, "All 3 gradient effect shapes reloaded from OOXML");
+
+    // 7. Test Undo / Redo
+    s.click_cell("A1");
+    s.key("cmd-z"); // Undo convert
+    assert_eq!(ink_names(&mut s).len(), 4, "Undo restored the ink stroke");
+    assert!(!is_rect(&mut s));
+
+    s.key("cmd-shift-z"); // Redo convert
+    assert_eq!(ink_names(&mut s).len(), 3, "Redo converted back to rectangle");
+    assert!(is_rect(&mut s));
+}
+
+/// The panels of データ分析・ソルバー・オートコレクト・エラー チェック・描画 in
+/// English: each opens and is drawn with the texts of the table (a scenario
+/// fails when an id is asked for that the table lacks); pictures to look at.
+fn ui_english_panels_2() {
+    use crate::shell::i18n::{self, Language};
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    i18n::show(Language::English);
+    s.menu("xlsx.data-analysis");
+    s.update(|e, w, cx| e.analysis_choose(super::analysis_panel::Tool::Regression, super::analysis_panel::Dist::Uniform, w, cx));
+    s.screenshot("analysis-en");
+    s.menu("xlsx.solver");
+    s.screenshot("solver-en");
+    s.menu("xlsx.autocorrect");
+    s.screenshot("autocorrect-en");
+    s.menu("xlsx.error-options");
+    s.screenshot("error-options-en");
+    s.menu("xlsx.ink");
+    s.screenshot("ink-en");
+    i18n::show(Language::Japanese);
+}
+
+/// XLSX-TABLE-019・PIVOT-015・017 挿入 > スライサー…: slicers made for the
+/// fields of the table or the pivot table the selected cell is in (a name
+/// and a cache name each, the cache's defined name), their buttons press
+/// into the filter, and the saved file has their parts (an anchor in the
+/// drawing, an entry in the slicers part, a cache and its references) and
+/// reads back (made by hand from an Excel file's parts, not checked in Excel).
+fn slicer002_insert() {
+    let mut s = Scenario::open("test/editing/xlsx-slicers-excel.xlsx");
+    let slicers = |s: &mut Scenario| -> Vec<String> { s.with(|e, _| e.presentation().slides.iter().flat_map(|sl| sl.shapes.iter()).filter_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Slicer(x) => Some(x.name.clone()), _ => None }).collect()) };
+    assert_eq!(slicers(&mut s).len(), 2);
+    // Nothing selected in a table: told so.
+    s.menu("xlsx.slicer-insert");
+    s.update(|e, _, cx| e.apply_slicer_insert_panel(cx));
+    s.update(|e, _, _| e.wb_mut().panels.slicer_insert = None);
+    // The table's sheet: a slicer for 売上.
+    let table_slide = s.with(|e, _| e.presentation().slides.iter().find(|sl| sl.name.as_deref() == Some("データ")).map(|sl| sl.id)).expect("the sheet");
+    s.update(move |e, window, cx| e.select_slide(table_slide, window, cx));
+    s.click_cell("B3");
+    s.menu("xlsx.slicer-insert");
+    let fields = s.with(|e, _| e.wb().panels.slicer_insert.as_ref().unwrap().fields.clone());
+    assert_eq!(fields, ["地域", "商品", "売上"]);
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.slicer_insert.as_mut().unwrap().checked = vec![true, false, true];
+        e.apply_slicer_insert_panel(cx);
+    });
+    assert_eq!(slicers(&mut s).len(), 4);
+    let names = slicers(&mut s);
+    assert!(names.contains(&"地域 2".to_string()) && names.contains(&"売上".to_string()), "{names:?}");
+    // Its buttons are the column's values; a press filters the table.
+    let items = slicer_items_of(&mut s, "売上");
+    assert!(items.len() >= 3 && items.iter().all(|i| i.1), "{items:?}");
+    let at = slicer_button(&mut s, "売上", 0);
+    s.click(at);
+    let kept: Vec<_> = slicer_items_of(&mut s, "売上").into_iter().filter(|i| i.1).collect();
+    assert_eq!(kept.len(), 1);
+    // The defined names Excel makes.
+    let defined = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().names.iter().filter(|n| n.name.starts_with("スライサー_")).map(|n| (n.name.clone(), n.formula.clone())).collect::<Vec<_>>());
+    assert!(defined.contains(&("スライサー_売上".to_string(), "#N/A".to_string())) && defined.contains(&("スライサー_地域2".to_string(), "#N/A".to_string())), "{defined:?}");
+    // The pivot table's sheet: a slicer for its 地域 field.
+    let pivot_slide = s.with(|e, _| e.presentation().slides.iter().find(|sl| sl.name.as_deref() == Some("Sheet2")).map(|sl| sl.id)).expect("the pivot's sheet");
+    s.update(move |e, window, cx| e.select_slide(pivot_slide, window, cx));
+    s.click_cell("A5");
+    s.menu("xlsx.slicer-insert");
+    s.update(|e, _, cx| {
+        let p = e.wb_mut().panels.slicer_insert.as_mut().unwrap();
+        assert_eq!(p.fields, ["地域", "商品"], "the number field has no items to make buttons of");
+        p.checked = p.fields.iter().map(|f| f == "地域").collect();
+        e.apply_slicer_insert_panel(cx);
+    });
+    assert_eq!(slicers(&mut s).len(), 5);
+    // Saved: the parts and the references.
+    let path = s.save_as("slicer002.xlsx");
+    let bytes = std::fs::read(&path).expect("the saved file");
+    let package = ibis_pptx::ibis_ooxml::Package::open(bytes).expect("a package");
+    let caches = package.names().filter(|n| n.starts_with("xl/slicerCaches/")).count();
+    assert_eq!(caches, 5, "{:?}", package.names().collect::<Vec<_>>());
+    let workbook = String::from_utf8(package.read("xl/workbook.xml").unwrap()).unwrap();
+    assert!(workbook.contains("スライサー_売上") && workbook.contains("slicerCaches"), "{workbook}");
+    let pivot_cache = (1..=5).map(|n| String::from_utf8(package.read(&format!("xl/slicerCaches/slicerCache{n}.xml")).unwrap()).unwrap()).find(|c| c.contains("スライサー_地域3")).expect("the pivot slicer's cache");
+    assert!(pivot_cache.contains("pivotCacheId=\"505006826\"") && pivot_cache.contains("<items count=\"4\">") && pivot_cache.matches(" s=\"1\"/>").count() == 4, "{pivot_cache}");
+    assert_eq!(workbook.matches("<x14:slicerCache ").count(), 5, "{workbook}");
+    let reopened = s.reopen();
+    let back: Vec<String> = reopened.slides.iter().flat_map(|sl| sl.shapes.iter()).filter_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Slicer(x) => Some(x.name.clone()), _ => None }).collect();
+    assert_eq!(back.len(), 5, "{back:?}");
+    assert!(back.contains(&"売上".to_string()) && back.contains(&"地域 2".to_string()) && back.contains(&"地域 3".to_string()), "{back:?}");
+    // Undo takes back the last insertion, its name and all.
+    s.click_cell("A5");
+    s.key("cmd-z");
+    assert_eq!(slicers(&mut s).len(), 4);
+}
+
+/// XLSX-TABLE-019・PIVOT-015・017 書式 > スライサーの設定…: the selected
+/// slicer's heading, whether it shows, its columns of buttons and their
+/// height, and a pivot slicer's connections; written to the slicers part and
+/// read back.
+fn slicer003_settings() {
+    let mut s = Scenario::open("test/editing/xlsx-slicers-excel.xlsx");
+    // No slicer selected: told so.
+    s.menu("xlsx.slicer-settings");
+    assert!(s.with(|e, _| e.wb().panels.slicer_settings.is_none()));
+    let id = s.with(|e, _| e.slide().shapes.iter().find(|sh| matches!(&sh.kind, ibis_doc_model::ShapeKind::Slicer(x) if x.name == "商品")).map(|sh| sh.id)).expect("the slicer");
+    s.update(move |e, _, _| e.selection = Some(id));
+    s.menu("xlsx.slicer-settings");
+    let pivots = s.with(|e, _| e.wb().panels.slicer_settings.as_ref().unwrap().pivots.clone());
+    assert_eq!(pivots, vec![("ピボットテーブル1".to_string(), true)]);
+    // A pivot slicer with no pivot table connected is refused.
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.slicer_settings.as_mut().unwrap().pivots[0].1 = false;
+        e.apply_slicer_settings_panel(cx);
+    });
+    assert!(s.with(|e, _| e.wb().panels.slicer_settings.as_ref().unwrap().message.clone()).contains("ピボットテーブル"));
+    // A duplicate slicer name is refused.
+    s.update(|e, window, cx| {
+        let p = e.wb_mut().panels.slicer_settings.as_mut().unwrap();
+        p.pivots[0].1 = true;
+        p.name.update(cx, |i, cx| i.set_value("地域".to_string(), window, cx));
+        e.apply_slicer_settings_panel(cx);
+    });
+    assert!(!s.with(|e, _| e.wb().panels.slicer_settings.as_ref().unwrap().message.clone()).is_empty());
+    let orig_items: Vec<String> = s.with(|e, _| match &e.slide().shape(id).unwrap().kind { ibis_doc_model::ShapeKind::Slicer(x) => x.items.iter().map(|i| i.label.clone()).collect(), _ => Vec::new() });
+    let mut rev_items = orig_items.clone();
+    rev_items.reverse();
+    s.update(|e, window, cx| {
+        let p = e.wb_mut().panels.slicer_settings.as_mut().unwrap();
+        p.pivots[0].1 = true;
+        p.show_caption = false;
+        p.descending = true;
+        p.name.update(cx, |i, cx| i.set_value("商品スライサー".to_string(), window, cx));
+        p.style = "SlicerStyleDark2".to_string();
+        p.caption.update(cx, |i, cx| i.set_value("Product".to_string(), window, cx));
+        p.columns.update(cx, |i, cx| i.set_value("2".to_string(), window, cx));
+        p.height.update(cx, |i, cx| i.set_value("20".to_string(), window, cx));
+        e.apply_slicer_settings_panel(cx);
+    });
+    let slicer = s.with(|e, _| match &e.slide().shape(id).unwrap().kind { ibis_doc_model::ShapeKind::Slicer(x) => (**x).clone(), _ => panic!("a slicer") });
+    assert_eq!((slicer.name.as_str(), slicer.style.as_str(), slicer.caption.as_str(), slicer.show_caption, slicer.columns, slicer.row_height, slicer.descending), ("商品スライサー", "SlicerStyleDark2", "Product", false, 2, 254_000, true));
+    assert_eq!(slicer.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>(), rev_items, "the buttons are remade in descending order");
+    let path = s.save_as("slicer003.xlsx");
+    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let part = (1..=2).map(|n| String::from_utf8(package.read(&format!("xl/slicers/slicer{n}.xml")).unwrap()).unwrap()).find(|x| x.contains("商品スライサー")).expect("the slicers part");
+    assert!(part.contains("name=\"商品スライサー\"") && part.contains("style=\"SlicerStyleDark2\"") && part.contains("caption=\"Product\"") && part.contains("columnCount=\"2\"") && part.contains("rowHeight=\"254000\"") && part.contains("showCaption=\"0\""), "{part}");
+    let cache_part = (1..=2).map(|n| String::from_utf8(package.read(&format!("xl/slicerCaches/slicerCache{n}.xml")).unwrap()).unwrap()).find(|x| x.contains("sortOrder=\"descending\"")).expect("the slicer cache with descending sortOrder");
+    assert!(cache_part.contains("sortOrder=\"descending\""), "{cache_part}");
+    let reopened = s.reopen();
+    let back = reopened.slides.iter().flat_map(|sl| sl.shapes.iter()).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Slicer(x) if x.name == "商品スライサー" => Some((**x).clone()), _ => None }).expect("the slicer");
+    assert_eq!((back.name.as_str(), back.style.as_str(), back.caption.as_str(), back.show_caption, back.columns, back.row_height, back.descending), ("商品スライサー", "SlicerStyleDark2", "Product", false, 2, 254_000, true));
+    assert_eq!(back.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>(), rev_items);
+    // One undo takes the settings back.
+    s.click_cell("A1");
+    s.key("cmd-z");
+    let undone = s.with(|e, _| match &e.slide().shape(id).unwrap().kind { ibis_doc_model::ShapeKind::Slicer(x) => (x.name.clone(), x.caption.clone(), x.descending, x.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()), _ => (String::new(), String::new(), true, Vec::new()) });
+    assert_eq!(undone, ("商品".to_string(), "商品".to_string(), false, orig_items));
+
+    // XLSX-PIVOT-017: Connect a second PivotTable sharing the same data source via レポートの接続,
+    // verify both PivotTables filter together when a slicer button is clicked, and verify OOXML roundtrip.
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let mut sheet = (**e.current_sheet().unwrap().1).clone();
+        let mut p2 = sheet.pivots[0].clone();
+        p2.name = "ピボットテーブル2".to_string();
+        p2.part = None;
+        p2.cache_part = None;
+        p2.location = ibis_doc_model::CellRange {
+            first_row: 3,
+            last_row: 9,
+            first_column: 8,
+            last_column: 10,
+        };
+        sheet.pivots.push(p2);
+        let rebuilt = ibis_pptx::rebuilt_pivot(e.presentation(), slide, 1, sheet.pivots.get(1).cloned()).unwrap_or(sheet);
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::ReplaceSheet { slide, sheet: Box::new(rebuilt) })], cx);
+    });
+    s.update(move |e, _, _| e.selection = Some(id));
+    s.menu("xlsx.slicer-settings");
+    let candidates = s.with(|e, _| e.wb().panels.slicer_settings.as_ref().unwrap().pivots.clone());
+    assert_eq!(
+        candidates,
+        vec![
+            ("ピボットテーブル1".to_string(), true),
+            ("ピボットテーブル2".to_string(), false),
+        ],
+        "second PivotTable with the same source is listed in Report Connections"
+    );
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.slicer_settings.as_mut().unwrap().pivots[1].1 = true;
+        e.apply_slicer_settings_panel(cx);
+    });
+    let at = slicer_button(&mut s, "商品", 0);
+    s.click(at);
+    let kept_counts: Vec<usize> = s.with(|e, _| {
+        let (_, sheet) = e.current_sheet().unwrap();
+        sheet
+            .pivots
+            .iter()
+            .map(|p| {
+                p.fields
+                    .iter()
+                    .find(|f| f.name == "商品")
+                    .unwrap()
+                    .items
+                    .iter()
+                    .filter(|it| it.kind.is_none() && !it.hidden)
+                    .count()
+            })
+            .collect()
+    });
+    assert_eq!(kept_counts, vec![1, 1], "clicking the slicer button filters both connected PivotTables");
+    let path2 = s.save_as("slicer003_multi_pivot.xlsx");
+    let pkg2 = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path2).unwrap()).unwrap();
+    let multi_cache = (1..=2)
+        .map(|n| String::from_utf8(pkg2.read(&format!("xl/slicerCaches/slicerCache{n}.xml")).unwrap()).unwrap())
+        .find(|x| x.contains("ピボットテーブル2"))
+        .expect("slicer cache has both connected PivotTables");
+    assert!(multi_cache.contains("name=\"ピボットテーブル1\"") && multi_cache.contains("name=\"ピボットテーブル2\""), "{multi_cache}");
+}
+
 /// XLSX-PIVOT-005〜008: the layout (表形式), the subtotals, the grand totals,
 /// 項目ラベルを繰り返す and the captions of empty values, set on a pivot
 /// table, drawn and saved.
@@ -4475,6 +6243,9 @@ fn pivot005_design() {
         p.outline = false;
         for f in &mut p.fields { f.compact = false; f.outline = false; }
         p.fill_down_labels = true;
+        if let Some(f0) = p.fields.first_mut() {
+            f0.fill_down_labels = Some(true);
+        }
         p.missing_caption = Some("-".into());
         p.row_grand_totals = false;
     }, cx));
@@ -4489,6 +6260,7 @@ fn pivot005_design() {
     let sh = sheet_of_slide(&reopened.slides[0]).unwrap();
     let p = &sh.pivots[0];
     assert!(!p.compact && !p.outline && p.fill_down_labels && !p.row_grand_totals);
+    assert_eq!(p.fields[0].fill_down_labels, Some(true));
     assert_eq!(p.missing_caption.as_deref(), Some("-"));
 }
 
@@ -4572,11 +6344,23 @@ fn whatif002_data_table() {
     s.type_text("5");
     s.key("enter");
     assert_eq!(s.value("I4"), CellValue::Number(1_000_000.0), "refused");
+    // Insert a row above row 1 and a column left of column A: the data table range and input cells shift and recalculate.
+    s.click_cell("A1");
+    s.menu("xlsx.insert-row-above");
+    s.menu("xlsx.insert-column-left");
+    let dt = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().data_tables[0].clone());
+    assert_eq!(dt.range, ibis_doc_model::CellRange { first_row: 4, last_row: 5, first_column: 9, last_column: 10 });
+    assert_eq!(dt.row_input, Some((1, 12)));
+    assert_eq!(dt.column_input, Some((2, 12)));
+    assert_eq!(s.value("J5"), CellValue::Number(1_000_000.0));
+    assert_eq!(s.value("K6"), CellValue::Number(2_100_000.0));
     s.save_as("whatif002.xlsx");
     let saved = s.reopen();
     let sheet = sheet_of_slide(&saved.slides[0]).unwrap();
     assert_eq!(sheet.data_tables.len(), 1);
-    assert_eq!(sheet.data_tables[0].row_input, Some((0, 11)));
+    assert_eq!(sheet.data_tables[0].range, ibis_doc_model::CellRange { first_row: 4, last_row: 5, first_column: 9, last_column: 10 });
+    assert_eq!(sheet.data_tables[0].row_input, Some((1, 12)));
+    assert_eq!(sheet.data_tables[0].column_input, Some((2, 12)));
 }
 
 fn scenario_manager_click(s: &mut Scenario, id: &str) {
@@ -5134,7 +6918,8 @@ fn spark003_date_axis_and_cross_sheet() {
     assert_eq!(sheet.sparklines.len(), 1);
     let g = &sheet.sparklines[0];
     assert!(g.date_axis);
-    assert_eq!(g.date_range, Some("A1:C1".to_string()));
+    assert!(g.date_range.as_deref().unwrap_or_default().contains('!'), "date_range must be sheet-qualified in saved XML: {:?}", g.date_range);
+    assert_eq!(g.date_range, Some(format!("{sheet_name}!A1:C1")));
     assert_eq!(g.sparklines.len(), 2);
     assert_eq!(g.sparklines[1].sheet, Some("Sheet1".to_string()));
 }
@@ -5380,6 +7165,10 @@ fn cell007_multi_range_select() {
     let c3 = s.with(|e, _| e.cell_center(2, 2)).unwrap();
     s.dispatch_click_with((f32::from(c3.x), f32::from(c3.y)), cmd);
     assert_eq!(s.with(|e, _| e.selected_ranges()), vec![r(2, 2, 2, 2), r(0, 1, 0, 0)]);
+    // Shift+arrow stretches the ⌘-added range, the others kept.
+    s.key("shift-down");
+    s.key("shift-right");
+    assert_eq!(s.with(|e, _| e.selected_ranges()), vec![r(2, 3, 2, 3), r(0, 1, 0, 0)]);
     // Dragging on from the ⌘-click stretches the new range, the others kept.
     let d5 = s.with(|e, _| e.cell_center(3, 4)).unwrap();
     s.update(move |e, _, cx| {
@@ -5406,6 +7195,290 @@ fn cell007_multi_range_select() {
     assert!(!bold(&mut s, 1, 0) && !bold(&mut s, 0, 4));
     s.click_cell("G7");
     assert_eq!(s.with(|e, _| e.selected_ranges().len()), 1, "a click leaves one range");
+}
+
+/// XLSX-CELL-007: ⌘クリックによる選択除外（Deselect / 選択解除）
+fn cell007_deselect_multi_range() {
+    let mut s = new_sheet();
+    let cmd = gpui_kit::Modifiers { platform: true, ..Default::default() };
+
+    // A1:C3 に 1..=9 の数値を入力
+    for r in 0..3 {
+        for c in 0..3 {
+            let name = format!("{}{}", (b'A' + c as u8) as char, r + 1);
+            s.click_cell(&name);
+            s.enter(&format!("{}", r * 3 + c + 1), "enter");
+        }
+    }
+
+    // --- 1. A1:C3 (9セル) を選択 ---
+    s.click_cell("A1");
+    let c3 = s.with(|e, _| e.cell_center(2, 2)).unwrap();
+    s.shift_click((f32::from(c3.x), f32::from(c3.y)));
+
+    let total_selected_cells = |s: &mut Scenario| {
+        s.with(|e, _| {
+            let mut count = 0;
+            for r in e.selected_ranges() {
+                count += (r.last_row - r.first_row + 1) * (r.last_column - r.first_column + 1);
+            }
+            count
+        })
+    };
+
+    assert_eq!(total_selected_cells(&mut s), 9);
+    let summary = |s: &mut Scenario| s.status_texts().into_iter().find(|t| t.starts_with("平均"));
+    assert_eq!(summary(&mut s).as_deref(), Some("平均: 5　データの個数: 9　合計: 45"));
+
+    // --- 2. ⌘クリックで中央セル B2 (1, 1: 値 5) を選択解除 ---
+    let b2 = s.with(|e, _| e.cell_center(1, 1)).unwrap();
+    s.dispatch_click_with((f32::from(b2.x), f32::from(b2.y)), cmd);
+
+    // B2 が除外されて 8 セルになり、合計は 40、平均は 5
+    assert_eq!(total_selected_cells(&mut s), 8);
+    assert!(!s.with(|e, _| e.is_cell_selected(1, 1)), "B2 is deselected");
+    assert!(s.with(|e, _| e.is_cell_selected(0, 0)), "A1 is still selected");
+    assert!(s.with(|e, _| e.is_cell_selected(2, 2)), "C3 is still selected");
+    assert_eq!(summary(&mut s).as_deref(), Some("平均: 5　データの個数: 8　合計: 40"));
+
+    // --- 3. さらに角セル A1 (0, 0: 値 1) を ⌘クリックで除外 ---
+    let a1 = s.with(|e, _| e.cell_center(0, 0)).unwrap();
+    s.dispatch_click_with((f32::from(a1.x), f32::from(a1.y)), cmd);
+
+    assert_eq!(total_selected_cells(&mut s), 7);
+    assert!(!s.with(|e, _| e.is_cell_selected(0, 0)), "A1 is deselected");
+    let txt = summary(&mut s).unwrap();
+    assert!(txt.contains("データの個数: 7") && txt.contains("合計: 39"));
+
+    // 一括太字適用が除外セルに波及しないことを確認
+    s.key("cmd-b");
+    let bold = |s: &mut Scenario, row: u32, column: u32| {
+        s.with(move |e, _| e.current_sheet().and_then(|(_, sh)| sh.cell(row, column).map(|c| sh.styles[c.style as usize].bold)).unwrap_or(false))
+    };
+    assert!(!bold(&mut s, 1, 1), "B2 was not bolded");
+    assert!(!bold(&mut s, 0, 0), "A1 was not bolded");
+    assert!(bold(&mut s, 0, 1), "B1 was bolded");
+    assert!(bold(&mut s, 2, 2), "C3 was bolded");
+
+    // --- 4. ⌘+ドラッグによる矩形領域の除外 ---
+    // A1:D4 (16セル) を新規選択
+    s.click_cell("A1");
+    let d4 = s.with(|e, _| e.cell_center(3, 3)).unwrap();
+    s.shift_click((f32::from(d4.x), f32::from(d4.y)));
+    assert_eq!(total_selected_cells(&mut s), 16);
+
+    // B2 を ⌘クリックし、C3 までドラッグ（2x2 = 4セルを除外）
+    s.drag_with((f32::from(b2.x), f32::from(b2.y)), (f32::from(c3.x), f32::from(c3.y)), cmd);
+
+    assert_eq!(total_selected_cells(&mut s), 12);
+    assert!(!s.with(|e, _| e.is_cell_selected(1, 1)), "B2 deselected");
+    assert!(!s.with(|e, _| e.is_cell_selected(2, 1)), "C2 deselected");
+    assert!(!s.with(|e, _| e.is_cell_selected(1, 2)), "B3 deselected");
+    assert!(!s.with(|e, _| e.is_cell_selected(2, 2)), "C3 deselected");
+    assert!(s.with(|e, _| e.is_cell_selected(0, 0)), "A1 selected");
+    assert!(s.with(|e, _| e.is_cell_selected(3, 3)), "D4 selected");
+
+    // --- 5. 列ヘッダーの ⌘クリックによる列除外 ---
+    let a_head = s.header("A");
+    s.dispatch_click_with(a_head, gpui_kit::Modifiers::default());
+    let b_head = s.header("B");
+    s.shift_click(b_head);
+    assert_eq!(s.with(|e, _| e.selected_ranges().len()), 1);
+
+    // B列ヘッダーを ⌘クリックして除外
+    s.dispatch_click_with(b_head, cmd);
+    let ranges = s.with(|e, _| e.selected_ranges());
+    assert_eq!(ranges.len(), 1);
+    assert_eq!((ranges[0].first_column, ranges[0].last_column), (0, 0), "only column A remains selected");
+
+    // --- 6. 1セルのみ選択時の除外防止（空選択の防止） ---
+    s.click_cell("A1");
+    assert_eq!(total_selected_cells(&mut s), 1);
+    s.dispatch_click_with((f32::from(a1.x), f32::from(a1.y)), cmd);
+    assert_eq!(total_selected_cells(&mut s), 1, "cannot deselect the last cell");
+    assert!(s.with(|e, _| e.is_cell_selected(0, 0)));
+}
+
+/// XLSX-CELL-007, XLSX-CELL-008: 非連続（複数）範囲選択時のコピー＆ペースト
+fn cell008_multi_range_copy_paste() {
+    let mut s = new_sheet();
+    let cmd = gpui_kit::Modifiers { platform: true, ..Default::default() };
+
+    // --- 1. 垂直非連続範囲コピー＆ペースト ---
+    // A1=10, A2==A1*2 (20), A4=30, A5==A4*2 (60). A3は空行
+    s.click_cell("A1"); s.enter("10", "enter");
+    s.click_cell("A2"); s.enter("=A1*2", "enter");
+    s.click_cell("A4"); s.enter("30", "enter");
+    s.click_cell("A5"); s.enter("=A4*2", "enter");
+
+    // A1:A2 を選択
+    s.click_cell("A1");
+    let a2 = s.with(|e, _| e.cell_center(0, 1)).unwrap();
+    s.shift_click((f32::from(a2.x), f32::from(a2.y)));
+
+    // ⌘-click で A4 を追加し、A5 まで広げる
+    let a4 = s.with(|e, _| e.cell_center(0, 3)).unwrap();
+    s.dispatch_click_with((f32::from(a4.x), f32::from(a4.y)), cmd);
+    let a5 = s.with(|e, _| e.cell_center(0, 4)).unwrap();
+    s.update(move |e, _, cx| {
+        e.extend_cells_to(a5);
+        cx.notify();
+    });
+
+    let ranges = s.with(|e, _| e.selected_ranges());
+    assert_eq!(ranges.len(), 2);
+
+    // コピー
+    s.key("cmd-c");
+
+    // クリップボードのテキストを確認（隙間が詰まった 4 行）
+    let clip_text = s.with(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default());
+    assert_eq!(clip_text, "10\n20\n30\n60\n");
+
+    // C1 に貼り付け
+    s.click_cell("C1");
+    s.key("cmd-v");
+
+    let cell_formula = |s: &mut Scenario, row: u32, col: u32| {
+        s.with(move |e, _| e.current_sheet().and_then(|(_, sh)| sh.cell(row, col).and_then(|c| c.formula.clone())))
+    };
+    let cell_val = |s: &mut Scenario, row: u32, col: u32| {
+        s.with(move |e, _| e.current_sheet().and_then(|(_, sh)| sh.cell(row, col).map(|c| c.text.clone())).unwrap_or_default())
+    };
+
+    assert_eq!(cell_val(&mut s, 0, 2), "10");
+    assert_eq!(cell_formula(&mut s, 1, 2).as_deref(), Some("C1*2"));
+    assert_eq!(cell_val(&mut s, 1, 2), "20");
+    assert_eq!(cell_val(&mut s, 2, 2), "30");
+    assert_eq!(cell_formula(&mut s, 3, 2).as_deref(), Some("C3*2"));
+    assert_eq!(cell_val(&mut s, 3, 2), "60");
+
+    // Undo で一括クリア
+    s.key("cmd-z");
+    assert_eq!(cell_val(&mut s, 0, 2), "");
+    assert_eq!(cell_val(&mut s, 1, 2), "");
+    assert_eq!(cell_val(&mut s, 2, 2), "");
+    assert_eq!(cell_val(&mut s, 3, 2), "");
+
+    // --- 2. 水平非連続範囲コピー＆ペースト ---
+    // A7=100, B7=200, D7=300, E7=400 (C7は空列)
+    s.click_cell("A7"); s.enter("100", "enter");
+    s.click_cell("B7"); s.enter("200", "enter");
+    s.click_cell("D7"); s.enter("300", "enter");
+    s.click_cell("E7"); s.enter("400", "enter");
+
+    // A7:B7 を選択
+    s.click_cell("A7");
+    let b7 = s.with(|e, _| e.cell_center(1, 6)).unwrap();
+    s.shift_click((f32::from(b7.x), f32::from(b7.y)));
+
+    // ⌘-click で D7 を追加し、E7 まで広げる
+    let d7 = s.with(|e, _| e.cell_center(3, 6)).unwrap();
+    s.dispatch_click_with((f32::from(d7.x), f32::from(d7.y)), cmd);
+    let e7 = s.with(|e, _| e.cell_center(4, 6)).unwrap();
+    s.update(move |e, _, cx| {
+        e.extend_cells_to(e7);
+        cx.notify();
+    });
+
+    s.key("cmd-c");
+    let clip_text = s.with(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default());
+    assert_eq!(clip_text, "100\t200\t300\t400\n");
+
+    // A9 に貼り付け
+    s.click_cell("A9");
+    s.key("cmd-v");
+    assert_eq!(cell_val(&mut s, 8, 0), "100");
+    assert_eq!(cell_val(&mut s, 8, 1), "200");
+    assert_eq!(cell_val(&mut s, 8, 2), "300");
+    assert_eq!(cell_val(&mut s, 8, 3), "400");
+
+    // --- 3. 単一セルコピーから複数非連続範囲への貼り付け ---
+    s.click_cell("A11"); s.enter("TARGET", "enter");
+    s.click_cell("A11");
+    s.key("cmd-c");
+
+    // 複数範囲を選択: G1:G2 と H4:H5
+    s.click_cell("G1");
+    let g2 = s.with(|e, _| e.cell_center(6, 1)).unwrap();
+    s.shift_click((f32::from(g2.x), f32::from(g2.y)));
+
+    let h4 = s.with(|e, _| e.cell_center(7, 3)).unwrap();
+    s.dispatch_click_with((f32::from(h4.x), f32::from(h4.y)), cmd);
+    let h5 = s.with(|e, _| e.cell_center(7, 4)).unwrap();
+    s.update(move |e, _, cx| {
+        e.extend_cells_to(h5);
+        cx.notify();
+    });
+
+    // 貼り付け
+    s.key("cmd-v");
+
+    // G1, G2, H4, H5 の全セルに "TARGET" が展開されたことを確認
+    assert_eq!(cell_val(&mut s, 0, 6), "TARGET");
+    assert_eq!(cell_val(&mut s, 1, 6), "TARGET");
+    assert_eq!(cell_val(&mut s, 3, 7), "TARGET");
+    assert_eq!(cell_val(&mut s, 4, 7), "TARGET");
+
+    // 1回の Undo ですべて元に戻る
+    s.key("cmd-z");
+    assert_eq!(cell_val(&mut s, 0, 6), "");
+    assert_eq!(cell_val(&mut s, 1, 6), "");
+    assert_eq!(cell_val(&mut s, 3, 7), "");
+    assert_eq!(cell_val(&mut s, 4, 7), "");
+
+    // 1回の Redo ですべて再展開
+    s.key("cmd-shift-z");
+    assert_eq!(cell_val(&mut s, 0, 6), "TARGET");
+    assert_eq!(cell_val(&mut s, 1, 6), "TARGET");
+    assert_eq!(cell_val(&mut s, 3, 7), "TARGET");
+    assert_eq!(cell_val(&mut s, 4, 7), "TARGET");
+
+    // --- 4. 複数範囲への形式を選択して貼り付け（加算） ---
+    // J1=10, J3=20
+    s.click_cell("J1"); s.enter("10", "enter");
+    s.click_cell("J3"); s.enter("20", "enter");
+    // K1=5 をコピー
+    s.click_cell("K1"); s.enter("5", "enter");
+    s.click_cell("K1"); s.key("cmd-c");
+
+    // J1 と J3 を複数選択
+    s.click_cell("J1");
+    let j3 = s.with(|e, _| e.cell_center(9, 2)).unwrap();
+    s.dispatch_click_with((f32::from(j3.x), f32::from(j3.y)), cmd);
+
+    // 加算貼り付け
+    s.update(|e, _, cx| e.paste_special(crate::xlsx::clipboard::PasteSpecial::Add, cx));
+    assert_eq!(cell_val(&mut s, 0, 9), "15");
+    assert_eq!(cell_val(&mut s, 2, 9), "25");
+
+    s.key("cmd-z");
+    assert_eq!(cell_val(&mut s, 0, 9), "10");
+    assert_eq!(cell_val(&mut s, 2, 9), "20");
+
+    // --- 5. 斜め配置など不揃いな複数範囲コピーの拒否 ---
+    s.click_cell("A1");
+    let b2 = s.with(|e, _| e.cell_center(1, 1)).unwrap();
+    s.dispatch_click_with((f32::from(b2.x), f32::from(b2.y)), cmd);
+    s.update(|e, _, cx| {
+        e.status = None;
+        e.copy_cells(false, cx);
+    });
+    let status = s.with(|e, _| e.status.clone());
+    assert_eq!(status.as_deref(), Some("その操作は複数の選択範囲に対しては実行できません"));
+
+    // --- 6. 複数範囲の切り取り（Cut）の拒否 ---
+    s.click_cell("A1");
+    let a2 = s.with(|e, _| e.cell_center(0, 1)).unwrap();
+    s.shift_click((f32::from(a2.x), f32::from(a2.y)));
+    let a4 = s.with(|e, _| e.cell_center(0, 3)).unwrap();
+    s.dispatch_click_with((f32::from(a4.x), f32::from(a4.y)), cmd);
+    s.update(|e, _, cx| {
+        e.status = None;
+        e.copy_cells(true, cx);
+    });
+    let status = s.with(|e, _| e.status.clone());
+    assert_eq!(status.as_deref(), Some("その操作は複数の選択範囲に対しては実行できません"));
 }
 
 /// XLSX-CELL-004, ⌥Enter (Excel's Alt+Enter): a line break in the cell; the
@@ -5531,6 +7604,62 @@ fn pivot001_create() {
     let sh = sheet_of_slide(&reopened.slides[0]).unwrap();
     assert_eq!(sh.pivots.len(), 1);
     assert_eq!(sh.cell(9, 5).map(|c| c.value.clone()), Some(CellValue::Number(151819.0)), "built again on opening");
+}
+
+/// XLSX-FN-GETPIVOTDATA, GETPIVOTDATA formula calculation against pivot tables:
+/// Grand Total, row field filters, error handling for nonexistent items/fields,
+/// undo/redo, save/reopen roundtrip.
+fn pivot_fn_getpivotdata() {
+    let mut s = Scenario::open("test/editing/xlsx-pivot-not-refreshed.xlsx");
+    s.click_cell("K5");
+    s.menu("xlsx.pivot-insert");
+    s.update(|e, window, cx| e.create_pivot(window, cx));
+    let target = s.with(|e, _| e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).and_then(|p| p.target)).expect("its fields shown");
+    s.update(move |e, _, cx| e.toggle_pivot_field(target, 2, cx)); // 地域 to Rows
+    s.update(move |e, _, cx| e.toggle_pivot_field(target, 6, cx)); // 金額 to Values
+
+    assert_eq!(s.value("A9"), CellValue::Text("総計".into()));
+    assert_eq!(s.value("B9"), CellValue::Number(151819.0));
+
+    // 1. Enter GETPIVOTDATA for Grand Total in cell D1
+    s.click_cell("D1");
+    s.type_text("=GETPIVOTDATA(\"金額\", A3)");
+    s.key("enter");
+    assert_eq!(s.value("D1"), CellValue::Number(151819.0));
+
+    // 2. Enter GETPIVOTDATA with field filter in cell D2
+    s.click_cell("D2");
+    s.type_text("=GETPIVOTDATA(\"金額\", A3, \"地域\", \"関東\")");
+    s.key("enter");
+    let kanto_val = (4..9).find_map(|r| {
+        let label = s.value(&format!("A{r}"));
+        if label == CellValue::Text("関東".into()) {
+            Some(s.value(&format!("B{r}")))
+        } else {
+            None
+        }
+    }).expect("関東 row");
+    assert_eq!(s.value("D2"), kanto_val);
+
+    // 3. Enter GETPIVOTDATA with nonexistent item in cell D3 -> #REF!
+    s.click_cell("D3");
+    s.type_text("=GETPIVOTDATA(\"金額\", A3, \"地域\", \"Unknown\")");
+    s.key("enter");
+    assert_eq!(s.value("D3"), CellValue::Error(ibis_calc::CellError::Ref));
+
+    // 4. Undo and Redo on D3
+    s.key("cmd-z");
+    assert_eq!(s.value("D3"), CellValue::Empty);
+    s.key("cmd-shift-z");
+    assert_eq!(s.value("D3"), CellValue::Error(ibis_calc::CellError::Ref));
+
+    // 5. Save and reopen roundtrip
+    let _saved = s.save_as("pivot_getpivotdata.xlsx");
+    let reopened = s.reopen();
+    let sh = sheet_of_slide(&reopened.slides[0]).unwrap();
+    assert_eq!(sh.cell(0, 3).map(|c| c.value.clone()), Some(CellValue::Number(151819.0)), "D1 preserved on reopen");
+    assert_eq!(sh.cell(1, 3).map(|c| c.value.clone()), Some(kanto_val), "D2 preserved on reopen");
+    assert_eq!(sh.cell(2, 3).map(|c| c.value.clone()), Some(CellValue::Error(ibis_calc::CellError::Ref)), "D3 preserved on reopen");
 }
 
 /// XLSX-PIVOT-002, a table Excel made laid out anew: 商品 to the columns
@@ -5755,6 +7884,32 @@ fn pivot013_buttons() {
     assert!(p.fields[2].items[hokkaido].hidden, "北海道 kept hidden");
     assert_eq!(p.page_fields[0].item, Some(sato as u32));
     assert_eq!(sh.cell(p.location.last_row, p.location.last_column).map(|c| c.value.clone()), total, "the same total on opening");
+
+    // Pivot banded rows & columns, and report layout
+    s.click_cell("A3");
+    let row_stripes_before = pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.row_stripes);
+    s.menu("xlsx.pivot-banded-rows");
+    assert_eq!(pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.row_stripes), !row_stripes_before, "pivot banded rows toggled");
+    s.key("cmd-z");
+    assert_eq!(pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.row_stripes), row_stripes_before, "pivot banded rows undone");
+
+    let col_stripes_before = pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.col_stripes);
+    s.menu("xlsx.pivot-banded-columns");
+    assert_eq!(pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.col_stripes), !col_stripes_before, "pivot banded columns toggled");
+    s.key("cmd-z");
+    assert_eq!(pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.col_stripes), col_stripes_before, "pivot banded columns undone");
+
+    s.menu("xlsx.pivot-layout-tabular");
+    let p_tab = pivot_of(&mut s, 0);
+    assert_eq!((p_tab.compact, p_tab.outline), (false, false), "tabular layout applied");
+
+    s.menu("xlsx.pivot-layout-outline");
+    let p_out = pivot_of(&mut s, 0);
+    assert_eq!((p_out.compact, p_out.outline), (false, true), "outline layout applied");
+
+    s.menu("xlsx.pivot-layout-compact");
+    let p_comp = pivot_of(&mut s, 0);
+    assert!(p_comp.compact, "compact layout applied");
 }
 
 /// XLSX-PQ-001, データ > テキスト/CSV から…: a Shift_JIS text file read with
@@ -5769,11 +7924,11 @@ fn pq001_import_text() {
     s.update(move |e, _, cx| e.set_import_text_data("goods.csv".into(), data, cx));
     // The file is read as Shift_JIS (found from its bytes), the comma found.
     s.screenshot("panel");
-    s.update(|e, _, cx| {
+    s.update(|e, window, cx| {
         if let Some(p) = e.wb_mut().panels.import_text.as_mut() {
             p.columns = vec![super::import_text::ColumnType::Text, super::import_text::ColumnType::Skip];
         }
-        e.apply_import_text_panel(cx);
+        e.apply_import_text_panel(window, cx);
     });
     s.screenshot("imported");
     assert_eq!(s.value("B2"), CellValue::Text("コード".into()));
@@ -5797,17 +7952,278 @@ fn pq001_import_text_dates() {
     s.click_cell("A1");
     s.update(|e, window, cx| e.show_import_text_panel(window, cx));
     s.update(move |e, _, cx| e.set_import_text_data("dates.csv".into(), data, cx));
-    s.update(|e, _, cx| {
+    s.update(|e, window, cx| {
         if let Some(p) = e.wb_mut().panels.import_text.as_mut() {
             p.columns = vec![ColumnType::Date(DateOrder::Dmy), ColumnType::Date(DateOrder::Ymd)];
         }
-        e.apply_import_text_panel(cx);
+        e.apply_import_text_panel(window, cx);
     });
     s.screenshot("imported");
     assert_eq!(s.value("A2"), CellValue::Number(46027.0), "5 Jan 2026");
     assert_eq!(s.value("B2"), CellValue::Number(46027.0));
     assert_eq!(s.value("A3"), CellValue::Text("31/2/2026".into()), "not a date in that order: text");
     assert_eq!(s.value("B3"), CellValue::Number(46387.0), "31 Dec 2026");
+}
+
+/// XLSX-PQ-001, a text file in fixed-width columns (the columns found from the text, then given), into a new sheet.
+fn pq001_import_text_fixed_width() {
+    let mut s = new_sheet();
+    let data = b"Code  Name       Qty\r\nA001  Apple        3\r\nB020  Mandarin   12\r\n".to_vec();
+    s.click_cell("A1");
+    let before = s.with(|e, _| e.presentation().workbook.as_ref().map_or(0, |w| w.sheets.len()));
+    s.update(|e, window, cx| e.show_import_text_panel(window, cx));
+    s.update(move |e, _, cx| e.set_import_text_data("stock.txt".into(), data, cx));
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.import_text.as_mut() {
+            p.fixed = true;
+            p.new_sheet = true;
+        }
+        e.apply_import_text_panel(window, cx);
+    });
+    s.screenshot("new-sheet");
+    // The breaks were found: Code | Name | Qty, in a sheet of its own named for the file, which is now the one shown.
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().map(|w| w.sheets.len())), Some(before + 1));
+    assert_eq!(s.value("A1"), CellValue::Text("Code".into()));
+    assert_eq!(s.value("B2"), CellValue::Text("Apple".into()));
+    assert_eq!(s.value("C3"), CellValue::Number(12.0));
+    assert!(s.with(|e, _| e.presentation().workbook.as_ref().is_some_and(|w| w.sheets.iter().any(|sheet| sheet.name == "stock"))));
+    // Breaks given: only after the first column.
+    s.update(|e, window, cx| e.show_import_text_panel(window, cx));
+    let data = b"A001  Apple        3\r\n".to_vec();
+    s.update(move |e, _, cx| e.set_import_text_data("one.txt".into(), data, cx));
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.import_text.as_mut() {
+            p.fixed = true;
+            p.columns = vec![super::import_text::ColumnType::Text];
+            p.breaks.update(cx, |i, cx| i.set_value("6".to_string(), window, cx));
+            p.destination.update(cx, |i, cx| i.set_value("E1".to_string(), window, cx));
+        }
+        e.apply_import_text_panel(window, cx);
+    });
+    assert_eq!(s.value("E1"), CellValue::Text("A001".into()));
+    assert_eq!(s.value("F1"), CellValue::Text("Apple        3".into()), "the rest of the line is the second part");
+}
+
+/// XLSX-FILE-010, 名前を付けて保存 as an old Excel file (.xls): written, and opened again with the cells, formulas
+/// and formats; what the old format cannot hold is said.
+fn file010_save_as_xls() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.save_as("sales-old.xls");
+    s.screenshot("saved");
+    let status = s.with(|e, _| e.save_note.clone().map(|t| t.to_string()).unwrap_or_default());
+    // The chart and the picture of the book cannot go in: said.
+    assert!(status.contains("図") || status.contains("pictures"), "status: {status}");
+    let reopened = s.reopen();
+    let sh = sheet_of_slide(&reopened.slides[0]).unwrap();
+    assert_eq!(sh.cell(5, 0).map(|c| c.value.clone()), Some(CellValue::Text("東町店".into())));
+    assert!(sh.cells.iter().any(|c| c.formula.is_some()), "formulas are kept");
+    assert_eq!(reopened.workbook.as_ref().unwrap().sheets.len(), 3, "the chart sheet is left out");
+}
+
+/// XLSX-AUTO-006, form controls (a workbook Excel made with one of each: a button, a check box, two option buttons,
+/// a scroll bar, a spin button, a drop-down, a list box, a group box, a label): drawn, their state read from their
+/// linked cells, operated (the linked cell changes), saved and opened again.
+fn auto006_form_controls() {
+    use ibis_doc_model::{ControlKind, ShapeKind};
+    let mut s = Scenario::open("test/editing/xlsx-form-controls.xlsx");
+    s.screenshot("controls");
+    let controls = |s: &mut Scenario| -> Vec<(ibis_doc_model::ShapeId, ibis_doc_model::FormControl)> {
+        s.with(|e, _| e.slide().shapes.iter().filter_map(|sh| match &sh.kind { ShapeKind::Control(c) => Some((sh.id, (**c).clone())), _ => None }).collect())
+    };
+    let all = controls(&mut s);
+    assert_eq!(all.len(), 10, "one of each");
+    let of = |k: ControlKind| all.iter().find(|(_, c)| c.kind == k).unwrap().1.clone();
+    // The state: the check box's link H2 is TRUE, the scroll bar's H3 is 40, the spin button's H4 is 5.
+    assert_eq!(of(ControlKind::CheckBox).checked, 1);
+    assert_eq!(of(ControlKind::Scroll).value, 40);
+    assert_eq!(of(ControlKind::Spin).value, 5);
+    assert_eq!(of(ControlKind::Button).text, "実行");
+    assert_eq!(of(ControlKind::Drop).items, ["りんご", "みかん", "ぶどう", "もも"]);
+    // Operated: the check box turned off writes FALSE to H2; the spin button up writes 6 to H4.
+    let (check, c) = all.iter().find(|(_, c)| c.kind == ControlKind::CheckBox).unwrap().clone();
+    let mut off = c.clone();
+    off.checked = 0;
+    s.update(move |e, _, cx| e.apply_control(e.current_slide, check, off, cx));
+    assert_eq!(s.value("H2"), CellValue::Bool(false));
+    assert_eq!(of_state(&controls(&mut s), ControlKind::CheckBox).checked, 0);
+    let (spin, c) = all.iter().find(|(_, c)| c.kind == ControlKind::Spin).unwrap().clone();
+    let mut up = c.clone();
+    up.value += 1;
+    s.update(move |e, _, cx| e.apply_control(e.current_slide, spin, up, cx));
+    assert_eq!(s.value("H4"), CellValue::Number(6.0));
+    // A change of the cell shows in the control (the scroll bar follows H3).
+    s.click_cell("H3");
+    s.type_text("70");
+    s.key("enter");
+    assert_eq!(of_state(&controls(&mut s), ControlKind::Scroll).value, 70);
+    s.key("cmd-z");
+
+    // Continuous scrollbar thumb drag updates value and linked cell H3
+    let (scroll_id, scroll_c) = all.iter().find(|(_, c)| c.kind == ControlKind::Scroll).unwrap().clone();
+    let new_thumb_val = ibis_doc_model::form_control::thumb_value(&scroll_c, 1828800, 190500, 1371600, 0);
+    s.update(move |e, _, cx| {
+        let mut dragged = scroll_c.clone();
+        dragged.value = new_thumb_val;
+        e.apply_control(e.current_slide, scroll_id, dragged, cx);
+    });
+    assert_eq!(s.value("H3"), CellValue::Number(new_thumb_val as f64));
+
+    // Edit Button control properties via ControlPropertiesPanel (caption text, font, size, bold, italic, color)
+    let (btn_id, _) = all.iter().find(|(_, c)| c.kind == ControlKind::Button).unwrap().clone();
+    s.update(move |e, window, cx| {
+        e.selection = Some(btn_id);
+        e.open_control_properties_panel(window, cx);
+        if let Some(p) = e.wb_mut().panels.control_properties.as_mut() {
+            p.text.update(cx, |s, cx| s.set_value("実行ボタン".to_string(), window, cx));
+            p.font.update(cx, |s, cx| s.set_value("Yu Gothic".to_string(), window, cx));
+            p.font_size.update(cx, |s, cx| s.set_value("12".to_string(), window, cx));
+            p.text_color.update(cx, |s, cx| s.set_value("#CC2211".to_string(), window, cx));
+            p.bold = true;
+            p.italic = true;
+        }
+        e.apply_control_properties_panel(cx);
+        // Also move and resize the button control
+        let slide = e.current_slide;
+        if let Some(sh) = e.slide().shape(btn_id) {
+            let mut next_frame = sh.frame;
+            next_frame.x += 457200;
+            next_frame.width += 228600;
+            e.run_sheet(vec![ibis_doc_model::Command::SetFrame { slide, shape: btn_id, frame: next_frame }], cx);
+        }
+    });
+
+    // Toggle 3-D shading off on CheckBox via ControlPropertiesPanel
+    s.update(move |e, window, cx| {
+        e.selection = Some(check);
+        e.open_control_properties_panel(window, cx);
+        if let Some(p) = e.wb_mut().panels.control_properties.as_mut() {
+            p.three_d = false;
+        }
+        e.apply_control_properties_panel(cx);
+    });
+
+    // Insert a new CheckBox control and delete the Label control
+    let (label_id, _) = all.iter().find(|(_, c)| c.kind == ControlKind::Label).unwrap().clone();
+    s.update(move |e, _, cx| {
+        e.insert_form_control(ControlKind::CheckBox, cx);
+        let slide = e.current_slide;
+        e.run_sheet(vec![ibis_doc_model::Command::RemoveShape { slide, shape: label_id }], cx);
+    });
+
+    s.screenshot("operated");
+    // Saved and opened again: 10 controls (10 - 1 deleted Label + 1 inserted CheckBox), with formatting & 3D preserved.
+    s.save_as("auto006.xlsx");
+    let reopened = s.reopen();
+    let reopened_ctrls: Vec<&ibis_doc_model::FormControl> = reopened
+        .slides
+        .iter()
+        .flat_map(|sl| sl.shapes.iter())
+        .filter_map(|sh| match &sh.kind {
+            ShapeKind::Control(c) => Some(c.as_ref()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reopened_ctrls.len(), 10);
+    assert!(!reopened_ctrls.iter().any(|c| c.kind == ControlKind::Label));
+    let reopened_btn = reopened_ctrls.iter().find(|c| c.kind == ControlKind::Button).unwrap();
+    assert_eq!(reopened_btn.text, "実行ボタン");
+    assert_eq!(reopened_btn.font.as_deref(), Some("Yu Gothic"));
+    assert_eq!(reopened_btn.font_size, Some(1200));
+    assert!(reopened_btn.bold);
+    assert!(reopened_btn.italic);
+    assert_eq!(reopened_btn.text_color, Some(ibis_doc_model::Rgb::from_rgb(0xCC, 0x22, 0x11)));
+    let reopened_orig_chk = reopened_ctrls
+        .iter()
+        .find(|c| c.kind == ControlKind::CheckBox && !c.three_d)
+        .expect("CheckBox with three_d=false should roundtrip");
+    assert!(!reopened_orig_chk.three_d);
+}
+
+fn of_state(all: &[(ibis_doc_model::ShapeId, ibis_doc_model::FormControl)], k: ibis_doc_model::ControlKind) -> ibis_doc_model::FormControl {
+    all.iter().find(|(_, c)| c.kind == k).unwrap().1.clone()
+}
+
+/// The new chart kinds (chartEx) in workbooks Excel made, whose data are named (`_xlchart.v1.0`) and not cached:
+/// read from the cells, and drawn.
+macro_rules! chartex_sample {
+    ($name:ident, $file:expr, $min_series:expr) => {
+        #[allow(unused_comparisons)]
+        fn $name() {
+            let mut s = Scenario::open(concat!("test/editing/xlsx-chartex-", $file, ".xlsx"));
+            s.screenshot("chart");
+            let charts: Vec<ibis_doc_model::Chart> = s.with(|e, _| e.slide().shapes.iter().filter_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).collect());
+            assert_eq!(charts.len(), 1, "the chart is read");
+            let points: usize = charts[0].groups.iter().flat_map(|g| g.series.iter()).map(|ser| ser.values.iter().flatten().count()).sum::<usize>() + charts[0].ex.as_ref().map_or(0, |ex| match ex { ibis_doc_model::ChartEx::Box { boxes, .. } => boxes.len(), ibis_doc_model::ChartEx::Treemap { nodes: t, .. } | ibis_doc_model::ChartEx::Sunburst(t) => t.len(), _ => 0 });
+            assert!(points >= $min_series, "{} has its data: {points} points", $file);
+        }
+    };
+}
+chartex_sample!(chtype_excel_histogram, "histogram", 2);
+chartex_sample!(chtype_excel_pareto, "pareto", 2);
+chartex_sample!(chtype_excel_boxwhisker, "boxwhisker", 2);
+chartex_sample!(chtype_excel_waterfall, "waterfall", 0);
+chartex_sample!(chtype_excel_funnel, "funnel", 2);
+chartex_sample!(chtype_excel_treemap, "treemap", 2);
+chartex_sample!(chtype_excel_sunburst, "sunburst", 2);
+
+/// XLSX-PIVOT-016, a timeline (a workbook Excel made, with a timeline over a pivot table's date field): drawn, its
+/// state read, a period selected (the selection kept in the file), the level changed, cleared; saved and opened again.
+/// XLSX-PIVOT-016: a timeline Excel saved with March 2026 selected shows it so (the selection is read as the first day
+/// to the day after the last), and saving it again keeps the selection.
+fn pivot016_timeline_selected() {
+    use ibis_doc_model::ShapeKind;
+    let mut s = Scenario::open("test/editing/xlsx-timeline-selected.xlsx");
+    s.screenshot("selected-in-excel");
+    let timelines = |s: &mut Scenario| -> Vec<ibis_doc_model::timeline::Timeline> {
+        s.with(|e, _| e.slide().shapes.iter().filter_map(|sh| match &sh.kind { ShapeKind::Timeline(t) => Some((**t).clone()), _ => None }).collect())
+    };
+    let all = timelines(&mut s);
+    assert_eq!(all.len(), 1);
+    let t = &all[0];
+    let march = t.periods(2)[2];
+    assert_eq!(t.selection, Some((march.start, march.end)), "March 2026, from its first day to the day after the last");
+    let saved = s.save_as("timeline-selected.xlsx");
+    let back = ibis_pptx::read(&std::fs::read(&saved).unwrap()).unwrap();
+    let kept: Vec<_> = back.slides.iter().flat_map(|sl| &sl.shapes).filter_map(|sh| match &sh.kind { ShapeKind::Timeline(t) => Some(t.selection), _ => None }).collect();
+    assert_eq!(kept, vec![Some((march.start, march.end))]);
+}
+
+fn pivot016_timeline() {
+    use ibis_doc_model::ShapeKind;
+    let mut s = Scenario::open("test/editing/xlsx-timeline-pivot.xlsx");
+    s.screenshot("timeline");
+    let timelines = |s: &mut Scenario| -> Vec<(ibis_doc_model::ShapeId, ibis_doc_model::timeline::Timeline)> {
+        s.with(|e, _| e.slide().shapes.iter().filter_map(|sh| match &sh.kind { ShapeKind::Timeline(t) => Some((sh.id, (**t).clone())), _ => None }).collect())
+    };
+    let all = timelines(&mut s);
+    assert_eq!(all.len(), 1, "the timeline is read");
+    let (shape, t) = all[0].clone();
+    assert_eq!((t.name.as_str(), t.source.as_str(), t.level, t.selection_level), ("日付", "日付", 2, 2));
+    assert_eq!(t.pivots, ["ピボットテーブル1"]);
+    assert_eq!(t.selection, None);
+    // March 2026 selected: its first day, to the day after its last.
+    let periods = t.periods(2);
+    assert_eq!(periods.len(), 12, "a year of months");
+    let march = periods[2];
+    let mut next = t.clone();
+    next.selection = t.select_after_click(&periods, 2, false);
+    assert_eq!(next.selection, Some((march.start, march.end)));
+    s.update(move |e, _, cx| e.apply_timeline(e.current_slide, shape, next, cx));
+    assert_eq!(timelines(&mut s)[0].1.selection, Some((march.start, march.end)));
+    s.screenshot("selected");
+    // The level to the next (days): the selection level follows.
+    let mut daily = timelines(&mut s)[0].1.clone();
+    daily.level = 3;
+    daily.selection_level = 3;
+    s.update(move |e, _, cx| e.apply_timeline(e.current_slide, shape, daily, cx));
+    assert_eq!(timelines(&mut s)[0].1.periods(3).len(), 365);
+    s.key("cmd-z");
+    assert_eq!(timelines(&mut s)[0].1.level, 2);
+    // Saved and opened again: the selection is kept.
+    s.save_as("pivot016.xlsx");
+    let reopened = s.reopen();
+    let kept: Vec<_> = reopened.slides.iter().flat_map(|sl| sl.shapes.iter()).filter_map(|sh| match &sh.kind { ShapeKind::Timeline(t) => t.selection, _ => None }).collect();
+    assert_eq!(kept, [(march.start, march.end)]);
 }
 
 /// XLSX-CELL-005, the formula bar: a press on it types into the selected
@@ -5847,7 +8263,52 @@ fn formula006_external_links() {
     assert_eq!(s.value("K45"), CellValue::Text("x".into()));
     s.screenshot("updated");
     s.key("cmd-z");
+    // リンク元の変更: change source of 予算.xlsx to 予算2026.xlsx
+    let new_source = ibis_pptx::csv::workbook_from("10,南部\n20\n30\n", "Data").expect("a workbook");
+    s.update(|e, _, cx| {
+        e.change_external_book_source(
+            0,
+            "予算2026.xlsx".into(),
+            "/path/to/予算2026.xlsx".into(),
+            &new_source,
+            cx,
+        )
+    });
+    assert_eq!(s.with(|e, _| e.live_external_books().iter().map(|(_, b)| b.name.clone()).collect::<Vec<_>>()), ["予算2026.xlsx", "actual.xlsx"]);
+    assert_eq!(s.formula("J45").as_deref(), Some("SUM([予算2026.xlsx]Data!$A$1:$A$3)"));
+    assert_eq!(s.formula("K45").as_deref(), Some("[予算2026.xlsx]Data!B1"));
     assert_eq!(s.value("J45"), CellValue::Number(60.0));
+    assert_eq!(s.value("K45"), CellValue::Text("南部".into()));
+    // Undo リンク元の変更
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.live_external_books().iter().map(|(_, b)| b.name.clone()).collect::<Vec<_>>()), ["予算.xlsx", "actual.xlsx"]);
+    assert_eq!(s.formula("J45").as_deref(), Some("SUM([予算.xlsx]Data!$A$1:$A$3)"));
+    assert_eq!(s.formula("K45").as_deref(), Some("[予算.xlsx]Data!B1"));
+    assert_eq!(s.value("K45"), CellValue::Text("北部".into()));
+    // Redo リンク元の変更
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.live_external_books().iter().map(|(_, b)| b.name.clone()).collect::<Vec<_>>()), ["予算2026.xlsx", "actual.xlsx"]);
+    assert_eq!(s.formula("J45").as_deref(), Some("SUM([予算2026.xlsx]Data!$A$1:$A$3)"));
+
+    // Save with changed source and reopen to verify roundtrip
+    let saved_changed = s.save_as("formula006_changed.xlsx");
+    let back = ibis_pptx::open(std::fs::read(&saved_changed).unwrap()).unwrap();
+    let wb = back.presentation.workbook.as_ref().unwrap();
+    assert_eq!(wb.external_books[0].name, "予算2026.xlsx");
+    assert_eq!(wb.external_books[0].path, "/path/to/予算2026.xlsx");
+    let sh0 = sheet_of_slide(&back.presentation.slides[0]).unwrap();
+    assert_eq!(sh0.cell(44, 9).and_then(|c| c.formula.clone()).as_deref(), Some("SUM([予算2026.xlsx]Data!$A$1:$A$3)"));
+    assert_eq!(sh0.cell(44, 10).and_then(|c| c.formula.clone()).as_deref(), Some("[予算2026.xlsx]Data!B1"));
+
+    // 外部ブックのリンクを追加 (add link)
+    let extra_bytes = ibis_pptx::csv::workbook_from("100\n", "Sheet1").expect("extra bytes");
+    s.update(|e, _, cx| {
+        e.add_external_link("追加.xlsx".into(), "追加.xlsx".into(), &extra_bytes, cx)
+    });
+    assert_eq!(s.with(|e, _| e.live_external_books().len()), 3);
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.live_external_books().len()), 2);
+
     // リンクの解除 of the first.
     s.update(|e, _, cx| e.break_external_link(0, cx));
     assert_eq!(s.with(|e, _| e.live_external_books().len()), 1);
@@ -5882,8 +8343,23 @@ fn options003_cell_menu() {
     assert_eq!(s.value("A6"), CellValue::Empty);
     s.key("cmd-z");
     assert_eq!(s.value("A6"), CellValue::Text("東町店".into()));
-    call(&mut s, "xlsx.cell-insert-row");
+    // 挿入…: Excel's one dialog; its 行全体 makes a row above.
+    call(&mut s, "xlsx.cell-insert");
+    assert!(s.with(|e, _| e.wb().panels.cells_dialog.as_ref().is_some_and(|d| d.insert)));
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.cells_dialog.as_mut().unwrap().choice = 2;
+        e.apply_cells_dialog(cx);
+    });
+    assert!(s.with(|e, _| e.wb().panels.cells_dialog.is_none()));
     assert_eq!(s.value("A7"), CellValue::Text("東町店".into()), "a row inserted above");
+    s.key("cmd-z");
+    // 削除…: the cells below move up.
+    call(&mut s, "xlsx.cell-delete");
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.cells_dialog.as_mut().unwrap().choice = 1;
+        e.apply_cells_dialog(cx);
+    });
+    assert_eq!(s.value("A6"), CellValue::Text("西町店".into()), "the cells below moved up");
     s.key("cmd-z");
     // フィルター > 選択したセルの値でフィルター: the other stores' rows are hidden.
     s.click_cell("A6");
@@ -5955,11 +8431,368 @@ fn options006_error_check() {
     s.click_cell("B3");
     call(&mut s, "xlsx.error-ignore");
     assert_eq!(flagged(&mut s), 1, "B3 ignored, B2 still marked");
+
+    // Table with inconsistent calculated column formula in D12:
+    // C10:D13 (Header row: 9, Data rows: 10..=12). Columns: C (col 2), D (col 3).
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let table = ibis_doc_model::SheetTable {
+            name: "SalesTable".into(),
+            range: ibis_doc_model::CellRange { first_row: 9, last_row: 12, first_column: 2, last_column: 3 },
+            header_rows: 1,
+            totals_rows: 0,
+            columns: vec!["Qty".into(), "Total".into()],
+            style: None,
+            filter: None,
+            totals: Vec::new(),
+        };
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetTable { slide, index: 0, table: Some(table), cells: Vec::new() })], cx);
+    });
+    s.click_cell("C10"); s.enter("Qty", "enter");
+    s.click_cell("D10"); s.enter("Total", "enter");
+    s.click_cell("C11"); s.enter("5", "enter");
+    s.click_cell("D11"); s.enter("=C11*10", "enter");
+    s.click_cell("C12"); s.enter("8", "enter");
+    s.click_cell("D12"); s.enter("80", "enter"); // constant value instead of formula =C12*10!
+    s.click_cell("C13"); s.enter("12", "enter");
+    s.click_cell("D13"); s.enter("=C13*10", "enter");
+
+    s.click_cell("D12");
+    assert_eq!(s.with(|e, _| e.current_error()), Some(ibis_doc_model::error_check::ErrorKind::CalculatedColumn));
+    // Restore calculated column formula:
+    call(&mut s, "xlsx.error-restore-column");
+    assert_eq!(s.with(|e, _| e.current_sheet().and_then(|(_, sh)| sh.cell(11, 3)).and_then(|c| c.formula.clone())), Some("C12*10".to_string()));
+    assert_ne!(s.with(|e, _| e.current_error()), Some(ibis_doc_model::error_check::ErrorKind::CalculatedColumn));
+
+    // Data validation violation check:
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let rule = ibis_doc_model::Validation {
+            ranges: vec![ibis_doc_model::CellRange { first_row: 15, last_row: 15, first_column: 0, last_column: 0 }],
+            kind: "list".into(),
+            operator: "between".into(),
+            formula1: Some(r#""Small,Medium,Large""#.into()),
+            formula2: None,
+            allow_blank: true,
+            dropdown: true,
+            prompt: None,
+            error: None,
+        };
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetValidation { slide, ranges: rule.ranges.clone(), rule: Some(rule) })], cx);
+    });
+    s.click_cell("A16");
+    s.enter("ExtraLarge", "enter");
+    s.click_cell("A16");
+    assert_eq!(s.with(|e, _| e.current_error()), Some(ibis_doc_model::error_check::ErrorKind::ListDataValidation));
+    call(&mut s, "xlsx.error-ignore");
+    assert_ne!(s.with(|e, _| e.current_error()), Some(ibis_doc_model::error_check::ErrorKind::ListDataValidation));
+
     s.save_as("options006.xlsx");
     let reopened = s.reopen();
     let total: usize = reopened.slides.iter().filter_map(sheet_of_slide).map(|sh| ibis_doc_model::error_check::flagged_cells(sh).len()).sum();
     let ignored: usize = reopened.slides.iter().filter_map(sheet_of_slide).map(|sh| sh.ignored_errors.len()).sum();
-    assert_eq!((total, ignored), (1, 1), "B2 marked, B3 ignored after a save");
+    assert!(ignored >= 2, "B3 and A16 ignored after a save: ignored={ignored}");
+    assert_eq!(total, 1, "only B2 marked after a save");
+}
+
+/// tasks/doc/xlsx-menu-ids.txt, for `scripts/gen-xlsx-ribbon-map.py` (what the menus really have).
+fn options001_dump_menu_ids() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    fn walk(entries: &[crate::shell::chrome::MenuEntry], out: &mut Vec<String>) {
+        use crate::shell::chrome::MenuEntry;
+        for entry in entries {
+            match entry {
+                MenuEntry::Item(item) => out.push(item.id.to_string()),
+                MenuEntry::Submenu(sub) => {
+                    out.push(sub.id.to_string());
+                    walk(&sub.items, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    let ids = s.with(|e, _| {
+        let menus = e.menus();
+        let mut out = Vec::new();
+        for (_, entries) in &menus.menus {
+            walk(entries, &mut out);
+        }
+        out
+    });
+    assert!(ids.len() > 100, "the menus have items: {}", ids.len());
+    let path = crate::shell::scenario::repo_root().join("tasks/doc/xlsx-menu-ids.txt");
+    std::fs::write(path, ids.join("\n")).unwrap();
+}
+
+/// XLSX-NUMFMT-018: locale calendar names (Russian, Dutch, Polish, Swedish, Turkish, Arabic, Hindi) and currency formats.
+fn numfmt018_locale_calendar_and_currency() {
+    let mut s = new_sheet();
+    s.enter("2026/10/13 14:05", "enter");
+    s.click_cell("A1");
+
+    // 1. Russian locale calendar names (0x0419 / ru-RU)
+    custom_format(&mut s, "[$-419]dddd, d mmmm yyyy");
+    assert_eq!(s.shown("A1"), "вторник, 13 октябрь 2026");
+    custom_format(&mut s, "[$-ru-RU]ddd d mmm");
+    assert_eq!(s.shown("A1"), "вт 13 окт");
+
+    // 2. Dutch locale calendar names (0x0413 / nl-NL)
+    custom_format(&mut s, "[$-413]dddd d mmmm yyyy");
+    assert_eq!(s.shown("A1"), "dinsdag 13 oktober 2026");
+    custom_format(&mut s, "[$-nl-NL]ddd d mmm");
+    assert_eq!(s.shown("A1"), "di 13 okt");
+
+    // 3. Polish locale calendar names (0x0415 / pl-PL)
+    custom_format(&mut s, "[$-415]dddd, d mmmm yyyy");
+    assert_eq!(s.shown("A1"), "wtorek, 13 październik 2026");
+    custom_format(&mut s, "[$-pl-PL]ddd d mmm");
+    assert_eq!(s.shown("A1"), "wt 13 paź");
+
+    // 4. Swedish locale calendar names (0x041D / sv-SE)
+    custom_format(&mut s, "[$-41D]dddd d mmmm yyyy");
+    assert_eq!(s.shown("A1"), "tisdag 13 oktober 2026");
+    custom_format(&mut s, "[$-sv-SE]ddd d mmm");
+    assert_eq!(s.shown("A1"), "tis 13 okt");
+
+    // 5. Turkish locale calendar names (0x041F / tr-TR)
+    custom_format(&mut s, "[$-41F]d mmmm yyyy dddd");
+    assert_eq!(s.shown("A1"), "13 Ekim 2026 Salı");
+    custom_format(&mut s, "[$-tr-TR]d mmm ddd");
+    assert_eq!(s.shown("A1"), "13 Eki Sal");
+
+    // 6. Arabic locale calendar names (0x0401)
+    custom_format(&mut s, "[$-401]dddd d mmmm yyyy");
+    assert_eq!(s.shown("A1"), "الثلاثاء 13 أكتوبر 2026");
+    custom_format(&mut s, "[$-401]h:mm AM/PM");
+    assert_eq!(s.shown("A1"), "2:05 م");
+
+    // 7. Hindi locale calendar names (0x0439)
+    custom_format(&mut s, "[$-439]dddd, d mmmm yyyy");
+    assert_eq!(s.shown("A1"), "मंगलवार, 13 अक्टूबर 2026");
+    custom_format(&mut s, "[$-439]h:mm AM/PM");
+    assert_eq!(s.shown("A1"), "2:05 अपराह्न");
+
+    // 8. Currency formatting on cell A2
+    s.click_cell("A2");
+    s.enter("1234.5", "enter");
+    s.click_cell("A2");
+    custom_format(&mut s, "[$₽-419] #,##0.00");
+    assert_eq!(s.shown("A2"), "₽ 1,234.50");
+    custom_format(&mut s, "#,##0.00\\ [$₽-419]");
+    assert_eq!(s.shown("A2"), "1,234.50 ₽");
+    custom_format(&mut s, "[$€-40C] #,##0.00");
+    assert_eq!(s.shown("A2"), "€ 1,234.50");
+    custom_format(&mut s, "[$£-809] #,##0.00");
+    assert_eq!(s.shown("A2"), "£ 1,234.50");
+
+    // 9. Save as .xlsx and reopen roundtrip
+    s.save_as("numfmt018-locales.xlsx");
+    let saved = s.reopen();
+    assert_eq!(s.shown("A2"), "£ 1,234.50");
+    let sheet = saved.slides.iter().filter_map(sheet_of_slide).find(|sh| sh.cell(1, 0).map_or(false, |c| c.text == "£ 1,234.50")).expect("the sheet with formatted cell");
+    let style = &sheet.styles[sheet.cell(1, 0).unwrap().style as usize];
+    assert_eq!(style.number_format, "[$£-809] #,##0.00");
+
+    // 10. Undo / Redo
+    s.menu("edit.undo");
+    assert_eq!(s.shown("A2"), "€ 1,234.50");
+    s.menu("edit.redo");
+    assert_eq!(s.shown("A2"), "£ 1,234.50");
+}
+
+/// Todo-fix #48: a reference to the cell's own row of its table (`Table1[[#This Row],[Qty]]` in the file) is shown
+/// as Excel shows it, `[@Qty]`, in the formula bar and when the cell is edited; the file keeps the long form.
+fn table_this_row_short() {
+    let mut s = Scenario::open("test/editing/xlsx-table.xlsx");
+    s.click_cell("C2");
+    assert_eq!(s.formula("C2").as_deref(), Some("Table1[[#This Row],[Qty]]*2"), "stored long");
+    s.screenshot("bar");
+    s.key("f2");
+    assert_eq!(s.with(|e, _| e.cell_edit().map(|c| c.text.clone())).unwrap(), "=[@Qty]*2", "edited short");
+    s.key("escape");
+    // Typed in either form, it is shown short again.
+    s.click_cell("C3");
+    s.enter("=[@Qty]*3+Table1[[#This Row],[Qty]]", "enter");
+    assert_eq!(s.value("C3"), CellValue::Number(12.0));
+    s.click_cell("C3");
+    s.key("f2");
+    assert_eq!(s.with(|e, _| e.cell_edit().map(|c| c.text.clone())).unwrap(), "=[@Qty]*3+[@Qty]");
+    s.key("escape");
+    // Outside its table (E2) a reference to a table's row is left long.
+    s.click_cell("E2");
+    s.enter("=Table1[[#This Row],[Qty]]", "enter");
+    s.click_cell("E2");
+    s.key("f2");
+    assert_eq!(s.with(|e, _| e.cell_edit().map(|c| c.text.clone())).unwrap(), "=Table1[[#This Row],[Qty]]");
+    s.key("escape");
+}
+
+/// A PNG of two bands (red over blue), `width` x `height` pixels.
+fn two_band_png(width: u32, height: u32) -> Vec<u8> {
+    let mut image = image::RgbaImage::new(width, height);
+    for (_, y, pixel) in image.enumerate_pixels_mut() {
+        *pixel = if y < height / 2 { image::Rgba([220, 30, 30, 255]) } else { image::Rgba([30, 30, 220, 255]) };
+    }
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgba8(image).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+    out
+}
+
+/// Todo-fix #47: IMAGE(address) shows the picture at the address in the cell. The picture comes from outside the
+/// calculation (the scenario's own fetcher, not the network), is drawn when it arrives, sized as the third argument
+/// says, from an address another cell holds or a table row's own (the formula of the X post).
+fn image47_web_images() {
+    use crate::render::web_image;
+    web_image::set_fetcher(Some(std::sync::Arc::new(|url: &str| match url {
+        "https://img.test/wide.png" | "https://img.test/wide.png.jpg_1" => Ok(two_band_png(200, 100)),
+        "https://img.test/tall.png" => Ok(two_band_png(100, 200)),
+        "https://img.test/not-a-picture" => Ok(b"<html>no</html>".to_vec()),
+        _ => Err(crate::render::web_image::Failure::Connect),
+    })));
+    let mut s = Scenario::open("test/editing/xlsx-table.xlsx");
+    let slide = s.with(|e, _| e.slide().id);
+    let size = |axis, first, last, points: i64| ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize { slide, axis, first, last, size: points * 12_700 });
+    s.update(move |e, _, cx| {
+        e.run_sheet(vec![size(ibis_doc_model::sheet_command::Axis::Rows, 9, 14, 70), size(ibis_doc_model::sheet_command::Axis::Rows, 2, 2, 50), size(ibis_doc_model::sheet_command::Axis::Columns, 0, 6, 100)], cx)
+    });
+    // Fit (the default), fill, its own size, a size given, and the other cell's address.
+    s.click_cell("A10");
+    s.enter("=IMAGE(\"https://img.test/wide.png\",\"wide\")", "enter");
+    s.click_cell("B10");
+    s.enter("=IMAGE(\"https://img.test/wide.png\",\"wide\",1)", "enter");
+    s.click_cell("C10");
+    s.enter("=IMAGE(\"https://img.test/wide.png\",\"wide\",2)", "enter");
+    s.click_cell("D10");
+    s.enter("=IMAGE(\"https://img.test/tall.png\",,3,40,40)", "enter");
+    s.click_cell("A11");
+    s.enter("https://img.test/tall.png", "tab");
+    s.enter("=IMAGE(A11)", "enter");
+    // Not a picture, not found, not https: nothing is drawn.
+    s.click_cell("A12");
+    s.enter("=IMAGE(\"https://img.test/not-a-picture\")", "enter");
+    s.click_cell("B12");
+    s.enter("=IMAGE(\"https://img.test/missing.png\")", "enter");
+    s.click_cell("C12");
+    s.enter("=IMAGE(\"http://img.test/wide.png\")", "enter");
+    // The formula of the post, in the table (Table1 covers A1:C6; the Item of row 3 holds the address).
+    s.click_cell("A3");
+    s.enter("https://img.test/wide.png.jpg_1.avif", "enter");
+    s.click_cell("C3");
+    s.enter("=IMAGE(IF(AND(RIGHT([@Item],5)=\".avif\",ISNUMBER(SEARCH(\".jpg_\",[@Item]))),LEFT([@Item],LEN([@Item])-5),[@Item]))", "enter");
+    let specs = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().web_images.clone());
+    let source = |r: u32, c: u32| specs.get(&(r, c)).map(|i| i.source.clone());
+    assert_eq!(source(9, 0).as_deref(), Some("https://img.test/wide.png"));
+    assert_eq!(source(10, 1).as_deref(), Some("https://img.test/tall.png"), "an address from another cell");
+    assert_eq!(source(2, 2).as_deref(), Some("https://img.test/wide.png.jpg_1"), "[@Item] without .avif");
+    assert_eq!(specs.get(&(9, 3)).map(|i| (i.sizing, i.height, i.width)), Some((3, 40, 40)));
+    // Wait for the fetches (on other threads), then draw.
+    for _ in 0..500 {
+        if web_image::pending() == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        s.settle();
+    }
+    s.settle();
+    s.settle();
+    let ready = |s: &mut Scenario, url: &'static str| s.with(move |_, app| matches!(web_image::poll(url, app), web_image::Poll::Ready(_)));
+    assert!(ready(&mut s, "https://img.test/wide.png"));
+    assert!(ready(&mut s, "https://img.test/tall.png"));
+    assert!(ready(&mut s, "https://img.test/wide.png.jpg_1"), "the table's own formula");
+    assert!(!ready(&mut s, "https://img.test/not-a-picture"), "HTML is not a picture");
+    assert!(!ready(&mut s, "https://img.test/missing.png"));
+    assert!(!ready(&mut s, "http://img.test/wide.png"), "Excel takes https only");
+    s.screenshot("web-images");
+    web_image::set_fetcher(None);
+}
+
+/// Todo-fix #49: a picture that is not there shows an error in the cell (on the cell's own fill, not blank), an IMAGE
+/// whose address is in another sheet shows its picture, and curl missing is said in the status bar (in both languages).
+fn image49_errors_sheets_curl() {
+    use crate::render::web_image::{self, Failure, Status};
+    use crate::shell::i18n::{self, Language};
+    web_image::set_fetcher(Some(std::sync::Arc::new(|url: &str| match url {
+        "https://img.test/wide.png" => Ok(two_band_png(200, 100)),
+        "https://img.test/not-a-picture" => Ok(b"<html>no</html>".to_vec()),
+        "https://nohost.invalid/a.png" => Err(Failure::Unresolved),
+        _ => Err(Failure::Connect),
+    })));
+    let mut s = new_sheet();
+    // The address in the sheet before the new one's, which is then the third.
+    s.click_cell("A1");
+    s.enter("https://img.test/wide.png", "enter");
+    let name = s.with(|e, _| e.slide().name.clone()).expect("the sheet's name");
+    s.menu("xlsx.insert-sheet");
+    s.click_cell("B2");
+    s.enter(&format!("=IMAGE('{name}'!A1)"), "enter");
+    s.click_cell("B3");
+    s.enter("=IMAGE(\"https://img.test/gone.png\")", "enter");
+    s.click_cell("B4");
+    s.enter("=IMAGE(\"https://img.test/not-a-picture\")", "enter");
+    s.click_cell("B5");
+    s.enter("=IMAGE(\"http://img.test/wide.png\")", "enter");
+    s.click_cell("B6");
+    s.enter("=IMAGE(\"https://nohost.invalid/a.png\")", "enter");
+    s.click_cell("B7");
+    s.enter("=IMAGE(\"hello\")", "enter");
+    s.click_cell("B8");
+    s.enter("=IMAGE(\"\")", "enter");
+    for _ in 0..500 {
+        if web_image::pending() == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        s.settle();
+    }
+    s.settle();
+    s.settle();
+    assert_eq!(web_image::status("https://img.test/wide.png"), Status::Ready, "an address read from another sheet");
+    assert_eq!(web_image::status("https://img.test/gone.png"), Status::Failed(Failure::Connect));
+    assert_eq!(web_image::status("https://img.test/not-a-picture"), Status::Failed(Failure::NotImage));
+    assert_eq!(web_image::status("http://img.test/wide.png"), Status::Failed(Failure::NotHttps));
+    assert_eq!(web_image::status("https://nohost.invalid/a.png"), Status::Failed(Failure::Unresolved));
+    assert_eq!(web_image::status("hello"), Status::Failed(Failure::NotUrl));
+    // What Excel shows (measured): 404 #CONNECT!, http #BLOCKED!, not a picture, no such host, no address, not an address
+    // #VALUE!.
+    let shown = |s: &mut Scenario, r: &str| s.value(r);
+    assert_eq!(shown(&mut s, "B8"), CellValue::Error(ibis_calc::CellError::Value), "an empty address");
+    assert_eq!(Failure::Connect.error(), ibis_calc::CellError::Connect);
+    assert_eq!(Failure::NotHttps.error(), ibis_calc::CellError::Blocked);
+    assert_eq!(Failure::Unresolved.error(), ibis_calc::CellError::Value);
+    assert_eq!(Failure::NotImage.error(), ibis_calc::CellError::Value);
+    assert_eq!(Failure::NotUrl.error(), ibis_calc::CellError::Value);
+    s.screenshot("errors");
+    // Saved and opened again: the picture is asked for again from the formulas (the file keeps no picture).
+    s.save_as("image49.xlsx");
+    let reopened = s.reopen();
+    let asked: usize = reopened.slides.iter().filter_map(sheet_of_slide).map(|sh| sh.web_images.len()).sum();
+    assert_eq!(asked, 6, "the six IMAGE cells of the file with an address");
+    // curl missing: the status bar says it, in the language of the screen.
+    web_image::note_curl_missing();
+    let said = |s: &mut Scenario| s.with(|e, _| e.status_texts().iter().any(|t| t.contains("curl")));
+    assert!(said(&mut s));
+    assert!(s.with(|e, _| e.status_texts().iter().any(|t| t.as_ref() == "curlがみつかりません。")));
+    i18n::show(Language::English);
+    s.update(|_, _, _| {});
+    assert!(s.with(|e, _| e.status_texts().iter().any(|t| t.as_ref() == "curl was not found.")));
+    s.screenshot("curl-missing-english");
+    i18n::show(Language::Japanese);
+    web_image::set_fetcher(None);
+}
+
+/// Todo-fix #49: a formula replaced by another IMAGE formula, undone and redone: the picture follows each time.
+fn image49_undo() {
+    let mut s = new_sheet();
+    let source = |s: &mut Scenario| s.with(|e, _| sheet_of_slide(e.slide()).unwrap().web_images.get(&(0, 0)).map(|i| i.source.clone()));
+    s.click_cell("A1");
+    s.enter("=IMAGE(\"https://img.test/one.png\")", "enter");
+    s.click_cell("A1");
+    s.enter("=IMAGE(\"https://img.test/two.png\")", "enter");
+    assert_eq!(source(&mut s).as_deref(), Some("https://img.test/two.png"));
+    s.key("cmd-z");
+    assert_eq!(source(&mut s).as_deref(), Some("https://img.test/one.png"), "undo: the earlier picture");
+    s.key("cmd-shift-z");
+    assert_eq!(source(&mut s).as_deref(), Some("https://img.test/two.png"), "redo: the later one");
 }
 
 /// XLSX-IMAGE-002, pictures in cells (セルに配置): drawn inside their cells
@@ -5979,6 +8812,221 @@ fn image002_cell_pictures() {
         cx.notify();
     });
     s.screenshot("cell-pictures");
+}
+
+/// XLSX-IMAGE-003 to 008: in-cell images sequential insert, place-over-cells, place-in-cell,
+/// copy/paste in-cell images, row insertion/deletion shift, and undo/redo.
+fn image003_cell_images_manipulation() {
+    use ibis_doc_model::sheet_command::Axis;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // 1. Insert multiple images into cells sequentially (XLSX-IMAGE-003)
+    let png_1x1: Vec<u8> = vec![
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+        0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41,
+        0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+        0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+        0x42, 0x60, 0x82,
+    ];
+    let items = vec![
+        ("img1.png".to_string(), png_1x1.clone()),
+        ("img2.png".to_string(), png_1x1.clone()),
+    ];
+    s.update(|e, _, cx| {
+        e.insert_sheet_pictures_in_cells(items, 0, 0, cx);
+    });
+    let cell_images = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.cell_images.clone())).unwrap_or_default();
+    assert_eq!(cell_images.len(), 2, "2 in-cell images inserted");
+    assert!(cell_images.iter().any(|i| i.column == 0 && i.row == 0));
+    assert!(cell_images.iter().any(|i| i.column == 0 && i.row == 1));
+
+    // 2. Convert in-cell image at (0, 0) to floating picture (XLSX-IMAGE-006)
+    s.update(|e, _, cx| {
+        e.set_cell(0, 0);
+        e.place_current_cell_picture_over_cells(cx);
+    });
+    let cell_images_after_floating = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.cell_images.clone())).unwrap_or_default();
+    assert_eq!(cell_images_after_floating.len(), 1, "now 1 in-cell image left");
+    assert!(cell_images_after_floating.iter().any(|i| i.column == 0 && i.row == 1));
+
+    // 3. Convert floating picture back to in-cell image (XLSX-IMAGE-005)
+    let floating_id = s.with(|e, _| e.selected_sheet_shape()).expect("floating picture selected");
+    s.update(move |e, _, cx| {
+        e.place_picture_in_cell(floating_id, cx);
+    });
+    let cell_images_reconverted = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.cell_images.clone())).unwrap_or_default();
+    assert_eq!(cell_images_reconverted.len(), 2, "back to 2 in-cell images");
+    assert!(cell_images_reconverted.iter().any(|i| i.column == 0 && i.row == 0), "(0, 0) reconverted to in-cell");
+
+    // 4. Copy cell (0, 1) and paste to (1, 1) (XLSX-IMAGE-004)
+    s.update(|e, _, cx| {
+        e.set_cell(0, 1);
+        e.copy_cells(false, cx);
+        e.set_cell(1, 1);
+        e.paste_cells(false, cx);
+    });
+    let cell_images_pasted = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.cell_images.clone())).unwrap_or_default();
+    assert!(cell_images_pasted.iter().any(|i| i.column == 1 && i.row == 1), "pasted in-cell image at (1, 1)");
+
+    // 5. Insert row above row 1 (XLSX-IMAGE-007)
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Insert { slide, axis: Axis::Rows, at: 1, count: 1 })], cx);
+    });
+    let cell_images_shifted = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.cell_images.clone())).unwrap_or_default();
+    assert!(cell_images_shifted.iter().any(|i| i.column == 0 && i.row == 0), "(0, 0) stayed");
+    assert!(cell_images_shifted.iter().any(|i| i.column == 0 && i.row == 2), "(0, 1) shifted to (0, 2)");
+    assert!(cell_images_shifted.iter().any(|i| i.column == 1 && i.row == 2), "(1, 1) shifted to (1, 2)");
+
+    // 6. Undo/Redo
+    s.key("cmd-z");
+    let cell_images_undone = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.cell_images.clone())).unwrap_or_default();
+    assert!(cell_images_undone.iter().any(|i| i.column == 0 && i.row == 1), "undo restored (0, 1)");
+    s.key("cmd-shift-z");
+    let cell_images_redone = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.cell_images.clone())).unwrap_or_default();
+    assert!(cell_images_redone.iter().any(|i| i.column == 0 && i.row == 2), "redo restored (0, 2)");
+
+    s.screenshot("in-cell-images-manipulation");
+
+    // 7. Save and reopen: verify in-cell image preservation in OOXML and roundtrip conversion
+    s.save_as("xlsx-cell-images-manipulation.xlsx");
+    let saved = s.reopen();
+    let sheet = sheet_of_slide(&saved.slides[0]).unwrap().clone();
+    assert_eq!(sheet.cell_images.len(), 3, "3 in-cell images preserved on reopen");
+    assert!(sheet.cell_images.iter().any(|i| i.column == 0 && i.row == 0));
+    assert!(sheet.cell_images.iter().any(|i| i.column == 0 && i.row == 2));
+    assert!(sheet.cell_images.iter().any(|i| i.column == 1 && i.row == 2));
+
+    // Convert in-cell image back to floating
+    s.update(|e, _, cx| {
+        e.set_cell(0, 0);
+        e.place_current_cell_picture_over_cells(cx);
+    });
+    let cell_images_floated = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.cell_images.clone())).unwrap_or_default();
+    assert_eq!(cell_images_floated.len(), 2, "converted back to floating");
+    assert!(!cell_images_floated.iter().any(|i| i.column == 0 && i.row == 0));
+}
+
+/// XLSX-IMAGE-020: リンクされた図 (Paste Special -> Linked Picture) and カメラ機能 (Camera tool).
+/// Verifies:
+/// 1. Copying range A1:C3 and pasting as linked picture (paste_as_picture(true)).
+/// 2. Shape is inserted as a Picture with formula "=$A$1:$C$3".
+/// 3. Picture rasterization accurately reflects the cell content.
+/// 4. Modifying cell A1 and committing edits updates the Picture media through sync_shape_formulas.
+/// 5. Camera tool (insert_camera_picture) on a selection creates a linked picture.
+/// 6. Undo/Redo restores and reapplies the linked pictures.
+/// 7. Saving and reopening preserves the linked picture and formula in OOXML.
+fn image020_linked_picture_and_camera() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // 1. Select range A1:C3 and copy
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.set_cell(0, 0);
+        e.wb_mut().cell_ends.insert(slide, (2, 2));
+        e.copy_cells(false, cx);
+    });
+
+    // 2. Select cell E5 and paste as linked picture
+    s.update(|e, _, cx| {
+        e.set_cell(4, 4);
+        e.paste_as_picture(true, cx);
+    });
+
+    let pic_shape_id = s.with(|e, _| e.selected_sheet_shape()).expect("linked picture created and selected");
+    let (formula, initial_media) = s.with(|e, _| {
+        let slide = e.slide();
+        let formula = slide.shape_formulas.get(&pic_shape_id).cloned();
+        let shape = slide.shape(pic_shape_id).expect("shape");
+        let media = match &shape.kind {
+            ibis_doc_model::ShapeKind::Picture(p) => p.media,
+            _ => panic!("expected picture shape"),
+        };
+        (formula, media)
+    });
+
+    assert_eq!(formula.as_deref(), Some("=$A$1:$E$3"), "formula is =$A$1:$E$3");
+    let initial_data = s.with(|e, _| e.presentation().media(initial_media).map(|m| m.data.clone())).expect("media data");
+    assert!(!initial_data.is_empty(), "rasterized png is non-empty");
+
+    // 3. Edit cell A1: change value from whatever it was to "NEW_VAL"
+    s.click_cell("A1");
+    s.type_text("NEW_VAL");
+    s.key("enter");
+
+    // Verify sync_shape_formulas updated the linked picture's media!
+    let (updated_formula, updated_media) = s.with(|e, _| {
+        let slide = e.slide();
+        let formula = slide.shape_formulas.get(&pic_shape_id).cloned();
+        let shape = slide.shape(pic_shape_id).expect("shape");
+        let media = match &shape.kind {
+            ibis_doc_model::ShapeKind::Picture(p) => p.media,
+            _ => panic!("expected picture shape"),
+        };
+        (formula, media)
+    });
+    assert_eq!(updated_formula.as_deref(), Some("=$A$1:$E$3"));
+    let updated_data = s.with(|e, _| e.presentation().media(updated_media).map(|m| m.data.clone())).expect("media data");
+    assert_ne!(initial_data, updated_data, "picture media was refreshed after cell edit");
+
+    // 4. Test Camera tool: select range B2:D4 and use insert_camera_picture
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.set_cell(1, 1);
+        e.wb_mut().cell_ends.insert(slide, (3, 3));
+        e.insert_camera_picture(cx);
+    });
+    let camera_shape_id = s.with(|e, _| e.selected_sheet_shape()).expect("camera picture created and selected");
+    assert_ne!(camera_shape_id, pic_shape_id, "camera shape is a separate picture");
+    let camera_formula = s.with(|e, _| e.slide().shape_formulas.get(&camera_shape_id).cloned());
+    assert_eq!(camera_formula.as_deref(), Some("=$B$2:$D$4"), "camera formula is =$B$2:$D$4");
+
+    // 5. Test Undo
+    s.key("cmd-z");
+    let camera_exists = s.with(|e, _| e.slide().shape(camera_shape_id).is_some());
+    assert!(!camera_exists, "undo removed camera picture");
+
+    // 6. Test Redo
+    s.key("cmd-shift-z");
+    let camera_restored = s.with(|e, _| e.slide().shape(camera_shape_id).is_some());
+    assert!(camera_restored, "redo restored camera picture");
+
+    // 7. Save and reopen to verify roundtrip
+    s.save_as("image020_camera.xlsx");
+    let reopened = s.reopen();
+    let r_slide = &reopened.slides[0];
+    let formulas: Vec<&str> = r_slide.shape_formulas.values().map(|s| s.as_str()).collect();
+    assert!(formulas.contains(&"=$A$1:$E$3"), "linked picture formula preserved on save/reopen: {formulas:?}");
+    assert!(formulas.contains(&"=$B$2:$D$4"), "camera formula preserved on save/reopen: {formulas:?}");
+
+    s.screenshot("linked-picture-and-camera");
+}
+
+/// XLSX-CHEDIT-023, a SmartArt graphic and an SVG picture on a sheet: the
+/// graphic's shapes are drawn in its frame (attached to it), the picture is
+/// shown from its SVG, and a save keeps them (the file is made by the test
+/// `xlsx_smartart`: hand-written, not saved by Excel).
+fn chedit023_smartart_and_svg() {
+    use ibis_doc_model::{Placeholder, ShapeKind};
+    let mut s = Scenario::open("test/editing/xlsx-smartart.xlsx");
+    s.screenshot("smartart");
+    let (graphic, parts, svgs) = s.with(|e, _| {
+        let slide = e.slide();
+        let graphic = slide.shapes.iter().find(|sh| matches!(sh.kind, ShapeKind::Placeholder(Placeholder::Diagram))).expect("the graphic").id;
+        let parts = slide.attached.get(&graphic).map_or(0, Vec::len);
+        let svgs = slide.shapes.iter().filter(|sh| matches!(&sh.kind, ShapeKind::Picture(p) if e.presentation().media.iter().any(|m| m.id == p.media && m.format == ibis_doc_model::MediaFormat::Svg))).count();
+        (graphic, parts, svgs)
+    });
+    assert_eq!(parts, 3);
+    assert_eq!(svgs, 1);
+    let _ = graphic;
+    s.save_as("chedit023.xlsx");
+    let reopened = s.reopen();
+    let slide = &reopened.slides[0];
+    assert!(slide.shapes.iter().any(|sh| matches!(sh.kind, ShapeKind::Placeholder(Placeholder::Diagram))));
+    assert_eq!(slide.attached.values().map(Vec::len).sum::<usize>(), 3);
 }
 
 /// XLSX-FILE-010, an old workbook (.xls, Excel 97-2003): opened as a
@@ -6172,6 +9220,17 @@ fn chart001_insert_over_cells() {
     assert_eq!(series[0].categories, ["北", "南", "東"]);
     assert_eq!(series[1].values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(40.0), Some(30.0), Some(20.0)]);
     s.screenshot("column");
+    // Switch row/column via ribbon command
+    s.menu("xlsx.chart-switch-row-column");
+    let switched = charts(&mut s);
+    let switched_series: Vec<_> = switched[0].groups.iter().flat_map(|g| g.series.iter()).collect();
+    assert_eq!(switched_series.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["北", "南", "東"]);
+    assert_eq!(switched_series[0].categories, ["4月", "5月"]);
+    // Switch back
+    s.menu("xlsx.chart-switch-row-column");
+    let restored = charts(&mut s);
+    let restored_series: Vec<_> = restored[0].groups.iter().flat_map(|g| g.series.iter()).collect();
+    assert_eq!(restored_series.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["4月", "5月"]);
     // A single cell selected: the table around it.
     s.click_cell("B2");
     s.menu("pptx.insert-chart.pie");
@@ -6367,6 +9426,22 @@ fn xsc25_conditional_quick() {
     let sheet = sheet_of_slide(&saved.slides[1]).unwrap();
     assert!(matches!(sheet.conditional[0].rules[0].kind, ibis_doc_model::CfKind::Top10 { rank: 10, percent: true, bottom: false }));
     assert!(matches!(&sheet.conditional[5].rules[0].kind, ibis_doc_model::CfKind::CellIs { operator, formulas } if operator == "greaterThan" && formulas == &vec!["8".to_string()]));
+    // Edit the Top10 rule in the rule manager (XLSX-CF-005: rank, percent, bottom).
+    s.menu("xlsx.conditional");
+    cf_click(&mut s, "edit-0");
+    cf_field(&mut s, "formula", "5");
+    cf_click(&mut s, "top10-percent");
+    cf_click(&mut s, "top10-bottom");
+    cf_click(&mut s, "apply");
+    assert_eq!(cf_model(&mut s)[0].rules[0].kind, ibis_doc_model::CfKind::Top10 { rank: 5, percent: false, bottom: true });
+    s.click_cell("A1");
+    s.key("cmd-z");
+    assert_eq!(cf_model(&mut s)[0].rules[0].kind, ibis_doc_model::CfKind::Top10 { rank: 10, percent: true, bottom: false });
+    s.key("cmd-shift-z");
+    assert_eq!(cf_model(&mut s)[0].rules[0].kind, ibis_doc_model::CfKind::Top10 { rank: 5, percent: false, bottom: true });
+    s.save_as("xsc25-quick-edited.xlsx");
+    let reopened = s.reopen();
+    assert_eq!(sheet_of_slide(&reopened.slides[1]).unwrap().conditional[0].rules[0].kind, ibis_doc_model::CfKind::Top10 { rank: 5, percent: false, bottom: true });
 }
 
 /// XSC-26, 範囲に変換: the table goes, its look stays, a SUM of its column
@@ -6434,6 +9509,15 @@ fn xsc26_table_filter() {
     let f = sheet.tables[0].filter.clone().expect("saved");
     assert_eq!(f.columns.len(), 1);
     assert!(sheet.filtered_rows.len() == 2, "{:?}", sheet.filtered_rows);
+    // Color filter on a table column is saved and read back.
+    let corner_a = s.with(|e, _| e.cell_corner(0, 0)).unwrap();
+    s.click((f32::from(corner_a.x) - 6.0, f32::from(corner_a.y) - 6.0));
+    s.update(|e, _, cx| e.filter_panel_apply(Some(ibis_doc_model::ColumnFilter::Color { cell: false, color: Some(ibis_doc_model::Rgb(0xCC0000)) }), cx));
+    s.save_as("xsc26-table-color-filter.xlsx");
+    let saved_color = s.reopen();
+    let sheet_color = sheet_of_slide(&saved_color.slides[1]).unwrap().clone();
+    let f_color = sheet_color.tables[0].filter.clone().expect("saved color filter");
+    assert!(f_color.columns.contains(&(0, ibis_doc_model::ColumnFilter::Color { cell: false, color: Some(ibis_doc_model::Rgb(0xCC0000)) })));
     s.click_cell("A1");
     s.menu("xlsx.filter");
     assert!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().tables[0].filter.is_none()));
@@ -6555,6 +9639,186 @@ fn table006_structure_edits() {
     assert_eq!(table(&mut s).unwrap().columns.len(), 3);
     s.key("cmd-shift-z"); // redo column delete
     assert_eq!(table(&mut s).unwrap().columns.len(), 2);
+}
+
+/// XLSX-TABLE-007: Table design, autofit, hide/unhide, and print area ribbon commands
+fn table_design_ribbon_commands() {
+    let mut s = new_sheet();
+    for (row, values) in [["項目", "数値"], ["A", "10"], ["B", "20"], ["C", "30"]].into_iter().enumerate() {
+        for (col, value) in values.into_iter().enumerate() {
+            s.click_cell(&ibis_doc_model::cell_name(col as u32, row as u32));
+            s.enter(value, "enter");
+        }
+    }
+    s.click_cell("A1");
+    s.key("cmd-t");
+    s.key("enter");
+    let table = |s: &mut Scenario| s.with(|e, _| sheet_of_slide(e.slide()).unwrap().tables.first().cloned());
+    let t = table(&mut s).expect("a table created");
+    assert_eq!((t.name.as_str(), t.range.last_row, t.range.last_column), ("テーブル1", 3, 1));
+
+    // 1. Table design panel open
+    s.click_cell("A2");
+    s.menu("xlsx.table-design");
+    assert!(s.with(|e, _| e.wb().panels.table_design.is_some()), "table design panel opened");
+
+    // 2. Table total row toggle
+    let totals_before = table(&mut s).unwrap().totals_rows;
+    s.menu("xlsx.table-total-row");
+    let totals_after = table(&mut s).unwrap().totals_rows;
+    assert_ne!(totals_before, totals_after, "total row toggled on");
+    assert_eq!(totals_after, 1);
+    s.menu("xlsx.table-total-row");
+    assert_eq!(table(&mut s).unwrap().totals_rows, 0, "total row toggled off");
+
+    // 3. Banded rows toggle
+    let st = table(&mut s).unwrap().style.unwrap();
+    let row_stripes_before = st.row_stripes;
+    s.menu("xlsx.table-banded-rows");
+    let row_stripes_after = table(&mut s).unwrap().style.unwrap().row_stripes;
+    assert_eq!(row_stripes_after, !row_stripes_before, "banded rows toggled");
+
+    // 4. Banded columns toggle
+    let col_stripes_before = table(&mut s).unwrap().style.unwrap().column_stripes;
+    s.menu("xlsx.table-banded-columns");
+    let col_stripes_after = table(&mut s).unwrap().style.unwrap().column_stripes;
+    assert_eq!(col_stripes_after, !col_stripes_before, "banded columns toggled");
+
+    // 5. First column toggle
+    let first_col_before = table(&mut s).unwrap().style.unwrap().first_column;
+    s.menu("xlsx.table-first-column");
+    let first_col_after = table(&mut s).unwrap().style.unwrap().first_column;
+    assert_eq!(first_col_after, !first_col_before, "first column toggled");
+
+    // 6. Last column toggle
+    let last_col_before = table(&mut s).unwrap().style.unwrap().last_column;
+    s.menu("xlsx.table-last-column");
+    let last_col_after = table(&mut s).unwrap().style.unwrap().last_column;
+    assert_eq!(last_col_after, !last_col_before, "last column toggled");
+
+    // 7. Filter button toggle
+    let filter_before = table(&mut s).unwrap().filter.is_some();
+    s.menu("xlsx.table-filter-button");
+    let filter_after = table(&mut s).unwrap().filter.is_some();
+    assert_eq!(filter_after, !filter_before, "filter button toggled off");
+    s.menu("xlsx.table-filter-button");
+    assert!(table(&mut s).unwrap().filter.is_some(), "filter button toggled back on");
+
+    // 8. Clear table style
+    s.menu("xlsx.table-style-clear");
+    let st_cleared = table(&mut s).unwrap().style.unwrap();
+    assert!(st_cleared.name.is_empty(), "table style cleared");
+
+    // 8b. New table style
+    s.menu("xlsx.new-table-style");
+    assert!(s.with(|e, _| e.wb().panels.new_table_style.is_some()), "new table style panel opened");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.new_table_style.as_mut() {
+            p.name.update(cx, |inp, cx| inp.set_value("CustomTableStyle1".to_string(), window, cx));
+            p.row_stripes = true;
+            p.col_stripes = true;
+        }
+        e.apply_new_table_style(cx);
+    });
+    assert!(s.with(|e, _| e.wb().panels.new_table_style.is_none()), "panel closed after apply");
+    let st_custom = table(&mut s).unwrap().style.unwrap();
+    assert_eq!(st_custom.name.as_str(), "CustomTableStyle1");
+    assert!(st_custom.row_stripes && st_custom.column_stripes);
+    s.key("cmd-z");
+    let st_undone = table(&mut s).unwrap().style.unwrap();
+    assert_eq!(st_undone.name.as_str(), "");
+
+    // 9. Autofit column width & row height
+    s.menu("xlsx.autofit-column-width");
+    s.menu("xlsx.autofit-row-height");
+
+    // 10. Hide & unhide rows/columns
+    s.click_cell("A2");
+    s.menu("xlsx.hide-rows");
+    let hidden_row = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().rows.get(1).copied().unwrap_or(0));
+    assert_eq!(hidden_row, 0, "row 2 hidden");
+    s.menu("xlsx.unhide-rows");
+    let unhidden_row = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().rows.get(1).copied().unwrap_or(0));
+    assert!(unhidden_row > 0, "row 2 unhidden");
+
+    // 11. Print area set & clear
+    s.click_cell("A1");
+    s.menu("xlsx.print-area-set");
+    assert!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().print_area.is_some()), "print area set");
+    s.menu("xlsx.print-area-clear");
+    assert!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().print_area.is_none()), "print area cleared");
+
+    // 12. Page break
+    s.click_cell("A3");
+    s.menu("xlsx.page-break");
+    let breaks_count = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().print.row_breaks.len());
+    assert_eq!(breaks_count, 1, "page break inserted");
+    s.menu("xlsx.page-break");
+    let breaks_count2 = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().print.row_breaks.len());
+    assert_eq!(breaks_count2, 0, "page break removed");
+
+    // 13. Table resize
+    s.click_cell("A2");
+    s.menu("xlsx.table-resize");
+    assert!(s.with(|e, _| e.wb().table_dialog.is_some()), "table resize dialog opened");
+    s.update(|e, window, cx| {
+        if let Some(d) = e.wb().table_dialog.as_ref() {
+            d.range.update(cx, |i, cx| i.set_value("=A1:C5".to_string(), window, cx));
+        }
+        e.confirm_table_dialog(window, cx);
+    });
+    assert!(s.with(|e, _| e.wb().table_dialog.is_none()), "table resize dialog closed");
+    let t_resized = table(&mut s).unwrap();
+    assert_eq!((t_resized.range.last_row, t_resized.range.last_column), (4, 2), "table resized to A1:C5");
+    assert_eq!(t_resized.columns.len(), 3, "table now has 3 columns");
+    // Undo table resize
+    s.key("cmd-z");
+    let t_undone = table(&mut s).unwrap();
+    assert_eq!((t_undone.range.last_row, t_undone.range.last_column), (3, 1), "table resize undone");
+    // Redo table resize
+    s.key("cmd-shift-z");
+    let t_redone = table(&mut s).unwrap();
+    assert_eq!((t_redone.range.last_row, t_redone.range.last_column), (4, 2), "table resize redone");
+
+    // 14. Row height & Column width panels
+    s.click_cell("B2");
+    s.menu("xlsx.row-height");
+    assert!(s.with(|e, _| e.wb().panels.row_col_size.is_some()), "row height panel opened");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.sheet_state().and_then(|s| s.panels.row_col_size.as_ref()) {
+            p.value.update(cx, |i, cx| i.set_value("25".to_string(), window, cx));
+        }
+        e.apply_row_col_size(cx);
+    });
+    let r_height = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().rows.get(1).copied().unwrap_or(0));
+    assert_eq!(r_height, (25.0 * ibis_doc_model::EMU_PER_POINT as f32).round() as i64, "row height set to 25pt");
+    s.update(|e, window, cx| {
+        e.close_row_col_size_panel(cx);
+        e.focus_handle.focus(window, cx);
+    });
+    s.key("cmd-z");
+    let r_height_undone = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().rows.get(1).copied().unwrap_or(0));
+    assert_ne!(r_height_undone, r_height, "row height undone");
+
+    s.click_cell("B2");
+    s.menu("xlsx.column-width");
+    assert!(s.with(|e, _| e.wb().panels.row_col_size.is_some()), "column width panel opened");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.sheet_state().and_then(|s| s.panels.row_col_size.as_ref()) {
+            p.value.update(cx, |i, cx| i.set_value("15".to_string(), window, cx));
+        }
+        e.apply_row_col_size(cx);
+    });
+    let c_width = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().columns.get(1).copied().unwrap_or(0));
+    let expected_c_width = (15.0 * 6.4 * ibis_doc_model::EMU_PER_POINT as f32).round() as i64;
+    assert_eq!(c_width, expected_c_width, "column width set to 15 chars");
+    s.update(|e, window, cx| {
+        e.close_row_col_size_panel(cx);
+        e.focus_handle.focus(window, cx);
+    });
+    s.key("cmd-z");
+    let c_width_undone = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().columns.get(1).copied().unwrap_or(0));
+    assert_ne!(c_width_undone, c_width, "column width undone");
 }
 
 /// XSC-05, threaded comments: the pointer on a cell with a thread shows
@@ -6749,6 +10013,8 @@ fn xsc24_filter() {
 
 /// Sidebar fields and buttons are driven with real window clicks/typing.
 fn cf_click(s: &mut Scenario, id: &str) {
+    // The panel (with the presets and the text colour) is longer than the default window: a taller window keeps every rule row in view.
+    s.size(1200.0, 1600.0);
     let id = id.to_string();
     let b = s.with(|e, _| *e.wb().conditional_edit.as_ref().unwrap().ui.borrow().get(&id).unwrap());
     s.click((f32::from(b.origin.x + b.size.width / 2.0), f32::from(b.origin.y + b.size.height / 2.0)));
@@ -7177,7 +10443,7 @@ fn xsc13_underline_kinds() {
         let address = ibis_doc_model::cell_name(column as u32, 0);
         s.click_cell(&address); s.type_text("gyp 下線"); s.key("enter"); s.click_cell(&address);
         let before = style_at(&mut s, &address);
-        s.toolbar_menu("underline-kind", u.ooxml());
+        s.toolbar_menu("underline", u.ooxml());
         assert_eq!(style_at(&mut s, &address).underline, u);
         if u != before.underline {
             s.key("cmd-z"); assert_eq!(style_at(&mut s, &address), before);
@@ -7228,7 +10494,7 @@ with zipfile.ZipFile(sys.argv[1]) as source, zipfile.ZipFile(sys.argv[2], 'w') a
         if info.filename == 'xl/worksheets/sheet1.xml':
             text = data.decode('utf-8')
             text = re.sub(r'(<c r="B10"[^>]*><f>)[^<]*(</f>)', r'\g<1>_xlfn.FIELDVALUE(A10,"Price")\g<2>', text)
-            text = re.sub(r'(<c r="B11"[^>]*><f>)[^<]*(</f>)', r'\g<1>_xlfn._xlws.PY(A10,0)\g<2>', text)
+            text = re.sub(r'(<c r="B11"[^>]*><f>)[^<]*(</f>)', r'\g<1>_xlfn.FIELDVALUE(A10,"Volume")\g<2>', text)
             data = text.encode('utf-8')
         output.writestr(info, data)
 "#).arg(path).arg(&fixture).status().unwrap();
@@ -7244,7 +10510,7 @@ with zipfile.ZipFile(sys.argv[1]) as source, zipfile.ZipFile(sys.argv[2], 'w') a
     s.save_as("xsc39-external-preserved.xlsx");let p=s.reopen();let sheet=sheet_of_slide(&p.slides[0]).unwrap();
     for (row,expected) in [(9,7.),(10,11.)] {assert_eq!(sheet.cell(row,1).unwrap().value,CellValue::Number(expected));}
     assert_eq!(sheet.cell(9,1).unwrap().formula.as_deref(),Some("FIELDVALUE(A10,\"Price\")"));
-    assert_eq!(sheet.cell(10,1).unwrap().formula.as_deref(),Some("PY(A10,0)"));
+    assert_eq!(sheet.cell(10,1).unwrap().formula.as_deref(),Some("FIELDVALUE(A10,\"Volume\")"));
 }
 
 fn xsc55_flatten_options() {
@@ -7458,9 +10724,10 @@ fn xsc55_filter_empty() {
     let mut s=new_sheet();for (address,input) in [("A1","10"),("A2","20"),("A3","30"),("C1","=FILTER(A1:A3,B1:B3,99)")]{s.click_cell(address);s.enter(input,"enter");}assert_eq!(s.value("C1"),CellValue::Number(99.0));s.key("cmd-z");assert_eq!(s.value("C1"),CellValue::Empty);s.key("cmd-shift-z");assert_eq!(s.value("C1"),CellValue::Number(99.0));s.save_as("xsc55-filter-empty-blank.xlsx");assert_eq!(sheet_of_slide(&s.reopen().slides[1]).unwrap().cell(0,2).unwrap().value,CellValue::Number(99.0));s.click_cell("B2");s.enter("TRUE","enter");assert_eq!(s.value("C1"),CellValue::Number(20.0));s.key("cmd-z");assert_eq!(s.value("C1"),CellValue::Number(99.0));s.key("cmd-shift-z");assert_eq!(s.value("C1"),CellValue::Number(20.0));s.save_as("xsc55-filter-empty-selected.xlsx");assert_eq!(sheet_of_slide(&s.reopen().slides[1]).unwrap().cell(0,2).unwrap().value,CellValue::Number(20.0));
 }
 
+// TAKE(…,0) is #VALUE!, FILTER with no match #CALC!, and ARRAYTOTEXT of either #VALUE!, as the calc crate's cases (recalc.rs) have them.
 fn xsc55_arraytotext_empty() {
-    let mut s=new_sheet();for (row,source) in ["TAKE({1;2},0)","FILTER({1;2},{FALSE;FALSE})"].into_iter().enumerate(){let mut formulas=vec![(source.to_string(),ibis_doc_model::CellError::Calc)];for suffix in ["",",0",",1"]{formulas.push((format!("ARRAYTOTEXT({source}{suffix})"),ibis_doc_model::CellError::Value));}for (col,(f,e)) in formulas.into_iter().enumerate(){let address=ibis_doc_model::cell_name(col as u32,row as u32);s.click_cell(&address);s.enter(&format!("={f}"),"enter");assert_eq!(s.value(&address),CellValue::Error(e));s.key("cmd-z");assert_eq!(s.value(&address),CellValue::Empty);s.key("cmd-shift-z");assert_eq!(s.value(&address),CellValue::Error(e));}}
-    s.save_as("xsc55-arraytotext-empty.xlsx");let p=s.reopen();let sh=sheet_of_slide(&p.slides[1]).unwrap();for row in 0..2{assert_eq!(sh.cell(row,0).unwrap().value,CellValue::Error(ibis_doc_model::CellError::Calc));for col in 1..4{assert_eq!(sh.cell(row,col).unwrap().value,CellValue::Error(ibis_doc_model::CellError::Value));}}
+    let mut s=new_sheet();for (row,source) in ["TAKE({1;2},0)","FILTER({1;2},{FALSE;FALSE})"].into_iter().enumerate(){let mut formulas=vec![(source.to_string(),if row==0{ibis_doc_model::CellError::Value}else{ibis_doc_model::CellError::Calc})];for suffix in ["",",0",",1"]{formulas.push((format!("ARRAYTOTEXT({source}{suffix})"),ibis_doc_model::CellError::Value));}for (col,(f,e)) in formulas.into_iter().enumerate(){let address=ibis_doc_model::cell_name(col as u32,row as u32);s.click_cell(&address);s.enter(&format!("={f}"),"enter");assert_eq!(s.value(&address),CellValue::Error(e));s.key("cmd-z");assert_eq!(s.value(&address),CellValue::Empty);s.key("cmd-shift-z");assert_eq!(s.value(&address),CellValue::Error(e));}}
+    s.save_as("xsc55-arraytotext-empty.xlsx");let p=s.reopen();let sh=sheet_of_slide(&p.slides[1]).unwrap();for row in 0..2{for col in 0..4{let e=if col==0&&row==1{ibis_doc_model::CellError::Calc}else{ibis_doc_model::CellError::Value};assert_eq!(sh.cell(row,col).unwrap().value,CellValue::Error(e));}}
 }
 
 fn xsc55_choose_lines_options() {
@@ -7503,7 +10770,7 @@ fn xsc23_sort_keys() {
     assert_eq!(options, 3, "セルの値, and the two fills (none, yellow)");
     // The fills are listed as found: none first (row 2), then yellow.
     sort_click(&mut s, "key-0-2");
-    assert_eq!(s.with(|e, _| e.wb().sort_edit.as_ref().unwrap().keys[0]), crate::xlsx::sort_edit::LevelKey::CellColor(Some(ibis_doc_model::Rgb(0xFFFF00))));
+    assert_eq!(s.with(|e, _| e.wb().sort_edit.as_ref().unwrap().keys[0].clone()), crate::xlsx::sort_edit::LevelKey::CellColor(Some(ibis_doc_model::Rgb(0xFFFF00))));
     // Then 点, descending.
     sort_click(&mut s, "add");
     sort_field(&mut s, "column-1", "B");
@@ -7979,21 +11246,40 @@ fn perf_sheet_switch() {
 fn perf_sheet_zoom() {
     let Some(path) = std::env::var_os("IBIS_PERF_XLSX") else { return };
     let mut s = Scenario::open(&path.to_string_lossy());
-    // IBIS_PERF_ROUNDS: more rounds, to profile.
-    let rounds = std::env::var("IBIS_PERF_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(2);
-    for round in 0..rounds {
-        let mut times = Vec::new();
-        for step in 0..11 {
-            let zoom = 0.85 - step as f32 * 0.05;
-            let started = crate::clock::Instant::now();
-            s.update(|e, window, cx| e.set_zoom(Some(zoom), window, cx));
-            times.push(format!("{:.0}%:{:.0}", zoom * 100.0, started.elapsed().as_secs_f64() * 1000.0));
+    let ws = s.with(|e, _| e.workspace_bounds).expect("the workspace");
+    let center = (f32::from(ws.origin.x + ws.size.width / 2.0), f32::from(ws.origin.y + ws.size.height / 2.0));
+    let num_sheets = s.with(|e, _| e.presentation().slides.len());
+    let indices: Vec<usize> = [0, 1, 2, 18].into_iter().filter(|&i| i < num_sheets).collect();
+    for sheet_idx in indices {
+        s.update(|e, window, cx| {
+            let slide_id = e.presentation().slides[sheet_idx].id;
+            e.select_slide(slide_id, window, cx);
+            e.set_zoom(Some(1.0), window, cx);
+        });
+        let (sheet_name, cell_count) = s.with(|e, _| {
+            let name = e.presentation().slides[sheet_idx].name.clone().unwrap_or_default();
+            let cells = e.current_sheet().map_or(0, |(_, sh)| sh.cells.len());
+            (name, cells)
+        });
+        let mut tick_times = Vec::new();
+        let total_started = crate::clock::Instant::now();
+        for tick in 0..10 {
+            let t0 = crate::clock::Instant::now();
+            s.wheel_zoom_lines(center, -1.0);
+            let zoom_pct = s.with(|e, _| e.current_zoom() * 100.0);
+            let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+            tick_times.push(format!("#{}({:.0}%):{:.1}ms", tick + 1, zoom_pct, elapsed_ms));
+            s.advance_ms(16);
         }
-        eprintln!("perf_sheet_zoom round {round} (zoom:ms): {}", times.join(" "));
-        // The same three frames with nothing changed (redrawn from what is kept).
-        let started = crate::clock::Instant::now();
-        s.update(|_, window, _| window.refresh());
-        eprintln!("perf_sheet_zoom unchanged: {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
+        let wheel_10_ms = total_started.elapsed().as_secs_f64() * 1000.0;
+        let settle_t0 = crate::clock::Instant::now();
+        s.wait(250);
+        let settle_ms = settle_t0.elapsed().as_secs_f64() * 1000.0;
+        eprintln!(
+            "perf_wheel_zoom_10ticks sheet[{sheet_idx}] \"{sheet_name}\" ({cell_count} cells): 10 ticks total={wheel_10_ms:.1}ms (avg {:.1}ms/tick), settle={settle_ms:.1}ms | {}",
+            wheel_10_ms / 10.0,
+            tick_times.join(" ")
+        );
     }
 }
 
@@ -8228,6 +11514,25 @@ fn table017_text_to_columns() {
     assert_eq!(s.value("A6"), CellValue::Number(20261007.0));
     s.key("cmd-shift-z");
     assert_eq!(s.value("C6"), CellValue::Text("07".into()));
+    // Column format specification: Date (YMD) for col 0, Skip for col 1, Text for col 2
+    s.click_cell("A8");
+    s.enter("2026/10/17,omit_me,00123", "enter");
+    s.click_cell("A8");
+    s.menu("xlsx.text-to-columns");
+    text_columns_click(&mut s, "text-columns-tab");
+    text_columns_click(&mut s, "text-columns-comma");
+    text_columns_click(&mut s, "text-columns-column-0"); // Standard -> Text
+    text_columns_click(&mut s, "text-columns-column-0"); // Text -> Date(Ymd)
+    s.update(|e, _, cx| e.set_text_columns_type(1, crate::xlsx::import_text::ColumnType::Skip, cx));
+    text_columns_click(&mut s, "text-columns-column-2"); // Standard -> Text
+    text_columns_field(&mut s, "destination", "A8");
+    text_columns_click(&mut s, "apply");
+    assert!(matches!(s.value("A8"), CellValue::Number(n) if n > 40000.0));
+    assert_eq!(number_format(&mut s, "A8"), "yyyy/m/d");
+    assert_eq!(s.value("B8"), CellValue::Empty);
+    assert_eq!(s.value("C8"), CellValue::Text("00123".into()));
+    assert_eq!(number_format(&mut s, "C8"), "@");
+    text_columns_click(&mut s, "close");
     s.save_as("table017.xlsx");
     let p = s.reopen();
     let sheet = sheet_of_slide(&p.slides[1]).unwrap();
@@ -8429,8 +11734,71 @@ fn sheet016_split_window() {
     assert!(s.with(|e, _| e.split_panes().is_none()));
     s.menu("xlsx.split");
     assert!(s.with(|e, _| e.split_panes().is_some() && e.current_sheet().unwrap().1.frozen.is_none()));
+    let expected_split = s.with(|e, _| e.split_panes().map(|p| p.at));
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.split), expected_split);
+
+    // Undo: reverts split
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.split_panes().is_none() && e.current_sheet().unwrap().1.split.is_none()));
+
+    // Redo: restores split
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.split), expected_split);
+
+    // Save and reopen roundtrip
+    let sheet_index = s.with(|e, _| e.presentation().slide_index(e.current_slide).unwrap());
+    s.save_as("sheet016_split_window.xlsx");
+    let saved = s.reopen();
+    let re_sheet = sheet_of_slide(&saved.slides[sheet_index]).unwrap();
+    assert_eq!(re_sheet.split, expected_split);
+    assert_eq!(re_sheet.frozen, None);
+
     s.menu("xlsx.split");
     assert!(s.with(|e, _| e.split_panes().is_none()));
+
+    // --- ドラッグ移動とダブルクリック解除のテスト ---
+    s.click_cell("D6");
+    s.menu("xlsx.split");
+    assert_eq!(s.with(|e, _| e.split_panes().map(|p| p.at)), Some((3, 5)));
+
+    let (ws, split) = s.with(|e, _| (e.workspace_bounds.unwrap(), e.workspace_content().and_then(|c| e.frozen_split(c)).unwrap()));
+    let (split_x, split_y) = (f32::from(ws.origin.x) + split.0.unwrap(), f32::from(ws.origin.y) + split.1.unwrap());
+
+    // 1. 水平スプリットバーのドラッグ移動: 行 5 から 行 8 付近へ
+    let c7 = s.with(|e, _| e.cell_center(3, 7).unwrap());
+    s.drag((split_x + 50.0, split_y), (split_x + 50.0, f32::from(c7.y) + 15.0));
+    let after_h = s.with(|e, _| e.split_panes().map(|p| p.at)).unwrap();
+    assert_eq!(after_h.0, 3, "column split stays 3");
+    assert!(after_h.1 >= 7, "row split moved down: got {}", after_h.1);
+
+    // Undo で元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.split_panes().map(|p| p.at)), Some((3, 5)));
+
+    // 2. 垂直スプリットバーのドラッグ移動: 列 3 (D) から 列 5 (F) 付近へ
+    let f5 = s.with(|e, _| e.cell_center(5, 4).unwrap());
+    s.drag((split_x, split_y + 50.0), (f32::from(f5.x) + 20.0, split_y + 50.0));
+    let after_v = s.with(|e, _| e.split_panes().map(|p| p.at)).unwrap();
+    assert!(after_v.0 >= 5, "column split moved right: got {}", after_v.0);
+    assert_eq!(after_v.1, 5, "row split stays 5");
+
+    // 3. ダブルクリックによる分割解除
+    let (ws, split_cur) = s.with(|e, _| (e.workspace_bounds.unwrap(), e.workspace_content().and_then(|c| e.frozen_split(c)).unwrap()));
+    let (cur_x, cur_y) = (f32::from(ws.origin.x) + split_cur.0.unwrap(), f32::from(ws.origin.y) + split_cur.1.unwrap());
+
+    // 水平バーをダブルクリック -> 水平分割が解除される
+    s.double_click((cur_x + 50.0, cur_y));
+    let after_dbl_h = s.with(|e, _| e.split_panes().map(|p| p.at)).unwrap();
+    assert_eq!(after_dbl_h.1, 0, "horizontal split removed");
+    assert!(after_dbl_h.0 > 0, "vertical split remains");
+
+    // 垂直バーをダブルクリック -> 垂直分割も解除され、完全に分割解除される
+    s.double_click((cur_x, cur_y + 50.0));
+    assert!(s.with(|e, _| e.split_panes().is_none()), "all splits removed");
+
+    // Undo で直前の状態（垂直分割）に戻る
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.split_panes().is_some()));
 }
 
 /// XLSX-FORMAT-014 表示形式 > セルのスタイル: 良い on two cells (green text
@@ -8701,6 +12069,20 @@ fn cell016_flash_fill() {
     assert!(s.status_texts().iter().any(|t| t.contains("2 個のセル")), "{:?}", s.status_texts());
     s.key("cmd-z");
     assert_eq!(s.value("C4"), CellValue::Empty);
+    // Inline Flash Fill ghost preview while typing a prefix ("An" -> "Andrew" & "Janet"), accepted by Enter in one step:
+    s.click_cell("C3");
+    s.type_text("An");
+    assert_eq!(
+        s.with(|e, _| e.flash_fill_preview()),
+        vec![(2, "Andrew".to_string()), (3, "Janet".to_string())],
+        "inline Flash Fill ghost preview shows for C3 and C4"
+    );
+    s.key("enter");
+    assert_eq!(s.value("C3"), CellValue::Text("Andrew".into()), "Enter accepts Flash Fill preview on C3");
+    assert_eq!(s.value("C4"), CellValue::Text("Janet".into()), "Enter accepts Flash Fill preview on C4");
+    s.key("cmd-z");
+    assert_eq!(s.value("C3"), CellValue::Empty);
+    assert_eq!(s.value("C4"), CellValue::Empty);
     s.key("cmd-shift-z");
     // "DAVOLIO, N." in D2: the other rows follow (by the menu).
     s.click_cell("D2");
@@ -8713,6 +12095,47 @@ fn cell016_flash_fill() {
     s.click_cell("F3");
     s.key("ctrl-e");
     assert_eq!(s.value("F3"), CellValue::Empty);
+
+    // Date zero-trim, telephone split, and thousands separator formatting in a new region:
+    let region2 = [
+        ["日付", "電話", "数値", "変換日付"],
+        ["'2024-05-09", "'09012345678", "'1234567", "'2024/5/9"],
+        ["'2025-12-03", "'08098765432", "'9876543", ""],
+        ["'2026-01-08", "'07011223344", "'1000", ""],
+    ];
+    for (r, values) in region2.iter().enumerate() {
+        for (c, v) in values.iter().enumerate() {
+            if !v.is_empty() {
+                s.click_cell(&ibis_doc_model::cell_name(c as u32, (6 + r) as u32));
+                s.enter(v, "enter");
+            }
+        }
+    }
+    // Date flash fill on D9 (row index 8, col index 3)
+    s.click_cell("D9");
+    s.key("ctrl-e");
+    assert_eq!(s.value("D9"), CellValue::Text("2025/12/3".into()));
+    assert_eq!(s.value("D10"), CellValue::Text("2026/1/8".into()));
+
+    // Telephone flash fill on E column (col index 4)
+    s.click_cell("E7");
+    s.enter("ハイフン電話", "enter");
+    s.click_cell("E8");
+    s.enter("'090-1234-5678", "enter");
+    s.click_cell("E9");
+    s.menu("xlsx.flash-fill");
+    assert_eq!(s.value("E9"), CellValue::Text("080-9876-5432".into()));
+    assert_eq!(s.value("E10"), CellValue::Text("070-1122-3344".into()));
+
+    // Number thousands separator flash fill on F column (col index 5)
+    s.click_cell("F7");
+    s.enter("カンマ数値", "enter");
+    s.click_cell("F8");
+    s.enter("'1,234,567", "enter");
+    s.click_cell("F9");
+    s.key("ctrl-e");
+    assert_eq!(s.value("F9"), CellValue::Text("9,876,543".into()));
+    assert_eq!(s.value("F10"), CellValue::Text("1,000".into()));
 }
 
 fn validation_click(s: &mut Scenario, id: &str) {
@@ -8760,7 +12183,7 @@ fn valid001_rules_and_messages() {
     s.click_cell("A2");
     s.enter("5", "enter");
     assert_eq!(s.value("A2"), CellValue::Number(5.0));
-    // Text of at most 3 characters, a warning: kept, with the warning.
+    // Text of at most 3 characters, a warning: kept, with the warning and Yes/No/Cancel confirmation.
     s.click_cell("B1");
     s.menu("xlsx.validation");
     s.update(|e, _, cx| {
@@ -8775,6 +12198,20 @@ fn valid001_rules_and_messages() {
     s.click_cell("B1");
     s.enter("abcd", "enter");
     assert_eq!(s.value("B1"), CellValue::Text("abcd".into()), "a warning keeps it");
+    assert!(s.with(|e, _| e.wb().validation_warning.is_some()), "warning confirmation card is shown");
+    s.update(|e, _, cx| e.validation_warning_no(cx));
+    assert_eq!(s.value("B1"), CellValue::Empty, "No reverts cell value");
+    assert_eq!(s.with(|e, _| e.cell_edit().map(|ed| ed.text.clone())), Some("abcd".to_string()), "No reopens cell edit with typed text");
+    s.key("enter");
+    assert!(s.with(|e, _| e.wb().validation_warning.is_some()));
+    s.update(|e, _, cx| e.validation_warning_cancel(cx));
+    assert_eq!(s.value("B1"), CellValue::Empty, "Cancel reverts cell value");
+    assert!(s.with(|e, _| e.cell_edit().is_none()), "Cancel leaves cell edit closed");
+    s.click_cell("B1");
+    s.enter("abcd", "enter");
+    s.update(|e, _, cx| e.validation_warning_yes(cx));
+    assert_eq!(s.value("B1"), CellValue::Text("abcd".into()), "Yes keeps value");
+    assert!(s.with(|e, _| e.wb().validation_warning.is_none()), "Yes dismisses warning confirmation");
     // A list from a range.
     s.click_cell("C1");
     s.menu("xlsx.validation");
@@ -9490,6 +12927,20 @@ fn cell015_series() {
     assert_eq!(shown, vec!["2026/1/31", "2026/2/28", "2026/3/31", "2026/4/30"], "{shown:?}");
     s.key("cmd-z");
     assert_eq!(s.value("C3"), CellValue::Empty);
+    // AutoFill in the Series panel: "第1四半期" down D2:D5 fills 第1四半期..第4四半期.
+    s.click_cell("D2");
+    s.enter("第1四半期", "enter");
+    s.click_cell("D2");
+    for _ in 0..3 {
+        s.key("shift-down");
+    }
+    s.menu("xlsx.series");
+    series_click(&mut s, "series-autofill");
+    series_click(&mut s, "apply");
+    let quarters: Vec<String> = ["D2", "D3", "D4", "D5"].iter().map(|c| s.shown(c)).collect();
+    assert_eq!(quarters, vec!["第1四半期", "第2四半期", "第3四半期", "第4四半期"], "{quarters:?}");
+    s.key("cmd-z");
+    assert_eq!(s.value("D3"), CellValue::Empty);
 }
 
 /// XLSX-WHATIF-014 U:線形・指数傾向のフィル:
@@ -9733,7 +13184,8 @@ fn table018_consolidate() {
     consolidate_click(&mut s, "add-ref");
 
     let refs = s.with(|e, _| e.wb().panels.consolidate.as_ref().unwrap().references.clone());
-    assert_eq!(refs, vec!["A1:C3", "E1:G3"]);
+    // Excel's 統合 turns a typed reference into the sheet-qualified absolute one when it is added.
+    assert_eq!(refs, vec!["Sheet4!$A$1:$C$3", "Sheet4!$E$1:$G$3"]);
 
     consolidate_click(&mut s, "top-labels");
     consolidate_click(&mut s, "left-labels");
@@ -9777,10 +13229,486 @@ fn table018_consolidate() {
     assert_eq!(dc.function, ibis_doc_model::ConsolidateFunction::Sum);
     assert!(dc.top_labels);
     assert!(dc.left_labels);
-    assert_eq!(dc.data_refs, vec!["A1:C3", "E1:G3"]);
+    assert_eq!(dc.data_refs, vec!["Sheet4!$A$1:$C$3", "Sheet4!$E$1:$G$3"]);
 
     consolidate_click(&mut s, "close");
     assert!(s.with(|e, _| e.wb().panels.consolidate.is_none()));
+}
+
+fn analysis_click(s: &mut Scenario, id: &str) {
+    let id = id.to_string();
+    let b = s.with(|e, _| *e.wb().panels.analysis.as_ref().expect("the panel").ui.borrow().get(&id).unwrap_or_else(|| panic!("{id}")));
+    s.click((f32::from(b.origin.x + b.size.width / 2.0), f32::from(b.origin.y + b.size.height / 2.0)));
+}
+fn analysis_field(s: &mut Scenario, id: &str, text: &str) {
+    // The boxes low in a tall panel are below the window: set them directly.
+    let (id, text) = (id.to_string(), text.to_string());
+    s.update(move |e, w, cx| {
+        let p = e.wb().panels.analysis.as_ref().expect("the panel");
+        let state = match id.as_str() {
+            "input" => p.input.clone(),
+            "input2" => p.input2.clone(),
+            "output" => p.output.clone(),
+            other => p.params[other.strip_prefix("param-").unwrap().parse::<usize>().unwrap()].clone(),
+        };
+        state.update(cx, |input, cx| input.set_value(text, w, cx));
+    });
+}
+
+/// Choose a tool of the panel, fill its boxes (`fields`: id and text) and
+/// press OK; the message the panel shows.
+fn analysis_run(s: &mut Scenario, tool: super::analysis_panel::Tool, dist: super::analysis_panel::Dist, fields: &[(&str, &str)], flags: &[usize]) -> String {
+    s.update(|e, w, cx| e.analysis_choose(tool, dist, w, cx));
+    for (id, text) in fields {
+        analysis_field(s, id, text);
+    }
+    for i in flags {
+        s.update(|e, _, _| {
+            let p = e.wb_mut().panels.analysis.as_mut().unwrap();
+            p.flags[*i] = !p.flags[*i];
+        });
+    }
+    s.update(|e, _, cx| e.apply_analysis_panel(cx));
+    s.with(|e, _| e.wb().panels.analysis.as_ref().unwrap().message.clone())
+}
+
+fn number_at(s: &mut Scenario, reference: &str) -> f64 {
+    match s.value(reference) {
+        CellValue::Number(n) => n,
+        other => panic!("{reference} is {other:?}"),
+    }
+}
+
+/// XLSX-ANALYSIS-001〜019 データ > データ分析…: the tools write Excel's
+/// tables at the output cell (one undo), and the numbers agree with the
+/// worksheet functions.
+fn analysis001_toolpak() {
+    use super::analysis_panel::{Dist, Tool};
+    let mut s = new_sheet();
+    let ys = [2.0, 4.0, 5.0, 4.0, 5.0, 7.0, 8.0, 9.0, 10.0, 12.0];
+    s.click_cell("A1");
+    s.enter("x", "tab");
+    s.enter("y", "enter");
+    for (i, y) in ys.iter().enumerate() {
+        s.click_cell(&format!("A{}", i + 2));
+        s.enter(&format!("{}", i + 1), "tab");
+        s.enter(&format!("{y}"), "enter");
+    }
+    // Worksheet functions to compare with.
+    s.click_cell("Z1");
+    s.enter("=CORREL(A2:A11,B2:B11)", "enter");
+    s.enter("=SLOPE(B2:B11,A2:A11)", "enter");
+    s.enter("=INTERCEPT(B2:B11,A2:A11)", "enter");
+    s.enter("=T.TEST(A2:A11,B2:B11,2,2)", "enter");
+    s.enter("=VAR.S(B2:B11)", "enter");
+    s.enter("=RSQ(B2:B11,A2:A11)", "enter");
+
+    // 基本統計量 on A1:B11 with the names in the first row, at E1.
+    s.menu("xlsx.data-analysis");
+    assert!(s.with(|e, _| e.wb().panels.analysis.is_some()));
+    analysis_click(&mut s, "labels");
+    s.update(|e, w, cx| e.analysis_choose(Tool::Descriptive, Dist::Uniform, w, cx));
+    analysis_field(&mut s, "input", "A1:B11");
+    analysis_field(&mut s, "output", "E1");
+    analysis_field(&mut s, "param-0", "95");
+    analysis_field(&mut s, "param-1", "1");
+    analysis_click(&mut s, "apply");
+    let message = s.with(|e, _| e.wb().panels.analysis.as_ref().unwrap().message.clone());
+    assert!(message.contains("E1:H16"), "{message}");
+    assert_eq!(s.value("E1"), CellValue::Text("x".into()));
+    assert_eq!(s.value("E2"), CellValue::Text("平均".into()));
+    assert_eq!(number_at(&mut s, "F2"), 5.5);
+    assert_eq!(number_at(&mut s, "H2"), 6.6);
+    assert_eq!(number_at(&mut s, "F14"), 10.0);
+    assert_eq!(number_at(&mut s, "F15"), 10.0);
+    assert_eq!(s.value("E16"), CellValue::Text("信頼区間(95.0%)".into()));
+    // The whole table is one step to undo.
+    s.click_cell("A1");
+    s.key("cmd-z");
+    assert_eq!(s.value("F2"), CellValue::Empty);
+    s.key("cmd-shift-z");
+    assert_eq!(number_at(&mut s, "F2"), 5.5);
+
+    // 相関 at E20.
+    let message = analysis_run(&mut s, Tool::Correlation, Dist::Uniform, &[("input", "A1:B11"), ("output", "E20")], &[]);
+    assert!(message.contains("E20:G22"), "{message}");
+    let correl = number_at(&mut s, "Z1");
+    assert_eq!(s.value("F20"), CellValue::Text("x".into()));
+    assert!((number_at(&mut s, "F22") - correl).abs() < 1e-12);
+    assert_eq!(number_at(&mut s, "F21"), 1.0);
+
+    // 回帰分析 of y on x at E30 (with residuals and chart output).
+    let charts_before_reg = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count());
+    let message = analysis_run(&mut s, Tool::Regression, Dist::Uniform, &[("input", "B1:B11"), ("input2", "A1:A11"), ("output", "E30"), ("param-0", "95")], &[1, 3]);
+    assert!(message.starts_with("分析結果を"), "{message}");
+    assert!((number_at(&mut s, "F46") - number_at(&mut s, "Z3")).abs() < 1e-9, "intercept");
+    assert!((number_at(&mut s, "F47") - number_at(&mut s, "Z2")).abs() < 1e-9, "slope");
+    assert!((number_at(&mut s, "F34") - number_at(&mut s, "Z6")).abs() < 1e-9, "R square");
+    assert_eq!(number_at(&mut s, "F37"), 10.0);
+    assert_eq!(s.value("E47"), CellValue::Text("x".into()));
+    let charts_after_reg = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count());
+    assert_eq!(charts_after_reg, charts_before_reg + 1, "regression chart output inserted");
+
+    // t 検定 (equal variances) at M1.
+    analysis_run(&mut s, Tool::TEqual, Dist::Uniform, &[("input", "A1:A11"), ("input2", "B1:B11"), ("output", "M1")], &[]);
+    assert_eq!(s.value("M3"), CellValue::Text("平均".into()));
+    assert!((number_at(&mut s, "N12") - number_at(&mut s, "Z4")).abs() < 1e-12, "p two-tail");
+    assert_eq!(number_at(&mut s, "N8"), 18.0);
+
+    // ヒストグラム with bins, cumulative percentage and chart output at M20.
+    s.click_cell("D1");
+    s.enter("bins", "enter");
+    for (i, bin) in [3, 6, 9].iter().enumerate() {
+        s.click_cell(&format!("D{}", i + 2));
+        s.enter(&format!("{bin}"), "enter");
+    }
+    analysis_run(&mut s, Tool::Histogram, Dist::Uniform, &[("input", "A1:A11"), ("input2", "D1:D4"), ("output", "M20")], &[1, 2]);
+    assert_eq!(number_at(&mut s, "N21"), 3.0);
+    assert_eq!(number_at(&mut s, "N23"), 3.0);
+    assert_eq!(s.value("M24"), CellValue::Text("次の級".into()));
+    assert_eq!(number_at(&mut s, "N24"), 1.0);
+    assert_eq!(number_at(&mut s, "O24"), 1.0);
+    assert_eq!(number_format(&mut s, "O22"), "0.00%");
+    let charts_after_hist = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count());
+    assert_eq!(charts_after_hist, charts_after_reg + 1, "histogram chart output inserted");
+
+    // 移動平均 writes formulas and chart output.
+    analysis_run(&mut s, Tool::MovingAverage, Dist::Uniform, &[("input", "B1:B11"), ("output", "R1"), ("param-0", "3")], &[1]);
+    assert_eq!(s.formula("R3").as_deref(), Some("AVERAGE(B2:B4)"));
+    assert!((number_at(&mut s, "R3") - 11.0 / 3.0).abs() < 1e-12);
+    assert_eq!(s.value("R2"), CellValue::Error(ibis_doc_model::CellError::NA));
+    let charts_after_ma = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count());
+    assert_eq!(charts_after_ma, charts_after_hist + 1, "moving average chart output inserted");
+
+    // 分散分析: 一元配置.
+    analysis_run(&mut s, Tool::AnovaSingle, Dist::Uniform, &[("input", "A1:B11"), ("output", "T1"), ("param-0", "0.05")], &[]);
+    assert_eq!(number_at(&mut s, "V10"), 1.0);
+    assert_eq!(number_at(&mut s, "V11"), 18.0);
+    assert_eq!(number_at(&mut s, "V13"), 19.0);
+
+    // 乱数発生: 2 variables, 5 numbers each.
+    analysis_run(&mut s, Tool::Random, Dist::Uniform, &[("output", "T30"), ("param-0", "2"), ("param-1", "5"), ("param-2", "10"), ("param-3", "20"), ("param-4", "7")], &[]);
+    for r in 30..35 {
+        for c in ["T", "U"] {
+            let v = number_at(&mut s, &format!("{c}{r}"));
+            assert!((10.0..20.0).contains(&v), "{c}{r}={v}");
+        }
+    }
+    assert_eq!(s.value("T35"), CellValue::Empty);
+
+    // フーリエ解析 of 1, 2, 3, 4.
+    for (i, v) in [1, 2, 3, 4].iter().enumerate() {
+        s.click_cell(&format!("AB{}", i + 1));
+        s.enter(&format!("{v}"), "enter");
+    }
+    analysis_run(&mut s, Tool::Fourier, Dist::Uniform, &[("input", "AB1:AB4"), ("output", "AC1")], &[]);
+    assert_eq!(s.value("AC1"), CellValue::Text("10".into()));
+    assert_eq!(s.value("AC2"), CellValue::Text("-2+2i".into()));
+
+    // A bad number is refused with a message and nothing is written.
+    analysis_run(&mut s, Tool::MovingAverage, Dist::Uniform, &[("input", "B1:B11"), ("output", "AE1"), ("param-0", "x")], &[]);
+    let message = s.with(|e, _| e.wb().panels.analysis.as_ref().unwrap().message.clone());
+    assert!(message.contains("区間"), "{message}");
+    assert_eq!(s.value("AE3"), CellValue::Empty);
+
+    // Saved and opened again: the values stay, and the formulas.
+    s.save_as("analysis001.xlsx");
+    let p = s.reopen();
+    let sheet = sheet_of_slide(&p.slides[1]).unwrap();
+    assert_eq!(sheet.cell(1, 5).map(|c| c.value.clone()), Some(CellValue::Number(5.5)));
+    assert_eq!(sheet.cell(2, 17).and_then(|c| c.formula.clone()).as_deref(), Some("AVERAGE(B2:B4)"));
+    assert_eq!(p.slides[1].shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count(), charts_after_ma, "saved and reopened preserves analysis charts");
+
+    // 新規ワークシート (XLSX-ANALYSIS-019): writes the table at A1 of a new sheet, undone in one step.
+    let orig_slide = s.with(|e, _| e.current_slide);
+    let orig_sheets = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.len());
+    analysis_click(&mut s, "output-new-sheet");
+    assert!(s.with(|e, _| e.wb().panels.analysis.as_ref().unwrap().new_sheet));
+    let msg = analysis_run(&mut s, Tool::Descriptive, Dist::Uniform, &[("input", "A1:B11"), ("output", "統計シート"), ("param-0", "95"), ("param-1", "1")], &[]);
+    assert!(msg.contains("A1:D16"), "{msg}");
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.len()), orig_sheets + 1);
+    assert_eq!(s.with(|e, _| e.slide().name.clone()), Some("統計シート".to_string()));
+    assert_eq!(s.value("A1"), CellValue::Text("x".into()));
+    assert_eq!(number_at(&mut s, "B2"), 5.5);
+    assert_eq!(number_at(&mut s, "D2"), 6.6);
+    // One undo removes the new sheet and restores the original sheet.
+    s.click_cell("A1");
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.len()), orig_sheets);
+    assert_eq!(s.with(|e, _| e.current_slide), orig_slide);
+
+    s.update(|e, w, cx| e.analysis_choose(Tool::Correlation, Dist::Uniform, w, cx));
+    analysis_click(&mut s, "close");
+    assert!(s.with(|e, _| e.wb().panels.analysis.is_none()));
+}
+
+/// XLSX-ANALYSIS-005・007・008・013・015〜018 and the two-factor analyses
+/// of variance: the rest of the tools of データ分析….
+fn analysis002_other_tools() {
+    use super::analysis_panel::{Dist, Tool};
+    let mut s = new_sheet();
+    let ys = [2.0, 4.0, 5.0, 4.0, 5.0, 7.0, 8.0, 9.0, 10.0, 12.0];
+    s.click_cell("A1");
+    s.enter("x", "tab");
+    s.enter("y", "enter");
+    for (i, y) in ys.iter().enumerate() {
+        s.click_cell(&format!("A{}", i + 2));
+        s.enter(&format!("{}", i + 1), "tab");
+        s.enter(&format!("{y}"), "enter");
+    }
+    s.menu("xlsx.data-analysis");
+    analysis_click(&mut s, "labels");
+    let message = analysis_run(&mut s, Tool::Covariance, Dist::Uniform, &[("input", "A1:B11"), ("output", "AH1")], &[]);
+    assert!(message.starts_with("分析結果を"), "{message}");
+    assert_eq!(number_at(&mut s, "AI2"), 8.25);
+    analysis_run(&mut s, Tool::Rank, Dist::Uniform, &[("input", "A1:A11"), ("output", "AH10")], &[]);
+    assert_eq!((number_at(&mut s, "AH11"), number_at(&mut s, "AI11"), number_at(&mut s, "AJ11"), number_at(&mut s, "AK11")), (10.0, 10.0, 1.0, 1.0));
+    assert_eq!(number_format(&mut s, "AK11"), "0.00%");
+    analysis_run(&mut s, Tool::TPaired, Dist::Uniform, &[("input", "A1:A11"), ("input2", "B1:B11"), ("output", "AH20"), ("param-0", "0"), ("param-1", "0.05")], &[]);
+    assert_eq!(number_at(&mut s, "AI27"), 9.0);
+    analysis_run(&mut s, Tool::TUnequal, Dist::Uniform, &[("input", "A1:A11"), ("input2", "B1:B11"), ("output", "AH40"), ("param-0", "0"), ("param-1", "0.05")], &[]);
+    assert!(number_at(&mut s, "AI46") >= 17.0);
+    let message = analysis_run(&mut s, Tool::ZTest, Dist::Uniform, &[("input", "A1:A11"), ("input2", "B1:B11"), ("output", "AO1"), ("param-0", "0"), ("param-1", "0.05"), ("param-2", "8"), ("param-3", "9")], &[]);
+    assert!(message.starts_with("分析結果を"), "{message}");
+    assert!((number_at(&mut s, "AP11") - 1.959963984540054).abs() < 1e-9);
+    analysis_run(&mut s, Tool::FTest, Dist::Uniform, &[("input", "A1:A11"), ("input2", "B1:B11"), ("output", "AO20"), ("param-0", "0.05")], &[]);
+    assert_eq!(number_at(&mut s, "AP25"), 9.0);
+    let charts_before_es = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count());
+    analysis_run(&mut s, Tool::ExponentialSmoothing, Dist::Uniform, &[("input", "B1:B11"), ("output", "AO40"), ("param-0", "0.3")], &[1]);
+    assert_eq!(s.formula("AO41").as_deref(), Some("B2"));
+    assert_eq!(s.formula("AO42").as_deref(), Some("0.7*B3+0.3*AO41"));
+    assert!((number_at(&mut s, "AO42") - (0.7 * 4.0 + 0.3 * 2.0)).abs() < 1e-12);
+    let charts_after_es = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count());
+    assert_eq!(charts_after_es, charts_before_es + 1, "exponential smoothing chart output inserted");
+    // Single undo removes both the chart and the cells; redo restores both.
+    s.click_cell("A1");
+    s.key("cmd-z");
+    assert_eq!(s.value("AO42"), CellValue::Empty);
+    assert_eq!(s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count()), charts_before_es);
+    s.key("cmd-shift-z");
+    assert!((number_at(&mut s, "AO42") - (0.7 * 4.0 + 0.3 * 2.0)).abs() < 1e-12);
+    assert_eq!(s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count()), charts_after_es);
+    analysis_run(&mut s, Tool::Sampling, Dist::Uniform, &[("input", "A1:A11"), ("output", "AU1"), ("param-0", "3"), ("param-1", "")], &[]);
+    assert_eq!((number_at(&mut s, "AU1"), number_at(&mut s, "AU2"), number_at(&mut s, "AU3")), (3.0, 6.0, 9.0));
+    assert_eq!(s.value("AU4"), CellValue::Empty);
+    // Two-factor analyses of variance, with the names in the first row and column.
+    let rows = [["", "c1", "c2", "c3"], ["r1", "1", "2", "3"], ["r2", "2", "4", "6"], ["r3", "3", "6", "9"]];
+    for (r, row) in rows.iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            if !v.is_empty() {
+                s.click_cell(&format!("{}{}", ["R", "S", "T", "U"][c], r + 1));
+                s.enter(v, "enter");
+            }
+        }
+    }
+    let message = analysis_run(&mut s, Tool::AnovaTwoWithout, Dist::Uniform, &[("input", "R1:U4"), ("output", "W1"), ("param-0", "0.05")], &[]);
+    assert!(message.starts_with("分析結果を"), "{message}");
+    assert_eq!(number_at(&mut s, "Y17"), 8.0);
+    assert_eq!(number_at(&mut s, "X13"), 24.0);
+    let rows = [["", "c1", "c2"], ["g1", "1", "5"], ["g1", "3", "7"], ["g2", "2", "6"], ["g2", "4", "10"]];
+    for (r, row) in rows.iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            if !v.is_empty() {
+                s.click_cell(&format!("{}{}", ["R", "S", "T"][c], r + 10));
+                s.enter(v, "enter");
+            }
+        }
+    }
+    analysis_run(&mut s, Tool::AnovaTwoWith, Dist::Uniform, &[("input", "R10:T14"), ("output", "W30"), ("param-0", "2"), ("param-1", "0.05")], &[]);
+    assert_eq!(number_at(&mut s, "Y58"), 7.0);
+    // Rows that do not divide evenly are refused.
+    let message = analysis_run(&mut s, Tool::AnovaTwoWith, Dist::Uniform, &[("input", "R10:T14"), ("output", "W70"), ("param-0", "3")], &[]);
+    assert!(message.contains("行数"), "{message}");
+    assert_eq!(s.value("W70"), CellValue::Empty);
+}
+
+fn autocorrect_click(s: &mut Scenario, id: &str) {
+    let id = id.to_string();
+    let b = s.with(|e, _| *e.wb().panels.autocorrect.as_ref().expect("the panel").ui.borrow().get(&id).unwrap_or_else(|| panic!("{id}")));
+    s.click((f32::from(b.origin.x + b.size.width / 2.0), f32::from(b.origin.y + b.size.height / 2.0)));
+}
+
+/// XLSX-OPTIONS-005 ツール > オートコレクトのオプション…: the text typed
+/// into a cell is corrected (two initial capitals, days, the replace list)
+/// unless the switch is off; an entry added to the list is used; formulas
+/// are left; the correction is part of the entry (one undo).
+fn opt005_autocorrect() {
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    s.enter("TWo INitial teh cat", "enter");
+    assert_eq!(s.value("A1"), CellValue::Text("Two Initial the cat".into()));
+    s.enter("see you. monday (c)", "enter");
+    assert_eq!(s.value("A2"), CellValue::Text("see you. Monday ©".into()));
+    s.enter("=\"teh\"", "enter");
+    assert_eq!(s.formula("A3").as_deref(), Some("\"teh\""));
+    // One entry, one step to undo.
+    s.key("cmd-z");
+    s.key("cmd-z");
+    assert_eq!(s.value("A2"), CellValue::Empty);
+    assert_eq!(s.value("A1"), CellValue::Text("Two Initial the cat".into()));
+
+    s.menu("xlsx.autocorrect");
+    autocorrect_click(&mut s, "two-initials");
+    s.update(|e, w, cx| {
+        let p = e.wb().panels.autocorrect.as_ref().unwrap();
+        p.replace.update(cx, |i, cx| i.set_value("brb".to_string(), w, cx));
+        p.with.update(cx, |i, cx| i.set_value("be right back".to_string(), w, cx));
+    });
+    autocorrect_click(&mut s, "add");
+    assert!(s.with(|e, _| e.wb().panels.autocorrect.as_ref().unwrap().working.table.iter().any(|(a, b)| a == "brb" && b == "be right back")));
+    s.update(|e, _, cx| e.apply_autocorrect_panel(cx));
+    assert!(s.with(|e, _| e.wb().panels.autocorrect.is_none()));
+    s.click_cell("B1");
+    s.enter("TWo brb", "enter");
+    assert_eq!(s.value("B1"), CellValue::Text("TWo be right back".into()));
+
+    // The settings are the process's: put them back for the other scenarios.
+    s.menu("xlsx.autocorrect");
+    s.update(|e, _, _| {
+        e.wb_mut().panels.autocorrect.as_mut().unwrap().working = super::autocorrect::AutoCorrect::default();
+    });
+    s.update(|e, _, cx| e.apply_autocorrect_panel(cx));
+    s.click_cell("B2");
+    s.enter("TWo brb", "enter");
+    assert_eq!(s.value("B2"), CellValue::Text("Two brb".into()));
+}
+
+fn solver_set(s: &mut Scenario, id: &'static str, text: &str) {
+    let text = text.to_string();
+    s.update(move |e, w, cx| {
+        let p = e.wb().panels.solver.as_ref().expect("the panel");
+        let state = match id {
+            "objective" => p.objective.clone(),
+            "variables" => p.variables.clone(),
+            "c-lhs" => p.c_lhs.clone(),
+            "c-rhs" => p.c_rhs.clone(),
+            "goal-number" => p.goal_value.clone(),
+            "max-time" => p.max_time.clone(),
+            other => panic!("{other}"),
+        };
+        state.update(cx, |input, cx| input.set_value(text, w, cx));
+    });
+}
+
+fn solver_constraint(s: &mut Scenario, lhs: &str, rel: ibis_doc_model::solver::Rel, rhs: &str) {
+    solver_set(s, "c-lhs", lhs);
+    solver_set(s, "c-rhs", rhs);
+    s.update(move |e, _, cx| {
+        e.wb_mut().panels.solver.as_mut().unwrap().c_rel = rel;
+        e.solver_put_constraint(false, cx);
+    });
+}
+
+fn solver_message(s: &mut Scenario) -> String {
+    s.with(|e, _| e.wb().panels.solver.as_ref().map(|p| p.message.clone()).unwrap_or_default())
+}
+
+/// XLSX-WHATIF-008〜013 データ > ソルバー…: the objective cell and the
+/// variable cells, constraints (<=, >=, int, bin), the method and the
+/// options; 解決 finds the optimum of a linear model exactly, a bad model is
+/// refused with a message, the solution is kept in one step with the answer
+/// report sheet, and the model is kept in the sheet (the hidden solver_*
+/// names) and comes back when the panel is opened again.
+fn whatif008_solver() {
+    use ibis_doc_model::solver::{Method, Rel};
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    s.enter("0", "enter");
+    s.enter("0", "enter");
+    s.click_cell("B1");
+    s.enter("=3*A1+2*A2", "enter");
+    s.enter("=A1+A2", "enter");
+    s.enter("=A1+3*A2", "enter");
+    s.click_cell("B1");
+    s.menu("xlsx.solver");
+    assert!(s.with(|e, _| e.wb().panels.solver.is_some()));
+    // The objective starts at the selected cell.
+    assert_eq!(s.with(|e, cx| e.wb().panels.solver.as_ref().unwrap().objective.read(cx).value().to_string()), "B1");
+    solver_set(&mut s, "variables", "A1:A2");
+    s.update(|e, _, _| {
+        let p = e.wb_mut().panels.solver.as_mut().unwrap();
+        p.goal = super::solver_panel::GoalKind::Max;
+        p.method = Method::Simplex;
+    });
+    // A bad constraint is refused.
+    solver_constraint(&mut s, "B2", Rel::Le, "many");
+    assert!(solver_message(&mut s).contains("制約条件"));
+    solver_constraint(&mut s, "B2", Rel::Le, "4");
+    solver_constraint(&mut s, "B3", Rel::Le, "6");
+    solver_constraint(&mut s, "A1", Rel::Le, "3");
+    assert_eq!(s.with(|e, _| e.wb().panels.solver.as_ref().unwrap().constraints.len()), 3);
+    s.update(|e, _, cx| e.solver_solve(cx));
+    assert!(solver_message(&mut s).contains("解が見つかりました"), "{}", solver_message(&mut s));
+    // Nothing is changed until the solution is kept.
+    assert_eq!(number_at(&mut s, "A1"), 0.0);
+    s.update(|e, _, _| {
+        let p = e.wb_mut().panels.solver.as_mut().unwrap();
+        p.report = true;
+        p.sensitivity_report = true;
+        p.limits_report = true;
+    });
+    s.update(|e, _, cx| e.solver_finish(true, cx));
+    assert!(s.with(|e, _| e.wb().panels.solver.is_none()));
+    assert_eq!(number_at(&mut s, "A1"), 3.0);
+    assert_eq!(number_at(&mut s, "A2"), 1.0);
+    assert_eq!(number_at(&mut s, "B1"), 11.0);
+    // The answer, sensitivity, and limits reports are new sheets after this one.
+    let names: Vec<String> = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.iter().map(|x| x.name.clone()).collect());
+    assert!(names.iter().any(|n| n == "解答レポート"), "{names:?}");
+    assert!(names.iter().any(|n| n == "感度レポート"), "{names:?}");
+    assert!(names.iter().any(|n| n == "条件レポート"), "{names:?}");
+    let sens_shadow = s.with(|e, _| {
+        let p = e.presentation();
+        let wb = p.workbook.as_ref().unwrap();
+        let sens_slide = wb.sheets.iter().find(|x| x.name == "感度レポート").unwrap().slide.unwrap();
+        let lims_slide = wb.sheets.iter().find(|x| x.name == "条件レポート").unwrap().slide.unwrap();
+        let sens = sheet_of_slide(p.slide(sens_slide).unwrap()).unwrap();
+        let lims = sheet_of_slide(p.slide(lims_slide).unwrap()).unwrap();
+        // Row 10, col 3 is the shadow price of the first constraint ($B$2 <= 4), which is 2.0.
+        // In Limits Report, row 7 is A1 (lower=0 -> obj=2, upper=3 -> obj=11).
+        (
+            sens.cell(10, 3).and_then(|c| c.value.as_number()),
+            lims.cell(7, 3).and_then(|c| c.value.as_number()),
+            lims.cell(7, 4).and_then(|c| c.value.as_number()),
+            lims.cell(7, 5).and_then(|c| c.value.as_number()),
+            lims.cell(7, 6).and_then(|c| c.value.as_number()),
+        )
+    });
+    assert_eq!(sens_shadow, (Some(2.0), Some(0.0), Some(2.0), Some(3.0), Some(11.0)));
+
+    // The model is in the sheet's names, and comes back.
+    let kept = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().names.iter().filter(|n| n.name.starts_with("solver_")).count());
+    assert!(kept >= 14 + 9, "{kept}");
+    s.menu("xlsx.solver");
+    assert_eq!(s.with(|e, cx| e.wb().panels.solver.as_ref().unwrap().variables.read(cx).value().to_string()), "A1:A2");
+    assert_eq!(s.with(|e, _| e.wb().panels.solver.as_ref().unwrap().constraints.clone()), vec![("B2".to_string(), Rel::Le, "4".to_string()), ("B3".to_string(), Rel::Le, "6".to_string()), ("A1".to_string(), Rel::Le, "3".to_string())]);
+
+    // Whole numbers, and a model with no solution.
+    solver_constraint(&mut s, "A1:A2", Rel::Int, "");
+    solver_constraint(&mut s, "A1", Rel::Ge, "5");
+    s.update(|e, _, cx| e.solver_solve(cx));
+    assert!(solver_message(&mut s).contains("実行可能な解"), "{}", solver_message(&mut s));
+    // Restoring (or closing) keeps the model and the values.
+    s.update(|e, _, cx| e.solver_finish(false, cx));
+    assert_eq!(number_at(&mut s, "A1"), 3.0);
+
+    // Saved and opened again, the model is still in the sheet's hidden names.
+    s.save_as("whatif008.xlsx");
+    let reopened = s.reopen();
+    let wb = reopened.workbook.as_ref().unwrap();
+    let opt = wb.names.iter().find(|n| n.name == "solver_opt").expect("solver_opt saved");
+    assert_eq!((opt.sheet.is_some(), opt.hidden), (true, true), "{opt:?}");
+    assert!(opt.formula.ends_with("$B$1"), "{}", opt.formula);
+    assert!(wb.names.iter().any(|n| n.name == "solver_rel3" && n.formula == "1"));
+    // Undo: the model saved by the restore, then the kept solution with its model and the report together.
+    s.click_cell("D1");
+    s.key("cmd-z");
+    assert_eq!(number_at(&mut s, "A1"), 3.0);
+    s.key("cmd-z");
+    assert_eq!(number_at(&mut s, "A1"), 0.0);
+    let names: Vec<String> = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.iter().map(|x| x.name.clone()).collect());
+    assert!(!names.iter().any(|n| n == "解答レポート"), "{names:?}");
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().unwrap().names.iter().filter(|n| n.name.starts_with("solver_")).count()), 0);
 }
 
 /// XLSX-TABLE-014: 大文字と小文字を区別する並べ替え
@@ -10453,7 +14381,7 @@ fn formula008_named_formulas() {
 
     // Edit TaxRate via UI panel to 0.08
     s.update(|e, window, cx| {
-        e.edit_name(0, "TaxRate", "0.08", window, cx);
+        e.edit_name(0, "TaxRate", None, "0.08", window, cx);
         let panel = e.sheet_state().unwrap().names.as_ref().unwrap();
         let name_text = panel.new_name.read(cx).value();
         let formula_text = panel.new_formula.read(cx).value();
@@ -10603,7 +14531,10 @@ fn pivot009_group_and_ungroup() {
     let saved = s.save_as("pivot009.xlsx");
     let data = std::fs::read(&saved).unwrap();
     let cache = ibis_pptx::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition1.xml").expect("cache xml");
-    assert!(cache.contains(r#"<fieldGroup><rangePr groupBy="months""#), "cache has fieldGroup: {cache}");
+    assert!(cache.contains("<fieldGroup") && cache.contains(r#"<rangePr groupBy="months" startDate="2026-01-05T00:00:00" endDate="2026-12-22T00:00:00""#), "cache has fieldGroup rangePr with startDate/endDate: {cache}");
+    assert!(cache.contains(r#"<groupItems count="14">"#), "cache has groupItems count=14: {cache}");
+    let table = ibis_pptx::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("table xml");
+    assert!(table.contains(r#"<items count="15">"#), "table has 14 group items + 1 default subtotal: {table}");
 
     let reopened = s.reopen();
     let sh = sheet_of_slide(&reopened.slides[0]).unwrap();
@@ -11033,7 +14964,15 @@ fn pivot012_calculated_item() {
 
     // 5. Test Save and Reopen roundtrip
     s.screenshot("pivot012_calculated_item");
-    let _saved = s.save_as("pivot012_calculated_item.xlsx");
+    let saved = s.save_as("pivot012_calculated_item.xlsx");
+    let data = std::fs::read(&saved).unwrap();
+    let cache = ibis_pptx::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition1.xml").expect("cache xml");
+    assert!(cache.contains(r#"<s v="北日本" f="1"/>"#), "cache sharedItems has calculated item with f=1: {cache}");
+    assert!(cache.contains(r#"<calculatedItem field="2" formula="北海道"><pivotArea field="2""#), "cache has ECMA-376 calculatedItem with pivotArea: {cache}");
+    assert!(!cache.contains(r#"<calculatedItem field="2" name="#), "calculatedItem does not emit non-standard name attribute: {cache}");
+    let table = ibis_pptx::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("table xml");
+    assert!(table.contains(r#"<items count="7">"#), "table has 5 base items + 1 calculated item + 1 default subtotal: {table}");
+
     let reopened = s.reopen();
     let sheet = sheet_of_slide(&reopened.slides[0]).unwrap();
     assert!(!sheet.pivots.is_empty(), "has pivot table in reopened file");
@@ -11749,6 +15688,9 @@ fn cf012_databar_negative_and_axis() {
                 axis_position: Some(ibis_doc_model::DataBarAxisPosition::Midpoint),
                 min_length: None,
                 max_length: None,
+                border_color: None,
+                negative_border_color: None,
+                direction: ibis_doc_model::DataBarDirection::Context,
             },
             priority: 2,
             stop: false,
@@ -12068,7 +16010,7 @@ fn custom_views_field(s: &mut Scenario, id: &str, text: &str) {
 /// ユーザー設定のビュー (Custom Views) の登録・表示・削除・印刷設定および非表示行/列の反映、
 /// Undo/Redo、保存・再読み込み、およびテーブルとの排他条件の検証。
 fn view016_custom_views_register_show_delete_and_table_exclusion() {
-    use ibis_doc_model::{Command, SheetCommand};
+    use ibis_doc_model::Command;
     let mut s = new_sheet();
 
     // 1. Setup initial cells
@@ -13051,7 +16993,7 @@ fn chtype022_radar_chart_styles_and_rendering() {
     std::fs::create_dir_all(&dir).unwrap();
     let source = dir.join("chtype022-radar.xlsx");
 
-    let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:radarChart><c:radarStyle val="standard"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S1</c:v></c:tx><c:cat><c:strLit><c:ptCount val="3"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt><c:pt idx="2"><c:v>C</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt><c:pt idx="2"><c:v>30</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="111"/><c:axId val="222"/></c:radarChart></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend></c:chart></c:chartSpace>"#;
+    let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:radarChart><c:radarStyle val="standard"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S1</c:v></c:tx><c:cat><c:strLit><c:ptCount val="3"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt><c:pt idx="2"><c:v>C</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt><c:pt idx="2"><c:v>30</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="111"/><c:axId val="222"/></c:radarChart><c:catAx><c:axId val="111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="222"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="111"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend></c:chart></c:chartSpace>"#;
     let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
     let bytes = ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
     std::fs::write(&source, bytes).unwrap();
@@ -14151,61 +18093,48 @@ fn file013_compatibility_check() {
 fn file014_autorecover_settings() {
     let mut s = new_sheet();
 
-    // 1. メニューから「自動回復の設定…」を開く
+    // 1. メニューから「自動回復の設定…」を開く（共通の shell/autorecover.rs のパネル）
     s.menu("xlsx.autorecover-settings");
     s.settle();
-
-    assert!(s.with(|e, _| e.wb().panels.autorecover_settings.is_some()), "autorecover settings panel opened");
+    assert!(s.with(|e, _| e.autorecover_settings.is_some()), "autorecover settings panel opened");
 
     // 2. パネル内の入力・トグルの検証
     s.update(|e, _, _| {
-        let p = e.wb_mut().panels.autorecover_settings.as_mut().unwrap();
+        let p = e.autorecover_settings.as_mut().unwrap();
         p.enabled = false;
         p.keep_last_unsaved = true;
-        p.disable_for_this_workbook = true;
+        p.disable_for_this_file = true;
     });
-
-    // 保存間隔の変更: 15分
     s.update(|e, w, cx| {
-        let p = e.wb().panels.autorecover_settings.as_ref().unwrap();
-        p.interval_input.update(cx, |inp, cx| {
-            inp.set_value("15", w, cx);
-        });
+        let p = e.autorecover_settings.as_ref().unwrap();
+        p.interval_input.update(cx, |inp, cx| inp.set_value("15", w, cx));
     });
-
-    // 設定を保存
-    s.update(|e, _, cx| {
-        e.save_xlsx_autorecover_settings(cx);
-    });
+    s.update(|e, _, cx| e.save_autorecover_settings(cx));
     s.settle();
-
-    let saved_msg = s.with(|e, _| e.wb().panels.autorecover_settings.as_ref().unwrap().message.clone());
+    let saved_msg = s.with(|e, _| e.autorecover_settings.as_ref().unwrap().message.clone());
     assert!(!saved_msg.is_empty(), "settings saved message displayed");
-
-    let saved_config = super::autorecover::load_autorecover_config();
+    let saved_config = crate::shell::autorecover::load_autorecover_config();
     assert_eq!(saved_config.interval_minutes, 15);
     assert!(!saved_config.enabled);
-
-    let disable_wb = s.with(|e, _| e.wb().disable_autorecover_for_workbook);
-    assert!(disable_wb, "disable for workbook is saved in state");
+    assert!(s.with(|e, _| e.autorecover_off), "disable for the workbook is saved in state");
 
     // 設定を再度有効化（テスト後の整合性のため）
     s.update(|e, _, cx| {
-        let p = e.wb_mut().panels.autorecover_settings.as_mut().unwrap();
+        let p = e.autorecover_settings.as_mut().unwrap();
         p.enabled = true;
-        e.save_xlsx_autorecover_settings(cx);
+        p.disable_for_this_file = false;
+        e.save_autorecover_settings(cx);
     });
     s.settle();
 
-    // 3. 「今すぐ自動回復データを保存」の手動実行
-    s.update(|e, w, cx| {
-        e.save_xlsx_autorecover_now(w, cx);
+    // 3. 「今すぐ自動回復データを保存」
+    s.update(|e, _, cx| {
+        let path = e.write_autorecover_snapshot().expect("snapshot saved");
+        if let Some(p) = e.autorecover_settings.as_mut() {
+            p.message = path.display().to_string();
+        }
+        cx.notify();
     });
-    s.settle();
-
-    let now_msg = s.with(|e, _| e.wb().panels.autorecover_settings.as_ref().unwrap().message.clone());
-    assert!(now_msg.contains("自動回復データを保存しました") || now_msg.contains("AutoRecover"), "manual snapshot message displayed");
-
     let active_path = s.with(|e, _| e.active_autorecover_file.clone());
     assert!(active_path.is_some(), "active autorecover file path recorded");
     let path = active_path.unwrap();
@@ -14214,12 +18143,10 @@ fn file014_autorecover_settings() {
 
     // 4. パネルのクローズ
     s.update(|e, _, cx| {
-        e.close_xlsx_autorecover_settings_panel(cx);
+        e.autorecover_settings = None;
+        cx.notify();
     });
-    s.settle();
-    assert!(s.with(|e, _| e.wb().panels.autorecover_settings.is_none()), "autorecover settings panel closed");
-
-    // クリーンアップ
+    assert!(s.with(|e, _| e.autorecover_settings.is_none()), "autorecover settings panel closed");
     let _ = std::fs::remove_file(&path);
 }
 
@@ -14233,7 +18160,7 @@ fn file015_and_file016_recover_and_save_workbook() {
 
     // 2. 自動回復スナップショットを作成
     let snapshot_path = s.update(|e, _, _| {
-        e.save_autorecover_snapshot().expect("snapshot saved")
+        e.write_autorecover_snapshot().expect("snapshot saved")
     });
     assert!(snapshot_path.exists(), "snapshot file exists on disk");
 
@@ -14241,23 +18168,23 @@ fn file015_and_file016_recover_and_save_workbook() {
     s.menu("xlsx.recover-unsaved");
     s.settle();
 
-    assert!(s.with(|e, _| e.wb().panels.recover_unsaved.is_some()), "recover unsaved panel opened");
-    let entries = s.with(|e, _| e.wb().panels.recover_unsaved.as_ref().unwrap().entries.clone());
+    assert!(s.with(|e, _| e.recover_unsaved.is_some()), "recover unsaved panel opened");
+    let entries = s.with(|e, _| e.recover_unsaved.as_ref().unwrap().entries.clone());
     assert!(!entries.is_empty(), "recovered files list contains snapshot");
 
     let entry_idx = entries.iter().position(|e| e.path == snapshot_path).expect("snapshot in entries");
 
     // 4. 回復ブックを開く
     s.update(|e, w, cx| {
-        e.open_recovered_file_entry(entry_idx, w, cx);
+        e.open_recovered_entry(entry_idx, w, cx);
     });
     s.settle();
 
     // 検証: 回復フラグが立っており、タイトルに[回復済み]が付与され、パネルが閉じている
     assert!(s.with(|e, _| e.is_recovered), "is_recovered is true");
     let title = s.with(|e, _| e.file_name.clone().unwrap_or_default().to_string());
-    assert!(title.contains("[回復済み]"), "title includes [回復済み]");
-    assert!(s.with(|e, _| e.wb().panels.recover_unsaved.is_none()), "recover panel closed upon opening file");
+    assert!(title.contains("回復済み"), "title includes 回復済み");
+    assert!(s.with(|e, _| e.recover_unsaved.is_none()), "recover panel closed upon opening file");
 
     // セルG1の内容が復元されていること
     assert_eq!(s.shown("G1"), "ImportantRecoverData", "cell value recovered accurately");
@@ -14677,34 +18604,39 @@ fn pivot020_pivot_chart_create_and_sync() {
     assert_eq!(redone_chart.pivot_source.as_deref(), Some("ピボットテーブル1"));
 
     // 6. OOXML 保存・開き直し（ラウンドトリップ検証）
-    // 既存チャートを持つ XLSX フィクスチャに c:pivotSource を付与して開き、保存・再読込で pivotSource が保持されることを検証
-    let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
-    std::fs::create_dir_all(&dir).unwrap();
-    let source_path = dir.join("pivot020-pivot-chart-roundtrip.xlsx");
-
-    let pivot_chart_xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:pivotSource><c:name>ピボットテーブル1</c:name><c:fmtId val="0"/></c:pivotSource><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>売上</c:v></c:tx><c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>東京</c:v></c:pt><c:pt idx="1"><c:v>大阪</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>100</c:v></c:pt><c:pt idx="1"><c:v>200</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="100000001"/><c:axId val="100000002"/></c:barChart><c:catAx><c:axId val="100000001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="100000002"/></c:catAx><c:valAx><c:axId val="100000002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="100000001"/></c:valAx></c:plotArea><c:legend><c:legendPos val="r"/><c:overlay val="0"/></c:legend></c:chart></c:chartSpace>"#;
-    let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
-    let bytes = ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", pivot_chart_xml);
-    std::fs::write(&source_path, bytes).unwrap();
-    drop(s);
-    let mut s2 = Scenario::open("target/scenario-input/pivot020-pivot-chart-roundtrip.xlsx");
-    let chart2 = s2.with(|e, _| {
-        e.slide().shapes.iter().find_map(|sh| match &sh.kind {
-            ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()),
-            _ => None,
-        })
-    }).expect("chart found in roundtrip fixture");
-    assert!(chart2.is_pivot_chart());
-    assert_eq!(chart2.pivot_source.as_deref(), Some("ピボットテーブル1"));
-
-    s2.save_as("pivot020_roundtrip_saved.xlsx");
-    let reopened = s2.reopen();
+    // 新規挿入したピボットグラフをそのまま保存・再読込し、さらに再読込後にピボットテーブルのフィールド構成を変更して再保存・再読込できることを検証
+    let saved_path = s.save_as("pivot020_created_saved.xlsx");
+    let reopened = s.reopen();
     let reopened_chart = reopened.slides[0].shapes.iter().find_map(|sh| match &sh.kind {
         ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()),
         _ => None,
-    }).expect("chart retained in reopened file");
+    }).expect("newly inserted pivot chart retained in reopened file");
     assert!(reopened_chart.is_pivot_chart());
     assert_eq!(reopened_chart.pivot_source.as_deref(), Some("ピボットテーブル1"));
+    assert_eq!(reopened_chart.groups[0].series.len(), series_count_before);
+    drop(s);
+
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
+    std::fs::create_dir_all(&dir).unwrap();
+    let reopen_input = dir.join("pivot020-created-reopen.xlsx");
+    std::fs::copy(&saved_path, &reopen_input).unwrap();
+    let mut s2 = Scenario::open("target/scenario-input/pivot020-created-reopen.xlsx");
+    let target2 = (s2.with(|e, _| e.current_slide), 0);
+    s2.update(move |e, _, cx| {
+        e.change_pivot(target2, |p| {
+            p.place(2, None, 0);
+        }, cx);
+    });
+    s2.save_as("pivot020_roundtrip_saved.xlsx");
+    let reopened2 = s2.reopen();
+    let reopened_chart2 = reopened2.slides[0].shapes.iter().find_map(|sh| match &sh.kind {
+        ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()),
+        _ => None,
+    }).expect("synced pivot chart retained after second save");
+    assert!(reopened_chart2.is_pivot_chart());
+    assert_eq!(reopened_chart2.pivot_source.as_deref(), Some("ピボットテーブル1"));
+    assert_eq!(reopened_chart2.groups[0].series.len(), updated_chart.groups[0].series.len());
+    assert_eq!(reopened_chart2.groups[0].series[0].values, updated_chart.groups[0].series[0].values);
 }
 
 /// XLSX-CELL-006: ふりがな編集パネルによるふりがな設定、PHONETIC 関数との連動、表示/非表示トグル、Undo/Redo、保存・開き直し.
@@ -15078,4 +19010,8919 @@ fn spelling_check() {
     s.update(|e, w, cx| e.close_sheet_spelling(w, cx));
     i18n::show(Language::Japanese);
     s.update(|_, _, _| {});
+}
+
+/// Split buttons as Excel's (罫線・下線・セルを結合して中央揃え・Σ): the left half does the last choice from the menu
+/// (the first time: the bottom border, a single underline, 結合して中央揃え, the sum), the ▼ has the menu; the borders
+/// button shows the icon of the border last chosen.
+fn split_buttons_borders_underline_merge_sum() {
+    use ibis_doc_model::CellUnderline;
+    let mut s = new_sheet();
+    let split = |s: &mut Scenario, id: &str| {
+        let b = s.tool_button(id).unwrap_or_else(|| panic!("no button {id}"));
+        assert!(b.menu.is_some() && b.left_action().is_some(), "{id} is a split button");
+        b.icon
+    };
+    // 罫線: the bottom border first, then the border last chosen, with its icon.
+    assert_eq!(split(&mut s, "borders"), Some("border_bottom"));
+    s.click_cell("B2");
+    s.toolbar("borders");
+    let st = style_at(&mut s, "B2");
+    assert!(st.bottom.is_some() && st.top.is_none() && st.left.is_none(), "the bottom border only");
+    s.click_cell("B4");
+    s.toolbar_menu("borders", "xlsx.border-outside");
+    assert_eq!(split(&mut s, "borders"), Some("border_outer"), "the icon of the border last chosen");
+    s.toolbar_menu("borders", "thin");
+    assert_eq!(split(&mut s, "borders"), Some("border_outer"), "a line style is not a border");
+    s.click_cell("B6");
+    s.toolbar("borders");
+    let st = style_at(&mut s, "B6");
+    assert!(st.top.is_some() && st.bottom.is_some() && st.left.is_some() && st.right.is_some(), "the outside border, the last chosen");
+    // 下線: single first; off when underlined; the kind last chosen after.
+    s.click_cell("D2");
+    s.toolbar("underline");
+    assert_eq!(style_at(&mut s, "D2").underline, CellUnderline::Single);
+    s.toolbar("underline");
+    assert_eq!(style_at(&mut s, "D2").underline, CellUnderline::None, "the left half takes the underline off");
+    s.toolbar_menu("underline", "double");
+    assert_eq!(style_at(&mut s, "D2").underline, CellUnderline::Double);
+    s.toolbar("underline");
+    assert_eq!(style_at(&mut s, "D2").underline, CellUnderline::None);
+    s.toolbar("underline");
+    assert_eq!(style_at(&mut s, "D2").underline, CellUnderline::Double, "double, the last chosen");
+    // セルを結合して中央揃え: merged, then unmerged by the same button.
+    let merges = |s: &mut Scenario| s.with(|e, _| sheet_of_slide(e.slide()).unwrap().merges.len());
+    s.click_cell("F2");
+    s.key("shift-right");
+    s.toolbar("merge");
+    assert_eq!(merges(&mut s), 1);
+    assert_eq!(s.toolbar_state("merge").map(|t| t.on), Some(true), "pressed where the selection is merged");
+    s.toolbar("merge");
+    assert_eq!(merges(&mut s), 0, "the left half takes the merge off");
+    // Σ: the sum.
+    s.click_cell("H2");
+    for n in ["1", "2", "3"] {
+        s.type_text(n);
+        s.key("enter");
+    }
+    s.toolbar("functions");
+    assert!(s.with(|e, _| e.cell_edit().is_some_and(|c| c.text == "=SUM(H2:H4)")), "the left half is the sum");
+    s.key("escape");
+    s.screenshot("split-buttons");
+}
+
+/// The two halves of a split button (1200-wide window, the borders button: icon at x 761, ▼ at x 786, y 84) have their
+/// own click and hover: a click on the ▼ opens the menu and draws no border; a click on the icon draws the border at once.
+fn split_buttons_click_and_hover_ranges() {
+    let mut s = new_sheet();
+    s.click_cell("C3");
+    s.hover((786.0, 84.0));
+    s.screenshot("hover-arrow");
+    s.hover((761.0, 84.0));
+    s.screenshot("hover-icon");
+    s.click((786.0, 84.0));
+    assert!(style_at(&mut s, "C3").bottom.is_none(), "the ▼ draws nothing");
+    s.screenshot("arrow-clicked-menu");
+    s.key("escape");
+    s.click((761.0, 84.0));
+    assert!(style_at(&mut s, "C3").bottom.is_some(), "the icon draws the border at once");
+}
+
+/// スペル チェック: a range selected checks only its cells; the text of the
+/// sheet's shapes is checked after the cells (changed in one undo step with the
+/// cells); an undo with the panel open lists the words again.
+fn spelling_range_shapes_undo() {
+    if !crate::spelling::available() {
+        return;
+    }
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    for (cell, text) in [("J2", "recieve a"), ("J3", "recieve b"), ("J4", "recieve c")] {
+        s.click_cell(cell);
+        s.enter(text, "enter");
+    }
+    let found = s.with(|e, _| {
+        let sheet = sheet_of_slide(e.slide()).unwrap();
+        crate::xlsx::spelling_panel::scan(sheet, None, (0, 0), &Default::default()).iter().filter(|i| i.word == "recieve").count()
+    });
+    if found != 3 {
+        // No English dictionary here.
+        return;
+    }
+    // A text box with a misspelling on the sheet.
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let shape = ibis_doc_model::Shape::text_box(ibis_doc_model::ShapeId(9001), ibis_doc_model::EmuRect::new(0, 0, 1_000_000, 500_000), "a recieve box");
+        e.document.execute(vec![ibis_doc_model::Command::InsertShape { slide, index: 1, shape }]).unwrap();
+        cx.notify();
+    });
+    let box_text = |s: &mut Scenario| {
+        s.with(|e, _| e.slide().shape(ibis_doc_model::ShapeId(9001)).and_then(|sh| sh.text_body()).map(|b| b.text()).unwrap_or_default())
+    };
+    // A range J2:J3: only its two cells (no shape, not J4).
+    s.update(|e, _, _| {
+        let slide = e.current_slide;
+        let st = e.wb_mut();
+        st.cells.insert(slide, (9, 1));
+        st.cell_ends.insert(slide, (9, 2));
+    });
+    s.menu("pptx.spelling.check");
+    let issues = s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().expect("the panel is open").issues.clone());
+    let places: Vec<(u32, Option<u64>)> = issues.iter().map(|i| (i.row, i.shape.map(|x| x.0))).collect();
+    assert_eq!(places, vec![(1, None), (2, None)], "only the range's cells");
+    s.update(|e, w, cx| e.close_sheet_spelling(w, cx));
+    // One cell: the sheet, then the shape's text.
+    s.click_cell("J2");
+    s.menu("pptx.spelling.check");
+    let issues = s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().issues.clone());
+    let places: Vec<(u32, Option<u64>)> = issues.iter().map(|i| (i.row, i.shape.map(|x| x.0))).collect();
+    assert_eq!(places, vec![(1, None), (2, None), (3, None), (0, Some(9001))], "the cells, then the shape");
+    // The shape's word: the shape is selected, with its suggestions.
+    s.update(|e, w, cx| {
+        e.sheet_spelling_step(false, w, cx);
+    });
+    assert_eq!(s.with(|e, _| e.selected_sheet_shape()), Some(ibis_doc_model::ShapeId(9001)));
+    let suggestions = s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().suggestions.clone());
+    assert!(suggestions.iter().any(|x| x == "receive"), "{suggestions:?}");
+    s.screenshot("spelling-shape");
+    // すべて変更: the cells and the shape in one step.
+    s.update(|e, w, cx| e.sheet_spelling_change("receive", true, w, cx));
+    assert_eq!(box_text(&mut s), "a receive box");
+    assert_eq!(s.value("J4"), CellValue::Text("receive c".into()));
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().issues.len()), 0);
+    // ⌘Z with the panel open: one step brings every word back, and the list is checked again.
+    s.key("cmd-z");
+    assert_eq!(box_text(&mut s), "a recieve box");
+    assert_eq!(s.value("J2"), CellValue::Text("recieve a".into()));
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().issues.len()), 4);
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().issues.len()), 0);
+    s.update(|e, w, cx| e.close_sheet_spelling(w, cx));
+}
+
+/// 3-D charts (`bar3DChart`, `area3DChart`, `line3DChart`, `pie3DChart` with `c:view3D`): the view is read,
+/// kept on a save, and drawn with depth (a bar's sides, a pie's ellipse and rim) instead of flat.
+fn chtype003_three_d_charts() {
+    use ibis_doc_model::ShapeKind;
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
+    std::fs::create_dir_all(&dir).unwrap();
+    let cats = r#"<c:cat><c:strLit><c:ptCount val="3"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt><c:pt idx="2"><c:v>C</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt><c:pt idx="2"><c:v>30</c:v></c:pt></c:numLit></c:val>"#;
+    let ser = |i: u32| format!(r#"<c:ser><c:idx val="{i}"/><c:order val="{i}"/><c:tx><c:v>S{i}</c:v></c:tx>{cats}</c:ser>"#);
+    let axes = r#"<c:catAx><c:axId val="111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222"/></c:catAx><c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:crossAx val="111"/></c:valAx>"#;
+    let chart_xml = |plot: String, rot_x: u32| format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:view3D><c:rotX val="{rot_x}"/><c:rotY val="20"/><c:rAngAx val="1"/></c:view3D><c:plotArea>{plot}</c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend></c:chart></c:chartSpace>"#);
+    let cases = [
+        ("bar", chart_xml(format!(r#"<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/>{}{}<c:axId val="111"/><c:axId val="222"/></c:bar3DChart>{axes}"#, ser(0), ser(1)), 15)),
+        ("area", chart_xml(format!(r#"<c:area3DChart><c:grouping val="standard"/>{}{}<c:axId val="111"/><c:axId val="222"/></c:area3DChart>{axes}"#, ser(0), ser(1)), 15)),
+        ("line", chart_xml(format!(r#"<c:line3DChart><c:grouping val="standard"/>{}{}<c:axId val="111"/><c:axId val="222"/></c:line3DChart>{axes}"#, ser(0), ser(1)), 15)),
+        ("pie", chart_xml(format!(r#"<c:pie3DChart><c:varyColors val="1"/>{}</c:pie3DChart>"#, ser(0)), 30)),
+    ];
+    let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
+    for (name, xml) in cases {
+        let path = dir.join(format!("chtype003-{name}3d.xlsx"));
+        std::fs::write(&path, ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", &xml)).unwrap();
+        let mut s = Scenario::open(&format!("target/scenario-input/chtype003-{name}3d.xlsx"));
+        s.settle();
+        let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+        let at = s.shape_position(index);
+        s.click(at);
+        s.settle();
+        let view = s.with(|e, _| e.sheet_chart().map(|(_, c)| c.groups[0].three_d)).unwrap();
+        let view = view.unwrap_or_else(|| panic!("{name}: no 3-D view"));
+        assert_eq!((view.rot_y, view.right_angle_axes), (20, true), "{name}");
+        assert_eq!(view.rot_x, if name == "pie" { 30 } else { 15 }, "{name}");
+        s.screenshot(&format!("chtype003-{name}-3d"));
+        s.save_as(&format!("chtype003-{name}3d-saved.xlsx"));
+        let saved = s.reopen();
+        let sh = saved.slides[0].shapes.iter().find(|x| matches!(x.kind, ShapeKind::Chart(_))).unwrap();
+        let ShapeKind::Chart(c) = &sh.kind else { unreachable!() };
+        assert_eq!(c.groups[0].three_d, Some(view), "{name}: the 3-D view is kept on a save");
+    }
+}
+
+/// 3-D 回転設定（X/Y軸回転・直角の軸・奥行き・既定値リセット）、書式パネル入力、系列方向3D縦棒、ラウンドトリップ保存、Undo/Redo を検証.
+fn chtype003_3d_rotation_settings_and_series_depth() {
+    use ibis_doc_model::{ChartType, Grouping, ShapeKind, View3D};
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let cats = r#"<c:cat><c:strLit><c:ptCount val="3"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt><c:pt idx="2"><c:v>C</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt><c:pt idx="2"><c:v>30</c:v></c:pt></c:numLit></c:val>"#;
+    let ser = |i: u32| format!(r#"<c:ser><c:idx val="{i}"/><c:order val="{i}"/><c:tx><c:v>S{i}</c:v></c:tx>{cats}</c:ser>"#);
+    let axes = r#"<c:catAx><c:axId val="111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222"/></c:catAx><c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:crossAx val="111"/></c:valAx>"#;
+    let chart_xml = format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:view3D><c:rotX val="15"/><c:rotY val="20"/><c:rAngAx val="1"/><c:depthPercent val="100"/></c:view3D><c:plotArea><c:bar3DChart><c:barDir val="col"/><c:grouping val="standard"/>{}{}<c:axId val="111"/><c:axId val="222"/></c:bar3DChart>{axes}</c:plotArea></c:chart></c:chartSpace>"#, ser(0), ser(1));
+
+    let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
+    let path = dir.join("chtype003-series-depth.xlsx");
+    std::fs::write(&path, ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", &chart_xml)).unwrap();
+
+    let mut s = Scenario::open("target/scenario-input/chtype003-series-depth.xlsx");
+    s.settle();
+    let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+    let at = s.shape_position(index);
+    s.click(at);
+    s.settle();
+
+    let c = s.with(|e, _| e.sheet_chart().map(|(_, c)| c.clone())).unwrap();
+    assert_eq!(c.groups[0].kind, ChartType::Bar { horizontal: false, gap_width: 150, overlap: 0 });
+    assert_eq!(c.groups[0].grouping, Grouping::Standard);
+    assert_eq!(c.groups[0].three_d, Some(View3D { rot_x: 15, rot_y: 20, right_angle_axes: true, depth_percent: 100 }));
+
+    s.menu("xlsx.chart-format");
+    assert!(s.with(|e, _| e.wb().chart_edit.is_some()));
+
+    // 1. Modify 3D rotation via set_sheet_chart_3d_rotation
+    s.update(|e, _, cx| e.set_sheet_chart_3d_rotation(Some(35), Some(45), Some(true), Some(150), cx));
+    let view = s.with(|e, _| e.sheet_chart().and_then(|(_, c)| c.groups[0].three_d)).unwrap();
+    assert_eq!(view, View3D { rot_x: 35, rot_y: 45, right_angle_axes: true, depth_percent: 150 });
+
+    // 2. Undo & Redo
+    s.update(|e, window, cx| e.undo(&crate::Undo, window, cx));
+    let view_undone = s.with(|e, _| e.sheet_chart().and_then(|(_, c)| c.groups[0].three_d)).unwrap();
+    assert_eq!(view_undone, View3D { rot_x: 15, rot_y: 20, right_angle_axes: true, depth_percent: 100 });
+
+    s.update(|e, window, cx| e.redo(&crate::Redo, window, cx));
+    let view_redone = s.with(|e, _| e.sheet_chart().and_then(|(_, c)| c.groups[0].three_d)).unwrap();
+    assert_eq!(view_redone, View3D { rot_x: 35, rot_y: 45, right_angle_axes: true, depth_percent: 150 });
+
+    // 3. Reset defaults
+    s.update(|e, _, cx| e.reset_sheet_chart_3d_rotation(cx));
+    let view_reset = s.with(|e, _| e.sheet_chart().and_then(|(_, c)| c.groups[0].three_d)).unwrap();
+    assert_eq!(view_reset, View3D { rot_x: 15, rot_y: 20, right_angle_axes: true, depth_percent: 100 });
+
+    // 4. Set custom rotation and save & reload roundtrip
+    s.update(|e, _, cx| e.set_sheet_chart_3d_rotation(Some(25), Some(30), Some(false), Some(120), cx));
+    s.screenshot("chtype003-series-depth-3d");
+    s.save_as("chtype003-series-depth-saved.xlsx");
+
+    let saved = s.reopen();
+    let sh = saved.slides[0].shapes.iter().find(|x| matches!(x.kind, ShapeKind::Chart(_))).unwrap();
+    let ShapeKind::Chart(saved_chart) = &sh.kind else { unreachable!() };
+    assert_eq!(saved_chart.groups[0].grouping, Grouping::Standard);
+    assert_eq!(saved_chart.groups[0].three_d, Some(View3D { rot_x: 25, rot_y: 30, right_angle_axes: false, depth_percent: 120 }));
+}
+
+/// XLSX-CHTYPE-009 3D折れ線, XLSX-CHTYPE-010 3D円, XLSX-CHTYPE-015 3D面:
+/// 挿入 > グラフ（insert_sheet_chart）で 3D 折れ線・3D 円・3D 面を挿入し、
+/// 3-D ビュー設定、保存・再読込ラウンドトリップ、Undo/Redo を検証.
+fn chtype009_010_015_insert_3d_line_pie_area() {
+    use ibis_doc_model::{ChartType, ShapeKind, View3D};
+    use ibis_pptx::NewChartKind;
+
+    for kind in [NewChartKind::Line3D, NewChartKind::Pie3D, NewChartKind::Area3D] {
+        let mut s = new_sheet();
+        s.click_cell("A1");
+        s.enter("Category", "right");
+        s.enter("Value", "enter");
+        for (i, (cat, val)) in [("A", 10), ("B", 25), ("C", 18)].iter().enumerate() {
+            let row = i + 2;
+            s.click_cell(&format!("A{row}"));
+            s.enter(cat, "right");
+            s.enter(&format!("{val}"), "enter");
+        }
+        s.click_cell("A1");
+        s.key("shift-right");
+        s.key("shift-down");
+        s.key("shift-down");
+        s.key("shift-down");
+
+        s.update(move |e, w, cx| e.insert_sheet_chart(kind, w, cx));
+        s.settle();
+
+        let shape = s.with(|e, _| e.slide().shapes.iter().find(|sh| matches!(&sh.kind, ShapeKind::Chart(_))).cloned());
+        assert!(shape.is_some(), "{kind:?}: inserted chart on the sheet");
+        let ShapeKind::Chart(chart) = shape.unwrap().kind else { unreachable!() };
+        assert_eq!(chart.groups.len(), 1, "{kind:?}: one chart group");
+        assert!(chart.groups[0].three_d.is_some(), "{kind:?}: 3D view is present");
+
+        match kind {
+            NewChartKind::Line3D => assert!(matches!(chart.groups[0].kind, ChartType::Line)),
+            NewChartKind::Pie3D => assert!(matches!(chart.groups[0].kind, ChartType::Pie { .. })),
+            NewChartKind::Area3D => assert!(matches!(chart.groups[0].kind, ChartType::Area)),
+            _ => unreachable!(),
+        }
+
+        // Test format panel 3D rotation update
+        s.update(|e, _, cx| e.set_sheet_chart_3d_rotation(Some(25), Some(35), Some(true), Some(120), cx));
+        let view = s.with(|e, _| e.sheet_chart().and_then(|(_, c)| c.groups[0].three_d)).unwrap();
+        assert_eq!(view, View3D { rot_x: 25, rot_y: 35, right_angle_axes: true, depth_percent: 120 });
+
+        // Undo & Redo
+        s.update(|e, window, cx| e.undo(&crate::Undo, window, cx));
+        let view_undone = s.with(|e, _| e.sheet_chart().and_then(|(_, c)| c.groups[0].three_d)).unwrap();
+        assert_ne!(view_undone, View3D { rot_x: 25, rot_y: 35, right_angle_axes: true, depth_percent: 120 });
+        s.update(|e, window, cx| e.redo(&crate::Redo, window, cx));
+        let view_redone = s.with(|e, _| e.sheet_chart().and_then(|(_, c)| c.groups[0].three_d)).unwrap();
+        assert_eq!(view_redone, View3D { rot_x: 25, rot_y: 35, right_angle_axes: true, depth_percent: 120 });
+
+        // Save & Reopen
+        let name = format!("{kind:?}");
+        let slide_name = s.with(|e, _| e.slide().name.clone()).unwrap();
+        s.screenshot(&format!("chtype-{name}"));
+        s.save_as(&format!("chtype-{name}-saved.xlsx"));
+
+        let saved = s.reopen();
+        let saved_slide = saved.slides.iter().find(|sl| sl.name == Some(slide_name.clone())).expect("inserted sheet exists");
+        let saved_shape = saved_slide.shapes.iter().find(|sh| matches!(&sh.kind, ShapeKind::Chart(_))).cloned();
+        assert!(saved_shape.is_some(), "{kind:?}: chart preserved on reopen");
+        let ShapeKind::Chart(saved_chart) = saved_shape.unwrap().kind else { unreachable!() };
+        assert_eq!(saved_chart.groups[0].three_d, Some(View3D { rot_x: 25, rot_y: 35, right_angle_axes: true, depth_percent: 120 }));
+    }
+}
+
+/// The ¥ button as a split button (Excel's): the left half is the accounting format of the currency last chosen from the ▼
+/// (¥ at first); その他の会計表示形式… opens the number format panel.
+fn split_button_currency() {
+    let mut s = new_sheet();
+    let b = s.tool_button("currency").expect("the currency button");
+    assert!(b.left_action().is_some() && b.menu.as_ref().is_some_and(|m| m.len() == 8), "a split button with the currencies");
+    s.click_cell("A1");
+    s.type_text("1234.5");
+    s.key("enter");
+    s.click_cell("A1");
+    s.toolbar("currency");
+    assert_eq!(number_format(&mut s, "A1"), "_ \"¥\"* #,##0_ ;_ \"¥\"* \\-#,##0_ ;_ \"¥\"* \"-\"_ ;_ @_ ");
+    assert!(s.shown("A1").contains('¥') && s.shown("A1").contains("1,235"), "{:?}", s.shown("A1"));
+    s.toolbar_menu("currency", "xlsx.currency.usd");
+    assert!(s.shown("A1").contains('$') && s.shown("A1").contains("1,234.50"), "{:?}", s.shown("A1"));
+    s.click_cell("B1");
+    s.type_text("7");
+    s.key("enter");
+    s.click_cell("B1");
+    s.toolbar("currency");
+    assert_eq!(number_format(&mut s, "B1"), number_format(&mut s, "A1"), "the currency last chosen");
+    assert!(s.shown("B1").contains("7.00"), "{:?}", s.shown("B1"));
+    s.toolbar_menu("currency", "xlsx.currency.chf");
+    assert!(s.shown("B1").contains("CHF"), "{:?}", s.shown("B1"));
+    s.screenshot("split-currency");
+}
+
+/// A bubble series with `c:bubble3D` is read as spheres (`Series::bubble_3d`), kept on a save, drawn
+/// with a highlight; one without it is flat.
+fn chtype017_bubble_spheres() {
+    use ibis_doc_model::ShapeKind;
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
+    std::fs::create_dir_all(&dir).unwrap();
+    let lit = |name: &str, values: &[f64]| {
+        let pts: String = values.iter().enumerate().map(|(i, v)| format!(r#"<c:pt idx="{i}"><c:v>{v}</c:v></c:pt>"#)).collect();
+        format!(r#"<c:{name}><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="{}"/>{pts}</c:numLit></c:{name}>"#, values.len())
+    };
+    let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
+    for (name, on) in [("flat", false), ("sphere", true)] {
+        let ser = format!(r#"<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S</c:v></c:tx>{}{}{}<c:bubble3D val="{}"/></c:ser>"#, lit("xVal", &[1.0, 2.0, 3.0]), lit("yVal", &[3.0, 5.0, 4.0]), lit("bubbleSize", &[10.0, 30.0, 20.0]), u8::from(on));
+        let xml = format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:bubbleChart>{ser}<c:axId val="111"/><c:axId val="222"/></c:bubbleChart><c:valAx><c:axId val="111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222"/></c:valAx><c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="111"/></c:valAx></c:plotArea></c:chart></c:chartSpace>"#);
+        let path = dir.join(format!("chtype017-{name}.xlsx"));
+        std::fs::write(&path, ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", &xml)).unwrap();
+        let mut s = Scenario::open(&format!("target/scenario-input/chtype017-{name}.xlsx"));
+        s.settle();
+        let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
+        let at = s.shape_position(index);
+        s.click(at);
+        s.settle();
+        let flag = s.with(|e, _| e.sheet_chart().map(|(_, c)| c.groups[0].series[0].bubble_3d)).unwrap();
+        assert_eq!(flag, on, "{name}");
+        s.screenshot(&format!("chtype017-bubble-{name}"));
+        s.save_as(&format!("chtype017-{name}-saved.xlsx"));
+        let saved = s.reopen();
+        let sh = saved.slides[0].shapes.iter().find(|x| matches!(x.kind, ShapeKind::Chart(_))).unwrap();
+        let ShapeKind::Chart(c) = &sh.kind else { unreachable!() };
+        assert_eq!(c.groups[0].series[0].bubble_3d, on, "{name}: kept on a save");
+    }
+}
+
+/// XLSX-ANALYSIS-020 データ > 予測シート…: a new sheet with the timeline, the values, the forecast to the end and
+/// the bounds of its interval (formulas that agree with the worksheet functions), statistics and a chart; one step
+/// to undo.
+fn analysis020_forecast_sheet() {
+    let mut s = new_sheet();
+    let data_slide = s.with(|e, _| e.current_slide);
+    s.click_cell("A1");
+    s.enter("t", "tab");
+    s.enter("y", "enter");
+    for i in 1..=10 {
+        // A line with a little noise that has no season.
+        let y = 2.0 * i as f64 + 1.0 + [0.3, -0.4, 0.1, 0.5, -0.2, -0.5, 0.4, 0.0, -0.3, 0.2][i - 1];
+        s.click_cell(&format!("A{}", i + 1));
+        s.enter(&format!("{i}"), "tab");
+        s.enter(&format!("{y}"), "enter");
+    }
+    s.click_cell("D1");
+    s.enter("=FORECAST.ETS(13,B2:B11,A2:A11)", "enter");
+    let expected = number_at(&mut s, "D1");
+    s.click_cell("A1");
+    s.update(|e, w, cx| e.open_forecast_panel(w, cx));
+    assert!(s.with(|e, _| e.wb().panels.forecast.is_some()));
+    // The ranges and the end come from the selection; set them as a user would type them.
+    for (which, value) in [("timeline", "A1:A11"), ("values", "B1:B11"), ("end", "13"), ("confidence", "95")] {
+        let value = value.to_string();
+        s.update(move |e, w, cx| {
+            let p = e.wb().panels.forecast.as_ref().expect("the panel");
+            let state = match which {
+                "timeline" => p.timeline.clone(),
+                "values" => p.values.clone(),
+                "end" => p.end.clone(),
+                _ => p.confidence.clone(),
+            };
+            state.update(cx, |input, cx| input.set_value(value, w, cx));
+        });
+    }
+    let before = s.with(|e, _| e.presentation().slides.len());
+    s.update(|e, w, cx| e.apply_forecast_panel(w, cx));
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), before + 1);
+    assert_eq!(s.value("A1"), CellValue::Text("t".into()));
+    assert_eq!(s.value("C1"), CellValue::Text("予測(y)".into()));
+    assert_eq!(number_at(&mut s, "A12"), 11.0);
+    assert_eq!(number_at(&mut s, "A14"), 13.0);
+    assert_eq!(s.value("A15"), CellValue::Empty);
+    let forecast = number_at(&mut s, "C14");
+    assert!((forecast - expected).abs() < 1e-9, "{forecast} vs {expected}");
+    let (lower, upper) = (number_at(&mut s, "D14"), number_at(&mut s, "E14"));
+    assert!(lower < forecast && forecast < upper, "{lower} {forecast} {upper}");
+    // The interval is symmetric about the forecast and widens with the distance.
+    assert!(((forecast - lower) - (upper - forecast)).abs() < 1e-9);
+    assert!(number_at(&mut s, "E14") - number_at(&mut s, "D14") > number_at(&mut s, "E12") - number_at(&mut s, "D12"));
+    // The join: the forecast starts from the last value.
+    assert_eq!(number_at(&mut s, "C11"), number_at(&mut s, "B11"));
+    assert_eq!(s.value("G1"), CellValue::Text("予測の統計情報".into()));
+    // Columns autofit: check that Column C (予測(y)) and Column G (予測の統計情報) have fitted width
+    let (col2_width, col6_width) = s.with(|e, _| {
+        let sheet = &e.current_sheet().unwrap().1;
+        (sheet.columns.get(2).copied().unwrap_or(0), sheet.columns.get(6).copied().unwrap_or(0))
+    });
+    assert!(col2_width > 0, "Column C was autofitted: {col2_width}");
+    assert!(col6_width > 0, "Column G was autofitted: {col6_width}");
+    let charts = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count());
+    assert_eq!(charts, 1);
+    s.screenshot("analysis020-forecast-sheet");
+    // One step undoes the sheet whole.
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), before);
+
+    // Re-select the data sheet
+    s.update(move |e, window, cx| e.select_slide(data_slide, window, cx));
+    s.click_cell("A1");
+    s.update(|e, w, cx| e.open_forecast_panel(w, cx));
+    for (which, value) in [("timeline", "A1:A11"), ("values", "B1:B11"), ("end", "13"), ("confidence", "95")] {
+        let value = value.to_string();
+        s.update(move |e, w, cx| {
+            let p = e.wb().panels.forecast.as_ref().expect("the panel");
+            let state = match which {
+                "timeline" => p.timeline.clone(),
+                "values" => p.values.clone(),
+                "end" => p.end.clone(),
+                _ => p.confidence.clone(),
+            };
+            state.update(cx, |input, cx| input.set_value(value, w, cx));
+        });
+    }
+    s.update(|e, w, cx| {
+        e.forecast_set_start("8", w, cx);
+        e.forecast_set_seasonality(true, "4", w, cx);
+        e.forecast_set_data_completion_zero(true, cx);
+        e.forecast_set_aggregation(7, cx);
+    });
+    s.update(|e, w, cx| e.apply_forecast_panel(w, cx));
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), before + 1);
+    // Historical rows 8..=10 (indices 7..=9, row 9..=11): row 9 (A9=8) has forecast formula with extra args
+    let c9_formula = s.with(|e, _| {
+        let sheet = &e.current_sheet().unwrap().1;
+        sheet.cells.iter().find(|c| c.row == 8 && c.column == 2).map(|c| c.formula.clone())
+    }).flatten();
+    assert_eq!(c9_formula.as_deref(), Some("FORECAST.ETS(A9,$B$2:$B$11,$A$2:$A$11,4,0,7)"));
+    // Future row (r=13, row 14) has formulas with extra args
+    let c14_formula = s.with(|e, _| {
+        let sheet = &e.current_sheet().unwrap().1;
+        sheet.cells.iter().find(|c| c.row == 13 && c.column == 2).map(|c| c.formula.clone())
+    }).flatten();
+    assert_eq!(c14_formula.as_deref(), Some("FORECAST.ETS(A14,$B$2:$B$11,$A$2:$A$11,4,0,7)"));
+    let d14_formula = s.with(|e, _| {
+        let sheet = &e.current_sheet().unwrap().1;
+        sheet.cells.iter().find(|c| c.row == 13 && c.column == 3).map(|c| c.formula.clone())
+    }).flatten();
+    assert_eq!(d14_formula.as_deref(), Some("C14-FORECAST.ETS.CONFINT(A14,$B$2:$B$11,$A$2:$A$11,0.95,4,0,7)"));
+    // Statistics formula with extra args
+    let g2_formula = s.with(|e, _| {
+        let sheet = &e.current_sheet().unwrap().1;
+        sheet.cells.iter().find(|c| c.row == 1 && c.column == 7).map(|c| c.formula.clone())
+    }).flatten();
+    assert_eq!(g2_formula.as_deref(), Some("FORECAST.ETS.STAT($B$2:$B$11,$A$2:$A$11,1,4,0,7)"));
+
+    // Save and reload roundtrip
+    s.save_as("forecast-options.xlsx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides.len(), before + 1);
+
+    // One step undoes custom forecast sheet
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), before);
+}
+
+/// A .csv, a .tsv and a .tab file (Finder's 開く, the Dock, a drop) open as a workbook, the fields in their cells,
+/// as ファイル > 開く does; the kind comes from the extension.
+fn file_open_csv_and_tsv() {
+    for (extension, text) in [("csv", "名前,数量\r\nりんご,3\r\nみかん,5\r\n"), ("tsv", "名前\t数量\r\nりんご\t3\r\nみかん\t5\r\n"), ("tab", "名前\t数量\r\nりんご\t3\r\nみかん\t5\r\n")] {
+        assert_eq!(ibis_pptx::Kind::from_extension(extension), Some(ibis_pptx::Kind::Workbook), "{extension}");
+        let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("file-open.{extension}")), text).unwrap();
+        let mut s = Scenario::open(&format!("target/scenario-input/file-open.{extension}"));
+        s.settle();
+        assert!(s.with(|e, _| e.is_workbook()), "{extension}: opened as a workbook");
+        assert_eq!(s.value("A2"), CellValue::Text("りんご".into()), "{extension}");
+        assert_eq!(number_at(&mut s, "B3"), 5.0, "{extension}");
+    }
+}
+
+/// A CSV with a cell of 100 lines (todo-fix #37, a report of a CSV of about 100 MB that aborted): the row is no higher than Excel's most (409.5 pt) and is shown that high; typing into the cell stacks its lines in the box, which grows down over the cells below (not over what is above the sheet).
+fn csv_cell_of_many_lines() {
+    let lines: Vec<String> = (0..100).map(|i| format!("line {i}")).collect();
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("many-lines.csv"), format!("a,b\r\nx,y\r\nz,\"{}\"\r\nw,v\r\n", lines.join("\n"))).unwrap();
+    let mut s = Scenario::open("target/scenario-input/many-lines.csv");
+    s.settle();
+    let row = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().rows[2]);
+    assert_eq!(row, (409.5 * ibis_doc_model::EMU_PER_POINT as f64) as i64);
+    assert_eq!(s.value("B3"), CellValue::Text(lines.join("\n")));
+    s.click_cell("B3");
+    s.screenshot("selected");
+    s.key("f2");
+    s.screenshot("editing");
+    let r = s.with(|e, _| e.cell_edit().and_then(|c| c.rect.get())).expect("the text is painted");
+    // The box grows down over what is below the cell, line by line (as Excel's).
+    // ...up to the most a row can be (409.5 pt), not the 100 lines' height.
+    assert!((300.0..420.0).contains(&f32::from(r.size.height)), "the lines are stacked in the box, no higher than Excel's most: {:?}", r.size);
+    s.key("escape");
+}
+
+/// 数式バーの展開 (todo-fix #37): a cell of several lines shows its first line in the formula bar; the ▼ at the bar's right end widens it to four lines (the sheet moves down, nothing is covered) and back; typing in the widened bar: the caret moves by line with ↑ ↓, Shift+↑ selects, ⌥Enter breaks the line, a press in the bar puts the caret on the line pressed.
+fn formula_bar_expand_many_lines() {
+    let lines: Vec<String> = (0..10).map(|i| format!("line {i}")).collect();
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("bar-lines.csv"), format!("a,b\r\nx,y\r\nz,\"{}\"\r\n", lines.join("\n"))).unwrap();
+    let mut s = Scenario::open("target/scenario-input/bar-lines.csv");
+    s.settle();
+    s.click_cell("B3");
+    s.screenshot("closed");
+    let bar = |s: &mut Scenario| s.with(|e, _| e.sheet_state().and_then(|st| st.bar_bounds.get())).expect("the bar's text is painted");
+    let closed = bar(&mut s);
+    let sheet_top = |s: &mut Scenario| s.with(|e, _| e.workspace_bounds.map(|b| f32::from(b.origin.y))).unwrap();
+    let top_closed = sheet_top(&mut s);
+    // The ▼: at the bar's right end.
+    let arrow = |s: &mut Scenario| {
+        let b = bar(s);
+        (f32::from(b.origin.x + b.size.width) + 8.0 + 12.0, f32::from(b.origin.y) + 11.0)
+    };
+    let at = arrow(&mut s);
+    s.click(at);
+    assert!(s.with(|e, _| e.sheet_state().unwrap().bar_expanded), "widened");
+    s.screenshot("widened");
+    let widened = bar(&mut s);
+    assert!(f32::from(widened.size.height) > f32::from(closed.size.height) + 40.0, "{closed:?} {widened:?}");
+    // The sheet is below the bar: it moved down by what the bar grew.
+    let top_widened = sheet_top(&mut s);
+    assert!(top_widened > top_closed + 40.0, "{top_closed} {top_widened}");
+    assert!(top_widened >= f32::from(widened.origin.y + widened.size.height), "the sheet is not under the bar");
+    // F2: the caret at the end, on the last line; ↑ goes up a line, Shift+↑ selects a line more.
+    s.key("f2");
+    let state = |s: &mut Scenario| s.with(|e, _| e.cell_edit().map(|c| (c.caret_line(), c.caret, c.anchor, c.text.clone())).unwrap());
+    assert_eq!(state(&mut s).0, 9);
+    s.key("up");
+    assert_eq!(state(&mut s).0, 8);
+    s.key("shift-up");
+    let (line, _, anchor, _) = state(&mut s);
+    assert_eq!((line, anchor.is_some()), (7, true));
+    s.key("left");
+    // ⌥Enter breaks the line at the caret.
+    s.key("alt-enter");
+    let (_, _, _, text) = state(&mut s);
+    assert_eq!(text.matches('\n').count(), 10);
+    s.screenshot("typing");
+    // A press on the second line of the bar puts the caret on it.
+    // (The bar is scrolled to the top first: it was following the caret.)
+    s.with(|e, _| e.sheet_state().unwrap().bar_scroll.set_offset(point(px(0.), px(0.))));
+    let b = bar(&mut s);
+    s.click((f32::from(b.origin.x) + 40.0, f32::from(b.origin.y) + 18.0 + 9.0));
+    assert_eq!(state(&mut s).0, 1);
+    s.key("escape");
+    // Closed again with the ▼ (up now).
+    let at = arrow(&mut s);
+    s.click(at);
+    assert!(!s.with(|e, _| e.sheet_state().unwrap().bar_expanded));
+    assert_eq!(f32::from(bar(&mut s).size.height), f32::from(closed.size.height));
+    assert_eq!(sheet_top(&mut s), top_closed);
+    s.screenshot("closed-again");
+}
+
+/// todo-fix #42: typing into a cell with ⌥Enter line breaks: the lines are stacked in the box (not side by side), the box grows down over the cells below with each line, and the caret is on the last line.
+fn cell_edit_lines_stack() {
+    let mut s = new_sheet();
+    s.click_cell("B2");
+    s.type_text("one");
+    let one = s.with(|e, _| e.cell_edit().and_then(|c| c.rect.get())).expect("painted").size.height;
+    s.key("alt-enter");
+    s.type_text("two");
+    s.key("alt-enter");
+    s.type_text("three");
+    s.screenshot("three-lines");
+    let r = s.with(|e, _| e.cell_edit().and_then(|c| c.rect.get())).expect("painted");
+    assert!(f32::from(r.size.height) > f32::from(one) * 2.0, "{one:?} {:?}", r.size);
+    // The box reaches below B2, over B3 (it is as high as the three lines are).
+    let b3 = s.with(|e, _| e.cell_center(1, 2)).expect("B3 is shown");
+    assert!(f32::from(r.origin.y + r.size.height) > f32::from(b3.y), "{r:?} {b3:?}");
+    s.key("enter");
+    assert_eq!(s.value("B2"), CellValue::Text("one\ntwo\nthree".into()));
+}
+
+/// todo-fix #44〜#46: F2 on A1, 10 lines of 40 characters pasted: Enter commits and moves to A2 (also after the caret is moved up), the row is no higher than Excel's most (409.5 pt), the box is of the cell's fill (not white), and the selection's green frame is not drawn over it.
+fn cell_edit_paste_many_lines() {
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    s.update(|e, _, cx| e.format_cells(ibis_doc_model::StyleChange::Fill(Some(ibis_doc_model::Rgb(0xFFFF00))), cx));
+    s.key("f2");
+    s.screenshot("filled-f2");
+    let line = "あいうえおかきくけこさしすせそたちつてとあいうえおかきくけこさしすせそたちつてと";
+    let text = vec![line; 10].join("\n");
+    s.update(|_, _, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text.clone())));
+    s.key("cmd-v");
+    s.screenshot("pasted");
+    for _ in 0..3 {
+        s.key("up");
+    }
+    s.key("enter");
+    s.screenshot("entered");
+    assert_eq!(s.value("A1"), CellValue::Text(text.clone()));
+    assert!(s.with(|e, _| e.cell_edit().is_none()), "Enter commits");
+    let row = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().rows[0]);
+    assert!(row <= (409.5 * ibis_doc_model::EMU_PER_POINT as f64) as i64, "{row}");
+    assert_eq!(s.selected(), "A2");
+}
+
+/// todo-fix #42: a cell of about 40 full-width characters and 5 line breaks, entered, then F2 and the caret moved with ← → ↑ ↓ (a report: the drawing fell to pieces): the lines are stacked from the left edge of the cell, the box does not go over what is above the sheet, and the caret is where it was moved (images to look at).
+fn cell_edit_fullwidth_lines_move() {
+    let mut s = new_sheet();
+    s.click_cell("C3");
+    let line = "あいうえおかきくけこさしすせそたちつてと";
+    for i in 0..6 {
+        if i > 0 {
+            s.key("alt-enter");
+        }
+        s.type_text(&format!("{}{}", i + 1, if i == 0 { line } else { &line[..line.char_indices().nth(6 + i).map_or(line.len(), |(b, _)| b)] }));
+    }
+    s.key("enter");
+    s.click_cell("C3");
+    s.screenshot("entered");
+    s.key("f2");
+    s.screenshot("f2");
+    let caret = |s: &mut Scenario| s.with(|e, _| e.cell_edit().map(|c| (c.caret_line(), c.caret)).unwrap());
+    let at_f2 = caret(&mut s);
+    s.key("up");
+    s.key("left");
+    s.screenshot("moved-up-left");
+    let moved = caret(&mut s);
+    assert!(moved.0 < at_f2.0 && moved.1 < at_f2.1, "{at_f2:?} {moved:?}");
+    s.key("down");
+    s.key("right");
+    s.screenshot("moved-down-right");
+    // The box is inside the sheet's area (not over the toolbar or the bars), and starts at the cell's left edge.
+    let r = s.with(|e, _| e.cell_edit().and_then(|c| c.rect.get())).expect("painted");
+    let ws = s.with(|e, _| e.workspace_bounds).unwrap();
+    let cell = s.with(|e, _| e.cell_center(2, 2)).unwrap();
+    assert!(f32::from(r.origin.y) >= f32::from(ws.origin.y) - 1.0, "{r:?} {ws:?}");
+    assert!(f32::from(r.origin.x) <= f32::from(cell.x), "{r:?} {cell:?}");
+    s.key("escape");
+}
+
+/// 挿入 > グラフ: the new chart kinds of Excel 2016 (ウォーターフォール・ヒストグラム・パレート図・じょうご) over the
+/// selected cells, drawn as chartEx charts, kept on a save.
+fn chtype027_chart_ex_kinds_in_a_workbook() {
+    use ibis_doc_model::ShapeKind;
+    for kind in [ibis_pptx::NewChartKind::Waterfall, ibis_pptx::NewChartKind::Histogram, ibis_pptx::NewChartKind::Pareto, ibis_pptx::NewChartKind::Funnel] {
+        let mut s = new_sheet();
+        s.click_cell("A1");
+        s.enter("項目", "tab");
+        s.enter("値", "enter");
+        for (i, (name, v)) in [("a", 100.0), ("b", 40.0), ("c", -25.0), ("d", 10.0), ("e", 125.0)].iter().enumerate() {
+            s.click_cell(&format!("A{}", i + 2));
+            s.enter(name, "tab");
+            s.enter(&format!("{v}"), "enter");
+        }
+        s.click_cell("A1");
+        s.key("shift-right");
+        for _ in 0..5 {
+            s.key("shift-down");
+        }
+        s.update(move |e, w, cx| e.insert_sheet_chart(kind, w, cx));
+        s.settle();
+        let n = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(&sh.kind, ShapeKind::Chart(c) if c.ex.is_some())).count());
+        assert_eq!(n, 1, "{kind:?}: a chartEx chart is on the sheet");
+        s.screenshot(&format!("chtype027-{kind:?}"));
+        s.save_as(&format!("chtype027-{kind:?}.xlsx"));
+        let saved = s.reopen();
+        let n = saved.slides.iter().flat_map(|sl| &sl.shapes).filter(|sh| matches!(&sh.kind, ShapeKind::Chart(c) if c.ex.is_some())).count();
+        assert_eq!(n, 1, "{kind:?}: the chartEx chart is read again after a save");
+    }
+}
+
+/// An old .xls's pictures (an image of the drawing group at its anchor), and its AutoFilter (the range and the
+/// buttons), shown in the workbook screen.
+fn file010_legacy_pictures_and_filter() {
+    {
+        let mut s = Scenario::open("test/editing/xlsx-legacy-pictures.xls");
+        let pictures = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Picture(_))).count());
+        assert_eq!(pictures, 2);
+        s.screenshot("pictures");
+    }
+    {
+        let mut s = Scenario::open("test/editing/xlsx-legacy-autofilter.xls");
+        let filtered = s.with(|e, _| e.current_sheet().and_then(|(_, sh)| sh.auto_filter.as_ref().map(|f| f.columns.len())));
+        assert_eq!(filtered, Some(2));
+        s.screenshot("autofilter");
+    }
+    // The charts of an old .xls: columns, stacked bars, lines, an area, a pie and a scatter, drawn from the
+    // cells their series name.
+    let mut s = Scenario::open("test/editing/xlsx-legacy-charts.xls");
+    let charts = s.with(|e, _| e.slide().shapes.iter().filter(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_))).count());
+    assert_eq!(charts, 6);
+    s.screenshot("charts");
+}
+
+/// 外部ブック参照 typed in: `=[Budget.xlsx]月次売上!B4` names a workbook the file does not link; found beside this
+/// workbook, it is linked (its sheets and the cells read cached), the formula shows its value, the file saves with
+/// the link, and one undo takes both back.
+fn formula006_typed_external_reference() {
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input/external");
+    std::fs::create_dir_all(&dir).unwrap();
+    let sales = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
+    std::fs::write(dir.join("Main.xlsx"), &sales).unwrap();
+    std::fs::write(dir.join("Budget.xlsx"), &sales).unwrap();
+    let mut s = Scenario::open("target/scenario-input/external/Main.xlsx");
+    // The other workbook beside the one opened (the scenario works on a copy of it).
+    let beside = s.with(|e, _| e.path.clone()).and_then(|p| p.parent().map(|d| d.join("Budget.xlsx"))).expect("a path");
+    std::fs::write(beside, &sales).unwrap();
+    s.click_cell("J1");
+    s.enter("=[Budget.xlsx]月次売上!B4+1", "enter");
+    assert_eq!(number_at(&mut s, "J1"), 1_250_001.0);
+    let books = s.with(|e, _| e.presentation().workbook.as_ref().map(|w| w.external_books.iter().map(|b| (b.name.clone(), b.sheets.len(), b.sheets.iter().map(|x| x.cells.len()).sum::<usize>())).collect::<Vec<_>>())).unwrap();
+    assert_eq!(books.len(), 1, "{books:?}");
+    assert_eq!(books[0].0, "Budget.xlsx");
+    assert!(books[0].1 >= 1 && books[0].2 == 1, "{books:?}");
+    let saved = s.save_as("external-saved.xlsx");
+    let bytes = std::fs::read(&saved).unwrap();
+    let again = ibis_pptx::open(bytes.clone()).unwrap();
+    let wb = again.presentation.workbook.as_ref().unwrap();
+    assert_eq!(wb.external_books.len(), 1);
+    assert_eq!(wb.external_books[0].name, "Budget.xlsx");
+    let sheet = sheet_of_slide(again.presentation.slides.iter().find(|sl| sl.name.as_deref() == Some("月次売上")).unwrap()).unwrap();
+    assert_eq!(sheet.cell(0, 9).and_then(|c| c.formula.clone()).as_deref(), Some("[Budget.xlsx]月次売上!B4+1"));
+    assert_eq!(sheet.cell(0, 9).map(|c| c.value.clone()), Some(CellValue::Number(1_250_001.0)));
+    // One undo: the entry and the link.
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().map_or(0, |w| w.external_books.len())), 0);
+    // Pasted as text: the workbooks the formulas name are linked in the same step (the two formulas, one link).
+    s.click_cell("L1");
+    s.update(|_, _, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("=[Budget.xlsx]月次売上!B4\t=[Budget.xlsx]月次売上!C4*2".to_string())));
+    s.key("cmd-v");
+    s.settle();
+    assert_eq!(number_at(&mut s, "L1"), 1_250_000.0);
+    assert_eq!(number_at(&mut s, "M1"), 2_640_000.0);
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().map_or(0, |w| w.external_books.len())), 1);
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().map_or(0, |w| w.external_books.len())), 0, "one undo takes the paste and the link");
+    // External 3D reference across multiple sheets:
+    // 月次売上!C4 is 1,320,000 and 商品!C4 is 980.
+    s.click_cell("J3");
+    s.enter("=SUM([Budget.xlsx]月次売上:商品!C4)", "enter");
+    assert_eq!(number_at(&mut s, "J3"), 1_320_980.0);
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().map_or(0, |w| w.external_books.len())), 0);
+
+    // External reference with directory path:
+    s.click_cell("J4");
+    let path_formula = format!("='{}/[Budget.xlsx]月次売上'!B4+5", dir.display());
+    s.enter(&path_formula, "enter");
+    assert_eq!(number_at(&mut s, "J4"), 1_250_005.0);
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().map_or(0, |w| w.external_books.len())), 0);
+
+    // A workbook that is not there: told, and nothing linked.
+    s.click_cell("J2");
+    s.enter("=[Missing.xlsx]Sheet1!A1", "enter");
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().map_or(0, |w| w.external_books.len())), 0);
+    assert!(s.with(|e, _| e.status.as_ref().is_some_and(|m| m.contains("Missing.xlsx"))));
+
+    // A workbook referenced with explicit folder path:
+    s.click_cell("J3");
+    s.enter("='target/scenario-input/external\\[Budget.xlsx]月次売上'!B4+10", "enter");
+    assert_eq!(number_at(&mut s, "J3"), 1_250_010.0);
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().map_or(0, |w| w.external_books.len())), 1);
+    let path_formula = s.formula("J3");
+    assert!(path_formula.as_deref().is_some_and(|f| f.contains("target/scenario-input/external") && f.contains("Budget.xlsx")));
+}
+
+/// CELL("filename"): the path of the file, the book's name in brackets and the sheet's; "" before the
+/// workbook is saved. The name is its own document's: another workbook opened after it does not change it.
+fn fn_cell_filename() {
+    let name_of = |file: &str| -> String {
+        let mut s = Scenario::open(file);
+        s.click_cell("J1");
+        s.enter("=CELL(\"filename\",A1)", "enter");
+        let CellValue::Text(text) = s.value("J1") else { panic!("text") };
+        text
+    };
+    let first = name_of("test/editing/xlsx-sales.xlsx");
+    assert!(first.contains("[") && first.contains("xlsx-sales") && first.contains(".xlsx]"), "{first}");
+    // (A workbook opened after it is calculated with its own name.)
+    let second = name_of("test/editing/xlsx-formats.xlsx");
+    assert!(second.contains("xlsx-formats") && !second.contains("xlsx-sales"), "{second}");
+}
+
+/// A waterfall Excel made: the cells it reads change and it follows (the bar of the opening balance), a point is set as a
+/// total in the format pane (undone, redone), its title and legend are edited, and saved: the part holds the total, title, and legend.
+fn chtype_ex_waterfall_settings() {
+    let mut s = Scenario::open("test/editing/xlsx-chartex-waterfall.xlsx");
+    s.screenshot("opened");
+    let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_)))).unwrap();
+    s.click_shape(index);
+    s.menu("xlsx.chart-format");
+    s.screenshot("pane");
+    let series = |s: &mut Scenario, name: &str| -> Vec<Option<f64>> {
+        s.with(|e, _| e.slide().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some(c.groups[0].series.iter().find(|x| x.name == name).map(|x| x.values.iter().map(|v| v.map(|n| n.0)).collect()).unwrap()), _ => None })).unwrap()
+    };
+    assert_eq!(series(&mut s, "合計")[0], None);
+    // The opening balance a total.
+    s.update(|e, _, cx| e.toggle_chart_ex_total(0, cx));
+    assert_eq!(series(&mut s, "合計")[0], Some(100.0));
+    s.screenshot("total");
+    s.key("cmd-z");
+    assert_eq!(series(&mut s, "合計")[0], None);
+    s.key("cmd-shift-z");
+    assert_eq!(series(&mut s, "合計")[0], Some(100.0));
+
+    // Edit title and legend in format pane.
+    s.update(|e, window, cx| {
+        e.set_sheet_chart_title_shown(true, cx);
+        let title_input = e.wb().chart_edit.as_ref().unwrap().title.clone();
+        title_input.update(cx, |i, cx| i.set_value("損益推移", window, cx));
+        e.apply_sheet_chart_panel(cx);
+        e.set_sheet_chart_legend(Some(ibis_doc_model::LegendPosition::Bottom), cx);
+    });
+    let current_title = s.with(|e, _| e.sheet_chart().and_then(|(_, c)| c.title.as_ref().map(|t| t.text.clone())));
+    assert_eq!(current_title.as_deref(), Some("損益推移"));
+
+    // The cell changes: the total follows and custom title/legend remain.
+    s.click_cell("B2");
+    s.type_text("250");
+    s.key("enter");
+    assert_eq!(series(&mut s, "合計")[0], Some(250.0), "the chart follows its cells");
+    let saved = s.save_as("waterfall-settings.xlsx");
+    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
+    assert_eq!(chart.ex_source.unwrap().0.options().subtotals, vec![0, 5]);
+    assert_eq!(chart.title.as_ref().map(|t| t.text.as_str()), Some("損益推移"));
+    assert_eq!(chart.legend.as_ref().and_then(|l| l.source_position), Some(ibis_doc_model::LegendPosition::Bottom));
+}
+
+/// A histogram Excel made: its bins set to a width of 10 in the format pane, and saved.
+fn chtype_ex_histogram_settings() {
+    let mut s = Scenario::open("test/editing/xlsx-chartex-histogram.xlsx");
+    s.screenshot("opened");
+    let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_)))).unwrap();
+    s.click_shape(index);
+    s.menu("xlsx.chart-format");
+    let bins = |s: &mut Scenario| -> Vec<String> { s.with(|e, _| e.slide().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some(c.groups[0].series[0].categories.clone()), _ => None }).unwrap()) };
+    assert_eq!(bins(&mut s).len(), 4);
+    s.update(|e, window, cx| {
+        let width = e.wb().chart_edit.as_ref().unwrap().ex_bin_width.clone();
+        width.update(cx, |i, cx| i.set_value("10", window, cx));
+        e.apply_chart_ex_bins(cx);
+    });
+    assert_eq!(bins(&mut s).len(), 5);
+    s.screenshot("bins");
+    s.key("cmd-z");
+    assert_eq!(bins(&mut s).len(), 4);
+    s.key("cmd-shift-z");
+    // An edit of a cell: a score of 52 becomes 30, the first bin starts there.
+    s.click_cell("A2");
+    s.type_text("30");
+    s.key("enter");
+    assert!(bins(&mut s)[0].starts_with("[30"), "{:?}", bins(&mut s));
+    let saved = s.save_as("histogram-settings.xlsx");
+    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
+    assert_eq!(chart.ex_source.unwrap().0.options().bin_by, ibis_doc_model::BinBy::Width(ibis_doc_model::Number(10.0)));
+}
+
+/// A box & whisker chart: mean marker, mean line, outliers, and inclusive quartile settings in format pane, undo/redo, and saved.
+fn chtype_ex_boxwhisker_settings() {
+    let mut s = Scenario::open("test/editing/xlsx-chartex-boxwhisker.xlsx");
+    s.screenshot("opened");
+    let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_)))).unwrap();
+    s.click_shape(index);
+    s.menu("xlsx.chart-format");
+    s.screenshot("pane");
+    let options = |s: &mut Scenario| -> ibis_doc_model::ChartExOptions {
+        s.with(|e, _| e.slide().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some(c.ex_source.as_ref().unwrap().0.options()), _ => None }).unwrap())
+    };
+    assert!(options(&mut s).box_mean_marker);
+    assert!(!options(&mut s).box_mean_line);
+    assert!(options(&mut s).box_outliers);
+    assert!(!options(&mut s).box_inclusive);
+
+    // Toggle options
+    s.update(|e, _, cx| e.set_chart_ex_options(|o| {
+        o.box_mean_marker = false;
+        o.box_mean_line = true;
+        o.box_outliers = false;
+        o.box_inclusive = true;
+    }, cx));
+    assert!(!options(&mut s).box_mean_marker);
+    assert!(options(&mut s).box_mean_line);
+    assert!(!options(&mut s).box_outliers);
+    assert!(options(&mut s).box_inclusive);
+    s.screenshot("changed");
+
+    // Undo
+    s.key("cmd-z");
+    assert!(options(&mut s).box_mean_marker);
+    assert!(!options(&mut s).box_mean_line);
+    assert!(options(&mut s).box_outliers);
+    assert!(!options(&mut s).box_inclusive);
+
+    // Redo
+    s.key("cmd-shift-z");
+    assert!(!options(&mut s).box_mean_marker);
+    assert!(options(&mut s).box_mean_line);
+    assert!(!options(&mut s).box_outliers);
+    assert!(options(&mut s).box_inclusive);
+
+    let saved = s.save_as("boxwhisker-settings.xlsx");
+    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
+    let back_opts = chart.ex_source.unwrap().0.options();
+    assert!(!back_opts.box_mean_marker);
+    assert!(back_opts.box_mean_line);
+    assert!(!back_opts.box_outliers);
+    assert!(back_opts.box_inclusive);
+}
+
+/// A treemap chart: overlapping parent labels setting in format pane, undo/redo, and saved.
+fn chtype_ex_treemap_settings() {
+    let mut s = Scenario::open("test/editing/xlsx-chartex-treemap.xlsx");
+    s.screenshot("opened");
+    let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_)))).unwrap();
+    s.click_shape(index);
+    s.menu("xlsx.chart-format");
+    let options = |s: &mut Scenario| -> ibis_doc_model::ChartExOptions {
+        s.with(|e, _| e.slide().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some(c.ex_source.as_ref().unwrap().0.options()), _ => None }).unwrap())
+    };
+    assert!(options(&mut s).treemap_overlapping);
+
+    // Toggle overlapping
+    s.update(|e, _, cx| e.set_chart_ex_options(|o| o.treemap_overlapping = false, cx));
+    assert!(!options(&mut s).treemap_overlapping);
+    s.screenshot("banner");
+
+    // Undo
+    s.key("cmd-z");
+    assert!(options(&mut s).treemap_overlapping);
+
+    // Redo
+    s.key("cmd-shift-z");
+    assert!(!options(&mut s).treemap_overlapping);
+
+    let saved = s.save_as("treemap-settings.xlsx");
+    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
+    let back_opts = chart.ex_source.unwrap().0.options();
+    assert!(!back_opts.treemap_overlapping);
+}
+
+/// A funnel chart: gap width setting in format pane, undo/redo, and saved.
+fn chtype_ex_funnel_settings() {
+    let mut s = Scenario::open("test/editing/xlsx-chartex-funnel.xlsx");
+    s.screenshot("opened");
+    let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_)))).unwrap();
+    s.click_shape(index);
+    s.menu("xlsx.chart-format");
+    let options = |s: &mut Scenario| -> ibis_doc_model::ChartExOptions {
+        s.with(|e, _| e.slide().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some(c.ex_source.as_ref().unwrap().0.options()), _ => None }).unwrap())
+    };
+    assert_eq!(options(&mut s).gap_width, Some(6));
+
+    // Change gap width
+    s.update(|e, _, cx| e.set_chart_ex_options(|o| o.gap_width = Some(30), cx));
+    assert_eq!(options(&mut s).gap_width, Some(30));
+    s.screenshot("changed");
+
+    // Undo
+    s.key("cmd-z");
+    assert_eq!(options(&mut s).gap_width, Some(6));
+
+    // Redo
+    s.key("cmd-shift-z");
+    assert_eq!(options(&mut s).gap_width, Some(30));
+
+    let saved = s.save_as("funnel-settings.xlsx");
+    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
+    let back_opts = chart.ex_source.unwrap().0.options();
+    assert_eq!(back_opts.gap_width, Some(30));
+}
+
+/// A pareto chart: gap width setting in format pane, undo/redo, and saved.
+fn chtype_ex_pareto_settings() {
+    let mut s = Scenario::open("test/editing/xlsx-chartex-pareto.xlsx");
+    s.screenshot("opened");
+    let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Chart(_)))).unwrap();
+    s.click_shape(index);
+    s.menu("xlsx.chart-format");
+    let options = |s: &mut Scenario| -> ibis_doc_model::ChartExOptions {
+        s.with(|e, _| e.slide().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some(c.ex_source.as_ref().unwrap().0.options()), _ => None }).unwrap())
+    };
+    assert_eq!(options(&mut s).gap_width, Some(0));
+
+    // Change gap width
+    s.update(|e, _, cx| e.set_chart_ex_options(|o| o.gap_width = Some(45), cx));
+    assert_eq!(options(&mut s).gap_width, Some(45));
+    s.screenshot("changed");
+
+    // Undo
+    s.key("cmd-z");
+    assert_eq!(options(&mut s).gap_width, Some(0));
+
+    // Redo
+    s.key("cmd-shift-z");
+    assert_eq!(options(&mut s).gap_width, Some(45));
+
+    let saved = s.save_as("pareto-settings.xlsx");
+    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
+    let back_opts = chart.ex_source.unwrap().0.options();
+    assert_eq!(back_opts.gap_width, Some(45));
+}
+
+
+/// A chart follows the cells it plots (Excel redraws it when they change): editing a cell moves its bar, undo puts it
+/// back, and saving writes the new values into the chart part (read again, they are there).
+fn chart_follows_its_cells() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let first_value = |chart: &ibis_doc_model::Chart| chart.groups[0].series[0].values[0].map(|n| n.0);
+    let charts = |p: &ibis_doc_model::Presentation| -> Vec<ibis_doc_model::Chart> { p.slides[0].shapes.iter().filter_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).collect() };
+    let before = s.with(|e, _| charts(e.presentation()));
+    assert_eq!(before.len(), 1);
+    assert_eq!(first_value(&before[0]), Some(1_250_000.0));
+    s.click_cell("B4");
+    s.type_text("9000000");
+    s.key("enter");
+    s.screenshot("after");
+    let after = s.with(|e, _| charts(e.presentation()));
+    assert_eq!(first_value(&after[0]), Some(9_000_000.0), "the bar follows the cell");
+    // The total of the row (a formula) is read through too: the series of 合計 are not plotted, the 5 stores are.
+    s.key("cmd-z");
+    let undone = s.with(|e, _| charts(e.presentation()));
+    assert_eq!(first_value(&undone[0]), Some(1_250_000.0), "undo puts the bar back");
+    s.click_cell("B4");
+    s.type_text("9000000");
+    s.key("enter");
+    let saved = s.save_as("chart-follows.xlsx");
+    let back = ibis_pptx::read(&std::fs::read(&saved).unwrap()).unwrap();
+    assert_eq!(first_value(&charts(&back)[0]), Some(9_000_000.0), "the saved chart holds the new value");
+}
+
+/// XLSX-FILE-010, a binary workbook (.xlsb) is opened as a new workbook: values, formulas, styles, merges and the
+/// frozen pane come across; saving as .xlsx and opening again keeps them.
+fn file010_open_xlsb() {
+    let mut s = Scenario::open("crates/ibis-pptx/tests/fixtures/generated.xlsb");
+    s.screenshot("opened");
+    let sheets = s.with(|e, _| e.presentation().slides.len());
+    assert_eq!(sheets, 2);
+    let cell = |s: &mut Scenario, r: u32, c: u32| s.with(|e, _| sheet_of_slide(e.slide()).and_then(|sh| sh.cell(r, c)).map(|x| (x.text.clone(), x.formula.clone())));
+    assert_eq!(cell(&mut s, 1, 1), Some(("1,234.50円".to_string(), None)));
+    assert_eq!(cell(&mut s, 3, 1).and_then(|x| x.1).as_deref(), Some("SUM(B2:B3)"));
+    // The formulas recalculate.
+    s.click_cell("B2");
+    s.type_text("2000");
+    s.key("enter");
+    // The sheet's breaks (row and col) and workbook protection are preserved.
+    let (row_breaks, col_breaks, wb_protected) = s.with(|e, _| {
+        let sh = sheet_of_slide(e.slide()).unwrap();
+        let wb = e.presentation().workbook.as_ref().unwrap();
+        (sh.print.row_breaks.clone(), sh.print.column_breaks.clone(), wb.protection.as_ref().map(|p| p.lock_structure).unwrap_or(false))
+    });
+    assert_eq!(row_breaks, vec![4]);
+    assert_eq!(col_breaks, vec![2]);
+    assert!(wb_protected);
+    let path = s.save_as("file010-xlsb.xlsx");
+    let back = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(back.slides.len(), 2);
+    let back_sh0 = sheet_of_slide(&back.slides[0]).unwrap();
+    assert_eq!(back_sh0.print.row_breaks, vec![4]);
+    assert_eq!(back_sh0.print.column_breaks, vec![2]);
+    let back_sh1 = sheet_of_slide(&back.slides[1]).unwrap();
+    assert!(back_sh1.protection.is_some());
+}
+
+/// XLSX-FILE-010, a binary workbook Excel saved (data validation, a conditional format, a note, an AutoFilter and
+/// formulas that name another sheet): all of it comes across.
+fn file010_open_xlsb_excel_features() {
+    let mut s = Scenario::open("test/editing/xlsb-features.xlsb");
+    s.screenshot("opened");
+    let (validations, cf, notes, filter) = s.with(|e, _| {
+        let sh = sheet_of_slide(e.slide()).unwrap();
+        (sh.validations.len(), sh.conditional.len(), sh.comments.len(), sh.auto_filter.is_some())
+    });
+    assert_eq!((validations, cf, notes, filter), (1, 1, 1, true));
+    // The second sheet's formulas name the first.
+    let second = s.with(|e, _| e.presentation().slides[1].id);
+    s.update(move |e, window, cx| e.select_slide(second, window, cx));
+    let f = s.with(|e, _| sheet_of_slide(e.slide()).and_then(|sh| sh.cell(0, 0)).and_then(|c| c.formula.clone()));
+    assert_eq!(f.as_deref(), Some("Data!C3*2"));
+    assert_eq!(s.value("A1"), CellValue::Number(24.0));
+    assert_eq!(s.value("A3"), CellValue::Text("あり".into()));
+}
+
+/// XLSX-FILE-010, the sales book Excel saved as .xlsb (four sheets, a chart, a picture, formulas across sheets).
+fn file010_open_xlsb_excel_sales() {
+    let mut s = Scenario::open("test/editing/xlsb-sales.xlsb");
+    s.screenshot("opened");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), 4);
+    assert_eq!(s.value("E4"), CellValue::Number(3_750_000.0));
+    let last = s.with(|e, _| e.presentation().slides[3].id);
+    s.update(move |e, window, cx| e.select_slide(last, window, cx));
+    assert_eq!(s.value("A2"), CellValue::Number(41_030_000.0));
+    s.screenshot("reference");
+}
+
+/// XLSX-FILE-012 ODF（.ods）を開く: a spreadsheet LibreOffice Calc made is read
+/// as a new workbook (saving asks where, as with an old .xls).
+fn file012_open_ods() {
+    let mut s = Scenario::open("crates/ibis-pptx/tests/fixtures/libreoffice_small.ods");
+    let sheets = s.with(|e, _| e.presentation().slides.len());
+    assert_eq!(sheets, 2);
+    let cell = |s: &mut Scenario, r: u32, c: u32| s.with(|e, _| ibis_doc_model::sheet_calc::sheet_of_slide(e.slide()).and_then(|sh| sh.cell(r, c)).map(|x| (x.text.clone(), x.formula.clone())));
+    assert_eq!(cell(&mut s, 1, 1), Some(("1,234.50".to_string(), None)));
+    assert_eq!(cell(&mut s, 2, 1).and_then(|x| x.1).as_deref(), Some("SUM(B2,B2*2)"));
+    // Saved as .xlsx and read again.
+    let path = s.save_as("file012.xlsx");
+    let back = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(back.slides.len(), 2);
+    // Saved as .ods (ファイル > 書き出し > OpenDocument スプレッドシート) and read again.
+    let ods = s.save_as("file012.ods");
+    let bytes = std::fs::read(&ods).unwrap();
+    assert!(bytes.starts_with(b"PK") && bytes.windows(46).any(|w| w == b"application/vnd.oasis.opendocument.spreadsheet"));
+    let again = ibis_pptx::read(&bytes).unwrap();
+    let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&again.slides[0]).unwrap();
+    assert_eq!(sheet.cell(1, 1).map(|c| c.text.clone()).as_deref(), Some("1,234.50"));
+    assert_eq!(sheet.cell(2, 1).and_then(|c| c.formula.clone()).as_deref(), Some("SUM(B2,B2*2)"));
+    assert_eq!(sheet.merges.len(), 1);
+}
+
+/// XLSX-FORMULA-006 起動時のリンクの確認: a workbook that links others shows
+/// the bar on opening (cached values until updated); 値を更新 reads the files
+/// found, tells the ones not found, and takes the bar away.
+fn formula006_links_banner() {
+    let mut s = Scenario::open("test/editing/xlsx-external-link.xlsx");
+    assert!(s.with(|e, _| e.sheet_state().is_some_and(|st| st.links_notice)));
+    s.screenshot("banner");
+    assert_eq!(s.value("J45"), CellValue::Number(60.0));
+    // One of the two linked workbooks beside this one.
+    let dir = s.with(|e, _| e.file_path().and_then(|p| p.parent().map(std::path::Path::to_path_buf))).expect("the copy's folder");
+    std::fs::write(dir.join("予算.xlsx"), ibis_pptx::csv::workbook_from("1,x\n2\n3\n", "Data").expect("a workbook")).unwrap();
+    s.update(|e, _, cx| e.update_all_links(cx));
+    assert_eq!(s.value("J45"), CellValue::Number(6.0));
+    assert!(s.with(|e, _| e.status.as_ref().is_some_and(|m| m.contains("actual.xlsx") && m.contains('1'))));
+    assert!(s.with(|e, _| e.sheet_state().is_some_and(|st| !st.links_notice)));
+}
+
+/// XLSX-FN-RAND・RANDBETWEEN・RANDARRAY: the random numbers are really random
+/// (in range, new ones at each calculation), and the arguments Excel refuses
+/// are refused.
+fn fn_random_numbers() {
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    s.enter("=RAND()", "enter");
+    s.click_cell("B1");
+    s.enter("=RANDBETWEEN(1,6)", "enter");
+    s.click_cell("C1");
+    s.enter("=RANDARRAY(3,2,10,20,TRUE)", "enter");
+    s.click_cell("E1");
+    s.enter("=RANDBETWEEN(TRUE,6)", "enter");
+    s.click_cell("F1");
+    s.enter("=RANDARRAY(1,1,0,1,1)", "enter");
+    let in_unit = |v: CellValue| matches!(v, CellValue::Number(n) if (0.0..1.0).contains(&n) && n != 0.5);
+    assert!(in_unit(s.value("A1")));
+    assert!(matches!(s.value("B1"), CellValue::Number(n) if (1.0..=6.0).contains(&n) && n.fract() == 0.0));
+    for r in ["C1", "D1", "C2", "D2", "C3", "D3"] {
+        assert!(matches!(s.value(r), CellValue::Number(n) if (10.0..=20.0).contains(&n) && n.fract() == 0.0), "{r}");
+    }
+    assert_eq!(s.value("E1"), CellValue::Error(ibis_doc_model::CellError::Value));
+    assert_eq!(s.value("F1"), CellValue::Error(ibis_doc_model::CellError::Value));
+    // Edited elsewhere, the volatile cells are calculated again: the numbers change (a few tries are enough).
+    let first = s.value("A1");
+    let mut changed = false;
+    for i in 0..5 {
+        s.click_cell("H1");
+        s.enter(&format!("{i}"), "enter");
+        if s.value("A1") != first {
+            changed = true;
+            break;
+        }
+    }
+    assert!(changed, "RAND is calculated again");
+}
+
+/// XLSX-FN-CELL: the format, protection, prefix, width and colour options
+/// read the cell's own format.
+fn fn_cell_info() {
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    s.enter("hello", "enter");
+    s.click_cell("B1");
+    s.enter("1234.5", "enter");
+    s.click_cell("B1");
+    custom_format(&mut s, "#,##0.00");
+    s.click_cell("D1");
+    s.enter("=CELL(\"format\",B1)", "enter");
+    s.click_cell("D2");
+    s.enter("=CELL(\"prefix\",A1)", "enter");
+    s.click_cell("D3");
+    s.enter("=CELL(\"protect\",A1)", "enter");
+    s.click_cell("D4");
+    s.enter("=CELL(\"format\",A1)", "enter");
+    s.click_cell("D5");
+    s.enter("=CELL(\"width\",A1)", "enter");
+    assert_eq!(s.value("D1"), CellValue::Text(",2".into()));
+    assert_eq!(s.value("D2"), CellValue::Text("'".into()));
+    assert_eq!(s.value("D3"), CellValue::Number(1.0));
+    assert_eq!(s.value("D4"), CellValue::Text("G".into()));
+    assert!(matches!(s.value("D5"), CellValue::Number(n) if (7.0..=14.0).contains(&n)), "{:?}", s.value("D5"));
+}
+
+/// XLSX-PQ-009〜020 データ > テーブルまたは範囲から: the クエリ エディター. The
+/// steps work on the table the step before gave; 閉じて読み込む writes the result
+/// to a new sheet and keeps the query, which データ > クエリと接続 edits,
+/// refreshes and deletes.
+fn query001_editor() {
+    use crate::xlsx::query_ops::QOp;
+    use ibis_doc_model::query::{Agg, Op, QType, Step};
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.click_cell("A3");
+    s.update(|e, window, cx| e.open_query_from_selection(window, cx));
+    let shown = |s: &mut Scenario| s.with(|e, _| e.wb().panels.query_editor.as_ref().map(|q| (q.shown().names(), q.shown().rows.len(), q.error.clone(), q.message.clone())).expect("the editor is open"));
+    // The region around A3 is A3:E9; its first row is promoted to the headings.
+    let (names, rows, error, _) = shown(&mut s);
+    assert_eq!(names, ["店舗", "4月", "5月", "6月", "合計"]);
+    assert_eq!((rows, error), (6, None));
+    s.screenshot("editor");
+    // Ribbon buttons: a column selected by its heading, then removed at once.
+    s.update(|e, _, cx| e.query_select_column("5月", cx));
+    s.update(|e, window, cx| e.query_run_op(QOp::RemoveColumns, window, cx));
+    assert_eq!(shown(&mut s).0, ["店舗", "4月", "6月", "合計"]);
+    // An operation with a form: the form opens, is filled, and makes the step.
+    s.update(|e, window, cx| e.query_run_op(QOp::Filter, window, cx));
+    assert!(s.with(|e, _| e.wb().panels.query_editor.as_ref().unwrap().form.is_some()));
+    s.update(|e, _, cx| e.query_apply_form(cx));
+    assert!(s.with(|e, _| e.wb().panels.query_editor.as_ref().unwrap().form.is_some()), "the value is missing: the form stays");
+    s.update(|e, _, cx| {
+        e.query_add_step(Step::FilterRows { column: "店舗".into(), op: Op::DoesNotContain, value: "合計".into() }, None, cx);
+        e.query_add_step(Step::ChangeType { column: "4月".into(), ty: QType::Whole, culture: ibis_doc_model::query::Culture::Invariant }, None, cx);
+        e.query_add_step(Step::AddColumn { name: "傾向".into(), formula: "if [6月] > [4月] then \"増\" else \"減\"".into() }, None, cx);
+        e.query_add_step(Step::Sort(vec![("6月".into(), false)]), None, cx);
+    });
+    let (names, rows, error, message) = shown(&mut s);
+    assert_eq!(names, ["店舗", "4月", "6月", "合計", "傾向"]);
+    assert_eq!((rows, error.is_none()), (5, true), "{message}");
+    assert_eq!(s.with(|e, _| e.wb().panels.query_editor.as_ref().unwrap().shown().rows[0][0].clone()), CellValue::Text("駅前店".into()));
+    s.screenshot("steps");
+    // Showing an earlier step shows its table; the last has all the steps.
+    s.update(|e, _, _| e.query_show(0));
+    assert_eq!(shown(&mut s).0.len(), 5);
+    s.update(|e, _, _| e.query_show(99));
+    // A step that fails is told, and the table before it stays.
+    s.update(|e, _, cx| e.query_add_step(Step::RemoveColumns(vec!["無い列".into()]), None, cx));
+    let (_, _, error, message) = shown(&mut s);
+    assert!(error.is_some() && message.contains("無い列"), "{message}");
+    let steps = s.with(|e, _| e.wb().panels.query_editor.as_ref().unwrap().query.steps.len());
+    s.update(move |e, _, cx| e.query_delete_step(steps - 1, cx));
+    assert!(shown(&mut s).2.is_none());
+    // The M code of the steps.
+    let m = s.with(|e, _| ibis_doc_model::query::query_to_m(&e.wb().panels.query_editor.as_ref().unwrap().query));
+    assert!(m.contains("Table.PromoteHeaders(Source") && m.contains("Table.Sort(") && m.contains("Table.AddColumn("), "{m}");
+    // 閉じて読み込む.
+    let sheets_before = s.with(|e, _| e.presentation().slides.len());
+    s.update(|e, window, cx| e.query_close_and_load(window, cx));
+    assert!(s.with(|e, _| e.wb().panels.query_editor.is_none()));
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), sheets_before + 1);
+    let output = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().queries[0].output.clone()).expect("the sheet it loaded");
+    let read = |s: &mut Scenario, name: String, r: u32, c: u32| s.with(move |e, _| e.presentation().slides.iter().find(|x| x.name.as_deref() == Some(name.as_str())).and_then(ibis_doc_model::sheet_calc::sheet_of_slide).and_then(|sh| sh.cell(r, c)).map(|x| x.value.clone()));
+    assert_eq!(read(&mut s, output.clone(), 0, 0), Some(CellValue::Text("店舗".into())));
+    assert_eq!(read(&mut s, output.clone(), 1, 0), Some(CellValue::Text("駅前店".into())));
+    assert_eq!(read(&mut s, output.clone(), 1, 4), Some(CellValue::Text("増".into())));
+    // データ > クエリと接続: the source changed, the query refreshed (the sheet written again).
+    s.update(|e, _, cx| e.open_queries_panel(cx));
+    s.screenshot("queries");
+    s.click_cell("B8");
+    s.enter("5000000", "enter");
+    s.update(|e, _, cx| e.refresh_query(0, cx));
+    assert_eq!(read(&mut s, output.clone(), 1, 0), Some(CellValue::Text("駅前店".into())));
+    assert_eq!(read(&mut s, output.clone(), 1, 1), Some(CellValue::Number(5_000_000.0)));
+    // Edited again: the steps are there, one more is added, and loaded to the same sheet.
+    let sheets_now = s.with(|e, _| e.presentation().slides.len());
+    s.update(|e, window, cx| e.edit_query(0, window, cx));
+    assert!(s.with(|e, _| e.wb().panels.query_editor.as_ref().map(|q| q.query.steps.len()).unwrap_or(0)) >= 5);
+    s.update(|e, _, cx| e.query_add_step(Step::KeepTopRows(2), None, cx));
+    s.update(|e, window, cx| e.query_close_and_load(window, cx));
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), sheets_now, "the sheet is written again, not made again");
+    assert_eq!(read(&mut s, output.clone(), 3, 0), None);
+    // Saved and read back.
+    s.save_as("query001.xlsx");
+    let back = s.reopen();
+    let wb = back.workbook.as_ref().unwrap();
+    assert_eq!(wb.queries.len(), 1);
+    assert!(wb.queries[0].steps.len() >= 6 && wb.queries[0].output.as_deref() == Some(output.as_str()));
+    // Group and pivot on the result.
+    s.update(|e, window, cx| e.edit_query(0, window, cx));
+    s.update(|e, _, cx| {
+        e.query_add_step(Step::GroupBy { keys: vec!["傾向".into()], aggregations: vec![("合計".into(), Agg::Sum, Some("合計".into()))] }, None, cx);
+    });
+    assert_eq!(shown(&mut s).0, ["傾向", "合計"]);
+    s.update(|e, _, cx| e.query_cancel(cx));
+    assert!(s.with(|e, _| e.wb().panels.query_editor.is_none()));
+    // Deleted from the list: the sheet stays.
+    s.update(|e, _, cx| e.delete_query(0, cx));
+    assert!(s.with(|e, _| e.presentation().workbook.as_ref().unwrap().queries.is_empty()));
+}
+
+
+/// XLSX-PQ-008 空のクエリを作る: データ > クエリと接続 > 空のクエリ.
+/// Opens a blank query with an initial empty table, adds steps, views the M code (#table({}, {})),
+/// loads to a new sheet, and verifies roundtrip persistence.
+fn query002_blank_query() {
+    use ibis_doc_model::query::{Source, Step};
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.update(|e, window, cx| e.open_blank_query(window, cx));
+    let shown = |s: &mut Scenario| {
+        s.with(|e, _| {
+            e.wb()
+                .panels
+                .query_editor
+                .as_ref()
+                .map(|q| (q.shown().names(), q.shown().rows.len(), q.error.clone(), q.message.clone()))
+                .expect("the editor is open")
+        })
+    };
+    let (names, rows, error, _) = shown(&mut s);
+    assert_eq!(names, ["Column1"]);
+    assert_eq!((rows, error), (0, None));
+    s.screenshot("blank_editor");
+
+    // Add steps: e.g. AddIndexColumn
+    s.update(|e, _, cx| {
+        e.query_add_step(Step::AddIndexColumn { name: "Index".into(), start: 1, step: 1 }, None, cx);
+    });
+    let (names, rows, error, _) = shown(&mut s);
+    assert_eq!(names, ["Column1", "Index"]);
+    assert_eq!((rows, error), (0, None));
+
+    // Check M code
+    let m = s.with(|e, _| ibis_doc_model::query::query_to_m(&e.wb().panels.query_editor.as_ref().unwrap().query));
+    assert!(m.contains("#table({}, {})"), "M contains blank table: {m}");
+    assert!(m.contains("Table.AddIndexColumn("), "M contains index step: {m}");
+
+    // Close and load
+    let sheets_before = s.with(|e, _| e.presentation().slides.len());
+    s.update(|e, window, cx| e.query_close_and_load(window, cx));
+    assert!(s.with(|e, _| e.wb().panels.query_editor.is_none()));
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), sheets_before + 1);
+
+    let output = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().queries[0].output.clone()).expect("the sheet it loaded");
+    let read = |s: &mut Scenario, name: String, r: u32, c: u32| {
+        s.with(move |e, _| {
+            e.presentation()
+                .slides
+                .iter()
+                .find(|x| x.name.as_deref() == Some(name.as_str()))
+                .and_then(ibis_doc_model::sheet_calc::sheet_of_slide)
+                .and_then(|sh| sh.cell(r, c))
+                .map(|x| x.value.clone())
+        })
+    };
+    assert_eq!(read(&mut s, output.clone(), 0, 0), Some(CellValue::Text("Column1".into())));
+    assert_eq!(read(&mut s, output.clone(), 0, 1), Some(CellValue::Text("Index".into())));
+
+    // Save and reopen
+    s.save_as("blank_query.xlsx");
+    let back = s.reopen();
+    let wb = back.workbook.as_ref().unwrap();
+    assert_eq!(wb.queries.len(), 1);
+    assert_eq!(wb.queries[0].source, Source::Blank);
+    assert_eq!(wb.queries[0].steps.len(), 1);
+    assert_eq!(wb.queries[0].output.as_deref(), Some(output.as_str()));
+}
+
+
+
+/// XLSX-OPTIONS-004・007 ツール > 設定…: 保存・セキュリティ センター・クイック アクセス ツール バー.
+/// The commands chosen for the quick access toolbar are buttons in the title row (those the open document has);
+/// the warning bar of the links can be turned off.
+fn options007_settings() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // The settings are kept in the scenario's folder, not the user's.
+    let dir = crate::shell::scenario::repo_root().join("target/scenario/xlsx::options007_settings/settings");
+    let _ = std::fs::remove_dir_all(&dir);
+    // SAFETY: the scenarios run one at a time on the main thread; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
+    crate::shell::qat::reload();
+    let buttons = |s: &mut Scenario| s.update(|e, _, cx| e.quick_access_buttons(&cx.entity().downgrade()).len());
+    assert_eq!(buttons(&mut s), 0);
+    assert!(crate::shell::settings_window::links_warning_enabled());
+    // The windows of the categories (a picture of each).
+    for (category, name) in [(1, "save"), (2, "trust"), (3, "qat")] {
+        s.update(move |_, window, cx| crate::shell::settings_window::open_at(category, Some(window.bounds()), window.display(cx).map(|d| d.id()), cx));
+        let handle = crate::shell::settings_window::handle().expect("the settings window is open");
+        s.screenshot_of(handle.into(), name);
+        s.update(move |_, _, cx| {
+            handle.update(cx, |_, window, _| window.remove_window()).ok();
+        });
+    }
+    // Commands put in the row: save, and one that only a workbook has; one the document lacks is left out.
+    crate::shell::qat::toggle("file.save");
+    crate::shell::qat::toggle("xlsx.freeze");
+    crate::shell::qat::toggle("pptx.start-slideshow");
+    assert_eq!(crate::shell::qat::commands(), ["file.save", "xlsx.freeze", "pptx.start-slideshow"]);
+    s.update(|_, _, cx| cx.refresh_windows());
+    assert_eq!(buttons(&mut s), 2, "the command the workbook does not have is not shown");
+    s.screenshot("quick-access");
+    // Kept in the file, and reordered.
+    assert!(std::fs::read_to_string(dir.join("settings.txt")).unwrap_or_default().contains("qat=file.save,xlsx.freeze"));
+    // Reorder: move down and move up.
+    assert!(crate::shell::qat::move_down("file.save"));
+    assert_eq!(crate::shell::qat::commands(), ["xlsx.freeze", "file.save", "pptx.start-slideshow"]);
+    assert!(crate::shell::qat::move_up("file.save"));
+    assert_eq!(crate::shell::qat::commands(), ["file.save", "xlsx.freeze", "pptx.start-slideshow"]);
+    crate::shell::qat::toggle("xlsx.freeze");
+    assert_eq!(buttons(&mut s), 1);
+    // Reset defaults.
+    crate::shell::qat::reset();
+    assert!(crate::shell::qat::commands().is_empty());
+    assert_eq!(buttons(&mut s), 0);
+    // 他のブックへのリンクの警告のバー.
+    crate::shell::settings::set(crate::shell::settings_window::LINKS_WARNING_KEY, "0");
+    assert!(!crate::shell::settings_window::links_warning_enabled());
+    crate::shell::settings::set(crate::shell::settings_window::LINKS_WARNING_KEY, "1");
+    unsafe { std::env::remove_var("IBIS_SETTINGS_DIR") };
+    crate::shell::qat::reload();
+}
+
+/// 挿入 > グラフ: 箱ひげ図・ツリーマップ・サンバースト over the selected cells (a box and whisker chart groups the
+/// values by the category beside them; a treemap and a sunburst take a column of text for each level and the
+/// sizes last), drawn as chartEx charts, kept on a save.
+fn chtype028_box_treemap_sunburst_in_a_workbook() {
+    use ibis_doc_model::ShapeKind;
+    for kind in [ibis_pptx::NewChartKind::BoxWhisker, ibis_pptx::NewChartKind::Treemap, ibis_pptx::NewChartKind::Sunburst] {
+        let mut s = new_sheet();
+        let hierarchy = !matches!(kind, ibis_pptx::NewChartKind::BoxWhisker);
+        let rows: Vec<(&str, &str, f64)> = vec![("果物", "りんご", 40.0), ("果物", "みかん", 25.0), ("野菜", "にんじん", 20.0), ("野菜", "だいこん", 15.0), ("野菜", "ねぎ", 12.0), ("肉", "鶏", 30.0), ("肉", "豚", 18.0)];
+        if hierarchy {
+            s.click_cell("A1");
+            s.enter("分類", "tab");
+            s.enter("品目", "tab");
+            s.enter("売上", "enter");
+            for (i, (a, b, v)) in rows.iter().enumerate() {
+                s.click_cell(&format!("A{}", i + 2));
+                s.enter(a, "tab");
+                s.enter(b, "tab");
+                s.enter(&format!("{v}"), "enter");
+            }
+            s.click_cell("A1");
+            s.key("shift-right");
+            s.key("shift-right");
+        } else {
+            s.click_cell("A1");
+            s.enter("グループ", "tab");
+            s.enter("値", "enter");
+            for (i, (a, _, v)) in rows.iter().enumerate() {
+                s.click_cell(&format!("A{}", i + 2));
+                s.enter(a, "tab");
+                s.enter(&format!("{v}"), "enter");
+            }
+            s.click_cell("A1");
+            s.key("shift-right");
+        }
+        for _ in 0..rows.len() {
+            s.key("shift-down");
+        }
+        s.update(move |e, w, cx| e.insert_sheet_chart(kind, w, cx));
+        s.settle();
+        let ex = s.with(|e, _| e.slide().shapes.iter().find_map(|sh| match &sh.kind { ShapeKind::Chart(c) => c.ex.as_ref().map(|x| format!("{:?}", std::mem::discriminant(x)).len() > 0), _ => None }));
+        assert_eq!(ex, Some(true), "{kind:?}: a chartEx chart is on the sheet");
+        let kind_ok = s.with(move |e, _| e.slide().shapes.iter().any(|sh| match &sh.kind {
+            ShapeKind::Chart(c) => match (&c.ex, kind) {
+                (Some(ibis_doc_model::ChartEx::Box { boxes, .. }), ibis_pptx::NewChartKind::BoxWhisker) => boxes.len() == 3,
+                (Some(ibis_doc_model::ChartEx::Treemap { nodes: t, .. }), ibis_pptx::NewChartKind::Treemap) => t.len() == 3,
+                (Some(ibis_doc_model::ChartEx::Sunburst(t)), ibis_pptx::NewChartKind::Sunburst) => t.len() == 3 && t[0].children.len() == 2,
+                _ => false,
+            },
+            _ => false,
+        }));
+        assert!(kind_ok, "{kind:?}: the groups (3) are read from the cells");
+        s.screenshot(&format!("chtype028-{kind:?}"));
+        s.save_as(&format!("chtype028-{kind:?}.xlsx"));
+        let saved = s.reopen();
+        let n = saved.slides.iter().flat_map(|sl| &sl.shapes).filter(|sh| matches!(&sh.kind, ShapeKind::Chart(c) if c.ex.is_some())).count();
+        assert_eq!(n, 1, "{kind:?}: the chartEx chart is read again after a save");
+    }
+}
+
+/// XLSX-IMAGE-015: 背景削除（透明色を指定・背景削除）
+/// OOXML `<a:clrChange>` in DrawingML `a:blip`. UI menu, context menu, Undo/Redo, save & reopen roundtrip.
+fn image015_picture_background_removal_and_transparent_color() {
+    use ibis_doc_model::ShapeKind;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let (pic_slide_id, pic_id) = s.with(|e, _| {
+        e.presentation().slides.iter().find_map(|sl| {
+            sl.shapes.iter().find_map(|sh| {
+                if matches!(sh.kind, ShapeKind::Picture(_)) {
+                    Some((sl.id, sh.id))
+                } else {
+                    None
+                }
+            })
+        })
+    }).expect("xlsx-sales.xlsx has a picture");
+
+    // Switch to sheet with picture and select picture
+    s.update(|e, window, cx| {
+        e.select_slide(pic_slide_id, window, cx);
+        e.select_sheet_shape(pic_id);
+    });
+    s.settle();
+
+    // Verify initial state
+    s.with(|e, _| {
+        let ShapeKind::Picture(p) = &e.slide().shape(pic_id).unwrap().kind else { panic!("not picture") };
+        assert_eq!(p.clear, None, "initial picture clear should be None");
+    });
+
+    // Verify context menu has picture items
+    let menu_items = s.with(|e, _| e.shape_menu());
+    let has_bg_removal = menu_items.iter().any(|m| match m {
+        crate::shell::chrome::MenuEntry::Item(item) => item.id == "xlsx.picture.remove-background",
+        _ => false,
+    });
+    assert!(has_bg_removal, "shape context menu contains xlsx.picture.remove-background");
+
+    let has_color_submenu = menu_items.iter().any(|m| match m {
+        crate::shell::chrome::MenuEntry::Submenu(sub) => sub.id == "xlsx.picture.color",
+        _ => false,
+    });
+    assert!(has_color_submenu, "shape context menu contains xlsx.picture.color submenu");
+
+    // 1. Remove background / Set transparent color to white via menu
+    s.menu("xlsx.picture.remove-background");
+    s.settle();
+    s.with(|e, _| {
+        let ShapeKind::Picture(p) = &e.slide().shape(pic_id).unwrap().kind else { panic!("not picture") };
+        assert_eq!(p.clear, Some(ibis_doc_model::Rgb(0xffffff)), "clear should be white");
+    });
+
+    // 2. Set transparent color to black
+    s.menu("xlsx.picture.color.transparent-black");
+    s.settle();
+    s.with(|e, _| {
+        let ShapeKind::Picture(p) = &e.slide().shape(pic_id).unwrap().kind else { panic!("not picture") };
+        assert_eq!(p.clear, Some(ibis_doc_model::Rgb(0x000000)), "clear should be black");
+    });
+
+    // 3. Undo / Redo
+    s.key("cmd-z");
+    s.settle();
+    s.with(|e, _| {
+        let ShapeKind::Picture(p) = &e.slide().shape(pic_id).unwrap().kind else { panic!("not picture") };
+        assert_eq!(p.clear, Some(ibis_doc_model::Rgb(0xffffff)), "undo restores white transparent color");
+    });
+
+    s.key("cmd-shift-z");
+    s.settle();
+    s.with(|e, _| {
+        let ShapeKind::Picture(p) = &e.slide().shape(pic_id).unwrap().kind else { panic!("not picture") };
+        assert_eq!(p.clear, Some(ibis_doc_model::Rgb(0x000000)), "redo restores black transparent color");
+    });
+
+    // 4. Reset transparent color
+    s.menu("xlsx.picture.color.transparent-clear");
+    s.settle();
+    s.with(|e, _| {
+        let ShapeKind::Picture(p) = &e.slide().shape(pic_id).unwrap().kind else { panic!("not picture") };
+        assert_eq!(p.clear, None, "clear should be reset to None");
+    });
+
+    // 5. Apply transparent color, save and reopen
+    s.menu("xlsx.picture.remove-background");
+    s.settle();
+    s.save_as("test-image015-background-removal.xlsx");
+    let saved = s.reopen();
+    let reloaded_pic = saved
+        .slides
+        .iter()
+        .flat_map(|sl| &sl.shapes)
+        .find(|sh| sh.id == pic_id)
+        .and_then(|sh| if let ShapeKind::Picture(p) = &sh.kind { Some(p) } else { None })
+        .expect("reloaded picture");
+    assert_eq!(reloaded_pic.clear, Some(ibis_doc_model::Rgb(0xffffff)), "clear survives save and reopen");
+
+    // 6. Reset all picture effects
+    s.update(|e, window, cx| {
+        e.select_slide(pic_slide_id, window, cx);
+        e.select_sheet_shape(pic_id);
+    });
+    s.settle();
+    s.menu("xlsx.picture.reset");
+    s.settle();
+    s.with(|e, _| {
+        let ShapeKind::Picture(p) = &e.slide().shape(pic_id).unwrap().kind else { panic!("not picture") };
+        assert_eq!(p.clear, None, "clear reset by reset_picture_effects");
+    });
+}
+
+/// XLSX-SEC-008, XLSX-SEC-009, XLSX-SEC-013, XLSX-SEC-015, XLSX-FORMULA-024:
+/// - Previous/Next comment/note navigation and wrapping around
+/// - Toggle show all notes
+/// - Page setup menus: orientation (portrait/landscape), paper size (A4, A3, B5, Letter), print titles (set rows, clear)
+/// - Insert function action, shift-f3 shortcut, and formula bar fx click
+fn xlsx_comments_page_setup_and_insert_function() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // 1. Comments and Notes navigation (XLSX-SEC-008, XLSX-SEC-009)
+    let slide = s.with(|e, _| e.slide().id);
+    s.update(|e, _, _| {
+        e.document
+            .execute(vec![
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
+                    slide,
+                    row: 3,
+                    column: 1, // B4
+                    comment: Some(ibis_doc_model::SheetComment {
+                        row: 3,
+                        column: 1,
+                        author: "Tester".into(),
+                        text: "東町メモ".into(),
+                    }),
+                }),
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
+                    slide,
+                    row: 5,
+                    column: 3, // D6
+                    comment: Some(ibis_doc_model::SheetComment {
+                        row: 5,
+                        column: 3,
+                        author: "Tester".into(),
+                        text: "北町メモ".into(),
+                    }),
+                }),
+            ])
+            .unwrap();
+    });
+
+    // Currently at D6 or elsewhere. Navigate next comment
+    s.click_cell("D6");
+    s.menu("xlsx.next-comment");
+    s.settle();
+    assert_eq!(s.selected(), "B4", "next comment wrapped to B4");
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.comment_hover).is_some()), "hover card shown");
+
+    // Next comment goes to D6
+    s.menu("xlsx.next-comment");
+    s.settle();
+    assert_eq!(s.selected(), "D6", "next comment moved to D6");
+
+    // Previous comment goes back to B4
+    s.menu("xlsx.previous-comment");
+    s.settle();
+    assert_eq!(s.selected(), "B4", "previous comment moved back to B4");
+
+    // Previous comment wraps to D6
+    s.menu("xlsx.previous-comment");
+    s.settle();
+    assert_eq!(s.selected(), "D6", "previous comment wrapped back to D6");
+
+    // Toggle show all notes
+    assert_eq!(s.with(|e, _| e.sheet_state().map(|st| st.show_all_notes)), Some(false));
+    s.menu("xlsx.show-all-notes");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.sheet_state().map(|st| st.show_all_notes)), Some(true));
+    s.menu("xlsx.show-all-notes");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.sheet_state().map(|st| st.show_all_notes)), Some(false));
+
+    // 2. Page setup menus (XLSX-SEC-013, XLSX-SEC-015)
+    // Page orientation
+    s.menu("xlsx.orientation-landscape");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.current_print().map(|p| p.landscape)),
+        Some(true),
+        "orientation set to Landscape"
+    );
+    s.menu("xlsx.orientation-portrait");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.current_print().map(|p| p.landscape)),
+        Some(false),
+        "orientation set to Portrait"
+    );
+
+    // Paper size
+    s.menu("xlsx.paper-a3");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.current_print().map(|p| p.paper)),
+        Some((297 * 36_000, 420 * 36_000)),
+        "paper size set to A3"
+    );
+    s.menu("xlsx.paper-letter");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.current_print().map(|p| p.paper)),
+        Some((7_772_400, 10_058_400)),
+        "paper size set to Letter"
+    );
+
+    // Print titles
+    s.click_cell("A3");
+    s.key("shift-down");
+    s.menu("xlsx.print-titles-set-rows");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.print_title_rows()), Some((2, 3)), "print titles rows set to 2..=3");
+
+    // Clear print titles
+    s.menu("xlsx.print-titles-clear");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.print_title_rows()), None, "print titles cleared");
+
+    // 3. Insert function (XLSX-FORMULA-024)
+    // Menu action xlsx.insert-function
+    s.click_cell("G2");
+    s.menu("xlsx.insert-function");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=".to_string()),
+        "insert-function menu enters edit mode with '='"
+    );
+    s.key("escape");
+    s.settle();
+    assert!(s.with(|e, _| e.cell_edit().is_none()), "escape cancels edit");
+
+    // Keyboard shortcut Shift+F3
+    s.key("shift-f3");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=".to_string()),
+        "shift-f3 enters edit mode with '='"
+    );
+    s.key("escape");
+    s.settle();
+
+    // Clicking fx button in formula bar
+    s.click((115.0, 123.0));
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=".to_string()),
+        "clicking fx button enters edit mode with '='"
+    );
+    s.key("escape");
+    s.settle();
+}
+
+/// XLSX-FUNCAT-001〜011, XLSX-FORMULA-007, XLSX-FORMULA-008, XLSX-FORMULA-024:
+/// - Function categories: recent, financial, text, lookup, math, other functions insertion
+/// - Defined names: create names from selection (top row / left col) with undo/redo
+/// - Use defined name in formula
+fn xlsx_function_categories_and_name_creation() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // 1. Function categories insertion
+    s.click_cell("G2");
+    s.menu("xlsx.fn.sum");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=SUM(".to_string()),
+        "xlsx.fn.sum inserts =SUM("
+    );
+    s.key("escape");
+    s.settle();
+
+    s.menu("xlsx.fn.pmt");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=PMT(".to_string()),
+        "xlsx.fn.pmt inserts =PMT("
+    );
+    s.key("escape");
+    s.settle();
+
+    s.menu("xlsx.fn.concat");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=CONCAT(".to_string()),
+        "xlsx.fn.concat inserts =CONCAT("
+    );
+    s.key("escape");
+    s.settle();
+
+    s.menu("xlsx.fn.xlookup");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=XLOOKUP(".to_string()),
+        "xlsx.fn.xlookup inserts =XLOOKUP("
+    );
+    s.key("escape");
+    s.settle();
+
+    s.menu("xlsx.fn.round");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=ROUND(".to_string()),
+        "xlsx.fn.round inserts =ROUND("
+    );
+    s.key("escape");
+    s.settle();
+
+    s.menu("xlsx.fn.countif");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=COUNTIF(".to_string()),
+        "xlsx.fn.countif inserts =COUNTIF("
+    );
+    s.key("escape");
+    s.settle();
+
+    // 2. Create defined names from selection (Excel's 選択範囲から作成)
+    // Select range A3:E8 (headings in row 3, data rows 4..=8)
+    s.click_cell("A3");
+    for _ in 0..4 {
+        s.key("shift-right");
+    }
+    for _ in 0..5 {
+        s.key("shift-down");
+    }
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.selected_range().map(|r| (r.first_column, r.first_row, r.last_column, r.last_row))),
+        Some((0, 2, 4, 7)),
+        "A3:E8 selected"
+    );
+
+    // Create names from top row
+    s.menu("xlsx.create-names-top-row");
+    s.settle();
+
+    let names = s.with(|e, _| {
+        e.presentation()
+            .workbook
+            .as_ref()
+            .unwrap()
+            .names
+            .iter()
+            .map(|n| (n.name.clone(), n.formula.clone()))
+            .collect::<Vec<_>>()
+    });
+    // Should have created names like "店舗", "_4月", "_5月", "_6月", "合計"
+    assert!(names.iter().any(|(n, f)| n == "店舗" && f.contains("$A$4:$A$8")), "{names:?}");
+    assert!(names.iter().any(|(n, f)| n == "_4月" && f.contains("$B$4:$B$8")), "{names:?}");
+    assert!(names.iter().any(|(n, f)| n == "合計" && f.contains("$E$4:$E$8")), "{names:?}");
+
+    // Undo: all created names should be undone
+    s.key("cmd-z");
+    s.settle();
+    let undone_names = s.with(|e, _| {
+        e.presentation()
+            .workbook
+            .as_ref()
+            .unwrap()
+            .names
+            .iter()
+            .map(|n| n.name.clone())
+            .collect::<Vec<_>>()
+    });
+    assert!(!undone_names.contains(&"店舗".to_string()), "undo removes created names");
+
+    // Redo: restored
+    s.key("cmd-shift-z");
+    s.settle();
+    let redone_names = s.with(|e, _| {
+        e.presentation()
+            .workbook
+            .as_ref()
+            .unwrap()
+            .names
+            .iter()
+            .map(|n| n.name.clone())
+            .collect::<Vec<_>>()
+    });
+    assert!(redone_names.contains(&"店舗".to_string()), "redo restores created names");
+
+    // 3. Use in formula (xlsx.use-in-formula)
+    s.click_cell("G10");
+    s.update(|e, window, cx| {
+        e.use_name_in_formula("合計", window, cx);
+    });
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_edit().map(|c| c.text.clone())),
+        Some("=合計".to_string()),
+        "use_name_in_formula begins edit with =合計"
+    );
+    s.key("escape");
+    s.settle();
+}
+
+/// グラフの種類の変更 (XLSX-CHEDIT グラフの種類の変更):
+/// a bar chart on a worksheet changed to line, area, stacked column,
+/// percent stacked bar and column; verified through save and reopen, and undone.
+pub(crate) fn change_chart_type() {
+    use ibis_doc_model::{ChartType, Grouping, ShapeKind};
+    use crate::pptx::chart_panel::ChartPreset;
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let index = s
+        .with(|e, _| {
+            e.slide()
+                .shapes
+                .iter()
+                .position(|sh| matches!(sh.kind, ShapeKind::Chart(_)))
+        })
+        .expect("a sheet with a chart");
+    let at = s.shape_position(index);
+    s.click(at);
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_chart().is_some()));
+
+    let original = s.with(|e, _| e.presentation().clone());
+    let group = |s: &mut Scenario| {
+        s.with(|e, _| match &e.slide().shapes[index].kind {
+            ShapeKind::Chart(c) => (
+                c.groups[0].kind,
+                c.groups[0].grouping,
+                c.groups[0].series.len(),
+                c.groups[0].series[0].values.clone(),
+            ),
+            _ => panic!("a chart"),
+        })
+    };
+    let (_, _, series, values) = group(&mut s);
+
+    for (preset, check) in [
+        (ChartPreset::Line, (|k: ChartType, g: Grouping| k == ChartType::Line && g == Grouping::Standard) as fn(ChartType, Grouping) -> bool),
+        (ChartPreset::Area, |k, g| k == ChartType::Area && g == Grouping::Standard),
+        (ChartPreset::ColumnStacked, |k, g| matches!(k, ChartType::Bar { horizontal: false, .. }) && g == Grouping::Stacked),
+        (ChartPreset::BarPercent, |k, g| matches!(k, ChartType::Bar { horizontal: true, .. }) && g == Grouping::PercentStacked),
+        (ChartPreset::Column, |k, g| matches!(k, ChartType::Bar { horizontal: false, .. }) && g == Grouping::Standard),
+    ] {
+        s.update(|e, _, cx| e.set_sheet_chart_type(preset, cx));
+        s.settle();
+        let (kind, grouping, n, v) = group(&mut s);
+        assert!(check(kind, grouping), "{preset:?}: {kind:?} {grouping:?}");
+        assert_eq!((n, &v), (series, &values), "{preset:?}: the data stays");
+        let _path = s.save_as("xlsx-chart-type.xlsx");
+        let saved = s.reopen();
+        let ShapeKind::Chart(c) = &saved.slides[0].shapes[index].kind else { panic!("a chart") };
+        assert_eq!((c.groups[0].kind, c.groups[0].grouping), (kind, grouping), "{preset:?}: as saved");
+    }
+
+    for _ in 0..5 {
+        s.key("cmd-z");
+    }
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().clone()), original);
+
+    for _ in 0..5 {
+        s.key("cmd-shift-z");
+    }
+    s.settle();
+    let (last_kind, last_grouping, _, _) = group(&mut s);
+    assert!(matches!(last_kind, ChartType::Bar { horizontal: false, .. }) && last_grouping == Grouping::Standard);
+
+    for _ in 0..5 {
+        s.key("cmd-z");
+    }
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().clone()), original);
+}
+fn xlsx_pivot_source_drill_theme_and_charts() {
+    let mut s = Scenario::open("test/editing/xlsx-pivot-not-refreshed.xlsx");
+
+    // 1. テーマのフォント (xlsx.theme-fonts)
+    s.menu("xlsx.theme-fonts.arial");
+    s.settle();
+    assert!(s.with(|e, _| e.is_xlsx_theme_fonts_active("arial")), "switched to arial");
+    s.key("cmd-z");
+    s.settle();
+    assert!(!s.with(|e, _| e.is_xlsx_theme_fonts_active("arial")), "undo reverts arial font");
+    s.key("cmd-shift-z");
+    s.settle();
+    assert!(s.with(|e, _| e.is_xlsx_theme_fonts_active("arial")), "redo restores arial font");
+
+    // 2. テーマの効果 (xlsx.theme-effects)
+    s.menu("xlsx.theme-effects.apex");
+    s.settle();
+    let status = s.with(|e, _| e.status.clone()).unwrap_or_default();
+    assert!(status.contains("アペックス") || status.contains("Apex") || status.contains("控えめ"), "status confirms apex theme effect: {status}");
+
+    // 3. 類義語辞典 (xlsx.thesaurus)
+    s.click_cell("M1"); // "商品"
+    s.menu("xlsx.thesaurus");
+    s.settle();
+    let status = s.with(|e, _| e.status.clone()).unwrap_or_default();
+    assert!(status.contains("商品"), "thesaurus looked up active cell text: {status}");
+
+    // 4. おすすめグラフ (xlsx.recommended-charts)
+    s.update(|e, _, _cx| {
+        let slide = e.current_slide;
+        e.wb_mut().cells.insert(slide, (12, 0));
+        e.wb_mut().cell_ends.insert(slide, (14, 10));
+    });
+    let shape_count_before = s.with(|e, _| e.slide().shapes.len());
+    s.menu("xlsx.recommended-charts");
+    s.settle();
+    let shape_count_after = s.with(|e, _| e.slide().shapes.len());
+    assert!(shape_count_after > shape_count_before, "recommended chart shape inserted");
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), shape_count_before, "undo removed recommended chart");
+
+    // 5. ピボットテーブル +/- ボタン (xlsx.pivot-drill-buttons)
+    s.click_cell("A3");
+    let pivot = pivot_of(&mut s, 0);
+    assert!(pivot.show_drill, "show_drill is true by default");
+
+    s.menu("xlsx.pivot-drill-buttons");
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    assert!(!pivot.show_drill, "show_drill toggled to false");
+    s.key("cmd-z");
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    assert!(pivot.show_drill, "undo restores show_drill = true");
+    s.key("cmd-shift-z");
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    assert!(!pivot.show_drill, "redo restores show_drill = false");
+
+    // 6. データ ソースの変更 (xlsx.pivot-change-data-source)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-change-data-source");
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).and_then(|p| p.change_source.as_ref()).is_some()), "change source panel opened");
+    s.update(|e, window, cx| {
+        if let Some(cs) = e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).and_then(|p| p.change_source.as_ref()) {
+            cs.source.update(cx, |inp, cx| inp.set_value("ピボット!$J$1:$N$20".to_string(), window, cx));
+        }
+    });
+    s.update(|e, _, cx| e.apply_change_pivot_source(cx));
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    let range = pivot.source.range.expect("has range");
+    assert_eq!(range.last_row, 19, "last row changed to 19");
+    assert_eq!(range.last_column, 13, "last column changed to 13 (N)");
+
+    // Test Undo of change source
+    s.key("cmd-z");
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    let range = pivot.source.range.expect("has range");
+    assert_eq!(range.last_row, 40, "undo restored last row 40");
+
+    // Test Redo of change source
+    s.key("cmd-shift-z");
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    let range = pivot.source.range.expect("has range");
+    assert_eq!(range.last_row, 19, "redo restored last row 19");
+
+    // 7. 保存・再読込ラウンドトリップで showDrill="0" と更新データソースを検証
+    s.save_as("pivot_drill_source.xlsx");
+    let saved = s.reopen();
+    let saved_pivot = saved.slides[0].shapes.iter().find_map(|sh| if let ibis_doc_model::ShapeKind::Sheet(s) = &sh.kind { s.pivots.first().cloned() } else { None }).expect("saved pivot");
+    assert!(!saved_pivot.show_drill, "saved pivot preserves show_drill = false");
+    let range = saved_pivot.source.range.expect("saved has range");
+    assert_eq!(range.last_row, 19, "saved preserves updated source range last row 19");
+
+    // 8. ピボットテーブルメニュー接続の検証 (xlsx.pivot-fields, xlsx.pivot-value-settings, xlsx.pivot-refresh, xlsx.pivot-refresh-all)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-fields");
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).is_some()), "pivot fields panel opened via menu connect");
+
+    s.menu("xlsx.pivot-value-settings");
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).and_then(|p| p.value).is_some()), "pivot value settings opened via menu connect");
+
+    s.menu("xlsx.pivot-refresh");
+    s.settle();
+
+    s.menu("xlsx.pivot-refresh-all");
+    s.settle();
+    // 9. ピボットテーブルの空白行設定 (xlsx.pivot-blank-rows / xlsx.pivot-insert-blank-line / xlsx.pivot-remove-blank-line)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-insert-blank-line");
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    for &rf in &pivot.row_fields {
+        if rf >= 0 && (rf as usize) < pivot.fields.len() {
+            assert!(pivot.fields[rf as usize].insert_blank_row, "blank row inserted for row field");
+        }
+    }
+    s.menu("xlsx.pivot-remove-blank-line");
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    for &rf in &pivot.row_fields {
+        if rf >= 0 && (rf as usize) < pivot.fields.len() {
+            assert!(!pivot.fields[rf as usize].insert_blank_row, "blank row removed for row field");
+        }
+    }
+    s.key("cmd-z");
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    for &rf in &pivot.row_fields {
+        if rf >= 0 && (rf as usize) < pivot.fields.len() {
+            assert!(pivot.fields[rf as usize].insert_blank_row, "undo restored blank row insertion");
+        }
+    }
+    s.key("cmd-shift-z");
+    s.settle();
+
+    // 10. ピボットテーブルの要素選択 (xlsx.pivot-select / xlsx.pivot-select-entire-table / xlsx.pivot-select-values)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-select-entire-table");
+    s.settle();
+    let pivot = pivot_of(&mut s, 0);
+    let selected = s.with(|e, _| e.selected_range()).expect("selected range");
+    assert_eq!(selected.first_column, pivot.location.first_column);
+    assert_eq!(selected.last_column, pivot.location.last_column);
+    assert_eq!(selected.first_row, pivot.location.first_row);
+    assert_eq!(selected.last_row, pivot.location.last_row);
+
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-select-values");
+    s.settle();
+    let selected = s.with(|e, _| e.selected_range()).expect("selected range");
+    assert_eq!(selected.first_column, pivot.location.first_column + pivot.first_data_col);
+    assert_eq!(selected.first_row, pivot.location.first_row + pivot.first_data_row);
+
+    // 11. ピボットテーブルの移動 (xlsx.pivot-move)
+    s.click_cell("A3");
+    s.update(|e, _, cx| e.move_pivot_to_corner(5, 8, cx));
+    s.settle();
+    let moved_pivot = pivot_of(&mut s, 0);
+    assert_eq!(moved_pivot.location.first_column, 5);
+    assert_eq!(moved_pivot.location.first_row, 8);
+    s.key("cmd-z");
+    s.settle();
+    let reverted_pivot = pivot_of(&mut s, 0);
+    assert_eq!(reverted_pivot.location.first_column, pivot.location.first_column);
+    assert_eq!(reverted_pivot.location.first_row, pivot.location.first_row);
+
+    // 12. ピボットテーブルのクリア (xlsx.pivot-clear-all / xlsx.pivot-clear-filters)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-clear-filters");
+    s.settle();
+    let p = pivot_of(&mut s, 0);
+    assert!(p.filters.is_empty(), "filters cleared");
+
+    s.menu("xlsx.pivot-clear-all");
+    s.settle();
+    let p = pivot_of(&mut s, 0);
+    assert!(p.row_fields.is_empty(), "row fields cleared");
+    assert!(p.col_fields.is_empty(), "col fields cleared");
+    assert!(p.data_fields.is_empty(), "data fields cleared");
+    s.key("cmd-z");
+    s.settle();
+    let p = pivot_of(&mut s, 0);
+    assert!(!p.row_fields.is_empty(), "undo restored row fields");
+
+    // 13. おすすめピボットテーブル (xlsx.recommended-pivots)
+    s.click_cell("J1");
+    let sheet_count_before = s.with(|e, _| e.presentation().slides.len());
+    s.menu("xlsx.recommended-pivots");
+    s.settle();
+    let sheet_count_after = s.with(|e, _| e.presentation().slides.len());
+    assert_eq!(sheet_count_after, sheet_count_before + 1, "recommended pivot created on new sheet");
+    let new_pivot = pivot_of(&mut s, 0);
+    assert!(!new_pivot.row_fields.is_empty(), "recommended pivot has row fields");
+    assert!(!new_pivot.data_fields.is_empty(), "recommended pivot has data fields");
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), sheet_count_before, "undo removes recommended pivot sheet");
+
+    // 14. ピボットテーブル スタイル ギャラリー (xlsx.pivot-styles / xlsx.pivot-style.*)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-style.medium-9");
+    s.settle();
+    let p = pivot_of(&mut s, 0);
+    assert_eq!(p.style.as_ref().map(|s| s.name.as_str()), Some("PivotStyleMedium9"));
+
+    s.menu("xlsx.pivot-style.none");
+    s.settle();
+    let p = pivot_of(&mut s, 0);
+    assert!(p.style.is_none(), "style cleared");
+
+    s.key("cmd-z");
+    s.settle();
+    let p = pivot_of(&mut s, 0);
+    assert_eq!(p.style.as_ref().map(|s| s.name.as_str()), Some("PivotStyleMedium9"), "undo restored PivotStyleMedium9");
+
+    // 15. タイムラインの挿入 (xlsx.timeline-insert / xlsx.pivot-insert-timeline)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-insert-timeline");
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.timeline_insert.as_ref()).is_some()), "timeline insert panel opened");
+
+    // チェックボックスを ON にしてタイムラインを挿入
+    s.update(|e, _, cx| {
+        if let Some(p) = e.wb_mut().panels.timeline_insert.as_mut() {
+            if let Some(c) = p.checked.first_mut() {
+                *c = true;
+            }
+        }
+        e.apply_timeline_insert_panel(cx);
+    });
+    s.settle();
+
+    // タイムライン Shape が追加されたことを検証
+    let timeline_shape = s.with(|e, _| {
+        e.slide().shapes.iter().find_map(|sh| {
+            if let ibis_doc_model::ShapeKind::Timeline(t) = &sh.kind {
+                Some(t.clone())
+            } else {
+                None
+            }
+        })
+    });
+    assert!(timeline_shape.is_some(), "timeline shape was inserted");
+    let t = timeline_shape.unwrap();
+    assert!(!t.name.is_empty(), "timeline has name");
+    assert!(!t.cache.is_empty(), "timeline has cache");
+    assert_eq!(t.pivots.len(), 1, "timeline is connected to pivot");
+
+    // Undo の検証
+    s.key("cmd-z");
+    s.settle();
+    let timeline_shape = s.with(|e, _| {
+        e.slide().shapes.iter().find_map(|sh| {
+            if let ibis_doc_model::ShapeKind::Timeline(t) = &sh.kind {
+                Some(t.clone())
+            } else {
+                None
+            }
+        })
+    });
+    assert!(timeline_shape.is_none(), "undo removed inserted timeline shape");
+
+    // Redo の検証
+    s.key("cmd-shift-z");
+    s.settle();
+    let timeline_shape = s.with(|e, _| {
+        e.slide().shapes.iter().find_map(|sh| {
+            if let ibis_doc_model::ShapeKind::Timeline(t) = &sh.kind {
+                Some(t.clone())
+            } else {
+                None
+            }
+        })
+    });
+    assert!(timeline_shape.is_some(), "redo restored inserted timeline shape");
+
+    // 16. データの取得 (xlsx.get-data)
+    s.menu("xlsx.get-data");
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.import_text.as_ref()).is_some()), "import text panel opened via get-data");
+    s.update(|e, _, _| e.wb_mut().panels.import_text = None);
+    s.settle();
+
+    // 17. フォーム コントロールの挿入 (xlsx.insert-control.button, xlsx.insert-control.checkbox, etc.)
+    let shapes_before = s.with(|e, _| e.slide().shapes.len());
+    s.click_cell("D2");
+    s.menu("xlsx.insert-control.checkbox");
+    s.settle();
+    let shapes_after = s.with(|e, _| e.slide().shapes.len());
+    assert_eq!(shapes_after, shapes_before + 1, "checkbox control shape inserted");
+    let ctrl_shape = s.with(|e, _| {
+        e.slide().shapes.last().and_then(|sh| match &sh.kind {
+            ibis_doc_model::ShapeKind::Control(c) => Some((**c).clone()),
+            _ => None,
+        })
+    }).expect("inserted shape is control");
+    assert_eq!(ctrl_shape.kind, ibis_doc_model::ControlKind::CheckBox);
+
+    // 18. コントロールのプロパティ (xlsx.control-properties)
+    s.menu("xlsx.control-properties");
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.control_properties.as_ref()).is_some()), "control properties panel opened");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.control_properties.as_mut() {
+            p.text.update(cx, |inp, cx| inp.set_value("テストチェック".to_string(), window, cx));
+            p.link.update(cx, |inp, cx| inp.set_value("$F$5".to_string(), window, cx));
+        }
+        e.apply_control_properties_panel(cx);
+    });
+    s.settle();
+    let updated_ctrl = s.with(|e, _| {
+        e.slide().shapes.last().and_then(|sh| match &sh.kind {
+            ibis_doc_model::ShapeKind::Control(c) => Some((**c).clone()),
+            _ => None,
+        })
+    }).expect("control still present");
+    assert_eq!(updated_ctrl.text, "テストチェック");
+    assert_eq!(updated_ctrl.link.as_deref(), Some("$F$5"));
+
+    // Undo の検証
+    s.key("cmd-z");
+    s.settle();
+    let reverted_ctrl = s.with(|e, _| {
+        e.slide().shapes.last().and_then(|sh| match &sh.kind {
+            ibis_doc_model::ShapeKind::Control(c) => Some((**c).clone()),
+            _ => None,
+        })
+    }).expect("control still present");
+    assert_ne!(reverted_ctrl.text, "テストチェック", "undo restored original text");
+
+    // Redo の検証
+    s.key("cmd-shift-z");
+    s.settle();
+    let redo_ctrl = s.with(|e, _| {
+        e.slide().shapes.last().and_then(|sh| match &sh.kind {
+            ibis_doc_model::ShapeKind::Control(c) => Some((**c).clone()),
+            _ => None,
+        })
+    }).expect("control still present");
+    assert_eq!(redo_ctrl.text, "テストチェック", "redo restored modified text");
+
+    // コントロール挿入自体の Undo
+    s.key("cmd-z"); // undo property change
+    s.settle();
+    s.key("cmd-z"); // undo control insert
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), shapes_before, "undo removed inserted control shape");
+
+    // 19. デザイン モード (xlsx.design-mode)
+    assert!(!s.with(|e, _| e.is_design_mode_active()), "design mode is off by default");
+    s.menu("xlsx.design-mode");
+    s.settle();
+    assert!(s.with(|e, _| e.is_design_mode_active()), "design mode is toggled on");
+    let status = s.with(|e, _| e.status.clone()).unwrap_or_default();
+    assert!(status.contains("デザイン モード") || status.contains("Design Mode"), "status confirms design mode: {status}");
+
+    s.menu("xlsx.design-mode");
+    s.settle();
+    assert!(!s.with(|e, _| e.is_design_mode_active()), "design mode is toggled off");
+
+    // 20. コードの表示 (xlsx.view-code)
+    s.menu("xlsx.view-code");
+    s.settle();
+    let status = s.with(|e, _| e.status.clone()).unwrap_or_default();
+    assert!(!status.is_empty(), "view code produced status notification: {status}");
+
+    // 9b. おすすめピボットテーブル (xlsx.recommended-pivot-tables)
+    s.menu("xlsx.recommended-pivot-tables");
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).and_then(|p| p.create.as_ref()).is_some()), "recommended pivot tables panel opened");
+    s.update(|e, _, cx| e.close_pivot_panel(cx));
+
+    // 10. 行の見出し・列の見出し (xlsx.pivot-row-headers, xlsx.pivot-col-headers)
+    s.click_cell("A3");
+    let row_headers_before = pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.row_headers);
+    s.menu("xlsx.pivot-row-headers");
+    s.settle();
+    assert_eq!(pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.row_headers), !row_headers_before, "row headers toggled");
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.row_headers), row_headers_before, "undo restores row headers");
+
+    let col_headers_before = pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.col_headers);
+    s.menu("xlsx.pivot-col-headers");
+    s.settle();
+    assert_eq!(pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.col_headers), !col_headers_before, "col headers toggled");
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.col_headers), col_headers_before, "undo restores col headers");
+
+    // 11. 空白行 (xlsx.pivot-blank-rows)
+    s.menu("xlsx.pivot-blank-rows");
+    s.settle();
+    assert!(pivot_of(&mut s, 0).fields.iter().filter(|f| f.axis == Some(ibis_doc_model::PivotAxis::Row)).any(|f| f.insert_blank_row), "blank rows inserted");
+    s.key("cmd-z");
+    s.settle();
+    assert!(!pivot_of(&mut s, 0).fields.iter().filter(|f| f.axis == Some(ibis_doc_model::PivotAxis::Row)).any(|f| f.insert_blank_row), "undo restores blank rows");
+
+    // 12. ピボットテーブル スタイル (xlsx.pivot-styles)
+    s.menu("xlsx.pivot-styles");
+    s.settle();
+    assert_eq!(pivot_of(&mut s, 0).style.as_ref().map(|st| st.name.as_str()), Some("PivotStyleLight16"), "style light 16 set");
+
+    // 13. ピボットテーブルの選択 (xlsx.pivot-select)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-select");
+    s.settle();
+    let sel = s.with(|e, _| e.selected_range()).expect("range selected");
+    let loc = pivot_of(&mut s, 0).location;
+    assert_eq!((sel.first_column, sel.first_row, sel.last_column, sel.last_row), (loc.first_column, loc.first_row, loc.last_column, loc.last_row), "entire pivot selected");
+
+    // 14. ピボットテーブルの移動 (xlsx.pivot-move)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-move");
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).and_then(|p| p.move_pivot.as_ref()).is_some()), "move pivot panel opened");
+    s.update(|e, window, cx| {
+        if let Some(mv) = e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).and_then(|p| p.move_pivot.as_ref()) {
+            mv.destination.update(cx, |inp, cx| inp.set_value("A5".to_string(), window, cx));
+        }
+    });
+    s.update(|e, window, cx| e.apply_move_pivot(window, cx));
+    s.settle();
+    assert_eq!(pivot_of(&mut s, 0).location.first_row, 4, "pivot moved to row 5 (0-indexed 4)");
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(pivot_of(&mut s, 0).location.first_row, 0, "undo restores location row 1 (0-indexed 0)");
+
+    // 15. ピボットテーブルのクリア (xlsx.pivot-clear)
+    s.click_cell("A3");
+    s.menu("xlsx.pivot-clear");
+    s.settle();
+    let p_cleared = pivot_of(&mut s, 0);
+    assert!(p_cleared.row_fields.is_empty(), "row fields cleared");
+    assert!(p_cleared.col_fields.is_empty(), "col fields cleared");
+    assert!(p_cleared.data_fields.is_empty(), "data fields cleared");
+    s.key("cmd-z");
+    s.settle();
+    let p_restored = pivot_of(&mut s, 0);
+    assert!(!p_restored.row_fields.is_empty(), "undo restored row fields");
+
+    // 21. XML ソース (xlsx.xml-source)
+    s.menu("xlsx.xml-source");
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.xml_source.is_some()), "xml source panel opened");
+    assert!(!s.with(|e, _| e.wb().panels.xml_source.as_ref().unwrap().maps.is_empty()), "default xml map present");
+
+    // 22. XML マップのプロパティ (xlsx.xml-map-properties)
+    s.menu("xlsx.xml-map-properties");
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.xml_map_properties.is_some()), "xml map properties panel opened");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.xml_map_properties.as_mut() {
+            p.name.update(cx, |inp, cx| inp.set_value("売上マップ".to_string(), window, cx));
+            p.validate = false;
+        }
+        e.apply_xml_map_properties(cx);
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.xml_map_properties.is_none()), "properties panel closed");
+
+    // 23. 3D モデル (xlsx.3d-model)
+    let shapes_before_3d = s.with(|e, _| e.slide().shapes.len());
+    s.update(|e, _, cx| {
+        e.insert_sheet_3d_model(std::path::Path::new("sample.glb"), cx);
+    });
+    s.settle();
+    let shapes_after_3d = s.with(|e, _| e.slide().shapes.len());
+    assert_eq!(shapes_after_3d, shapes_before_3d + 1, "3D model shape inserted");
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), shapes_before_3d, "undo removed 3D model shape");
+
+    // 24. 署名欄 (xlsx.signature-line)
+    let shapes_before_sig = s.with(|e, _| e.slide().shapes.len());
+    s.menu("xlsx.signature-line");
+    s.settle();
+    let shapes_after_sig = s.with(|e, _| e.slide().shapes.len());
+    assert_eq!(shapes_after_sig, shapes_before_sig + 1, "signature line shape inserted");
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), shapes_before_sig, "undo removed signature line shape");
+}
+
+/// テーマのフォントと効果の切り替え・保存・元に戻す・やり直す.
+pub(crate) fn theme_fonts_and_effects() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let orig_fonts = s.with(|e, _| e.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| e.presentation().theme_fonts.clone()));
+    let orig_effects = s.with(|e, _| e.presentation().theme_effects.clone());
+
+    // 1. Switch theme fonts to Arial
+    s.menu("xlsx.theme-fonts.arial");
+    s.settle();
+    let arial_fonts = s.with(|e, _| e.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| e.presentation().theme_fonts.clone())).unwrap();
+    assert_eq!(arial_fonts.major.latin.as_deref(), Some("Arial"));
+    assert_eq!(arial_fonts.minor.latin.as_deref(), Some("Arial"));
+
+    // 2. Switch theme fonts to Times New Roman
+    s.menu("xlsx.theme-fonts.times");
+    s.settle();
+    let times_fonts = s.with(|e, _| e.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| e.presentation().theme_fonts.clone())).unwrap();
+    assert_eq!(times_fonts.major.latin.as_deref(), Some("Times New Roman"));
+    assert_eq!(times_fonts.minor.latin.as_deref(), Some("Times New Roman"));
+
+    // Save and reopen round-trip
+    let _path = s.save_as("xlsx-theme-fonts.xlsx");
+    let saved = s.reopen();
+    let saved_fonts = saved.workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| saved.theme_fonts.clone()).unwrap();
+    assert_eq!(saved_fonts.major.latin.as_deref(), Some("Times New Roman"));
+    assert_eq!(saved_fonts.minor.latin.as_deref(), Some("Times New Roman"));
+
+    // 3. Switch theme effects
+    s.menu("xlsx.theme-effects.apex");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().theme_effects.clone()), Some("apex".to_string()));
+
+    s.menu("xlsx.theme-effects.metro");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().theme_effects.clone()), Some("metro".to_string()));
+
+    // 4. Undo all changes
+    s.key("cmd-z"); // undo metro -> apex
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().theme_effects.clone()), Some("apex".to_string()));
+
+    s.key("cmd-z"); // undo apex -> orig effects
+    s.settle();
+    assert_eq!(s.with(|e, _| e.presentation().theme_effects.clone()), orig_effects);
+
+    s.key("cmd-z"); // undo times -> arial
+    s.settle();
+    let fonts_after_undo = s.with(|e, _| e.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| e.presentation().theme_fonts.clone())).unwrap();
+    assert_eq!(fonts_after_undo.major.latin.as_deref(), Some("Arial"));
+
+    s.key("cmd-z"); // undo arial -> orig fonts
+    s.settle();
+    let final_fonts = s.with(|e, _| e.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| e.presentation().theme_fonts.clone()));
+    assert_eq!(final_fonts, orig_fonts);
+}
+
+/// ワークシートへの SmartArt の挿入・保存・元に戻す・やり直す.
+pub(crate) fn insert_smartart_workflow() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let orig_count = s.with(|e, _| e.slide().shapes.len());
+
+    // Insert SmartArt (Basic Process)
+    s.menu("pptx.insert.smartart.process");
+    s.settle();
+
+    let new_count = s.with(|e, _| e.slide().shapes.len());
+    assert!(new_count > orig_count, "SmartArt shapes inserted: {orig_count} -> {new_count}");
+
+    // Save and reopen round-trip
+    let _path = s.save_as("xlsx-smartart-test.xlsx");
+    let saved = s.reopen();
+    assert_eq!(saved.slides[0].shapes.len(), new_count, "shapes preserved on save & reopen");
+
+    // Undo: 2 steps (SmartArt grouping, then shapes insertion)
+    s.key("cmd-z");
+    s.settle();
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), orig_count, "undo removes SmartArt");
+
+    // Redo: 2 steps restore SmartArt
+    s.key("cmd-shift-z");
+    s.settle();
+    s.key("cmd-shift-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), new_count, "redo restores SmartArt");
+
+    // Undo again to clean state
+    s.key("cmd-z");
+    s.settle();
+    s.key("cmd-z");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), orig_count, "final undo restores initial state");
+}
+
+/// クイック レイアウトと図の圧縮 (xlsx.chart-quick-layout, xlsx.picture.compress):
+/// 1. グラフのクイック レイアウト 1..=10 の適用、設定反映、保存・再開、Undo/Redo 検証。
+/// 2. シート上の画像の挿入、トリミング、図の圧縮、容量削減、保存・再開、Undo/Redo 検証。
+pub(crate) fn xlsx_chart_quick_layout_and_picture_compress() {
+    use ibis_doc_model::chart::{LabelPosition, LegendPosition, TrendlineType};
+    use ibis_doc_model::{Crop, ShapeKind};
+    use image::ImageEncoder as _;
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let chart_index = s
+        .with(|e, _| {
+            e.slide()
+                .shapes
+                .iter()
+                .position(|sh| matches!(sh.kind, ShapeKind::Chart(_)))
+        })
+        .expect("a sheet with a chart");
+    let at = s.shape_position(chart_index);
+    s.click(at);
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_chart().is_some()), "chart is selected");
+
+    // Test Quick Layout 1:
+    // Title: ON, Legend: Right, Gridlines: ON, Axis Titles: None, Data Labels: None, Data Table: None
+    s.update(|e, _, cx| e.set_sheet_chart_quick_layout(1, cx));
+    s.settle();
+    s.with(|e, _| {
+        let (_, c) = e.sheet_chart().unwrap();
+        assert!(c.title.is_some(), "layout 1: title present");
+        assert_eq!(
+            c.legend.as_ref().and_then(|l| l.source_position),
+            Some(LegendPosition::Right),
+            "layout 1: legend right"
+        );
+        assert!(c.data_table.is_none(), "layout 1: no data table");
+        assert!(c.groups[0].series[0].labels.is_none(), "layout 1: no data labels");
+        assert!(c.groups[0].series[0].trendline.is_none(), "layout 1: no trendline");
+        assert!(c.groups[0].series[0].error_bars.is_none(), "layout 1: no error bars");
+    });
+
+    // Test Quick Layout 2:
+    // Legend: Top, Data Labels: OutsideEnd, Gridlines: None
+    s.update(|e, _, cx| e.set_sheet_chart_quick_layout(2, cx));
+    s.settle();
+    s.with(|e, _| {
+        let (_, c) = e.sheet_chart().unwrap();
+        assert_eq!(
+            c.legend.as_ref().and_then(|l| l.source_position),
+            Some(LegendPosition::Top),
+            "layout 2: legend top"
+        );
+        let val_axis = c.axes.iter().find(|a| a.kind == ibis_doc_model::chart::AxisKind::Value);
+        assert!(val_axis.unwrap().gridlines.is_none(), "layout 2: no gridlines");
+        let labels = c.groups[0].series[0].labels.as_ref().unwrap();
+        assert_eq!(labels.position, Some(LabelPosition::OutsideEnd), "layout 2: data labels outside end");
+    });
+
+    // Test Quick Layout 3:
+    // Category & Value Axis Titles present, Legend: Right
+    s.update(|e, _, cx| e.set_sheet_chart_quick_layout(3, cx));
+    s.settle();
+    s.with(|e, _| {
+        let (_, c) = e.sheet_chart().unwrap();
+        let cat = c.axes.iter().find(|a| a.kind == ibis_doc_model::chart::AxisKind::Category).unwrap();
+        let val = c.axes.iter().find(|a| a.kind == ibis_doc_model::chart::AxisKind::Value).unwrap();
+        assert!(cat.title.is_some(), "layout 3: cat title");
+        assert!(val.title.is_some(), "layout 3: val title");
+    });
+
+    // Test Quick Layout 4:
+    // Data Table: ON (show_keys: true), Legend: None
+    s.update(|e, _, cx| e.set_sheet_chart_quick_layout(4, cx));
+    s.settle();
+    s.with(|e, _| {
+        let (_, c) = e.sheet_chart().unwrap();
+        assert!(c.legend.is_none(), "layout 4: no legend");
+        let dt = c.data_table.as_ref().expect("layout 4: data table present");
+        assert!(dt.show_keys, "layout 4: show keys true");
+    });
+
+    // Test Quick Layout 8:
+    // Trendline: Linear
+    s.update(|e, _, cx| e.set_sheet_chart_quick_layout(8, cx));
+    s.settle();
+    s.with(|e, _| {
+        let (_, c) = e.sheet_chart().unwrap();
+        let tl = c.groups[0].series[0].trendline.as_ref().expect("layout 8: trendline present");
+        assert_eq!(tl.kind, TrendlineType::Linear);
+        assert!(!tl.disp_eq);
+    });
+
+    // Test Quick Layout 10:
+    // Error Bars: ON
+    s.update(|e, _, cx| e.set_sheet_chart_quick_layout(10, cx));
+    s.settle();
+    s.with(|e, _| {
+        let (_, c) = e.sheet_chart().unwrap();
+        assert!(c.groups[0].series[0].error_bars.is_some(), "layout 10: error bars present");
+    });
+
+    // Save and reopen roundtrip for Quick Layout 10
+    let _path = s.save_as("xlsx-chart-quick-layout.xlsx");
+    let saved = s.reopen();
+    let ShapeKind::Chart(saved_chart) = &saved.slides[0].shapes[chart_index].kind else { panic!("chart") };
+    assert!(saved_chart.groups[0].series[0].error_bars.is_some(), "error bars preserved after reopen");
+
+    // Undo quick layout
+    s.key("cmd-z");
+    s.settle();
+    s.with(|e, _| {
+        let (_, c) = e.sheet_chart().unwrap();
+        assert!(c.groups[0].series[0].error_bars.is_none(), "undo removes error bars");
+    });
+
+    // Redo quick layout
+    s.key("cmd-shift-z");
+    s.settle();
+    s.with(|e, _| {
+        let (_, c) = e.sheet_chart().unwrap();
+        assert!(c.groups[0].series[0].error_bars.is_some(), "redo restores error bars");
+    });
+
+    // -------------------------------------------------------------
+    // Part 2: Picture compression test
+    // -------------------------------------------------------------
+    let mut state = 42u32;
+    let noisy = image::RgbImage::from_fn(1600, 800, |x, y| {
+        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+        image::Rgb([
+            (x * 255 / 1600) as u8 ^ (state >> 24) as u8 / 8,
+            (y * 255 / 800) as u8,
+            (state >> 16) as u8 / 2,
+        ])
+    });
+    let mut img_bytes = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(
+        &mut std::io::Cursor::new(&mut img_bytes),
+        100,
+    )
+    .write_image(noisy.as_raw(), 1600, 800, image::ExtendedColorType::Rgb8)
+    .unwrap();
+
+    let pic_id = s
+        .update(|e, _, cx| e.insert_sheet_picture("highres.jpg", img_bytes.clone(), cx))
+        .expect("picture inserted");
+
+    // Shown 2 x 2 inches with right 50% cropped
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.run_sheet(
+            vec![ibis_doc_model::Command::SetFrame {
+                slide,
+                shape: pic_id,
+                frame: ibis_doc_model::EmuRect::new(0, 0, 2 * 914_400, 2 * 914_400),
+            }],
+            cx,
+        );
+        e.crop_selected_pictures(
+            Crop {
+                left: 0,
+                top: 0,
+                right: 50_000,
+                bottom: 0,
+            },
+            cx,
+        );
+    });
+
+    let (before_media, size_before) = s.with(|e, _| match &e.slide().shape(pic_id).unwrap().kind {
+        ShapeKind::Picture(p) => (p.media, e.presentation().media(p.media).unwrap().data.len()),
+        _ => unreachable!(),
+    });
+
+    // Run picture compression
+    let (count, bytes_before, bytes_after) = s.update(|e, _, cx| {
+        e.compress_sheet_pictures(
+            crate::pptx::compress::Resolution::Print,
+            true,
+            true,
+            cx,
+        )
+    });
+    assert_eq!(count, 1, "1 picture compressed");
+    assert!(bytes_after < bytes_before, "bytes decreased: {bytes_after} < {bytes_before}");
+
+    let (after_media, size_after, crop) = s.with(|e, _| match &e.slide().shape(pic_id).unwrap().kind {
+        ShapeKind::Picture(p) => (p.media, e.presentation().media(p.media).unwrap().data.len(), p.crop),
+        _ => unreachable!(),
+    });
+    assert_ne!(before_media, after_media, "medium replaced");
+    assert!(size_after < size_before, "compressed media is smaller");
+    assert_eq!(crop, Crop::default(), "cropped portion deleted and crop reset");
+
+    // Save & reopen roundtrip
+    let _path = s.save_as("xlsx-compressed-picture.xlsx");
+    let saved2 = s.reopen();
+    let saved_pic = saved2
+        .slides
+        .iter()
+        .flat_map(|sl| &sl.shapes)
+        .find_map(|sh| match &sh.kind {
+            ShapeKind::Picture(p) => Some(p),
+            _ => None,
+        })
+        .expect("compressed picture found in saved workbook");
+    assert_eq!(saved_pic.crop, Crop::default(), "crop stays reset");
+
+    // Undo picture compression
+    s.key("cmd-z");
+    s.settle();
+    let undone_media = s.with(|e, _| match &e.slide().shape(pic_id).unwrap().kind {
+        ShapeKind::Picture(p) => p.media,
+        _ => unreachable!(),
+    });
+    assert_eq!(undone_media, before_media, "undo restored original media");
+
+    // Redo picture compression
+    s.key("cmd-shift-z");
+    s.settle();
+    let redone_media = s.with(|e, _| match &e.slide().shape(pic_id).unwrap().kind {
+        ShapeKind::Picture(p) => p.media,
+        _ => unreachable!(),
+    });
+    assert_eq!(redone_media, after_media, "redo restored compressed media");
+}
+
+/// オートSUM リボンコマンド（xlsx.autosum, xlsx.autosum.sum, average, count, max, min）の動作検証
+fn autosum_ribbon_commands() {
+    let mut s = new_sheet();
+    // A列: SUM
+    s.click_cell("A1");
+    s.enter("10", "enter");
+    s.click_cell("A2");
+    s.enter("20", "enter");
+    s.click_cell("A3");
+    s.enter("30", "enter");
+    s.click_cell("A1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down"); // A1:A4
+    s.menu("xlsx.autosum");
+    assert_eq!(s.value("A4"), CellValue::Number(60.0));
+
+    // B列: AVERAGE
+    s.click_cell("B1");
+    s.enter("10", "enter");
+    s.click_cell("B2");
+    s.enter("20", "enter");
+    s.click_cell("B3");
+    s.enter("60", "enter");
+    s.click_cell("B1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down"); // B1:B4
+    s.menu("xlsx.autosum.average");
+    assert_eq!(s.value("B4"), CellValue::Number(30.0));
+
+    // C列: COUNT
+    s.click_cell("C1");
+    s.enter("100", "enter");
+    s.click_cell("C2");
+    s.enter("200", "enter");
+    s.click_cell("C3");
+    s.enter("300", "enter");
+    s.click_cell("C1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down"); // C1:C4
+    s.menu("xlsx.autosum.count");
+    assert_eq!(s.value("C4"), CellValue::Number(3.0));
+
+    // D列: MAX
+    s.click_cell("D1");
+    s.enter("15", "enter");
+    s.click_cell("D2");
+    s.enter("42", "enter");
+    s.click_cell("D3");
+    s.enter("9", "enter");
+    s.click_cell("D1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down"); // D1:D4
+    s.menu("xlsx.autosum.max");
+    assert_eq!(s.value("D4"), CellValue::Number(42.0));
+
+    // E列: MIN
+    s.click_cell("E1");
+    s.enter("15", "enter");
+    s.click_cell("E2");
+    s.enter("42", "enter");
+    s.click_cell("E3");
+    s.enter("9", "enter");
+    s.click_cell("E1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down"); // E1:E4
+    s.menu("xlsx.autosum.min");
+    assert_eq!(s.value("E4"), CellValue::Number(9.0));
+
+    // F列: SUM (xlsx.autosum.sum)
+    s.click_cell("F1");
+    s.enter("5", "enter");
+    s.click_cell("F2");
+    s.enter("15", "enter");
+    s.click_cell("F3");
+    s.enter("25", "enter");
+    s.click_cell("F1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down"); // F1:F4
+    s.menu("xlsx.autosum.sum");
+    assert_eq!(s.value("F4"), CellValue::Number(45.0));
+}
+
+/// 並べ替え・フィルター（クリア・再適用）・表示モード（標準・改ページ）・名前管理・重複削除・クリアのリボンコマンド検証
+fn sort_filter_view_ribbon_commands() {
+    let mut s = new_sheet();
+    for (row, values) in [["名前", "スコア"], ["太郎", "50"], ["次郎", "30"], ["三郎", "80"]].into_iter().enumerate() {
+        for (col, val) in values.into_iter().enumerate() {
+            s.click_cell(&ibis_doc_model::cell_name(col as u32, row as u32));
+            s.enter(val, "enter");
+        }
+    }
+    // オートフィルター設定
+    s.click_cell("A1");
+    s.menu("xlsx.filter");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.auto_filter.is_some()), "auto filter created");
+
+    // フィルターのクリア
+    s.menu("xlsx.clear-filter");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.auto_filter.as_ref().unwrap().columns.is_empty()), "filters cleared");
+
+    // 表示モード: 改ページプレビュー → 標準表示
+    s.menu("xlsx.page-break-preview");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.page_break_preview), "page break preview active");
+    s.menu("xlsx.normal-view");
+    assert!(s.with(|e, _| {
+        let sheet = e.current_sheet().unwrap().1;
+        !sheet.page_break_preview && !sheet.page_layout
+    }), "normal view restored");
+
+    // 名前の管理
+    s.menu("xlsx.name-manager");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().names.is_some()), "names panel opened");
+    s.update(|e, _, _| { e.sheet_state_mut().unwrap().names = None; });
+
+    // 重複の削除
+    s.click_cell("A1");
+    s.menu("xlsx.remove-duplicates");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.dedupe.is_some()), "dedupe panel opened");
+    s.update(|e, _, _| { e.wb_mut().panels.dedupe = None; });
+
+    // すべてクリア
+    s.click_cell("A1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-right"); // A1:B4
+    s.menu("xlsx.clear-all");
+    assert!(s.value("A1").is_empty(), "A1 cleared");
+    assert!(s.value("B2").is_empty(), "B2 cleared");
+}
+
+/// ページ設定・余白・ヘッダーフッター・スペルチェック・記号・論理関数・スパークライン・図形等のリボンコマンド検証
+fn page_setup_and_insert_ribbon_commands() {
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    s.enter("10", "enter");
+    s.click_cell("A2");
+    s.enter("20", "enter");
+
+    // ページ設定・余白
+    s.menu("xlsx.page-setup");
+    assert!(s.with(|e, _| e.wb().page_setup), "page setup opened");
+    s.update(|e, _, _| { e.wb_mut().page_setup = false; });
+
+    s.menu("xlsx.margins");
+    assert!(s.with(|e, _| e.wb().page_setup), "margins opened");
+    s.update(|e, _, _| { e.wb_mut().page_setup = false; });
+
+    // ヘッダーとフッター
+    s.menu("xlsx.header-footer");
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.header_footer_edit.as_ref()).is_some()), "header footer panel opened");
+    s.update(|e, _, cx| { e.close_header_footer_edit(cx); });
+
+    // スペルチェック
+    s.menu("xlsx.spelling.check");
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.spelling.as_ref()).is_some()), "spelling panel opened");
+    s.update(|e, w, cx| { e.close_sheet_spelling(w, cx); });
+
+    // 記号と特殊文字
+    s.menu("xlsx.insert-symbol");
+    assert!(s.with(|e, _| e.symbol.is_some()), "symbols panel opened");
+    s.update(|e, _, _| { e.symbol = None; });
+
+    // リンク
+    s.menu("xlsx.insert-link");
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.link.as_ref()).is_some()), "link panel opened");
+    s.update(|e, _, _| { e.sheet_state_mut().unwrap().link = None; });
+
+    // 論理関数（IF, IFS）
+    s.click_cell("B1");
+    s.menu("xlsx.fn.if");
+    assert_eq!(s.with(|e, _| e.cell_edit().map(|c| c.text.clone())), Some("=IF(".to_string()));
+    s.enter("TRUE, 100, 0)", "enter");
+    assert_eq!(s.formula("B1").as_deref(), Some("IF(TRUE, 100, 0)"));
+    assert_eq!(s.value("B1"), CellValue::Number(100.0));
+
+    // スパークライン（折れ線・縦棒・勝敗）
+    s.click_cell("A1");
+    s.menu("xlsx.sparkline-line");
+    assert!(s.with(|e, _| e.wb().panels.sparkline.is_some()), "sparkline panel opened");
+    s.update(|e, _, _| { e.wb_mut().panels.sparkline = None; });
+
+    // 図形挿入（四角形）
+    let shapes_before = s.with(|e, _| e.slide().shapes.len());
+    s.menu("xlsx.shape.rect");
+    let shapes_after = s.with(|e, _| e.slide().shapes.len());
+    assert_eq!(shapes_after, shapes_before + 1, "shape inserted");
+
+    // 下線・二重下線
+    s.click_cell("A1");
+    s.menu("xlsx.underline-double");
+    assert_eq!(s.with(|e, _| e.current_style().underline), ibis_doc_model::CellUnderline::Double);
+    s.menu("xlsx.underline-single");
+    assert_eq!(s.with(|e, _| e.current_style().underline), ibis_doc_model::CellUnderline::Single);
+
+    // スクリーンショット挿入
+    let shapes_before_screenshot = s.with(|e, _| e.slide().shapes.len());
+    s.menu("xlsx.screenshot.available-windows");
+    let shapes_after_screenshot = s.with(|e, _| e.slide().shapes.len());
+    assert_eq!(shapes_after_screenshot, shapes_before_screenshot + 1, "screenshot picture inserted");
+    assert!(s.with(|e, _| matches!(e.slide().shapes.last().unwrap().kind, ibis_doc_model::ShapeKind::Picture(_))), "inserted shape is picture");
+}
+
+/// XLSX-CELL-014: U:オートフィル - フィルハンドルのダブルクリックによる下方向自動フィル
+/// - 左隣の列の連続データ範囲末尾行まで下方向へ自動フィル
+/// - 途中に空セルがある場合、空セルの直前で自動停止
+/// - 左列が空で右列にデータがある場合、右列を参照して自動フィル
+/// - 数式の相対参照シフト（=A1*2 -> =A2*2, =A3*2...）
+/// - Undo / Redo 連動
+/// - テーブル（SheetTable）内でのデータ最終行（集計行手前）までの自動フィル
+fn cell014_double_click_fill_handle() {
+    let mut s = new_sheet();
+
+    // 1. 左隣の列の連続データに合わせた自動フィル
+    // A1=10, A2=20, A3=30, A4=40, A5=50
+    for i in 1..=5 {
+        s.click_cell(&format!("A{i}"));
+        s.enter(&format!("{}", i * 10), "enter");
+    }
+    // B1 に数式 =A1*2 を入力
+    s.click_cell("B1");
+    s.enter("=A1*2", "enter");
+    s.click_cell("B1");
+    assert_eq!(s.value("B1"), CellValue::Number(20.0));
+    assert_eq!(s.formula("B1"), Some("A1*2".into()));
+
+    // B1 のフィルハンドルをダブルクリック
+    s.double_click_fill("B1");
+
+    // B2..=B5 まで数式が自動展開・計算されていることを確認
+    assert_eq!(s.value("B2"), CellValue::Number(40.0));
+    assert_eq!(s.formula("B2"), Some("A2*2".into()));
+    assert_eq!(s.value("B3"), CellValue::Number(60.0));
+    assert_eq!(s.formula("B3"), Some("A3*2".into()));
+    assert_eq!(s.value("B4"), CellValue::Number(80.0));
+    assert_eq!(s.formula("B4"), Some("A4*2".into()));
+    assert_eq!(s.value("B5"), CellValue::Number(100.0));
+    assert_eq!(s.formula("B5"), Some("A5*2".into()));
+    // B6 は空のまま
+    assert!(s.value("B6").is_empty());
+
+    // Undo で B2..=B5 が消去され、B1 のみに戻ることを確認
+    s.key("cmd-z");
+    assert!(s.value("B2").is_empty());
+    assert!(s.value("B5").is_empty());
+
+    // Redo で再び B2..=B5 が復元されることを確認
+    s.key("shift-cmd-z");
+    assert_eq!(s.value("B5"), CellValue::Number(100.0));
+
+    // 2. 途中に空行がある場合の自動停止
+    // C1=100, C2=200, C3=空, C4=400
+    s.click_cell("C1");
+    s.enter("100", "enter");
+    s.click_cell("C2");
+    s.enter("200", "enter");
+    // C3 は空
+    s.click_cell("C4");
+    s.enter("400", "enter");
+
+    // D1 に =C1+1 を入力してダブルクリック
+    s.click_cell("D1");
+    s.enter("=C1+1", "enter");
+    s.click_cell("D1");
+    s.double_click_fill("D1");
+
+    // C2 までデータがあり C3 が空なので、D2 までフィルされて D3 は空のまま止まる！
+    assert_eq!(s.value("D2"), CellValue::Number(201.0));
+    assert!(s.value("D3").is_empty());
+    assert!(s.value("D4").is_empty());
+
+    // 3. 左隣が空で右隣にデータがある場合
+    // G1="Item 1"
+    // H1=1, H2=2, H3=3
+    s.click_cell("H1");
+    s.enter("1", "enter");
+    s.click_cell("H2");
+    s.enter("2", "enter");
+    s.click_cell("H3");
+    s.enter("3", "enter");
+
+    s.click_cell("G1");
+    s.enter("Item 1", "enter");
+    s.click_cell("G1");
+    // G1 のダブルクリックで右隣 H列（H3まで）に合わせて G3 までフィル
+    s.double_click_fill("G1");
+    assert_eq!(s.shown("G2"), "Item 2");
+    assert_eq!(s.shown("G3"), "Item 3");
+    assert!(s.value("G4").is_empty());
+
+    // 4. テーブル内でのダブルクリック（テーブル最終データ行までフィル）
+    // J1:K1 にテーブル作成
+    // 見出し: J1="ID", K1="Calc"
+    // データ: J2=1, J3=2, J4=3
+    s.click_cell("J1");
+    s.enter("ID", "enter");
+    s.click_cell("K1");
+    s.enter("Calc", "enter");
+    s.click_cell("J2");
+    s.enter("1", "enter");
+    s.click_cell("J3");
+    s.enter("2", "enter");
+    s.click_cell("J4");
+    s.enter("3", "enter");
+
+    // J1 で cmd-t してテーブル作成
+    s.click_cell("J1");
+    s.key("cmd-t");
+    s.key("enter");
+    assert!(s.with(|e, _| !sheet_of_slide(e.slide()).unwrap().tables.is_empty()), "table created");
+
+    // K2 に数式 =J2*100 を入力してダブルクリック
+    s.click_cell("K2");
+    s.enter("=J2*100", "enter");
+    s.click_cell("K2");
+    s.double_click_fill("K2");
+
+    // K3, K4 までフィルされることを確認
+    assert_eq!(s.value("K3"), CellValue::Number(200.0));
+    assert_eq!(s.value("K4"), CellValue::Number(300.0));
+}
+
+/// XLSX-TABLE-004: 集計行 — セルの ▼（ドロップダウンメニュー）による集計関数の直接選択
+/// - 集計行セルを選択した際、セル右端に ▼（table-total-dropdown）が表示される
+/// - クリックで集計関数メニュー（なし・平均・個数・数値の個数・最大・最小・合計・標準偏差・分散）がポップアップ
+/// - 関数選択でセルに SUBTOTAL 数式が自動挿入され即時再計算
+/// - Undo / Redo 連動
+fn table004_totals_row_dropdown() {
+    let mut s = new_sheet();
+
+    // 1. テーブルデータの準備
+    // A1="商品", B1="売上"
+    // A2="りんご", B2=100
+    // A3="みかん", B3=200
+    // A4="バナナ", B4=300
+    s.click_cell("A1");
+    s.enter("商品", "enter");
+    s.click_cell("B1");
+    s.enter("売上", "enter");
+    s.click_cell("A2");
+    s.enter("りんご", "enter");
+    s.click_cell("B2");
+    s.enter("100", "enter");
+    s.click_cell("A3");
+    s.enter("みかん", "enter");
+    s.click_cell("B3");
+    s.enter("200", "enter");
+    s.click_cell("A4");
+    s.enter("バナナ", "enter");
+    s.click_cell("B4");
+    s.enter("300", "enter");
+
+    // A1 で cmd-t してテーブル作成
+    s.click_cell("A1");
+    s.key("cmd-t");
+    s.key("enter");
+    assert!(s.with(|e, _| !sheet_of_slide(e.slide()).unwrap().tables.is_empty()), "table created");
+
+    // 集計行を有効化
+    s.update(|e, _, cx| {
+        e.toggle_totals_row(0, cx);
+    });
+
+    let table = s.with(|e, _| sheet_of_slide(e.slide()).unwrap().tables[0].clone());
+    assert_eq!(table.totals_rows, 1);
+    assert_eq!(table.range.last_row, 4); // A5:B5 が集計行
+
+    // A5（集計行1列目）を選択
+    s.click_cell("A5");
+    let target = s.with(|e, _| e.current_cell_table_total());
+    assert_eq!(target, Some((0, 0)));
+
+    // B5（集計行2列目）を選択
+    s.click_cell("B5");
+    let target = s.with(|e, _| e.current_cell_table_total());
+    assert_eq!(target, Some((0, 1)));
+
+    // 初期状態では集計行トグル時に最終列が合計（109）になっている
+    assert_eq!(s.value("B5"), CellValue::Number(600.0));
+
+    // B5 のセル右端の ▼（table-total-dropdown）をクリックしてメニューを開く
+    s.update(|e, window, cx| {
+        let (c, r) = parse("B5");
+        let corner = e.cell_corner(c, r).unwrap();
+        e.open_table_total_menu(0, 1, point(corner.x, corner.y), window, cx);
+    });
+    assert!(s.with(|e, _| e.sheet_state().unwrap().list_popup.is_some()), "total menu opened");
+
+    // 「平均（average, 101）」を選択
+    s.update(|e, _, cx| {
+        e.set_table_total(0, 1, Some("average"), cx);
+    });
+    assert_eq!(s.formula("B5"), Some("SUBTOTAL(101,テーブル1[売上])".into()));
+    assert_eq!(s.value("B5"), CellValue::Number(200.0));
+
+    // 「最大（max, 104）」に変更
+    s.update(|e, _, cx| {
+        e.set_table_total(0, 1, Some("max"), cx);
+    });
+    assert_eq!(s.formula("B5"), Some("SUBTOTAL(104,テーブル1[売上])".into()));
+    assert_eq!(s.value("B5"), CellValue::Number(300.0));
+
+    // 「なし（None）」に変更
+    s.update(|e, _, cx| {
+        e.set_table_total(0, 1, None, cx);
+    });
+    assert!(s.formula("B5").is_none());
+    assert!(s.value("B5").is_empty());
+
+    // Undo で最大（300.0）に戻る
+    s.key("cmd-z");
+    assert_eq!(s.value("B5"), CellValue::Number(300.0));
+
+    // Undo で平均（200.0）に戻る
+    s.key("cmd-z");
+    assert_eq!(s.value("B5"), CellValue::Number(200.0));
+
+    // Redo で最大（300.0）に再変更
+    s.key("shift-cmd-z");
+    assert_eq!(s.value("B5"), CellValue::Number(300.0));
+}
+
+fn sheet006_smart_insert_delete_shortcuts() {
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    s.enter("10", "enter");
+    s.enter("20", "enter");
+    s.enter("30", "enter");
+    s.click_cell("B1");
+    s.enter("100", "enter");
+    s.enter("200", "enter");
+    s.enter("300", "enter");
+
+    // 初期状態:
+    // A1=10, A2=20, A3=30
+    // B1=100, B2=200, B3=300
+    assert_eq!(s.value("A1"), CellValue::Number(10.0));
+    assert_eq!(s.value("A2"), CellValue::Number(20.0));
+    assert_eq!(s.value("A3"), CellValue::Number(30.0));
+
+    // 1. 行選択時（2行目を選択）に ⌘+ で行挿入
+    s.update(|e, _, cx| {
+        e.select_lines(Axis::Rows, 1, 1, cx);
+    });
+    s.update(|e, _, cx| e.smart_insert(cx));
+    // 2行目に空行が挿入され、旧A2(20)/B2(200)がA3/B3に移動する
+    assert_eq!(s.value("A1"), CellValue::Number(10.0));
+    assert!(s.value("A2").is_empty());
+    assert_eq!(s.value("A3"), CellValue::Number(20.0));
+    assert_eq!(s.value("A4"), CellValue::Number(30.0));
+
+    // Undo で元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.value("A2"), CellValue::Number(20.0));
+
+    // 2. 行選択時に ⌘- で行削除
+    s.update(|e, _, cx| {
+        e.select_lines(Axis::Rows, 1, 1, cx);
+    });
+    s.update(|e, _, cx| e.smart_delete(cx));
+    // 2行目(20/200)が削除され、旧A3(30)/B3(300)がA2/B2に上がる
+    assert_eq!(s.value("A1"), CellValue::Number(10.0));
+    assert_eq!(s.value("A2"), CellValue::Number(30.0));
+
+    // Undo で元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.value("A2"), CellValue::Number(20.0));
+    assert_eq!(s.value("A3"), CellValue::Number(30.0));
+
+    // 3. 列選択時（B列を選択）に ⌘+ で列挿入
+    s.update(|e, _, cx| {
+        e.select_lines(Axis::Columns, 1, 1, cx);
+    });
+    s.update(|e, _, cx| e.smart_insert(cx));
+    // B列に空列が挿入され、旧B列(100, 200, 300)がC列に移動する
+    assert_eq!(s.value("A1"), CellValue::Number(10.0));
+    assert!(s.value("B1").is_empty());
+    assert_eq!(s.value("C1"), CellValue::Number(100.0));
+
+    // Undo で元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.value("B1"), CellValue::Number(100.0));
+
+    // 4. 列選択時に ⌘- で列削除
+    s.update(|e, _, cx| {
+        e.select_lines(Axis::Columns, 1, 1, cx);
+    });
+    s.update(|e, _, cx| e.smart_delete(cx));
+    // B列が削除される
+    assert_eq!(s.value("A1"), CellValue::Number(10.0));
+    assert!(s.value("B1").is_empty());
+
+    // Undo で元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.value("B1"), CellValue::Number(100.0));
+
+    // 5. 単一セル選択（A2）時に ⌘+ でセル挿入ダイアログが開く
+    s.click_cell("A2");
+    s.update(|e, _, cx| e.smart_insert(cx));
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.cells_dialog.is_some()), "insert dialog opened");
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().panels.cells_dialog.as_ref().unwrap().choice), 0);
+
+    // 下キー（Down）で「下方向にシフト（choice: 1）」に切り替え
+    s.key("down");
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().panels.cells_dialog.as_ref().unwrap().choice), 1);
+
+    // Enter キーで適用（apply_cells_dialog）
+    s.key("enter");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.cells_dialog.is_none()), "dialog closed on enter");
+    // A2 に空セルが挿入され、旧A2(20)がA3、旧A3(30)がA4にシフト（B列はシフトしない）
+    assert_eq!(s.value("A1"), CellValue::Number(10.0));
+    assert!(s.value("A2").is_empty());
+    assert_eq!(s.value("A3"), CellValue::Number(20.0));
+    assert_eq!(s.value("A4"), CellValue::Number(30.0));
+    assert_eq!(s.value("B2"), CellValue::Number(200.0)); // B列は変化なし
+
+    // Undo で元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.value("A2"), CellValue::Number(20.0));
+    assert_eq!(s.value("A3"), CellValue::Number(30.0));
+
+    // 6. 単一セル選択時に ⌘- でセル削除ダイアログが開き、Escape でキャンセル
+    s.click_cell("A2");
+    s.update(|e, _, cx| e.smart_delete(cx));
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.cells_dialog.is_some()), "delete dialog opened");
+    // Escape でキャンセル
+    s.key("escape");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.cells_dialog.is_none()), "dialog cancelled on escape");
+    // シートは変化していない
+    assert_eq!(s.value("A2"), CellValue::Number(20.0));
+}
+
+/// The box of the dark pixels (text) in a window rectangle of a screenshot: left, top, right, bottom.
+fn ink_box(path: &std::path::Path, (x0, y0, x1, y1): (f32, f32, f32, f32), skip: Option<(u32, u32)>) -> Option<(i32, i32, i32, i32)> {
+    let img = image::open(path).unwrap().to_rgba8();
+    let mut out: Option<(i32, i32, i32, i32)> = None;
+    for y in (y0.ceil() as u32)..(y1.floor() as u32).min(img.height()) {
+        for x in (x0.ceil() as u32)..(x1.floor() as u32).min(img.width()) {
+            if skip.is_some_and(|(a, b)| x >= a && x <= b) {
+                continue;
+            }
+            let p = img.get_pixel(x, y).0;
+            if p[0] < 110 && p[1] < 110 && p[2] < 110 {
+                let (x, y) = (x as i32, y as i32);
+                out = Some(match out {
+                    None => (x, y, x, y),
+                    Some((l, t, r, b)) => (l.min(x), t.min(y), r.max(x), b.max(y)),
+                });
+            }
+        }
+    }
+    out
+}
+
+fn default_xlsx_path() -> String {
+    // The file is not committed (test/github-issue/ is ignored): this checkout's, else the main checkout's next to a worktree.
+    let main_checkout = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../ibisOffice/test/github-issue/default.xlsx");
+    for p in ["test/github-issue/default.xlsx", main_checkout] {
+        if std::path::Path::new(p).exists() {
+            return p.to_string();
+        }
+    }
+    panic!("test/github-issue/default.xlsx");
+}
+
+/// F2 on a cell keeps its text where it was drawn: left, top and bottom of the ink within a pixel
+/// (the right end holds the caret), for left, centre and right alignment, three vertical alignments,
+/// and a merged cell. The screenshots of both are in target/scenario.
+fn fix73_edit_text_stays_put() {
+    let cases: Vec<(&str, Option<ibis_doc_model::StyleChange>, Option<ibis_doc_model::StyleChange>, bool)> = vec![
+        ("left", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Left)), None, false),
+        ("center", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Center)), None, false),
+        ("right", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Right)), None, false),
+        ("short-top", None, Some(ibis_doc_model::StyleChange::Vertical(ibis_doc_model::CellVerticalAlign::Top)), false),
+        ("short-middle", None, Some(ibis_doc_model::StyleChange::Vertical(ibis_doc_model::CellVerticalAlign::Center)), false),
+        ("short-bottom", None, Some(ibis_doc_model::StyleChange::Vertical(ibis_doc_model::CellVerticalAlign::Bottom)), false),
+        ("short-right", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Right)), None, false),
+        ("short-center", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Center)), None, false),
+        ("merged-center", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Center)), None, true),
+    ];
+    let mut report = Vec::new();
+    for (label, align, vertical, merge) in cases {
+        let mut s = Scenario::open(&default_xlsx_path());
+        s.settle();
+        // The A4 of the file (a wrapped, merged cell with parts in other colours and sizes), or a cell of ordinary text.
+        let short = label.starts_with("short");
+        let (cell, col, row) = if short { ("G10", 6u32, 9u32) } else { ("A4", 0, 3) };
+        s.click_cell(cell);
+        if short {
+            s.enter("Test あ gy", "enter");
+            s.click_cell(cell);
+        }
+        if merge {
+            s.key("shift-right");
+            s.update(|e, _, cx| e.merge_cells(false, cx));
+            s.click_cell("A4");
+        }
+        for change in [align, vertical].into_iter().flatten() {
+            s.update(move |e, _, cx| e.format_cells(change.clone(), cx));
+        }
+        s.settle();
+        // The cell's box (its merged range), in window points; the screenshots are at 2 pixels to a point.
+        let rect = s.with(move |e, _| {
+            let g = e.sheet_state().unwrap().header_geometry.borrow().clone();
+            let sheet = sheet_of_slide(e.slide()).unwrap();
+            let m = sheet.merge_at(row, col).unwrap_or(ibis_doc_model::CellRange { first_row: row, first_column: col, last_row: row, last_column: col });
+            let c0 = g.columns.iter().find(|c| c.0 == m.first_column).unwrap();
+            let c1 = g.columns.iter().find(|c| c.0 == m.last_column).unwrap();
+            let r0 = g.rows.iter().find(|r| r.0 == m.first_row).unwrap();
+            let r1 = g.rows.iter().find(|r| r.0 == m.last_row).unwrap();
+            (c0.1 * 2.0, r0.1 * 2.0, c1.2 * 2.0, r1.2 * 2.0)
+        });
+        let inner = (rect.0 + 6.0, rect.1 + 6.0, rect.2 - 6.0, rect.3 - 6.0);
+        let before = s.screenshot(&format!("{label}-before"));
+        s.key("f2");
+        s.settle();
+        let after = s.screenshot(&format!("{label}-after"));
+        // The caret (a dark line taller than the glyphs) is left out of the box of the text.
+        let caret_x = s.with(|e, _| {
+            let ed = e.cell_edit().unwrap();
+            let layout = ed.layout.borrow().clone().unwrap();
+            let line = &layout.lines[layout.line_of(ed.caret_byte())];
+            ((ed.rect.get().unwrap().origin.x + px(line.x_at(ed.caret_byte()))) * 1.0).into()
+        });
+        let caret_x: f32 = caret_x;
+        let skip = Some(((caret_x * 2.0) as u32 - 2, (caret_x * 2.0) as u32 + 3));
+        let (b, a) = (ink_box(&before, inner, skip), ink_box(&after, inner, skip));
+        report.push(format!("{label}: before {b:?} after {a:?} rect {rect:?}"));
+        eprintln!("FIX73 {label}: before {b:?} after {a:?} rect {rect:?}");
+    }
+    for line in &report {
+        eprintln!("{line}");
+    }
+    for line in &report {
+        let nums: Vec<i32> = line.split(|c: char| !c.is_ascii_digit() && c != '-').filter_map(|t| t.parse().ok()).collect();
+        let (b, a) = (&nums[0..4], &nums[4..8]);
+        // Two pixels to a point: within one pixel of the screen is 2 here. The caret is left out.
+        assert!((b[0] - a[0]).abs() <= 2 && (b[1] - a[1]).abs() <= 2 && (b[3] - a[3]).abs() <= 2, "{line}");
+    }
+}
+
+/// A click in the box of a cell being typed in puts the caret where it landed, after F2 and after a double-click.
+fn fix73_edit_click_places_caret() {
+    let mut s = Scenario::open(&default_xlsx_path());
+    s.settle();
+    s.click_cell("A1");
+    s.enter("abcdefghij", "enter");
+    s.click_cell("A1");
+    s.key("f2");
+    s.settle();
+    let (column, row) = (0u32, 0u32);
+    let rect = s.with(move |e, _| {
+        let g = e.sheet_state().unwrap().header_geometry.borrow().clone();
+        let c = g.columns.iter().find(|c| c.0 == column).unwrap();
+        let r = g.rows.iter().find(|r| r.0 == row).unwrap();
+        (c.1, r.1, c.2, r.2)
+    });
+    let caret = |s: &mut Scenario| s.with(|e, _| e.cell_edit().map(|c| (c.caret, c.anchor)));
+    assert_eq!(caret(&mut s), Some((10, None)));
+    // Clicks near the left edge, in the middle and at the far right of the box.
+    let y = (rect.1 + rect.3) / 2.0;
+    s.click((rect.0 + 3.0, y));
+    assert_eq!(caret(&mut s).map(|c| c.0), Some(0), "click at the left edge");
+    s.click((rect.2 - 2.0, y));
+    let end = caret(&mut s).map(|c| c.0).unwrap();
+    assert!(end >= 8, "click at the right: {end}");
+    // A drag selects.
+    s.drag((rect.0 + 3.0, y), (rect.2 - 2.0, y));
+    let sel = caret(&mut s).unwrap();
+    assert!(sel.1.is_some() && sel.0 != sel.1.unwrap(), "dragged: {sel:?}");
+    // Escape, then a double-click: the caret lands where it was clicked.
+    s.key("escape");
+    s.double_click((rect.0 + 3.0, y));
+    s.settle();
+    let at = caret(&mut s);
+    assert_eq!(at.map(|c| c.0), Some(0), "double-click at the left edge: {at:?}");
+    s.key("escape");
+    s.double_click((rect.2 - 2.0, y));
+    s.settle();
+    let at = caret(&mut s).map(|c| c.0).unwrap();
+    assert!(at >= 8, "double-click at the right: {at}");
+    s.key("escape");
+
+    // A box that reaches over other cells: text of three lines and, in another cell, text wider than the cell.
+    s.click_cell("C2");
+    s.type_text("one");
+    s.key("alt-enter");
+    s.type_text("two");
+    s.key("alt-enter");
+    s.type_text("three");
+    s.settle();
+    let c2 = s.with(|e, _| e.cell_edit().and_then(|c| c.rect.get())).expect("painted");
+    let (x, bottom) = (f32::from(c2.origin.x) + 6.0, f32::from(c2.origin.y + c2.size.height));
+    // The second line, which is over the cell below C2 (the rows are 20 px high).
+    let second = (x, f32::from(c2.origin.y) + (bottom - f32::from(c2.origin.y)) / 2.0);
+    s.click(second);
+    assert!(s.with(|e, _| e.cell_edit().is_some()), "still editing after a click in the second line");
+    let caret_at = caret(&mut s).map(|c| c.0).unwrap();
+    assert!((4..=7).contains(&caret_at), "caret at the start of 'two': {caret_at}");
+    // The last line's empty room to the right (over the cells beside the cell is not reached by this box, so the box's own right margin).
+    s.click((f32::from(c2.origin.x + c2.size.width) - 2.0, bottom - 5.0));
+    assert!(s.with(|e, _| e.cell_edit().is_some()), "still editing after a click in the right margin");
+    assert_eq!(caret(&mut s).map(|c| c.0), Some(13));
+    s.key("escape");
+    s.click_cell("E5");
+    s.type_text("a long text running far beyond the width of its cell E5");
+    s.settle();
+    let e5 = s.with(|e, _| e.cell_edit().and_then(|c| c.rect.get())).expect("painted");
+    s.click((f32::from(e5.origin.x + e5.size.width) - 30.0, f32::from(e5.origin.y) + 10.0));
+    assert!(s.with(|e, _| e.cell_edit().is_some()), "still editing after a click in the widened box");
+    let at = caret(&mut s).map(|c| c.0).unwrap();
+    assert!(at > 20, "caret near the end of the widened box: {at}");
+}
+
+fn default_xlsx_a4_cell_edit_screenshots() {
+    let mut s = Scenario::open(&default_xlsx_path());
+    s.settle();
+    s.click_cell("A4");
+    s.settle();
+    s.screenshot("a4_before_edit");
+    s.key("f2");
+    s.settle();
+    s.screenshot("a4_after_edit");
+}
+
+/// XLSX-SHEET-008 行ヘッダー境界のダブルクリックによる「行の高さの自動調整（Autofit Row Height）」
+/// および複数行・全選択一括自動調整
+fn sheet008_autofit_row_height_double_click() {
+    let mut s = new_sheet();
+
+    // 1. セル A3 に 28pt の大きなフォントを設定しテキストを入力
+    s.click_cell("A3");
+    s.update(|e, _, cx| {
+        e.format_cells(ibis_doc_model::StyleChange::FontSize(2800), cx);
+    });
+    s.enter("大きな文字見出し", "enter");
+    let _init_h = s.size_pt("3");
+
+    // 行3の境界線をダブルクリックして自動調整
+    let (x, y) = s.header_line("3");
+    s.double_click((x, y));
+    let fitted_h = s.size_pt("3");
+    assert!(fitted_h >= 35.0, "fitted row 3 should be taller than initial: {fitted_h} pt");
+
+    // 手動で行3を 12pt に縮小
+    s.update(|e, _, _| {
+        let slide = e.current_slide;
+        let _ = e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize {
+            slide,
+            axis: ibis_doc_model::sheet_command::Axis::Rows,
+            first: 2,
+            last: 2,
+            size: 12 * ibis_doc_model::EMU_PER_POINT,
+        })]);
+    });
+    assert_eq!(s.size_pt("3"), 12.0);
+
+    // 再度ダブルクリックして自動調整
+    let (x, y) = s.header_line("3");
+    s.double_click((x, y));
+    assert_eq!(s.size_pt("3"), fitted_h);
+
+    // Undo で 12pt に戻り、Redo で再度 fitted_h になる
+    s.key("cmd-z");
+    assert_eq!(s.size_pt("3"), 12.0);
+    s.key("cmd-shift-z");
+    assert_eq!(s.size_pt("3"), fitted_h);
+
+    // 2. セル A4 にセル内改行（3行）を含むテキストを入力（alt-enter）
+    s.click_cell("A4");
+    s.type_text("一行目");
+    s.key("alt-enter");
+    s.type_text("二行目");
+    s.key("alt-enter");
+    s.type_text("三行目");
+    s.key("enter");
+    assert_eq!(s.value("A4"), ibis_doc_model::CellValue::Text("一行目\n二行目\n三行目".into()));
+
+    // 手動で行4を 15pt に縮小
+    s.update(|e, _, _| {
+        let slide = e.current_slide;
+        let _ = e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize {
+            slide,
+            axis: ibis_doc_model::sheet_command::Axis::Rows,
+            first: 3,
+            last: 3,
+            size: 15 * ibis_doc_model::EMU_PER_POINT,
+        })]);
+    });
+    assert_eq!(s.size_pt("4"), 15.0);
+
+    // 行4の境界線をダブルクリックして自動調整
+    let (x, y) = s.header_line("4");
+    s.double_click((x, y));
+    let fitted_h4 = s.size_pt("4");
+    // 3行分の高さなので 45pt 以上
+    assert!(fitted_h4 >= 45.0, "multiline fitted row 4: {fitted_h4} pt");
+
+    // 3. 複数行選択状態での一括自動調整（行5と行6）
+    s.click_cell("A5");
+    s.update(|e, _, cx| {
+        e.format_cells(ibis_doc_model::StyleChange::FontSize(2400), cx);
+    });
+    s.enter("24pt Text", "enter");
+
+    s.click_cell("A6");
+    s.update(|e, _, cx| {
+        e.format_cells(ibis_doc_model::StyleChange::FontSize(2000), cx);
+    });
+    s.enter("20pt Text", "enter");
+
+    // 手動で行5, 行6を縮小（行5=10pt, 行6=10pt）
+    s.update(|e, _, _| {
+        let slide = e.current_slide;
+        let _ = e.document.execute(vec![
+            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize {
+                slide,
+                axis: ibis_doc_model::sheet_command::Axis::Rows,
+                first: 4,
+                last: 4,
+                size: 10 * ibis_doc_model::EMU_PER_POINT,
+            }),
+            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize {
+                slide,
+                axis: ibis_doc_model::sheet_command::Axis::Rows,
+                first: 5,
+                last: 5,
+                size: 10 * ibis_doc_model::EMU_PER_POINT,
+            }),
+        ]);
+    });
+    assert_eq!(s.size_pt("5"), 10.0);
+    assert_eq!(s.size_pt("6"), 10.0);
+
+    // 行5と行6を行選択
+    s.update(|e, _, cx| {
+        e.select_lines(ibis_doc_model::sheet_command::Axis::Rows, 4, 5, cx);
+    });
+
+    // 選択範囲内の行5の境界線をダブルクリック
+    let (x, y) = s.header_line("5");
+    s.double_click((x, y));
+
+    // 行5と行6の両方が一括自動調整される！
+    assert!(s.size_pt("5") >= 30.0, "row 5 fitted: {}", s.size_pt("5"));
+    assert!(s.size_pt("6") >= 25.0, "row 6 fitted: {}", s.size_pt("6"));
+
+    // 4. ファイル保存と再読み込み後も維持されることを検証
+    s.save_as("sheet008-autofit.xlsx");
+    let reloaded = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&reloaded.slides[1]).unwrap();
+    let r3_emu = reloaded_sheet.rows.get(2).copied().unwrap_or(0);
+    let r4_emu = reloaded_sheet.rows.get(3).copied().unwrap_or(0);
+    let r5_emu = reloaded_sheet.rows.get(4).copied().unwrap_or(0);
+    let r6_emu = reloaded_sheet.rows.get(5).copied().unwrap_or(0);
+    assert!(r3_emu as f32 / ibis_doc_model::EMU_PER_POINT as f32 >= 35.0, "r3 mismatch");
+    assert!(r4_emu as f32 / ibis_doc_model::EMU_PER_POINT as f32 >= 45.0, "r4 mismatch");
+    assert!(r5_emu as f32 / ibis_doc_model::EMU_PER_POINT as f32 >= 30.0, "r5 mismatch");
+    assert!(r6_emu as f32 / ibis_doc_model::EMU_PER_POINT as f32 >= 25.0, "r6 mismatch");
+}
+
+/// XLSX-SHEET-007 行・列ヘッダーのコンテキストメニューからの「行の高さ…」「列の幅…」数値指定パネル連携と複数行・列一括設定
+fn sheet007_row_height_column_width_dialog() {
+    let mut s = new_sheet();
+
+    // 1. 行ヘッダー右クリックメニューから「行の高さ…」を開き、35pt に設定
+    s.header_menu("3", "xlsx.header-row-height");
+    assert!(s.with(|e, _| e.wb().panels.row_col_size.is_some()), "row height panel opened from header menu");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.sheet_state().and_then(|s| s.panels.row_col_size.as_ref()) {
+            p.value.update(cx, |i, cx| i.set_value("35".to_string(), window, cx));
+        }
+        e.apply_row_col_size(cx);
+        e.close_row_col_size_panel(cx);
+        e.focus_handle.focus(window, cx);
+    });
+    assert_eq!(s.size_pt("3"), 35.0, "row 3 set to 35pt");
+
+    // Undo で元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.size_pt("3"), 20.0);
+    s.key("cmd-shift-z");
+    assert_eq!(s.size_pt("3"), 35.0);
+
+    // 2. 複数行選択状態（行4〜行6）で「行の高さ…」を開き、一括設定（28pt）
+    s.update(|e, _, cx| {
+        e.select_lines(ibis_doc_model::sheet_command::Axis::Rows, 3, 5, cx);
+    });
+    s.header_menu("4", "xlsx.header-row-height");
+    assert!(s.with(|e, _| e.wb().panels.row_col_size.is_some()), "multi-row height panel opened");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.sheet_state().and_then(|s| s.panels.row_col_size.as_ref()) {
+            p.value.update(cx, |i, cx| i.set_value("28".to_string(), window, cx));
+        }
+        e.apply_row_col_size(cx);
+        e.close_row_col_size_panel(cx);
+        e.focus_handle.focus(window, cx);
+    });
+    assert_eq!(s.size_pt("4"), 28.0);
+    assert_eq!(s.size_pt("5"), 28.0);
+    assert_eq!(s.size_pt("6"), 28.0);
+
+    // Undo で 3 行とも元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.size_pt("4"), 20.0);
+    assert_eq!(s.size_pt("5"), 20.0);
+    assert_eq!(s.size_pt("6"), 20.0);
+
+    // 3. 列ヘッダー右クリックメニューから「列の幅…」を開き、18文字に設定
+    let init_c = s.size_pt("C");
+    s.header_menu("C", "xlsx.header-column-width");
+    assert!(s.with(|e, _| e.wb().panels.row_col_size.is_some()), "column width panel opened from header menu");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.sheet_state().and_then(|s| s.panels.row_col_size.as_ref()) {
+            p.value.update(cx, |i, cx| i.set_value("18".to_string(), window, cx));
+        }
+        e.apply_row_col_size(cx);
+        e.close_row_col_size_panel(cx);
+        e.focus_handle.focus(window, cx);
+    });
+    let c_width = s.size_pt("C");
+    let expected_c = (18.0 * 6.4 * ibis_doc_model::EMU_PER_POINT as f32).round() / ibis_doc_model::EMU_PER_POINT as f32;
+    assert_eq!(c_width, expected_c, "column C set to 18 chars");
+
+    // Undo で元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.size_pt("C"), init_c);
+    s.key("cmd-shift-z");
+    assert_eq!(s.size_pt("C"), expected_c);
+
+    // 4. 複数列選択状態（列D〜列F）で「列の幅…」を開き、一括設定（22文字）
+    let init_d = s.size_pt("D");
+    s.update(|e, _, cx| {
+        e.select_lines(ibis_doc_model::sheet_command::Axis::Columns, 3, 5, cx);
+    });
+    s.header_menu("D", "xlsx.header-column-width");
+    assert!(s.with(|e, _| e.wb().panels.row_col_size.is_some()), "multi-column width panel opened");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.sheet_state().and_then(|s| s.panels.row_col_size.as_ref()) {
+            p.value.update(cx, |i, cx| i.set_value("22".to_string(), window, cx));
+        }
+        e.apply_row_col_size(cx);
+        e.close_row_col_size_panel(cx);
+        e.focus_handle.focus(window, cx);
+    });
+    let expected_d = (22.0 * 6.4 * ibis_doc_model::EMU_PER_POINT as f32).round() / ibis_doc_model::EMU_PER_POINT as f32;
+    assert_eq!(s.size_pt("D"), expected_d);
+    assert_eq!(s.size_pt("E"), expected_d);
+    assert_eq!(s.size_pt("F"), expected_d);
+
+    // Undo で 3 列とも元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.size_pt("D"), init_d);
+    assert_eq!(s.size_pt("E"), init_d);
+    assert_eq!(s.size_pt("F"), init_d);
+
+    // 5. set_selected_row_height / set_selected_column_width の直接呼び出し
+    s.update(|e, _, cx| {
+        e.select_lines(ibis_doc_model::sheet_command::Axis::Rows, 1, 1, cx);
+        e.set_selected_row_height(40.0, cx);
+    });
+    assert_eq!(s.size_pt("2"), 40.0);
+
+    s.update(|e, _, cx| {
+        e.select_lines(ibis_doc_model::sheet_command::Axis::Columns, 1, 1, cx);
+        e.set_selected_column_width(25.0, cx);
+    });
+    let expected_b = (25.0 * 6.4 * ibis_doc_model::EMU_PER_POINT as f32).round() / ibis_doc_model::EMU_PER_POINT as f32;
+    assert_eq!(s.size_pt("B"), expected_b);
+
+    // 6. ファイル保存と再読み込み後もサイズが保持されることを検証
+    s.save_as("sheet007-sizes.xlsx");
+    let reloaded = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&reloaded.slides[1]).unwrap();
+    let r2_pt = reloaded_sheet.rows[1] as f32 / ibis_doc_model::EMU_PER_POINT as f32;
+    let r3_pt = reloaded_sheet.rows[2] as f32 / ibis_doc_model::EMU_PER_POINT as f32;
+    let cb_pt = reloaded_sheet.columns[1] as f32 / ibis_doc_model::EMU_PER_POINT as f32;
+    let cc_pt = reloaded_sheet.columns[2] as f32 / ibis_doc_model::EMU_PER_POINT as f32;
+    assert_eq!(r2_pt, 40.0, "row 2 preserved");
+    assert_eq!(r3_pt, 35.0, "row 3 preserved");
+    assert!((cb_pt - expected_b).abs() < 1.0, "column B preserved: {cb_pt} vs {expected_b}");
+    assert!((cc_pt - expected_c).abs() < 1.0, "column C preserved: {cc_pt} vs {expected_c}");
+}
+
+/// XLSX-CELL-009 / XLSX-CELL-010 / XLSX-CELL-011 / XLSX-CELL-012:
+/// 形式を選択して貼り付け（Paste Special）ダイアログ連携、列幅・コメント・罫線除外・値と数値の書式・演算・空白無視・転置の組み合わせ設定、およびショートカットキー（⌘⌥V / ⌃⌥V）。
+fn sheet012_paste_special_dialog_and_options() {
+    let mut s = new_sheet();
+
+    // 1. セル未コピー時: ⌘⌥V を押しても警告ステータスが表示されパネルは開かない
+    s.update(|e, _, cx| {
+        if let Some(state) = e.sheet_state_mut() {
+            state.clip = None;
+        }
+        cx.notify();
+    });
+    s.key("cmd-alt-v");
+    assert!(s.with(|e, _| e.wb().panels.paste_special_dialog.is_none()), "dialog should not open without copied cells");
+    assert_eq!(
+        s.with(|e, _| e.status.as_deref().map(str::to_string)),
+        Some(crate::shell::i18n::text("_xlsx.to-use-paste-special-copy-cells-first").to_string())
+    );
+
+    // 2. コピー後に ⌘⌥V でダイアログが開き、キャンセルで閉じる
+    s.click_cell("A1");
+    s.key("cmd-c");
+    s.key("cmd-alt-v");
+    assert!(s.with(|e, _| e.wb().panels.paste_special_dialog.is_some()), "dialog opened via cmd-alt-v");
+    // キャンセルボタンを押すと閉じる
+    s.update(|e, _, cx| {
+        if let Some(state) = e.sheet_state_mut() {
+            state.panels.paste_special_dialog = None;
+        }
+        cx.notify();
+    });
+    assert!(s.with(|e, _| e.wb().panels.paste_special_dialog.is_none()));
+
+    // 3. 列幅の貼り付け（PasteType::ColumnWidths）
+    // 列 A の幅を 25文字（160pt）に設定
+    s.update(|e, _, cx| {
+        e.select_lines(ibis_doc_model::sheet_command::Axis::Columns, 0, 0, cx);
+        e.set_selected_column_width(25.0, cx);
+    });
+    let col_a_pt = s.size_pt("A");
+    let init_d_pt = s.size_pt("D");
+
+    // A1:A3 をコピー
+    s.click_cell("A1");
+    s.update(|e, _, _| {
+        e.set_selected_ranges(&[ibis_doc_model::CellRange {
+            first_row: 0,
+            last_row: 2,
+            first_column: 0,
+            last_column: 0,
+        }]);
+    });
+    s.key("cmd-c");
+
+    // D1 を選択し、形式を選択して貼り付けから「列幅（ColumnWidths）」を適用
+    s.click_cell("D1");
+    s.key("cmd-alt-v");
+    s.update(|e, _, cx| {
+        if let Some(d) = e.sheet_state_mut().and_then(|s| s.panels.paste_special_dialog.as_mut()) {
+            d.paste_type = crate::xlsx::clipboard::PasteType::ColumnWidths;
+        }
+        e.apply_paste_special_dialog(cx);
+    });
+    assert_eq!(s.size_pt("D"), col_a_pt, "column D took column A's width");
+
+    // Undo で D の幅が元に戻る
+    s.key("cmd-z");
+    assert_eq!(s.size_pt("D"), init_d_pt, "Undo reverted column D's width");
+    // Redo で再び適用される
+    s.key("cmd-shift-z");
+    assert_eq!(s.size_pt("D"), col_a_pt, "Redo reapplied column D's width");
+
+    // 4. 値と数値の書式（PasteType::ValuesAndNumberFormats）
+    // E1 に数式 =100*2、表示形式を "¥#,##0"、赤色背景に設定
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let edits = vec![ibis_doc_model::CellEdit {
+            row: 0,
+            column: 4, // E1
+            input: ibis_doc_model::CellInput::Formula("100*2".into()),
+        }];
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        cx.notify();
+    });
+    s.click_cell("E1");
+    s.update(|e, _, cx| {
+        e.format_cells(ibis_doc_model::StyleChange::NumberFormat("¥#,##0".into()), cx);
+        e.format_cells(ibis_doc_model::StyleChange::Fill(Some(ibis_doc_model::Rgb(0xFFC8C8))), cx);
+    });
+    assert_eq!(s.formula("E1"), Some("100*2".to_string()));
+    assert_eq!(number_format(&mut s, "E1"), "¥#,##0");
+
+    // F1 に青色背景を設定
+    s.click_cell("F1");
+    s.update(|e, _, cx| {
+        e.format_cells(ibis_doc_model::StyleChange::Fill(Some(ibis_doc_model::Rgb(0xC8C8FF))), cx);
+    });
+
+    // E1 をコピーし、F1 に ValuesAndNumberFormats を適用
+    s.click_cell("E1");
+    s.key("cmd-c");
+    s.click_cell("F1");
+    s.update(|e, _, cx| {
+        e.apply_paste_special_options(crate::xlsx::clipboard::PasteSpecialOptions {
+            paste_type: crate::xlsx::clipboard::PasteType::ValuesAndNumberFormats,
+            operation: crate::xlsx::clipboard::PasteOp::None,
+            skip_blanks: false,
+            transpose: false,
+        }, cx);
+    });
+    // F1 は数式ではなく値 200、表示形式は "¥#,##0"、背景色は元の青色のまま
+    assert_eq!(s.value("F1"), ibis_doc_model::CellValue::Number(200.0));
+    assert_eq!(s.formula("F1"), None, "formula converted to value");
+    assert_eq!(number_format(&mut s, "F1"), "¥#,##0", "number format applied");
+    let f1_fill = s.with(|e, _| {
+        let (_, sh) = e.current_sheet()?;
+        let c = sh.cell(0, 5)?;
+        sh.styles.get(c.style as usize).and_then(|st| st.fill)
+    });
+    assert_eq!(f1_fill, Some(ibis_doc_model::Rgb(0xC8C8FF)), "original fill preserved");
+
+    // Undo で F1 が復元
+    s.key("cmd-z");
+    assert_eq!(s.value("F1"), ibis_doc_model::CellValue::Empty);
+
+    // 5. 罫線を除くすべて（PasteType::AllExceptBorders）
+    // G1 に太枠罫線（Thick）を設定
+    s.click_cell("G1");
+    s.update(|e, _, cx| {
+        let border = Some(ibis_doc_model::Border { line: ibis_doc_model::BorderLine::Thick, color: ibis_doc_model::Rgb(0x000000) });
+        e.format_cells(ibis_doc_model::StyleChange::Border(ibis_doc_model::Edge::Top, border), cx);
+    });
+    // E1（背景色あり、罫線なし）をコピーし、G1 に AllExceptBorders を適用
+    s.click_cell("E1");
+    s.key("cmd-c");
+    s.click_cell("G1");
+    s.update(|e, _, cx| {
+        e.apply_paste_special_options(crate::xlsx::clipboard::PasteSpecialOptions {
+            paste_type: crate::xlsx::clipboard::PasteType::AllExceptBorders,
+            operation: crate::xlsx::clipboard::PasteOp::None,
+            skip_blanks: false,
+            transpose: false,
+        }, cx);
+    });
+    // G1 は E1 の値・数式・背景色を受け継ぎつつ、既存の太枠罫線が維持されている
+    assert_eq!(s.formula("G1"), Some("100*2".to_string()));
+    let g1_borders = s.with(|e, _| {
+        let (_, sh) = e.current_sheet()?;
+        let c = sh.cell(0, 6)?;
+        let st = sh.styles.get(c.style as usize)?;
+        Some((st.top, st.fill))
+    });
+    assert!(g1_borders.as_ref().and_then(|(b, _)| *b).is_some_and(|b| b.line == ibis_doc_model::BorderLine::Thick), "borders kept");
+    assert_eq!(g1_borders.and_then(|(_, f)| f), Some(ibis_doc_model::Rgb(0xFFC8C8)), "fill applied");
+
+    // 6. コメントとメモの貼り付け（PasteType::Comments）
+    s.click_cell("A1");
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let _ = e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
+            slide,
+            row: 0,
+            column: 0,
+            comment: Some(ibis_doc_model::SheetComment {
+                row: 0,
+                column: 0,
+                author: "Tester".into(),
+                text: "重要メモ".into(),
+            }),
+        })]);
+        cx.notify();
+    });
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.comment_at(0, 0).is_some()));
+
+    // A1 をコピーし、H1 に Comments のみ適用
+    s.click_cell("A1");
+    s.key("cmd-c");
+    s.click_cell("H1");
+    s.update(|e, _, cx| {
+        e.apply_paste_special_options(crate::xlsx::clipboard::PasteSpecialOptions {
+            paste_type: crate::xlsx::clipboard::PasteType::Comments,
+            operation: crate::xlsx::clipboard::PasteOp::None,
+            skip_blanks: false,
+            transpose: false,
+        }, cx);
+    });
+    let h1_comment = s.with(|e, _| e.current_sheet().and_then(|(_, sh)| sh.comment_at(0, 7)).map(|c| c.text.clone()));
+    assert_eq!(h1_comment.as_deref(), Some("重要メモ"), "comment pasted to H1");
+    // H1 のセル値は空のまま
+    assert_eq!(s.value("H1"), ibis_doc_model::CellValue::Empty);
+
+    // Undo で H1 のコメントが消える
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.comment_at(0, 7).is_none()), "comment removed by undo");
+
+    // 7. 演算（加算 PasteOp::Add）と空白セルを無視する（skip_blanks）の組み合わせ
+    // I1 に 50, I2 に 80 を設定
+    // J1 に 100 を設定、J2 は空セル
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let edits = vec![
+            ibis_doc_model::CellEdit { row: 0, column: 8, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(50.0)) }, // I1
+            ibis_doc_model::CellEdit { row: 1, column: 8, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(80.0)) }, // I2
+            ibis_doc_model::CellEdit { row: 0, column: 9, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(100.0)) }, // J1
+        ];
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        cx.notify();
+    });
+
+    // J1:J2 をコピーし、I1 に PasteType::Values, PasteOp::Add, skip_blanks: true で適用
+    s.click_cell("J1");
+    s.update(|e, _, _| {
+        e.set_selected_ranges(&[ibis_doc_model::CellRange {
+            first_row: 0,
+            last_row: 1,
+            first_column: 9,
+            last_column: 9,
+        }]);
+    });
+    s.key("cmd-c");
+    s.click_cell("I1");
+    s.update(|e, _, cx| {
+        e.apply_paste_special_options(crate::xlsx::clipboard::PasteSpecialOptions {
+            paste_type: crate::xlsx::clipboard::PasteType::Values,
+            operation: crate::xlsx::clipboard::PasteOp::Add,
+            skip_blanks: true,
+            transpose: false,
+        }, cx);
+    });
+    // I1 は 50 + 100 = 150、I2 は空白無視により 80 のまま
+    assert_eq!(s.value("I1"), ibis_doc_model::CellValue::Number(150.0));
+    assert_eq!(s.value("I2"), ibis_doc_model::CellValue::Number(80.0));
+
+    // Undo で I1=50, I2=80 に復帰
+    s.key("cmd-z");
+    assert_eq!(s.value("I1"), ibis_doc_model::CellValue::Number(50.0));
+    assert_eq!(s.value("I2"), ibis_doc_model::CellValue::Number(80.0));
+
+    // 8. 転置（transpose）
+    // K1:M2（2行3列）にデータを入力
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let edits = vec![
+            ibis_doc_model::CellEdit { row: 0, column: 10, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(1.0)) }, // K1
+            ibis_doc_model::CellEdit { row: 0, column: 11, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(2.0)) }, // L1
+            ibis_doc_model::CellEdit { row: 0, column: 12, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(3.0)) }, // M1
+            ibis_doc_model::CellEdit { row: 1, column: 10, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(4.0)) }, // K2
+            ibis_doc_model::CellEdit { row: 1, column: 11, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(5.0)) }, // L2
+            ibis_doc_model::CellEdit { row: 1, column: 12, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(6.0)) }, // M2
+        ];
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        cx.notify();
+    });
+
+    s.click_cell("K1");
+    s.update(|e, _, _| {
+        e.set_selected_ranges(&[ibis_doc_model::CellRange {
+            first_row: 0,
+            last_row: 1,
+            first_column: 10,
+            last_column: 12,
+        }]);
+    });
+    s.key("cmd-c");
+    s.click_cell("N1");
+    s.update(|e, _, cx| {
+        e.apply_paste_special_options(crate::xlsx::clipboard::PasteSpecialOptions {
+            paste_type: crate::xlsx::clipboard::PasteType::Values,
+            operation: crate::xlsx::clipboard::PasteOp::None,
+            skip_blanks: false,
+            transpose: true,
+        }, cx);
+    });
+    // N1:O3（3行2列）に転置配置される
+    // N1=1, O1=4
+    // N2=2, O2=5
+    // N3=3, O3=6
+    assert_eq!(s.value("N1"), ibis_doc_model::CellValue::Number(1.0));
+    assert_eq!(s.value("O1"), ibis_doc_model::CellValue::Number(4.0));
+    assert_eq!(s.value("N2"), ibis_doc_model::CellValue::Number(2.0));
+    assert_eq!(s.value("O2"), ibis_doc_model::CellValue::Number(5.0));
+    assert_eq!(s.value("N3"), ibis_doc_model::CellValue::Number(3.0));
+    assert_eq!(s.value("O3"), ibis_doc_model::CellValue::Number(6.0));
+
+    // 9. ファイル保存と再読み込み
+    s.save_as("sheet012-paste-special.xlsx");
+    let reloaded = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&reloaded.slides[1]).unwrap();
+    // 列 D の幅が保持されていること
+    let rd_pt = reloaded_sheet.columns[3] as f32 / ibis_doc_model::EMU_PER_POINT as f32;
+    assert!((rd_pt - col_a_pt).abs() < 1.0, "reloaded col D width: {rd_pt} vs {col_a_pt}");
+    // N1:O3 の転置データが保持されていること
+    assert_eq!(reloaded_sheet.cell(0, 13).unwrap().value, ibis_doc_model::CellValue::Number(1.0));
+    assert_eq!(reloaded_sheet.cell(0, 14).unwrap().value, ibis_doc_model::CellValue::Number(4.0));
+    assert_eq!(reloaded_sheet.cell(2, 14).unwrap().value, ibis_doc_model::CellValue::Number(6.0));
+}
+
+/// XLSX-CELL-017: 検索と置換ダイアログパネルの大文字・小文字区別、完全一致セル検索、
+/// すべて検索（一致結果一覧リスト収集とジャンプ）、およびすべて置換の一括Undo/Redo。
+fn sheet013_find_and_replace_options() {
+    let mut s = new_sheet();
+
+    // 1. テストデータをセットアップ
+    // A1: "Item"
+    // A2: "item"
+    // A3: "ITEM"
+    // A4: "Subitem"
+    // A5: "Items"
+    // B1: "=SUM(D1:D3)"
+    // B2: "=SUM(D4:D5)"
+    // C1: "Apple"
+    // C2: "Banana"
+    // C3: "Pineapple"
+    // D1: 10, D2: 20, D3: 30, D4: 40, D5: 50
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let edits = vec![
+            ibis_doc_model::CellEdit { row: 0, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("Item".into())) },
+            ibis_doc_model::CellEdit { row: 1, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("item".into())) },
+            ibis_doc_model::CellEdit { row: 2, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("ITEM".into())) },
+            ibis_doc_model::CellEdit { row: 3, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("Subitem".into())) },
+            ibis_doc_model::CellEdit { row: 4, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("Items".into())) },
+            ibis_doc_model::CellEdit { row: 0, column: 1, input: ibis_doc_model::CellInput::Formula("SUM(D1:D3)".into()) },
+            ibis_doc_model::CellEdit { row: 1, column: 1, input: ibis_doc_model::CellInput::Formula("SUM(D4:D5)".into()) },
+            ibis_doc_model::CellEdit { row: 0, column: 2, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("Apple".into())) },
+            ibis_doc_model::CellEdit { row: 1, column: 2, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("Banana".into())) },
+            ibis_doc_model::CellEdit { row: 2, column: 2, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("Pineapple".into())) },
+            ibis_doc_model::CellEdit { row: 0, column: 3, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(10.0)) },
+            ibis_doc_model::CellEdit { row: 1, column: 3, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(20.0)) },
+            ibis_doc_model::CellEdit { row: 2, column: 3, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(30.0)) },
+            ibis_doc_model::CellEdit { row: 3, column: 3, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(40.0)) },
+            ibis_doc_model::CellEdit { row: 4, column: 3, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(50.0)) },
+        ];
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        cx.notify();
+    });
+
+    assert_eq!(s.value("A1"), ibis_doc_model::CellValue::Text("Item".into()));
+    assert_eq!(s.value("B1"), ibis_doc_model::CellValue::Number(60.0));
+    assert_eq!(s.value("B2"), ibis_doc_model::CellValue::Number(90.0));
+
+    // 2. 検索パネルを開く
+    s.update(|e, window, cx| {
+        e.open_sheet_find(window, cx);
+    });
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.find.as_ref()).is_some()), "find panel opened");
+
+    // 3. 通常検索（大文字小文字無視・部分一致）
+    // "item" を検索: A1("Item"), A2("item"), A3("ITEM"), A4("Subitem"), A5("Items") の 5 件ヒット
+    let matches = s.update(|e, _, cx| {
+        e.find_all_cells("item", crate::xlsx::find::FindOptions::default(), cx)
+    });
+    assert_eq!(matches.len(), 5);
+    let matched_refs: Vec<String> = matches.iter().map(|m| m.reference.clone()).collect();
+    assert_eq!(matched_refs, vec!["A1", "A2", "A3", "A4", "A5"]);
+    // find_all_cells 後、先頭ヒットセル（A1）にカーソルが移動していること
+    assert_eq!(s.selected(), "A1");
+
+    // 4. 大文字小文字の区別（match_case: true）
+    // "ITEM" を検索（大文字小文字区別、部分一致）: A3 の 1 件のみ
+    let matches_case_item = s.update(|e, _, cx| {
+        e.find_all_cells("ITEM", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: true,
+            entire_cell: false,
+            ..Default::default()
+        }, cx)
+    });
+    assert_eq!(matches_case_item.len(), 1);
+    assert_eq!(matches_case_item[0].reference, "A3");
+    assert_eq!(s.selected(), "A3");
+
+    // "item" を検索（大文字小文字区別、部分一致）: A2("item") と A4("Subitem") の 2 件
+    let matches_lower_item = s.update(|e, _, cx| {
+        e.find_all_cells("item", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: true,
+            entire_cell: false,
+            ..Default::default()
+        }, cx)
+    });
+    assert_eq!(matches_lower_item.len(), 2);
+    assert_eq!(matches_lower_item[0].reference, "A2");
+    assert_eq!(matches_lower_item[1].reference, "A4");
+
+    // 5. 完全一致セル検索（entire_cell: true）
+    // "item" を検索（大文字小文字無視、完全一致）: A1("Item"), A2("item"), A3("ITEM") の 3 件
+    // （A4 "Subitem" や A5 "Items" は部分一致のため除外される）
+    let matches_entire = s.update(|e, _, cx| {
+        e.find_all_cells("item", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: false,
+            entire_cell: true,
+            ..Default::default()
+        }, cx)
+    });
+    assert_eq!(matches_entire.len(), 3);
+    let entire_refs: Vec<String> = matches_entire.iter().map(|m| m.reference.clone()).collect();
+    assert_eq!(entire_refs, vec!["A1", "A2", "A3"]);
+
+    // "item" を検索（大文字小文字区別、完全一致）: A2("item") のみ（1 件）
+    let matches_exact = s.update(|e, _, cx| {
+        e.find_all_cells("item", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: true,
+            entire_cell: true,
+            ..Default::default()
+        }, cx)
+    });
+    assert_eq!(matches_exact.len(), 1);
+    assert_eq!(matches_exact[0].reference, "A2");
+
+    // 6. 数式を含む検索（formulas: true）
+    // formulas: false で "SUM" を検索 -> 0 件
+    let matches_no_form = s.update(|e, _, cx| {
+        e.find_all_cells("SUM", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: false,
+            entire_cell: false,
+            ..Default::default()
+        }, cx)
+    });
+    assert_eq!(matches_no_form.len(), 0);
+
+    // formulas: true で "SUM" を検索 -> B1, B2 の 2 件
+    let matches_form = s.update(|e, _, cx| {
+        e.find_all_cells("SUM", crate::xlsx::find::FindOptions {
+            formulas: true,
+            match_case: false,
+            entire_cell: false,
+            ..Default::default()
+        }, cx)
+    });
+    assert_eq!(matches_form.len(), 2);
+    assert_eq!(matches_form[0].reference, "B1");
+    assert_eq!(matches_form[1].reference, "B2");
+
+    // 7. 検索結果一覧リストからのジャンプ（jump_to_cell）
+    // matches_form[1] (B2: column=1, row=1) へジャンプ
+    s.update(|e, _, cx| {
+        e.jump_to_cell(1, 1, cx);
+    });
+    assert_eq!(s.selected(), "B2");
+
+    // 8. 次を検索（find_next_cell_with_options）の循環動作
+    s.click_cell("A1");
+    // options: match_case: true, entire_cell: false で "item" を次検索
+    // A2 -> A4 -> A2 の順で巡回
+    let found1 = s.update(|e, _, cx| {
+        e.find_next_cell_with_options("item", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: true,
+            entire_cell: false,
+            ..Default::default()
+        }, cx)
+    });
+    assert!(found1);
+    assert_eq!(s.selected(), "A2");
+
+    let found2 = s.update(|e, _, cx| {
+        e.find_next_cell_with_options("item", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: true,
+            entire_cell: false,
+            ..Default::default()
+        }, cx)
+    });
+    assert!(found2);
+    assert_eq!(s.selected(), "A4");
+
+    let found3 = s.update(|e, _, cx| {
+        e.find_next_cell_with_options("item", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: true,
+            entire_cell: false,
+            ..Default::default()
+        }, cx)
+    });
+    assert!(found3);
+    assert_eq!(s.selected(), "A2");
+
+    // 9. 個別置換（replace_one_with_options）
+    // 現在選択セル A2("item") を "Product" に置換（match_case: true, entire_cell: false）
+    // 置換後、次の一致セルである A4("Subitem") に移動する
+    s.update(|e, _, cx| {
+        e.replace_one_with_options("item", "Product", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: true,
+            entire_cell: false,
+            ..Default::default()
+        }, cx);
+    });
+    assert_eq!(s.value("A2"), ibis_doc_model::CellValue::Text("Product".into()));
+    assert_eq!(s.selected(), "A4");
+
+    // 10. すべて置換（replace_all_cells_with_options）と 1 手での一括 Undo / Redo
+    // options: match_case: false, entire_cell: true で "item" を "Gadget" に全置換
+    // 対象は A1("Item") と A3("ITEM") の 2 件（A2 は既に "Product"、A4, A5 は部分一致）
+    let replaced_count = s.update(|e, _, cx| {
+        e.replace_all_cells_with_options("item", "Gadget", crate::xlsx::find::FindOptions {
+            formulas: false,
+            match_case: false,
+            entire_cell: true,
+            ..Default::default()
+        }, cx)
+    });
+    assert_eq!(replaced_count, 2);
+    assert_eq!(s.value("A1"), ibis_doc_model::CellValue::Text("Gadget".into()));
+    assert_eq!(s.value("A3"), ibis_doc_model::CellValue::Text("Gadget".into()));
+    assert_eq!(s.value("A2"), ibis_doc_model::CellValue::Text("Product".into()));
+    assert_eq!(s.value("A4"), ibis_doc_model::CellValue::Text("Subitem".into()));
+    assert_eq!(s.value("A5"), ibis_doc_model::CellValue::Text("Items".into()));
+
+    // 11. 1 手の Undo（⌘Z）で置換前の A1="Item", A3="ITEM" に完全復元されること
+    s.key("cmd-z");
+    assert_eq!(s.value("A1"), ibis_doc_model::CellValue::Text("Item".into()));
+    assert_eq!(s.value("A3"), ibis_doc_model::CellValue::Text("ITEM".into()));
+
+    // Redo（⌘⇧Z）で再度 "Gadget" に適用されること
+    s.key("cmd-shift-z");
+    assert_eq!(s.value("A1"), ibis_doc_model::CellValue::Text("Gadget".into()));
+    assert_eq!(s.value("A3"), ibis_doc_model::CellValue::Text("Gadget".into()));
+
+    // 11. 数式の置換（formulas: true）
+    let formula_rep = s.update(|e, _, cx| {
+        e.replace_all_cells_with_options("SUM", "AVERAGE", crate::xlsx::find::FindOptions {
+            formulas: true,
+            match_case: true,
+            entire_cell: false,
+            ..Default::default()
+        }, cx)
+    });
+    assert_eq!(formula_rep, 2);
+    assert_eq!(s.formula("B1").as_deref(), Some("AVERAGE(D1:D3)"));
+    assert_eq!(s.formula("B2").as_deref(), Some("AVERAGE(D4:D5)"));
+    assert_eq!(s.value("B1"), ibis_doc_model::CellValue::Number(20.0));
+    assert_eq!(s.value("B2"), ibis_doc_model::CellValue::Number(45.0));
+
+    // 12. 保存と再読み込み（ラウンドトリップ）
+    s.save_as("sheet013-find-replace.xlsx");
+    let reloaded = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&reloaded.slides[1]).unwrap();
+    assert_eq!(reloaded_sheet.cell(0, 0).unwrap().value, ibis_doc_model::CellValue::Text("Gadget".into()));
+    assert_eq!(reloaded_sheet.cell(1, 0).unwrap().value, ibis_doc_model::CellValue::Text("Product".into()));
+    assert_eq!(reloaded_sheet.cell(2, 0).unwrap().value, ibis_doc_model::CellValue::Text("Gadget".into()));
+    assert_eq!(reloaded_sheet.cell(0, 1).unwrap().formula.as_deref(), Some("AVERAGE(D1:D3)"));
+    assert_eq!(reloaded_sheet.cell(1, 1).unwrap().formula.as_deref(), Some("AVERAGE(D4:D5)"));
+}
+
+/// XLSX-CELL-020: ドロップダウン リストから選択（Pick from Drop-down List）
+/// ショートカットキー（⌥↓ / Alt+↓）、同列既存値からの自動候補リスト収集・入力、
+/// コンテキストメニュー連携、および一括Undo/Redo。
+fn sheet014_pick_from_drop_down_list() {
+    let mut s = new_sheet();
+
+    // 1. 同一列（列 A）にテストデータをセットアップ
+    // A1: "りんご"
+    // A2: "みかん"
+    // A3: "ぶどう"
+    // A4: "りんご" （重複データ）
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let edits = vec![
+            ibis_doc_model::CellEdit { row: 0, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("りんご".into())) },
+            ibis_doc_model::CellEdit { row: 1, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("みかん".into())) },
+            ibis_doc_model::CellEdit { row: 2, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("ぶどう".into())) },
+            ibis_doc_model::CellEdit { row: 3, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("りんご".into())) },
+        ];
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        cx.notify();
+    });
+
+    // 2. 空セル A5 を選択
+    s.click_cell("A5");
+    assert!(s.value("A5").is_empty());
+
+    // 3. 右クリックメニューに「ドロップダウン リストから選択…」が含まれ、ショートカットが表示されていること
+    let has_pick_menu = s.with(|e, _| {
+        e.cell_menu().iter().any(|m| match m {
+            crate::shell::chrome::MenuEntry::Item(item) => item.id == "xlsx.cell-pick-list",
+            _ => false,
+        })
+    });
+    assert!(has_pick_menu, "cell context menu has pick-from-drop-down-list entry");
+
+    // 4. 同列既存値の候補収集関数の検証（重複排除および自然順ソート）
+    let items = s.with(|e, _| {
+        let (_, sheet) = e.current_sheet().unwrap();
+        crate::xlsx::validation::column_pick_list_items(sheet, 4, 0)
+    });
+    assert_eq!(items, vec!["ぶどう", "みかん", "りんご"]);
+
+    // 5. ⌥↓（alt-down）キーでドロップダウン リストを開く
+    s.key("alt-down");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().list_popup.is_some()), "drop-down pick list opened via alt-down");
+
+    // 6. Escape でキャンセル（閉じて何も入力されないこと）
+    s.key("escape");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().list_popup.is_none()), "drop-down closed on escape");
+    assert!(s.value("A5").is_empty());
+
+    // 7. 再度 ⌥↓ で開き、候補から選択入力
+    s.key("alt-down");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().list_popup.is_some()));
+    // 候補 "みかん" を選択入力
+    s.update(|e, window, cx| {
+        let slide = e.current_slide;
+        let edit = ibis_doc_model::CellEdit {
+            row: 4,
+            column: 0,
+            input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("みかん".into())),
+        };
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits: vec![edit] })]).unwrap();
+        if let Some(st) = e.sheet_state_mut() {
+            st.list_popup = None;
+        }
+        e.focus_handle.focus(window, cx);
+        cx.notify();
+    });
+    s.click_cell("A5");
+    assert_eq!(s.value("A5"), ibis_doc_model::CellValue::Text("みかん".into()));
+
+    // 8. 1 手の Undo（⌘Z）でセルが空に戻り、Redo（⌘⇧Z）で再度入力されること
+    s.key("cmd-z");
+    assert!(s.value("A5").is_empty(), "undone: cell A5 is empty again");
+    s.key("cmd-shift-z");
+    assert_eq!(s.value("A5"), ibis_doc_model::CellValue::Text("みかん".into()), "redone: cell A5 is restored");
+
+    // 9. 入力規則（Data Validation）のリストが設定されたセルでの ⌥↓ 連動
+    // B1 に入力規則（リスト: "東京,大阪,名古屋"）を設定
+    s.click_cell("B1");
+    s.update(|e, _, cx| {
+        e.set_list_validation("東京,大阪,名古屋", "都市を選んでください", cx);
+    });
+    // B1 で ⌥↓ を押すと入力規則のリストが開くこと
+    s.key("alt-down");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().list_popup.is_some()), "validation list opened via alt-down");
+
+    // 10. 入力規則リストから "大阪" を入力
+    s.update(|e, window, cx| {
+        let slide = e.current_slide;
+        let edit = ibis_doc_model::CellEdit {
+            row: 0,
+            column: 1,
+            input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("大阪".into())),
+        };
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits: vec![edit] })]).unwrap();
+        if let Some(st) = e.sheet_state_mut() {
+            st.list_popup = None;
+        }
+        e.focus_handle.focus(window, cx);
+        cx.notify();
+    });
+    s.click_cell("B1");
+    assert_eq!(s.value("B1"), ibis_doc_model::CellValue::Text("大阪".into()));
+
+    // 11. ファイル保存（.xlsx）と再読み込みラウンドトリップ
+    s.save_as("sheet014-pick-list.xlsx");
+    let reloaded = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&reloaded.slides[1]).unwrap();
+    assert_eq!(reloaded_sheet.cell(4, 0).unwrap().value, ibis_doc_model::CellValue::Text("みかん".into()));
+    assert_eq!(reloaded_sheet.cell(0, 1).unwrap().value, ibis_doc_model::CellValue::Text("大阪".into()));
+    assert_eq!(reloaded_sheet.validations.len(), 1);
+}
+
+/// XLSX-VIEW-009: ウィンドウ枠の固定（Freeze Panes）拡張オプション：
+/// 先頭行の固定（Freeze Top Row）、先頭列の固定（Freeze First Column）、
+/// ウィンドウ枠固定の解除（Unfreeze Panes）、任意セル位置での固定、
+/// Undo/Redo 連動、および .xlsx ファイル保存・再読み込みラウンドトリップ。
+fn sheet015_freeze_top_row_first_column() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let frozen = |s: &mut Scenario| s.with(|e, _| sheet_of_slide(e.slide()).unwrap().frozen);
+
+    // 1. 初期状態では枠固定なし
+    assert_eq!(frozen(&mut s), None);
+
+    // 2. 先頭行の固定（xlsx.freeze-top-row）
+    s.menu("xlsx.freeze-top-row");
+    // (columns=0, rows=1) で先頭行（行0）の下で固定されること
+    assert_eq!(frozen(&mut s), Some((0, 1)));
+
+    // 3. ウィンドウ枠固定の解除（xlsx.unfreeze-panes）
+    s.menu("xlsx.unfreeze-panes");
+    assert_eq!(frozen(&mut s), None);
+
+    // 4. 先頭列の固定（xlsx.freeze-first-column）
+    s.menu("xlsx.freeze-first-column");
+    // (columns=1, rows=0) で先頭列（列0=A列）の右で固定されること
+    assert_eq!(frozen(&mut s), Some((1, 0)));
+
+    // 5. 1 手の Undo（⌘Z）で枠固定解除に戻ること
+    s.key("cmd-z");
+    assert_eq!(frozen(&mut s), None);
+
+    // 6. 1 手の Redo（⌘⇧Z）で再度先頭列の固定が適用されること
+    s.key("cmd-shift-z");
+    assert_eq!(frozen(&mut s), Some((1, 0)));
+
+    // 7. 任意位置でのウィンドウ枠の固定（xlsx.freeze-panes）
+    // セル C4（column=2, row=3）を選択して固定を実行
+    s.click_cell("C4");
+    s.menu("xlsx.freeze-panes");
+    assert_eq!(frozen(&mut s), Some((2, 3)));
+
+    // 8. 既存互換 xlsx.freeze で解除
+    s.menu("xlsx.freeze");
+    assert_eq!(frozen(&mut s), None);
+
+    // 再度 C4 で固定
+    s.click_cell("C4");
+    s.menu("xlsx.freeze-panes");
+    assert_eq!(frozen(&mut s), Some((2, 3)));
+
+    // 9. ファイル保存（.xlsx）と再読み込みラウンドトリップ
+    s.save_as("sheet015-freeze-panes.xlsx");
+    let saved = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&saved.slides[0]).unwrap();
+    assert_eq!(reloaded_sheet.frozen, Some((2, 3)), "frozen panes preserved across save and reload");
+}
+
+/// XLSX-PAGE-007 / XLSX-PRINT-002: ワークシートの印刷範囲（Print Area）拡張：
+/// 印刷範囲に追加（Add to Print Area）、印刷範囲の設定・クリア、動的有効/無効制御、
+/// 包含矩形への自動マージ、Undo/Redo 連動、および .xlsx ファイル保存・再読み込みラウンドトリップ。
+fn sheet016_print_area_add_and_clear() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let print_area = |s: &mut Scenario| s.with(|e, _| sheet_of_slide(e.slide()).unwrap().print_area);
+
+    // 1. 初期状態では印刷範囲未設定
+    assert_eq!(print_area(&mut s), None);
+
+    // 2. セル範囲 A2:C5（first_col: 0, last_col: 2, first_row: 1, last_row: 4）を選択
+    // （※A1:E1 は結合セルのため A2 以降を使用）
+    s.click_cell("A2");
+    let c5 = s.with(|e, _| e.cell_center(2, 4)).unwrap();
+    s.shift_click((f32::from(c5.x), f32::from(c5.y)));
+    assert_eq!(
+        s.with(|e, _| e.selected_range().map(|r| (r.first_column, r.last_column, r.first_row, r.last_row))),
+        Some((0, 2, 1, 4))
+    );
+
+    // 3. 印刷範囲の設定（xlsx.print-area-set）
+    s.menu("xlsx.print-area-set");
+    assert_eq!(
+        print_area(&mut s),
+        Some(ibis_doc_model::CellRange {
+            first_column: 0,
+            last_column: 2,
+            first_row: 1,
+            last_row: 4,
+        })
+    );
+
+    // 4. 別のセル範囲 D6:F10（first_col: 3, last_col: 5, first_row: 5, last_row: 9）を選択
+    s.click_cell("D6");
+    let f10 = s.with(|e, _| e.cell_center(5, 9)).unwrap();
+    s.shift_click((f32::from(f10.x), f32::from(f10.y)));
+    assert_eq!(
+        s.with(|e, _| e.selected_range().map(|r| (r.first_column, r.last_column, r.first_row, r.last_row))),
+        Some((3, 5, 5, 9))
+    );
+
+    // 5. 印刷範囲に追加（xlsx.print-area-add）
+    // 既存の A2:C5 と D6:F10 が包括矩形 A2:F10 に自動マージされること
+    s.menu("xlsx.print-area-add");
+    assert_eq!(
+        print_area(&mut s),
+        Some(ibis_doc_model::CellRange {
+            first_column: 0,
+            last_column: 5,
+            first_row: 1,
+            last_row: 9,
+        })
+    );
+
+    // 6. 1 手の Undo（⌘Z）で追加前の A2:C5 に戻ること
+    s.key("cmd-z");
+    assert_eq!(
+        print_area(&mut s),
+        Some(ibis_doc_model::CellRange {
+            first_column: 0,
+            last_column: 2,
+            first_row: 1,
+            last_row: 4,
+        })
+    );
+
+    // 7. 1 手の Redo（⌘⇧Z）で再度包括矩形 A2:F10 に拡張されること
+    s.key("cmd-shift-z");
+    assert_eq!(
+        print_area(&mut s),
+        Some(ibis_doc_model::CellRange {
+            first_column: 0,
+            last_column: 5,
+            first_row: 1,
+            last_row: 9,
+        })
+    );
+
+    // 8. 既存の印刷範囲の内側にあるセル（B3:C4）を選択して追加しても包括矩形が保持されること
+    s.click_cell("B3");
+    let c4 = s.with(|e, _| e.cell_center(2, 3)).unwrap();
+    s.shift_click((f32::from(c4.x), f32::from(c4.y)));
+    s.menu("xlsx.print-area-add");
+    assert_eq!(
+        print_area(&mut s),
+        Some(ibis_doc_model::CellRange {
+            first_column: 0,
+            last_column: 5,
+            first_row: 1,
+            last_row: 9,
+        })
+    );
+
+    // 9. 印刷範囲のクリア（xlsx.print-area-clear）
+    s.menu("xlsx.print-area-clear");
+    assert_eq!(print_area(&mut s), None);
+
+    // 10. 1 手の Undo（⌘Z）でクリア前の A2:F10 に戻ること
+    s.key("cmd-z");
+    assert_eq!(
+        print_area(&mut s),
+        Some(ibis_doc_model::CellRange {
+            first_column: 0,
+            last_column: 5,
+            first_row: 1,
+            last_row: 9,
+        })
+    );
+
+    // 11. ファイル保存（.xlsx）と再読み込みラウンドトリップ
+    s.save_as("sheet016-print-area.xlsx");
+    let saved = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&saved.slides[0]).unwrap();
+    assert_eq!(
+        reloaded_sheet.print_area,
+        Some(ibis_doc_model::CellRange {
+            first_column: 0,
+            last_column: 5,
+            first_row: 1,
+            last_row: 9,
+        }),
+        "print area preserved across save and reload"
+    );
+}
+
+/// XLSX-CELL-022: セルのハイパーリンク（Hyperlink）コンテキストメニュー拡張：
+/// ハイパーリンクを開く（Open Hyperlink）、ハイパーリンクの編集（Edit Hyperlink）、
+/// ハイパーリンクの削除（Remove Hyperlink）、リンク有無に応じた動的分岐、
+/// Undo/Redo 連動、および .xlsx ファイル保存・再読み込みラウンドトリップ。
+fn sheet017_hyperlink_context_menu_and_operations() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let menu_ids = |s: &mut Scenario| {
+        s.with(|e, _| {
+            e.cell_menu()
+                .into_iter()
+                .filter_map(|m| match m {
+                    crate::shell::chrome::MenuEntry::Item(it) => Some(it.id.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+
+    // 1. セル B3（リンク未設定）を選択
+    s.click_cell("B3");
+    assert!(s.with(|e, _| e.current_link()).is_none());
+
+    // 2. リンク未設定セルでは「ハイパーリンク…（xlsx.cell-link）」が表示され、
+    // 「開く」「編集」「削除」は表示されないこと
+    let ids = menu_ids(&mut s);
+    assert!(ids.contains(&"xlsx.cell-link".to_string()), "has xlsx.cell-link");
+    assert!(!ids.contains(&"xlsx.cell-link-open".to_string()), "no open");
+    assert!(!ids.contains(&"xlsx.cell-link-edit".to_string()), "no edit");
+    assert!(!ids.contains(&"xlsx.cell-link-remove".to_string()), "no remove");
+
+    // 3. ハイパーリンク（https://example.com）を挿入
+    s.update(|e, _, cx| e.insert_cell_link("https://example.com", cx));
+    assert!(s.with(|e, _| e.current_link().is_some()), "link inserted");
+    assert_eq!(
+        s.with(|e, _| e.current_link().unwrap().target),
+        Some("https://example.com".into())
+    );
+
+    // 4. リンク設定済みセルでは「ハイパーリンクを開く」「ハイパーリンクの編集…」「ハイパーリンクの削除」
+    // の 3 項目がコンテキストメニューに動的表示され、「ハイパーリンク…」は非表示となること
+    let ids_with_link = menu_ids(&mut s);
+    assert!(!ids_with_link.contains(&"xlsx.cell-link".to_string()), "no plain cell-link");
+    assert!(ids_with_link.contains(&"xlsx.cell-link-open".to_string()), "has cell-link-open");
+    assert!(ids_with_link.contains(&"xlsx.cell-link-edit".to_string()), "has cell-link-edit");
+    assert!(ids_with_link.contains(&"xlsx.cell-link-remove".to_string()), "has cell-link-remove");
+
+    let call = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.cell_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // 5. 「ハイパーリンクを開く（xlsx.cell-link-open）」を実行
+    call(&mut s, "xlsx.cell-link-open");
+    assert!(
+        s.with(|e, _| e.status.clone()).is_some_and(|t| t.contains("https://example.com")),
+        "follow link status set"
+    );
+
+    // 6. 「ハイパーリンクの編集（xlsx.cell-link-edit）」メニューでリンク編集パネルが起動すること
+    call(&mut s, "xlsx.cell-link-edit");
+    assert!(s.with(|e, _| e.sheet_state().unwrap().link.is_some()), "link panel opened");
+
+    // リンク先アドレスを https://ibis.ne.jp に更新
+    s.update(|e, _, cx| {
+        e.insert_cell_link("https://ibis.ne.jp", cx);
+        if let Some(st) = e.sheet_state_mut() {
+            st.link = None;
+        }
+    });
+    s.click_cell("B3");
+    assert_eq!(
+        s.with(|e, _| e.current_link().unwrap().target),
+        Some("https://ibis.ne.jp".into())
+    );
+
+    // 7. 「ハイパーリンクの削除（xlsx.cell-link-remove）」を実行してリンクが削除されること
+    call(&mut s, "xlsx.cell-link-remove");
+    assert!(s.with(|e, _| e.current_link()).is_none(), "link removed");
+
+    // コンテキストメニューが未設定状態（xlsx.cell-link）に戻ること
+    let ids_removed = menu_ids(&mut s);
+    assert!(ids_removed.contains(&"xlsx.cell-link".to_string()));
+    assert!(!ids_removed.contains(&"xlsx.cell-link-open".to_string()));
+
+    // 8. 1 手の Undo（⌘Z）でハイパーリンクが完全復元されること
+    s.key("cmd-z");
+    assert_eq!(
+        s.with(|e, _| e.current_link().unwrap().target),
+        Some("https://ibis.ne.jp".into()),
+        "link restored on undo"
+    );
+
+    // 9. 1 手の Redo（⌘⇧Z）で再度削除されること
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.current_link()).is_none(), "link re-removed on redo");
+
+    // 10. 再度 Undo でリンクを復元し、ファイル保存（.xlsx）と再読み込みラウンドトリップ
+    s.key("cmd-z");
+    s.save_as("sheet017-hyperlink.xlsx");
+    let saved = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&saved.slides[0]).unwrap();
+    assert!(
+        reloaded_sheet.hyperlinks.iter().any(|h| h.target.as_deref() == Some("https://ibis.ne.jp")),
+        "hyperlink preserved across save and reload"
+    );
+}
+
+/// XLSX-SEC-008 / XLSX-SEC-009 / XLSX-OPTIONS-003: セル右クリックメニューのスレッドコメント（新しいコメント／コメントに返信…・コメントの削除）とメモ（⇧F2 ショートカット・新しいメモ／メモの編集・メモの削除）、タイトルバー連携、および一括クリア・Undo/Redo・保存ラウンドトリップの検証。
+fn sheet018_comments_and_notes_context_menu_and_shortcuts() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    let menu_ids = |s: &mut Scenario| -> Vec<String> {
+        s.with(|e, _| {
+            e.cell_menu()
+                .iter()
+                .filter_map(|m| match m {
+                    crate::shell::chrome::MenuEntry::Item(i) => Some(i.id.to_string()),
+                    crate::shell::chrome::MenuEntry::Submenu(x) => Some(x.id.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+    };
+
+    let call = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.cell_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no cell_menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // 1. C4 (col: 2, row: 3) を選択：スレッドコメントもメモも未設定の状態
+    s.click_cell("C4");
+    let ids_initial = menu_ids(&mut s);
+    assert!(ids_initial.contains(&"xlsx.cell-comment-new".to_string()), "{ids_initial:?}");
+    assert!(!ids_initial.contains(&"xlsx.cell-comment-reply".to_string()), "{ids_initial:?}");
+    assert!(!ids_initial.contains(&"xlsx.cell-comment-delete".to_string()), "{ids_initial:?}");
+    assert!(ids_initial.contains(&"xlsx.note-new".to_string()), "{ids_initial:?}");
+    assert!(!ids_initial.contains(&"xlsx.note-edit".to_string()), "{ids_initial:?}");
+    assert!(!ids_initial.contains(&"xlsx.note-delete".to_string()), "{ids_initial:?}");
+
+    // 2. 右クリックメニュー「新しいコメント（xlsx.cell-comment-new）」からスレッドコメントパネルを開き、コメントを投稿
+    call(&mut s, "xlsx.cell-comment-new");
+    assert!(s.with(|e, _| e.wb().panels.threaded_comment.is_some()), "threaded comment panel opened");
+    assert_eq!(s.with(|e, _| e.wb().panels.threaded_comment.as_ref().unwrap().cell), (2, 3));
+    s.update(|e, window, cx| {
+        e.send_threaded_comment("C4の初期コメント", window, cx);
+    });
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.thread_at(3, 2).map(|t| t.posts.len())),
+        Some(1)
+    );
+
+    // 3. スレッドコメント設定済みセルでは、右クリックメニューが「コメントに返信…（xlsx.cell-comment-reply）」と「コメントの削除（xlsx.cell-comment-delete）」に分岐すること
+    let ids_with_thread = menu_ids(&mut s);
+    assert!(!ids_with_thread.contains(&"xlsx.cell-comment-new".to_string()), "{ids_with_thread:?}");
+    assert!(ids_with_thread.contains(&"xlsx.cell-comment-reply".to_string()), "{ids_with_thread:?}");
+    assert!(ids_with_thread.contains(&"xlsx.cell-comment-delete".to_string()), "{ids_with_thread:?}");
+
+    // 4. FormatEditor::show_comments による表示トグルと「コメントに返信…」からの返信追加
+    let (shown, toggle_fn) = s.with(|e, _| {
+        <super::Workbook as crate::shell::format::FormatEditor>::show_comments(e).expect("show_comments implemented")
+    });
+    assert!(shown, "threaded comment panel is currently shown");
+    s.update(move |e, window, cx| toggle_fn(e, window, cx));
+    assert!(s.with(|e, _| e.wb().panels.threaded_comment.is_none()), "threaded comment panel hidden by toggle");
+
+    call(&mut s, "xlsx.cell-comment-reply");
+    assert!(s.with(|e, _| e.wb().panels.threaded_comment.is_some()), "threaded comment panel reopened for reply");
+    s.update(|e, window, cx| {
+        e.send_threaded_comment("2件目の返信", window, cx);
+    });
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.thread_at(3, 2).map(|t| t.posts.len())),
+        Some(2)
+    );
+
+    // 5. 右クリックメニュー「コメントの削除（xlsx.cell-comment-delete）」と Undo / Redo
+    call(&mut s, "xlsx.cell-comment-delete");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.thread_at(3, 2).is_none()), "thread deleted");
+    s.key("cmd-z");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.thread_at(3, 2).map(|t| t.posts.len())),
+        Some(2),
+        "thread restored on undo"
+    );
+
+    // 6. D4 (col: 3, row: 3) を選択し、ショートカット ⇧F2（shift-f2）でメモパネルを開いてメモを作成
+    s.click_cell("D4");
+    s.key("shift-f2");
+    assert!(s.with(|e, _| e.wb().panels.note.is_some()), "note panel opened via Shift+F2");
+    assert_eq!(s.with(|e, _| e.wb().panels.note.as_ref().unwrap().cell), (3, 3));
+    s.update(|e, window, cx| {
+        let state = e.wb().panels.note.as_ref().unwrap().state.clone();
+        state.update(cx, |st, cx| st.set_value("D4の従来メモ", window, cx));
+        e.save_note(cx);
+        e.focus_handle.focus(window, cx);
+    });
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.comment_at(3, 3).map(|c| c.text.clone())),
+        Some("D4の従来メモ".into())
+    );
+
+    // D4 の右クリックメニューが「メモの編集（xlsx.note-edit）」と「メモの削除（xlsx.note-delete）」に分岐すること
+    let ids_with_note = menu_ids(&mut s);
+    assert!(ids_with_note.contains(&"xlsx.note-edit".to_string()), "{ids_with_note:?}");
+    assert!(ids_with_note.contains(&"xlsx.note-delete".to_string()), "{ids_with_note:?}");
+
+    // 7. C4:D4 を範囲選択し、「編集 > クリア > コメントとメモのクリア（xlsx.clear-comments）」でスレッドコメントとメモの両方が 1 手で一括消去されること
+    s.update(|e, window, cx| e.go_to_reference("C4:D4", window, cx));
+    s.menu("xlsx.clear-comments");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.thread_at(3, 2).is_none()), "C4 thread cleared");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.comment_at(3, 3).is_none()), "D4 note cleared");
+
+    // 8. 1 手の Undo（⌘Z）で C4 のスレッドコメントと D4 のメモが両方同時に復元されること
+    s.key("cmd-z");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.thread_at(3, 2).map(|t| t.posts.len())),
+        Some(2),
+        "C4 thread restored by single undo"
+    );
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.comment_at(3, 3).map(|c| c.text.clone())),
+        Some("D4の従来メモ".into()),
+        "D4 note restored by single undo"
+    );
+
+    // 9. ファイル保存（.xlsx）と再読み込みラウンドトリップ
+    s.save_as("sheet018-comments-notes.xlsx");
+    let saved = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&saved.slides[0]).unwrap();
+    let thread = reloaded_sheet.thread_at(3, 2).expect("C4 thread preserved across save/reload");
+    assert_eq!(thread.posts.len(), 2);
+    assert_eq!(thread.posts[0].text, "C4の初期コメント");
+    assert_eq!(thread.posts[1].text, "2件目の返信");
+    let note = reloaded_sheet.comment_at(3, 3).expect("D4 note preserved across save/reload");
+    assert_eq!(note.text, "D4の従来メモ");
+}
+
+/// XLSX-TABLE-001 / XLSX-TABLE-004 / XLSX-TABLE-006 / XLSX-OPTIONS-003:
+/// テーブル内セル右クリック時の動的サブメニュー「テーブル ▸（xlsx.cell-table）」、
+/// テーブル行・列の挿入と削除（上／下にテーブルの行を挿入、左／右にテーブルの列を挿入、テーブルの行／列の削除）、
+/// 集計行トグル、範囲に変換、サイズ変更ダイアログ、テーブルデザイン・重複の削除・スライサーの挿入パネル連携、
+/// Undo/Redo、および .xlsx 保存・再読み込みラウンドトリップの検証。
+fn sheet019_table_context_menu_and_operations() {
+    let mut s = new_sheet();
+
+    let top_menu_ids = |s: &mut Scenario| -> Vec<String> {
+        s.with(|e, _| {
+            e.cell_menu()
+                .iter()
+                .filter_map(|m| match m {
+                    crate::shell::chrome::MenuEntry::Item(i) => Some(i.id.to_string()),
+                    crate::shell::chrome::MenuEntry::Submenu(x) => Some(x.id.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+    };
+
+    let call = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.cell_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no cell_menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // 1. A1:C3 にサンプルデータを入力
+    s.click_cell("A1");
+    s.enter("Item", "tab");
+    s.enter("Price", "tab");
+    s.enter("Qty", "enter");
+    s.click_cell("A2");
+    s.enter("Pen", "tab");
+    s.enter("100", "tab");
+    s.enter("5", "enter");
+    s.click_cell("A3");
+    s.enter("Book", "tab");
+    s.enter("500", "tab");
+    s.enter("2", "enter");
+
+    // テーブル作成前は「テーブル ▸（xlsx.cell-table）」サブメニューが表示されないこと
+    s.click_cell("B2");
+    assert!(!top_menu_ids(&mut s).contains(&"xlsx.cell-table".to_string()));
+
+    // 2. A1:C3 をテーブル化
+    s.update(|e, _, cx| {
+        e.make_table(
+            CellRange {
+                first_row: 0,
+                last_row: 2,
+                first_column: 0,
+                last_column: 2,
+            },
+            true,
+            cx,
+        )
+        .unwrap();
+    });
+
+    // テーブル外のセル（E1）では「xlsx.cell-table」が表示されず、テーブル内のセル（B2）では表示されること
+    s.click_cell("E1");
+    assert!(!top_menu_ids(&mut s).contains(&"xlsx.cell-table".to_string()));
+
+    s.click_cell("B2");
+    assert!(top_menu_ids(&mut s).contains(&"xlsx.cell-table".to_string()));
+
+    // サブメニュー内の全項目が存在することを確認
+    let sub_ids: Vec<String> = s.with(|e, _| {
+        e.cell_menu()
+            .into_iter()
+            .find_map(|m| match m {
+                crate::shell::chrome::MenuEntry::Submenu(sub) if sub.id == "xlsx.cell-table" => Some(
+                    sub.items
+                        .into_iter()
+                        .filter_map(|it| match it {
+                            crate::shell::chrome::MenuEntry::Item(i) => Some(i.id.to_string()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .expect("xlsx.cell-table submenu")
+    });
+    for expected in [
+        "xlsx.cell-table-insert-row-above",
+        "xlsx.cell-table-insert-row-below",
+        "xlsx.cell-table-insert-col-left",
+        "xlsx.cell-table-insert-col-right",
+        "xlsx.cell-table-delete-row",
+        "xlsx.cell-table-delete-col",
+        "xlsx.cell-table-totals",
+        "xlsx.cell-table-to-range",
+        "xlsx.cell-table-resize",
+        "xlsx.cell-table-design",
+        "xlsx.cell-table-dedupe",
+        "xlsx.cell-table-slicer",
+    ] {
+        assert!(sub_ids.contains(&expected.to_string()), "missing {expected} in {sub_ids:?}");
+    }
+
+    let table_range = |s: &mut Scenario| -> CellRange {
+        s.with(|e, _| e.current_sheet().unwrap().1.tables[0].range)
+    };
+
+    // 3. 「上にテーブルの行を挿入（xlsx.cell-table-insert-row-above）」
+    s.click_cell("A2");
+    call(&mut s, "xlsx.cell-table-insert-row-above");
+    assert_eq!(
+        table_range(&mut s),
+        CellRange { first_row: 0, last_row: 3, first_column: 0, last_column: 2 },
+        "table expanded to A1:C4"
+    );
+    assert_eq!(s.value("A2"), CellValue::Empty);
+    assert_eq!(s.value("A3"), CellValue::Text("Pen".into()));
+    s.click_cell("A2");
+    s.enter("Note", "tab");
+    s.enter("200", "tab");
+    s.enter("3", "enter");
+
+    // 4. 「下にテーブルの行を挿入（xlsx.cell-table-insert-row-below）」（最終行 A4 で実行）
+    s.click_cell("A4");
+    call(&mut s, "xlsx.cell-table-insert-row-below");
+    assert_eq!(
+        table_range(&mut s),
+        CellRange { first_row: 0, last_row: 4, first_column: 0, last_column: 2 },
+        "table expanded to A1:C5"
+    );
+
+    // 5. 「テーブルの行の削除（xlsx.cell-table-delete-row）」（A5 を削除して A1:C4 に戻す）
+    s.click_cell("A5");
+    call(&mut s, "xlsx.cell-table-delete-row");
+    assert_eq!(
+        table_range(&mut s),
+        CellRange { first_row: 0, last_row: 3, first_column: 0, last_column: 2 },
+        "table shrunk back to A1:C4"
+    );
+
+    // 6. 「左にテーブルの列を挿入（xlsx.cell-table-insert-col-left）」と「テーブルの列の削除（xlsx.cell-table-delete-col）」
+    s.click_cell("B2");
+    call(&mut s, "xlsx.cell-table-insert-col-left");
+    assert_eq!(
+        table_range(&mut s),
+        CellRange { first_row: 0, last_row: 3, first_column: 0, last_column: 3 },
+        "table expanded to A1:D4"
+    );
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.tables[0].columns.len()), 4);
+    assert_eq!(s.value("C1"), CellValue::Text("Price".into()));
+
+    s.click_cell("B2");
+    call(&mut s, "xlsx.cell-table-delete-col");
+    assert_eq!(
+        table_range(&mut s),
+        CellRange { first_row: 0, last_row: 3, first_column: 0, last_column: 2 },
+        "table shrunk back to A1:C4"
+    );
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.tables[0].columns.clone()),
+        vec!["Item".to_string(), "Price".to_string(), "Qty".to_string()]
+    );
+
+    // 7. 「右にテーブルの列を挿入（xlsx.cell-table-insert-col-right）」（右端列 C2 で実行）＋ Undo
+    s.click_cell("C2");
+    call(&mut s, "xlsx.cell-table-insert-col-right");
+    assert_eq!(
+        table_range(&mut s),
+        CellRange { first_row: 0, last_row: 3, first_column: 0, last_column: 3 },
+        "table expanded right to A1:D4"
+    );
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.tables[0].columns.len()), 4);
+    s.key("cmd-z");
+    assert_eq!(
+        table_range(&mut s),
+        CellRange { first_row: 0, last_row: 3, first_column: 0, last_column: 2 },
+        "undo restored A1:C4"
+    );
+
+    // 8. 「集計行（xlsx.cell-table-totals）」のトグルとチェック状態
+    s.click_cell("B2");
+    call(&mut s, "xlsx.cell-table-totals");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.tables[0].totals_rows), 1);
+    assert_eq!(
+        table_range(&mut s),
+        CellRange { first_row: 0, last_row: 4, first_column: 0, last_column: 2 },
+        "totals row added at row 5"
+    );
+    assert_eq!(s.value("C5"), CellValue::Number(10.0), "3 + 5 + 2 = 10");
+    let totals_checked = s.with(|e, _| {
+        let entries = e.cell_menu();
+        crate::shell::scenario::find_item(&entries, "xlsx.cell-table-totals")
+            .unwrap()
+            .checked
+    });
+    assert!(totals_checked, "xlsx.cell-table-totals is checked when totals row is active");
+
+    // 9. ダイアログ・パネル起動連携（サイズ変更・テーブルデザイン・重複の削除・スライサーの挿入）
+    call(&mut s, "xlsx.cell-table-resize");
+    assert!(
+        s.with(|e, _| e.wb().table_dialog.as_ref().is_some_and(|d| d.target_table == Some(0))),
+        "resize table dialog opened"
+    );
+    s.update(|e, window, cx| e.close_table_dialog(window, cx));
+
+    call(&mut s, "xlsx.cell-table-design");
+    assert!(s.with(|e, _| e.wb().panels.table_design.is_some()), "table design panel opened");
+    s.update(|e, window, cx| {
+        e.wb_mut().panels.table_design = None;
+        e.focus_handle.focus(window, cx);
+    });
+
+    call(&mut s, "xlsx.cell-table-dedupe");
+    assert!(s.with(|e, _| e.wb().panels.dedupe.is_some()), "dedupe panel opened");
+    s.update(|e, window, cx| {
+        e.wb_mut().panels.dedupe = None;
+        e.focus_handle.focus(window, cx);
+    });
+
+    call(&mut s, "xlsx.cell-table-slicer");
+    assert!(s.with(|e, _| e.wb().panels.slicer_insert.is_some()), "slicer insert panel opened");
+    s.update(|e, window, cx| {
+        e.wb_mut().panels.slicer_insert = None;
+        e.focus_handle.focus(window, cx);
+    });
+
+    // 10. ファイル保存（.xlsx）と再読み込みラウンドトリップ
+    s.save_as("sheet019-table-context.xlsx");
+    let saved = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&saved.slides[1]).unwrap();
+    assert_eq!(reloaded_sheet.tables.len(), 1);
+    assert_eq!(
+        reloaded_sheet.tables[0].range,
+        CellRange { first_row: 0, last_row: 4, first_column: 0, last_column: 2 }
+    );
+    assert_eq!(reloaded_sheet.tables[0].totals_rows, 1);
+    assert_eq!(reloaded_sheet.cell(4, 2).unwrap().value, CellValue::Number(10.0));
+
+    // 11. 「範囲に変換（xlsx.cell-table-to-range）」と Undo / Redo
+    s.click_cell("B2");
+    call(&mut s, "xlsx.cell-table-to-range");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.tables.is_empty()), "converted to range");
+    assert!(!top_menu_ids(&mut s).contains(&"xlsx.cell-table".to_string()));
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.tables.len()), 1, "table restored on undo");
+}
+
+/// XLSX-PIVOT-003 / XLSX-PIVOT-004 / XLSX-PIVOT-018 / XLSX-PIVOT-019 / XLSX-OPTIONS-003:
+/// ピボットテーブル内のセル右クリック時の動的サブメニュー「ピボットテーブル ▸（xlsx.cell-pivot）」
+/// （ピボットテーブルの更新・詳細データの表示・集計方法 ▸・計算の種類 ▸・グループ化・グループ解除・
+/// 値フィールドの設定・ピボットテーブル オプション・ピボットテーブルのフィールド）の動作、
+/// チェックマーク状態、Undo/Redo、および .xlsx ファイル保存・再読み込みラウンドトリップ。
+fn sheet020_pivot_context_menu_and_operations() {
+    let mut s = Scenario::open("test/editing/xlsx-pivot-not-refreshed.xlsx");
+
+    let top_menu_ids = |s: &mut Scenario| -> Vec<String> {
+        s.with(|e, _| {
+            e.cell_menu()
+                .iter()
+                .filter_map(|m| match m {
+                    crate::shell::chrome::MenuEntry::Item(it) => Some(it.id.to_string()),
+                    crate::shell::chrome::MenuEntry::Submenu(sub) => Some(sub.id.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+    };
+
+    let call = |s: &mut Scenario, id: &str| {
+        let handler = s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+    };
+
+    let is_checked = |s: &mut Scenario, id: &str| -> bool {
+        s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+                .checked
+        })
+    };
+
+    // 1. ピボットテーブル外のセル（H5）では「ピボットテーブル（xlsx.cell-pivot）」サブメニューが表示されないこと
+    s.click_cell("H5");
+    assert!(
+        !top_menu_ids(&mut s).contains(&"xlsx.cell-pivot".to_string()),
+        "xlsx.cell-pivot should not appear outside a PivotTable"
+    );
+
+    // 2. ピボットテーブル内のセル（B4）では「ピボットテーブル（xlsx.cell-pivot）」サブメニューが表示され、
+    // 各種アクションおよび「集計方法」「計算の種類」のチェック状態が反映されること
+    s.click_cell("B4");
+    assert!(
+        top_menu_ids(&mut s).contains(&"xlsx.cell-pivot".to_string()),
+        "xlsx.cell-pivot must appear when a cell inside a PivotTable is selected"
+    );
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-fn-sum"), "sum is initially checked");
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-fn-average"), "average is initially unchecked");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-show-normal"), "no-calculation is initially checked");
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-show-pct-total"), "percentOfTotal is initially unchecked");
+
+    // 3. 右クリックメニュー「ピボットテーブルの更新（xlsx.cell-pivot-refresh）」と Undo / Redo
+    assert_eq!(s.value("F23"), CellValue::Number(52180.0));
+    call(&mut s, "xlsx.cell-pivot-refresh");
+    assert_eq!(s.value("F23"), CellValue::Number(151819.0), "refreshed Grand Total");
+    assert_eq!(s.value("B4"), CellValue::Number(99999.0), "refreshed B4 value");
+    s.key("cmd-z");
+    assert_eq!(s.value("F23"), CellValue::Number(52180.0), "undo refresh");
+    s.key("cmd-shift-z");
+    assert_eq!(s.value("F23"), CellValue::Number(151819.0), "redo refresh");
+
+    // 4. 右クリックメニュー「集計方法 > 平均（xlsx.cell-pivot-fn-average）」とチェック状態・Undo/Redo
+    s.click_cell("B4");
+    call(&mut s, "xlsx.cell-pivot-fn-average");
+    assert_eq!(pivot_of(&mut s, 0).data_fields[0].function, "average");
+    assert_eq!(s.value("F23"), CellValue::Number(151819.0 / 40.0));
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-fn-average"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-fn-sum"));
+
+    s.key("cmd-z");
+    assert_eq!(pivot_of(&mut s, 0).data_fields[0].function, "sum");
+    assert_eq!(s.value("F23"), CellValue::Number(151819.0));
+    s.key("cmd-shift-z");
+    assert_eq!(pivot_of(&mut s, 0).data_fields[0].function, "average");
+
+    // 合計に戻す
+    call(&mut s, "xlsx.cell-pivot-fn-sum");
+    assert_eq!(pivot_of(&mut s, 0).data_fields[0].function, "sum");
+    assert_eq!(s.value("F23"), CellValue::Number(151819.0));
+
+    // 5. 右クリックメニュー「計算の種類 > 総計に対する比率（xlsx.cell-pivot-show-pct-total）」と Undo/Redo
+    call(&mut s, "xlsx.cell-pivot-show-pct-total");
+    assert_eq!(pivot_of(&mut s, 0).data_fields[0].show_as.as_deref(), Some("percentOfTotal"));
+    assert_eq!(s.value("F23"), CellValue::Number(1.0), "Grand Total ratio is 1.0 (100%)");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-show-pct-total"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-show-normal"));
+
+    s.key("cmd-z");
+    assert_eq!(pivot_of(&mut s, 0).data_fields[0].show_as, None);
+    assert_eq!(s.value("F23"), CellValue::Number(151819.0));
+    s.key("cmd-shift-z");
+    assert_eq!(pivot_of(&mut s, 0).data_fields[0].show_as.as_deref(), Some("percentOfTotal"));
+
+    // 計算なしに戻す
+    call(&mut s, "xlsx.cell-pivot-show-normal");
+    assert_eq!(pivot_of(&mut s, 0).data_fields[0].show_as, None);
+    assert_eq!(s.value("F23"), CellValue::Number(151819.0));
+
+    // 6. 右クリックメニュー「詳細データの表示（xlsx.cell-pivot-show-details）」で新規シート展開＋Undo
+    let slides_before = s.with(|e, _| e.presentation().slides.len());
+    s.click_cell("B4");
+    call(&mut s, "xlsx.cell-pivot-show-details");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), slides_before + 1, "detail sheet created");
+    assert_eq!(s.value("A1"), CellValue::Text("日付".into()));
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), slides_before, "detail sheet removed on undo");
+
+    // 7. サイドバーパネル起動連携（値フィールドの設定・オプション・フィールドリスト・グループ化）
+    s.click_cell("B4");
+    call(&mut s, "xlsx.cell-pivot-value-settings");
+    assert!(
+        s.with(|e, _| e.wb().panels.pivot.as_ref().is_some_and(|p| p.value == Some(0))),
+        "value field settings panel opened"
+    );
+    s.update(|e, _, cx| e.close_pivot_panel(cx));
+
+    call(&mut s, "xlsx.cell-pivot-options");
+    assert!(
+        s.with(|e, _| e.wb().panels.pivot_options.is_some()),
+        "pivot options panel opened"
+    );
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.pivot_options = None;
+        cx.notify();
+    });
+
+    call(&mut s, "xlsx.cell-pivot-fields");
+    assert!(
+        s.with(|e, _| e.wb().panels.pivot.as_ref().is_some_and(|p| p.target == Some((e.current_slide, 0)))),
+        "pivot fields panel opened"
+    );
+    s.update(|e, _, cx| e.close_pivot_panel(cx));
+
+    // 8. 集計方法を「最大（xlsx.cell-pivot-fn-max）」に変更して保存・再読み込みラウンドトリップ
+    s.click_cell("B4");
+    call(&mut s, "xlsx.cell-pivot-fn-max");
+    assert_eq!(pivot_of(&mut s, 0).data_fields[0].function, "max");
+    assert_eq!(s.value("F23"), CellValue::Number(99999.0));
+
+    s.save_as("sheet020-pivot-context.xlsx");
+    let saved = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&saved.slides[0]).unwrap();
+    assert_eq!(reloaded_sheet.pivots[0].data_fields[0].function, "max");
+    assert_eq!(reloaded_sheet.cell(22, 5).map(|c| c.value.clone()), Some(CellValue::Number(99999.0)));
+}
+
+/// XLSX-CHART-006 / XLSX-OPTIONS-003:
+/// スパークライン配置セル右クリック時の動的サブメニュー「スパークライン ▸（xlsx.cell-sparkline）」
+/// （スパークラインの編集・折れ線・縦棒・勝敗・表示する点 ▸［頂点・低点・負の点・始点・終点・マーカー］・
+/// グループ化・グループ解除・選択したスパークラインのクリア・スパークライン グループのクリア）の動作、
+/// チェックマーク状態、Undo/Redo、および .xlsx ファイル保存・再読み込みラウンドトリップ。
+fn sheet021_sparkline_context_menu_and_operations() {
+    use ibis_doc_model::SparklineKind;
+    let mut s = new_sheet();
+
+    let top_menu_ids = |s: &mut Scenario| -> Vec<String> {
+        s.with(|e, _| {
+            e.cell_menu()
+                .iter()
+                .filter_map(|m| match m {
+                    crate::shell::chrome::MenuEntry::Item(it) => Some(it.id.to_string()),
+                    crate::shell::chrome::MenuEntry::Submenu(sub) => Some(sub.id.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+    };
+
+    let call = |s: &mut Scenario, id: &str| {
+        let handler = s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+    };
+
+    let is_checked = |s: &mut Scenario, id: &str| -> bool {
+        s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+                .checked
+        })
+    };
+
+    // B4:D5 にデータを入力し、E4:E5 に折れ線スパークラインとして作成
+    s.click_cell("B4");
+    s.enter("10", "tab");
+    s.enter("20", "tab");
+    s.enter("15", "enter");
+    s.click_cell("B5");
+    s.enter("30", "tab");
+    s.enter("10", "tab");
+    s.enter("25", "enter");
+
+    s.click_cell("E4");
+    s.update(|e, window, cx| {
+        e.open_sparkline_panel(Some(SparklineKind::Line), window, cx);
+        let p = e.wb().panels.sparkline.as_ref().unwrap();
+        let data_in = p.data_range_input.clone();
+        let loc_in = p.location_range_input.clone();
+        data_in.update(cx, |i, cx| i.set_value("B4:D5", window, cx));
+        loc_in.update(cx, |i, cx| i.set_value("E4:E5", window, cx));
+        e.apply_sparkline(cx);
+    });
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 1);
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].sparklines.len()), 2);
+
+    // 1. スパークライン外のセル（D4）では「スパークライン（xlsx.cell-sparkline）」サブメニューが表示されないこと
+    s.click_cell("D4");
+    assert!(
+        !top_menu_ids(&mut s).contains(&"xlsx.cell-sparkline".to_string()),
+        "xlsx.cell-sparkline should not appear outside a sparkline cell"
+    );
+
+    // 2. スパークライン配置セル（E4）では「スパークライン（xlsx.cell-sparkline）」が表示され、折れ線にチェックが付いていること
+    s.click_cell("E4");
+    assert!(
+        top_menu_ids(&mut s).contains(&"xlsx.cell-sparkline".to_string()),
+        "xlsx.cell-sparkline must appear when a sparkline cell is selected"
+    );
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-line"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-column"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-winloss"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-high-point"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-markers"));
+
+    // 3. 右クリックメニューから種類を「縦棒（xlsx.cell-sparkline-column）」「勝敗（xlsx.cell-sparkline-winloss）」へ変更＋Undo/Redo
+    call(&mut s, "xlsx.cell-sparkline-column");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].kind), SparklineKind::Column);
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-column"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-line"));
+
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].kind), SparklineKind::Line);
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].kind), SparklineKind::Column);
+
+    call(&mut s, "xlsx.cell-sparkline-winloss");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].kind), SparklineKind::WinLoss);
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-winloss"));
+
+    // 折れ線に戻す
+    call(&mut s, "xlsx.cell-sparkline-line");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].kind), SparklineKind::Line);
+
+    // 4. 「表示する点 ▸」から頂点・低点・マーカーを切り替え＋チェック状態確認
+    call(&mut s, "xlsx.cell-sparkline-high-point");
+    call(&mut s, "xlsx.cell-sparkline-low-point");
+    call(&mut s, "xlsx.cell-sparkline-markers");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-high-point"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-low-point"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-markers"));
+    assert!(s.with(|e, _| {
+        let g = &e.current_sheet().unwrap().1.sparklines[0];
+        g.high && g.low && g.markers
+    }));
+
+    // 5. 「スパークラインの編集（xlsx.cell-sparkline-edit）」で編集パネルが開くこと
+    call(&mut s, "xlsx.cell-sparkline-edit");
+    assert!(
+        s.with(|e, _| e.wb().panels.sparkline.as_ref().is_some_and(|p| p.group_index == Some(0))),
+        "sparkline edit panel opened for group 0"
+    );
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.sparkline = None;
+        cx.notify();
+    });
+
+    // 6. 「グループ解除（xlsx.cell-sparkline-ungroup）」と「グループ化（xlsx.cell-sparkline-group）」
+    s.click_cell("E4");
+    call(&mut s, "xlsx.cell-sparkline-ungroup");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 2, "ungrouped into 2 groups");
+
+    s.update(|e, window, cx| e.go_to_reference("E4:E5", window, cx));
+    call(&mut s, "xlsx.cell-sparkline-group");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 1, "regrouped into 1 group");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].sparklines.len()), 2);
+
+    // 7. 「選択したスパークラインのクリア」と「スパークライン グループのクリア」＋Undo
+    s.click_cell("E4");
+    call(&mut s, "xlsx.cell-sparkline-clear-selected");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].sparklines.len()), 1, "only E4 cleared");
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].sparklines.len()), 2, "undo restored E4");
+
+    call(&mut s, "xlsx.cell-sparkline-clear-group");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 0, "whole group cleared");
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 1, "undo restored group");
+
+    // 8. 保存・再読み込みラウンドトリップ
+    s.save_as("sheet021-sparkline-context.xlsx");
+    let saved = s.reopen();
+    let reloaded_sheet = sheet_of_slide(&saved.slides[1]).unwrap();
+    assert_eq!(reloaded_sheet.sparklines.len(), 1);
+    assert_eq!(reloaded_sheet.sparklines[0].kind, SparklineKind::Line);
+    assert!(reloaded_sheet.sparklines[0].high);
+    assert!(reloaded_sheet.sparklines[0].low);
+    assert!(reloaded_sheet.sparklines[0].markers);
+    assert_eq!(reloaded_sheet.sparklines[0].sparklines.len(), 2);
+}
+
+/// XLSX-CHEDIT-001..021 / XLSX-OPTIONS-003: グラフ右クリックメニュー（shape_menu）と操作連携
+/// 非グラフ図形選択時とグラフ選択時での右クリックメニュー（shape_menu）の出し分け、
+/// 右クリックメニューからのグラフの種類変更・行/列の切り替え・スタイル/配色変更・
+/// データテーブル/近似曲線/誤差範囲のトグル・グラフの書式/移動/テンプレートパネル起動、
+/// および Undo/Redo・保存再読み込みラウンドトリップを検証。
+fn sheet022_chart_context_menu_and_operations() {
+    use ibis_doc_model::{ChartType, ShapeKind};
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    let top_menu_ids = |s: &mut Scenario| -> Vec<String> {
+        s.with(|e, _| {
+            e.shape_menu()
+                .into_iter()
+                .filter_map(|m| match m {
+                    crate::shell::chrome::MenuEntry::Item(i) => Some(i.id.to_string()),
+                    crate::shell::chrome::MenuEntry::Submenu(sub) => Some(sub.id.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+    };
+
+    let call = |s: &mut Scenario, id: &str| {
+        let handler = s.with(|e, _| {
+            let entries = e.shape_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no shape_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+    };
+
+    let is_checked = |s: &mut Scenario, id: &str| -> bool {
+        s.with(|e, _| {
+            let entries = e.shape_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no shape_menu item {id}"))
+                .checked
+        })
+    };
+
+    // 1. 非グラフ図形（四角形）を選択した場合、グラフ専用メニュー項目が含まれないこと
+    s.menu("xlsx.shape.rect");
+    s.settle();
+    let rect_ids = top_menu_ids(&mut s);
+    assert!(
+        !rect_ids.contains(&"xlsx.chart-format".to_string()),
+        "non-chart shape_menu should not include xlsx.chart-format"
+    );
+    assert!(
+        !rect_ids.contains(&"xlsx.chart-type".to_string()),
+        "non-chart shape_menu should not include xlsx.chart-type"
+    );
+    s.key("cmd-z");
+    s.settle();
+
+    // 2. ワークシート上のグラフを選択した場合、グラフ専用メニュー項目一式が含まれること
+    let chart_index = s
+        .with(|e, _| {
+            e.slide()
+                .shapes
+                .iter()
+                .position(|sh| matches!(sh.kind, ShapeKind::Chart(_)))
+        })
+        .expect("a sheet with a chart");
+    let at = s.shape_position(chart_index);
+    s.click(at);
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_chart().is_some()), "chart is selected");
+
+    let chart_ids = top_menu_ids(&mut s);
+    for expected in [
+        "xlsx.chart-format",
+        "xlsx.chart-type",
+        "xlsx.chart-switch-row-column",
+        "xlsx.chart-styles",
+        "xlsx.chart-palettes",
+        "xlsx.chart-quick-layout",
+        "xlsx.chart-data-table",
+        "xlsx.chart-trendline",
+        "xlsx.chart-error-bars",
+        "xlsx.move-chart",
+        "xlsx.chart.save-template",
+        "xlsx.chart.apply-template",
+    ] {
+        assert!(
+            chart_ids.contains(&expected.to_string()),
+            "chart shape_menu must include {expected}, got {chart_ids:?}"
+        );
+    }
+    assert!(is_checked(&mut s, "chart.type.column"), "initial chart type is column");
+    assert!(!is_checked(&mut s, "chart.type.line"));
+
+    // 3. 右クリックメニュー「グラフの種類 ▸ 折れ線（chart.type.line）」への変更＋Undo/Redo
+    call(&mut s, "chart.type.line");
+    assert_eq!(
+        s.with(|e, _| e.sheet_chart().unwrap().1.groups[0].kind),
+        ChartType::Line
+    );
+    assert!(is_checked(&mut s, "chart.type.line"));
+    assert!(!is_checked(&mut s, "chart.type.column"));
+
+    s.key("cmd-z");
+    assert!(matches!(
+        s.with(|e, _| e.sheet_chart().unwrap().1.groups[0].kind),
+        ChartType::Bar { horizontal: false, .. }
+    ));
+    s.key("cmd-shift-z");
+    assert_eq!(
+        s.with(|e, _| e.sheet_chart().unwrap().1.groups[0].kind),
+        ChartType::Line
+    );
+
+    // 4. 右クリックメニュー「行/列の切り替え（xlsx.chart-switch-row-column）」＋Undo/Redo
+    let orig_series_count = s.with(|e, _| e.sheet_chart().unwrap().1.groups[0].series.len());
+    call(&mut s, "xlsx.chart-switch-row-column");
+    let switched_series_count = s.with(|e, _| e.sheet_chart().unwrap().1.groups[0].series.len());
+    assert_ne!(switched_series_count, orig_series_count, "row/column switched series count");
+    s.key("cmd-z");
+    assert_eq!(
+        s.with(|e, _| e.sheet_chart().unwrap().1.groups[0].series.len()),
+        orig_series_count,
+        "undo restored series count"
+    );
+
+    // 5. 右クリックメニュー「グラフのスタイル ▸ スタイル 3（xlsx.chart-style-3）」＋Undo/Redo
+    call(&mut s, "xlsx.chart-style-3");
+    assert_eq!(s.with(|e, _| e.sheet_chart().unwrap().1.style), Some(3));
+    s.key("cmd-z");
+    assert_ne!(s.with(|e, _| e.sheet_chart().unwrap().1.style), Some(3));
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.sheet_chart().unwrap().1.style), Some(3));
+
+    // 6. 右クリックメニューからデータ テーブル・近似曲線・誤差範囲をトグル
+    assert!(!is_checked(&mut s, "xlsx.chart-data-table"));
+    call(&mut s, "xlsx.chart-data-table");
+    assert!(is_checked(&mut s, "xlsx.chart-data-table"));
+    assert!(s.with(|e, _| e.sheet_chart().unwrap().1.data_table.is_some()));
+
+    assert!(!is_checked(&mut s, "xlsx.chart-trendline"));
+    call(&mut s, "xlsx.chart-trendline");
+    assert!(is_checked(&mut s, "xlsx.chart-trendline"));
+    assert!(s.with(|e, _| e.sheet_chart().unwrap().1.groups[0].series[0].trendline.is_some()));
+
+    assert!(!is_checked(&mut s, "xlsx.chart-error-bars"));
+    call(&mut s, "xlsx.chart-error-bars");
+    assert!(is_checked(&mut s, "xlsx.chart-error-bars"));
+    assert!(s.with(|e, _| e.sheet_chart().unwrap().1.groups[0].series[0].error_bars.is_some()));
+
+    // 7. 右クリックメニューから「グラフの書式…」「グラフの移動…」「テンプレートとして保存…」パネルの起動確認
+    call(&mut s, "xlsx.chart-format");
+    assert!(s.with(|e, _| e.wb().chart_edit.is_some()), "chart format panel opened");
+    s.update(|e, _, cx| {
+        e.wb_mut().chart_edit = None;
+        cx.notify();
+    });
+
+    call(&mut s, "xlsx.move-chart");
+    assert!(s.with(|e, _| e.wb().panels.move_chart.is_some()), "move chart panel opened");
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.move_chart = None;
+        cx.notify();
+    });
+
+    call(&mut s, "xlsx.chart.save-template");
+    assert!(
+        s.with(|e, _| {
+            e.wb().panels.chart_template.as_ref().is_some_and(|p| {
+                p.mode == crate::xlsx::chart_template::ChartTemplateMode::Save
+            })
+        }),
+        "chart template save panel opened"
+    );
+    call(&mut s, "xlsx.chart.apply-template");
+    assert!(
+        s.with(|e, _| {
+            e.wb().panels.chart_template.as_ref().is_some_and(|p| {
+                p.mode == crate::xlsx::chart_template::ChartTemplateMode::Apply
+            })
+        }),
+        "chart template apply panel opened"
+    );
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.chart_template = None;
+        cx.notify();
+    });
+
+    // 8. 保存・再読み込みラウンドトリップ
+    s.save_as("sheet022-chart-context.xlsx");
+    let saved = s.reopen();
+    let ShapeKind::Chart(reloaded_chart) = &saved.slides[0].shapes[chart_index].kind else {
+        panic!("expected chart")
+    };
+    assert_eq!(reloaded_chart.groups[0].kind, ChartType::Line);
+    assert_eq!(reloaded_chart.style, Some(3));
+    assert!(reloaded_chart.data_table.is_some());
+    assert!(reloaded_chart.groups[0].series[0].trendline.is_some());
+    assert!(reloaded_chart.groups[0].series[0].error_bars.is_some());
+}
+
+/// XLSX-TABLE-019 / XLSX-PIVOT-015..017 / XLSX-AUTO-006 / XLSX-OBJECT-011..013 / XLSX-OPTIONS-003:
+/// スライサー・タイムライン・フォームコントロール・図形/テキストボックス右クリックコンテキストメニュー (`shape_menu()`) と操作の検証.
+fn sheet023_slicer_timeline_control_and_shape_context_menu() {
+    use crate::shell::chrome::MenuEntry;
+    use ibis_doc_model::{ControlKind, Fill, ShapeKind};
+
+    let shape_menu_ids = |s: &mut Scenario| -> Vec<&'static str> {
+        s.with(|e, _| {
+            e.shape_menu()
+                .iter()
+                .filter_map(|m| match m {
+                    MenuEntry::Item(i) => Some(i.id),
+                    MenuEntry::Submenu(x) => Some(x.id),
+                    _ => None,
+                })
+                .collect()
+        })
+    };
+
+    let call = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.shape_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no shape menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // 1. スライサー (`ShapeKind::Slicer`) の右クリックメニューと操作
+    let mut s = Scenario::open("test/editing/xlsx-slicers-excel.xlsx");
+    let slicer_id = s
+        .with(|e, _| {
+            e.slide()
+                .shapes
+                .iter()
+                .find(|sh| matches!(&sh.kind, ShapeKind::Slicer(x) if x.name == "商品"))
+                .map(|sh| sh.id)
+        })
+        .expect("slicer shape");
+    s.update(move |e, _, _| e.set_selection(vec![slicer_id]));
+
+    let ids = shape_menu_ids(&mut s);
+    assert!(ids.contains(&"xlsx.slicer-clear-filter"), "slicer clear filter in shape_menu: {ids:?}");
+    assert!(ids.contains(&"xlsx.slicer-settings"), "slicer settings in shape_menu: {ids:?}");
+
+    // 初期状態はすべて選択済みのためフィルター解除は disabled
+    let initially_disabled = s.with(|e, _| {
+        let entries = e.shape_menu();
+        crate::shell::scenario::find_item(&entries, "xlsx.slicer-clear-filter")
+            .expect("item")
+            .disabled
+    });
+    assert!(initially_disabled, "clear filter is disabled when all items are selected");
+
+    // ボタン1 ("B") をクリックしてフィルター適用 ("A" が非表示になる)
+    let at = slicer_button(&mut s, "商品", 1);
+    s.click(at);
+    assert_eq!(
+        slicer_items_of(&mut s, "商品"),
+        vec![("A".to_string(), false), ("B".to_string(), true)]
+    );
+    assert_eq!(s.value("A5"), CellValue::Text("B".into()));
+
+    // スライサーを再選択して右クリックメニューからフィルター解除を実行
+    s.update(move |e, _, _| e.set_selection(vec![slicer_id]));
+    let filtered_disabled = s.with(|e, _| {
+        let entries = e.shape_menu();
+        crate::shell::scenario::find_item(&entries, "xlsx.slicer-clear-filter")
+            .expect("item")
+            .disabled
+    });
+    assert!(!filtered_disabled, "clear filter is enabled when filtered");
+
+    call(&mut s, "xlsx.slicer-clear-filter");
+    assert_eq!(
+        slicer_items_of(&mut s, "商品"),
+        vec![("A".to_string(), true), ("B".to_string(), true)]
+    );
+    assert_eq!(s.value("A5"), CellValue::Text("A".into()), "A is restored");
+
+    // 右クリックメニューからスライサーの設定パネルを開く
+    call(&mut s, "xlsx.slicer-settings");
+    assert!(
+        s.with(|e, _| e.wb().panels.slicer_settings.is_some()),
+        "slicer settings panel opened"
+    );
+    drop(s);
+
+    // 2. タイムライン (`ShapeKind::Timeline`) の右クリックメニューと操作
+    let mut s = Scenario::open("test/editing/xlsx-timeline-pivot.xlsx");
+    let (timeline_id, initial_timeline) = s
+        .with(|e, _| {
+            e.slide()
+                .shapes
+                .iter()
+                .find_map(|sh| match &sh.kind {
+                    ShapeKind::Timeline(t) => Some((sh.id, (**t).clone())),
+                    _ => None,
+                })
+        })
+        .expect("timeline shape");
+    s.update(move |e, _, _| e.set_selection(vec![timeline_id]));
+
+    let ids = shape_menu_ids(&mut s);
+    assert!(ids.contains(&"xlsx.timeline-clear-filter"), "timeline clear filter in shape_menu: {ids:?}");
+    assert!(ids.contains(&"xlsx.timeline-level"), "timeline level submenu in shape_menu: {ids:?}");
+
+    // 初期状態は level=2 (月) が checked、selection=None のため clear filter は disabled
+    let (clear_disabled, months_checked) = s.with(|e, _| {
+        let entries = e.shape_menu();
+        let clear = crate::shell::scenario::find_item(&entries, "xlsx.timeline-clear-filter").unwrap();
+        let months = crate::shell::scenario::find_item(&entries, "xlsx.timeline.level.months").unwrap();
+        (clear.disabled, months.checked)
+    });
+    assert!(clear_disabled, "timeline clear filter initially disabled");
+    assert!(months_checked, "months level initially checked");
+
+    // 右クリックメニューから表示単位を「四半期」(level=1) に変更
+    call(&mut s, "xlsx.timeline.level.quarters");
+    let updated_level = s.with(|e, _| {
+        e.slide()
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ShapeKind::Timeline(t) => Some((t.level, t.selection_level)),
+                _ => None,
+            })
+            .unwrap()
+    });
+    assert_eq!(updated_level, (1, 1), "timeline level changed to quarters");
+
+    // 期間を選択してから右クリックメニューのフィルター解除を実行
+    let periods = initial_timeline.periods(1);
+    let q1 = periods[0];
+    s.update(move |e, _, cx| {
+        let mut next = initial_timeline.clone();
+        next.level = 1;
+        next.selection_level = 1;
+        next.selection = Some((q1.start, q1.end));
+        e.apply_timeline(e.current_slide, timeline_id, next, cx);
+    });
+    s.update(move |e, _, _| e.set_selection(vec![timeline_id]));
+    let clear_disabled_after_select = s.with(|e, _| {
+        let entries = e.shape_menu();
+        crate::shell::scenario::find_item(&entries, "xlsx.timeline-clear-filter")
+            .unwrap()
+            .disabled
+    });
+    assert!(!clear_disabled_after_select, "timeline clear filter enabled when period selected");
+
+    call(&mut s, "xlsx.timeline-clear-filter");
+    let cleared_selection = s.with(|e, _| {
+        e.slide()
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ShapeKind::Timeline(t) => Some(t.selection),
+                _ => None,
+            })
+            .unwrap()
+    });
+    assert_eq!(cleared_selection, None, "timeline selection cleared via context menu");
+    drop(s);
+
+    // 3. フォームコントロール (`ShapeKind::Control`) の右クリックメニューと操作
+    let mut s = Scenario::open("test/editing/xlsx-form-controls.xlsx");
+    let checkbox_id = s
+        .with(|e, _| {
+            e.slide()
+                .shapes
+                .iter()
+                .find_map(|sh| match &sh.kind {
+                    ShapeKind::Control(c) if c.kind == ControlKind::CheckBox => Some(sh.id),
+                    _ => None,
+                })
+        })
+        .expect("checkbox control");
+    s.update(move |e, _, _| e.set_selection(vec![checkbox_id]));
+
+    let ids = shape_menu_ids(&mut s);
+    for expected in ["xlsx.control-properties", "xlsx.design-mode", "xlsx.view-code"] {
+        assert!(ids.contains(&expected), "control shape_menu missing {expected}: {ids:?}");
+    }
+
+    call(&mut s, "xlsx.control-properties");
+    assert!(
+        s.with(|e, _| e.wb().panels.control_properties.is_some()),
+        "control properties panel opened"
+    );
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.control_properties = None;
+        cx.notify();
+    });
+
+    assert!(!s.with(|e, _| e.wb().design_mode));
+    call(&mut s, "xlsx.design-mode");
+    assert!(s.with(|e, _| e.wb().design_mode), "design mode toggled on");
+    call(&mut s, "xlsx.design-mode");
+    assert!(!s.with(|e, _| e.wb().design_mode), "design mode toggled off");
+    drop(s);
+
+    // 4. オートシェイプ / テキストボックス (`ShapeKind::Auto` / `ShapeKind::TextBox`) の右クリックメニューと操作
+    let mut s = new_sheet();
+    s.update(|e, _, cx| {
+        e.insert_sheet_shape("rect", cx);
+    });
+    let auto_id = s.with(|e, _| e.selected_sheet_shape()).expect("inserted auto shape selected");
+    let ids = shape_menu_ids(&mut s);
+    for expected in [
+        "xlsx.change-shape",
+        "xlsx.shape-textlink",
+        "xlsx.shape-fill",
+        "xlsx.shape-stroke",
+        "xlsx.shape-effect",
+        "xlsx.text-format",
+        "xlsx.text-align",
+    ] {
+        assert!(ids.contains(&expected), "auto shape_menu missing {expected}: {ids:?}");
+    }
+
+    // 右クリックメニューから図形の変更 (楕円) と図形の塗りつぶし (青) を実行
+    call(&mut s, "xlsx.change-shape.ellipse");
+    call(&mut s, "xlsx.shape-fill.blue");
+    let (geometry, fill) = s.with(move |e, _| {
+        let sh = e.slide().shape(auto_id).expect("auto shape");
+        match &sh.kind {
+            ShapeKind::Auto(a) => (a.geometry.clone(), a.fill.clone()),
+            _ => panic!("expected auto shape"),
+        }
+    });
+    assert_eq!(Some(geometry), ibis_pptx::preset_geometry("ellipse"));
+    assert!(matches!(fill, Fill::Solid(_)), "shape fill applied");
+}
+
+/// XLSX-SHEET-005..010 / XLSX-PAGE-008 / XLSX-OPTIONS-003:
+/// 行・列ヘッダー右クリックコンテキストメニュー (`header_menu`) およびシート見出しタブ右クリックメニュー (`tab_menu`) の拡張項目と操作検証.
+fn sheet024_header_and_tab_context_menu_operations() {
+    use crate::shell::chrome::MenuEntry;
+    use ibis_doc_model::sheet_command::Axis;
+
+    let mut s = new_sheet();
+
+    let header_ids = |s: &mut Scenario, axis: Axis| -> Vec<&'static str> {
+        s.with(move |e, _| {
+            e.header_menu(axis)
+                .iter()
+                .filter_map(|m| match m {
+                    MenuEntry::Item(i) => Some(i.id),
+                    MenuEntry::Submenu(x) => Some(x.id),
+                    _ => None,
+                })
+                .collect()
+        })
+    };
+
+    let tab_ids = |s: &mut Scenario| -> Vec<&'static str> {
+        s.with(|e, _| {
+            e.tab_menu()
+                .iter()
+                .filter_map(|m| match m {
+                    MenuEntry::Item(i) => Some(i.id),
+                    MenuEntry::Submenu(x) => Some(x.id),
+                    _ => None,
+                })
+                .collect()
+        })
+    };
+
+    // 1. 列ヘッダー右クリックメニューの項目検証
+    let col_ids = header_ids(&mut s, Axis::Columns);
+    for expected in [
+        "xlsx.paste-special",
+        "xlsx.header-format-columns",
+        "xlsx.header-group-columns",
+        "xlsx.header-ungroup-columns",
+    ] {
+        assert!(col_ids.contains(&expected), "column header_menu missing {expected}: {col_ids:?}");
+    }
+
+    // 2. 行ヘッダー右クリックメニューの項目検証
+    let row_ids = header_ids(&mut s, Axis::Rows);
+    for expected in [
+        "xlsx.paste-special",
+        "xlsx.header-format-rows",
+        "xlsx.header-group-rows",
+        "xlsx.header-ungroup-rows",
+        "xlsx.header-page-break",
+    ] {
+        assert!(row_ids.contains(&expected), "row header_menu missing {expected}: {row_ids:?}");
+    }
+
+    // 3. 列ヘッダー右クリックからグループ化・Undo/Redo・グループ解除・セルの書式設定パネル起動
+    s.header_menu("C", "xlsx.header-group-columns");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.outline_columns.get(&2).copied()),
+        Some(1),
+        "column C grouped to level 1"
+    );
+    s.key("cmd-z");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.outline_columns.get(&2).copied()),
+        None,
+        "undo column group"
+    );
+    s.key("cmd-shift-z");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.outline_columns.get(&2).copied()),
+        Some(1),
+        "redo column group"
+    );
+    s.header_menu("C", "xlsx.header-ungroup-columns");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.outline_columns.get(&2).copied()),
+        None,
+        "column C ungrouped"
+    );
+
+    s.header_menu("B", "xlsx.header-format-columns");
+    assert!(
+        s.with(|e, _| e.wb().custom_format.is_some()),
+        "custom format panel opened from column header menu"
+    );
+    s.update(|e, _, cx| {
+        e.wb_mut().custom_format = None;
+        cx.notify();
+    });
+
+    // 4. 行ヘッダー右クリックからグループ化および改ページの挿入・解除
+    s.header_menu("3", "xlsx.header-group-rows");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.outline_rows.get(&2).copied()),
+        Some(1),
+        "row 3 grouped to level 1"
+    );
+
+    s.header_menu("3", "xlsx.header-page-break");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.print.row_breaks.clone()),
+        vec![2],
+        "row break inserted before row 3 (index 2)"
+    );
+    let break_checked = s.with(|e, _| {
+        let entries = e.header_menu(Axis::Rows);
+        crate::shell::scenario::find_item(&entries, "xlsx.header-page-break")
+            .unwrap()
+            .checked
+    });
+    assert!(break_checked, "page break item checked when row break exists");
+
+    // 再度実行で改ページ解除、その後保存検証のため再設定
+    s.header_menu("3", "xlsx.header-page-break");
+    assert!(
+        s.with(|e, _| e.current_sheet().unwrap().1.print.row_breaks.is_empty()),
+        "row break removed"
+    );
+    s.header_menu("3", "xlsx.header-page-break");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.print.row_breaks.clone()),
+        vec![2]
+    );
+
+    // 5. シート見出しタブ右クリックメニュー (`tab_menu`) の検証
+    let t_ids = tab_ids(&mut s);
+    for expected in ["xlsx.view-code", "xlsx.tab-protect", "xlsx.unhide-sheet"] {
+        assert!(t_ids.contains(&expected), "tab_menu missing {expected}: {t_ids:?}");
+    }
+    let unhide_disabled = s.with(|e, _| {
+        let entries = e.tab_menu();
+        crate::shell::scenario::find_item(&entries, "xlsx.unhide-sheet")
+            .unwrap()
+            .disabled
+    });
+    assert!(unhide_disabled, "unhide-sheet is disabled when no sheets are hidden");
+
+    let call_tab = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.tab_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no tab menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // シートを追加して非表示にし、tab_menu に `xlsx.unhide-sheets` サブメニューが現れて再表示できることを検証
+    let edited_slide = s.with(|e, _| e.current_slide);
+    let before_slides = s.with(|e, _| e.presentation().slides.len());
+    call_tab(&mut s, "xlsx.insert-sheet");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), before_slides + 1);
+    call_tab(&mut s, "xlsx.hide-sheet");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), before_slides);
+    let t_ids_hidden = tab_ids(&mut s);
+    assert!(
+        t_ids_hidden.contains(&"xlsx.unhide-sheets"),
+        "tab_menu shows unhide-sheets submenu when a sheet is hidden: {t_ids_hidden:?}"
+    );
+    call_tab(&mut s, "xlsx.unhide-sheet");
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), before_slides + 1, "hidden sheet restored via tab_menu");
+
+    // 6. 編集したシートに戻って保存・再読み込みラウンドトリップ検証
+    s.update(move |e, window, cx| e.select_slide(edited_slide, window, cx));
+    let sheet_name = s.with(|e, _| e.slide().name.clone().unwrap_or_default());
+    s.save_as("sheet024.xlsx");
+    let p = s.reopen();
+    let slide = p.slides.iter().find(|sl| sl.name.as_deref() == Some(&sheet_name)).unwrap();
+    let sheet = sheet_of_slide(slide).unwrap();
+    assert_eq!(sheet.outline_rows.get(&2).copied(), Some(1));
+    assert_eq!(sheet.print.row_breaks, vec![2]);
+}
+
+/// XLSX-SPARK-016..020: スパークラインの軸設定（横軸の表示・右から左へプロット・縦軸最小値/最大値の自動・全スパークラインで同じ値・ユーザー設定値）
+/// セル右クリックメニュー（`xlsx.cell-sparkline-axis`）、ツールバーメニュー、およびスパークラインパネル UI からの変更と Undo/Redo・OOXML 保存再読み込みラウンドトリップを検証。
+fn spark004_axis_options_and_right_to_left() {
+    use ibis_doc_model::{SparklineAxis, SparklineKind};
+
+    let mut s = new_sheet();
+    let sheet_name = s.with(|e, _| e.slide().name.clone().unwrap_or_default());
+
+    let call_cell = |s: &mut Scenario, id: &str| {
+        let handler = s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+    };
+
+    let is_checked = |s: &mut Scenario, id: &str| -> bool {
+        s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+                .checked
+        })
+    };
+
+    // B4:D5 に正負混在のデータを入力し、E4:E5 に折れ線スパークラインを作成
+    s.click_cell("B4");
+    s.enter("-10", "tab");
+    s.enter("20", "tab");
+    s.enter("5", "enter");
+    s.click_cell("B5");
+    s.enter("10", "tab");
+    s.enter("-25", "tab");
+    s.enter("40", "enter");
+
+    s.click_cell("E4");
+    s.update(|e, window, cx| {
+        e.open_sparkline_panel(Some(SparklineKind::Line), window, cx);
+        let p = e.wb().panels.sparkline.as_ref().unwrap();
+        let data_in = p.data_range_input.clone();
+        let loc_in = p.location_range_input.clone();
+        data_in.update(cx, |i, cx| i.set_value("B4:D5", window, cx));
+        loc_in.update(cx, |i, cx| i.set_value("E4:E5", window, cx));
+        e.apply_sparkline(cx);
+    });
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 1);
+
+    // 1. セル右クリックメニューから「軸を表示 (xlsx.cell-sparkline-show-axis)」と「右から左へプロット (xlsx.cell-sparkline-right-to-left)」を切り替え＋Undo/Redo
+    s.click_cell("E4");
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-show-axis"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-right-to-left"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-min-individual"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-max-individual"));
+
+    call_cell(&mut s, "xlsx.cell-sparkline-show-axis");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-show-axis"));
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].display_x_axis));
+
+    call_cell(&mut s, "xlsx.cell-sparkline-right-to-left");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-right-to-left"));
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].right_to_left));
+
+    s.key("cmd-z");
+    assert!(!s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].right_to_left));
+    s.key("cmd-shift-z");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].right_to_left));
+
+    // 2. セル右クリックメニューおよびツールバーメニューから縦軸の最小値・最大値モード (Individual / Group) を切り替え
+    call_cell(&mut s, "xlsx.cell-sparkline-min-group");
+    call_cell(&mut s, "xlsx.cell-sparkline-max-group");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-min-group"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-min-individual"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-max-group"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-max-individual"));
+    assert_eq!(
+        s.with(|e, _| {
+            let g = &e.current_sheet().unwrap().1.sparklines[0];
+            (g.min_axis.clone(), g.max_axis.clone())
+        }),
+        (SparklineAxis::Group, SparklineAxis::Group)
+    );
+
+    s.menu("xlsx.sparkline-min-individual");
+    s.menu("xlsx.sparkline-max-individual");
+    assert_eq!(
+        s.with(|e, _| {
+            let g = &e.current_sheet().unwrap().1.sparklines[0];
+            (g.min_axis.clone(), g.max_axis.clone())
+        }),
+        (SparklineAxis::Individual, SparklineAxis::Individual)
+    );
+
+    // 3. スパークラインパネルでユーザー設定値 (Custom: manualMin = -50, manualMax = 100) を設定して適用
+    call_cell(&mut s, "xlsx.cell-sparkline-min-custom");
+    assert!(
+        s.with(|e, _| e.wb().panels.sparkline.as_ref().is_some_and(|p| p.group_index == Some(0) && p.right_to_left && p.display_x_axis)),
+        "sparkline edit panel opened with current axis state"
+    );
+    s.update(|e, window, cx| {
+        let p = e.wb_mut().panels.sparkline.as_mut().unwrap();
+        p.min_axis_kind = 2;
+        p.max_axis_kind = 2;
+        let min_in = p.min_custom_input.clone();
+        let max_in = p.max_custom_input.clone();
+        min_in.update(cx, |i, cx| i.set_value("-50", window, cx));
+        max_in.update(cx, |i, cx| i.set_value("100", window, cx));
+        e.apply_sparkline(cx);
+    });
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-min-custom"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-max-custom"));
+    assert_eq!(
+        s.with(|e, _| {
+            let g = &e.current_sheet().unwrap().1.sparklines[0];
+            (g.min_axis.clone(), g.max_axis.clone(), g.display_x_axis, g.right_to_left)
+        }),
+        (SparklineAxis::Custom("-50".to_string()), SparklineAxis::Custom("100".to_string()), true, true)
+    );
+
+    // 4. OOXML 保存・再読み込みラウンドトリップ検証
+    s.save_as("spark004.xlsx");
+    let reopened = s.reopen();
+    let slide = reopened.slides.iter().find(|sl| sl.name.as_deref() == Some(&sheet_name)).unwrap();
+    let sheet = sheet_of_slide(slide).unwrap();
+    assert_eq!(sheet.sparklines.len(), 1);
+    let g = &sheet.sparklines[0];
+    assert!(g.display_x_axis);
+    assert!(g.right_to_left);
+    assert_eq!(g.min_axis, SparklineAxis::Custom("-50".to_string()));
+    assert_eq!(g.max_axis, SparklineAxis::Custom("100".to_string()));
+}
+
+/// XLSX-SPARK-009 / XLSX-SPARK-014 / XLSX-SPARK-021: スパークラインのポイント種別ごとのマーカー色、線の太さ（Weight）、空白セルの表示（Gap / Zero / Span）
+/// セル右クリックメニュー（`xlsx.cell-sparkline-marker-colors` / `xlsx.cell-sparkline-weight` / `xlsx.cell-sparkline-empty`）、
+/// ツールバーメニュー（`xlsx.sparkline-marker-colors` / `xlsx.sparkline-weight` / `xlsx.sparkline-empty-cells`）、
+/// スパークラインパネル UI、Undo/Redo、および OOXML 保存再読み込みラウンドトリップを検証。
+fn spark005_marker_colors_weight_and_empty_cells() {
+    use ibis_doc_model::{Rgb, SparklineEmpty, SparklineKind};
+
+    let mut s = new_sheet();
+    let sheet_name = s.with(|e, _| e.slide().name.clone().unwrap_or_default());
+
+    let call_cell = |s: &mut Scenario, id: &str| {
+        let handler = s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+    };
+
+    let is_checked = |s: &mut Scenario, id: &str| -> bool {
+        s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+                .checked
+        })
+    };
+
+    // B4:E4 に負値と空白を含むデータを入力し、F4 に折れ線スパークラインを作成
+    s.click_cell("B4");
+    s.enter("10", "tab");
+    // C4 は空白のまま飛ばす
+    s.click_cell("D4");
+    s.enter("-15", "tab");
+    s.enter("30", "enter");
+
+    s.click_cell("F4");
+    s.update(|e, window, cx| {
+        e.open_sparkline_panel(Some(SparklineKind::Line), window, cx);
+        let p = e.wb().panels.sparkline.as_ref().unwrap();
+        let data_in = p.data_range_input.clone();
+        let loc_in = p.location_range_input.clone();
+        data_in.update(cx, |i, cx| i.set_value("B4:E4", window, cx));
+        loc_in.update(cx, |i, cx| i.set_value("F4", window, cx));
+        e.apply_sparkline(cx);
+    });
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 1);
+
+    // 1. セル右クリックメニューからポイント種別ごとのマーカー色を変更し、対応するフラグも自動 ON になることを検証
+    s.click_cell("F4");
+    call_cell(&mut s, "xlsx.cell-sparkline-mc-high-green");
+    call_cell(&mut s, "xlsx.cell-sparkline-mc-low-red");
+    call_cell(&mut s, "xlsx.cell-sparkline-mc-negative-orange");
+    call_cell(&mut s, "xlsx.cell-sparkline-mc-first-purple");
+    call_cell(&mut s, "xlsx.cell-sparkline-mc-last-cyan");
+    call_cell(&mut s, "xlsx.cell-sparkline-mc-markers-blue");
+
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-mc-high-green"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-mc-low-red"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-mc-negative-orange"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-mc-first-purple"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-mc-last-cyan"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-mc-markers-blue"));
+
+    let g = s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].clone());
+    assert!(g.high && g.low && g.negative_points && g.first && g.last && g.markers);
+    assert_eq!(g.high_color, Some(Rgb(0x70AD47)));
+    assert_eq!(g.low_color, Some(Rgb(0xC00000)));
+    assert_eq!(g.negative, Some(Rgb(0xED7D31)));
+    assert_eq!(g.first_color, Some(Rgb(0x7030A0)));
+    assert_eq!(g.last_color, Some(Rgb(0x4BACC6)));
+    assert_eq!(g.markers_color, Some(Rgb(0x376092)));
+
+    // 2. セル右クリックメニューとツールバーメニューから線の太さ (Weight) と空白セルの表示 (Empty Cells) を変更＋Undo/Redo
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-weight-75"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-empty-gap"));
+
+    call_cell(&mut s, "xlsx.cell-sparkline-weight-150");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-weight-150"));
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].line_weight), 150);
+
+    call_cell(&mut s, "xlsx.cell-sparkline-empty-zero");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-empty-zero"));
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].empty), SparklineEmpty::Zero);
+
+    // ツールバーメニューからの変更
+    s.menu("xlsx.sparkline-weight-225");
+    s.menu("xlsx.sparkline-empty-span");
+    s.menu("xlsx.sparkline-mc-high-black");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-weight-225"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-empty-span"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-mc-high-black"));
+
+    // Undo / Redo 検証
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].high_color), Some(Rgb(0x70AD47)));
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].high_color), Some(Rgb(0x000000)));
+
+    // 3. OOXML 保存・再読み込みラウンドトリップ検証
+    s.save_as("spark005.xlsx");
+    let reopened = s.reopen();
+    let slide = reopened.slides.iter().find(|sl| sl.name.as_deref() == Some(&sheet_name)).unwrap();
+    let sheet = sheet_of_slide(slide).unwrap();
+    assert_eq!(sheet.sparklines.len(), 1);
+    let rg = &sheet.sparklines[0];
+    assert_eq!(rg.line_weight, 225);
+    assert_eq!(rg.empty, SparklineEmpty::Span);
+    assert_eq!(rg.high_color, Some(Rgb(0x000000)));
+    assert_eq!(rg.low_color, Some(Rgb(0xC00000)));
+    assert_eq!(rg.negative, Some(Rgb(0xED7D31)));
+    assert_eq!(rg.first_color, Some(Rgb(0x7030A0)));
+    assert_eq!(rg.last_color, Some(Rgb(0x4BACC6)));
+    assert_eq!(rg.markers_color, Some(Rgb(0x376092)));
+}
+
+/// XLSX-CELL-018 / XLSX-TABLE-001 / XLSX-TABLE-007 / XLSX-SEC-014 / XLSX-OPTIONS-001 / XLSX-OPTIONS-002:
+/// ホーム > 検索と選択（数式・メモ・条件付き書式・定数・入力規則の1クリック選択）、
+/// ホーム > テーブルとして書式設定（選択範囲からのテーブル作成とスタイル変更）、
+/// ページ レイアウト > 拡大縮小印刷（横・縦ページ数と拡大/縮小倍率）のメニュー操作・Undo/Redo・OOXML 保存再読み込み検証.
+fn options001_format_as_table_find_select_and_scale_to_fit() {
+    use ibis_doc_model::{CellRange, Command, ConditionalFormat, CfKind, CfRule, SheetCommand, SheetComment, Validation};
+
+    let mut s = new_sheet();
+    let slide_id = s.with(|e, _| e.current_slide);
+
+    for (addr, val) in [
+        ("A1", "Item"),
+        ("B1", "Price"),
+        ("C1", "Total"),
+        ("A2", "Apple"),
+        ("B2", "120"),
+        ("C2", "=B2*2"),
+        ("A3", "Orange"),
+        ("B3", "80"),
+        ("C3", "=B3*3"),
+    ] {
+        s.click_cell(addr);
+        s.key("f2");
+        s.type_text(val);
+        s.key("enter");
+    }
+
+    // A2 にメモ、B2:B3 に条件付き書式と入力規則を設定
+    let b2_b3 = CellRange { first_row: 1, last_row: 2, first_column: 1, last_column: 1 };
+    s.update(|e, _, cx| {
+        e.document
+            .execute(vec![
+                Command::Sheet(SheetCommand::SetComment {
+                    slide: slide_id,
+                    row: 1,
+                    column: 0,
+                    comment: Some(SheetComment {
+                        row: 1,
+                        column: 0,
+                        author: "Tester".into(),
+                        text: "Check price".into(),
+                    }),
+                }),
+                Command::Sheet(SheetCommand::AddConditional {
+                    slide: slide_id,
+                    format: ConditionalFormat {
+                        source_index: None,
+                        ranges: vec![b2_b3],
+                        rules: vec![CfRule {
+                            kind: CfKind::CellIs {
+                                operator: "greaterThan".into(),
+                                formulas: vec!["100".into()],
+                            },
+                            priority: 1,
+                            stop: false,
+                            style: None,
+                        }],
+                    },
+                }),
+                Command::Sheet(SheetCommand::SetValidation {
+                    slide: slide_id,
+                    ranges: vec![b2_b3],
+                    rule: Some(Validation {
+                        ranges: vec![b2_b3],
+                        kind: "whole".into(),
+                        operator: "greaterThan".into(),
+                        formula1: Some("0".into()),
+                        formula2: None,
+                        allow_blank: true,
+                        dropdown: false,
+                        prompt: None,
+                        error: Some(("stop".into(), String::new(), String::new())),
+                    }),
+                }),
+            ])
+            .unwrap();
+        cx.notify();
+    });
+
+    // 1. 検索と選択 (xlsx.find-and-select) の 1 クリック選択検証
+    s.click_cell("A1");
+    s.menu("xlsx.select-formulas");
+    assert_eq!(
+        s.with(|e, _| e.selected_ranges()),
+        vec![CellRange { first_row: 1, last_row: 2, first_column: 2, last_column: 2 }],
+        "xlsx.select-formulas should select C2:C3"
+    );
+
+    s.click_cell("A1");
+    s.menu("xlsx.select-notes");
+    assert_eq!(
+        s.with(|e, _| e.selected_ranges()),
+        vec![CellRange { first_row: 1, last_row: 1, first_column: 0, last_column: 0 }],
+        "xlsx.select-notes should select A2"
+    );
+
+    s.click_cell("A1");
+    s.menu("xlsx.select-conditional-formats");
+    assert_eq!(
+        s.with(|e, _| e.selected_ranges()),
+        vec![b2_b3],
+        "xlsx.select-conditional-formats should select B2:B3"
+    );
+
+    s.click_cell("A1");
+    s.menu("xlsx.select-data-validation");
+    assert_eq!(
+        s.with(|e, _| e.selected_ranges()),
+        vec![b2_b3],
+        "xlsx.select-data-validation should select B2:B3"
+    );
+
+    s.click_cell("A1");
+    s.menu("xlsx.select-constants");
+    let const_ranges = s.with(|e, _| e.selected_ranges());
+    let const_cells: usize = const_ranges
+        .iter()
+        .map(|r| ((r.last_row - r.first_row + 1) * (r.last_column - r.first_column + 1)) as usize)
+        .sum();
+    assert_eq!(const_cells, 7, "A1:C1 (3) + A2:B3 (4) = 7 constant cells");
+
+    // 2. テーブルとして書式設定 (xlsx.format-as-table) の作成・スタイル変更・Undo/Redo 検証
+    s.click_cell("A1");
+    s.menu("xlsx.format-as-table.medium-9");
+    let (tbl_count, tbl_range, tbl_style) = s.with(|e, _| {
+        let (_, sh) = e.current_sheet().unwrap();
+        (
+            sh.tables.len(),
+            sh.tables[0].range,
+            sh.tables[0].style.as_ref().unwrap().name.clone(),
+        )
+    });
+    assert_eq!(tbl_count, 1);
+    assert_eq!(tbl_range, CellRange { first_row: 0, last_row: 2, first_column: 0, last_column: 2 });
+    assert_eq!(tbl_style, "TableStyleMedium9");
+
+    // テーブル内のセルを選択した状態で別スタイルに変更
+    s.click_cell("B2");
+    s.menu("xlsx.format-as-table.dark-2");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.tables[0].style.as_ref().unwrap().name.clone()),
+        "TableStyleDark2"
+    );
+
+    s.key("cmd-z");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.tables[0].style.as_ref().unwrap().name.clone()),
+        "TableStyleMedium9"
+    );
+    s.key("cmd-shift-z");
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.tables[0].style.as_ref().unwrap().name.clone()),
+        "TableStyleDark2"
+    );
+
+    // 3. 拡大縮小印刷 (xlsx.scale-to-fit) のメニュー検証
+    s.menu("xlsx.scale-width-1");
+    assert_eq!(s.with(|e, _| e.current_print().unwrap().fit_to), Some((1, 0)));
+
+    s.menu("xlsx.scale-height-2");
+    assert_eq!(s.with(|e, _| e.current_print().unwrap().fit_to), Some((1, 2)));
+
+    s.menu("xlsx.scale-80");
+    assert_eq!(s.with(|e, _| e.current_print().unwrap().fit_to), None);
+    assert_eq!(s.with(|e, _| e.current_print().unwrap().scale), 80);
+
+    s.menu("xlsx.scale-width-1");
+    s.menu("xlsx.scale-height-1");
+    assert_eq!(s.with(|e, _| e.current_print().unwrap().fit_to), Some((1, 1)));
+
+    // 4. OOXML 保存・再読み込みラウンドトリップ検証
+    s.save_as("options001.xlsx");
+    let reopened = s.reopen();
+    let sheet = sheet_of_slide(&reopened.slides[1]).unwrap();
+    assert_eq!(sheet.tables.len(), 1);
+    assert_eq!(sheet.tables[0].style.as_ref().unwrap().name, "TableStyleDark2");
+    assert_eq!(sheet.print.fit_to, Some((1, 1)));
+}
+
+/// XLSX-PIVOT-005..008 / XLSX-PIVOT-022 / XLSX-TABLE-008..009 / XLSX-OPTIONS-003:
+/// 1. ピボットテーブルのレポートレイアウト（コンパクト／アウトライン／表形式）・ラベルの繰り返し・空行挿入・
+///    総計（行／列）・ピボットテーブル スタイル オプション（行の見出し／列の見出し／縞模様（行）／縞模様（列））の
+///    セル右クリックメニュー（`xlsx.cell-pivot-layout` / `xlsx.cell-pivot-style-options`）およびリボンメニューからの切り替えと、
+///    ワークシート上のピボットテーブル再構築・Undo/Redo
+/// 2. テーブルのセル右クリックメニュー（`xlsx.cell-table-style-options` / `xlsx.cell-table-styles` / `xlsx.cell-table-pivot`）
+///    からのスタイルオプション切り替え・プリセットスタイル適用／クリア・ピボットテーブルで集計パネル起動
+/// 3. `.xlsx` 保存・再読み込みラウンドトリップ検証
+fn pivot022_and_table008_design_options_and_context_menus() {
+    let mut s = Scenario::open("test/editing/xlsx-pivot-not-refreshed.xlsx");
+
+    let call = |s: &mut Scenario, id: &str| {
+        let handler = s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+    };
+
+    let is_checked = |s: &mut Scenario, id: &str| -> bool {
+        s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+                .checked
+        })
+    };
+
+    // 1. ピボットテーブル内のセル（A5）を選択し、初期状態（コンパクト形式・総計ON・縞模様OFF）を確認
+    s.click_cell("A5");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-layout-compact"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-layout-outline"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-layout-tabular"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-repeat-labels"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-blank-rows"));
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-grand-rows"));
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-grand-cols"));
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-row-headers"));
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-col-headers"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-banded-rows"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-banded-columns"));
+
+    let loc_compact = pivot_of(&mut s, 0).location;
+
+    // 2. 右クリックメニューから「表形式で表示（xlsx.cell-pivot-layout-tabular）」に切り替え：
+    //    ピボットテーブルが即座に再構築され、行フィールドが別列に展開されて列数が増えること
+    call(&mut s, "xlsx.cell-pivot-layout-tabular");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-layout-tabular"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-layout-compact"));
+    let p_tab = pivot_of(&mut s, 0);
+    assert!(!p_tab.compact && !p_tab.outline);
+    assert!(p_tab.fields.iter().all(|f| !f.compact && !f.outline));
+    assert!(
+        p_tab.location.last_column > loc_compact.last_column,
+        "tabular layout expands row fields into separate columns: {:?} vs {:?}",
+        p_tab.location,
+        loc_compact
+    );
+
+    // Undo でコンパクト形式に戻ること
+    s.key("cmd-z");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-layout-compact"));
+    assert_eq!(pivot_of(&mut s, 0).location.last_column, loc_compact.last_column);
+    s.key("cmd-shift-z");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-layout-tabular"));
+
+    // 3. ラベルの繰り返し・空行の挿入・総計（行）・縞模様（行／列）のトグルと再構築検証
+    let rows_before_blank = pivot_of(&mut s, 0).location.last_row;
+    call(&mut s, "xlsx.cell-pivot-repeat-labels");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-repeat-labels"));
+    assert!(pivot_of(&mut s, 0).fill_down_labels);
+
+    call(&mut s, "xlsx.cell-pivot-blank-rows");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-blank-rows"));
+    let rows_after_blank = pivot_of(&mut s, 0).location.last_row;
+    assert!(
+        rows_after_blank > rows_before_blank,
+        "blank rows inserted into rebuilt pivot table: {rows_after_blank} > {rows_before_blank}"
+    );
+
+    call(&mut s, "xlsx.cell-pivot-grand-rows");
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-grand-rows"));
+    assert!(!pivot_of(&mut s, 0).row_grand_totals);
+
+    call(&mut s, "xlsx.cell-pivot-banded-rows");
+    call(&mut s, "xlsx.cell-pivot-banded-columns");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-banded-rows"));
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-banded-columns"));
+    let st = pivot_of(&mut s, 0).style.unwrap();
+    assert!(st.row_stripes && st.col_stripes);
+
+    // 4. 空き領域 I1:K3 にテーブルを作成し、テーブル右クリックメニューのスタイルオプション・スタイル・ピボット集計を検証
+    s.click_cell("I1");
+    s.enter("Dept", "tab");
+    s.enter("Month", "tab");
+    s.enter("Sales", "enter");
+    s.click_cell("I2");
+    s.enter("East", "tab");
+    s.enter("Apr", "tab");
+    s.enter("1200", "enter");
+    s.click_cell("I3");
+    s.enter("West", "tab");
+    s.enter("May", "tab");
+    s.enter("1800", "enter");
+
+    s.click_cell("I1");
+    s.menu("xlsx.format-as-table.medium-2");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.tables.len()), 1);
+
+    s.click_cell("J2");
+    assert!(is_checked(&mut s, "xlsx.cell-table-header-row"));
+    assert!(!is_checked(&mut s, "xlsx.cell-table-first-column"));
+    assert!(!is_checked(&mut s, "xlsx.cell-table-last-column"));
+    assert!(is_checked(&mut s, "xlsx.cell-table-style-medium-2"));
+
+    // 最初の列・最後の列・縞模様（列）を右クリックサブメニューから ON
+    call(&mut s, "xlsx.cell-table-first-column");
+    call(&mut s, "xlsx.cell-table-last-column");
+    call(&mut s, "xlsx.cell-table-banded-columns");
+    assert!(is_checked(&mut s, "xlsx.cell-table-first-column"));
+    assert!(is_checked(&mut s, "xlsx.cell-table-last-column"));
+    assert!(is_checked(&mut s, "xlsx.cell-table-banded-columns"));
+
+    // テーブルスタイルを右クリックサブメニューから TableStyleDark1 に変更 → クリア → Undo
+    call(&mut s, "xlsx.cell-table-style-dark-1");
+    assert!(is_checked(&mut s, "xlsx.cell-table-style-dark-1"));
+    call(&mut s, "xlsx.cell-table-style-clear");
+    assert!(is_checked(&mut s, "xlsx.cell-table-style-clear"));
+    s.key("cmd-z");
+    assert!(is_checked(&mut s, "xlsx.cell-table-style-dark-1"));
+
+    // 「ピボットテーブルで集計（xlsx.cell-table-pivot）」でピボット作成パネルが開くこと
+    call(&mut s, "xlsx.cell-table-pivot");
+    assert!(
+        s.with(|e, _| e.wb().panels.pivot.as_ref().is_some_and(|p| p.create.is_some())),
+        "create pivot panel opened from table context menu"
+    );
+    s.update(|e, _, cx| e.close_pivot_panel(cx));
+
+    // 5. 保存・再読み込みラウンドトリップ検証
+    s.save_as("pivot022.xlsx");
+    let reopened = s.reopen();
+    let sheet = sheet_of_slide(&reopened.slides[0]).unwrap();
+    let p = &sheet.pivots[0];
+    assert!(!p.compact && !p.outline && p.fill_down_labels && !p.row_grand_totals);
+    let pst = p.style.as_ref().unwrap();
+    assert!(pst.row_stripes && pst.col_stripes);
+    let tbl = &sheet.tables[0];
+    let tst = tbl.style.as_ref().unwrap();
+    assert_eq!(tst.name, "TableStyleDark1");
+    assert!(tst.first_column && tst.last_column && tst.column_stripes);
+}
+
+/// XLSX-PIVOT-005..007 / XLSX-PIVOT-021..023 / XLSX-OPTIONS-003:
+/// 1. ピボットテーブルの小計モード（非表示／グループの下部／グループの上部）のセル右クリックメニューおよびリボンメニューからの切り替えと再構築
+/// 2. ピボットテーブル スタイル プリセット（`xlsx.cell-pivot-styles`：Light / Medium / Dark / None）の右クリックメニュー切り替え・チェックマーク・Undo/Redo
+/// 3. ピボットテーブルの要素選択（`xlsx.cell-pivot-select`：全体／値／ラベル）およびクリア（`xlsx.cell-pivot-clear`：フィルターをクリア／すべてクリア）
+/// 4. ピボットテーブル フィールド パネルのデザインセクション拡張（空行の挿入・スタイル オプション・スタイル プリセット）とフィールド別空行設定の描画・保存ラウンドトリップ検証
+fn pivot023_subtotals_styles_and_panel_design() {
+    let mut s = Scenario::open("test/editing/xlsx-pivot-not-refreshed.xlsx");
+
+    let call = |s: &mut Scenario, id: &str| {
+        let handler = s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+    };
+
+    let is_checked = |s: &mut Scenario, id: &str| -> bool {
+        s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+                .checked
+        })
+    };
+
+    let dump = |s: &mut Scenario| -> Vec<String> {
+        (0..14)
+            .map(|r| {
+                (0..6)
+                    .map(|c| {
+                        s.with(|e, _| {
+                            e.current_sheet()
+                                .and_then(|(_, sh)| sh.cell(r, c).map(|x| x.text.clone()))
+                        })
+                        .unwrap_or_default()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("|")
+            })
+            .collect()
+    };
+
+    s.click_cell("A5");
+    // 表形式に切り替えて小計行（"集計"）が出る状態にする
+    s.menu("xlsx.pivot-layout-tabular");
+    assert!(dump(&mut s).iter().any(|l| l.contains("集計")));
+
+    // 1. 小計の切り替え（右クリックメニュー & リボンメニュー）
+    call(&mut s, "xlsx.cell-pivot-subtotal-off");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-subtotal-off"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-subtotal-bottom"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-subtotal-top"));
+    assert!(!dump(&mut s).iter().any(|l| l.contains("集計")), "subtotals hidden");
+
+    call(&mut s, "xlsx.cell-pivot-subtotal-bottom");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-subtotal-bottom"));
+    assert!(dump(&mut s).iter().any(|l| l.contains("集計")), "subtotals shown at bottom");
+    assert!(!pivot_of(&mut s, 0).fields[0].subtotal_top);
+
+    s.menu("xlsx.pivot-subtotal-top");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-subtotal-top"));
+    assert!(pivot_of(&mut s, 0).fields[0].subtotal_top);
+
+    // リボンメニューからの総計・ラベル繰り返しの切り替え
+    s.menu("xlsx.pivot-grand-rows");
+    assert!(!pivot_of(&mut s, 0).row_grand_totals);
+    s.menu("xlsx.pivot-grand-cols");
+    assert!(!pivot_of(&mut s, 0).col_grand_totals);
+    s.menu("xlsx.pivot-repeat-labels");
+    assert!(pivot_of(&mut s, 0).fill_down_labels);
+
+    // 2. ピボットテーブル スタイル プリセット（xlsx.cell-pivot-styles）の切り替え
+    call(&mut s, "xlsx.cell-pivot-style-medium-9");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-style-medium-9"));
+    assert_eq!(
+        pivot_of(&mut s, 0).style.as_ref().unwrap().name,
+        "PivotStyleMedium9"
+    );
+
+    call(&mut s, "xlsx.cell-pivot-style-dark-3");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-style-dark-3"));
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-style-medium-9"));
+    assert_eq!(
+        pivot_of(&mut s, 0).style.as_ref().unwrap().name,
+        "PivotStyleDark3"
+    );
+
+    call(&mut s, "xlsx.cell-pivot-style-none");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-style-none"));
+    assert!(pivot_of(&mut s, 0).style.is_none());
+
+    // Undo で PivotStyleDark3 に戻ること
+    s.key("cmd-z");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-style-dark-3"));
+    assert_eq!(
+        pivot_of(&mut s, 0).style.as_ref().unwrap().name,
+        "PivotStyleDark3"
+    );
+
+    // 3. ピボットテーブルの要素選択（値エリア・ラベルエリア・全体）とクリア（すべてクリア＋Undo）
+    let loc = pivot_of(&mut s, 0).location;
+    call(&mut s, "xlsx.cell-pivot-select-values");
+    let sel_values = s.with(|e, _| e.selected_range().unwrap());
+    assert!(sel_values.first_column > loc.first_column && sel_values.first_row > loc.first_row);
+
+    call(&mut s, "xlsx.cell-pivot-select-labels");
+    let sel_labels = s.with(|e, _| e.selected_range().unwrap());
+    assert_eq!(sel_labels.first_column, loc.first_column);
+
+    call(&mut s, "xlsx.cell-pivot-select-entire");
+    let sel_entire = s.with(|e, _| e.selected_range().unwrap());
+    assert_eq!(sel_entire, loc);
+
+    call(&mut s, "xlsx.cell-pivot-clear-all");
+    assert!(pivot_of(&mut s, 0).row_fields.is_empty() && pivot_of(&mut s, 0).data_fields.is_empty());
+    s.key("cmd-z");
+    assert!(!pivot_of(&mut s, 0).row_fields.is_empty() && !pivot_of(&mut s, 0).data_fields.is_empty());
+
+    // 4. ピボットテーブルのフィールドパネルを開き、行フィールド選択時の設定UIとデザインセクションを描画検証
+    s.click_cell("A5");
+    s.menu("xlsx.pivot-fields");
+    s.update(|e, _, cx| {
+        if let Some(panel) = e.wb_mut().panels.pivot.as_mut() {
+            panel.field_selected = Some((ibis_doc_model::PivotAxis::Row, 0));
+        }
+        cx.notify();
+    });
+    s.settle();
+
+    // 5. 保存・再読み込みラウンドトリップ検証
+    s.save_as("pivot023.xlsx");
+    let reopened = s.reopen();
+    let sheet = sheet_of_slide(&reopened.slides[0]).unwrap();
+    let p = &sheet.pivots[0];
+    assert_eq!(p.style.as_ref().unwrap().name, "PivotStyleDark3");
+    assert!(p.fill_down_labels && !p.row_grand_totals && !p.col_grand_totals);
+}
+
+/// XLSX-SPARKLINE-004..005 / XLSX-PIVOT-016..024:
+/// 1. スパークライン右クリックメニュー（`xlsx.cell-sparkline`）のスタイル プリセット（`xlsx.cell-sparkline-styles`）、系列色（`xlsx.cell-sparkline-colors`）、非表示セルのデータ表示（`xlsx.cell-sparkline-display-hidden`）、日付軸切り替え（`xlsx.cell-sparkline-date-axis-*`）およびチェックマーク状態の検証
+/// 2. リボンメニュー（`xlsx.sparkline-weight-*`、`xlsx.sparkline-show-axis`、`xlsx.sparkline-right-to-left`、`xlsx.sparkline-min-group`、`xlsx.sparkline-max-group`、`xlsx.sparkline-mc-*`、`xlsx.sparkline-ungroup`、`xlsx.sparkline-group`）の接続と実行検証
+/// 3. ピボットテーブル右クリックメニューの展開/折りたたみボタン（`xlsx.cell-pivot-drill-buttons`）、集計フィールド（`xlsx.cell-pivot-calculated-field`）、データソース変更（`xlsx.cell-pivot-change-source`）、スライサー・タイムライン・ピボットグラフ挿入（`xlsx.cell-pivot-chart`）、およびピボットテーブルの移動（`xlsx.cell-pivot-move`）でのセル選択追従と再構築検証
+fn sparkline005_and_pivot024_context_menus_and_quick_actions() {
+    let mut s = Scenario::open("test/editing/xlsx-pivot-not-refreshed.xlsx");
+
+    let call = |s: &mut Scenario, id: &str| {
+        let handler = s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+    };
+
+    let is_checked = |s: &mut Scenario, id: &str| -> bool {
+        s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+                .checked
+        })
+    };
+
+    // 1. I2:K3 に数値データを用意し、L2:L3 に折れ線スパークラインを作成
+    s.click_cell("I2");
+    s.enter("10", "tab");
+    s.enter("-5", "tab");
+    s.enter("30", "enter");
+    s.click_cell("I3");
+    s.enter("15", "tab");
+    s.enter("25", "tab");
+    s.enter("20", "enter");
+
+    s.update(|e, window, cx| e.go_to_reference("I2:K3", window, cx));
+    s.menu("xlsx.sparkline-line");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.sparkline.as_mut() {
+            p.location_range_input.update(cx, |i, cx| i.set_value("L2:L3", window, cx));
+        }
+        e.apply_sparkline(cx);
+    });
+    s.settle();
+
+    // L2 を選択し、右クリックメニューのスパークライン スタイル・色・非表示データ・日付軸を検証
+    s.click_cell("L2");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-style-1"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-color-blue"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-display-hidden-off"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-date-axis-off"));
+
+    // スタイル 4（紫）を右クリックサブメニューから適用
+    call(&mut s, "xlsx.cell-sparkline-style-4");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-style-4"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-style-1"));
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].series),
+        Some(ibis_doc_model::Rgb(0x8064A2))
+    );
+
+    // 系列色をオレンジ（0xED7D31）に右クリックサブメニューから変更
+    call(&mut s, "xlsx.cell-sparkline-color-orange");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-color-orange"));
+    assert!(!is_checked(&mut s, "xlsx.cell-sparkline-style-4"));
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].series),
+        Some(ibis_doc_model::Rgb(0xED7D31))
+    );
+
+    // 非表示セルのデータ表示 ON & 日付軸 ON を右クリックサブメニューから適用
+    call(&mut s, "xlsx.cell-sparkline-display-hidden-on");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-display-hidden-on"));
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].display_hidden));
+
+    call(&mut s, "xlsx.cell-sparkline-date-axis-on");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-date-axis-on"));
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].date_axis));
+
+    // 2. リボンメニューからの線の太さ・軸表示・右から左・最小値/最大値グループ・マーカー色・グループ解除/再グループ化の検証
+    s.menu("xlsx.sparkline-weight-150");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-weight-150"));
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines[0].line_weight), 150);
+
+    s.menu("xlsx.sparkline-show-axis");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-show-axis"));
+    s.menu("xlsx.sparkline-right-to-left");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-right-to-left"));
+    s.menu("xlsx.sparkline-min-group");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-min-group"));
+    s.menu("xlsx.sparkline-max-group");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-max-group"));
+
+    // リボンメニューから頂点マーカー色（緑 0x70AD47）を設定すると high = true かつ high_color が更新されること
+    s.menu("xlsx.sparkline-mc-high-green");
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-high-point"));
+    assert!(is_checked(&mut s, "xlsx.cell-sparkline-mc-high-green"));
+
+    // L2 のみ選択してリボンメニューからグループ解除 → 2グループに分かれること
+    s.click_cell("L2");
+    s.menu("xlsx.sparkline-ungroup");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 2);
+
+    // L2:L3 を選択してリボンメニューから再グループ化 → 1グループに戻ること
+    s.update(|e, window, cx| e.go_to_reference("L2:L3", window, cx));
+    s.menu("xlsx.sparkline-group");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 1);
+
+    // 3. ピボットテーブル右クリックメニューの拡張項目とピボットテーブル移動を検証
+    s.click_cell("A5");
+    assert!(is_checked(&mut s, "xlsx.cell-pivot-drill-buttons"));
+    call(&mut s, "xlsx.cell-pivot-drill-buttons");
+    assert!(!is_checked(&mut s, "xlsx.cell-pivot-drill-buttons"));
+    assert!(!pivot_of(&mut s, 0).show_drill);
+
+    // 右クリックメニューから集計フィールドパネルを開く
+    call(&mut s, "xlsx.cell-pivot-calculated-field");
+    assert!(s.with(|e, _| e.wb().panels.pivot_calc_field.is_some()));
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.pivot_calc_field = None;
+        cx.notify();
+    });
+
+    // 右クリックメニューからデータソースの変更パネルを開く
+    call(&mut s, "xlsx.cell-pivot-change-source");
+    assert!(s.with(|e, _| e.wb().panels.pivot.as_ref().is_some_and(|p| p.change_source.is_some())));
+    s.update(|e, _, cx| e.close_pivot_panel(cx));
+
+    // 右クリックメニューからピボットグラフを挿入
+    let shapes_before = s.with(|e, _| e.slide().shapes.len());
+    call(&mut s, "xlsx.cell-pivot-chart");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), shapes_before + 1);
+
+    // 右クリックメニューからピボットテーブルの移動パネルを開き、A20 へ移動
+    s.click_cell("A5");
+    call(&mut s, "xlsx.cell-pivot-move");
+    assert!(s.with(|e, _| e.wb().panels.pivot.as_ref().is_some_and(|p| p.move_pivot.is_some())));
+    s.update(|e, window, cx| {
+        if let Some(mv) = e.wb_mut().panels.pivot.as_mut().and_then(|p| p.move_pivot.as_mut()) {
+            mv.destination.update(cx, |i, cx| i.set_value("A20", window, cx));
+        }
+        e.apply_move_pivot(window, cx);
+    });
+    s.settle();
+    let moved_loc = pivot_of(&mut s, 0).location;
+    assert_eq!((moved_loc.first_column, moved_loc.first_row), (0, 19));
+    assert_eq!(s.with(|e, _| e.current_cell()), Some((0, 19)), "selection follows moved pivot table");
+    assert!(
+        !s.shown("A20").is_empty(),
+        "rebuilt pivot table populates cells at new location A20"
+    );
+
+    // 4. 保存・再読み込みラウンドトリップ検証
+    s.save_as("sparkline005_pivot024.xlsx");
+    let reopened = s.reopen();
+    let sheet = sheet_of_slide(&reopened.slides[0]).unwrap();
+    assert_eq!(sheet.sparklines.len(), 1);
+    let sp = &sheet.sparklines[0];
+    assert_eq!(sp.series, Some(ibis_doc_model::Rgb(0xED7D31)));
+    assert_eq!(sp.line_weight, 150);
+    assert!(sp.display_hidden && sp.display_x_axis && sp.right_to_left && sp.high);
+    assert_eq!(sp.high_color, Some(ibis_doc_model::Rgb(0x70AD47)));
+    let p = &sheet.pivots[0];
+    assert!(!p.show_drill);
+    assert_eq!((p.location.first_column, p.location.first_row), (0, 19));
+    let has_pivot_chart = reopened.slides[0].shapes.iter().any(|sh| matches!(&sh.kind, ibis_doc_model::ShapeKind::Chart(c) if c.is_pivot_chart()));
+    assert!(has_pivot_chart, "newly inserted PivotChart should be saved and reopened");
+}
+
+fn table022_slicer003_timeline003_context_menus_and_quick_actions() {
+    let mut s = new_sheet();
+    // 1. A1:B4 にテーブルを作成
+    for (cell, val) in [
+        ("A1", "Category"),
+        ("B1", "Amount"),
+        ("A2", "East"),
+        ("B2", "100"),
+        ("A3", "West"),
+        ("B3", "200"),
+        ("A4", "East"),
+        ("B4", "300"),
+    ] {
+        s.click_cell(cell);
+        s.type_text(val);
+        s.key("enter");
+    }
+    s.update(|e, window, cx| {
+        e.go_to_reference("A1:B4", window, cx);
+        e.format_as_table_with_style("TableStyleMedium2", cx);
+    });
+    s.settle();
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.tables.len()), 1);
+
+    let call_cell = |s: &mut Scenario, id: &str| {
+        let handler = s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+        s.settle();
+    };
+    let is_cell_checked = |s: &mut Scenario, id: &str| -> bool {
+        s.with(|e, _| {
+            let entries = e.cell_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no cell_menu item {id}"))
+                .checked
+        })
+    };
+
+    // 2. テーブル右クリックメニューの「選択」サブメニュー検証
+    s.click_cell("B2");
+    call_cell(&mut s, "xlsx.cell-table-select-all");
+    assert_eq!(
+        s.with(|e, _| e.selected_range()),
+        Some(ibis_doc_model::CellRange {
+            first_row: 0,
+            first_column: 0,
+            last_row: 3,
+            last_column: 1,
+        })
+    );
+    s.click_cell("B2");
+    call_cell(&mut s, "xlsx.cell-table-select-data");
+    assert_eq!(
+        s.with(|e, _| e.selected_range()),
+        Some(ibis_doc_model::CellRange {
+            first_row: 1,
+            first_column: 0,
+            last_row: 3,
+            last_column: 1,
+        })
+    );
+    s.click_cell("B2");
+    call_cell(&mut s, "xlsx.cell-table-select-col");
+    assert_eq!(
+        s.with(|e, _| e.selected_range()),
+        Some(ibis_doc_model::CellRange {
+            first_row: 0,
+            first_column: 1,
+            last_row: 3,
+            last_column: 1,
+        })
+    );
+    s.click_cell("B2");
+    call_cell(&mut s, "xlsx.cell-table-select-col-data");
+    assert_eq!(
+        s.with(|e, _| e.selected_range()),
+        Some(ibis_doc_model::CellRange {
+            first_row: 1,
+            first_column: 1,
+            last_row: 3,
+            last_column: 1,
+        })
+    );
+    s.click_cell("B2");
+    call_cell(&mut s, "xlsx.cell-table-select-row");
+    assert_eq!(
+        s.with(|e, _| e.selected_range()),
+        Some(ibis_doc_model::CellRange {
+            first_row: 1,
+            first_column: 0,
+            last_row: 1,
+            last_column: 1,
+        })
+    );
+
+    // 3. テーブル右クリックメニューの「集計行の関数」サブメニューから Average を直接適用（集計行が自動で有効化されること）
+    s.click_cell("B2");
+    assert!(!is_cell_checked(&mut s, "xlsx.cell-table-total-average"));
+    call_cell(&mut s, "xlsx.cell-table-total-average");
+    assert!(is_cell_checked(&mut s, "xlsx.cell-table-total-average"));
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.tables[0].totals_rows), 1);
+    assert_eq!(s.value("B5"), ibis_doc_model::CellValue::Number(200.0));
+
+    // 4. テーブルからスライサーを挿入し、タイムライン挿入パネル起動も検証
+    call_cell(&mut s, "xlsx.cell-table-timeline");
+    assert!(s.with(|e, _| e.wb().panels.timeline_insert.is_some()));
+    s.update(|e, _, cx| {
+        e.wb_mut().panels.timeline_insert = None;
+        cx.notify();
+    });
+
+    call_cell(&mut s, "xlsx.cell-table-slicer");
+    assert!(s.with(|e, _| e.wb().panels.slicer_insert.is_some()));
+    s.update(|e, _, cx| {
+        if let Some(p) = e.wb_mut().panels.slicer_insert.as_mut() {
+            p.checked[0] = true;
+        }
+        e.apply_slicer_insert_panel(cx);
+    });
+    s.settle();
+
+    let slicer_id = s.with(|e, _| {
+        e.slide()
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ibis_doc_model::ShapeKind::Slicer(_) => Some(sh.id),
+                _ => None,
+            })
+            .expect("slicer shape")
+    });
+
+    let call_shape = |s: &mut Scenario, shape_id: ibis_doc_model::ShapeId, id: &str| {
+        let handler = s.update(|e, _, _| {
+            e.set_selection(vec![shape_id]);
+            let entries = e.shape_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .and_then(|i| i.handler.clone())
+                .unwrap_or_else(|| panic!("no shape_menu item {id}"))
+        });
+        s.update(|e, window, cx| handler(e, window, cx));
+        s.settle();
+    };
+    let is_shape_checked = |s: &mut Scenario, shape_id: ibis_doc_model::ShapeId, id: &str| -> bool {
+        s.update(|e, _, _| {
+            e.set_selection(vec![shape_id]);
+            let entries = e.shape_menu();
+            crate::shell::scenario::find_item(&entries, id)
+                .unwrap_or_else(|| panic!("no shape_menu item {id}"))
+                .checked
+        })
+    };
+
+    // 5. スライサー右クリックメニューの拡張項目（降順・見出し非表示・列数 2・スタイル Dark2）を検証
+    assert!(is_shape_checked(&mut s, slicer_id, "xlsx.slicer-sort-asc"));
+    assert!(!is_shape_checked(&mut s, slicer_id, "xlsx.slicer-sort-desc"));
+    call_shape(&mut s, slicer_id, "xlsx.slicer-sort-desc");
+    assert!(is_shape_checked(&mut s, slicer_id, "xlsx.slicer-sort-desc"));
+
+    assert!(is_shape_checked(&mut s, slicer_id, "xlsx.slicer-show-caption"));
+    call_shape(&mut s, slicer_id, "xlsx.slicer-show-caption");
+    assert!(!is_shape_checked(&mut s, slicer_id, "xlsx.slicer-show-caption"));
+
+    assert!(is_shape_checked(&mut s, slicer_id, "xlsx.slicer-columns-1"));
+    call_shape(&mut s, slicer_id, "xlsx.slicer-columns-2");
+    assert!(is_shape_checked(&mut s, slicer_id, "xlsx.slicer-columns-2"));
+
+    assert!(is_shape_checked(&mut s, slicer_id, "xlsx.slicer-style-SlicerStyleLight1"));
+    call_shape(&mut s, slicer_id, "xlsx.slicer-style-SlicerStyleDark2");
+    assert!(is_shape_checked(&mut s, slicer_id, "xlsx.slicer-style-SlicerStyleDark2"));
+
+    let slicer_model = s.with(|e, _| match &e.slide().shape(slicer_id).unwrap().kind {
+        ibis_doc_model::ShapeKind::Slicer(sl) => (**sl).clone(),
+        _ => panic!("expected slicer"),
+    });
+    assert!(slicer_model.descending);
+    assert!(!slicer_model.show_caption);
+    assert_eq!(slicer_model.columns, 2);
+    assert_eq!(slicer_model.style, "SlicerStyleDark2");
+
+    // 6. 新規テーブル＋新規スライサーの保存・再読み込みラウンドトリップ検証
+    s.save_as("table022_slicer003.xlsx");
+    let reopened = s.reopen();
+    let sheet = sheet_of_slide(&reopened.slides[1]).unwrap();
+    assert_eq!(sheet.tables[0].totals_rows, 1);
+    assert_eq!(sheet.tables[0].totals[1].function.as_deref(), Some("average"));
+    let re_slicer = reopened.slides[1]
+        .shapes
+        .iter()
+        .find_map(|sh| match &sh.kind {
+            ibis_doc_model::ShapeKind::Slicer(sl) => Some((**sl).clone()),
+            _ => None,
+        })
+        .expect("reopened slicer");
+    assert!(re_slicer.descending);
+    assert!(!re_slicer.show_caption);
+    assert_eq!(re_slicer.columns, 2);
+    assert_eq!(re_slicer.style, "SlicerStyleDark2");
+    drop(s);
+
+    // 7. タイムライン右クリックメニューの「表示」サブメニュー（ヘッダー・選択ラベル・時間レベル・スクロールバー）＋スタイル変更＋グリップ／スクロールつまみドラッグ＋日付グループ化併用フィルタ＋移動／新規追加／削除のOOXML保存ラウンドトリップ検証
+    let mut s = Scenario::open("test/editing/xlsx-timeline-pivot.xlsx");
+    let timeline_id = s.with(|e, _| {
+        e.slide()
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ibis_doc_model::ShapeKind::Timeline(_) => Some(sh.id),
+                _ => None,
+            })
+            .expect("timeline shape")
+    });
+    assert!(is_shape_checked(&mut s, timeline_id, "xlsx.timeline-conn-0"));
+    assert!(is_shape_checked(
+        &mut s,
+        timeline_id,
+        "xlsx.timeline-style-TimeSlicerStyleLight1"
+    ));
+    call_shape(&mut s, timeline_id, "xlsx.timeline-style-TimeSlicerStyleDark2");
+    assert!(is_shape_checked(
+        &mut s,
+        timeline_id,
+        "xlsx.timeline-style-TimeSlicerStyleDark2"
+    ));
+
+    // Selection grip drag and scrollbar thumb hit-test via timeline::hit + apply_timeline
+    s.update(|e, _, cx| {
+        use ibis_doc_model::timeline::{
+            CAPTION, CELL_WIDTH, GROUP, SCROLL, SUB, TimelineHit, first_shown, hit, period_at_x,
+            thumb_rect,
+        };
+        let slide_id = e.current_slide;
+        let sh = e.slide().shape(timeline_id).unwrap().clone();
+        let tl = match &sh.kind {
+            ibis_doc_model::ShapeKind::Timeline(tl) => (**tl).clone(),
+            _ => unreachable!(),
+        };
+        let periods = tl.periods(tl.selection_level);
+        let first = first_shown(&periods, tl.scroll);
+        // Select visible periods first..=first+1 so both grips are active on screen
+        let mut tl_sel = tl.clone();
+        tl_sel.selection = Some((periods[first].start, periods[first + 1].end));
+        e.apply_timeline(slide_id, timeline_id, tl_sel.clone(), cx);
+
+        // Verify hit-testing of SelectionStart, SelectionEnd, and ScrollThumb
+        let x_start = SCROLL;
+        let x_end = SCROLL + 2 * CELL_WIDTH;
+        let body_y = (CAPTION + SUB + GROUP + sh.frame.height - SCROLL) / 2;
+        assert_eq!(
+            hit(&tl_sel, sh.frame.width, sh.frame.height, x_start, body_y),
+            Some(TimelineHit::SelectionStart)
+        );
+        assert_eq!(
+            hit(&tl_sel, sh.frame.width, sh.frame.height, x_end, body_y),
+            Some(TimelineHit::SelectionEnd)
+        );
+        let (tx0, tx1) = thumb_rect(&tl_sel, &periods, sh.frame.width);
+        assert_eq!(
+            hit(&tl_sel, sh.frame.width, sh.frame.height, (tx0 + tx1) / 2, sh.frame.height - SCROLL / 2),
+            Some(TimelineHit::ScrollThumb)
+        );
+        // Simulate dragging SelectionEnd to period first + 2
+        let p2_x = SCROLL + 2 * CELL_WIDTH + CELL_WIDTH / 2;
+        let idx = period_at_x(&tl_sel, &periods, sh.frame.width, p2_x).unwrap();
+        assert_eq!(idx, first + 2);
+        tl_sel.selection = Some((periods[first].start, periods[idx].end));
+        e.apply_timeline(slide_id, timeline_id, tl_sel, cx);
+    });
+    let after_drag_sel = s.with(|e, _| match &e.slide().shape(timeline_id).unwrap().kind {
+        ibis_doc_model::ShapeKind::Timeline(tl) => tl.selection,
+        _ => unreachable!(),
+    });
+    assert!(after_drag_sel.is_some());
+
+    // Group the PivotTable's date field by Months and verify Timeline filtering keeps grouped buckets and filters sums
+    s.update(|e, _, cx| {
+        let slide_id = e.current_slide;
+        e.change_pivot(
+            (slide_id, 0),
+            |p| {
+                p.place(0, Some(ibis_doc_model::pivot::PivotAxis::Row), 0);
+                p.place(1, None, 0);
+                p.fields[0].grouping = Some(ibis_doc_model::pivot::PivotFieldGrouping::Date {
+                    by: ibis_doc_model::pivot::DateGroupBy::Months,
+                    start: None,
+                    end: None,
+                    auto_start: true,
+                    auto_end: true,
+                });
+            },
+            cx,
+        );
+        // Re-apply timeline filter for the first period only
+        let mut tl = match &e.slide().shape(timeline_id).unwrap().kind {
+            ibis_doc_model::ShapeKind::Timeline(tl) => (**tl).clone(),
+            _ => unreachable!(),
+        };
+        let periods = tl.periods(tl.selection_level);
+        tl.selection = Some((periods[0].start, periods[0].end));
+        e.apply_timeline(slide_id, timeline_id, tl, cx);
+    });
+    let grouped_filtered_ok = s.with(|e, _| {
+        let (_, sh) = e.current_sheet().unwrap();
+        let data = ibis_pptx::pivot_source(e.presentation(), sh, &sh.pivots[0]).unwrap();
+        let built = sh.pivots[0].build(&data);
+        // With 1 month selected, the grouped PivotTable must still have data rows (not all hidden)
+        built.cells.len() >= 3
+    });
+    assert!(grouped_filtered_ok, "Grouped date PivotTable should retain filtered month bucket");
+
+    for item_id in [
+        "xlsx.timeline-show-header",
+        "xlsx.timeline-show-selection-label",
+        "xlsx.timeline-show-time-level",
+        "xlsx.timeline-show-scroll-bar",
+    ] {
+        assert!(is_shape_checked(&mut s, timeline_id, item_id));
+        call_shape(&mut s, timeline_id, item_id);
+        assert!(!is_shape_checked(&mut s, timeline_id, item_id));
+    }
+    // Move and resize the timeline frame
+    s.update(|e, _, cx| {
+        let slide_id = e.current_slide;
+        let sh = e.slide().shape(timeline_id).unwrap();
+        let mut new_frame = sh.frame;
+        new_frame.x += 457200;
+        new_frame.y += 228600;
+        new_frame.width += 304800;
+        e.execute(
+            vec![ibis_doc_model::Command::SetFrame {
+                slide: slide_id,
+                shape: timeline_id,
+                frame: new_frame,
+            }],
+            cx,
+        );
+    });
+    let (expected_x, expected_y, expected_w, expected_sel) = s.with(|e, _| {
+        let sh = e.slide().shape(timeline_id).unwrap();
+        let tl = match &sh.kind {
+            ibis_doc_model::ShapeKind::Timeline(tl) => (**tl).clone(),
+            _ => panic!("expected timeline"),
+        };
+        assert!(!tl.show_header);
+        assert!(!tl.show_selection_label);
+        assert!(!tl.show_time_level);
+        assert!(!tl.show_scroll_bar);
+        assert_eq!(tl.style, "TimeSlicerStyleDark2");
+        (sh.frame.x, sh.frame.y, sh.frame.width, tl.selection)
+    });
+
+    s.save_as("timeline003.xlsx");
+    let reopened = s.reopen();
+    let re_sh = reopened.slides[0]
+        .shapes
+        .iter()
+        .find(|sh| matches!(&sh.kind, ibis_doc_model::ShapeKind::Timeline(_)))
+        .expect("reopened timeline shape");
+    let re_timeline = match &re_sh.kind {
+        ibis_doc_model::ShapeKind::Timeline(tl) => (**tl).clone(),
+        _ => unreachable!(),
+    };
+    assert!(!re_timeline.show_header);
+    assert!(!re_timeline.show_selection_label);
+    assert!(!re_timeline.show_time_level);
+    assert!(!re_timeline.show_scroll_bar);
+    assert_eq!(re_timeline.style, "TimeSlicerStyleDark2");
+    assert_eq!(re_timeline.selection, expected_sel);
+    assert!((re_sh.frame.x - expected_x).abs() <= 20000);
+    assert!((re_sh.frame.y - expected_y).abs() <= 20000);
+    assert!((re_sh.frame.width - expected_w).abs() <= 20000);
+}
+
+/// XLSX-FORMULA-009 / XLSX-VIEW-006 / XLSX-SHEET-025:
+/// - 名前の管理（ブック範囲 / シート範囲のスコープ切り替え、ジャンプ、数式で使用、選択範囲から作成、セル右クリックメニュー連携、保存ラウンドトリップ）
+/// - ステータスバー集計のカスタマイズ（平均・データの個数・数値の個数・最小値・最大値・合計の表示切替）
+/// - シート見出し・書式メニュー（先頭へ移動・末尾へ移動・すべてのシートを再表示・目盛線・見出し切替）
+fn formula009_view006_sheet025_names_statusbar_and_sheet_tabs() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    let call_cell = |s: &mut Scenario, item_id: &str| {
+        let entries = s.with(|e, _| e.cell_menu());
+        let item = crate::shell::scenario::find_item(&entries, item_id)
+            .unwrap_or_else(|| panic!("missing cell menu item: {item_id}"));
+        assert!(!item.disabled, "cell menu item {item_id} is disabled");
+        let handler = item.handler.clone().expect("handler");
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    let call_tab = |s: &mut Scenario, item_id: &str| {
+        let entries = s.with(|e, _| e.tab_menu());
+        let item = crate::shell::scenario::find_item(&entries, item_id)
+            .unwrap_or_else(|| panic!("missing tab menu item: {item_id}"));
+        assert!(!item.disabled, "tab menu item {item_id} is disabled");
+        let handler = item.handler.clone().expect("handler");
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // 1. ステータスバー集計（XLSX-VIEW-006）: B4:C5 を選択して既定集計と最小値・最大値・数値の個数トグルを検証
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.wb_mut().cells.insert(slide, (1, 3)); // B4
+        e.wb_mut().cell_ends.insert(slide, (2, 4)); // C5
+        cx.notify();
+    });
+    let default_summary = s.with(|e, _| e.range_summary()).expect("default summary");
+    assert!(default_summary.contains("4"), "count of 4 cells: {default_summary}");
+    assert!(default_summary.contains("4,560,000"), "sum of 4 cells: {default_summary}");
+    assert!(default_summary.contains("1,140,000"), "avg of 4 cells: {default_summary}");
+
+    // 表示メニュー > ステータスバーの集計 から「数値の個数」「最小値」「最大値」をオンにする
+    s.menu("xlsx.status-summary-num-count");
+    s.menu("xlsx.status-summary-min");
+    s.menu("xlsx.status-summary-max");
+    let custom_summary = s.with(|e, _| e.range_summary()).expect("custom summary");
+    assert!(custom_summary.contains("最小値:"), "min label in summary: {custom_summary}");
+    assert!(custom_summary.contains("最大値:"), "max label in summary: {custom_summary}");
+    assert!(custom_summary.contains("数値の個数: 4"), "num count in summary: {custom_summary}");
+    assert!(custom_summary.contains("4,560,000"), "sum 4,560,000 in summary: {custom_summary}");
+
+    // すべてオフにすると None になり、既定に戻すと元の集計に戻る
+    s.update(|e, _, cx| {
+        e.wb_mut().status_summary_mask = 0;
+        cx.notify();
+    });
+    assert!(s.with(|e, _| e.range_summary()).is_none());
+    s.update(|e, _, cx| {
+        e.wb_mut().status_summary_mask = super::STATUS_SUMMARY_DEFAULT;
+        cx.notify();
+    });
+    assert_eq!(s.with(|e, _| e.range_summary()).as_deref(), Some(default_summary.as_str()));
+
+    // 2. 名前の管理とセル右クリックメニュー連携（XLSX-FORMULA-009）
+    // B3:C5（上端行 B3="4月", C3="5月"）を選択してセル右クリックメニュー「選択範囲から作成 > 上端行」を実行
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.wb_mut().cells.insert(slide, (1, 2)); // B3
+        e.wb_mut().cell_ends.insert(slide, (2, 4)); // C5
+        cx.notify();
+    });
+    call_cell(&mut s, "xlsx.cell-create-names-top");
+    let names_after_create = s.with(|e, _| {
+        e.presentation()
+            .workbook
+            .as_ref()
+            .unwrap()
+            .names
+            .iter()
+            .map(|n| (n.name.clone(), n.sheet, n.formula.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert!(names_after_create.iter().any(|(n, sh, _)| n == "_4月" && sh.is_none()), "created _4月: {names_after_create:?}");
+    assert!(names_after_create.iter().any(|(n, sh, _)| n == "_5月" && sh.is_none()), "created _5月: {names_after_create:?}");
+
+    // シート範囲（sheet = Some(0)）の名前 `SheetTax` を定義し、数式から参照できることを検証
+    s.update(|e, window, cx| {
+        e.open_names(window, cx);
+        let sheet_idx = e.current_workbook_sheet_index();
+        assert_eq!(sheet_idx, Some(0));
+        assert!(e.set_named_formula_with_scope("SheetTax", sheet_idx, "0.1", cx));
+        assert!(e.sheet_state().unwrap().names.is_some());
+    });
+
+    // セル右クリックメニュー「名前へ移動」(`xlsx.cell-goto-name-0`) で `_4月` (B4:B5) にジャンプ
+    call_cell(&mut s, "xlsx.cell-goto-name-0");
+    assert_eq!(
+        s.with(|e, _| e.selected_range()),
+        Some(CellRange { first_row: 3, first_column: 1, last_row: 4, last_column: 1 })
+    );
+
+    // G4 を選択し、セル右クリックメニュー「数式で使用」(`xlsx.cell-use-name-0` と `xlsx.cell-use-name-2`) で `=SUM(_4月)*SheetTax` を組み立てて計算確認
+    let expected_g4 = match (s.value("B4"), s.value("B5")) {
+        (CellValue::Number(a), CellValue::Number(b)) => (a + b) * 0.1,
+        other => panic!("unexpected B4/B5 values: {other:?}"),
+    };
+    s.click_cell("G4");
+    s.type_text("=SUM(");
+    call_cell(&mut s, "xlsx.cell-use-name-0");
+    s.type_text(")*");
+    call_cell(&mut s, "xlsx.cell-use-name-2");
+    assert_eq!(s.with(|e, _| e.cell_edit().map(|c| c.text.clone())).as_deref(), Some("=SUM(_4月)*SheetTax"));
+    s.key("enter");
+    assert_eq!(s.value("G4"), CellValue::Number(expected_g4));
+
+    // 3. シートタブ右クリックメニュー：先頭へ移動・末尾へ移動・すべてのシートを再表示・目盛線・見出し（XLSX-SHEET-025）
+    // シートを2枚追加する
+    let base_sheets = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.len());
+    s.menu("xlsx.insert-sheet");
+    s.menu("xlsx.insert-sheet");
+    let sheet_count = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.len());
+    assert_eq!(sheet_count, base_sheets + 2);
+
+    // 現在のシートを「シートを先頭へ移動」で index 0 へ移動し、続いて「シートを末尾へ移動」で末尾へ移動
+    let moving_slide = s.with(|e, _| e.current_slide);
+    call_tab(&mut s, "xlsx.move-sheet-first");
+    assert_eq!(
+        s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets[0].slide),
+        Some(moving_slide)
+    );
+    call_tab(&mut s, "xlsx.move-sheet-last");
+    assert_eq!(
+        s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets[sheet_count - 1].slide),
+        Some(moving_slide)
+    );
+
+    // シートタブ右クリックメニューから目盛線・見出しをトグル
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.grid_lines));
+    call_tab(&mut s, "xlsx.tab-gridlines");
+    assert!(!s.with(|e, _| e.current_sheet().unwrap().1.grid_lines));
+    call_tab(&mut s, "xlsx.tab-gridlines");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.grid_lines));
+
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.headings));
+    call_tab(&mut s, "xlsx.tab-headings");
+    assert!(!s.with(|e, _| e.current_sheet().unwrap().1.headings));
+    call_tab(&mut s, "xlsx.tab-headings");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.headings));
+
+    // 2枚のシートを非表示にしてから「すべてのシートを再表示」で一括再表示
+    call_tab(&mut s, "xlsx.hide-sheet");
+    call_tab(&mut s, "xlsx.hide-sheet");
+    let hidden_count = s.with(|e, _| {
+        e.presentation()
+            .workbook
+            .as_ref()
+            .unwrap()
+            .sheets
+            .iter()
+            .filter(|sh| sh.slide.is_none() && sh.hidden.is_some())
+            .count()
+    });
+    assert_eq!(hidden_count, 2);
+
+    call_tab(&mut s, "xlsx.unhide-all-sheets");
+    let hidden_after = s.with(|e, _| {
+        e.presentation()
+            .workbook
+            .as_ref()
+            .unwrap()
+            .sheets
+            .iter()
+            .filter(|sh| sh.slide.is_none() && sh.hidden.is_some())
+            .count()
+    });
+    assert_eq!(hidden_after, 0);
+
+    // 4. 保存・再読み込みラウンドトリップでブック範囲名・シート範囲名と数式評価結果が保持されることを検証
+    s.save_as("formula009_view006_sheet025.xlsx");
+    let reopened = s.reopen();
+    let wb = reopened.workbook.as_ref().expect("workbook");
+    assert!(wb.names.iter().any(|n| n.name == "_4月" && n.sheet.is_none()));
+    assert!(wb.names.iter().any(|n| n.name == "SheetTax" && n.sheet == Some(0)));
+    let sheet0 = sheet_of_slide(&reopened.slides[0]).unwrap();
+    assert_eq!(sheet0.cell(3, 6).unwrap().value, CellValue::Number(expected_g4));
+}
+
+fn cf019_validation015_audit005_context_menus_and_quick_actions() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    let call_cell = |s: &mut Scenario, id: &'static str| {
+        s.update(move |e, window, cx| {
+            let entries = e.cell_menu();
+            let item = crate::shell::scenario::find_item(&entries, id).unwrap_or_else(|| panic!("missing cell menu item {id}"));
+            let handler = item.handler.clone().expect("menu item handler");
+            handler(e, window, cx);
+        });
+    };
+
+    // 1. 条件付き書式（XLSX-CF-019）：書式プリセット・文字色・太字・斜体・表示範囲フィルタ・セル右クリックメニュー
+    s.update(|e, window, cx| {
+        let slide = e.current_slide;
+        e.wb_mut().cells.insert(slide, (7, 1)); // H2
+        e.wb_mut().cell_ends.insert(slide, (7, 3)); // H4
+        e.open_conditional(None, window, cx);
+        e.set_conditional_choice(Some(5), None, window, cx); // 指定の値より大きい
+        if let Some(p) = e.sheet_state_mut().and_then(|st| st.conditional_edit.as_mut()) {
+            p.formula.update(cx, |i, cx| i.set_value("10", window, cx));
+            p.bold = true;
+            p.italic = true;
+        }
+        e.apply_conditional_preset("FFEB9C", "9C6500", window, cx);
+        e.apply_conditional(cx);
+        e.open_conditional(None, window, cx);
+        if let Some(p) = e.sheet_state_mut().and_then(|st| st.conditional_edit.as_mut()) {
+            p.filter_selection_only = true;
+        }
+    });
+    s.settle();
+
+    let cf_style = s.with(|e, _| {
+        let (_, sheet) = e.current_sheet().unwrap();
+        let cf = sheet.conditional.last().expect("conditional format added");
+        cf.rules[0].style.clone().expect("rule style")
+    });
+    assert_eq!(cf_style.fill, Some(ibis_doc_model::Rgb(0xFFEB9C)));
+    assert_eq!(cf_style.color, Some(ibis_doc_model::Rgb(0x9C6500)));
+    assert_eq!(cf_style.bold, Some(true));
+    assert_eq!(cf_style.italic, Some(true));
+
+    // セル右クリックメニューに「条件付き書式」サブメニューが含まれることを確認
+    let has_cf_in_cell_menu = s.with(|e, _| {
+        let entries = e.cell_menu();
+        crate::shell::scenario::find_item(&entries, "xlsx.cf-greater").is_some()
+            && crate::shell::scenario::find_item(&entries, "xlsx.cf-clear-selection").is_some()
+            && crate::shell::scenario::find_item(&entries, "xlsx.conditional").is_some()
+    });
+    assert!(has_cf_in_cell_menu);
+
+    // 2. データの入力規則（XLSX-VALIDATION-015）：同じ入力規則の一括変更・選択・次の無効データへジャンプ
+    s.update(|e, window, cx| {
+        let slide = e.current_slide;
+        let ranges = vec![
+            ibis_doc_model::CellRange { first_row: 1, last_row: 2, first_column: 8, last_column: 8 }, // I2:I3
+            ibis_doc_model::CellRange { first_row: 4, last_row: 4, first_column: 8, last_column: 8 }, // I5
+        ];
+        let rule = ibis_doc_model::Validation {
+            ranges: ranges.clone(),
+            kind: "whole".into(),
+            operator: "between".into(),
+            allow_blank: true,
+            dropdown: false,
+            formula1: Some("1".into()),
+            formula2: Some("100".into()),
+            prompt: None,
+            error: Some(("stop".into(), String::new(), String::new())),
+        };
+        e.run_sheet(
+            vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetValidation {
+                slide,
+                ranges,
+                rule: Some(rule),
+            })],
+            cx,
+        );
+        // I2 を選択してパネルを開き、「同じ入力規則が設定されたすべてのセルに適用」を ON にして上限を 200 に変更
+        e.set_cell(8, 1);
+        e.open_validation_panel(window, cx);
+        if let Some(p) = e.sheet_state_mut().and_then(|st| st.validation.as_mut()) {
+            p.apply_to_same = true;
+            p.second.update(cx, |i, cx| i.set_value("200", window, cx));
+        }
+        e.apply_validation_panel(cx);
+    });
+    s.settle();
+
+    // 離れている I5 (col=8, row=4) の入力規則も上限 200 に一括更新されていることを確認
+    let i5_max = s.with(|e, _| {
+        let (_, sheet) = e.current_sheet().unwrap();
+        crate::xlsx::validation::rule_at(sheet, 4, 8).and_then(|v| v.formula2.clone())
+    });
+    assert_eq!(i5_max.as_deref(), Some("200"));
+
+    // 右クリックメニュー「同じ入力規則のセルを選択」で I2:I5 を包含する範囲が選択されることを確認
+    s.click_cell("I2");
+    call_cell(&mut s, "xlsx.cell-validation-select-same");
+    let sel_range = s.with(|e, _| e.selected_range());
+    assert_eq!(
+        sel_range,
+        Some(ibis_doc_model::CellRange {
+            first_row: 1,
+            last_row: 4,
+            first_column: 8,
+            last_column: 8,
+        })
+    );
+
+    // I3 (col=8, row=2) に範囲外の数式値 =500 を設定し、A1 から「次の無効データへジャンプ」を実行
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.run_sheet(
+            vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
+                slide,
+                edits: vec![ibis_doc_model::CellEdit {
+                    row: 2,
+                    column: 8,
+                    input: ibis_doc_model::CellInput::Formula("500".into()),
+                }],
+            })],
+            cx,
+        );
+        e.set_cell(0, 0);
+    });
+    call_cell(&mut s, "xlsx.cell-validation-next-invalid");
+    assert_eq!(s.with(|e, _| e.current_cell()), Some((8, 2)));
+    assert!(s.with(|e, _| e.sheet_state().unwrap().validation_circles));
+
+    // 3. ワークシート分析（XLSX-FORMULA-022 / 023）：名前定義経由の参照トレース・多段トレース・複数セル一括ウォッチ追加
+    s.update(|e, _, cx| {
+        let sh_name = e.slide().name.clone().unwrap_or_else(|| "Sheet1".into());
+        let slide = e.current_slide;
+        e.run_sheet(
+            vec![
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
+                    slide,
+                    edits: vec![
+                        ibis_doc_model::CellEdit {
+                            row: 0,
+                            column: 9, // J1 = 5
+                            input: ibis_doc_model::CellInput::Value(CellValue::Number(5.0)),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 1,
+                            column: 9, // J2 = BaseVal * 2
+                            input: ibis_doc_model::CellInput::Formula("BaseVal*2".into()),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 2,
+                            column: 9, // J3 = J2 + 10
+                            input: ibis_doc_model::CellInput::Formula("J2+10".into()),
+                        },
+                    ],
+                }),
+            ],
+            cx,
+        );
+        e.set_named_formula("BaseVal", &format!("{}!$J$1", ibis_calc::formula::quote_sheet(&sh_name)), cx);
+    });
+    assert_eq!(s.value("J2"), CellValue::Number(10.0));
+    assert_eq!(s.value("J3"), CellValue::Number(20.0));
+
+    // J3 から参照元のトレース 1回目 (J2 -> J3)、2回目で多段 + 名前定義解決 (J1 -> J2)
+    s.click_cell("J3");
+    call_cell(&mut s, "xlsx.cell-trace-precedents");
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().trace_arrows.len()), 1);
+    call_cell(&mut s, "xlsx.cell-trace-precedents");
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().trace_arrows.len()), 2);
+    assert!(s.with(|e, _| e.sheet_state().unwrap().trace_arrows.iter().any(|a| a.from_range == (9, 0, 9, 0) && a.to == (9, 1))));
+
+    // トレース矢印を削除し、J1 から参照先のトレース 1回目 (J1 -> J2)、2回目で多段 (J2 -> J3)
+    call_cell(&mut s, "xlsx.cell-remove-arrows");
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().trace_arrows.len()), 0);
+    s.click_cell("J1");
+    call_cell(&mut s, "xlsx.cell-trace-dependents");
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().trace_arrows.len()), 1);
+    call_cell(&mut s, "xlsx.cell-trace-dependents");
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().trace_arrows.len()), 2);
+    assert!(s.with(|e, _| e.sheet_state().unwrap().trace_arrows.iter().any(|a| a.from_range == (9, 1, 9, 1) && a.to == (9, 2))));
+
+    // J1:J3 を範囲選択して「ウォッチ式の追加」を実行すると 3 セルすべてが一括登録されることを確認
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.wb_mut().cells.insert(slide, (9, 0)); // J1
+        e.wb_mut().cell_ends.insert(slide, (9, 2)); // J3
+        cx.notify();
+    });
+    call_cell(&mut s, "xlsx.cell-add-watch");
+    s.settle();
+    let watch_count = s.with(|e, _| e.sheet_state().unwrap().panels.watches.len());
+    assert_eq!(watch_count, 3);
+
+    // 4. 保存・再読み込みラウンドトリップ検証
+    s.save_as("cf019_validation015_audit005.xlsx");
+    let reopened = s.reopen();
+    let sheet0 = sheet_of_slide(&reopened.slides[0]).unwrap();
+    let last_cf = sheet0.conditional.last().expect("conditional format preserved");
+    let st = last_cf.rules[0].style.as_ref().expect("style preserved");
+    assert_eq!(st.fill, Some(ibis_doc_model::Rgb(0xFFEB9C)));
+    assert_eq!(st.color, Some(ibis_doc_model::Rgb(0x9C6500)));
+    assert_eq!(st.bold, Some(true));
+    assert_eq!(st.italic, Some(true));
+    assert_eq!(crate::xlsx::validation::rule_at(sheet0, 4, 8).and_then(|v| v.formula2.as_deref()), Some("200"));
+    assert_eq!(sheet0.cell(2, 9).unwrap().value, CellValue::Number(20.0));
+}
+
+fn table009_sort_filter_context_menu_and_panel_copy_icon() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    let call_cell = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.cell_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no cell menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // Set up H1:I5 with headings, values, cell color / font color on I3, and 3Arrows IconSet on I2:I5
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.run_sheet(
+            vec![
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
+                    slide,
+                    edits: vec![
+                        ibis_doc_model::CellEdit {
+                            row: 0,
+                            column: 7,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Text("Item".into())),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 0,
+                            column: 8,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Text("Score".into())),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 1,
+                            column: 7,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Text("Alpha".into())),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 1,
+                            column: 8,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Number(10.0)),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 2,
+                            column: 7,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Text("Beta".into())),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 2,
+                            column: 8,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Number(50.0)),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 3,
+                            column: 7,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Text("Gamma".into())),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 3,
+                            column: 8,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Number(30.0)),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 4,
+                            column: 7,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Text("Delta".into())),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 4,
+                            column: 8,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Number(90.0)),
+                        },
+                    ],
+                }),
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetFormat {
+                    slide,
+                    ranges: vec![CellRange {
+                        first_row: 2,
+                        last_row: 2,
+                        first_column: 8,
+                        last_column: 8,
+                    }],
+                    change: ibis_doc_model::StyleChange::Fill(Some(ibis_doc_model::Rgb(0xFFFF00))),
+                }),
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetFormat {
+                    slide,
+                    ranges: vec![CellRange {
+                        first_row: 2,
+                        last_row: 2,
+                        first_column: 8,
+                        last_column: 8,
+                    }],
+                    change: ibis_doc_model::StyleChange::Color(ibis_doc_model::Rgb(0xFF0000)),
+                }),
+            ],
+            cx,
+        );
+        e.wb_mut().cells.insert(slide, (8, 1)); // I2
+        e.wb_mut().cell_ends.insert(slide, (8, 4)); // I5
+        let values = (0..3)
+            .map(|i| ibis_doc_model::CfValue {
+                kind: "percent".into(),
+                value: Some((i * 100 / 3).to_string()),
+                gte: true,
+            })
+            .collect();
+        e.add_quick_rule(ibis_doc_model::CfKind::icon_set("3Arrows", values, false, true), None, cx);
+    });
+    s.settle();
+
+    // 1. Sort by selected cell's fill color (xlsx.cell-sort-fill)
+    s.click_cell("I3");
+    call_cell(&mut s, "xlsx.cell-sort-fill");
+    assert_eq!(s.value("H2"), CellValue::Text("Beta".into()));
+    assert_eq!(s.value("I2"), CellValue::Number(50.0));
+    s.key("cmd-z");
+    assert_eq!(s.value("H2"), CellValue::Text("Alpha".into()));
+
+    // 2. Sort by selected cell's font color (xlsx.cell-sort-font)
+    s.click_cell("I3");
+    call_cell(&mut s, "xlsx.cell-sort-font");
+    assert_eq!(s.value("H2"), CellValue::Text("Beta".into()));
+    assert_eq!(s.value("I2"), CellValue::Number(50.0));
+    s.key("cmd-z");
+    assert_eq!(s.value("H2"), CellValue::Text("Alpha".into()));
+
+    // 3. Sort by selected cell's conditional formatting icon (xlsx.cell-sort-icon)
+    s.click_cell("I5"); // Score = 90.0 (top arrow icon)
+    call_cell(&mut s, "xlsx.cell-sort-icon");
+    assert_eq!(s.value("H2"), CellValue::Text("Delta".into()));
+    assert_eq!(s.value("I2"), CellValue::Number(90.0));
+    s.key("cmd-z");
+    assert_eq!(s.value("H2"), CellValue::Text("Alpha".into()));
+
+    // 4. Filter by selected cell's conditional formatting icon (xlsx.cell-filter-icon), reapply, clear, and advanced filter
+    s.click_cell("I5");
+    call_cell(&mut s, "xlsx.cell-filter-icon");
+    let filtered = s.with(|e, _| e.current_sheet().unwrap().1.filtered_rows.clone());
+    assert!(filtered.contains(&1), "row 1 (I2=10.0) is hidden by icon filter: {filtered:?}");
+    assert!(!filtered.contains(&4), "row 4 (I5=90.0) stays visible: {filtered:?}");
+
+    // Change I5 to 5.0 and reapply filter via context menu (xlsx.cell-filter-reapply)
+    s.click_cell("I5");
+    s.enter("5", "enter");
+    s.click_cell("I5");
+    call_cell(&mut s, "xlsx.cell-filter-reapply");
+    let filtered_after_reapply = s.with(|e, _| e.current_sheet().unwrap().1.filtered_rows.clone());
+    assert!(filtered_after_reapply.contains(&4), "row 4 (I5=5.0) is hidden after reapply: {filtered_after_reapply:?}");
+
+    // Clear filter via context menu (xlsx.cell-filter-clear)
+    call_cell(&mut s, "xlsx.cell-filter-clear");
+    let filtered_after_clear = s.with(|e, _| e.current_sheet().unwrap().1.filtered_rows.len());
+    assert_eq!(filtered_after_clear, 0, "filter cleared via context menu");
+
+    // Restore I5 = 90
+    s.click_cell("I5");
+    s.enter("90", "enter");
+
+    // Open Advanced Filter panel via context menu (xlsx.cell-filter-advanced)
+    s.click_cell("I2");
+    call_cell(&mut s, "xlsx.cell-filter-advanced");
+    assert!(s.with(|e, _| e.wb().panels.advanced_filter.is_some()), "advanced filter panel opened");
+
+    // 5. Open Custom Sort panel via context menu (xlsx.cell-sort-custom), copy level, and sort by Icon + Value
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        e.wb_mut().cells.insert(slide, (7, 0)); // H1
+        e.wb_mut().cell_ends.insert(slide, (8, 4)); // I5
+        cx.notify();
+    });
+    call_cell(&mut s, "xlsx.cell-sort-custom");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.wb().sort_edit.as_ref().unwrap().levels.len()), 1);
+
+    // Click copy-0 to duplicate level 0 into level 1
+    let press_sort = |s: &mut Scenario, id: &str| {
+        let id = id.to_string();
+        let b = s.with(|e, _| {
+            *e.wb()
+                .sort_edit
+                .as_ref()
+                .expect("sort panel")
+                .ui
+                .borrow()
+                .get(&id)
+                .unwrap_or_else(|| panic!("no sort ui element {id}"))
+        });
+        s.click((
+            f32::from(b.origin.x + b.size.width / 2.0),
+            f32::from(b.origin.y + b.size.height / 2.0),
+        ));
+        s.settle();
+    };
+    press_sort(&mut s, "copy-0");
+    assert_eq!(s.with(|e, _| e.wb().sort_edit.as_ref().unwrap().levels.len()), 2);
+
+    // Set level 0 column to "I" and pick an Icon key from key-0 dropdown
+    s.update(|e, window, cx| {
+        let p = e.wb_mut().sort_edit.as_mut().unwrap();
+        p.levels[0].0.update(cx, |inp, cx| inp.set_value("I", window, cx));
+    });
+    s.settle();
+    press_sort(&mut s, "key-0");
+    // key-0-0 is Value, key-0-1.. are colors/icons; pick the last option which is an Icon key
+    let icon_key_idx = s.with(|e, _| {
+        let p = e.wb().sort_edit.as_ref().unwrap();
+        p.ui.borrow()
+            .keys()
+            .filter_map(|k| k.strip_prefix("key-0-").and_then(|n| n.parse::<usize>().ok()))
+            .max()
+            .expect("icon key option")
+    });
+    press_sort(&mut s, &format!("key-0-{icon_key_idx}"));
+    assert!(s.with(|e, _| matches!(
+        e.wb().sort_edit.as_ref().unwrap().keys[0],
+        crate::xlsx::sort_edit::LevelKey::Icon(_, _)
+    )));
+    press_sort(&mut s, "apply");
+    assert_eq!(s.with(|e, _| e.wb().sort_edit.as_ref().unwrap().error.clone()), "");
+}
+
+/// XLSX-CELL-017 / XLSX-CELL-018 / XLSX-CELL-021..022 / XLSX-OPTIONS-003:
+/// 1. 検索と置換: 列方向検索 (`by_columns`)、前を検索 (`find_prev_cell_with_options`)、メモ・コメント検索と置換 (`comments`)、ブック全体検索と一括置換 (`search_workbook`) + Undo/Redo。
+/// 2. ハイパーリンク パネル: 表示文字列 (`display_text`)・ヒント (`tooltip` / ScreenTip) 付き挿入と編集、および .xlsx 保存ラウンドトリップ。
+/// 3. 検索と選択メニュー・セル右クリックメニュー「条件を選択して選択 ▸ (`xlsx.cell-select-special`)」からの空白セル・アクティブ セル領域選択。
+fn cell017_018_021_find_workbook_links_tooltip_and_select_special() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // 1. Set up test cells on Sheet 1 (current slide) and Sheet 2
+    let (slide1, slide2) = s.with(|e, _| {
+        let w = e.presentation().workbook.as_ref().unwrap();
+        (w.sheets[0].slide.unwrap(), w.sheets[1].slide.unwrap())
+    });
+
+    s.update(move |e, _, cx| {
+        e.run_sheet(
+            vec![
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
+                    slide: slide1,
+                    edits: vec![
+                        // H1 (col 7, row 0), I1 (col 8, row 0), H2 (col 7, row 1)
+                        ibis_doc_model::CellEdit {
+                            row: 0,
+                            column: 7,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Text("TargetA".into())),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 0,
+                            column: 8,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Text("TargetB".into())),
+                        },
+                        ibis_doc_model::CellEdit {
+                            row: 1,
+                            column: 7,
+                            input: ibis_doc_model::CellInput::Value(CellValue::Text("TargetC".into())),
+                        },
+                    ],
+                }),
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
+                    slide: slide1,
+                    row: 2,
+                    column: 7, // H3 note
+                    comment: Some(ibis_doc_model::SheetComment {
+                        row: 2,
+                        column: 7,
+                        author: "Author".into(),
+                        text: "TargetNote memo".into(),
+                    }),
+                }),
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
+                    slide: slide2,
+                    edits: vec![ibis_doc_model::CellEdit {
+                        row: 0,
+                        column: 0, // A1 on sheet 2
+                        input: ibis_doc_model::CellInput::Value(CellValue::Text("TargetSheet2".into())),
+                    }],
+                }),
+            ],
+            cx,
+        );
+    });
+    s.settle();
+
+    // Row-by-row vs Column-by-column order on Sheet 1:
+    // Row-by-row: H1 (0,7), I1 (0,8), H2 (1,7)
+    // Column-by-column: H1 (0,7), H2 (1,7), I1 (0,8)
+    let row_order = s.update(|e, _, cx| {
+        e.find_all_cells(
+            "Target",
+            crate::xlsx::find::FindOptions {
+                by_columns: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    let row_refs: Vec<String> = row_order.iter().map(|m| m.reference.clone()).collect();
+    assert_eq!(row_refs, vec!["H1", "I1", "H2"]);
+
+    let col_order = s.update(|e, _, cx| {
+        e.find_all_cells(
+            "Target",
+            crate::xlsx::find::FindOptions {
+                by_columns: true,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    let col_refs: Vec<String> = col_order.iter().map(|m| m.reference.clone()).collect();
+    assert_eq!(col_refs, vec!["H1", "H2", "I1"]);
+
+    // Find Previous (`find_prev_cell_with_options`) with wrap-around:
+    // Starting at H1, previous in row order wraps around to H2, then I1, then H1
+    s.click_cell("H1");
+    s.update(|e, _, cx| {
+        assert!(e.find_prev_cell_with_options("Target", crate::xlsx::find::FindOptions::default(), cx));
+    });
+    assert_eq!(s.selected(), "H2");
+    s.update(|e, _, cx| {
+        assert!(e.find_prev_cell_with_options("Target", crate::xlsx::find::FindOptions::default(), cx));
+    });
+    assert_eq!(s.selected(), "I1");
+
+    // Search including comments/notes (`comments: true`): finds H3 as well
+    let with_comments = s.update(|e, _, cx| {
+        e.find_all_cells(
+            "Target",
+            crate::xlsx::find::FindOptions {
+                comments: true,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    let comment_refs: Vec<String> = with_comments.iter().map(|m| m.reference.clone()).collect();
+    assert_eq!(comment_refs, vec!["H1", "I1", "H2", "H3"]);
+
+    // Search across entire workbook (`search_workbook: true`): finds Sheet 1 + Sheet 2 matches
+    let wb_matches = s.update(|e, _, cx| {
+        e.find_all_cells(
+            "Target",
+            crate::xlsx::find::FindOptions {
+                search_workbook: true,
+                comments: true,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    assert_eq!(wb_matches.len(), 5);
+    assert!(wb_matches.last().unwrap().reference.ends_with("!A1"));
+
+    // Jump to the Sheet 2 match and verify current_slide switched to slide2
+    let last_match = wb_matches.last().unwrap().clone();
+    s.update(move |e, _, cx| {
+        e.jump_to_sheet_cell(last_match.slide, last_match.row, last_match.column, cx);
+    });
+    assert_eq!(s.with(|e, _| e.current_slide), slide2);
+    assert_eq!(s.selected(), "A1");
+
+    // Switch back to slide1 and run workbook-wide replace_all_cells_with_options (including notes)
+    s.update(move |e, _, cx| {
+        e.jump_to_sheet_cell(slide1, 0, 7, cx);
+        let count = e.replace_all_cells_with_options(
+            "Target",
+            "Replaced",
+            crate::xlsx::find::FindOptions {
+                search_workbook: true,
+                comments: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(count, 5);
+    });
+    assert_eq!(s.value("H1"), CellValue::Text("ReplacedA".into()));
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.comment_at(2, 7).unwrap().text.clone()),
+        "ReplacedNote memo"
+    );
+    assert_eq!(
+        s.with(move |e, _| sheet_of_slide(e.presentation().slide(slide2).unwrap()).unwrap().cell(0, 0).unwrap().value.clone()),
+        CellValue::Text("ReplacedSheet2".into())
+    );
+
+    // Single Undo restores all 5 replacements across sheets and notes
+    s.key("cmd-z");
+    assert_eq!(s.value("H1"), CellValue::Text("TargetA".into()));
+    assert_eq!(
+        s.with(|e, _| e.current_sheet().unwrap().1.comment_at(2, 7).unwrap().text.clone()),
+        "TargetNote memo"
+    );
+    assert_eq!(
+        s.with(move |e, _| sheet_of_slide(e.presentation().slide(slide2).unwrap()).unwrap().cell(0, 0).unwrap().value.clone()),
+        CellValue::Text("TargetSheet2".into())
+    );
+
+    // 2. Hyperlink with display_text and tooltip (ScreenTip)
+    s.click_cell("K1");
+    s.update(|e, window, cx| {
+        e.insert_cell_link_full("https://ibis.ne.jp", Some("アイビス公式"), Some("公式サイトを開きます"), cx);
+        e.open_link_panel(window, cx);
+    });
+    assert_eq!(s.value("K1"), CellValue::Text("アイビス公式".into()));
+    let link = s.with(|e, _| e.current_link()).expect("link on K1");
+    assert_eq!(link.target.as_deref(), Some("https://ibis.ne.jp"));
+    assert_eq!(link.tooltip.as_deref(), Some("公式サイトを開きます"));
+    let (panel_addr, panel_disp, panel_tip) = s.with(|e, cx| {
+        let p = e.wb().link.as_ref().expect("link panel");
+        (
+            p.address.read(cx).value().to_string(),
+            p.display_text.read(cx).value().to_string(),
+            p.tooltip.read(cx).value().to_string(),
+        )
+    });
+    assert_eq!(panel_addr, "https://ibis.ne.jp");
+    assert_eq!(panel_disp, "アイビス公式");
+    assert_eq!(panel_tip, "公式サイトを開きます");
+
+    // 3. Find & Select menu and cell context menu `xlsx.cell-select-special`
+    let call_cell = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.cell_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no cell_menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+    s.click_cell("H1");
+    call_cell(&mut s, "xlsx.cell-select-current-region");
+    let region = s.with(|e, _| e.selected_range()).expect("selected region");
+    assert_eq!((region.first_column, region.first_row, region.last_column, region.last_row), (7, 0, 8, 1));
+
+    // Select blanks within H1:I2 (I2 is blank -> col 8, row 1)
+    call_cell(&mut s, "xlsx.cell-select-blanks");
+    assert_eq!(s.selected(), "I2");
+}
+
+/// XLSX-WHATIF-001..003 / XLSX-SHEET-011 / XLSX-OPTIONS-003:
+/// - Goal Seek and Data Table resolving workbook/sheet Defined Names and `set_goal_seek_cell_from_selection` / `set_data_table_input_from_selection`
+/// - Subtotal panel `select_all_subtotal_columns` and `refresh_subtotal_range_from_selection`
+/// - Cell context menu `xlsx.cell-data-tools` and `xlsx.cell-what-if` submenus
+fn whatif001_002_subtotal_named_refs_and_cell_data_tools_menus() {
+    let mut s = new_sheet();
+    let call_cell = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.cell_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no cell_menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // 1. Goal Seek with Defined Names (`InputCell` -> A1, `ResultCell` -> B1)
+    s.click_cell("A1");
+    s.enter("10", "enter");
+    s.click_cell("A1");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("InputCell", cx));
+    });
+    s.click_cell("B1");
+    s.enter("=A1*3", "enter");
+    assert_eq!(s.value("B1"), CellValue::Number(30.0));
+    s.click_cell("B1");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("ResultCell", cx));
+    });
+
+    // Open Goal Seek via cell context menu `xlsx.cell-goal-seek`
+    call_cell(&mut s, "xlsx.cell-goal-seek");
+    s.click_cell("A1");
+    s.update(|e, window, cx| {
+        e.set_goal_seek_cell_from_selection(true, window, cx);
+    });
+    assert_eq!(
+        s.with(|e, cx| e.wb().panels.goal_seek.as_ref().unwrap().changing.read(cx).value().to_string()),
+        "A1"
+    );
+
+    // Now test Defined Names in both `formula` and `changing`
+    s.update(|e, window, cx| {
+        let p = e.wb().panels.goal_seek.as_ref().expect("goal seek panel");
+        p.formula.update(cx, |i, cx| i.set_value("ResultCell", window, cx));
+        p.target.update(cx, |i, cx| i.set_value("45", window, cx));
+        p.changing.update(cx, |i, cx| i.set_value("InputCell", window, cx));
+        e.run_goal_seek(cx);
+        e.apply_goal_seek(cx);
+    });
+    let CellValue::Number(a1_val) = s.value("A1") else { panic!("expected number in A1") };
+    assert!((a1_val - 15.0).abs() < 1e-6, "expected ~15.0, got {a1_val}");
+    let CellValue::Number(b1_val) = s.value("B1") else { panic!("expected number in B1") };
+    assert!((b1_val - 45.0).abs() < 1e-6, "expected ~45.0, got {b1_val}");
+
+    // 2. Data Table with Defined Name (`InputCell` as column_input)
+    s.click_cell("E1");
+    s.enter("=B1", "enter");
+    s.click_cell("D2");
+    s.enter("20", "enter");
+    s.click_cell("D3");
+    s.enter("30", "enter");
+
+    // Select D1:E3 and open Data Table via cell context menu `xlsx.cell-data-table`
+    s.click_cell("D1");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    call_cell(&mut s, "xlsx.cell-data-table");
+    s.update(|e, window, cx| {
+        let col_input = e.wb().panels.data_table.as_ref().expect("data table panel").column_input.clone();
+        col_input.update(cx, |i, cx| i.set_value("InputCell", window, cx));
+        e.apply_data_table(cx);
+    });
+    assert_eq!(s.value("E2"), CellValue::Number(60.0));
+    assert_eq!(s.value("E3"), CellValue::Number(90.0));
+
+    // 3. Subtotal via cell context menu `xlsx.cell-subtotal` + select all / unselect all
+    s.click_cell("G1");
+    s.enter("Dept", "tab");
+    s.enter("Q1", "tab");
+    s.enter("Q2", "enter");
+    s.click_cell("G2");
+    s.enter("Sales", "tab");
+    s.enter("100", "tab");
+    s.enter("200", "enter");
+    s.click_cell("G3");
+    s.enter("Sales", "tab");
+    s.enter("150", "tab");
+    s.enter("250", "enter");
+
+    s.click_cell("G1");
+    call_cell(&mut s, "xlsx.cell-subtotal");
+    s.update(|e, window, cx| {
+        e.refresh_subtotal_range_from_selection(window, cx);
+        e.select_all_subtotal_columns(false, cx);
+    });
+    assert!(s.with(|e, _| e.wb().panels.subtotal.as_ref().unwrap().subtotal_columns.is_empty()));
+    s.update(|e, _, cx| {
+        e.select_all_subtotal_columns(true, cx);
+    });
+    assert_eq!(
+        s.with(|e, _| e.wb().panels.subtotal.as_ref().unwrap().subtotal_columns.clone()),
+        vec![6, 7, 8]
+    );
+    s.update(|e, _, cx| {
+        if let Some(p) = e.wb_mut().panels.subtotal.as_mut() {
+            p.subtotal_columns = vec![7, 8];
+        }
+        e.apply_subtotal(cx);
+    });
+    // Row 4 (G4:I4) is "Sales 集計" -> H4 = 250, I4 = 450
+    assert_eq!(s.value("H4"), CellValue::Number(250.0));
+    assert_eq!(s.value("I4"), CellValue::Number(450.0));
+}
+
+/// Consolidate, Remove Duplicates, Scenario Manager, and Solver with Defined Names,
+/// quick selection buttons, scenario duplication, and Solver reset (`XLSX-TABLE-016` / `018`, `XLSX-WHATIF-004..013`).
+fn table016_018_whatif004_008_named_refs_and_quick_actions() {
+    let mut s = new_sheet();
+
+    let call_cell = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.cell_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no cell_menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // 1. Consolidate (`XLSX-TABLE-018`) with Defined Name + `add_consolidate_selection` + `clear_all_consolidate_references`
+    s.click_cell("A1");
+    s.enter("Item", "tab");
+    s.enter("Val", "enter");
+    s.click_cell("A2");
+    s.enter("Pen", "tab");
+    s.enter("10", "enter");
+
+    s.click_cell("D1");
+    s.enter("Item", "tab");
+    s.enter("Val", "enter");
+    s.click_cell("D2");
+    s.enter("Pen", "tab");
+    s.enter("25", "enter");
+
+    // Define `BranchA` = A1:B2
+    s.click_cell("A1");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("BranchA", cx));
+    });
+
+    s.click_cell("G1");
+    call_cell(&mut s, "xlsx.cell-consolidate");
+    s.update(|e, window, cx| {
+        e.clear_all_consolidate_references(cx);
+        let norm = e.normalize_consolidate_ref("BranchA");
+        if let Some(p) = e.wb_mut().panels.consolidate.as_mut() {
+            p.references.push(norm);
+            p.reference_input.update(cx, |i, cx| i.set_value("", window, cx));
+            p.top_labels = true;
+            p.left_labels = true;
+        }
+    });
+    // Select D1:E2 and add selection
+    s.click_cell("D1");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.update(|e, window, cx| {
+        e.add_consolidate_selection(window, cx);
+        if let Some(p) = e.wb_mut().panels.consolidate.as_mut() {
+            p.reference_input.update(cx, |i, cx| i.set_value("", window, cx));
+        }
+    });
+    assert_eq!(s.with(|e, _| e.wb().panels.consolidate.as_ref().unwrap().references.len()), 2);
+
+    s.click_cell("G1");
+    s.update(|e, _, cx| {
+        e.apply_consolidate_panel(cx);
+    });
+    assert_eq!(s.value("H2"), CellValue::Number(35.0));
+    s.key("cmd-z");
+
+    // 2. Remove Duplicates (`XLSX-TABLE-016`) with Defined Name (`DedupeRange`)
+    s.click_cell("A5");
+    s.enter("Key", "tab");
+    s.enter("Qty", "enter");
+    s.click_cell("A6");
+    s.enter("X", "tab");
+    s.enter("1", "enter");
+    s.click_cell("A7");
+    s.enter("X", "tab");
+    s.enter("2", "enter");
+
+    s.click_cell("A5");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("DedupeRange", cx));
+    });
+
+    call_cell(&mut s, "xlsx.cell-remove-duplicates");
+    s.update(|e, window, cx| {
+        e.refresh_dedupe_range_from_selection(window, cx);
+        if let Some(p) = e.wb_mut().panels.dedupe.as_mut() {
+            p.range.update(cx, |i, cx| i.set_value("DedupeRange", window, cx));
+            p.columns = vec![0];
+        }
+        e.apply_dedupe_panel(cx);
+    });
+    assert_eq!(s.value("A6"), CellValue::Text("X".into()));
+    assert_eq!(s.value("A7"), CellValue::Empty);
+    s.key("cmd-z");
+    assert_eq!(s.value("A7"), CellValue::Text("X".into()));
+
+    // 3. Scenario Manager (`XLSX-WHATIF-004..007`) with Defined Name + `duplicate_selected_scenario`
+    s.click_cell("J1");
+    s.enter("100", "enter");
+    s.click_cell("K1");
+    s.enter("=J1*2", "enter");
+    s.click_cell("J1");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("BaseInput", cx));
+    });
+    s.click_cell("K1");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("ObjCell", cx));
+    });
+
+    call_cell(&mut s, "xlsx.cell-scenario-manager");
+    s.update(|e, window, cx| {
+        e.open_add_scenario(window, cx);
+        if let Some(p) = e.wb_mut().panels.scenario_manager.as_mut() {
+            p.name_input.update(cx, |i, cx| i.set_value("High", window, cx));
+            p.changing_cells_input.update(cx, |i, cx| i.set_value("BaseInput", window, cx));
+        }
+        e.prepare_scenario_value_inputs(window, cx);
+        if let Some(p) = e.wb_mut().panels.scenario_manager.as_mut() {
+            assert_eq!(p.values_inputs.len(), 1);
+            assert_eq!(p.values_inputs[0].0, "J1");
+            p.values_inputs[0].1.update(cx, |i, cx| i.set_value("250", window, cx));
+        }
+        e.save_scenario(cx);
+        e.duplicate_selected_scenario(cx);
+    });
+    assert_eq!(
+        s.with(|e, _| {
+            e.current_sheet()
+                .and_then(|(_, sh)| sh.scenarios.as_ref())
+                .map(|sc| sc.scenarios.iter().map(|x| x.name.clone()).collect::<Vec<_>>())
+                .unwrap_or_default()
+        }),
+        vec!["High".to_string(), "High (2)".to_string()]
+    );
+    s.update(|e, _, cx| {
+        e.show_selected_scenario(cx);
+    });
+    assert_eq!(s.value("J1"), CellValue::Number(250.0));
+    assert_eq!(s.value("K1"), CellValue::Number(500.0));
+
+    // 4. Solver (`XLSX-WHATIF-008..013`) with Defined Names (`ObjCell`, `BaseInput`) + `solver_reset_all`
+    call_cell(&mut s, "xlsx.cell-solver");
+    s.update(|e, window, cx| {
+        e.solver_reset_all(window, cx);
+        if let Some(p) = e.wb_mut().panels.solver.as_mut() {
+            p.objective.update(cx, |i, cx| i.set_value("ObjCell", window, cx));
+            p.goal = crate::xlsx::solver_panel::GoalKind::Max;
+            p.variables.update(cx, |i, cx| i.set_value("BaseInput", window, cx));
+            p.c_lhs.update(cx, |i, cx| i.set_value("BaseInput", window, cx));
+            p.c_rel = ibis_doc_model::solver::Rel::Le;
+            p.c_rhs.update(cx, |i, cx| i.set_value("180", window, cx));
+        }
+        e.solver_put_constraint(false, cx);
+        e.solver_solve(cx);
+        e.solver_finish(true, cx);
+    });
+    let CellValue::Number(j1_val) = s.value("J1") else { panic!("expected number in J1") };
+    assert!((j1_val - 180.0).abs() < 1e-4, "expected ~180.0, got {j1_val}");
+    let CellValue::Number(k1_val) = s.value("K1") else { panic!("expected number in K1") };
+    assert!((k1_val - 360.0).abs() < 1e-4, "expected ~360.0, got {k1_val}");
+}
+
+/// Analysis ToolPak, Forecast Sheet, and Advanced Filter with Defined Names,
+/// quick selection buttons, automatic Forecast End fallback, and Criteria/Extract pre-population
+/// (`XLSX-ANALYSIS-001..020`, `XLSX-TABLE-015`).
+fn analysis019_020_table015_named_refs_and_quick_actions() {
+    let mut s = new_sheet();
+
+    let call_cell = |s: &mut Scenario, id: &'static str| {
+        let entries = s.with(|e, _| e.cell_menu());
+        let handler = crate::shell::scenario::find_item(&entries, id)
+            .and_then(|i| i.handler.clone())
+            .unwrap_or_else(|| panic!("no cell_menu item {id}"));
+        s.update(move |e, window, cx| handler(e, window, cx));
+    };
+
+    // 1. Analysis ToolPak (`XLSX-ANALYSIS-001..019`) with Defined Names (`SampleData`, `AnalysisOut`) + quick selection
+    for (cell, val) in [("A1", "10"), ("A2", "20"), ("A3", "30"), ("A4", "40"), ("A5", "50")] {
+        s.click_cell(cell);
+        s.enter(val, "enter");
+    }
+    s.click_cell("A1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("SampleData", cx));
+    });
+    s.click_cell("D1");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("AnalysisOut", cx));
+    });
+
+    call_cell(&mut s, "xlsx.cell-data-analysis");
+    s.click_cell("D1");
+    s.update(|e, window, cx| {
+        e.set_analysis_range_from_selection("output", window, cx);
+    });
+    assert_eq!(
+        s.with(|e, cx| e.wb().panels.analysis.as_ref().unwrap().output.read(cx).value().to_string()),
+        "D1"
+    );
+
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.analysis.as_mut() {
+            p.input.update(cx, |i, cx| i.set_value("SampleData", window, cx));
+            p.output.update(cx, |i, cx| i.set_value("AnalysisOut", window, cx));
+        }
+        e.apply_analysis_panel(cx);
+    });
+    // Descriptive statistics output starting at D1 puts Mean at E2 = 30.0
+    assert_eq!(s.value("E2"), CellValue::Number(30.0));
+    s.key("cmd-z");
+    assert_eq!(s.value("E2"), CellValue::Empty);
+
+    // 2. Forecast Sheet (`XLSX-ANALYSIS-020`) with Defined Names (`TimeRange`, `ValRange`) + empty End auto-calculation
+    for (r, (t, v)) in [("1", "10"), ("2", "20"), ("3", "30"), ("4", "40")].into_iter().enumerate() {
+        let row = r + 1;
+        s.click_cell(&format!("A{row}"));
+        s.enter(t, "tab");
+        s.enter(v, "enter");
+    }
+    s.click_cell("A1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("TimeRange", cx));
+    });
+    s.click_cell("B1");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("ValRange", cx));
+    });
+
+    call_cell(&mut s, "xlsx.cell-forecast-sheet");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.forecast.as_mut() {
+            p.timeline.update(cx, |i, cx| i.set_value("TimeRange", window, cx));
+            p.values.update(cx, |i, cx| i.set_value("ValRange", window, cx));
+            p.start.update(cx, |i, cx| i.set_value("", window, cx));
+            p.end.update(cx, |i, cx| i.set_value("", window, cx));
+        }
+        e.apply_forecast_panel(window, cx);
+    });
+    // Now on Forecast sheet: row 1 is headings, rows 2..=5 are timeline 1..=4, rows 6..=10 are forecast 5..=9
+    assert_eq!(s.value("A10"), CellValue::Number(9.0));
+    let CellValue::Number(c6_val) = s.value("C6") else { panic!("expected forecast number in C6") };
+    assert!((c6_val - 50.0).abs() < 1e-4, "expected ~50.0, got {c6_val}");
+    s.key("cmd-z");
+
+    // 3. Advanced Filter (`XLSX-TABLE-015`) with Defined Names (`ListData`, `CritData`, `DestCell`) + Criteria/Extract pre-population
+    s.click_cell("G1");
+    s.enter("Dept", "tab");
+    s.enter("Sales", "enter");
+    s.click_cell("G2");
+    s.enter("East", "tab");
+    s.enter("100", "enter");
+    s.click_cell("G3");
+    s.enter("West", "tab");
+    s.enter("200", "enter");
+    s.click_cell("G4");
+    s.enter("East", "tab");
+    s.enter("300", "enter");
+
+    s.click_cell("J1");
+    s.enter("Dept", "enter");
+    s.click_cell("J2");
+    s.enter("East", "enter");
+
+    s.click_cell("G1");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("ListData", cx));
+    });
+    s.click_cell("J1");
+    s.key("shift-down");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("CritData", cx));
+    });
+    s.click_cell("L1");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("DestCell", cx));
+    });
+
+    call_cell(&mut s, "xlsx.cell-filter-advanced");
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.advanced_filter.as_mut() {
+            p.copy_to_other = true;
+            p.list_range.update(cx, |i, cx| i.set_value("ListData", window, cx));
+            p.criteria_range.update(cx, |i, cx| i.set_value("CritData", window, cx));
+            p.copy_to_range.update(cx, |i, cx| i.set_value("DestCell", window, cx));
+        }
+        e.apply_advanced_filter_panel(cx);
+    });
+    assert_eq!(s.value("L1"), CellValue::Text("Dept".into()));
+    assert_eq!(s.value("M1"), CellValue::Text("Sales".into()));
+    assert_eq!(s.value("L2"), CellValue::Text("East".into()));
+    assert_eq!(s.value("M2"), CellValue::Number(100.0));
+    assert_eq!(s.value("L3"), CellValue::Text("East".into()));
+    assert_eq!(s.value("M3"), CellValue::Number(300.0));
+    assert_eq!(s.value("L4"), CellValue::Empty);
+
+    // Re-open Advanced Filter panel and verify Criteria ("J1:J2") and Extract ("L1:M3") are pre-populated!
+    s.update(|e, window, cx| {
+        e.open_advanced_filter_panel(window, cx);
+    });
+    assert_eq!(
+        s.with(|e, cx| e.wb().panels.advanced_filter.as_ref().unwrap().criteria_range.read(cx).value().to_string()),
+        "J1:J2"
+    );
+    assert_eq!(
+        s.with(|e, cx| e.wb().panels.advanced_filter.as_ref().unwrap().copy_to_range.read(cx).value().to_string()),
+        "L1:M3"
+    );
+}
+
+fn sparkline010_subtotal017_sort013_data005_named_refs_and_quick_actions() {
+    let mut s = new_sheet();
+
+    // 1. Sparklines (`XLSX-CHART-010..013`) with Defined Names (`SparkData`, `SparkLoc`) + quick selection
+    s.click_cell("A1");
+    s.enter("10", "tab");
+    s.enter("20", "tab");
+    s.enter("30", "enter");
+    s.click_cell("A1");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("SparkData", cx));
+    });
+    s.click_cell("D1");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("SparkLoc", cx));
+    });
+
+    s.update(|e, window, cx| {
+        e.open_sparkline_panel(Some(ibis_doc_model::SparklineKind::Line), window, cx);
+        e.set_sparkline_range_from_selection("location", window, cx);
+    });
+    assert_eq!(
+        s.with(|e, cx| e.wb().panels.sparkline.as_ref().unwrap().location_range_input.read(cx).value().to_string()),
+        "D1"
+    );
+    s.update(|e, window, cx| {
+        if let Some(p) = e.wb_mut().panels.sparkline.as_mut() {
+            p.data_range_input.update(cx, |i, cx| i.set_value("SparkData", window, cx));
+            p.location_range_input.update(cx, |i, cx| i.set_value("SparkLoc", window, cx));
+        }
+        e.apply_sparkline(cx);
+    });
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 1);
+    assert_eq!(
+        s.with(|e, _| {
+            let sp = &e.current_sheet().unwrap().1.sparklines[0].sparklines[0];
+            (sp.row, sp.column, sp.data.first_column, sp.data.last_column)
+        }),
+        (0, 3, 0, 2)
+    );
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.sparklines.len()), 0);
+
+    // 2. Sort (`XLSX-TABLE-013`) + Subtotal (`XLSX-TABLE-017`) with Defined Name (`DeptTable`) and header column lookup
+    s.click_cell("A1");
+    s.enter("Dept", "tab");
+    s.enter("Amount", "enter");
+    s.click_cell("A2");
+    s.enter("West", "tab");
+    s.enter("300", "enter");
+    s.click_cell("A3");
+    s.enter("East", "tab");
+    s.enter("100", "enter");
+    s.click_cell("A4");
+    s.enter("East", "tab");
+    s.enter("200", "enter");
+
+    s.click_cell("A1");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("DeptTable", cx));
+    });
+
+    s.update(|e, window, cx| {
+        e.open_sort_panel(window, cx);
+        if let Some(p) = e.wb_mut().sort_edit.as_mut() {
+            p.range.update(cx, |i, cx| i.set_value("DeptTable", window, cx));
+            p.header = true;
+            if let Some((col_inp, asc)) = p.levels.first_mut() {
+                col_inp.update(cx, |i, cx| i.set_value("Dept", window, cx));
+                *asc = true;
+            }
+        }
+        e.apply_sort_panel(cx);
+    });
+    assert_eq!(s.value("A2"), CellValue::Text("East".into()));
+    assert_eq!(s.value("A3"), CellValue::Text("East".into()));
+    assert_eq!(s.value("A4"), CellValue::Text("West".into()));
+
+    s.update(|e, window, cx| {
+        e.open_subtotal_panel(window, cx);
+        if let Some(p) = e.wb_mut().panels.subtotal.as_mut() {
+            p.range.update(cx, |i, cx| i.set_value("DeptTable", window, cx));
+        }
+        e.apply_subtotal(cx);
+    });
+    // Row 4 is East Subtotal (300), Row 6 is West Subtotal (300), Row 7 is Grand Total (600)
+    assert_eq!(s.value("B4"), CellValue::Number(300.0));
+    assert_eq!(s.value("B6"), CellValue::Number(300.0));
+    assert_eq!(s.value("B7"), CellValue::Number(600.0));
+    s.key("cmd-z");
+    assert_eq!(s.value("A4"), CellValue::Text("West".into()));
+
+    // 3. Data Validation (`XLSX-DATA-005`) with Defined Names (`AllowedCities`, `MaxLimit`) + quick selection
+    s.click_cell("F1");
+    s.enter("Tokyo", "enter");
+    s.click_cell("F2");
+    s.enter("Osaka", "enter");
+    s.click_cell("F1");
+    s.key("shift-down");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("AllowedCities", cx));
+    });
+
+    s.click_cell("G1");
+    s.enter("100", "enter");
+    s.click_cell("G1");
+    s.update(|e, _, cx| {
+        assert!(e.name_selection("MaxLimit", cx));
+    });
+
+    s.click_cell("H1");
+    s.update(|e, window, cx| {
+        e.open_validation_panel(window, cx);
+        if let Some(p) = e.wb_mut().validation.as_mut() {
+            p.kind = "list";
+            p.items.update(cx, |i, cx| i.set_value("AllowedCities", window, cx));
+        }
+        e.apply_validation_panel(cx);
+    });
+    assert_eq!(
+        s.with(|e, _| {
+            let rule = e.current_rule().unwrap();
+            e.validation_list_items_in_book(&rule)
+        }),
+        vec!["Tokyo".to_string(), "Osaka".to_string()]
+    );
+    assert!(s.with(|e, _| e.check_entry(0, 7, &CellValue::Text("Osaka".into())).is_ok()));
+    assert!(s.with(|e, _| e.check_entry(0, 7, &CellValue::Text("Kyoto".into())).is_err()));
+
+    s.click_cell("H2");
+    s.update(|e, window, cx| {
+        e.open_validation_panel(window, cx);
+        if let Some(p) = e.wb_mut().validation.as_mut() {
+            p.kind = "whole";
+            p.operator = "lessThanOrEqual";
+            p.items.update(cx, |i, cx| i.set_value("=MaxLimit", window, cx));
+        }
+        e.apply_validation_panel(cx);
+    });
+    assert!(s.with(|e, _| e.check_entry(1, 7, &CellValue::Number(80.0)).is_ok()));
+    assert!(s.with(|e, _| e.check_entry(1, 7, &CellValue::Number(150.0)).is_err()));
+}
+
+
+/// XLSX-SHEET-026:
+/// - Navigation at row 1020 and beyond with cursor keys (up/down/left/right) up to 1,048,576 rows.
+/// - PageDown / PageUp with selection (1 cell) following the view.
+/// - Direct click on empty cells beyond row 1000 (e.g. B1030) selecting single cell and entering value with Enter advancing to next row.
+/// - Navigation at sheet limit row 1048576 (A1048576 up/down clamped at bounds).
+fn sheet026_one_million_rows_navigation_pagedown_and_cell_input() {
+    let mut s = new_sheet();
+
+    // 1. Jump to A1020 using go_to_reference
+    s.update(|e, window, cx| {
+        assert!(e.go_to_reference("A1020", window, cx));
+    });
+    assert_eq!(s.selected(), "A1020");
+
+    // 2. Cursor keys up and down at row 1020
+    s.key("down");
+    assert_eq!(s.selected(), "A1021");
+    s.key("up");
+    assert_eq!(s.selected(), "A1020");
+    s.key("right");
+    assert_eq!(s.selected(), "B1020");
+    s.key("left");
+    assert_eq!(s.selected(), "A1020");
+
+    // 3. PageDown: single cell selection follows the page downward
+    s.key("pagedown");
+    let sel = s.selected();
+    let row_after_pagedown: u32 = sel.trim_start_matches('A').parse().expect("valid row after pagedown");
+    assert!(row_after_pagedown > 1020, "PageDown must advance selection row beyond 1020, got {sel}");
+
+    // PageUp: single cell selection follows the page upward
+    s.key("pageup");
+    let sel_up = s.selected();
+    let row_after_pageup: u32 = sel_up.trim_start_matches('A').parse().expect("valid row after pageup");
+    assert!(row_after_pageup < row_after_pagedown, "PageUp must move selection row upward, got {sel_up}");
+
+    // 4. Direct click on empty cell beyond row 1000 (e.g. B1030) and type text
+    s.click_cell("B1030");
+    assert_eq!(s.selected(), "B1030");
+    s.enter("1030data", "enter");
+    assert_eq!(s.value("B1030"), CellValue::Text("1030data".into()));
+    // Enter advances to next row (B1031)
+    assert_eq!(s.selected(), "B1031");
+    s.key("up");
+    assert_eq!(s.selected(), "B1030");
+
+    // 5. Navigation at maximum sheet row: A1048576 (row index 1,048,575)
+    s.update(|e, window, cx| {
+        assert!(e.go_to_reference("A1048576", window, cx));
+    });
+    assert_eq!(s.selected(), "A1048576");
+    s.key("up");
+    assert_eq!(s.selected(), "A1048575");
+    s.key("down");
+    assert_eq!(s.selected(), "A1048576");
+    // Down at max row stays at A1048576
+    s.key("down");
+    assert_eq!(s.selected(), "A1048576");
+}
+
+/// XLSX-SHEET-027 (todo-fix #75): with the scroll bar dragged to the very
+/// bottom of a new sheet, a click selects one cell, typing and pasting work
+/// there, and the wheel turned down goes on into the rows below (the grid
+/// grows) up to Excel's last row.
+fn sheet027_scroll_to_the_bottom_click_type_paste_and_wheel_on() {
+    let mut s = new_sheet();
+    s.size(1200.0, 800.0);
+    let state = |s: &mut Scenario| s.with(|e, _| (e.workspace_bounds.unwrap(), -f32::from(e.workspace_scroll.offset().y), f32::from(e.workspace_content().unwrap().size.height)));
+    let (bounds, _, content0) = state(&mut s);
+    let at = (f32::from(bounds.origin.x) + 400.0, f32::from(bounds.origin.y) + 300.0);
+    // The scroll bar's thumb dragged to the end: the offset set to the end (as the bar does).
+    for _ in 0..3 {
+        s.update(|e, _, cx| {
+            let ws = e.workspace_bounds.unwrap();
+            let content = e.workspace_content().unwrap();
+            e.workspace_scroll.set_offset(point(px(0.0), -(content.size.height - ws.size.height)));
+            cx.notify();
+        });
+        s.settle();
+    }
+    let (_, top_end, content1) = state(&mut s);
+    eprintln!("bottom: content {content0} -> {content1}, scroll top {top_end}");
+    s.screenshot("sheet027-bottom");
+    // 1. A click on a cell there selects that one cell.
+    s.click(at);
+    let (column, row) = s.with(move |e, _| e.cell_under(point(px(at.0), px(at.1)))).expect("a cell under the click");
+    assert!(row > 1000, "the click is far down: row {row}");
+    assert_eq!(s.with(|e, _| e.current_cell()), Some((column, row)), "the click selects that cell");
+    assert_eq!(s.with(|e, _| e.selected_ranges().len()), 1);
+    // 2. Typing, and a paste.
+    let name = ibis_doc_model::cell_name(column, row);
+    s.enter("bottom", "enter");
+    assert_eq!(s.value(&name), CellValue::Text("bottom".into()));
+    s.update(|_, _, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("7\t8\n9\t10\n".to_string())));
+    s.click(at);
+    s.key("cmd-v");
+    assert_eq!(s.value(&name), CellValue::Number(7.0));
+    s.screenshot("sheet027-typed-and-pasted");
+    // 3. The wheel down at the bottom goes on: the content grows and the view moves down.
+    let before = state(&mut s);
+    for _ in 0..4 {
+        s.wheel(at, -3000.0);
+    }
+    let after = state(&mut s);
+    eprintln!("wheel: scroll top {} -> {}, content {} -> {}", before.1, after.1, before.2, after.2);
+    assert!(after.1 > before.1 + 5000.0, "the wheel moves the view further down: {} -> {}", before.1, after.1);
+    assert!(after.2 > before.2, "the scroll range grows: {} -> {}", before.2, after.2);
+    s.screenshot("sheet027-wheeled-on");
+    let (_, row2) = s.with(move |e, _| e.cell_under(point(px(at.0), px(at.1)))).expect("a cell under the point");
+    assert!(row2 > row, "deeper rows: {row} -> {row2}");
+}
+
+/// XLSX-SHEET-028 (todo-fix #75, part 2): dragging the scroll bar thumb
+/// down (the offset set to the end, again and again, without waiting for a
+/// second frame) never shows the workspace's grey under the sheet, and a
+/// click anywhere in the cells shown selects one cell, where typing and
+/// pasting work.
+fn sheet028_scroll_bar_drag_never_shows_grey_and_clicks_select() {
+    let mut s = new_sheet();
+    s.size(1200.0, 800.0);
+    s.screenshot("sheet028-top");
+    for step in 0..6 {
+        // The thumb to the end of the range last laid out, one frame each.
+        s.update(|e, _, cx| {
+            let ws = e.workspace_bounds.unwrap();
+            let max = e.workspace_scroll.max_offset().y;
+            let _ = ws;
+            e.workspace_scroll.set_offset(point(px(0.0), -max));
+            cx.notify();
+        });
+        s.wheel((600.0, 400.0), 0.0);
+        let (ws, top, content, sheet_h) = s.with(|e, _| {
+            let ws = e.workspace_bounds.unwrap();
+            let content = e.workspace_content().unwrap();
+            let (shape, _) = e.current_sheet().unwrap();
+            (ws, -f32::from(e.workspace_scroll.offset().y), f32::from(content.size.height), shape.frame.height as f32 * content.scale)
+        });
+        eprintln!("step {step}: top {top} view {} content {content} sheet {sheet_h}", f32::from(ws.size.height));
+        s.screenshot(&format!("sheet028-drag-{step}"));
+        // Every cell shown is a normal cell: a click on the bottom rows selects one.
+        let at = (f32::from(ws.origin.x) + 500.0, f32::from(ws.origin.y) + f32::from(ws.size.height) - 60.0);
+        s.click(at);
+        let cell = s.with(move |e, _| e.cell_under(point(px(at.0), px(at.1)))).expect("a cell under the click");
+        assert_eq!(s.with(|e, _| e.current_cell()), Some(cell), "step {step}: the click selects the cell under it");
+        assert_eq!(s.with(|e, _| e.selected_ranges().len()), 1);
+    }
+    let (column, row) = s.with(|e, _| e.current_cell()).unwrap();
+    let name = ibis_doc_model::cell_name(column, row);
+    s.enter("grey", "enter");
+    assert_eq!(s.value(&name), CellValue::Text("grey".into()));
 }

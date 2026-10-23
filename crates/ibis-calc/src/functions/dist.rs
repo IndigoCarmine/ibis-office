@@ -3,8 +3,8 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Probability distributions and statistical tests.
 
-use super::{Func, arg_array, arg_num, err, number, numeric, numeric_defaults};
-use crate::eval::{Ctx, Value, to_bool, to_number};
+use super::{Func, arg_array, arg_num, err, number, numeric, numeric_defaults, numeric_defaults_with_bool, numeric_with_bool};
+use crate::eval::{Ctx, Value, to_number};
 use crate::formula::Expr;
 use crate::special::{beta_inc, cody_norm_cdf, erf, gamma, gamma_p, gamma_q, ln_beta, ln_gamma, norm_cdf, norm_inv, norm_pdf, solve};
 use crate::value::CellError;
@@ -1491,43 +1491,5 @@ fn z_test(c: &mut Ctx, a: &[Expr]) -> Value {
         1.0 - cody_norm_cdf(z)
     };
     number(p)
-}
-
-fn numeric_with_bool(ctx: &mut Ctx, args: &[Expr], bool_arg_idx: usize, f: impl Fn(&[f64]) -> Value) -> Value {
-    let date1904 = ctx.date1904();
-    ctx.map_args(args, |_, vals| {
-        let mut ns = Vec::with_capacity(vals.len());
-        for (i, v) in vals.iter().enumerate() {
-            if i == bool_arg_idx {
-                match to_bool(v) {
-                    Ok(b) => ns.push(if b { 1.0 } else { 0.0 }),
-                    Err(e) => return Value::Error(e),
-                }
-            } else {
-                match to_number(v, date1904) {
-                    Ok(n) => ns.push(n),
-                    Err(e) => return Value::Error(e),
-                }
-            }
-        }
-        f(&ns)
-    })
-}
-
-fn numeric_defaults_with_bool(
-    ctx: &mut Ctx,
-    args: &[Expr],
-    defaults: &[f64],
-    bool_arg_idx: usize,
-    f: impl Fn(&[f64]) -> Value,
-) -> Value {
-    let given = args.len();
-    numeric_with_bool(ctx, args, bool_arg_idx, |ns| {
-        let mut all: Vec<f64> = ns.to_vec();
-        for d in defaults.iter().skip(given) {
-            all.push(*d);
-        }
-        f(&all)
-    })
 }
 

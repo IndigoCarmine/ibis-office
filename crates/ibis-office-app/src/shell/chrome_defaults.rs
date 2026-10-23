@@ -121,7 +121,7 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
             .map(|path| {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 let icon = match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
-                    Some("xlsx" | "xlsm" | "xls" | "csv" | "tsv" | "tab" | "txt") => "table_chart",
+                    Some("xlsx" | "xlsm" | "xls" | "ods" | "csv" | "tsv" | "tab" | "txt") => "table_chart",
                     Some("docx" | "docm") => "description",
                     _ => "slideshow",
                 };
@@ -136,11 +136,26 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
         let _ = editor;
         vec![MenuItem::tr("file.recent.none").into()]
     };
-    vec![
+    let kind = editor.kind();
+    let mut doc_item = item("file.new.document", "description").on(|this, window, cx| this.new_file(Kind::Document, window, cx));
+    let mut sheet_item = item("file.new.workbook", "table_chart").on(|this, window, cx| this.new_file(Kind::Workbook, window, cx));
+    let mut pres_item = item("file.new.presentation", "slideshow").on(|this, window, cx| this.new_file(Kind::Presentation, window, cx));
+    match kind {
+        Kind::Document => doc_item = doc_item.shortcut("⌘N"),
+        Kind::Workbook => sheet_item = sheet_item.shortcut("⌘N"),
+        Kind::Presentation => pres_item = pres_item.shortcut("⌘N"),
+    }
+    let mut items: Vec<crate::shell::chrome::MenuEntry> = Vec::new();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        items.push(item("file.start-window", "grid_view").on(|_, _, cx| crate::open_editor(None, None, cx)).into());
+        items.push(SEP);
+    }
+    items.extend(vec![
         sub("file.new", "note_add", vec![
-            item("file.new.document", "description").shortcut("⌘N").on(|this, window, cx| this.new_file(Kind::Document, window, cx)).into(),
-            item("file.new.workbook", "table_chart").on(|this, window, cx| this.new_file(Kind::Workbook, window, cx)).into(),
-            item("file.new.presentation", "slideshow").on(|this, window, cx| this.new_file(Kind::Presentation, window, cx)).into(),
+            doc_item.into(),
+            sheet_item.into(),
+            pres_item.into(),
         ]),
         item("file.open", "folder_open").shortcut("⌘O").on(|this, window, cx| this.open_file(&crate::OpenFile, window, cx)).into(),
         sub("file.recent", "schedule", recent),
@@ -149,12 +164,19 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
         item("file.save-as", "save_as").shortcut("⇧⌘S").on(|this, window, cx| this.save_as(&crate::SaveAs, window, cx)).into(),
         item("file.copy", "content_copy").on(|this, window, cx| this.save_copy(window, cx)).into(),
         SEP,
-        sub("file.export", "ios_share", vec![
-            item("file.export.pdf", "picture_as_pdf").on(|this, window, cx| this.export_pdf(window, cx)).into(),
-            item("file.export.png", "image").on(|this, window, cx| this.export_png(window, cx)).into(),
-            item("file.export.gif", "animation").on(|this, window, cx| this.export_gif(window, cx)).into(),
-            item("file.export.svg", "draw").into(),
-        ]),
+        sub("file.export", "ios_share", {
+            let mut entries = vec![
+                item("file.export.pdf", "picture_as_pdf").on(|this, window, cx| this.export_pdf(window, cx)).into(),
+                item("file.export.png", "image").on(|this, window, cx| this.export_png(window, cx)).into(),
+                item("file.export.gif", "animation").on(|this, window, cx| this.export_gif(window, cx)).into(),
+                item("file.export.svg", "draw").into(),
+            ];
+            // A presentation can also be written as an OpenDocument presentation.
+            if editor.kind() == Kind::Presentation {
+                entries.push(item("file.export.odp", "slideshow").on(|this, window, cx| this.export_odp(window, cx)).into());
+            }
+            entries
+        }),
         item("file.print", "print").shortcut("⌘P").on(|this, window, cx| this.print(window, cx)).into(),
         SEP,
         item("file.info", "info").into(),
@@ -163,7 +185,8 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
         item("file.page-setup", "crop_landscape").into(),
         SEP,
         item("file.close", "close").shortcut("⌘W").on(|this, window, cx| this.close_file(&crate::CloseFile, window, cx)).into(),
-    ]
+    ]);
+    items
 }
 
 fn edit_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
@@ -237,6 +260,13 @@ fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
                     this.open_notes_format(window, cx);
                 }
             }).into(),
+            item("pptx.notes-master", "sticky_note_2").checked(editor.is_notes_master()).on(|this, window, cx| {
+                if this.is_notes_master() {
+                    this.close_notes_format(window, cx);
+                } else {
+                    this.open_notes_master(window, cx);
+                }
+            }).into(),
             item("pptx.handout-master", "view_agenda").checked(editor.is_handout_master()).on(|this, window, cx| {
                 if this.is_handout_master() {
                     this.close_notes_format(window, cx);
@@ -263,12 +293,103 @@ fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
             SEP,
             item("pptx.notes", "").into(),
             SEP,
+            sub("pptx.color-mode", "contrast", vec![
+                item("pptx.view.color", "palette")
+                    .checked(editor.color_mode() == crate::render::ColorMode::Color)
+                    .on(|this, _, cx| {
+                        this.set_color_mode(crate::render::ColorMode::Color, cx);
+                    })
+                    .into(),
+                item("pptx.view.grayscale", "filter_b_and_w")
+                    .checked(editor.color_mode() == crate::render::ColorMode::Grayscale)
+                    .on(|this, _, cx| {
+                        this.set_color_mode(crate::render::ColorMode::Grayscale, cx);
+                    })
+                    .into(),
+                item("pptx.view.high-contrast", "contrast")
+                    .shortcut("⌥⌘H")
+                    .checked(editor.color_mode() == crate::render::ColorMode::HighContrast)
+                    .on(|this, _, cx| {
+                        this.toggle_high_contrast(cx);
+                    })
+                    .into(),
+            ]),
+            SEP,
         ]),
         Kind::Workbook => entries.extend([
-            item("xlsx.freeze", "view_column").into(),
+            sub("xlsx.freeze", "view_column", vec![
+                item("xlsx.freeze", "")
+                    .on(|this, _, cx| {
+                        this.toggle_freeze(cx);
+                    })
+                    .into(),
+                item("xlsx.freeze-panes", "")
+                    .on(|this, _, cx| {
+                        this.freeze_panes(cx);
+                    })
+                    .into(),
+                item("xlsx.freeze-top-row", "")
+                    .on(|this, _, cx| {
+                        this.freeze_top_row(cx);
+                    })
+                    .into(),
+                item("xlsx.freeze-first-column", "")
+                    .on(|this, _, cx| {
+                        this.freeze_first_column(cx);
+                    })
+                    .into(),
+                item("xlsx.unfreeze-panes", "")
+                    .on(|this, _, cx| {
+                        this.unfreeze_panes(cx);
+                    })
+                    .into(),
+            ]).into(),
+            item("xlsx.ruler", "rule").into(),
+            sub("xlsx.ruler-unit", "straighten", vec![
+                item("xlsx.ruler-unit.cm", "")
+                    .checked(editor.ruler_unit == RulerUnit::Centimeters)
+                    .disabled(!editor.current_sheet().is_some_and(|(_, s)| s.page_layout && s.show_ruler))
+                    .on(|this, _, cx| {
+                        this.set_ruler_unit(RulerUnit::Centimeters, cx);
+                    })
+                    .into(),
+                item("xlsx.ruler-unit.mm", "")
+                    .checked(editor.ruler_unit == RulerUnit::Millimeters)
+                    .disabled(!editor.current_sheet().is_some_and(|(_, s)| s.page_layout && s.show_ruler))
+                    .on(|this, _, cx| {
+                        this.set_ruler_unit(RulerUnit::Millimeters, cx);
+                    })
+                    .into(),
+                item("xlsx.ruler-unit.inch", "")
+                    .checked(editor.ruler_unit == RulerUnit::Inches)
+                    .disabled(!editor.current_sheet().is_some_and(|(_, s)| s.page_layout && s.show_ruler))
+                    .on(|this, _, cx| {
+                        this.set_ruler_unit(RulerUnit::Inches, cx);
+                    })
+                    .into(),
+                item("xlsx.ruler-unit.point", "")
+                    .checked(editor.ruler_unit == RulerUnit::Points)
+                    .disabled(!editor.current_sheet().is_some_and(|(_, s)| s.page_layout && s.show_ruler))
+                    .on(|this, _, cx| {
+                        this.set_ruler_unit(RulerUnit::Points, cx);
+                    })
+                    .into(),
+                item("xlsx.ruler-unit.pica", "")
+                    .checked(editor.ruler_unit == RulerUnit::Picas)
+                    .disabled(!editor.current_sheet().is_some_and(|(_, s)| s.page_layout && s.show_ruler))
+                    .on(|this, _, cx| {
+                        this.set_ruler_unit(RulerUnit::Picas, cx);
+                    })
+                    .into(),
+            ]),
             item("xlsx.gridlines", "grid_on").into(),
             item("xlsx.headings", "view_headline").into(),
             item("xlsx.formula-bar", "functions").into(),
+            item("xlsx.show-formulas", "functions")
+                .shortcut("⌘`")
+                .into(),
+            item("xlsx.show-zeros", "exposure_zero").into(),
+            item("xlsx.normal-view", "grid_view").into(),
             item("xlsx.page-break-preview", "pageview").into(),
             item("xlsx.page-layout", "description").into(),
             item("xlsx.zoom-selection", "aspect_ratio").on(|this, window, cx| {
@@ -486,6 +607,25 @@ fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
                     this.toggle_document_split(cx);
                 })
                 .into(),
+            item("docx.view-side-by-side", "splitscreen")
+                .checked(editor.side_by_side)
+                .on(|this, window, cx| {
+                    this.toggle_view_side_by_side(window, cx);
+                })
+                .into(),
+            item("docx.sync-scrolling", "sync")
+                .checked(editor.sync_scrolling)
+                .disabled(!editor.side_by_side)
+                .on(|this, _window, cx| {
+                    this.toggle_sync_scrolling(cx);
+                })
+                .into(),
+            item("docx.reset-window-position", "restart_alt")
+                .disabled(!editor.side_by_side)
+                .on(|this, window, cx| {
+                    this.reset_side_by_side_positions(window, cx);
+                })
+                .into(),
             SEP,
         ]),
     }
@@ -579,6 +719,7 @@ fn insert_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
         sub("insert.shape", "shapes", vec![]),
         sub("insert.table", "table", vec![]),
         sub("insert.chart", "bar_chart", vec![]),
+        sub("insert.smartart", "account_tree", vec![]),
         item("insert.video", "movie").into(),
         item("insert.audio", "music_note").into(),
         SEP,
@@ -590,10 +731,17 @@ fn insert_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
     if kind == Kind::Document {
         entries.push(item("insert.rich-text", "text_fields").into());
         entries.push(item("insert.plain-text", "short_text").into());
+        entries.push(item("insert.picture-control", "image").into());
+        entries.push(item("insert.building-block-gallery", "dashboard_customize").into());
+        entries.push(item("insert.repeating-section", "control_point_duplicate").into());
+        entries.push(item("insert.group", "group_work").into());
         entries.push(item("insert.checkbox", "checklist").into());
         entries.push(item("insert.dropdown-list", "arrow_drop_down_circle").into());
         entries.push(item("insert.combo-box", "arrow_drop_down").into());
         entries.push(item("insert.date-picker", "schedule").into());
+        entries.push(item("insert.form-text", "text_snippet").into());
+        entries.push(item("insert.form-checkbox", "check_box").into());
+        entries.push(item("insert.form-dropdown", "list").into());
     }
     entries
 }
@@ -614,7 +762,19 @@ fn format_menu(kind: Kind) -> Vec<MenuEntry> {
             SEP,
             item("docx.form.checkbox.toggle", "check").into(),
             item("docx.form.dropdown.cycle", "autorenew").into(),
+            item("docx.form.legacy-dropdown.cycle", "autorenew").into(),
             item("docx.form.date.step", "schedule").into(),
+            item("docx.form.picture.replace", "image").into(),
+            item("docx.form.picture.reset", "restart_alt").into(),
+            item("docx.form.gallery.cycle", "autorenew").into(),
+            item("docx.form.gallery.reset", "restart_alt").into(),
+            item("docx.form.repeating.add", "add").into(),
+            item("docx.form.repeating.delete", "delete").into(),
+            item("docx.form.repeating.cycle", "autorenew").into(),
+            item("docx.form.group", "group_work").into(),
+            item("docx.form.ungroup", "workspaces").into(),
+            item("docx.form.design-mode", "design_services").into(),
+            item("docx.form.properties", "settings").into(),
         ]);
     }
     if kind == Kind::Workbook {
@@ -675,7 +835,38 @@ fn arrange_menu() -> Vec<MenuEntry> {
         sub("pptx.center", "center_focus_strong", vec![]),
         sub("pptx.merge", "cell_merge", vec![]),
         item("pptx.edit-points", "polyline").into(),
+        item("pptx.edit-points.smooth", "line_curve").into(),
+        item("pptx.edit-points.straight", "polyline").into(),
+        item("pptx.edit-points.corner", "turn_sharp_right").into(),
         item("pptx.smartart-to-shapes", "shapes").into(),
+        item("pptx.smartart.convert-text", "account_tree").into(),
+        item("pptx.smartart.add-shape", "add_circle").into(),
+        item("pptx.smartart.remove-shape", "remove_circle").into(),
+        item("pptx.smartart.add-assistant", "person_add").into(),
+        item("pptx.smartart.move-up", "arrow_upward").into(),
+        item("pptx.smartart.move-down", "arrow_downward").into(),
+        item("pptx.smartart.promote", "keyboard_double_arrow_up").into(),
+        item("pptx.smartart.demote", "keyboard_double_arrow_down").into(),
+        item("pptx.smartart.text-pane", "list_alt").into(),
+        sub("pptx.smartart.change-layout", "dashboard_customize", vec![
+            item("pptx.smartart.layout.list", "view_list").into(),
+            item("pptx.smartart.layout.vlist", "format_list_bulleted").into(),
+            item("pptx.smartart.layout.process", "arrow_forward").into(),
+            item("pptx.smartart.layout.chevron", "double_arrow").into(),
+            item("pptx.smartart.layout.cycle", "autorenew").into(),
+            item("pptx.smartart.layout.hierarchy", "account_tree").into(),
+            item("pptx.smartart.layout.relationship", "sync_alt").into(),
+            item("pptx.smartart.layout.matrix", "grid_view").into(),
+            item("pptx.smartart.layout.pyramid", "change_history").into(),
+            item("pptx.smartart.layout.picture", "insert_photo").into(),
+        ]),
+        sub("pptx.smartart.color", "palette", vec![
+            item("pptx.smartart.color.colorful", "palette").into(),
+            item("pptx.smartart.color.accent1", "palette").into(),
+            item("pptx.smartart.color.accent2", "palette").into(),
+            item("pptx.smartart.color.accent3", "palette").into(),
+            item("pptx.smartart.color.outline", "check_box_outline_blank").into(),
+        ]),
         sub("pptx.rotate", "rotate_90_degrees_cw", vec![
             item("pptx.rotate.right", "rotate_90_degrees_cw").into(),
             item("pptx.rotate.left", "rotate_90_degrees_ccw").into(),
@@ -696,8 +887,17 @@ pub(crate) fn toolbar_left(editor: &SlideEditor) -> Vec<ToolItem> {
     let mut items: Vec<ToolItem> = vec![ToolButton::new("menu-search", "search", crate::shell::i18n::text("_shell.search-menus")).into()];
     match editor.kind() {
         Kind::Presentation => items.push(
+            // A split button as PowerPoint's: the left half adds a slide in the layout of the current one, the ▼ has the
+            // layouts to add one in.
             ToolButton::new("new-slide", "add", crate::shell::i18n::text("_shell.new-slide-m"))
-                .menu(vec![MenuItem::tr("pptx.new-slide.blank").icon("add").on(|this, window, cx| this.add_slide(window, cx)).into()])
+                .menu({
+                    let mut items = crate::pptx::chrome::new_slide_menu(editor);
+                    if items.is_empty() {
+                        items.push(MenuItem::tr("pptx.new-slide.blank").icon("add").on(|this, window, cx| this.add_slide(window, cx)).into());
+                    }
+                    items
+                })
+                .quick(|this, window, cx| this.add_slide(window, cx))
                 .into(),
         ),
         Kind::Document => items.push(ToolButton::new("spelling", "spellcheck", "_shell.spelling-and-grammar").into()),
@@ -788,6 +988,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         Kind::Workbook => vec![
             ToolButton::text("currency", "¥", "_shell.accounting-number-format").into(),
             ToolButton::new("percent", "percent", "_shell.percent-style").into(),
+            ToolButton::text("comma", ",", "_shell.comma-style").into(),
             ToolButton::new("decimal-less", "decimal_decrease", "_shell.decrease-decimal").into(),
             ToolButton::new("decimal-more", "decimal_increase", "_shell.increase-decimal").into(),
             ToolButton::text("number-format", "123", "_shell.more-number-formats").menu(Vec::new()).into(),

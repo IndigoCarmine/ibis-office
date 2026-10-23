@@ -194,6 +194,12 @@ impl SlideEditor {
                 self.wb_mut().panels.threaded_comment = None;
             }
         }
+        if let Some(p) = self.wb().panels.note.as_ref() {
+            let (c, r) = p.cell;
+            if ranges.iter().any(|rng| (rng.first_row..=rng.last_row).contains(&r) && (rng.first_column..=rng.last_column).contains(&c)) {
+                self.wb_mut().panels.note = None;
+            }
+        }
         cx.notify();
     }
 
@@ -280,7 +286,10 @@ impl SlideEditor {
                             .small()
                             .ghost()
                             .label(crate::shell::i18n::text("_shell.delete"))
-                            .on_click(cx.listener(move |this, _, _, cx| this.delete_threaded_comment(row, column, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.delete_threaded_comment(row, column, cx);
+                                this.focus_handle.focus(window, cx);
+                            }))
                             .into_any_element(),
                     ),
                 );

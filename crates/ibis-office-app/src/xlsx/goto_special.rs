@@ -115,6 +115,74 @@ pub(crate) fn to_ranges(mut cells: Vec<(u32, u32)>) -> Vec<CellRange> {
     out
 }
 
+/// Subtract rectangle `b` from rectangle `a`.
+/// Returns 0 to 4 disjoint rectangles that represent `a \ b`.
+pub(crate) fn subtract_rect(a: CellRange, b: CellRange) -> Vec<CellRange> {
+    let r0 = a.first_row.max(b.first_row);
+    let r1 = a.last_row.min(b.last_row);
+    let c0 = a.first_column.max(b.first_column);
+    let c1 = a.last_column.min(b.last_column);
+
+    // No intersection
+    if r0 > r1 || c0 > c1 {
+        return vec![a];
+    }
+
+    let mut out = Vec::new();
+    // 1. Top slice (full width of a)
+    if a.first_row < r0 {
+        out.push(CellRange {
+            first_row: a.first_row,
+            last_row: r0 - 1,
+            first_column: a.first_column,
+            last_column: a.last_column,
+        });
+    }
+    // 2. Bottom slice (full width of a)
+    if a.last_row > r1 {
+        out.push(CellRange {
+            first_row: r1 + 1,
+            last_row: a.last_row,
+            first_column: a.first_column,
+            last_column: a.last_column,
+        });
+    }
+    // 3. Left slice (height restricted to intersection rows r0..=r1)
+    if a.first_column < c0 {
+        out.push(CellRange {
+            first_row: r0,
+            last_row: r1,
+            first_column: a.first_column,
+            last_column: c0 - 1,
+        });
+    }
+    // 4. Right slice (height restricted to intersection rows r0..=r1)
+    if a.last_column > c1 {
+        out.push(CellRange {
+            first_row: r0,
+            last_row: r1,
+            first_column: c1 + 1,
+            last_column: a.last_column,
+        });
+    }
+    out
+}
+
+/// Subtract rectangle `b` from a list of rectangles `ranges`.
+pub(crate) fn subtract_ranges(ranges: &[CellRange], b: CellRange) -> Vec<CellRange> {
+    let mut out = Vec::new();
+    for a in ranges {
+        out.extend(subtract_rect(*a, b));
+    }
+    let mut clean = Vec::new();
+    for r in out {
+        if r.first_row <= r.last_row && r.first_column <= r.last_column && !clean.contains(&r) {
+            clean.push(r);
+        }
+    }
+    clean
+}
+
 fn cells_equal(a: Option<&ibis_doc_model::SheetCell>, b: Option<&ibis_doc_model::SheetCell>) -> bool {
     let empty_a = a.is_none_or(|c| c.value.is_empty() && c.formula.is_none());
     let empty_b = b.is_none_or(|c| c.value.is_empty() && c.formula.is_none());
@@ -445,6 +513,63 @@ impl SlideEditor {
         state.panels.extra_ranges = Some(ExtraRanges { slide, cell, end, ranges: kept });
     }
 
+    /// Set the selection to exactly the given ranges.
+    pub(crate) fn set_selected_ranges(&mut self, ranges: &[CellRange]) {
+        let slide = self.current_slide;
+        if ranges.is_empty() {
+            return;
+        }
+        let first = ranges[0];
+        let state = self.wb_mut();
+        state.cells.insert(slide, (first.first_column, first.first_row));
+        if first.first_column == first.last_column && first.first_row == first.last_row {
+            state.cell_ends.remove(&slide);
+        } else {
+            state.cell_ends.insert(slide, (first.last_column, first.last_row));
+        }
+        if ranges.len() > 1 {
+            let extra = ranges[1..].to_vec();
+            self.keep_with_selection(extra);
+        } else {
+            self.wb_mut().panels.extra_ranges = None;
+        }
+    }
+
+    /// Check if a cell is covered by the current selection.
+    pub(crate) fn is_cell_selected(&self, column: u32, row: u32) -> bool {
+        self.selected_ranges().iter().any(|r| {
+            (r.first_row..=r.last_row).contains(&row) && (r.first_column..=r.last_column).contains(&column)
+        })
+    }
+
+    /// Deselect a cell from the current selection.
+    /// Returns true if the cell was selected and has been deselected.
+    #[allow(dead_code)]
+    pub(crate) fn deselect_cell(&mut self, column: u32, row: u32) -> bool {
+        let current = self.selected_ranges();
+        let in_sel = current.iter().any(|r| {
+            (r.first_row..=r.last_row).contains(&row) && (r.first_column..=r.last_column).contains(&column)
+        });
+        if !in_sel {
+            return false;
+        }
+        let deselect_rect = CellRange { first_row: row, last_row: row, first_column: column, last_column: column };
+        let remaining = subtract_ranges(&current, deselect_rect);
+        if remaining.is_empty() {
+            return false;
+        }
+        self.set_selected_ranges(&remaining);
+        true
+    }
+
+    /// Deselect a range of cells from a base set of ranges.
+    pub(crate) fn deselect_range(&mut self, base: &[CellRange], deselect_rect: CellRange) {
+        let remaining = subtract_ranges(base, deselect_rect);
+        if !remaining.is_empty() {
+            self.set_selected_ranges(&remaining);
+        }
+    }
+
     /// The selection's corner moved by dragging: the kept ranges stay with it
     /// (`was_kept`: whether they were with it before the move).
     pub(crate) fn extra_ranges_follow(&mut self, was_kept: bool) {
@@ -578,6 +703,69 @@ impl SlideEditor {
         if let Some(p) = state.panels.goto_special.as_mut() {
             p.message = crate::shell::i18n::format("goto-special.done", &[("count", &count)]);
         }
+        cx.notify();
+    }
+
+    /// ホーム > 編集 > 検索と選択: 1 クリックで指定種類のセルまたはオブジェクトを選択する.
+    pub(crate) fn select_special_kind(&mut self, kind: Special, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        if kind == Special::Objects {
+            let object_ids: Vec<ibis_doc_model::ShapeId> = self
+                .slide()
+                .shapes
+                .iter()
+                .filter(|s| !matches!(s.kind, ibis_doc_model::ShapeKind::Sheet(_)))
+                .map(|s| s.id)
+                .collect();
+            if object_ids.is_empty() {
+                self.status = Some(crate::shell::i18n::text("_xlsx.no-matching-objects-found"));
+                return cx.notify();
+            }
+            let count = object_ids.len() as u32;
+            self.set_selection(object_ids);
+            if let Some(state) = self.sheet_state_mut() {
+                state.panels.extra_ranges = None;
+            }
+            self.status = Some(crate::shell::i18n::format("goto-special.done", &[("count", &count)]).into());
+            return cx.notify();
+        }
+
+        let (Some((_, sheet)), Some(selection), Some(cell)) = (self.current_sheet(), self.selected_range(), self.current_cell()) else { return };
+        let single = sheet.merge_at(cell.1, cell.0).unwrap_or(CellRange {
+            first_row: cell.1,
+            last_row: cell.1,
+            first_column: cell.0,
+            last_column: cell.0,
+        });
+        let area = if selection == single { used_range(sheet) } else { selection };
+        let sheet_name = self.presentation().workbook.as_ref().and_then(|wb| {
+            wb.sheets.iter().find(|s| s.slide == Some(self.slide().id)).map(|s| s.name.clone())
+        });
+        let found = find(sheet, kind, Types::ALL, Scope::All, TraceLevel::DirectOnly, area, cell, sheet_name.as_deref());
+        let Some(first) = found.first().copied() else {
+            self.status = Some(crate::shell::i18n::text("_xlsx.no-matching-cells-were-found"));
+            return cx.notify();
+        };
+        let slide = self.current_slide;
+        let count: u32 = found.iter().map(|r| (r.last_row - r.first_row + 1) * (r.last_column - r.first_column + 1)).sum();
+        let state = self.wb_mut();
+        state.cells.insert(slide, (first.first_column, first.first_row));
+        let end = ((first.last_column, first.last_row) != (first.first_column, first.first_row)).then_some((first.last_column, first.last_row));
+        match end {
+            Some(e) => {
+                state.cell_ends.insert(slide, e);
+            }
+            None => {
+                state.cell_ends.remove(&slide);
+            }
+        }
+        state.panels.extra_ranges = Some(ExtraRanges {
+            slide,
+            cell: (first.first_column, first.first_row),
+            end,
+            ranges: found[1..].to_vec(),
+        });
+        self.status = Some(crate::shell::i18n::format("goto-special.done", &[("count", &count)]).into());
         cx.notify();
     }
 

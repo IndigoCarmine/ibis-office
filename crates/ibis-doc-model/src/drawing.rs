@@ -252,7 +252,7 @@ pub enum Fill {
 }
 
 /// How a tiled picture flips on alternating tiles (`ST_TileFlipMode`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TileFlip {
     #[default]
     None,
@@ -273,7 +273,7 @@ impl TileFlip {
 }
 
 /// How a tiled picture aligns to its frame (`ST_RectAlignment`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TileAlign {
     #[default]
     TopLeft,
@@ -574,6 +574,8 @@ pub struct Stroke {
     pub compound: LineCompound,
     /// Where the stroke is aligned relative to its path (`a:ln/@algn`).
     pub alignment: LineAlignment,
+    /// An optional fill for the stroke (e.g. gradient stroke `a:gradFill`).
+    pub fill: Option<Fill>,
 }
 
 /// Where a stroke is aligned relative to its path (`ST_PenAlignment`).
@@ -656,12 +658,17 @@ impl Stroke {
     pub const DEFAULT_WIDTH: Emu = 9_525;
 
     pub fn solid(color: Color, width: Emu) -> Self {
-        Self { color, width, dashed: false, head: LineEnd::None, tail: LineEnd::None, dash: LineDash::Solid, cap: LineCap::Flat, join: LineJoin::Miter, compound: LineCompound::Single, alignment: LineAlignment::Center }
+        Self { color, width, dashed: false, head: LineEnd::None, tail: LineEnd::None, dash: LineDash::Solid, cap: LineCap::Flat, join: LineJoin::Miter, compound: LineCompound::Single, alignment: LineAlignment::Center, fill: None }
     }
 
     /// This stroke with dash pattern `dash` (and `dashed` to match).
     pub fn with_dash(self, dash: LineDash) -> Self {
         Self { dashed: dash != LineDash::Solid, dash, ..self }
+    }
+
+    /// This stroke with an explicit fill (e.g. gradient fill).
+    pub fn with_fill(self, fill: Fill) -> Self {
+        Self { fill: Some(fill), ..self }
     }
 }
 
@@ -731,7 +738,7 @@ impl BevelPreset {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "circle" => Some(Self::Circle),
-            "relaxedIns" => Some(Self::RelaxedInset),
+            "relaxedInset" | "relaxedIns" => Some(Self::RelaxedInset),
             "slope" => Some(Self::Slope),
             "cross" => Some(Self::Cross),
             "angle" => Some(Self::Angle),
@@ -749,7 +756,7 @@ impl BevelPreset {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Circle => "circle",
-            Self::RelaxedInset => "relaxedIns",
+            Self::RelaxedInset => "relaxedInset",
             Self::Slope => "slope",
             Self::Cross => "cross",
             Self::Angle => "angle",

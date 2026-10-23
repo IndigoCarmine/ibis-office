@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! The app's settings (ツール > 設定…): a few `key=value` lines kept in the
 //! user's application data directory (`~/Library/Application
-//! Support/ibisOffice/settings.txt` on macOS, `%APPDATA%\ibisOffice` on
+//! Support/AcaudaOffice/settings.txt` on macOS, `%APPDATA%\AcaudaOffice` on
 //! Windows), beside the recent files; in the browser, its localStorage
 //! (`ibisOffice.<key>`). `IBIS_SETTINGS_DIR` puts the file elsewhere (the
 //! scenario tests). A missing or unreadable file is no settings; a failed
@@ -24,7 +24,7 @@ mod store {
         let base = env("APPDATA");
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let base = env("XDG_CONFIG_HOME").or_else(|| env("HOME").map(|home| home.join(".config")));
-        Some(base?.join("ibisOffice").join("settings.txt"))
+        Some(base?.join("AcaudaOffice").join("settings.txt"))
     }
 
     fn read() -> Vec<(String, String)> {
@@ -35,6 +35,11 @@ mod store {
             .filter_map(|line| line.split_once('='))
             .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
             .collect()
+    }
+
+    /// The directory the settings are in (the external editors' manifests are beside them).
+    pub(super) fn dir() -> Option<PathBuf> {
+        path()?.parent().map(PathBuf::from)
     }
 
     pub(super) fn get(key: &str) -> Option<String> {
@@ -76,11 +81,11 @@ mod store {
     }
 
     pub(super) fn get(key: &str) -> Option<String> {
-        call("getItem", &[&format!("ibisOffice.{key}")])?.as_string()
+        call("getItem", &[&format!("AcaudaOffice.{key}")])?.as_string()
     }
 
     pub(super) fn set(key: &str, value: &str) {
-        call("setItem", &[&format!("ibisOffice.{key}"), value]);
+        call("setItem", &[&format!("AcaudaOffice.{key}"), value]);
     }
 }
 
@@ -92,4 +97,10 @@ pub(crate) fn get(key: &str) -> Option<String> {
 /// Set `key` to `value` (kept).
 pub(crate) fn set(key: &str, value: &str) {
     store::set(key, value)
+}
+
+/// The directory the settings file is in.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn dir() -> Option<std::path::PathBuf> {
+    store::dir()
 }

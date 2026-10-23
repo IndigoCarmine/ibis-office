@@ -8,17 +8,26 @@
 
 pub(crate) mod doc_ui;
 pub(crate) mod editing;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod embed;
 pub(crate) mod text_format;
 pub(crate) mod block_tree;
 pub(crate) mod clipboard;
 pub(crate) mod kinsoku_panel;
+pub(crate) mod spelling_panel;
+pub(crate) mod chart_insert;
 pub(crate) mod find;
 pub(crate) mod wildcard;
 pub(crate) mod comments;
 pub(crate) mod link_panel;
 pub(crate) mod index_fields;
+pub(crate) mod toa_fields;
+pub(crate) mod bibliography;
 pub(crate) mod merge_panel;
 pub(crate) mod outline_ops;
+pub(crate) mod backup;
+pub(crate) mod control_panel;
+pub(crate) mod draw_table;
 pub(crate) mod ruby_panel;
 pub(crate) mod text_box_panel;
 pub(crate) mod symbol_panel;
@@ -33,6 +42,7 @@ pub(crate) mod table_size_panel;
 pub(crate) mod table_formula_panel;
 pub(crate) mod help_panels;
 pub(crate) mod list_formats;
+pub(crate) mod list_style_panel;
 mod style_new;
 pub(crate) mod cell_borders;
 pub(crate) mod cell_structure;
@@ -41,11 +51,29 @@ pub(crate) mod art_border;
 pub(crate) mod flow_layout;
 pub(crate) mod input;
 pub(crate) mod page_view;
-#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub(crate) mod scenarios;
 pub(crate) mod toolbar;
 pub(crate) mod accessibility;
 pub(crate) mod goto;
+pub(crate) mod compress_panel;
+pub(crate) mod shape_picture_tools;
+pub(crate) mod math_panel;
+pub(crate) mod quick_parts;
+pub(crate) mod insert_objects;
+pub(crate) mod inspect_panel;
+pub(crate) mod compatibility_panel;
+pub(crate) mod print_panel;
+pub(crate) mod source_manager;
+pub(crate) mod thesaurus;
+pub(crate) mod immersive_reader;
+pub(crate) mod mini_toolbar;
+pub(crate) mod screentip;
+pub(crate) mod drag_select;
+pub(crate) mod repair;
+pub(crate) mod template;
+pub(crate) mod ink;
+pub(crate) mod convert_panel;
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -80,6 +108,17 @@ pub(crate) enum NavigationTab {
 /// What only an open document has.
 #[derive(Default)]
 pub(crate) struct State {
+    /// 入力オートコレクト is off (it is on by default).
+    pub(crate) autocorrect_off: bool,
+    /// 罫線を引いて表を作成: the mode is on, and the box being drawn.
+    pub(crate) draw_table_mode: bool,
+    /// 校閲 > 比較の設定.
+    pub(crate) compare_options: ibis_doc_model::compare::CompareOptions,
+    pub(crate) draw_box: Option<draw_table::DrawBox>,
+    /// 挿入 > 図形: the shape the next drag draws.
+    pub(crate) draw_shape: Option<draw_table::DrawKind>,
+    /// オートコレクトのオプション's panel, while it is the one shown.
+    pub(crate) autocorrect: Option<crate::shell::autocorrect::AutoCorrectPanel>,
     /// The characters of the text, for the status bar.
     pub(crate) characters: usize,
     /// A page to scroll to once the workspace is laid out.
@@ -115,12 +154,15 @@ pub(crate) struct State {
     pub(crate) paragraph_edit: Option<paragraph_panel::ParagraphEditState>,
     pub(crate) tab_edit: Option<tab_panel::TabEditState>,
     pub(crate) picture_edit: Option<picture_panel::PictureEditState>,
+    pub(crate) compress_panel: Option<compress_panel::DocxCompressState>,
     pub(crate) table_size: Option<table_size_panel::TableSizeState>,
     pub(crate) table_formula: Option<table_formula_panel::TableFormulaState>,
     /// The comments' panel, while it is the one shown.
     pub(crate) comments: Option<comments::CommentState>,
     /// ルビ's panel, once opened.
     pub(crate) ruby: Option<ruby_panel::RubyState>,
+    /// コンテンツ コントロールのプロパティ's panel, while it is the one shown.
+    pub(crate) control: Option<control_panel::ControlState>,
     /// テキスト ボックスの文字's panel, while it is the one shown.
     pub(crate) text_box: Option<text_box_panel::TextBoxState>,
     /// 差し込み印刷's panel and its data (宛先一覧).
@@ -129,6 +171,33 @@ pub(crate) struct State {
     pub(crate) shape_drag: Option<text_box_panel::ShapeDrag>,
     /// 記号と特殊文字's panel, while it is the one shown.
     pub(crate) symbol: Option<symbol_panel::SymbolState>,
+    /// 数式 (Math) panel, while it is the one shown.
+    pub(crate) docx_math: Option<math_panel::DocxMathState>,
+    /// クイックパーツ (Quick Parts) panel, while it is the one shown.
+    pub(crate) quick_parts: Option<quick_parts::QuickPartsState>,
+    /// ドキュメントの検査 (Document Inspector) panel, while it is the one shown.
+    pub(crate) inspect_panel: Option<inspect_panel::DocInspectState>,
+    /// 互換性チェック (Compatibility Checker) panel, while it is the one shown.
+    pub(crate) compatibility_panel: Option<compatibility_panel::DocCompatibilityState>,
+    /// 印刷の設定 (Print Settings: DOCX-SEC-013, 015, 016)
+    pub(crate) print_settings: print_panel::DocxPrintSettings,
+    pub(crate) print_panel: Option<print_panel::DocxPrintPanelState>,
+    /// 資料文献の管理 (Source Manager: DOCX-REF-016)
+    pub(crate) source_manager: Option<source_manager::SourceManagerState>,
+    /// 類義語辞典 (Thesaurus: DOCX-REVIEW-019)
+    pub(crate) thesaurus: Option<thesaurus::ThesaurusState>,
+    /// イマーシブ リーダー (Immersive Reader: DOCX-ACCESS-010)
+    pub(crate) immersive_reader: Option<immersive_reader::ImmersiveReaderState>,
+    /// ミニ ツールバー (Mini Toolbar: DOCX-OPTIONS-001)
+    pub(crate) mini_toolbar: Option<mini_toolbar::MiniToolbarState>,
+    /// 画面のヒントのスタイル (ScreenTip Style: DOCX-OPTIONS-002)
+    pub(crate) screentip: Option<screentip::ScreenTipState>,
+    /// ドラッグ編集と選択方法 (DOCX-OPTIONS-005)
+    pub(crate) drag_select: Option<drag_select::DragSelectOptionsState>,
+    /// 破損文書の開いて修復 (DOCX-FILE-020)
+    pub(crate) repair: Option<repair::RepairDocumentPanel>,
+    /// テンプレートの添付とスタイルの更新 (DOCX-STYLE-017, DOCX-FILE-009)
+    pub(crate) template_panel: Option<template::TemplateAttachPanel>,
     /// The fix担当's panels (ページ設定).
     pub(crate) helper: help_panels::HelpPanels,
     /// Selection Pane (オブジェクトの選択と表示).
@@ -143,6 +212,28 @@ pub(crate) struct State {
     pub(crate) read_only_dismissed: bool,
     /// 上書き入力モード (Word's Overtype mode).
     pub(crate) overtype: bool,
+    /// コメント追加時にテキスト選択がない場合の情報ダイアログ表示フラグ。
+    pub(crate) comment_alert_no_selection: bool,
+    /// コメント削除時の確認ダイアログ（削除対象の comment ID）。
+    pub(crate) comment_delete_confirm: Option<u32>,
+    /// 新しいリスト スタイルの定義 (DOCX-LIST-011)
+    pub(crate) list_style: Option<list_style_panel::ListStyleState>,
+    /// 文書テーマ・テーマ色・テーマフォントのカスタマイズ (DOCX-STYLE-012, DOCX-STYLE-013)
+    pub(crate) theme_panel: Option<editing::DocxThemePanel>,
+    /// 折返し点の編集モード (DOCX-FLOAT-006)
+    pub(crate) editing_wrap_points: bool,
+    /// マスター文書（サブ文書管理）サイドバーパネル (DOCX-TOC-016)
+    pub(crate) master_doc_panel: Option<editing::MasterDocPanelState>,
+    /// 手描き注釈・インク描画・インク エディター (DOCX-IMAGE-019, DOCX-INK-001〜007, DOCX-INK-010)
+    pub(crate) docx_ink: Option<ink::DocxInkState>,
+    /// 文書形式の変換（旧doc・RTF・テキスト・HTML・ODT・PDF: DOCX-SEC-019, DOCX-FILE-010, 012, 013）
+    pub(crate) convert_panel: Option<convert_panel::ConvertDocumentPanel>,
+    /// スクリーンリーダーの操作・ランドマーク移動 (DOCX-ACCESS-007)
+    pub(crate) screen_reader: Option<accessibility::DocxScreenReaderState>,
+    /// 読み上げ (DOCX-ACCESS-009)
+    pub(crate) read_aloud: Option<accessibility::DocxReadAloudState>,
+    /// リボンとクイックアクセスのカスタマイズ (DOCX-CLOUD-020)
+    pub(crate) toolbar_customize: Option<accessibility::DocxToolbarCustomizeState>,
 }
 
 /// A document's editor: its pages are laid out from the text and shown
@@ -206,10 +297,20 @@ impl FormatEditor for Document {
 
     /// Word's print layout: the ruler over the pages, and no page list.
     fn render_body(editor: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>) -> AnyElement {
-        let is_focus = editor.is_focus_mode();
+        let is_immersive = editor.is_immersive_reader_enabled();
+        let is_focus = editor.is_focus_mode() || is_immersive;
         let mut pages = div().flex().flex_col().flex_1().min_w_0().min_h_0();
+        if is_immersive {
+            pages = pages.child(editor.render_immersive_reader_toolbar(cx));
+        }
         if let Some(bar) = editor.render_docx_infobar(cx) {
             pages = pages.child(bar);
+        }
+        if let Some(bar) = editor.render_recovery_banner(cx) {
+            pages = pages.child(bar);
+        }
+        if editor.is_repaired {
+            pages = pages.child(editor.render_docx_repair_banner(cx));
         }
         let show_v_ruler = !is_focus && editor.ruler_open && editor.vertical_ruler_open;
         let theme = cx.theme().clone();
@@ -230,13 +331,36 @@ impl FormatEditor for Document {
                 pages = pages.child(editor.render_ruler(theme.border, theme.font_family.clone()));
             }
         }
-        let mut content_row = div().flex().flex_1().min_w_0().min_h_0();
+        let mut content_row = div().flex().flex_1().min_w_0().min_h_0().relative();
         if show_v_ruler {
             content_row = content_row.flex_row().child(editor.render_vertical_ruler(theme.border, theme.font_family.clone()));
         } else {
             content_row = content_row.flex_col();
         }
-        content_row = content_row.child(editor.render_document_workspace(cx));
+
+        let (imm_bg, imm_max_w, imm_overlay) = if is_immersive {
+            (
+                editor.immersive_reader_state().map(|s| s.page_color.bg_color()),
+                editor.immersive_reader_state().and_then(|s| s.column_width.max_width_px()),
+                editor.render_immersive_line_focus_overlay(cx),
+            )
+        } else {
+            (None, None, None)
+        };
+        if let Some(bg) = imm_bg {
+            pages = pages.bg(bg);
+        }
+
+        let doc_ws = editor.render_document_workspace(cx);
+        if let Some(max_w) = imm_max_w {
+            content_row = content_row.items_center().child(div().w_full().max_w(px(max_w)).flex_1().min_h_0().child(doc_ws));
+        } else {
+            content_row = content_row.child(doc_ws);
+        }
+        if let Some(overlay) = imm_overlay {
+            content_row = content_row.child(overlay);
+        }
+
         let pages = pages.child(content_row);
         // Word's Navigation Pane (ナビゲーション ウィンドウ):
         // left of the pages: Headings (見出し), Pages (ページ), Results (検索結果).
@@ -312,8 +436,16 @@ impl FormatEditor for Document {
                                     .cursor_pointer()
                                     .hover(|s| s.bg(rgb(0xe8eaed)))
                                     .child(marker)
-                                    .child(SharedString::from(text))
+                                    .child(SharedString::from(text.clone()))
                                     .on_click(cx.listener(move |this, _, _, cx| this.jump_to(id, cx)))
+                                    // The heading dragged onto another goes before it, with what is under it.
+                                    .on_drag(outline_ops::DraggedHeading { id, text: text.clone() }, |dragged, _, _, cx| cx.new(|_| outline_ops::DraggedHeadingView(dragged.text.clone())))
+                                    .drag_over::<outline_ops::DraggedHeading>(|style, _, _, cx| style.border_t_2().border_color(cx.theme().primary))
+                                    .on_drop(cx.listener(move |this, dragged: &outline_ops::DraggedHeading, _, cx| {
+                                        if dragged.id != id {
+                                            this.move_heading_to(dragged.id, id, cx);
+                                        }
+                                    }))
                                     .into_any_element()
                             })
                             .collect();
@@ -383,8 +515,16 @@ impl FormatEditor for Document {
                                         if p.id == from.para {
                                             let s: String = p.runs.iter().map(|r| match &r.kind {
                                                 ibis_doc_model::FlowRunKind::Text(t) => t.as_str(),
-                                                ibis_doc_model::FlowRunKind::RichText { text }
-                                                | ibis_doc_model::FlowRunKind::PlainText { text } => text.as_str(),
+                                                ibis_doc_model::FlowRunKind::RichText { text, .. }
+                                                | ibis_doc_model::FlowRunKind::PlainText { text, .. }
+                                                | ibis_doc_model::FlowRunKind::BuildingBlockGallery { text, .. }
+                                                | ibis_doc_model::FlowRunKind::Group { text, .. } => text.as_str(),
+                                                ibis_doc_model::FlowRunKind::RepeatingSection { items, selected, .. } => items.get(*selected).map(|s| s.as_str()).unwrap_or(""),
+                                                ibis_doc_model::FlowRunKind::FormField(field) => match &field.kind {
+                                                    ibis_doc_model::FormFieldKind::TextInput { value, .. } => value.as_str(),
+                                                    ibis_doc_model::FormFieldKind::DropDown { items, selected, .. } => items.get(*selected).map(|s| s.as_str()).unwrap_or(""),
+                                                    ibis_doc_model::FormFieldKind::CheckBox { checked, .. } => if *checked { "☒" } else { "☐" },
+                                                },
                                                 _ => "",
                                             }).collect();
                                             return Some(s);
@@ -496,7 +636,7 @@ impl FormatEditor for Document {
         } else {
             None
         };
-        div().flex().flex_row().flex_1().min_h_0().relative().children(outline).child(pages).children(exit_focus_btn).into_any_element()
+        div().flex().flex_row().flex_1().min_h_0().relative().children(outline).child(pages).children(exit_focus_btn).children(editor.render_docx_comment_dialogs(cx)).into_any_element()
     }
 
     /// Typing and the input method go to the document while it has a caret.
@@ -536,19 +676,19 @@ impl FormatEditor for Document {
         editor.doc_character_index_for_point(point, window, cx)
     }
 
-    #[cfg(all(target_os = "macos", feature = "scenarios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
     fn scenarios() -> Vec<(&'static str, fn())> {
         scenarios::all()
     }
 
     /// The sidebar: 検索と置換's panel when it is open.
     fn sidebar(editor: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
-        editor.font_panel(cx).or_else(|| editor.color_panel(cx)).or_else(|| editor.table_size_panel(cx)).or_else(|| editor.table_formula_panel(cx)).or_else(|| editor.picture_panel(cx)).or_else(|| editor.paragraph_panel(cx)).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx)).or_else(|| editor.link_panel(cx)).or_else(|| editor.find_panel(cx)).or_else(|| editor.ruby_panel(cx)).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.merge_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx)).or_else(|| editor.notes_panel(cx)).or_else(|| editor.bookmark_panel(cx)).or_else(|| editor.watermark_panel(cx)).or_else(|| editor.new_style_panel(cx)).or_else(|| editor.symbol_panel(cx)).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx)).or_else(|| editor.caption_panel(cx)).or_else(|| editor.doc_properties_panel(cx)).or_else(|| editor.cross_reference_panel(cx)).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx)).or_else(|| editor.user_info_panel(cx)).or_else(|| editor.kinsoku_panel(cx)).or_else(|| editor.go_to_panel(cx))
+        editor.font_panel(cx).or_else(|| editor.color_panel(cx)).or_else(|| editor.table_size_panel(cx)).or_else(|| editor.table_formula_panel(cx)).or_else(|| editor.picture_panel(cx)).or_else(|| editor.docx_compress_panel(cx)).or_else(|| editor.paragraph_panel(cx)).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx)).or_else(|| editor.link_panel(cx)).or_else(|| editor.find_panel(cx)).or_else(|| editor.ruby_panel(cx)).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.merge_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx)).or_else(|| editor.notes_panel(cx)).or_else(|| editor.bookmark_panel(cx)).or_else(|| editor.watermark_panel(cx)).or_else(|| editor.new_style_panel(cx)).or_else(|| editor.symbol_panel(cx)).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx)).or_else(|| editor.caption_panel(cx)).or_else(|| editor.doc_properties_panel(cx)).or_else(|| editor.cross_reference_panel(cx)).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx)).or_else(|| editor.user_info_panel(cx)).or_else(|| editor.kinsoku_panel(cx)).or_else(|| editor.go_to_panel(cx)).or_else(|| editor.doc_spelling_panel(cx)).or_else(|| editor.doc_chart_panel(cx)).or_else(|| editor.control_panel(cx)).or_else(|| editor.doc_autocorrect_panel(cx)).or_else(|| editor.autorecover_settings_panel(cx)).or_else(|| editor.recover_unsaved_panel(cx)).or_else(|| editor.docx_math_panel(cx)).or_else(|| editor.quick_parts_panel(cx)).or_else(|| editor.doc_inspect_panel(cx)).or_else(|| editor.doc_compatibility_panel(cx)).or_else(|| editor.doc_print_panel(cx)).or_else(|| editor.doc_source_manager_panel(cx)).or_else(|| editor.doc_thesaurus_panel(cx)).or_else(|| editor.doc_repair_panel(cx)).or_else(|| editor.doc_template_panel(cx)).or_else(|| editor.list_style_panel(cx)).or_else(|| editor.docx_theme_panel(cx)).or_else(|| editor.master_doc_panel(cx)).or_else(|| editor.docx_ink_panel(cx)).or_else(|| editor.doc_convert_panel(cx)).or_else(|| editor.docx_screen_reader_panel(cx)).or_else(|| editor.docx_read_aloud_panel(cx)).or_else(|| editor.docx_customize_toolbar_panel(cx))
     }
 
     /// The title bar's コメントを追加: a comment on the selection.
     fn add_comment(_: &SlideEditor) -> Option<crate::shell::chrome::Handler> {
-        Some(std::rc::Rc::new(|this: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>| this.open_comments(window, cx)))
+        Some(std::rc::Rc::new(|this: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>| this.add_new_comment(window, cx)))
     }
 
     /// The title bar's コメントを表示: the comments' panel shown or hidden.
@@ -690,6 +830,172 @@ impl SlideEditor {
         }
         self.scroll_to_caret(cx);
         cx.notify();
+    }
+
+    /// 新規コメント追加（選択範囲がない場合は情報メッセージボックスを表示）
+    pub(crate) fn add_new_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_selection = self.doc_state().map_or(false, |s| {
+            if let (Some(a), Some(c)) = (s.anchor, s.caret) {
+                a != c
+            } else {
+                false
+            }
+        });
+        if !has_selection {
+            if let Some(state) = self.doc_state_mut() {
+                state.comment_alert_no_selection = true;
+            }
+            cx.notify();
+            return;
+        }
+        self.open_comments(window, cx);
+    }
+
+    /// コメント関連のダイアログ（選択範囲なし、削除確認）の描画
+    pub(crate) fn render_docx_comment_dialogs(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let state = self.doc_state()?;
+
+        if state.comment_alert_no_selection {
+            return Some(
+                div()
+                    .id("docx-comment-alert-modal")
+                    .absolute()
+                    .inset_0()
+                    .bg(hsla(0.0, 0.0, 0.0, 0.35))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .id("docx-comment-alert-box")
+                            .w(px(360.))
+                            .p(px(20.))
+                            .rounded_lg()
+                            .bg(rgb(0xffffff))
+                            .shadow_lg()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .text_color(rgb(0x222222))
+                                    .child(crate::shell::i18n::text("docx.comments.alert-no-selection.message"))
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .justify_end()
+                                    .child(
+                                        div()
+                                            .id("docx-comment-alert-ok")
+                                            .px(px(16.))
+                                            .py(px(6.))
+                                            .rounded_md()
+                                            .bg(rgb(0x1a73e8))
+                                            .text_color(rgb(0xffffff))
+                                            .text_size(px(13.))
+                                            .cursor_pointer()
+                                            .child(crate::shell::i18n::text("docx.comments.alert-no-selection.ok"))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                if let Some(s) = this.doc_state_mut() {
+                                                    s.comment_alert_no_selection = false;
+                                                }
+                                                cx.notify();
+                                            }))
+                                    )
+                            )
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        if let Some(comment_id) = state.comment_delete_confirm {
+            return Some(
+                div()
+                    .id("docx-comment-delete-modal")
+                    .absolute()
+                    .inset_0()
+                    .bg(hsla(0.0, 0.0, 0.0, 0.35))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .id("docx-comment-delete-box")
+                            .w(px(380.))
+                            .p(px(20.))
+                            .rounded_lg()
+                            .bg(rgb(0xffffff))
+                            .shadow_lg()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_size(px(15.))
+                                    .text_color(rgb(0x222222))
+                                    .child(crate::shell::i18n::text("docx.comments.delete-confirm.title"))
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .text_color(rgb(0x444444))
+                                    .child(crate::shell::i18n::text("docx.comments.delete-confirm.message"))
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .justify_end()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .id("docx-comment-delete-cancel")
+                                            .px(px(14.))
+                                            .py(px(6.))
+                                            .rounded_md()
+                                            .bg(rgb(0xf0f0f0))
+                                            .text_color(rgb(0x333333))
+                                            .text_size(px(13.))
+                                            .cursor_pointer()
+                                            .hover(|h| h.bg(rgb(0xe0e0e0)))
+                                            .child(crate::shell::i18n::text("docx.comments.delete-confirm.cancel"))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                if let Some(s) = this.doc_state_mut() {
+                                                    s.comment_delete_confirm = None;
+                                                }
+                                                cx.notify();
+                                            }))
+                                    )
+                                    .child(
+                                        div()
+                                            .id("docx-comment-delete-ok")
+                                            .px(px(14.))
+                                            .py(px(6.))
+                                            .rounded_md()
+                                            .bg(rgb(0xd93025))
+                                            .text_color(rgb(0xffffff))
+                                            .text_size(px(13.))
+                                            .cursor_pointer()
+                                            .hover(|h| h.bg(rgb(0xb3261e)))
+                                            .child(crate::shell::i18n::text("docx.comments.delete-confirm.delete"))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if let Some(s) = this.doc_state_mut() {
+                                                    s.comment_delete_confirm = None;
+                                                }
+                                                this.delete_comment(comment_id, cx);
+                                            }))
+                                    )
+                            )
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        None
     }
 }
 

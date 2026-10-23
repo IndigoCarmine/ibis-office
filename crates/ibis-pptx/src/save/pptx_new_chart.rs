@@ -17,6 +17,10 @@ const REL_PACKAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006
 const CT_CHART: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
 const CT_CHART_EX: &str = "application/vnd.ms-office.chartex+xml";
 const REL_CHART_EX: &str = "http://schemas.microsoft.com/office/2014/relationships/chartEx";
+const REL_CHART_STYLE: &str = "http://schemas.microsoft.com/office/2011/relationships/chartStyle";
+const REL_CHART_COLOR_STYLE: &str = "http://schemas.microsoft.com/office/2011/relationships/chartColorStyle";
+const CT_CHART_STYLE: &str = "application/vnd.ms-office.chartstyle+xml";
+const CT_CHART_COLOR_STYLE: &str = "application/vnd.ms-office.chartcolorstyle+xml";
 const CT_XLSX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /// Kinds of new chart available in 挿入 > グラフ.
@@ -28,26 +32,50 @@ pub enum NewChartKind {
     StackedColumn,
     /// 100% 積み上げ縦棒
     PercentStackedColumn,
+    /// 3D 集合縦棒
+    ClusteredColumn3D,
+    /// 3D 積み上げ縦棒
+    StackedColumn3D,
+    /// 100% 3D 積み上げ縦棒
+    PercentStackedColumn3D,
+    /// 3D 縦棒 (系列方向3D縦棒)
+    Column3D,
     /// 集合横棒
     ClusteredBar,
     /// 積み上げ横棒
     StackedBar,
     /// 100% 積み上げ横棒
     PercentStackedBar,
+    /// 3D 集合横棒
+    ClusteredBar3D,
+    /// 3D 積み上げ横棒
+    StackedBar3D,
+    /// 100% 3D 積み上げ横棒
+    PercentStackedBar3D,
     /// 折れ線
     Line,
     /// 積み上げ折れ線
     StackedLine,
     /// 100% 積み上げ折れ線
     PercentStackedLine,
+    /// 3D 折れ線
+    Line3D,
     /// 面
     Area,
     /// 積み上げ面
     StackedArea,
     /// 100% 積み上げ面
     PercentStackedArea,
+    /// 3D 面
+    Area3D,
+    /// 3D 積み上げ面
+    StackedArea3D,
+    /// 100% 3D 積み上げ面
+    PercentStackedArea3D,
     /// 円
     Pie,
+    /// 3D 円
+    Pie3D,
     /// ドーナツ
     Doughnut,
     /// 散布図 (マーカー)
@@ -96,12 +124,18 @@ pub enum NewChartKind {
     Pareto,
     /// じょうご (chartEx)
     Funnel,
+    /// 箱ひげ図 (chartEx)
+    BoxWhisker,
+    /// ツリーマップ (chartEx)
+    Treemap,
+    /// サンバースト (chartEx)
+    Sunburst,
 }
 
 impl NewChartKind {
     /// A new kind of chart (a `cx:chartSpace` part, "chartEx").
     pub fn is_chart_ex(self) -> bool {
-        matches!(self, Self::Waterfall | Self::Histogram | Self::Pareto | Self::Funnel)
+        matches!(self, Self::Waterfall | Self::Histogram | Self::Pareto | Self::Funnel | Self::BoxWhisker | Self::Treemap | Self::Sunburst)
     }
 }
 
@@ -406,6 +440,8 @@ fn ex_data(kind: NewChartKind) -> (Vec<&'static str>, Vec<f64>, &'static str) {
         NewChartKind::Waterfall => (vec!["開始", "増加 1", "減少 1", "増加 2", "合計"], vec![100.0, 40.0, -25.0, 10.0, 125.0], "売上"),
         NewChartKind::Pareto => (vec!["分類 A", "分類 B", "分類 C", "分類 D", "分類 E"], vec![42.0, 27.0, 16.0, 9.0, 6.0], "件数"),
         NewChartKind::Funnel => (vec!["問い合わせ", "見積", "商談", "受注"], vec![120.0, 80.0, 45.0, 20.0], "件数"),
+        NewChartKind::BoxWhisker => (vec!["A", "A", "A", "A", "B", "B", "B", "B"], vec![10.0, 12.0, 14.0, 20.0, 8.0, 15.0, 16.0, 30.0], "値"),
+        NewChartKind::Treemap | NewChartKind::Sunburst => (vec!["A", "A", "B", "B", "C"], vec![40.0, 25.0, 20.0, 10.0, 5.0], "売上"),
         // Histogram: the scores of a class.
         _ => (Vec::new(), vec![35.0, 42.0, 48.0, 51.0, 55.0, 58.0, 60.0, 62.0, 63.0, 65.0, 67.0, 68.0, 70.0, 72.0, 73.0, 75.0, 78.0, 81.0, 85.0, 92.0], "点数"),
     }
@@ -450,41 +486,94 @@ fn ex_workbook(kind: NewChartKind) -> Result<Vec<u8>, Error> {
     opened.source.save(doc.presentation(), crate::SaveOptions::default())
 }
 
+/// What a chartEx chart is made of: where its values are (a reference to cells) and what they are (cached).
+pub(crate) struct ExCells {
+    /// The series' name: its cell and the text.
+    pub name: Option<(String, String)>,
+    /// The categories (a histogram has none): their cells and the texts of each level, the finest level first (a
+    /// treemap or a sunburst has a hierarchy: the cells are several columns, each column a level; the others one).
+    pub categories: Option<(String, Vec<Vec<String>>)>,
+    /// The values: their cells and numbers (a blank is `None`).
+    pub values: (String, Vec<Option<f64>>),
+    /// The title of the chart.
+    pub title: String,
+}
+
 /// A chartEx part (`cx:chartSpace`) of `kind` with its sample data cached, the references into its workbook (Sheet1).
 fn chart_ex_xml(book_rel: &str, kind: NewChartKind) -> String {
     let (cats, values, name) = ex_data(kind);
     let n = values.len();
     let with_cats = !cats.is_empty();
     let value_column = if with_cats { 'B' } else { 'A' };
-    let points = |items: Vec<String>| items.iter().enumerate().map(|(i, v)| format!("<cx:pt idx=\"{i}\">{v}</cx:pt>")).collect::<String>();
-    let cat_dim = if with_cats {
-        format!("<cx:strDim type=\"cat\"><cx:f>Sheet1!$A$2:$A${}</cx:f><cx:lvl ptCount=\"{n}\">{}</cx:lvl></cx:strDim>", n + 1, points(cats.iter().map(|c| c.to_string()).collect()))
-    } else {
-        String::new()
+    let cells = ExCells {
+        name: Some((format!("Sheet1!${value_column}$1"), name.to_string())),
+        categories: with_cats.then(|| (format!("Sheet1!$A$2:$A${}", n + 1), vec![cats.iter().map(|c| c.to_string()).collect()])),
+        values: (format!("Sheet1!${value_column}$2:${value_column}${}", n + 1), values.iter().map(|v| Some(*v)).collect()),
+        title: name.to_string(),
     };
-    let val_dim = format!("<cx:numDim type=\"val\"><cx:f>Sheet1!${value_column}$2:${value_column}${}</cx:f><cx:lvl ptCount=\"{n}\" formatCode=\"General\">{}</cx:lvl></cx:numDim>", n + 1, points(values.iter().map(|v| v.to_string()).collect()));
-    let series_name = format!("<cx:tx><cx:txData><cx:f>Sheet1!${value_column}$1</cx:f><cx:v>{name}</cx:v></cx:txData></cx:tx>");
-    let labels = "<cx:dataLabels pos=\"outEnd\"><cx:visibility seriesName=\"0\" categoryName=\"0\" value=\"1\"/></cx:dataLabels>";
+    chart_ex_with(kind, &cells, true, Some(book_rel))
+}
+
+/// A chartEx part of `kind` over `cells`: with the total marks of a waterfall's first and last point when
+/// `subtotals`, and its workbook `book_rel` when it has one (a chart in a presentation; one in a workbook reads
+/// the sheet's cells).
+pub(crate) fn chart_ex_with(kind: NewChartKind, cells: &ExCells, subtotals: bool, book_rel: Option<&str>) -> String {
+    let name = super::pptx_new::escape(&cells.title);
+    let n = cells.values.1.len();
+    let points = |items: Vec<String>| items.iter().enumerate().map(|(i, v)| format!("<cx:pt idx=\"{i}\">{}</cx:pt>", super::pptx_new::escape(v))).collect::<String>();
+    let cat_dim = match &cells.categories {
+        Some((f, levels)) => {
+            let count = levels.first().map_or(0, Vec::len);
+            let lvls: String = levels.iter().map(|texts| format!("<cx:lvl ptCount=\"{}\">{}</cx:lvl>", texts.len().max(count), points(texts.clone()))).collect();
+            format!("<cx:strDim type=\"cat\"><cx:f>{f}</cx:f>{lvls}</cx:strDim>")
+        }
+        None => String::new(),
+    };
+    // A blank value has no point.
+    let value_points: String = cells.values.1.iter().enumerate().filter_map(|(i, v)| v.map(|v| format!("<cx:pt idx=\"{i}\">{v}</cx:pt>"))).collect();
+    // A treemap's and a sunburst's values are sizes.
+    let dim_type = if matches!(kind, NewChartKind::Treemap | NewChartKind::Sunburst) { "size" } else { "val" };
+    let val_dim = format!("<cx:numDim type=\"{dim_type}\"><cx:f>{}</cx:f><cx:lvl ptCount=\"{n}\" formatCode=\"General\">{value_points}</cx:lvl></cx:numDim>", cells.values.0);
+    let series_name = match &cells.name {
+        Some((f, text)) => format!("<cx:tx><cx:txData><cx:f>{f}</cx:f><cx:v>{}</cx:v></cx:txData></cx:tx>", super::pptx_new::escape(text)),
+        None => String::new(),
+    };
+    let total_marks = if subtotals { format!("<cx:subtotals><cx:idx val=\"0\"/><cx:idx val=\"{}\"/></cx:subtotals>", n.saturating_sub(1)) } else { String::new() };
+    // A Pareto chart gets no bar labels: PowerPoint shows them in the cumulative line's percentage format even with numFmt General (checked), and an Excel-made one has none either.
+    let labels = "<cx:dataLabels pos=\"outEnd\"><cx:numFmt formatCode=\"General\" sourceLinked=\"0\"/><cx:visibility seriesName=\"0\" categoryName=\"0\" value=\"1\"/></cx:dataLabels>";
     let (series, axes) = match kind {
         NewChartKind::Waterfall => (
-            format!("<cx:series layoutId=\"waterfall\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}{labels}<cx:dataId val=\"0\"/><cx:layoutPr><cx:visibility connectorLines=\"1\"/><cx:subtotals><cx:idx val=\"0\"/><cx:idx val=\"{}\"/></cx:subtotals></cx:layoutPr></cx:series>", n - 1),
+            format!("<cx:series layoutId=\"waterfall\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}{labels}<cx:dataId val=\"0\"/><cx:layoutPr><cx:visibility connectorLines=\"1\"/>{total_marks}</cx:layoutPr></cx:series>"),
             "<cx:axis id=\"0\"><cx:catScaling gapWidth=\"0.5\"/><cx:tickLabels/></cx:axis><cx:axis id=\"1\"><cx:valScaling/><cx:majorGridlines/><cx:tickLabels/></cx:axis>".to_string(),
         ),
         NewChartKind::Pareto => (
-            format!("<cx:series layoutId=\"clusteredColumn\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}{labels}<cx:dataId val=\"0\"/><cx:axisId val=\"1\"/></cx:series><cx:series layoutId=\"paretoLine\" ownerIdx=\"0\" uniqueId=\"{{00000000-0000-4000-8000-000000000002}}\"><cx:axisId val=\"2\"/></cx:series>"),
+            format!("<cx:series layoutId=\"clusteredColumn\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}<cx:dataId val=\"0\"/><cx:axisId val=\"1\"/></cx:series><cx:series layoutId=\"paretoLine\" ownerIdx=\"0\" uniqueId=\"{{00000000-0000-4000-8000-000000000002}}\"><cx:axisId val=\"2\"/></cx:series>"),
             "<cx:axis id=\"0\"><cx:catScaling gapWidth=\"0.5\"/><cx:tickLabels/></cx:axis><cx:axis id=\"1\"><cx:valScaling/><cx:majorGridlines/><cx:tickLabels/></cx:axis><cx:axis id=\"2\"><cx:valScaling max=\"1\" min=\"0\"/><cx:units unit=\"percentage\"/><cx:tickLabels/></cx:axis>".to_string(),
         ),
         NewChartKind::Funnel => (
             format!("<cx:series layoutId=\"funnel\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}{labels}<cx:dataId val=\"0\"/></cx:series>"),
             "<cx:axis id=\"0\"><cx:catScaling gapWidth=\"0.06\"/><cx:tickLabels/></cx:axis>".to_string(),
         ),
+        NewChartKind::BoxWhisker => (
+            format!("<cx:series layoutId=\"boxWhisker\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}<cx:dataId val=\"0\"/><cx:layoutPr><cx:visibility meanLine=\"0\" meanMarker=\"1\" nonoutliers=\"0\" outliers=\"1\"/><cx:statistics quartileMethod=\"exclusive\"/></cx:layoutPr></cx:series>"),
+            "<cx:axis id=\"0\"><cx:catScaling gapWidth=\"1\"/><cx:tickLabels/></cx:axis><cx:axis id=\"1\"><cx:valScaling/><cx:majorGridlines/><cx:tickLabels/></cx:axis>".to_string(),
+        ),
+        NewChartKind::Treemap => (
+            format!("<cx:series layoutId=\"treemap\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}<cx:dataLabels pos=\"inEnd\"><cx:visibility seriesName=\"0\" categoryName=\"1\" value=\"0\"/></cx:dataLabels><cx:dataId val=\"0\"/><cx:layoutPr><cx:parentLabelLayout val=\"overlapping\"/></cx:layoutPr></cx:series>"),
+            String::new(),
+        ),
+        NewChartKind::Sunburst => (
+            format!("<cx:series layoutId=\"sunburst\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}<cx:dataLabels pos=\"inEnd\"><cx:visibility seriesName=\"0\" categoryName=\"1\" value=\"0\"/></cx:dataLabels><cx:dataId val=\"0\"/></cx:series>"),
+            String::new(),
+        ),
         _ => (
-            format!("<cx:series layoutId=\"clusteredColumn\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}{labels}<cx:dataId val=\"0\"/><cx:layoutPr><cx:binning intervalClosed=\"r\"/></cx:layoutPr></cx:series>"),
+            format!("<cx:series layoutId=\"clusteredColumn\" uniqueId=\"{{00000000-0000-4000-8000-000000000001}}\">{series_name}<cx:dataId val=\"0\"/><cx:layoutPr><cx:binning intervalClosed=\"r\"/></cx:layoutPr></cx:series>"),
             "<cx:axis id=\"0\"><cx:catScaling gapWidth=\"0\"/><cx:tickLabels/></cx:axis><cx:axis id=\"1\"><cx:valScaling/><cx:majorGridlines/><cx:tickLabels/></cx:axis>".to_string(),
         ),
     };
+    let external = book_rel.map(|rel| format!("<cx:externalData r:id=\"{rel}\" cx:autoUpdate=\"0\"/>")).unwrap_or_default();
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<cx:chartSpace xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:cx=\"http://schemas.microsoft.com/office/drawing/2014/chartex\"><cx:chartData><cx:externalData r:id=\"{book_rel}\" cx:autoUpdate=\"0\"/><cx:data id=\"0\">{cat_dim}{val_dim}</cx:data></cx:chartData><cx:chart><cx:title pos=\"t\" align=\"ctr\" overlay=\"0\"><cx:tx><cx:txData><cx:v>{name}</cx:v></cx:txData></cx:tx></cx:title><cx:plotArea><cx:plotAreaRegion>{series}</cx:plotAreaRegion>{axes}</cx:plotArea><cx:legend pos=\"t\" align=\"ctr\" overlay=\"0\"/></cx:chart></cx:chartSpace>"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<cx:chartSpace xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:cx=\"http://schemas.microsoft.com/office/drawing/2014/chartex\"><cx:chartData>{external}<cx:data id=\"0\">{cat_dim}{val_dim}</cx:data></cx:chartData><cx:chart><cx:title pos=\"t\" align=\"ctr\" overlay=\"0\"><cx:tx><cx:txData><cx:v>{name}</cx:v></cx:txData></cx:tx></cx:title><cx:plotArea><cx:plotAreaRegion>{series}</cx:plotAreaRegion>{axes}</cx:plotArea><cx:legend pos=\"t\" align=\"ctr\" overlay=\"0\"/></cx:chart></cx:chartSpace>"
     )
 }
 
@@ -503,18 +592,24 @@ fn pie_chart_xml(book_rel: &str, kind: NewChartKind) -> String {
 <c:cat><c:strRef><c:f>Sheet1!$A$2:$A$5</c:f><c:strCache><c:ptCount val=\"4\"/>{cats}</c:strCache></c:strRef></c:cat>\
 <c:val><c:numRef><c:f>Sheet1!$B$2:$B$5</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"4\"/>{vals}</c:numCache></c:numRef></c:val></c:ser>"
     );
-    let chart_elem = match kind {
-        NewChartKind::Doughnut => format!("<c:doughnutChart><c:varyColors val=\"1\"/>{ser}<c:firstSliceAng val=\"0\"/><c:holeSize val=\"75\"/></c:doughnutChart>"),
-        NewChartKind::PieOfPie => format!("<c:ofPieChart><c:ofPieType val=\"pie\"/><c:varyColors val=\"1\"/>{ser}<c:splitType val=\"pos\"/><c:splitPos val=\"2\"/><c:secondPieSize val=\"75\"/><c:serLines/></c:ofPieChart>"),
-        NewChartKind::BarOfPie => format!("<c:ofPieChart><c:ofPieType val=\"bar\"/><c:varyColors val=\"1\"/>{ser}<c:splitType val=\"pos\"/><c:splitPos val=\"2\"/><c:secondPieSize val=\"75\"/><c:serLines/></c:ofPieChart>"),
-        _ => format!("<c:pieChart><c:varyColors val=\"1\"/>{ser}<c:firstSliceAng val=\"0\"/></c:pieChart>"),
+    let (chart_elem, is_3d) = match kind {
+        NewChartKind::Doughnut => (format!("<c:doughnutChart><c:varyColors val=\"1\"/>{ser}<c:firstSliceAng val=\"0\"/><c:holeSize val=\"75\"/></c:doughnutChart>"), false),
+        NewChartKind::PieOfPie => (format!("<c:ofPieChart><c:ofPieType val=\"pie\"/><c:varyColors val=\"1\"/>{ser}<c:splitType val=\"pos\"/><c:splitPos val=\"2\"/><c:secondPieSize val=\"75\"/><c:serLines/></c:ofPieChart>"), false),
+        NewChartKind::BarOfPie => (format!("<c:ofPieChart><c:ofPieType val=\"bar\"/><c:varyColors val=\"1\"/>{ser}<c:splitType val=\"pos\"/><c:splitPos val=\"2\"/><c:secondPieSize val=\"75\"/><c:serLines/></c:ofPieChart>"), false),
+        NewChartKind::Pie3D => (format!("<c:pie3DChart><c:varyColors val=\"1\"/>{ser}</c:pie3DChart>"), true),
+        _ => (format!("<c:pieChart><c:varyColors val=\"1\"/>{ser}<c:firstSliceAng val=\"0\"/></c:pieChart>"), false),
+    };
+    let view3d = if is_3d {
+        "<c:view3D><c:rotX val=\"30\"/><c:rotY val=\"0\"/><c:rAngAx val=\"0\"/></c:view3D>"
+    } else {
+        ""
     };
     let no_line = "<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>";
     let text = text_props(1197);
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
 <c:date1904 val=\"0\"/><c:lang val=\"ja-JP\"/><c:roundedCorners val=\"0\"/>\
-<c:chart><c:autoTitleDeleted val=\"1\"/><c:plotArea><c:layout/>\
+<c:chart><c:autoTitleDeleted val=\"1\"/>{view3d}<c:plotArea><c:layout/>\
 {chart_elem}\
 {no_line}</c:plotArea><c:legend><c:legendPos val=\"r\"/><c:overlay val=\"0\"/>{no_line}{text}</c:legend><c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart>\
 {no_line}{text}<c:externalData r:id=\"{book_rel}\"><c:autoUpdate val=\"0\"/></c:externalData></c:chartSpace>"
@@ -833,7 +928,7 @@ fn chart_xml(book_rel: &str, kind: NewChartKind) -> String {
     ) {
         return combo_chart_xml(book_rel, kind);
     }
-    if matches!(kind, NewChartKind::Pie | NewChartKind::Doughnut | NewChartKind::PieOfPie | NewChartKind::BarOfPie) {
+    if matches!(kind, NewChartKind::Pie | NewChartKind::Pie3D | NewChartKind::Doughnut | NewChartKind::PieOfPie | NewChartKind::BarOfPie) {
         return pie_chart_xml(book_rel, kind);
     }
     if matches!(kind, NewChartKind::Scatter | NewChartKind::ScatterSmooth | NewChartKind::ScatterLines) {
@@ -865,7 +960,7 @@ fn chart_xml(book_rel: &str, kind: NewChartKind) -> String {
         let col = column(s);
         let n = s + 1;
         let ser_body = match kind {
-            NewChartKind::Line | NewChartKind::StackedLine | NewChartKind::PercentStackedLine | NewChartKind::Radar => {
+            NewChartKind::Line | NewChartKind::StackedLine | NewChartKind::PercentStackedLine | NewChartKind::Line3D | NewChartKind::Radar => {
                 format!(
                     "<c:ser><c:idx val=\"{s}\"/><c:order val=\"{s}\"/><c:tx><c:strRef><c:f>Sheet1!${col}$1</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>{name}</c:v></c:pt></c:strCache></c:strRef></c:tx>\
 <c:spPr><a:ln w=\"25400\"><a:solidFill><a:schemeClr val=\"accent{n}\"/></a:solidFill><a:round/></a:ln></c:spPr><c:marker><c:symbol val=\"none\"/></c:marker>\
@@ -873,7 +968,7 @@ fn chart_xml(book_rel: &str, kind: NewChartKind) -> String {
 <c:val><c:numRef><c:f>Sheet1!${col}$2:${col}$5</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"4\"/>{vals}</c:numCache></c:numRef></c:val><c:smooth val=\"0\"/></c:ser>"
                 )
             }
-            NewChartKind::Area | NewChartKind::StackedArea | NewChartKind::PercentStackedArea | NewChartKind::RadarFilled => {
+            NewChartKind::Area | NewChartKind::StackedArea | NewChartKind::PercentStackedArea | NewChartKind::Area3D | NewChartKind::StackedArea3D | NewChartKind::PercentStackedArea3D | NewChartKind::RadarFilled => {
                 format!(
                     "<c:ser><c:idx val=\"{s}\"/><c:order val=\"{s}\"/><c:tx><c:strRef><c:f>Sheet1!${col}$1</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>{name}</c:v></c:pt></c:strCache></c:strRef></c:tx>\
 <c:spPr><a:solidFill><a:schemeClr val=\"accent{n}\"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr>\
@@ -897,28 +992,75 @@ fn chart_xml(book_rel: &str, kind: NewChartKind) -> String {
         NewChartKind::ClusteredColumn => format!("<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"219\"/><c:overlap val=\"-27\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:barChart>"),
         NewChartKind::StackedColumn => format!("<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"stacked\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:overlap val=\"100\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:barChart>"),
         NewChartKind::PercentStackedColumn => format!("<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"percentStacked\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:overlap val=\"100\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:barChart>"),
+        NewChartKind::ClusteredColumn3D => format!("<c:bar3DChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:gapDepth val=\"150\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:bar3DChart>"),
+        NewChartKind::StackedColumn3D => format!("<c:bar3DChart><c:barDir val=\"col\"/><c:grouping val=\"stacked\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:gapDepth val=\"150\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:bar3DChart>"),
+        NewChartKind::PercentStackedColumn3D => format!("<c:bar3DChart><c:barDir val=\"col\"/><c:grouping val=\"percentStacked\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:gapDepth val=\"150\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:bar3DChart>"),
+        NewChartKind::Column3D => format!("<c:bar3DChart><c:barDir val=\"col\"/><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:gapDepth val=\"150\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:bar3DChart>"),
         NewChartKind::ClusteredBar => format!("<c:barChart><c:barDir val=\"bar\"/><c:grouping val=\"clustered\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"219\"/><c:overlap val=\"-27\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:barChart>"),
         NewChartKind::StackedBar => format!("<c:barChart><c:barDir val=\"bar\"/><c:grouping val=\"stacked\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:overlap val=\"100\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:barChart>"),
         NewChartKind::PercentStackedBar => format!("<c:barChart><c:barDir val=\"bar\"/><c:grouping val=\"percentStacked\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:overlap val=\"100\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:barChart>"),
+        NewChartKind::ClusteredBar3D => format!("<c:bar3DChart><c:barDir val=\"bar\"/><c:grouping val=\"clustered\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:gapDepth val=\"150\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:bar3DChart>"),
+        NewChartKind::StackedBar3D => format!("<c:bar3DChart><c:barDir val=\"bar\"/><c:grouping val=\"stacked\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:gapDepth val=\"150\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:bar3DChart>"),
+        NewChartKind::PercentStackedBar3D => format!("<c:bar3DChart><c:barDir val=\"bar\"/><c:grouping val=\"percentStacked\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:gapDepth val=\"150\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:bar3DChart>"),
         NewChartKind::Line => format!("<c:lineChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{series}<c:marker val=\"1\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:lineChart>"),
         NewChartKind::StackedLine => format!("<c:lineChart><c:grouping val=\"stacked\"/><c:varyColors val=\"0\"/>{series}<c:marker val=\"1\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:lineChart>"),
         NewChartKind::PercentStackedLine => format!("<c:lineChart><c:grouping val=\"percentStacked\"/><c:varyColors val=\"0\"/>{series}<c:marker val=\"1\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:lineChart>"),
+        NewChartKind::Line3D => format!("<c:line3DChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{series}<c:gapDepth val=\"150\"/><c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:line3DChart>"),
         NewChartKind::Area => format!("<c:areaChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{series}<c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:areaChart>"),
         NewChartKind::StackedArea => format!("<c:areaChart><c:grouping val=\"stacked\"/><c:varyColors val=\"0\"/>{series}<c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:areaChart>"),
         NewChartKind::PercentStackedArea => format!("<c:areaChart><c:grouping val=\"percentStacked\"/><c:varyColors val=\"0\"/>{series}<c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:areaChart>"),
+        NewChartKind::Area3D => format!("<c:area3DChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{series}<c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:area3DChart>"),
+        NewChartKind::StackedArea3D => format!("<c:area3DChart><c:grouping val=\"stacked\"/><c:varyColors val=\"0\"/>{series}<c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:area3DChart>"),
+        NewChartKind::PercentStackedArea3D => format!("<c:area3DChart><c:grouping val=\"percentStacked\"/><c:varyColors val=\"0\"/>{series}<c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:area3DChart>"),
         NewChartKind::Radar => format!("<c:radarChart><c:radarStyle val=\"standard\"/>{series}<c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:radarChart>"),
         NewChartKind::RadarFilled => format!("<c:radarChart><c:radarStyle val=\"filled\"/>{series}<c:axId val=\"100000001\"/><c:axId val=\"100000002\"/></c:radarChart>"),
         _ => unreachable!(),
     };
 
-    let is_bar = matches!(kind, NewChartKind::ClusteredBar | NewChartKind::StackedBar | NewChartKind::PercentStackedBar);
+    let is_bar = matches!(
+        kind,
+        NewChartKind::ClusteredBar
+            | NewChartKind::StackedBar
+            | NewChartKind::PercentStackedBar
+            | NewChartKind::ClusteredBar3D
+            | NewChartKind::StackedBar3D
+            | NewChartKind::PercentStackedBar3D
+    );
     let cat_pos = if is_bar { "l" } else { "b" };
     let val_pos = if is_bar { "b" } else { "l" };
-    let is_percent = matches!(kind, NewChartKind::PercentStackedColumn | NewChartKind::PercentStackedBar | NewChartKind::PercentStackedLine | NewChartKind::PercentStackedArea);
+    let is_percent = matches!(
+        kind,
+        NewChartKind::PercentStackedColumn
+            | NewChartKind::PercentStackedBar
+            | NewChartKind::PercentStackedLine
+            | NewChartKind::PercentStackedArea
+            | NewChartKind::PercentStackedColumn3D
+            | NewChartKind::PercentStackedBar3D
+            | NewChartKind::PercentStackedArea3D
+    );
     let val_num_fmt = if is_percent {
         "<c:numFmt formatCode=\"0%\" sourceLinked=\"0\"/>"
     } else {
         "<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>"
+    };
+    let is_3d = matches!(
+        kind,
+        NewChartKind::ClusteredColumn3D
+            | NewChartKind::StackedColumn3D
+            | NewChartKind::PercentStackedColumn3D
+            | NewChartKind::Column3D
+            | NewChartKind::ClusteredBar3D
+            | NewChartKind::StackedBar3D
+            | NewChartKind::PercentStackedBar3D
+            | NewChartKind::Line3D
+            | NewChartKind::Area3D
+            | NewChartKind::StackedArea3D
+            | NewChartKind::PercentStackedArea3D
+    );
+    let view3d = if is_3d {
+        "<c:view3D><c:rotX val=\"15\"/><c:rotY val=\"20\"/><c:rAngAx val=\"1\"/><c:depthPercent val=\"100\"/></c:view3D>"
+    } else {
+        ""
     };
 
     let grid = "<c:majorGridlines><c:spPr><a:ln w=\"9525\"><a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill></a:ln></c:spPr></c:majorGridlines>";
@@ -928,7 +1070,7 @@ fn chart_xml(book_rel: &str, kind: NewChartKind) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
 <c:date1904 val=\"0\"/><c:lang val=\"ja-JP\"/><c:roundedCorners val=\"0\"/>\
-<c:chart><c:autoTitleDeleted val=\"1\"/><c:plotArea><c:layout/>\
+<c:chart><c:autoTitleDeleted val=\"1\"/>{view3d}<c:plotArea><c:layout/>\
 {group_elem}\
 <c:catAx><c:axId val=\"100000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:majorTickMark val=\"none\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>{axis_line}{text}<c:crossAx val=\"100000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>\
 <c:valAx><c:axId val=\"100000002\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/>{grid}{val_num_fmt}<c:majorTickMark val=\"none\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>{no_line}{text}<c:crossAx val=\"100000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/></c:valAx>\
@@ -943,10 +1085,19 @@ pub(crate) fn add_chart_part(package: &mut Package, slide: &str, kind: NewChartK
     if kind.is_chart_ex() {
         return add_chart_ex_part(package, slide, kind);
     }
-    let chart = next_part_name(package, "ppt/charts/chart1.xml");
-    let book = next_part_name(package, "ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx");
+    add_chart_part_at(package, slide, kind, "ppt/charts/chart1.xml", "ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx")
+}
+
+/// A new chart part (named like `chart_like`) with its workbook (named like `book_like`), related
+/// from `owner` (a slide, or a document's body): the relationship's id and the part. Not a chartEx kind.
+pub(crate) fn add_chart_part_at(package: &mut Package, slide: &str, kind: NewChartKind, chart_like: &str, book_like: &str) -> Result<(String, String), Error> {
+    if kind.is_chart_ex() {
+        return Err(Error::new("この種類のグラフは挿入できません"));
+    }
+    let chart = next_part_name(package, chart_like);
+    let book = next_part_name(package, book_like);
     let bytes = match kind {
-        NewChartKind::Pie | NewChartKind::Doughnut => pie_workbook()?,
+        NewChartKind::Pie | NewChartKind::Pie3D | NewChartKind::Doughnut | NewChartKind::PieOfPie | NewChartKind::BarOfPie => pie_workbook()?,
         NewChartKind::Scatter | NewChartKind::ScatterSmooth | NewChartKind::ScatterLines => scatter_workbook()?,
         NewChartKind::Bubble => bubble_workbook()?,
         NewChartKind::StockHLC => stock_hlc_workbook()?,
@@ -967,6 +1118,45 @@ pub(crate) fn add_chart_part(package: &mut Package, slide: &str, kind: NewChartK
     Ok((rel, chart))
 }
 
+/// The chart style (`cs:chartStyle`) and colour style (`cs:colorStyle`) parts of a chartEx part: Excel and
+/// PowerPoint do not open the chart without them. Written from the schema ([MS-ODRAWXML]) with its required
+/// elements only: every part of the chart takes its line, fill, effect and font from the theme (index 0:
+/// none; the minor font) or from its own `spPr`, the colours cycle through the theme's accents.
+fn add_chart_ex_style_parts(package: &mut Package, chart: &str) -> Result<(), Error> {
+    let dir = chart.rsplit_once('/').map_or("", |(d, _)| d);
+    let style = next_part_name(package, &format!("{dir}/style1.xml"));
+    let colors = next_part_name(package, &format!("{dir}/colors1.xml"));
+    const ENTRIES: [&str; 31] = [
+        "axisTitle", "categoryAxis", "chartArea", "dataLabel", "dataLabelCallout", "dataPoint", "dataPoint3D", "dataPointLine", "dataPointMarker", "dataPointWireframe", "dataTable", "downBar", "dropLine", "errorBar", "floor",
+        "gridlineMajor", "gridlineMinor", "hiLoLine", "leaderLine", "legend", "plotArea", "plotArea3D", "seriesAxis", "seriesLine", "title", "trendline", "trendlineLabel", "upBar", "valueAxis", "wall", "dataPointMarkerLayout",
+    ];
+    // The structure is [MS-ODRAWXML]'s; the values are chosen here: the data points take their series' colour (`phClr`, which the
+    // colour style hands out; `styleClr auto` says so), the lines of the axes and of the grid are the text colour at a quarter of
+    // its opacity, and the text is the theme's text colour.
+    let line = "<cs:spPr><a:ln w=\"9525\"><a:solidFill><a:schemeClr val=\"tx1\"><a:alpha val=\"25000\"/></a:schemeClr></a:solidFill></a:ln></cs:spPr>";
+    let mut body = String::new();
+    for name in ENTRIES.iter().filter(|n| **n != "dataPointMarkerLayout") {
+        let (fill, extra) = match *name {
+            "dataPoint" | "dataPoint3D" => ("<cs:fillRef idx=\"0\"><cs:styleClr val=\"auto\"/></cs:fillRef>".to_string(), "<cs:spPr><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill></cs:spPr>".to_string()),
+            "categoryAxis" => ("<cs:fillRef idx=\"0\"/>".to_string(), format!("{line}<cs:defRPr sz=\"1000\"/>")),
+            "valueAxis" | "seriesAxis" | "dataLabel" | "legend" | "axisTitle" => ("<cs:fillRef idx=\"0\"/>".to_string(), "<cs:defRPr sz=\"1000\"/>".to_string()),
+            "title" => ("<cs:fillRef idx=\"0\"/>".to_string(), "<cs:defRPr sz=\"1600\"/>".to_string()),
+            "gridlineMajor" | "gridlineMinor" => ("<cs:fillRef idx=\"0\"/>".to_string(), line.to_string()),
+            _ => ("<cs:fillRef idx=\"0\"/>".to_string(), String::new()),
+        };
+        body += &format!("<cs:{name}><cs:lnRef idx=\"0\"/>{fill}<cs:effectRef idx=\"0\"/><cs:fontRef idx=\"minor\"><a:schemeClr val=\"tx1\"/></cs:fontRef>{extra}</cs:{name}>");
+    }
+    let style_xml = format!("<cs:chartStyle xmlns:cs=\"http://schemas.microsoft.com/office/drawing/2012/chartStyle\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" id=\"201\">{body}</cs:chartStyle>");
+    let colors_xml = "<cs:colorStyle xmlns:cs=\"http://schemas.microsoft.com/office/drawing/2012/chartStyle\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" meth=\"cycle\" id=\"10\"><a:schemeClr val=\"accent1\"/><a:schemeClr val=\"accent2\"/><a:schemeClr val=\"accent3\"/><a:schemeClr val=\"accent4\"/><a:schemeClr val=\"accent5\"/><a:schemeClr val=\"accent6\"/><cs:variation/></cs:colorStyle>";
+    package.set_xml(&style, XmlDocument::parse(style_xml.as_bytes()).map_err(|e| Error::new(format!("グラフのスタイルを作れません: {e}")))?);
+    package.set_override(&style, CT_CHART_STYLE)?;
+    package.set_xml(&colors, XmlDocument::parse(colors_xml.as_bytes()).map_err(|e| Error::new(format!("グラフの色を作れません: {e}")))?);
+    package.set_override(&colors, CT_CHART_COLOR_STYLE)?;
+    package.add_relationship(chart, REL_CHART_STYLE, &relative(chart, &style), false)?;
+    package.add_relationship(chart, REL_CHART_COLOR_STYLE, &relative(chart, &colors), false)?;
+    Ok(())
+}
+
 /// A new chartEx part with its workbook, related from slide `slide`; returns the relationship's id and the part.
 fn add_chart_ex_part(package: &mut Package, slide: &str, kind: NewChartKind) -> Result<(String, String), Error> {
     let chart = next_part_name(package, "ppt/charts/chartEx1.xml");
@@ -978,6 +1168,7 @@ fn add_chart_ex_part(package: &mut Package, slide: &str, kind: NewChartKind) -> 
     let doc = XmlDocument::parse(chart_ex_xml(&book_rel, kind).as_bytes()).map_err(|e| Error::new(format!("グラフを作れません: {e}")))?;
     package.set_xml(&chart, doc);
     package.set_override(&chart, CT_CHART_EX)?;
+    add_chart_ex_style_parts(package, &chart)?;
     let rel = package.add_relationship(slide, REL_CHART_EX, &relative(slide, &chart), false)?;
     Ok((rel, chart))
 }
@@ -997,6 +1188,33 @@ pub(crate) fn add_sheet_chart_part(package: &mut Package, drawing: &str, kind: N
     package.set_override(&chart, CT_CHART)?;
     let rel = package.add_relationship(drawing, REL_CHART, &relative(drawing, &chart), false)?;
     Ok((rel, chart))
+}
+
+/// A new chartEx part in a workbook (`xl/charts/chartEx1.xml`), related from sheet drawing `drawing`: it
+/// reads the sheet's cells `cells` name (the values cached as they are now), no workbook of its own.
+/// Returns the relationship's id and the part.
+pub(crate) fn add_sheet_chart_ex_part(package: &mut Package, drawing: &str, kind: NewChartKind, cells: &ExCells) -> Result<(String, String), Error> {
+    let chart = next_part_name(package, "xl/charts/chartEx1.xml");
+    let doc = XmlDocument::parse(chart_ex_with(kind, cells, false, None).as_bytes()).map_err(|e| Error::new(format!("グラフを作れません: {e}")))?;
+    package.set_xml(&chart, doc);
+    package.set_override(&chart, CT_CHART_EX)?;
+    add_chart_ex_style_parts(package, &chart)?;
+    let rel = package.add_relationship(drawing, REL_CHART_EX, &relative(drawing, &chart), false)?;
+    Ok((rel, chart))
+}
+
+/// A sheet drawing's frame showing chartEx relationship `rel`: in `mc:AlternateContent`, as Excel writes it
+/// (a version that cannot draw the chart shows the fallback). `xdr` is the drawing's prefix.
+pub(crate) fn frame_ex_sheet_xml(xdr: &str, a: &str, r: &str, id: u32, name: &str, rel: &str) -> String {
+    let name = super::pptx_new::escape(name);
+    let id2 = id + 1;
+    format!(
+        "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:cx1=\"http://schemas.microsoft.com/office/drawing/2015/9/8/chartex\" Requires=\"cx1\">\
+<{xdr}graphicFrame macro=\"\"><{xdr}nvGraphicFramePr><{xdr}cNvPr id=\"{id}\" name=\"{name}\"/><{xdr}cNvGraphicFramePr/></{xdr}nvGraphicFramePr><{xdr}xfrm><{a}off x=\"0\" y=\"0\"/><{a}ext cx=\"0\" cy=\"0\"/></{xdr}xfrm>\
+<{a}graphic><{a}graphicData uri=\"http://schemas.microsoft.com/office/drawing/2014/chartex\"><cx:chart xmlns:cx=\"http://schemas.microsoft.com/office/drawing/2014/chartex\" {r}id=\"{rel}\"/></{a}graphicData></{a}graphic></{xdr}graphicFrame></mc:Choice>\
+<mc:Fallback><{xdr}sp macro=\"\" textlink=\"\"><{xdr}nvSpPr><{xdr}cNvPr id=\"{id2}\" name=\"{name}\"/><{xdr}cNvSpPr/></{xdr}nvSpPr><{xdr}spPr><{a}xfrm><{a}off x=\"0\" y=\"0\"/><{a}ext cx=\"4572000\" cy=\"2743200\"/></{a}xfrm><{a}prstGeom prst=\"rect\"><{a}avLst/></{a}prstGeom><{a}solidFill><{a}schemeClr val=\"bg1\"/></{a}solidFill><{a}ln><{a}solidFill><{a}schemeClr val=\"tx1\"/></{a}solidFill></{a}ln></{xdr}spPr>\
+<{xdr}txBody><{a}bodyPr vertOverflow=\"clip\" horzOverflow=\"clip\" rtlCol=\"0\" anchor=\"ctr\"/><{a}lstStyle/><{a}p><{a}r><{a}rPr lang=\"ja-JP\" sz=\"1200\"/><{a}t>このグラフは、お使いのバージョンの Excel では表示できません。</{a}t></{a}r></{a}p></{xdr}txBody></{xdr}sp></mc:Fallback></mc:AlternateContent>"
+    )
 }
 
 /// The slide's `p:graphicFrame` showing chart relationship `rel`.
@@ -1038,17 +1256,31 @@ mod tests {
             NewChartKind::ClusteredColumn,
             NewChartKind::StackedColumn,
             NewChartKind::PercentStackedColumn,
+            NewChartKind::ClusteredColumn3D,
+            NewChartKind::StackedColumn3D,
+            NewChartKind::PercentStackedColumn3D,
+            NewChartKind::Column3D,
             NewChartKind::ClusteredBar,
             NewChartKind::StackedBar,
             NewChartKind::PercentStackedBar,
+            NewChartKind::ClusteredBar3D,
+            NewChartKind::StackedBar3D,
+            NewChartKind::PercentStackedBar3D,
             NewChartKind::Line,
             NewChartKind::StackedLine,
             NewChartKind::PercentStackedLine,
+            NewChartKind::Line3D,
             NewChartKind::Area,
             NewChartKind::StackedArea,
             NewChartKind::PercentStackedArea,
+            NewChartKind::Area3D,
+            NewChartKind::StackedArea3D,
+            NewChartKind::PercentStackedArea3D,
             NewChartKind::Pie,
+            NewChartKind::Pie3D,
             NewChartKind::Doughnut,
+            NewChartKind::PieOfPie,
+            NewChartKind::BarOfPie,
             NewChartKind::Radar,
             NewChartKind::RadarFilled,
             NewChartKind::StockHLC,

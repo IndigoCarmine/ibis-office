@@ -9,6 +9,12 @@ use crate::shell::scenario::Scenario;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
+        ("shell::fix72_font_dropdown_preview", fix72_font_dropdown_preview),
+        ("shell::fix_pinch_to_zoom", fix_pinch_to_zoom),
+        ("shell::fix_cjk_edit_font_xlsx", fix_cjk_edit_font_xlsx),
+        ("shell::fix_cjk_edit_font_pptx", fix_cjk_edit_font_pptx),
+        ("shell::fix_cjk_edit_font_docx", fix_cjk_edit_font_docx),
+        ("shell::fix51_cell_edit_and_align_toolbar", fix51_cell_edit_and_align_toolbar),
         ("shell::fix12_menu_bar_hover_switches_menu", fix12_menu_bar_hover_switches_menu),
         ("shell::fix15_long_menu_scrolls", fix15_long_menu_scrolls),
         ("shell::fix14_fill_handle_direction", fix14_fill_handle_direction),
@@ -32,6 +38,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix_xlsx_page_break_preview", fix_xlsx_page_break_preview),
         ("shell::fix_docx_line_numbers", fix_docx_line_numbers),
         ("shell::fix_docx_ruler", fix_docx_ruler),
+        ("shell::fix_xlsx_ruler", fix_xlsx_ruler),
+        ("shell::fix_xlsx_page_layout_ruler_drag", fix_xlsx_page_layout_ruler_drag),
         ("shell::fix_xlsx_save_copy_and_recent", fix_xlsx_save_copy_and_recent),
         ("shell::fix_docx_gridlines", fix_docx_gridlines),
         ("shell::fix_xlsx_zoom_to_selection", fix_xlsx_zoom_to_selection),
@@ -58,6 +66,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix_docx_caption_labels_and_numbering", fix_docx_caption_labels_and_numbering),
         ("shell::fix_docx_table_of_figures", fix_docx_table_of_figures),
         ("shell::fix_status_bar_and_zoom_i18n", fix_status_bar_and_zoom_i18n),
+        ("shell::fix_zoom_percent_button", fix_zoom_percent_button),
         ("shell::fix21_pptx_sidebar_close_zoom_fit_benchmark", fix21_pptx_sidebar_close_zoom_fit_benchmark),
         ("shell::pptx_sidebar_starts_closed", pptx_sidebar_starts_closed),
         ("shell::fix_xlsx_file017_doc_properties", fix_xlsx_file017_doc_properties),
@@ -167,7 +176,7 @@ fn fix15_long_menu_scrolls() {
 
 /// #10: ツール > 設定… opens the settings window in the middle of the window
 /// the user is in, its categories at the top of the left column; the app's
-/// own menu ("ibisOffice") has 設定… (⌘,).
+/// own menu ("Acauda Office") has 設定… (⌘,).
 fn fix10_settings_window_centered_and_app_menu() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     let parent = s.update(|_, window, _| window.bounds());
@@ -183,8 +192,8 @@ fn fix10_settings_window_centered_and_app_menu() {
         menus.first().map(|m| (m.name.to_string(), m.items.iter().map(|i| match i { gpui_kit::OwnedMenuItem::Action { name, .. } => name.to_string(), _ => String::new() }).collect::<Vec<_>>()))
     });
     let (name, items) = labels.expect("the app menu");
-    assert_eq!(name, "ibisOffice");
-    assert_eq!(items.first().map(String::as_str), Some("ibisOffice について"), "{items:?}");
+    assert_eq!(name, "Acauda Office");
+    assert_eq!(items.first().map(String::as_str), Some("Acauda Office について"), "{items:?}");
     assert!(items.iter().any(|i| i == "設定…"), "{items:?}");
 }
 
@@ -412,7 +421,7 @@ fn fix_docx_edit014_symbols() {
 /// empty file of their kind (the xlsx one here).
 fn start_view_new_and_select() {
     let mut s = Scenario::start_view();
-    assert_eq!(crate::shell::start_view::start_title(), format!("ibisOffice {}", env!("IBIS_VERSION")));
+    assert_eq!(crate::shell::start_view::start_title(), format!("Acauda Office {}", env!("IBIS_VERSION")));
     s.screenshot("start");
     // 新規作成's second page (xlsx), below the section's title.
     s.click((150.0, 140.0));
@@ -1016,6 +1025,120 @@ fn fix_docx_ruler() {
     s.menu("docx.ruler");
     assert!(s.with(|e, _| e.ruler_open), "ruler should be visible again after second click");
     assert_eq!(s.menu_state("docx.ruler"), Some((true, true)), "docx.ruler menu item should be enabled and checked again");
+}
+
+/// XLSX-VIEW-008: ルーラーの表示条件
+/// 標準表示・改ページプレビューでは無効（disabled・チェックなし）、
+/// ページレイアウト表示（view="pageLayout"）時のみ有効（enabled・初期値チェックあり・ルーラー表示）。
+/// チェック切替でルーラー非表示／表示、Undo/Redo、OOXML sheetView/@showRuler 保存・再読込ラウンドトリップを検証する。
+fn fix_xlsx_ruler() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // 1. 初期状態（標準表示）: xlsx.ruler は無効（disabled: true -> menu_state enabled: false）
+    assert_eq!(s.menu_state("xlsx.ruler"), Some((false, false)), "xlsx.ruler should be disabled in normal view");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.show_ruler));
+
+    // 2. ページレイアウト表示へ切り替え（Page Layout view）
+    s.menu("xlsx.page-layout");
+    assert_eq!(s.menu_state("xlsx.page-layout"), Some((true, true)));
+    // ページレイアウト表示では xlsx.ruler が有効化され、初期状態でチェック付き
+    assert_eq!(s.menu_state("xlsx.ruler"), Some((true, true)), "xlsx.ruler should be enabled and checked in page layout view");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.show_ruler));
+    s.screenshot("page-layout-ruler-visible");
+
+    // 3. ルーラーをクリックして非表示にする
+    s.menu("xlsx.ruler");
+    assert_eq!(s.menu_state("xlsx.ruler"), Some((true, false)), "xlsx.ruler should be unchecked after toggle");
+    assert!(!s.with(|e, _| e.current_sheet().unwrap().1.show_ruler));
+    s.screenshot("page-layout-ruler-hidden");
+
+    // 4. Undo でルーラー再表示
+    s.key("cmd-z");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.show_ruler), "ruler restored by undo");
+    assert_eq!(s.menu_state("xlsx.ruler"), Some((true, true)));
+
+    // 5. Redo でルーラー再非表示
+    s.key("cmd-shift-z");
+    assert!(!s.with(|e, _| e.current_sheet().unwrap().1.show_ruler), "ruler hidden by redo");
+    assert_eq!(s.menu_state("xlsx.ruler"), Some((true, false)));
+
+    // 6. 保存と開き直し（OOXML sheetView/@showRuler="0" のラウンドトリップ）
+    s.save_as("ruler-off.xlsx");
+    let reloaded = s.reopen();
+    let r_sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&reloaded.slides[0]).unwrap();
+    assert!(!r_sheet.show_ruler, "show_ruler=false preserved after save and reopen");
+    assert!(r_sheet.page_layout, "page_layout preserved");
+
+    // 7. 標準表示に戻すと、再び無効化される
+    s.menu("xlsx.page-layout");
+    assert_eq!(s.menu_state("xlsx.ruler"), Some((false, false)), "xlsx.ruler should be disabled when exiting page layout view");
+}
+
+/// XLSX-VIEW-002: ページレイアウト表示でのルーラー余白ドラッグおよび測定単位切替
+/// ページレイアウト表示中のルーラー上余白ハンドル（左・右・上・下）をドラッグして余白（margins）を動的変更、
+/// ガイドライン描画、Undo/Redo 連動、ルーラーコーナーでの単位切替（cm -> mm -> in -> pt -> pi）、
+/// および OOXML <pageMargins> 保存・開き直しラウンドトリップを検証する。
+fn fix_xlsx_page_layout_ruler_drag() {
+    use crate::xlsx::page_layout::RulerMargin;
+    use crate::shell::editor::RulerUnit;
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("xlsx.page-layout");
+    assert_eq!(s.menu_state("xlsx.page-layout"), Some((true, true)));
+
+    // 1. ルーラーの初期余白取得
+    let initial_margins = s.with(|e, _| e.current_sheet().unwrap().1.print.margins);
+
+    // 2. 左余白ハンドルの位置取得とドラッグ
+    let left_handle = s.with(|e, _| e.page_layout_ruler_margin_handle_pos(RulerMargin::Left).unwrap());
+    let (lx0, ly0) = (f32::from(left_handle.x), f32::from(left_handle.y));
+    let drag_dx = 25.0; // 右方向へドラッグ（左余白を拡大）
+    s.drag((lx0, ly0), (lx0 + drag_dx, ly0));
+    s.settle();
+
+    let new_margins = s.with(|e, _| e.current_sheet().unwrap().1.print.margins);
+    assert!(new_margins[0] > initial_margins[0], "left margin increased by dragging right: before={}, after={}", initial_margins[0], new_margins[0]);
+    s.screenshot("page-layout-margin-left-dragged");
+
+    // 3. Undo で左余白が元に戻ることを検証
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.print.margins), initial_margins, "undo restores initial left margin");
+
+    // 4. Redo で変更後の左余白が再適用されることを検証
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.print.margins), new_margins, "redo reapplies dragged left margin");
+
+    // 5. 上余白ハンドルのドラッグ
+    let top_handle = s.with(|e, _| e.page_layout_ruler_margin_handle_pos(RulerMargin::Top).unwrap());
+    let (tx0, ty0) = (f32::from(top_handle.x), f32::from(top_handle.y));
+    let drag_dy = 20.0; // 下方向へドラッグ（上余白を拡大）
+    s.drag((tx0, ty0), (tx0, ty0 + drag_dy));
+    s.settle();
+
+    let after_top = s.with(|e, _| e.current_sheet().unwrap().1.print.margins);
+    assert!(after_top[2] > new_margins[2], "top margin increased by dragging down: before={}, after={}", new_margins[2], after_top[2]);
+    s.screenshot("page-layout-margin-top-dragged");
+
+    // 6. ルーラーコーナー（0, 0）をクリックして測定単位を順送り切替
+    assert_eq!(s.with(|e, _| e.ruler_unit), RulerUnit::Centimeters);
+    let corner = s.with(|e, _| e.page_layout_ruler_corner_pos().unwrap());
+    s.click((f32::from(corner.x), f32::from(corner.y)));
+    assert_eq!(s.with(|e, _| e.ruler_unit), RulerUnit::Millimeters, "cycled to Millimeters");
+    s.click((f32::from(corner.x), f32::from(corner.y)));
+    assert_eq!(s.with(|e, _| e.ruler_unit), RulerUnit::Inches, "cycled to Inches");
+    s.screenshot("page-layout-ruler-inches");
+
+    // 7. 保存・開き直しで変更された余白とページレイアウト表示が保持されることを検証
+    s.save_as("ruler-drag-margins.xlsx");
+    let reloaded = s.reopen();
+    let r_sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&reloaded.slides[0]).unwrap();
+    assert_eq!(r_sheet.print.margins, after_top, "dragged margins preserved across save and reopen");
+    assert!(r_sheet.page_layout, "page_layout preserved");
+
+    // 8. 変更をすべて Undo
+    s.key("cmd-z"); // top margin
+    s.key("cmd-z"); // left margin
+    assert_eq!(s.with(|e, _| e.current_sheet().unwrap().1.print.margins), initial_margins, "all margin changes undone");
 }
 
 /// XLSX-FILE-006（コピー保存）および XLSX-FILE-003（最近使ったブック）
@@ -2964,6 +3087,31 @@ fn fix_docx_table_of_figures() {
     assert_eq!(reread_entries.len(), 3, "3 entries preserved after save and reopen");
     let start_p = &reread_entries[0].1;
     assert!(start_p.field_start.as_deref().is_some_and(|i| i.contains("TOC") && i.contains("\\c") && i.contains("図")), "field_start preserved: {:?}", start_p.field_start);
+}
+
+/// todo-fix #40: the status bar's 「100%▲」 is one button (the pulldown arrow of the toolbar, turned up): a press on the percentage or on the arrow opens the list of zooms (a press again closes it); the hover shows the toolbar buttons' background. In the three formats.
+fn fix_zoom_percent_button() {
+    for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+        let mut s = Scenario::new_document(kind);
+        s.settle();
+        let bounds = |s: &mut Scenario| s.with(|e, _| e.zoom_trigger_bounds.get()).expect("the zoom button is painted");
+        let b = bounds(&mut s);
+        let (left, right, y) = (f32::from(b.origin.x), f32::from(b.origin.x + b.size.width), f32::from(b.origin.y + b.size.height / 2.0));
+        // The percentage and the arrow are in it: wider than the arrow alone.
+        assert!(right - left > 40.0, "{kind:?}: {b:?}");
+        assert!(!s.with(|e, _| e.zoom_menu_open));
+        s.hover((left + 8.0, y));
+        s.screenshot(&format!("{kind:?}-hover"));
+        // A press on the percentage's side opens the list.
+        s.click((left + 8.0, y));
+        assert!(s.with(|e, _| e.zoom_menu_open), "{kind:?}: the percentage opens the list");
+        s.screenshot(&format!("{kind:?}-open"));
+        s.update(|e, window, cx| e.set_zoom_menu_open(false, window, cx));
+        // And on the arrow's side.
+        s.click((right - 6.0, y));
+        assert!(s.with(|e, _| e.zoom_menu_open), "{kind:?}: the arrow opens the list");
+        s.update(|e, window, cx| e.set_zoom_menu_open(false, window, cx));
+    }
 }
 
 /// todo-fix #8: ステータスバー・ズーム・ヒント・配置の多言語化（i18n）
@@ -5501,14 +5649,14 @@ fn fix31_sheet_100_percent_is_a_point_a_pixel() {
         eprintln!("column {name}: {width_pt} pt, {width_px} px at 100%");
         assert!((width_px / width_pt - 1.0).abs() < 0.03, "column {name}: {width_pt} pt drawn {width_px} px at 100%");
     }
-    // A presentation's slide: 96 px an inch at 100%.
+    // A presentation's slide: 72 px an inch at 100% too (1 pt a pixel, as PowerPoint for Mac; todo-fix #41).
     drop(s);
     let mut p = Scenario::new_document(ibis_pptx::Kind::Presentation);
     p.update(|e, window, cx| e.set_zoom(Some(1.0), window, cx));
     p.settle();
     let ratio = p.with(|e, _| e.slide_layout().map(|l| l.scale * ibis_doc_model::EMU_PER_POINT as f32));
     eprintln!("a slide at 100%: {ratio:?} px a point");
-    assert!((ratio.unwrap() - 96.0 / 72.0).abs() < 0.01);
+    assert!((ratio.unwrap() - 1.0).abs() < 0.01);
 }
 
 /// #33: a formula with no cached value in the file (written by a program that does not
@@ -5558,4 +5706,268 @@ fn bench_open_scroll() {
         }
         eprintln!("BENCH {path}: parse {parse} ms, open+draw {open} ms (with parse), to the end {end} ms, next sheets {sheets:?} ms");
     }
+}
+
+/// #51: cell editing with F2/Enter preserves row height, toolbar alignment buttons are split into 4 parts, and start-window menu works.
+fn fix51_cell_edit_and_align_toolbar() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // 1. Toolbar alignment buttons are 4 parts each (Left, Center, Right, Dropdown).
+    assert!(s.toolbar_state("align-left").is_some());
+    assert!(s.toolbar_state("align-center").is_some());
+    assert!(s.toolbar_state("align-right").is_some());
+    assert!(s.toolbar_state("halign").is_some());
+    assert!(s.toolbar_state("valign-top").is_some());
+    assert!(s.toolbar_state("valign-center").is_some());
+    assert!(s.toolbar_state("valign-bottom").is_some());
+    assert!(s.toolbar_state("valign").is_some());
+
+    // 2. F2 on A4 then Enter does not change row height.
+    s.click_cell("A4");
+    let h0 = s.with(|e, _| e.current_sheet().unwrap().1.rows[3]);
+    s.key("f2");
+    s.key("enter");
+    let h1 = s.with(|e, _| e.current_sheet().unwrap().1.rows[3]);
+    assert_eq!(h0, h1, "row height should not change after F2 + Enter without edits");
+
+    // 3. Merged cell A4:E6: F2 + Enter does not change row height.
+    s.update(|e, _, _| {
+        let slide = e.current_slide;
+        let range = ibis_doc_model::CellRange { first_row: 3, first_column: 0, last_row: 5, last_column: 4 };
+        let _ = e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Merge { slide, range, center: false })]);
+    });
+    s.click_cell("A4");
+    let h0_m = s.with(|e, _| e.current_sheet().unwrap().1.rows[3]);
+    s.key("f2");
+    s.with(|e, _| {
+        assert!(e.cell_edit().is_some());
+        let edit = e.cell_edit().unwrap();
+        assert_eq!((edit.row, edit.column), (3, 0));
+    });
+    s.key("enter");
+    let h1_m = s.with(|e, _| e.current_sheet().unwrap().1.rows[3]);
+    assert_eq!(h0_m, h1_m, "row height of merged cell A4:E6 should not change after F2 + Enter");
+
+    // 4. Start window menu item exists in xlsx.
+    assert!(s.menu_state("file.start-window").is_some());
+    assert_eq!(s.with(|e, _| e.kind()), ibis_pptx::Kind::Workbook);
+    drop(s);
+
+    // 5. If default.xlsx exists in test/private, verify directly.
+    if std::path::Path::new("test/github-issue/default.xlsx").exists() {
+        let mut s_def = Scenario::open("test/github-issue/default.xlsx");
+        s_def.click_cell("A4");
+        let r3_before = s_def.with(|e, _| e.current_sheet().unwrap().1.rows[3]);
+        let r4_before = s_def.with(|e, _| e.current_sheet().unwrap().1.rows[4]);
+        let r5_before = s_def.with(|e, _| e.current_sheet().unwrap().1.rows[5]);
+        s_def.key("f2");
+        s_def.with(|e, _| {
+            assert!(e.cell_edit().is_some());
+            let edit = e.cell_edit().unwrap();
+            assert_eq!((edit.row, edit.column), (3, 0));
+        });
+        s_def.key("enter");
+        let r3_after = s_def.with(|e, _| e.current_sheet().unwrap().1.rows[3]);
+        let r4_after = s_def.with(|e, _| e.current_sheet().unwrap().1.rows[4]);
+        let r5_after = s_def.with(|e, _| e.current_sheet().unwrap().1.rows[5]);
+        assert_eq!(r3_before, r3_after, "row 4 height unchanged in default.xlsx");
+        assert_eq!(r4_before, r4_after, "row 5 height unchanged in default.xlsx");
+        assert_eq!(r5_before, r5_after, "row 6 height unchanged in default.xlsx");
+        drop(s_def);
+    }
+
+    {
+        let mut s_docx = Scenario::open("test/editing/docx-report.docx");
+        assert!(s_docx.menu_state("file.start-window").is_some());
+        assert_eq!(s_docx.with(|e, _| e.kind()), ibis_pptx::Kind::Document);
+    }
+
+    {
+        let mut s_pptx = Scenario::open("test/editing/pptx-plan.pptx");
+        assert!(s_pptx.menu_state("file.start-window").is_some());
+        assert_eq!(s_pptx.with(|e, _| e.kind()), ibis_pptx::Kind::Presentation);
+    }
+}
+
+/// GitHub issue #2: Support trackpad pinch-to-zoom on macOS (ibisjp/ibis-office#2)
+/// Verifies trackpad pinch gestures zoom in/out centered around the pointer across formats (pptx, xlsx, docx).
+fn fix_pinch_to_zoom() {
+    // 1. PPTX presentation
+    {
+        let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+        let initial_zoom = s.with(|e, _| e.current_zoom());
+        let (ws_origin, ws_size) = s.with(|e, _| {
+            let ws = e.workspace_bounds.expect("workspace bounds");
+            (ws.origin, ws.size)
+        });
+        let center_x = f32::from(ws_origin.x + ws_size.width / 2.0);
+        let center_y = f32::from(ws_origin.y + ws_size.height / 2.0);
+
+        // Pinch out (magnification > 0): zoom in
+        s.pinch((center_x, center_y), 0.25);
+        let zoomed_in = s.with(|e, _| e.current_zoom());
+        assert!(zoomed_in > initial_zoom, "pinch out should increase zoom (was {initial_zoom}, now {zoomed_in})");
+        assert!((zoomed_in - initial_zoom * 1.25).abs() < 0.01, "zoom should increase by ~25%");
+
+        // Pinch in (magnification < 0): zoom out
+        s.pinch((center_x, center_y), -0.2);
+        let zoomed_out = s.with(|e, _| e.current_zoom());
+        assert!(zoomed_out < zoomed_in, "pinch in should decrease zoom (was {zoomed_in}, now {zoomed_out})");
+
+        // Pointer-centered zoom: pinch at an off-center position (e.g. top-left quadrant)
+        let anchor_x = f32::from(ws_origin.x + ws_size.width / 4.0);
+        let anchor_y = f32::from(ws_origin.y + ws_size.height / 4.0);
+        let offset_before = s.with(|e, _| e.workspace_scroll.offset());
+        s.pinch((anchor_x, anchor_y), 0.5);
+        let offset_after = s.with(|e, _| e.workspace_scroll.offset());
+        assert_ne!(offset_before, offset_after, "scrolling should adjust to preserve point under pointer");
+
+        // Extreme zoom limits (clamp MIN_ZOOM..=MAX_ZOOM)
+        s.pinch((center_x, center_y), 10.0);
+        assert_eq!(s.with(|e, _| e.current_zoom()), crate::shell::editor::MAX_ZOOM, "zoom clamped to MAX_ZOOM");
+        s.pinch((center_x, center_y), -0.99);
+        s.pinch((center_x, center_y), -0.99);
+        assert_eq!(s.with(|e, _| e.current_zoom()), crate::shell::editor::MIN_ZOOM, "zoom clamped to MIN_ZOOM");
+    }
+
+    // 2. XLSX workbook
+    {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        let initial_zoom = s.with(|e, _| e.current_zoom());
+        let (ws_origin, ws_size) = s.with(|e, _| {
+            let ws = e.workspace_bounds.expect("workspace bounds");
+            (ws.origin, ws.size)
+        });
+        let center_x = f32::from(ws_origin.x + ws_size.width / 2.0);
+        let center_y = f32::from(ws_origin.y + ws_size.height / 2.0);
+
+        s.pinch((center_x, center_y), 0.5);
+        let zoomed = s.with(|e, _| e.current_zoom());
+        assert!(zoomed > initial_zoom, "xlsx pinch out should increase zoom");
+        // Verify sheet zoom was also updated
+        let sheet_zoom = s.with(|e, _| ibis_doc_model::sheet_calc::sheet_of_slide(e.slide()).unwrap().zoom);
+        assert_eq!(sheet_zoom, Some(150), "sheet zoom should reflect 150%");
+    }
+
+    // 3. DOCX document
+    {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        let initial_zoom = s.with(|e, _| e.current_zoom());
+        let (ws_origin, ws_size) = s.with(|e, _| {
+            let ws = e.workspace_bounds.expect("workspace bounds");
+            (ws.origin, ws.size)
+        });
+        let center_x = f32::from(ws_origin.x + ws_size.width / 2.0);
+        let center_y = f32::from(ws_origin.y + ws_size.height / 2.0);
+
+        s.pinch((center_x, center_y), 0.3);
+        let zoomed = s.with(|e, _| e.current_zoom());
+        assert!(zoomed > initial_zoom, "docx pinch out should increase zoom");
+    }
+}
+
+/// #72: font selection dropdown renders crisp font family previews on a light menu background (never solid black).
+fn fix72_font_dropdown_preview() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // Click the font select dropdown in the toolbar (around x=350, y=84).
+    s.click((350.0, 84.0));
+    s.settle();
+    s.screenshot("font-dropdown-open");
+
+    // Verify rendered pixels in the font dropdown region (x: 275..410, y: 180..550):
+    // must have predominantly light menu background (> 70% light pixels) and dark anti-aliased glyph strokes,
+    // never solid black rectangles (#000000).
+    let (stride_w, raw) = s.picture();
+    let scale = (stride_w as f32 / 1200.0).round().max(1.0) as u32;
+    let mut light_bg = 0usize;
+    let mut dark_glyph = 0usize;
+    let mut max_dark_run = 0u32;
+    let mut total = 0usize;
+    for y in (180 * scale)..(550 * scale) {
+        let mut run = 0u32;
+        for x in (275 * scale)..(410 * scale) {
+            let idx = ((y * stride_w + x) * 4) as usize;
+            if idx + 3 < raw.len() {
+                let (r, g, b) = (raw[idx], raw[idx + 1], raw[idx + 2]);
+                total += 1;
+                if r > 235 && g > 235 && b > 235 {
+                    light_bg += 1;
+                    run = 0;
+                } else if r < 80 && g < 80 && b < 80 {
+                    dark_glyph += 1;
+                    run += 1;
+                    max_dark_run = max_dark_run.max(run);
+                } else {
+                    run = 0;
+                }
+            }
+        }
+    }
+    assert!(
+        light_bg * 100 / total.max(1) > 80,
+        "font dropdown background must be predominantly light (got {light_bg}/{total} light pixels)"
+    );
+    assert!(
+        dark_glyph > 100 && dark_glyph * 100 / total.max(1) < 20,
+        "font dropdown must contain visible dark glyph pixels without solid black fill (got {dark_glyph}/{total})"
+    );
+    assert!(
+        max_dark_run < 50 * scale,
+        "font dropdown must not contain solid black preview bars (max horizontal dark run = {max_dark_run}px)"
+    );
+}
+
+/// Kanji whose Japanese and Chinese forms differ (直, 骨, 写): typed into a new
+/// document, they are drawn in the same Japanese font while composed, while
+/// edited and after (pictures to compare: the system's text system picked a
+/// Chinese font where the document's 游ゴシック is not installed).
+const CJK_SAMPLE: &str = "直接・骨・写真";
+
+/// A window with a new file of `kind`, as ファイル > 新規 makes it.
+fn new_file(kind: ibis_pptx::Kind) -> Scenario {
+    let mut s = Scenario::start_view();
+    s.update(|e, window, cx| e.new_file(kind, window, cx));
+    s.settle();
+    s
+}
+
+/// Compose `CJK_SAMPLE` (a picture), then commit it (a picture).
+fn compose_and_commit(s: &mut Scenario) {
+    use crate::shell::format::with_format;
+    let n = CJK_SAMPLE.encode_utf16().count();
+    s.update(|e, window, cx| {
+        assert!(with_format!(e, wants_text_input(e, window, cx)), "the format takes no text input now");
+        with_format!(e, replace_and_mark_text_in_range(e, None, CJK_SAMPLE, Some(n..n), window, cx));
+    });
+    s.settle();
+    s.screenshot("composing");
+    s.update(|e, window, cx| with_format!(e, replace_text_in_range(e, None, CJK_SAMPLE, window, cx)));
+    s.settle();
+    s.screenshot("editing");
+}
+
+fn fix_cjk_edit_font_xlsx() {
+    let mut s = new_file(ibis_pptx::Kind::Workbook);
+    s.click_cell("B2");
+    s.key("f2");
+    compose_and_commit(&mut s);
+    s.key("enter");
+    s.screenshot("committed");
+}
+
+fn fix_cjk_edit_font_pptx() {
+    let mut s = new_file(ibis_pptx::Kind::Presentation);
+    s.double_click_shape(0);
+    compose_and_commit(&mut s);
+    s.key("escape");
+    s.click((5.0, 300.0));
+    s.screenshot("committed");
+}
+
+fn fix_cjk_edit_font_docx() {
+    let mut s = new_file(ibis_pptx::Kind::Document);
+    let (id, _) = s.paragraph(0);
+    s.click_text(ibis_doc_model::FlowPos::new(id, 0));
+    compose_and_commit(&mut s);
+    s.key("enter");
+    s.screenshot("committed");
 }

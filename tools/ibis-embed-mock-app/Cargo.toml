@@ -1,0 +1,11 @@
+[package]
+name = "ibis-embed-mock-app"
+description = "A windowed mock editor for ibisOffice's embedded objects: the object's CONTENTS is the text typed (UTF-8), sent to ibisOffice with a picture of it at each change."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+ibis-embed-protocol.workspace = true

@@ -4,11 +4,11 @@
 //! Embeds the bundled icons (icons/material/*.svg) into the binary, so the
 //! app serves them from memory on every platform (see `shell/icons.rs`).
 //!
-//! On Windows it also gives the executable the app icon (see `windows_icon`).
+//! On Windows it also gives the executable the app icon and its version (see `windows_icon`).
 //!
 //! It also sets `cfg(headless_export)` where the export (`--export`) is
-//! built: with the `export` feature, on macOS and Windows, where GPUI draws
-//! without a window.
+//! built: with the `export` feature, on macOS, Windows and Linux, where GPUI
+//! draws without a window.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -41,7 +41,7 @@ fn main() {
     let target = |name: &str| std::env::var(name).unwrap_or_default();
     let os = target("CARGO_CFG_TARGET_OS");
     println!("cargo::rustc-check-cfg=cfg(headless_export)");
-    if std::env::var_os("CARGO_FEATURE_EXPORT").is_some() && (os == "macos" || os == "windows") {
+    if std::env::var_os("CARGO_FEATURE_EXPORT").is_some() && (os == "macos" || os == "windows" || os == "linux") {
         println!("cargo::rustc-cfg=headless_export");
     }
 
@@ -54,7 +54,7 @@ fn main() {
 
 /// The version the app shows (`IBIS_VERSION`), the one version.txt (at the
 /// top of the repository: a platform, a tab and its version, per line) gives
-/// the platform built for: Windows, macOS or wasm.
+/// the platform built for: Windows, macOS, Linux or wasm.
 fn app_version() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../version.txt");
     println!("cargo:rerun-if-changed={}", path.display());
@@ -63,6 +63,7 @@ fn app_version() {
     let platform = match (target("CARGO_CFG_TARGET_OS").as_str(), target("CARGO_CFG_TARGET_FAMILY").as_str()) {
         ("windows", _) => "Windows",
         ("macos", _) => "macOS",
+        ("linux", _) => "Linux",
         (_, "wasm") => "wasm",
         (os, _) => panic!("version.txt has no line for {os}"),
     };
@@ -75,9 +76,12 @@ fn app_version() {
     println!("cargo:rustc-env=IBIS_VERSION={version}");
 }
 
+#[cfg(windows)]
+include!("windows/resource.rs");
+
 /// The Windows app icon (windows/), the design without the plate.
 #[cfg(windows)]
-const WINDOWS_ICON: &str = "ibisOffice_transparent.ico";
+const WINDOWS_ICON: &str = "AcaudaOffice_transparent.ico";
 
 /// Give the executable the app icon, as icon resource 1 (the one GPUI shows
 /// on the window and the taskbar), from the .ico in windows/: its images as
@@ -110,32 +114,10 @@ fn windows_icon() {
         group.extend_from_slice(&id.to_le_bytes());
     }
     push_resource(&mut res, RT_GROUP_ICON, 1, &group);
+    // And the version, for the 詳細 tab of the file's properties.
+    push_version_resource(&mut res, &windows_version(), "Acauda Office", "AcaudaOffice.exe");
 
     let out = Path::new(&std::env::var("OUT_DIR").unwrap()).join("app-icon.res");
     std::fs::write(&out, res).unwrap();
-    println!("cargo:rustc-link-arg-bin=ibisOffice={}", out.display());
-}
-
-/// Append a resource with a numeric type and name to a .res file: its
-/// header, then its data padded to 4 bytes. Type and name 0 make the empty
-/// resource a .res file starts with.
-#[cfg(windows)]
-fn push_resource(res: &mut Vec<u8>, kind: u16, name: u16, data: &[u8]) {
-    const HEADER_SIZE: u32 = 32;
-    // Movable, pure and discardable, as resource compilers mark icons.
-    const MEMORY_FLAGS: u16 = 0x1030;
-    const LANG_NEUTRAL: u16 = 0;
-    res.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    res.extend_from_slice(&HEADER_SIZE.to_le_bytes());
-    for v in [0xffff, kind, 0xffff, name] {
-        res.extend_from_slice(&v.to_le_bytes());
-    }
-    res.extend_from_slice(&0u32.to_le_bytes()); // data version
-    let flags = if kind == 0 { 0 } else { MEMORY_FLAGS };
-    res.extend_from_slice(&flags.to_le_bytes());
-    res.extend_from_slice(&LANG_NEUTRAL.to_le_bytes());
-    res.extend_from_slice(&0u32.to_le_bytes()); // version
-    res.extend_from_slice(&0u32.to_le_bytes()); // characteristics
-    res.extend_from_slice(data);
-    res.resize(res.len().next_multiple_of(4), 0);
+    println!("cargo:rustc-link-arg-bin=AcaudaOffice={}", out.display());
 }

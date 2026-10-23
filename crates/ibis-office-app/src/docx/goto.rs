@@ -505,7 +505,7 @@ impl SlideEditor {
     }
 
     /// 相対ナビゲーション（前へ／次へ）.
-    fn navigate_items<F>(&mut self, getter: F, forward: bool, item_name: &'static str, cx: &mut Context<Self>)
+    pub(crate) fn navigate_items<F>(&mut self, getter: F, forward: bool, item_name: &'static str, cx: &mut Context<Self>)
     where
         F: FnOnce(&Self) -> Vec<u32>,
     {
@@ -787,5 +787,73 @@ impl SlideEditor {
             title: text("docx.goto.title").into(),
             body: body.into_any_element(),
         })
+    }
+}
+
+impl SlideEditor {
+    /// 参考資料 > 次の脚注／前の脚注（文末脚注）: the caret goes to the next (previous) note reference, round the end of the
+    /// document (DOCX-REF-017).
+    pub(crate) fn go_to_note(&mut self, endnote: bool, forward: bool, cx: &mut Context<Self>) {
+        if endnote {
+            self.navigate_items(document_endnote_paras, forward, "fix.goto.endnote", cx);
+        } else {
+            self.navigate_items(document_footnote_paras, forward, "fix.goto.footnote", cx);
+        }
+    }
+
+    /// 校閲 > 次のコメント／前のコメント (DOCX-REVIEW-022).
+    pub(crate) fn go_to_comment(&mut self, forward: bool, cx: &mut Context<Self>) {
+        self.navigate_items(document_comment_paras, forward, "_shell.comment", cx);
+    }
+
+    /// 参考資料 > 注の表示 (DOCX-REF-018): from a note reference the caret goes to the note's text; from the text of a note, back to
+    /// its reference in the body.
+    pub(crate) fn show_note(&mut self, cx: &mut Context<Self>) {
+        let Some(doc) = self.flow().cloned() else { return };
+        let Some((_, caret)) = self.text_selection() else { return };
+        // In a note: back to the reference.
+        for (endnote, notes) in [(false, &doc.footnotes), (true, &doc.endnotes)] {
+            for note in notes {
+                if note.blocks.iter().any(|b| matches!(b, Block::Paragraph(p) if p.id == caret.para)) {
+                    let found = doc.body.iter().find_map(|b| match b {
+                        Block::Paragraph(p) => {
+                            let mut offset = 0;
+                            for r in &p.runs {
+                                if matches!(r.kind, FlowRunKind::NoteRef { endnote: e, id } if e == endnote && id == note.id) {
+                                    return Some(FlowPos::new(p.id, offset + 1));
+                                }
+                                offset += r.len();
+                            }
+                            None
+                        }
+                        _ => None,
+                    });
+                    if let Some(pos) = found {
+                        self.set_caret(pos, false, cx);
+                        self.scroll_to_caret(cx);
+                    }
+                    return;
+                }
+            }
+        }
+        // At a reference: to the note's first paragraph.
+        let Some(Block::Paragraph(p)) = doc.body.iter().find(|b| matches!(b, Block::Paragraph(p) if p.id == caret.para)) else { return };
+        let mut offset = 0;
+        let mut target = None;
+        for r in &p.runs {
+            if let FlowRunKind::NoteRef { endnote, id } = r.kind {
+                // The reference the caret is just after or at, else the first of the paragraph.
+                if target.is_none() || offset < caret.offset {
+                    target = Some((endnote, id));
+                }
+            }
+            offset += r.len();
+        }
+        let Some((endnote, id)) = target else { return };
+        let notes = if endnote { &doc.endnotes } else { &doc.footnotes };
+        let first = notes.iter().find(|n| n.id == id).and_then(|n| n.blocks.iter().find_map(|b| if let Block::Paragraph(p) = b { Some(p.id) } else { None }));
+        if let Some(para) = first {
+            self.jump_to(para, cx);
+        }
     }
 }

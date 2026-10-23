@@ -24,9 +24,21 @@ pub(crate) const LINE_HEIGHT: f32 = crate::render::font_metrics::POWERPOINT_SING
 
 /// Decoded pictures and the fonts available to draw with, for one presentation.
 /// Identifies one rotated drawing of a picture.
-type RotatedKey = (MediaId, i32, bool, bool, ibis_doc_model::Crop, i64, i64);
+/// The picture, turn, flips, crop, size and (a hash of) its colour effects.
+type RotatedKey = (MediaId, i32, bool, bool, ibis_doc_model::Crop, i64, i64, u64);
+
+/// Color and contrast rendering mode for presentations and accessibility (表示 > カラー/白黒).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum ColorMode {
+    #[default]
+    Color,
+    Grayscale,
+    HighContrast,
+}
 
 pub(crate) struct Resources {
+    /// Color and contrast rendering mode (Color, Grayscale, HighContrast).
+    pub(crate) color_mode: ColorMode,
     pub(crate) images: HashMap<MediaId, Arc<Image>>,
     /// Encoded data of pictures that can be wrapped in SVG to rotate them.
     sources: std::cell::RefCell<HashMap<MediaId, (crate::render::picture_svg::Encoding, Arc<[u8]>)>>,
@@ -50,14 +62,30 @@ pub(crate) struct Resources {
     text_system: Arc<TextSystem>,
     /// Ascent, descent and line gap of fonts, in ems.
     metrics: std::cell::RefCell<HashMap<Font, (f32, f32, f32)>>,
+    /// Word for Windows' lines of the fonts and whether they are East Asian
+    /// ones (`word_windows_font`).
+    word_lines: std::cell::RefCell<HashMap<Font, Option<((f32, f32), bool)>>>,
     /// Draw as printed: sheets without their grid lines.
     pub(crate) print: bool,
     /// The slide show is drawn: an animated GIF plays (elsewhere it shows its first frame).
     pub(crate) animate_pictures: std::cell::Cell<bool>,
+    /// The GIFs put in after the file was opened (not decoded ahead), decoded with all their frames when the slide
+    /// show first draws them.
+    live_gifs: std::cell::RefCell<HashMap<MediaId, Arc<RenderImage>>>,
     /// 印刷オプション: 背景の色とイメージを印刷する (DOCX-OPTIONS-010).
     pub(crate) print_backgrounds: bool,
     /// 印刷オプション: 隠し文字を印刷する (DOCX-OPTIONS-010).
     pub(crate) print_hidden_text: bool,
+    /// 印刷オプション: 変更履歴とコメントを印刷する (DOCX-SEC-014).
+    pub(crate) print_markup: bool,
+    /// Word documents: lines and baselines as Word for Windows makes them
+    /// (`font_metrics::word_windows_line_of`), else as Word for Mac does. The
+    /// platform's by default; `--word-metrics` sets it for an export.
+    pub(crate) word_windows_lines: bool,
+    /// Word documents: hide document body text during header/footer editing (Word Header & Footer Tools > オプション > 文書内のテキストを表示).
+    pub(crate) hide_document_text: bool,
+    /// Word documents: the page is shown dark (表示 > ダークモード: a dark paper, the black of text and lines light), on the screen only.
+    pub(crate) dark_page: bool,
     /// Word documents: the headings (paragraph ids) shown collapsed; what is under them is
     /// not laid out (the navigation pane's 折りたたみ).
     pub(crate) collapsed_headings: Arc<std::collections::BTreeSet<u32>>,
@@ -83,6 +111,8 @@ pub(crate) struct Resources {
 
 impl Resources {
     pub(crate) fn new(presentation: &Presentation, cx: &App) -> Self {
+        // (The text of metafile pictures is put by the metrics of the fonts: before the pictures are made.)
+        crate::render::metafile_fonts::install(cx);
         let t = crate::clock::debug_timing::start();
         let preload = crate::render::preload::Preload::for_presentation(presentation);
         crate::clock::debug_timing::report("resources: preload", t);
@@ -106,6 +136,7 @@ impl Resources {
         crate::clock::debug_timing::report("resources: sizes", t);
         let t = crate::clock::debug_timing::start();
         let mut fonts = Fonts::new(cx);
+        fonts.substitutions = presentation.font_substitutions.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         crate::clock::debug_timing::report("resources: Fonts::new", t);
         let t = crate::clock::debug_timing::start();
         fonts.add_embedded(&presentation.fonts, &preload, cx);
@@ -134,6 +165,7 @@ impl Resources {
             }
         }
         Self {
+            color_mode: ColorMode::Color,
             images,
             sources: std::cell::RefCell::new(sources),
             preload,
@@ -146,10 +178,16 @@ impl Resources {
             fonts,
             text_system,
             metrics: Default::default(),
+            word_lines: Default::default(),
             print: false,
             animate_pictures: std::cell::Cell::new(false),
+            live_gifs: Default::default(),
             print_backgrounds: false,
             print_hidden_text: false,
+            print_markup: true,
+            word_windows_lines: cfg!(target_os = "windows"),
+            hide_document_text: false,
+            dark_page: false,
             collapsed_headings: Default::default(),
             merge_values: None,
             print_scale: std::cell::Cell::new(1.0),
@@ -198,6 +236,13 @@ impl Resources {
         }
     }
 
+    /// A picture drawn in place of `media`, which cannot be drawn itself (an
+    /// embedded object's vector EMF, drawn again by the object's editor).
+    /// Only the screen shows it: the document keeps `media`.
+    pub(crate) fn set_stand_in(&mut self, media: MediaId, png: &[u8]) {
+        self.images.insert(media, Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec())));
+    }
+
     /// The original pixel dimensions of `media`.
     pub(crate) fn image_size(&self, media: MediaId) -> Option<(u32, u32)> {
         self.sizes.get(&media).copied()
@@ -227,12 +272,20 @@ impl Resources {
         match self.preload.decoded(media) {
             Ok(Some(image)) => Some(ImageSource::Render(image)),
             Ok(None) => None,
-            Err(()) => self
-                .images
-                .get(&media)
-                .cloned()
-                .or_else(|| self.preload.prepared_one(media).map(|(img, _)| img))
-                .map(ImageSource::Image),
+            Err(()) => {
+                let image = self.images.get(&media).cloned().or_else(|| self.preload.prepared_one(media).map(|(img, _)| img))?;
+                // A GIF put in after the file was opened plays in the slide show as one read from the file does.
+                if self.animate_pictures.get() && self.formats.get(&media) == Some(&MediaFormat::Gif) {
+                    if let Some(frames) = self.live_gifs.borrow().get(&media) {
+                        return Some(ImageSource::Render(frames.clone()));
+                    }
+                    if let Ok(frames) = image.to_image_data(SvgRenderer::new(Arc::new(()))) {
+                        self.live_gifs.borrow_mut().insert(media, frames.clone());
+                        return Some(ImageSource::Render(frames));
+                    }
+                }
+                Some(ImageSource::Image(image))
+            }
         }
     }
 
@@ -340,6 +393,32 @@ impl Resources {
         m
     }
 
+    /// The ascent and the single-spaced line (ems) Word for Windows gives
+    /// `font` (`font_metrics::word_windows_font`), from its file.
+    pub(crate) fn word_windows_line(&self, font: &Font) -> Option<(f32, f32)> {
+        self.word_windows_font(font).map(|(line, _)| line)
+    }
+
+    /// Whether `font` is an East Asian one (has a CJK code page), from its file.
+    pub(crate) fn is_east_asian_font(&self, font: &Font) -> bool {
+        self.word_windows_font(font).is_some_and(|(_, east_asian)| east_asian)
+    }
+
+    fn word_windows_font(&self, font: &Font) -> Option<((f32, f32), bool)> {
+        if let Some(&m) = self.word_lines.borrow().get(font) {
+            return m;
+        }
+        let id = self.text_system.resolve_font(font);
+        let m = self.text_system.font_data(id).and_then(|(data, index)| crate::render::font_metrics::word_windows_font(&data, index));
+        self.word_lines.borrow_mut().insert(font.clone(), m);
+        m
+    }
+
+    /// Whether the typeface `name` is installed (else another font stands in for it).
+    pub(crate) fn has_typeface(&self, name: &str) -> bool {
+        self.fonts.available(name).is_some()
+    }
+
     /// How far to move a line of `font` at `size` down from where GPUI puts
     /// it in a line box `line` high (GPUI centres the font's height in the
     /// box) to where PowerPoint does (`rich_text::baseline`).
@@ -432,6 +511,7 @@ struct Fonts {
     installed: HashSet<String>,
     /// Used for East Asian typefaces that are not installed.
     east_asian_fallback: Option<SharedString>,
+    substitutions: HashMap<String, String>,
 }
 
 /// Weight words at the end of a typeface name, such as "Poppins SemiBold".
@@ -490,14 +570,37 @@ const TYPEFACE_ALIASES: &[(&str, &str)] = &[
     ("Yu Mincho", "YuMincho"),
     // Century is not on macOS; Times New Roman is the nearest serif.
     ("Century", "Times New Roman"),
+    // Helvetica is not on Windows: Word draws it with Arial (Windows' font
+    // substitutes; Word's PDF of a paper embeds Arial as "Helvetica,Bold").
+    ("Helvetica", "Arial"),
     // Calibri is not on macOS; Carlito, bundled (`BUNDLED_FONTS`), has its
     // widths.
     ("Calibri", "Carlito"),
+    // Cambria Math is Office's (and not on macOS); STIX Two Math and STIXGeneral, which macOS has, are serifs with the maths glyphs.
+    ("Cambria Math", "STIX Two Math"),
+    ("Cambria Math", "STIXGeneral"),
     ("メイリオ", "Meiryo"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
     ("ＭＳ Ｐゴシック", "MS PGothic"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
     ("ＭＳ ゴシック", "MS Gothic"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
     ("ＭＳ Ｐ明朝", "MS PMincho"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
     ("ＭＳ 明朝", "MS Mincho"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
+    // Linux has none of Office's typefaces; the Liberation fonts (Liberation
+    // Serif, Sans and Mono: Tinos, Arimo and Cousine under ChromeOS' names)
+    // and Caladea have the widths of Times New Roman, Arial, Courier New
+    // and Cambria, and DejaVu Math TeX Gyre and Latin Modern Math are maths
+    // fonts.
+    ("Times New Roman", "Liberation Serif"),
+    ("Times New Roman", "Tinos"),
+    ("Century", "Liberation Serif"),
+    ("Arial", "Liberation Sans"),
+    ("Arial", "Arimo"),
+    ("Helvetica", "Liberation Sans"),
+    ("Arial Narrow", "Liberation Sans Narrow"),
+    ("Courier New", "Liberation Mono"),
+    ("Courier New", "Cousine"),
+    ("Cambria", "Caladea"),
+    ("Cambria Math", "DejaVu Math TeX Gyre"),
+    ("Cambria Math", "Latin Modern Math"),
 ];
 
 /// For the web build: the typefaces the document asks for, under the names
@@ -539,7 +642,7 @@ fn browser_fallbacks(_: &TextStyle) -> Option<FontFallbacks> {
 }
 
 /// Typefaces made for Japanese (or other East Asian) text.
-fn is_east_asian_typeface(name: &str) -> bool {
+pub(crate) fn is_east_asian_typeface(name: &str) -> bool {
     const HINTS: &[&str] = &[
         "M PLUS", "Noto Sans JP", "Noto Serif JP", "Noto Sans CJK", "Yu Gothic", "Yu Mincho",
         "Meiryo", "Hiragino", "MS Gothic", "MS Mincho", "MS PGothic", "BIZ UD", "Kosugi",
@@ -580,7 +683,14 @@ fn add_extra_font_dirs(cx: &App, names: &mut HashSet<String>) {
             if matches!(ext.as_deref(), Some("ttf" | "otf" | "ttc"))
                 && let Ok(data) = std::fs::read(&path)
             {
-                fonts.push(std::borrow::Cow::Owned(data));
+                crate::render::math_font::offer_font(&data);
+                if ext.as_deref() == Some("ttc") {
+                    // The text system reads the first font of a collection only: each is given on its own (Cambria Math is
+                    // the second of Cambria's).
+                    fonts.extend(split_collection(&data).into_iter().map(std::borrow::Cow::Owned));
+                } else {
+                    fonts.push(std::borrow::Cow::Owned(data));
+                }
             }
         }
     }
@@ -591,6 +701,48 @@ fn add_extra_font_dirs(cx: &App, names: &mut HashSet<String>) {
         Ok(()) => names.extend(cx.text_system().all_font_names()),
         Err(err) => log::warn!("IBIS_EXTRA_FONT_DIRS: fonts could not be loaded: {err}"),
     }
+}
+
+/// The fonts of a TrueType collection (`.ttc`) as one font file each (their tables copied).
+#[cfg(not(target_family = "wasm"))]
+fn split_collection(data: &[u8]) -> Vec<Vec<u8>> {
+    let be32 = |at: usize| data.get(at..at + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    let be16 = |at: usize| data.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]) as usize);
+    if data.get(..4) != Some(b"ttcf") {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for i in 0..be32(8).unwrap_or(0) {
+        let Some(font) = be32(12 + 4 * i) else { break };
+        let Some(count) = be16(font + 4) else { break };
+        let mut head = data.get(font..font + 12).map(<[u8]>::to_vec).unwrap_or_default();
+        let mut tables: Vec<u8> = Vec::new();
+        let mut records: Vec<u8> = Vec::new();
+        let base = 12 + 16 * count;
+        let mut ok = head.len() == 12;
+        for t in 0..count {
+            let at = font + 12 + 16 * t;
+            let (Some(offset), Some(length), Some(tag)) = (be32(at + 8), be32(at + 12), data.get(at..at + 8)) else {
+                ok = false;
+                break;
+            };
+            let Some(body) = data.get(offset..offset + length) else {
+                ok = false;
+                break;
+            };
+            records.extend_from_slice(tag);
+            records.extend_from_slice(&((base + tables.len()) as u32).to_be_bytes());
+            records.extend_from_slice(&(length as u32).to_be_bytes());
+            tables.extend_from_slice(body);
+            tables.resize(tables.len().div_ceil(4) * 4, 0);
+        }
+        if ok {
+            head.extend(records);
+            head.extend(tables);
+            out.push(head);
+        }
+    }
+    out
 }
 
 #[cfg(target_family = "wasm")]
@@ -606,6 +758,15 @@ fn data_hash(data: &[u8]) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     data.hash(&mut h);
     h.finish()
+}
+
+/// The system's fonts (and the bundled ones), listed once per run on the first use.
+static SYSTEM_FONTS: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+
+/// The family names of the fonts of the system and the ones bundled with the app, once a
+/// document has been drawn (the list is made then, not at start-up); `None` before that.
+pub(crate) fn system_font_names() -> Option<&'static HashSet<String>> {
+    SYSTEM_FONTS.get()
 }
 
 impl Fonts {
@@ -649,7 +810,6 @@ impl Fonts {
         // The system's fonts, listed once per run (it takes a while), with
         // the fonts bundled with the app; fonts embedded in documents are
         // added apart, by `add_embedded`.
-        static SYSTEM_FONTS: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
         // Another text system than the first one (each scenario of the tests has its own)
         // is given the bundled fonts too: the list above is kept, they are not.
         let first = SYSTEM_FONTS.get().is_none();
@@ -688,18 +848,23 @@ impl Fonts {
                 log::warn!("bundled fonts could not be loaded: {err}");
             }
         }
-        let east_asian_fallback = ["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans CJK JP"]
+        let east_asian_fallback = ["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans CJK JP", "IPAexGothic"]
             .into_iter()
             .find(|f| installed.contains(*f))
             .map(SharedString::from);
-        Self { installed, east_asian_fallback }
+        Self { installed, east_asian_fallback, substitutions: HashMap::new() }
+    }
+
+    fn resolve<'a>(&'a self, name: &'a str) -> &'a str {
+        self.substitutions.get(name).map(|s| s.as_str()).unwrap_or(name)
     }
 
     fn font(&self, style: &TextStyle) -> Font {
         let (family, mut weight) = match &style.font {
             // A typeface that is not installed gives way to the run's other one.
             Some(name) if self.available(name).is_none() && style.fallback_font.as_deref().is_some_and(|f| self.available(f).is_some()) => {
-                self.family(style.fallback_font.as_deref().unwrap_or(name))
+                let fb = style.fallback_font.as_deref().unwrap_or(name);
+                self.family(fb)
             }
             Some(name) => self.family(name),
             None => (SharedString::from(".SystemUIFont"), FontWeight::NORMAL),
@@ -707,7 +872,8 @@ impl Fonts {
         // A typeface named for its weight ("Poppins SemiBold") is its own
         // family to PowerPoint, whose bold member is usually the same face,
         // so bold only applies to plain typefaces.
-        let named_weight = style.font.as_deref().is_some_and(|n| WEIGHT_SUFFIXES.iter().any(|(suffix, _)| n.ends_with(suffix)));
+        let resolved_name = style.font.as_deref().map(|n| self.resolve(n));
+        let named_weight = resolved_name.is_some_and(|n| WEIGHT_SUFFIXES.iter().any(|(suffix, _)| n.ends_with(suffix)));
         if style.bold && !named_weight {
             weight = FontWeight::BOLD;
         }
@@ -725,6 +891,7 @@ impl Fonts {
     /// name itself, or the name without a weight word ("Poppins SemiBold"
     /// is Poppins at 600).
     fn available(&self, name: &str) -> Option<(SharedString, FontWeight)> {
+        let name = self.resolve(name);
         let installed = |name: &str| -> Option<SharedString> {
             if self.installed.contains(name) {
                 return Some(name.to_string().into());
@@ -748,13 +915,14 @@ impl Fonts {
     /// The family and weight to draw a typeface with, falling back to a
     /// system font.
     fn family(&self, name: &str) -> (SharedString, FontWeight) {
+        let name = self.resolve(name);
         if let Some(found) = self.available(name) {
             return found;
         }
         let weight = WEIGHT_SUFFIXES.iter().find(|(suffix, _)| name.ends_with(suffix)).map(|(_, w)| *w).unwrap_or(FontWeight::NORMAL);
         // A Mincho (serif) typeface gives way to an installed Mincho.
         if (name.contains("明朝") || name.contains("Mincho")) // i18n-ok（フォント名の照合（部分一致で明朝を判定）。i18n-ok）
-            && let Some(mincho) = ["Hiragino Mincho ProN", "YuMincho", "BIZ UDMincho"].into_iter().find(|f| self.installed.contains(*f))
+            && let Some(mincho) = ["Hiragino Mincho ProN", "YuMincho", "BIZ UDMincho", "Noto Serif CJK JP", "IPAexMincho"].into_iter().find(|f| self.installed.contains(*f))
         {
             return (mincho.into(), weight);
         }
@@ -776,31 +944,64 @@ pub(crate) fn hsla(c: DocColor) -> Hsla {
     .into()
 }
 
-fn rgb_hsla(rgb: Rgb) -> Hsla {
+pub(crate) fn hsla_mode(c: DocColor, mode: ColorMode) -> Hsla {
+    match mode {
+        ColorMode::Color => hsla(c),
+        ColorMode::Grayscale => {
+            let Rgb(v) = c.rgb;
+            let r = ((v >> 16) & 0xff) as f32;
+            let g = ((v >> 8) & 0xff) as f32;
+            let b = (v & 0xff) as f32;
+            let gray = (0.299 * r + 0.587 * g + 0.114 * b).round().clamp(0.0, 255.0) / 255.0;
+            Rgba { r: gray, g: gray, b: gray, a: c.alpha as f32 / 255.0 }.into()
+        }
+        ColorMode::HighContrast => {
+            let Rgb(v) = c.rgb;
+            let r = ((v >> 16) & 0xff) as f32;
+            let g = ((v >> 8) & 0xff) as f32;
+            let b = (v & 0xff) as f32;
+            let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            let val = if luma < 128.0 { 0.0 } else { 1.0 };
+            Rgba { r: val, g: val, b: val, a: if c.alpha == 0 { 0.0 } else { 1.0 } }.into()
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn rgb_hsla(rgb: Rgb) -> Hsla {
     hsla(DocColor::opaque(rgb))
 }
 
-/// A fill as a GPUI background, for fills that are not pictures.
-pub(crate) fn background(fill: &Fill) -> Option<Background> {
+pub(crate) fn rgb_hsla_mode(rgb: Rgb, mode: ColorMode) -> Hsla {
+    hsla_mode(DocColor::opaque(rgb), mode)
+}
+
+/// A fill as a GPUI background with color mode support.
+pub(crate) fn background_with_mode(fill: &Fill, mode: ColorMode) -> Option<Background> {
     match fill {
-        Fill::Solid(c) => Some(hsla(*c).into()),
+        Fill::Solid(c) => Some(hsla_mode(*c, mode).into()),
         Fill::Linear { angle, stops, .. } => {
             let (first, last) = (stops.first()?, stops.last()?);
             // OOXML's 0° runs left to right; CSS's runs bottom to top.
             let degrees = *angle as f32 / 60_000.0 + 90.0;
             Some(linear_gradient(
                 degrees,
-                linear_color_stop(hsla(first.color), first.position as f32 / 100_000.0),
-                linear_color_stop(hsla(last.color), last.position as f32 / 100_000.0),
+                linear_color_stop(hsla_mode(first.color, mode), first.position as f32 / 100_000.0),
+                linear_color_stop(hsla_mode(last.color, mode), last.position as f32 / 100_000.0),
             ))
         }
         // The background colour; the foreground's cells are painted over it
         // (`paint_pattern`).
-        Fill::Pattern { background, .. } => Some(hsla(*background).into()),
+        Fill::Pattern { background, .. } => Some(hsla_mode(*background, mode).into()),
         // (Painted band by band where it can be: `gradient::paint_gradient`.)
-        Fill::Path { stops, .. } => Some(hsla(stops.last()?.color).into()),
+        Fill::Path { stops, .. } => Some(hsla_mode(stops.last()?.color, mode).into()),
         Fill::None | Fill::Image(_) | Fill::TileImage { .. } | Fill::TileLinear { .. } => None,
     }
+}
+
+/// A fill as a GPUI background, for fills that are not pictures.
+pub(crate) fn background(fill: &Fill) -> Option<Background> {
+    background_with_mode(fill, ColorMode::Color)
 }
 
 /// The dashes of a stroke along a polyline (window pixels), in its dash
@@ -1475,12 +1676,12 @@ pub(crate) fn place<E: Styled>(element: E, frame: EmuRect, scale: f32) -> E {
 pub(crate) fn with_fill(element: Div, fill: &Fill, res: &Resources) -> Div {
     match fill {
         // The background colour (`slide_backdrop` paints the cells).
-        Fill::Pattern { background: bg, .. } => element.bg(hsla(*bg)),
+        Fill::Pattern { background: bg, .. } => element.bg(hsla_mode(*bg, res.color_mode)),
         Fill::Image(media) | Fill::TileImage { media, .. } => match res.picture(*media) {
             Some(image) => element.child(img(image).absolute().size_full().object_fit(ObjectFit::Fill)),
             None => element,
         },
-        other => match background(other) {
+        other => match background_with_mode(other, res.color_mode) {
             Some(bg) => element.bg(bg),
             None => element,
         },
@@ -1494,6 +1695,7 @@ pub(crate) fn tile_fill_element(
     ty: i64,
     sx: i32,
     sy: i32,
+    flip: ibis_doc_model::TileFlip,
     align: ibis_doc_model::TileAlign,
     bounds_emu: (i64, i64),
     scale: f32,
@@ -1533,6 +1735,24 @@ pub(crate) fn tile_fill_element(
     let anchor_x_emu = base_x + tx;
     let anchor_y_emu = base_y + ty;
 
+    // The tiles, with the alternate ones mirrored if the fill says, as one SVG.
+    if let Some((encoding, data)) = res.source(media) {
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            (dest_w_emu, dest_h_emu, tile_w_emu, tile_h_emu, anchor_x_emu, anchor_y_emu, flip).hash(&mut hasher);
+            (media, hasher.finish())
+        };
+        let found = res.clipped.borrow().get(&key).cloned();
+        let image = found.unwrap_or_else(|| {
+            let layout = crate::render::picture_svg::TileLayout { width: tile_w_emu as f64, height: tile_h_emu as f64, x: anchor_x_emu as f64, y: anchor_y_emu as f64, flip_x: matches!(flip, ibis_doc_model::TileFlip::X | ibis_doc_model::TileFlip::Xy), flip_y: matches!(flip, ibis_doc_model::TileFlip::Y | ibis_doc_model::TileFlip::Xy) };
+            let svg = crate::render::picture_svg::styled_picture(&data, encoding, dest_w_emu, dest_h_emu, None, ibis_doc_model::Crop::default(), None, Some(layout), &Default::default());
+            let image = Arc::new(Image::from_bytes(ImageFormat::Svg, svg));
+            res.clipped.borrow_mut().insert(key, image.clone());
+            image
+        });
+        return container.child(img(res.svg_picture(image)).absolute().size_full().object_fit(ObjectFit::Fill));
+    }
     let tile_w_px = tile_w_emu as f32 * scale;
     let tile_h_px = tile_h_emu as f32 * scale;
     let anchor_x_px = anchor_x_emu as f32 * scale;
@@ -1573,7 +1793,7 @@ pub(crate) fn tile_fill_element(
 /// The slide background and the layout's and master's shapes.
 pub(crate) fn slide_backdrop(slide: &Slide, scale: f32, res: &Resources) -> Div {
     let base = match &slide.background {
-        Fill::TileImage { media, tx, ty, sx, sy, align, .. } => {
+        Fill::TileImage { media, tx, ty, sx, sy, flip, align } => {
             let size = slide.size.unwrap_or(ibis_doc_model::EmuSize {
                 width: 12_192_000,
                 height: 6_858_000,
@@ -1584,6 +1804,7 @@ pub(crate) fn slide_backdrop(slide: &Slide, scale: f32, res: &Resources) -> Div 
                 *ty,
                 *sx,
                 *sy,
+                *flip,
                 *align,
                 (size.width, size.height),
                 scale,
@@ -1736,14 +1957,17 @@ pub(crate) fn shape_element_with_positions(
         Some(text_body_element(&body, max_w, scale, res, positions, text_turn, origin_x).into_any_element())
     });
     // The text goes in the text rectangle.
+    let clip_text = body.is_some_and(|b| b.clip);
     let text = text.map(|text| {
-        div()
+        let cell = div()
             .absolute()
             .left(px((cx - w / 2.0) as f32 * scale))
             .top(px((cy - h / 2.0) as f32 * scale))
             .w(px(w.max(0.0) as f32 * scale))
             .h(px(h.max(0.0) as f32 * scale))
-            .child(text)
+            .child(text);
+        // Cut at the shape's edge, not the text rectangle's.
+        if clip_text { div().absolute().left_0().top_0().size_full().overflow_hidden().child(cell) } else { cell }
     });
     match &shape.kind {
         ShapeKind::TextBox(_) => container.children(text).into_any_element(),
@@ -1756,22 +1980,18 @@ pub(crate) fn shape_element_with_positions(
                 placeholder_element(container, &Placeholder::Picture(format), frame, scale).into_any_element()
             }
         },
-        ShapeKind::Line(stroke) => line_element(shape, stroke.clone(), frame, scale).into_any_element(),
+        ShapeKind::Line(stroke) => line_element(shape, stroke.clone(), frame, scale, res.color_mode).into_any_element(),
         // A SmartArt graphic's shapes are drawn on their own.
         ShapeKind::Placeholder(Placeholder::Diagram) => container.into_any_element(),
         ShapeKind::Placeholder(kind) => placeholder_element(container, kind, frame, scale).into_any_element(),
         ShapeKind::Chart(chart) => container.child(crate::render::chart_view::chart_element(chart, frame, scale, res)).into_any_element(),
-        ShapeKind::Table(table) => {
-            // PowerPoint hides tables that have rotation or flip applied.
-            if shape.rotation != 0 || shape.flip_h || shape.flip_v {
-                div().into_any_element()
-            } else {
-                container.child(crate::render::table_view::table_element(table, frame, scale, res)).into_any_element()
-            }
-        }
+        // A table's rotation and flip are not applied (PowerPoint draws it upright, as measured by PTBL-00251 to 00255).
+        ShapeKind::Table(table) => container.child(crate::render::table_view::table_element(table, frame, scale, res)).into_any_element(),
         ShapeKind::Sheet(sheet) => container.child(crate::xlsx::sheet_view::sheet_element(sheet, frame, scale, res)).into_any_element(),
         ShapeKind::Page { document, index } => container.child(crate::docx::page_view::page_element(document, *index, frame, scale, res)).into_any_element(),
         ShapeKind::Slicer(slicer) => container.child(crate::xlsx::slicer_view::slicer_element(slicer, frame, scale)).into_any_element(),
+        ShapeKind::Timeline(timeline) => container.child(crate::xlsx::timeline_view::timeline_element(timeline, frame, scale)).into_any_element(),
+        ShapeKind::Control(control) => container.child(crate::xlsx::control_view::control_element(control, frame, scale)).into_any_element(),
     }
 }
 
@@ -1866,10 +2086,10 @@ fn glow_spread_blur(r: f32) -> (f32, f32) {
 /// user's private presentation, against the PDF).
 /// `at` is where the frame is meant to be on the slide (pixels, before
 /// GPUI snaps the element to whole pixels).
-fn outline_element(stroke: &Stroke, w: f32, h: f32, radius: Pixels, scale: f32, rect: bool, at: (f32, f32)) -> AnyElement {
+fn outline_element(stroke: &Stroke, w: f32, h: f32, radius: Pixels, scale: f32, rect: bool, at: (f32, f32), mode: ColorMode) -> AnyElement {
     let width = f32::from(stroke_px(stroke, scale));
     let half = width / 2.0;
-    let color = hsla(stroke.color);
+    let color = hsla_mode(stroke.color, mode);
     if stroke.dashed && rect {
         let (dash, gap) = ((width * 4.0).max(3.0), (width * 3.0).max(2.0));
         return canvas(
@@ -1996,6 +2216,50 @@ fn painted_stroke_px(stroke: &Stroke, scale: f32, window: &Window) -> Pixels {
     px((stroke.width as f32 * scale).max(1.0 / window.scale_factor()))
 }
 
+/// The colour of a face a bevel is shaded from: a solid fill's, or a gradient's first stop.
+fn bevel_base(fill: &Fill) -> Option<([u8; 3], bool)> {
+    let rgb = match fill {
+        Fill::Solid(c) => c.rgb,
+        Fill::Linear { stops, .. } | Fill::TileLinear { stops, .. } => stops.first()?.color.rgb,
+        _ => return None,
+    };
+    let ibis_doc_model::Rgb(v) = rgb;
+    Some(([((v >> 16) & 0xff) as u8, ((v >> 8) & 0xff) as u8, (v & 0xff) as u8], matches!(fill, Fill::Solid(c) if c.alpha == 255)))
+}
+
+/// Whether a bevelled shape's outline is drawn with the bevel (lit by its sides): a plain line round a solid face.
+fn bevel_outline(auto: &AutoShape) -> bool {
+    auto.bevel.is_some() && bevel_base(&auto.fill).is_some_and(|(_, solid)| solid) && auto.stroke.as_ref().is_some_and(|s| !s.dashed && s.compound == ibis_doc_model::LineCompound::Single && s.color.alpha == 255)
+}
+
+/// Paint the outline of a bevelled shape, each edge lit by its side.
+fn paint_bevel_stroke(window: &mut Window, pts: &[Point<Pixels>], bevel: &ibis_doc_model::Bevel, scale: f32, stroke: &Stroke) {
+    let flat: Vec<(f32, f32)> = pts.iter().map(|p| (f32::from(p.x), f32::from(p.y))).collect();
+    let ratio = if bevel.width > 0 { bevel.height as f32 / bevel.width as f32 } else { 1.0 };
+    let ibis_doc_model::Rgb(v) = stroke.color.rgb;
+    let rgb = [((v >> 16) & 0xff) as u8, ((v >> 8) & 0xff) as u8, (v & 0xff) as u8];
+    let width = f32::from(painted_stroke_px(stroke, scale, window));
+    for (poly, [r, g, b]) in crate::render::bevel::stroke_pieces(&flat, width, ratio, bevel.preset, rgb) {
+        let corners: Vec<Point<Pixels>> = poly.iter().map(|&(x, y)| point(px(x), px(y))).collect();
+        if let Some(path) = compound_path(&[(corners, true)], None) {
+            window.paint_path(path, hsla(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)), alpha: 255 }));
+        }
+    }
+}
+
+/// Paint a bevel (面取り) along the closed outline `pts` (pixels).
+fn paint_bevel(window: &mut Window, pts: &[Point<Pixels>], bevel: &ibis_doc_model::Bevel, scale: f32, (base, solid): ([u8; 3], bool)) {
+    let flat: Vec<(f32, f32)> = pts.iter().map(|p| (f32::from(p.x), f32::from(p.y))).collect();
+    let width = bevel.width as f32 * scale;
+    let ratio = if bevel.width > 0 { bevel.height as f32 / bevel.width as f32 } else { 1.0 };
+    for (poly, [r, g, b]) in crate::render::bevel::pieces(&flat, width, ratio, bevel.preset, base, solid) {
+        let corners: Vec<Point<Pixels>> = poly.iter().map(|&(x, y)| point(px(x), px(y))).collect();
+        if let Some(path) = compound_path(&[(corners, true)], None) {
+            window.paint_path(path, hsla(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)), alpha: 255 }));
+        }
+    }
+}
+
 fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, scale: f32, res: &Resources) -> Div {
     let rotated = shape.rotation.rem_euclid(21_600_000) != 0;
     // Soft edges (`a:softEdge`) on a plain filled rectangle: the shape fades
@@ -2117,19 +2381,22 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
             }
 
             // 2. Shape body fill
+            // A bevelled shape's outline is lit with it (drawn with the bevel).
+            let bevel_stroked = bevel_outline(auto);
             let round_rect_exact = matches!(auto.geometry, Geometry::RoundRect { .. })
                 && matches!(auto.fill, Fill::Solid(_) | Fill::None)
-                && !auto.stroke.as_ref().is_some_and(|s| s.dashed);
+                && !auto.stroke.as_ref().is_some_and(|s| s.dashed)
+                && !bevel_stroked;
 
             let mut body = div().size_full().rounded(radius);
             body = match &auto.fill {
                 _ if round_rect_exact => {
                     let fill_color = match &auto.fill {
-                        Fill::Solid(color) => hsla(*color),
+                        Fill::Solid(color) => hsla_mode(*color, res.color_mode),
                         _ => transparent_black(),
                     };
                     let stroke_info = if auto.inner_shadow.is_none() {
-                        auto.stroke.as_ref().map(|s| (stroke_px(s, scale), hsla(s.color)))
+                        auto.stroke.as_ref().map(|s| (stroke_px(s, scale), hsla_mode(s.color, res.color_mode)))
                     } else {
                         None
                     };
@@ -2156,7 +2423,7 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                     )
                 }
                 Fill::Solid(color) if auto.geometry == Geometry::Rect => {
-                    let color = hsla(*color);
+                    let color = hsla_mode(*color, res.color_mode);
                     body.child(
                         canvas(
                             |_, _, _| {},
@@ -2174,12 +2441,13 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                         .size_full(),
                     )
                 }
-                Fill::TileImage { media, tx, ty, sx, sy, align, .. } => body.child(tile_fill_element(
+                Fill::TileImage { media, tx, ty, sx, sy, flip, align } => body.child(tile_fill_element(
                     *media,
                     *tx,
                     *ty,
                     *sx,
                     *sy,
+                    *flip,
                     *align,
                     (frame.width, frame.height),
                     scale,
@@ -2272,28 +2540,33 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                 container = container.child(div().absolute().top_0().left_0().size_full().rounded(radius).shadow(vec![inner]));
             }
 
-            // 3D bevel effect (面取りの陰影): top/left highlight and bottom/right shadow inside the shape.
-            if let Some(bevel) = auto.bevel.filter(|_| auto.fill != Fill::None) {
-                let bw = (bevel.width as f32 * scale).max(1.0).min(w / 4.0).min(h / 4.0);
-                let light = BoxShadow {
-                    color: hsla(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0xffffff), alpha: 120 }),
-                    offset: point(px(bw * 0.5), px(bw * 0.5)),
-                    blur_radius: px(bw * 0.4),
-                    spread_radius: px(0.),
-                    inset: true,
-                };
-                let dark = BoxShadow {
-                    color: hsla(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0x000000), alpha: 90 }),
-                    offset: point(px(-bw * 0.5), px(-bw * 0.5)),
-                    blur_radius: px(bw * 0.4),
-                    spread_radius: px(0.),
-                    inset: true,
-                };
-                container = container.child(div().absolute().top_0().left_0().size_full().rounded(radius).shadow(vec![light, dark]));
+            // 3D bevel effect (面取り): the strips along the edges, shaded by the preset's profile (render/bevel.rs).
+            if let (Some(bevel), Some(base)) = (auto.bevel, bevel_base(&auto.fill)) {
+                let geometry = auto.geometry.clone();
+                let stroke_for_bevel = auto.stroke.clone();
+                container = container.child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, _| {
+                            for outline in geometry_outlines(&geometry, frame).iter().filter(|o| o.fill == ibis_doc_model::PathFill::Normal) {
+                                for sub in outline.subpaths.iter().filter(|s| s.closed) {
+                                    let pts: Vec<Point<Pixels>> = sub.points.iter().map(|&(x, y)| point(bounds.origin.x + px(x as f32 * scale), bounds.origin.y + px(y as f32 * scale))).collect();
+                                    paint_bevel(window, &pts, &bevel, scale, base);
+                                    if let (true, Some(stroke)) = (bevel_stroked, &stroke_for_bevel) {
+                                        paint_bevel_stroke(window, &pts, &bevel, scale, stroke);
+                                    }
+                                }
+                            }
+                        },
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                );
             }
 
-
-            if let Some(stroke) = &auto.stroke {
+            if let Some(stroke) = auto.stroke.as_ref().filter(|_| !bevel_stroked) {
                 if round_rect_exact && auto.inner_shadow.is_none() {
                     // Handled inside body canvas above
                 } else if matches!(auto.fill, Fill::Image(_) | Fill::TileImage { .. }) {
@@ -2302,11 +2575,11 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                             .size_full()
                             .rounded(radius)
                             .border(stroke_px(stroke, scale))
-                            .border_color(hsla(stroke.color))
+                            .border_color(hsla_mode(stroke.color, res.color_mode))
                             .when(stroke.dashed, |d| d.border_dashed()),
                     );
                 } else {
-                    container = container.child(outline_element(stroke, w, h, radius, scale, auto.geometry == Geometry::Rect, at));
+                    container = container.child(outline_element(stroke, w, h, radius, scale, auto.geometry == Geometry::Rect, at, res.color_mode));
                 }
             }
             container
@@ -2316,7 +2589,25 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
             // The tilted body is drawn apart from the frame, which keeps the text.
             Some(tilt) => {
                 let (x, y, tw, th) = tilted_frame(tilt, w, h, scale);
-                container.child(paint(div().absolute().left(px(x)).top(px(y)).w(px(tw)).h(px(th))))
+                let front = paint(div().absolute().left(px(x)).top(px(y)).w(px(tw)).h(px(th)));
+                if tilt.extrusion_h > 0 {
+                    let ext_px = (tilt.extrusion_h as f32 * scale).max(1.0);
+                    let ext_clr = tilt
+                        .extrusion_color
+                        .map(hsla)
+                        .unwrap_or_else(|| Hsla { a: 0.75, ..hsla(DocColor::opaque(Rgb(0x404040))) });
+                    let ext_div = div()
+                        .absolute()
+                        .left(px(x))
+                        .top(px(y + 1.0))
+                        .w(px(tw))
+                        .h(px(th + ext_px))
+                        .rounded(radius)
+                        .bg(ext_clr);
+                    container.child(ext_div).child(front)
+                } else {
+                    container.child(front)
+                }
             }
             None => paint(container),
         };
@@ -2331,12 +2622,13 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
             Some(image) => container.child(img(res.svg_picture(image)).absolute().size_full().object_fit(ObjectFit::Fill)),
             None => with_fill(container.overflow_hidden(), &auto.fill, res),
         },
-        Fill::TileImage { media, tx, ty, sx, sy, align, .. } => container.child(tile_fill_element(
+        Fill::TileImage { media, tx, ty, sx, sy, flip, align } => container.child(tile_fill_element(
             *media,
             *tx,
             *ty,
             *sx,
             *sy,
+            *flip,
             *align,
             (frame.width, frame.height),
             scale,
@@ -2348,6 +2640,8 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
     // A gradient is painted in the shape's own coordinates, so it turns
     // and flips with the shape (`rotWithShape`).
     let own_fill = auto.fill.clone();
+    let bevel_spec = auto.bevel;
+    let bevel_stroked_path = bevel_outline(auto);
     let box_size = (frame.width as f32, frame.height as f32);
     let stroke = auto.stroke.clone();
     let place = Placement::new(shape, frame);
@@ -2364,6 +2658,7 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
     // poppler adjusts them (at 2 px a point: a rectangle's 1.5 pt outline
     // on whole pixels, its 0.75 pt one and open lines smoothed across them).
     let on_pixels = !res.exact;
+    let color_mode = res.color_mode;
     container.child(
         canvas(
             |_, _, _| {},
@@ -2379,7 +2674,7 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                         let (w_emu, h_emu) = (frame.width as f64, frame.height as f64);
                         let anchor = shadow_anchor(s.align, w_emu, h_emu, stroke_half_emu as f64);
                         let blur = s.blur as f32 * scale;
-                        let color = hsla(s.color);
+                        let color = hsla_mode(s.color, color_mode);
                         render_transformed_shadow(
                             window,
                             &shadow_outlines,
@@ -2438,7 +2733,20 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                             paint_pattern(window, &fill, &closed, slide_origin(bounds.origin), scale);
                         }
                     }
+                    // The bevel over the face (under the outline).
+                    if let (Some(bevel), Some(base), true) = (bevel_spec, bevel_base(&own_fill), outline.fill == ibis_doc_model::PathFill::Normal) {
+                        for (pts, closed) in subpaths.iter().filter(|(_, c)| *c) {
+                            let _ = closed;
+                            paint_bevel(window, pts, &bevel, scale, base);
+                        }
+                    }
+                    if let (Some(bevel), true, true, Some(stroke)) = (bevel_spec, bevel_stroked_path, outline.stroke, &stroke) {
+                        for (pts, _) in subpaths.iter().filter(|(_, c)| *c) {
+                            paint_bevel_stroke(window, pts, &bevel, scale, stroke);
+                        }
+                    }
                     if outline.stroke
+                        && !bevel_stroked_path
                         && let Some(stroke) = &stroke
                     {
                         let width = painted_stroke_px(stroke, scale, window);
@@ -2502,16 +2810,52 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                                         };
                                         let dot_pieces: Vec<Vec<Point<Pixels>>> = pieces.iter().filter(|p| is_dot(p)).cloned().collect();
                                         if !dot_pieces.is_empty() {
-                                            paint_round_caps(window, &dot_pieces, w_px, hsla(stroke.color));
+                                            paint_round_caps(window, &dot_pieces, w_px, hsla_mode(stroke.color, color_mode));
                                         }
-                                        paint_compound_round_caps(window, &pieces, w_px, stroke.compound, hsla(stroke.color), true, true);
+                                        paint_compound_round_caps(window, &pieces, w_px, stroke.compound, hsla_mode(stroke.color, color_mode), true, true);
                                     } else {
-                                        paint_round_caps(window, &pieces, w_px, hsla(stroke.color));
+                                        paint_round_caps(window, &pieces, w_px, hsla_mode(stroke.color, color_mode));
                                     }
                                 }
                             }
                         } else if let Some(p) = compound_path_styled(&subpaths, Some(width), stroke.cap, stroke.join) {
-                            window.paint_path(p, hsla(stroke.color));
+                            let mut painted_gradient = false;
+                            if let Some(ibis_doc_model::Fill::Linear { stops, .. } | ibis_doc_model::Fill::TileLinear { stops, .. } | ibis_doc_model::Fill::Path { stops, .. }) = &stroke.fill {
+                                if !stops.is_empty() {
+                                    for (pts, closed) in &subpaths {
+                                        if pts.len() >= 2 {
+                                            let edges: Vec<(Point<Pixels>, Point<Pixels>)> = if *closed && pts.len() >= 3 {
+                                                let mut e: Vec<_> = pts.windows(2).map(|w| (w[0], w[1])).collect();
+                                                if let (Some(&first), Some(&last)) = (pts.first(), pts.last()) {
+                                                    if (f32::from(last.x - first.x)).hypot(f32::from(last.y - first.y)) > 1e-3 {
+                                                        e.push((last, first));
+                                                    }
+                                                }
+                                                e
+                                            } else {
+                                                pts.windows(2).map(|w| (w[0], w[1])).collect()
+                                            };
+                                            let total_len: f32 = edges.iter().map(|(p0, p1)| (f32::from(p1.x - p0.x)).hypot(f32::from(p1.y - p0.y))).sum();
+                                            if total_len > 0.0 {
+                                                let mut cum_len = 0.0f32;
+                                                for (p0, p1) in edges {
+                                                    let seg_len = (f32::from(p1.x - p0.x)).hypot(f32::from(p1.y - p0.y));
+                                                    let t = (cum_len + seg_len * 0.5) / total_len;
+                                                    let seg_color = crate::render::gradient::color_at_mode(stops, t, false);
+                                                    if let Some(seg_p) = polygon_styled(&[p0, p1], Some(width), false, stroke.cap, stroke.join) {
+                                                        window.paint_path(seg_p, seg_color);
+                                                    }
+                                                    cum_len += seg_len;
+                                                }
+                                                painted_gradient = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !painted_gradient {
+                                window.paint_path(p, hsla_mode(stroke.color, color_mode));
+                            }
                         }
                         // Arrowheads at the ends of an open outline (bent
                         // and curved connectors, arcs).
@@ -2532,7 +2876,7 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                                 let (first, last) = (points[0], points[points.len() - 1]);
                                 let from_first = toward(first, &mut points.iter().skip(1));
                                 let from_last = toward(last, &mut points.iter().rev().skip(1));
-                                let color = hsla(stroke.color);
+                                let color = hsla_mode(stroke.color, color_mode);
                                 paint_line_end(stroke.head, first, from_first, f32::from(width), head_base, color, window);
                                 paint_line_end(stroke.tail, last, from_last, f32::from(width), head_base, color, window);
                             }
@@ -2883,7 +3227,7 @@ fn shadow_outlines(geometry: &Geometry, frame: EmuRect, stroke_half: f64) -> Vec
     }
 }
 
-fn line_element(shape: &Shape, stroke: Stroke, frame: EmuRect, scale: f32) -> Div {
+fn line_element(shape: &Shape, stroke: Stroke, frame: EmuRect, scale: f32, mode: ColorMode) -> Div {
     let place = Placement::new(shape, frame);
     let (w, h) = (frame.width as f32, frame.height as f32);
 
@@ -2920,7 +3264,7 @@ fn line_element(shape: &Shape, stroke: Stroke, frame: EmuRect, scale: f32) -> Di
                         ends[i] = point(ends[i].x + px(dx / len * back), ends[i].y + px(dy / len * back));
                     }
                 }
-                let color = hsla(stroke.color);
+                let color = hsla_mode(stroke.color, mode);
                 let head_plain = stroke.head == LineEnd::None;
                 let tail_plain = stroke.tail == LineEnd::None;
                 // Dashes in the line's pattern; the ends in its caps.
@@ -3109,13 +3453,15 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
     if turned && let Some((image, bounds)) = rotated_image(shape, picture, frame, res) {
         // The rotated picture covers its bounding box, around the frame.
         return container.child(
-            place(img(res.svg_picture(image)), bounds, scale).object_fit(ObjectFit::Fill),
+            place(img(res.svg_picture(image)), bounds, scale).object_fit(ObjectFit::Fill).opacity(picture.effects.opacity.map_or(1.0, |a| a as f32 / 100_000.0)),
         );
     }
     if !res.has_picture(picture.media) {
         return container;
     }
-    let recoloured = picture.duotone.and_then(|(dark, light)| {
+    // Cut to a shape, or given colour effects: one SVG with the crop, the cut and the filters.
+    let styled = (!picture.effects.is_none() || picture.geometry.is_some() || picture.luminance.is_some() || picture.tile.is_some() || picture.fill_rect.is_some() || picture.soft_edge.is_some() || picture.artistic_effect.is_some()).then(|| styled_picture_image(shape, picture, frame, res)).flatten();
+    let recoloured = picture.duotone.filter(|_| styled.is_none()).and_then(|(dark, light)| {
         let key = (picture.media, dark, light);
         if let Some(found) = res.duotones.borrow().get(&key) {
             return Some(found.clone());
@@ -3127,7 +3473,7 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
         Some(image)
     });
     // A colour set transparent (not combined with a duotone).
-    let cleared = picture.clear.filter(|_| recoloured.is_none()).and_then(|clear| {
+    let cleared = picture.clear.filter(|_| recoloured.is_none() && styled.is_none()).and_then(|clear| {
         let key = (picture.media, clear, clear);
         if let Some(found) = res.duotones.borrow().get(&key) {
             return Some(found.clone());
@@ -3138,13 +3484,14 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
         Some(image)
     });
     // Recoloured pictures are loaded by GPUI; the picture itself once decoded.
-    let Some(image) = recoloured.or(cleared).map(|image| res.svg_picture(image)).or_else(|| res.picture(picture.media)) else { return container };
-    let c = picture.crop;
+    let Some(image) = styled.clone().or(recoloured).or(cleared).map(|image| res.svg_picture(image)).or_else(|| res.picture(picture.media)) else { return container };
+    // (The crop is in the styled picture already.)
+    let c = if styled.is_some() { ibis_doc_model::Crop::default() } else { picture.crop };
     let frac = |v: i32| v as f32 / 100_000.0;
     let visible_w = (1.0 - frac(c.left) - frac(c.right)).max(0.01);
     let visible_h = (1.0 - frac(c.top) - frac(c.bottom)).max(0.01);
     // A brightness overlay reflecting luminance.
-    let lum_overlay = picture.luminance.and_then(|(bright, _)| {
+    let lum_overlay = picture.luminance.filter(|_| styled.is_none()).and_then(|(bright, _)| {
         if bright > 0 {
             let alpha = ((bright as f32 / 100_000.0).clamp(0.0, 0.85) * 255.0) as u8;
             Some(div().absolute().size_full().bg(hsla(DocColor { rgb: ibis_doc_model::Rgb(0xffffff), alpha })))
@@ -3205,16 +3552,76 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
     .children(outline)
 }
 
+/// The SVG of `picture` cropped, cut to its geometry and given its colour effects, if its format can be wrapped.
+fn styled_picture_image(shape: &Shape, picture: &Picture, frame: EmuRect, res: &Resources) -> Option<Arc<Image>> {
+    let (w, h) = (frame.width as f64, frame.height as f64);
+    let subpaths: Option<Vec<Vec<(f64, f64)>>> = picture.geometry.as_ref().map(|g| {
+        geometry_outlines(g, frame)
+            .iter()
+            .filter(|o| o.fill != ibis_doc_model::PathFill::None)
+            .flat_map(|o| &o.subpaths)
+            .map(|s| s.points.iter().map(|&(x, y)| (if shape.flip_h { w - x } else { x }, if shape.flip_v { h - y } else { y })).collect())
+            .collect()
+    });
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (frame.width, frame.height, picture.crop, picture.luminance, picture.duotone, picture.effects, picture.soft_edge, shape.flip_h, shape.flip_v, picture.tile, picture.fill_rect, picture.artistic_effect).hash(&mut hasher);
+        for p in subpaths.iter().flatten().flatten() {
+            (p.0.to_bits(), p.1.to_bits()).hash(&mut hasher);
+        }
+        (picture.media, hasher.finish())
+    };
+    if let Some(found) = res.clipped.borrow().get(&key) {
+        return Some(found.clone());
+    }
+    let (encoding, data) = res.source(picture.media)?;
+    let rgb = |c: ibis_doc_model::Rgb| (c.r(), c.g(), c.b());
+    let look = crate::render::picture_svg::Look { luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| (rgb(a), rgb(b))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect };
+    // Tiles: a tile is the picture's pixels at one point each, scaled (`a:tile/@sx`, `@sy`); the first sits at
+    // the frame's corner `align` names, moved by `tx`, `ty`.
+    let tile = picture.tile.and_then(|t| {
+        let (px_w, px_h) = res.image_size(picture.media)?;
+        let tw = ((px_w as f64 * ibis_doc_model::EMU_PER_POINT as f64) * (t.sx.max(1) as f64 / 100_000.0)).max(ibis_doc_model::EMU_PER_POINT as f64);
+        let th = ((px_h as f64 * ibis_doc_model::EMU_PER_POINT as f64) * (t.sy.max(1) as f64 / 100_000.0)).max(ibis_doc_model::EMU_PER_POINT as f64);
+        use ibis_doc_model::TileAlign as A;
+        let (bx, by) = match t.align {
+            A::TopLeft => (0.0, 0.0),
+            A::Top => ((w - tw) / 2.0, 0.0),
+            A::TopRight => (w - tw, 0.0),
+            A::Left => (0.0, (h - th) / 2.0),
+            A::Center => ((w - tw) / 2.0, (h - th) / 2.0),
+            A::Right => (w - tw, (h - th) / 2.0),
+            A::BottomLeft => (0.0, h - th),
+            A::Bottom => ((w - tw) / 2.0, h - th),
+            A::BottomRight => (w - tw, h - th),
+        };
+        let flip = t.flip;
+        Some(crate::render::picture_svg::TileLayout { width: tw, height: th, x: bx + t.tx as f64, y: by + t.ty as f64, flip_x: matches!(flip, ibis_doc_model::TileFlip::X | ibis_doc_model::TileFlip::Xy), flip_y: matches!(flip, ibis_doc_model::TileFlip::Y | ibis_doc_model::TileFlip::Xy) })
+    });
+    let svg = crate::render::picture_svg::styled_picture(&data, encoding, frame.width, frame.height, subpaths.as_deref(), picture.crop, picture.fill_rect, tile, &look);
+    let image = Arc::new(Image::from_bytes(ImageFormat::Svg, svg));
+    res.clipped.borrow_mut().insert(key, image.clone());
+    Some(image)
+}
+
 /// The picture of `shape` rotated and flipped, with its bounds relative to
 /// the frame's top-left corner; `None` if its format cannot be wrapped.
 fn rotated_image(shape: &Shape, picture: &Picture, frame: EmuRect, res: &Resources) -> Option<(Arc<Image>, EmuRect)> {
-    let key = (picture.media, shape.rotation, shape.flip_h, shape.flip_v, picture.crop, frame.width, frame.height);
+    let look = crate::render::picture_svg::Look { luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| ((a.r(), a.g(), a.b()), (b.r(), b.g(), b.b()))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect };
+    let look_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{look:?}").hash(&mut hasher);
+        hasher.finish()
+    };
+    let key = (picture.media, shape.rotation, shape.flip_h, shape.flip_v, picture.crop, frame.width, frame.height, look_hash);
     if let Some(found) = res.rotated.borrow().get(&key) {
         return Some(found.clone());
     }
     let (encoding, data) = res.source(picture.media)?;
     let local = EmuRect { x: 0, y: 0, ..frame };
-    let wrapped = crate::render::picture_svg::rotated_picture(&data, encoding, local, shape.rotation, shape.flip_h, shape.flip_v, picture.crop);
+    let wrapped = crate::render::picture_svg::rotated_picture(&data, encoding, local, shape.rotation, shape.flip_h, shape.flip_v, picture.crop, &look);
     let entry = (Arc::new(Image::from_bytes(ImageFormat::Svg, wrapped.svg)), wrapped.bounds);
     res.rotated.borrow_mut().insert(key, entry.clone());
     Some(entry)
@@ -3268,6 +3675,16 @@ pub(crate) fn text_body_element(
     // The paragraphs are placed together, from their unrounded heights.
     let block = crate::render::rich_text::TextBlock::default();
     block.heights.borrow_mut().resize(body.paragraphs.len(), 0.0);
+    // Text bent to a warp (`a:prstTxWarp`) that has two guide curves: its glyphs are collected and painted
+    // bent after the paragraphs (the other warps are not drawn yet).
+    if let Some(geometry) = body.warp.as_deref().and_then(|name| ibis_pptx::text_warp_geometry(name, &body.warp_adjust))
+        && matches!(geometry.outline(100.0, 100.0).len(), 1 | 2 | 3 | 4 | 6)
+    {
+        *block.warp.borrow_mut() = Some(crate::render::rich_text::Warp::new(geometry));
+    }
+    let warped = block.clone();
+    // (A text on one curve is a single line.)
+    let single_path = block.warp.borrow().as_ref().is_some_and(|w| matches!(w.geometry.outline(100.0, 100.0).len(), 1 | 3));
     let slots = positions.map(|p| p.slots(body.paragraphs.len()));
     let paragraphs = body.paragraphs.iter().enumerate().map(|(index, paragraph)| {
         let align = paragraph.align.unwrap_or(body.style.align);
@@ -3298,8 +3715,9 @@ pub(crate) fn text_body_element(
             (paragraph.margin_left + paragraph.indent).max(0) - paragraph.margin_left
         };
         // PowerPoint puts no space above the first paragraph of a body, nor
-        // below the last (measured: at the bottom of its box).
-        let space_before = if index == 0 { 0 } else { paragraph.space_before };
+        // below the last (measured: at the bottom of its box). Word keeps the
+        // space above the first paragraph of a text box (`clip`: Word's).
+        let space_before = if index == 0 && !body.clip { 0 } else { paragraph.space_before };
         let space_after = if index + 1 == body.paragraphs.len() { 0 } else { paragraph.space_after };
         // An empty paragraph still takes a line at its mark's size.
         let mark = [ibis_doc_model::Run { text: String::new(), style: paragraph.end_style.clone() }];
@@ -3324,7 +3742,7 @@ pub(crate) fn text_body_element(
                 text: b.text.clone(),
                 font,
                 size,
-                color: rgb_hsla(b.color.unwrap_or(first.color)),
+                color: rgb_hsla_mode(b.color.unwrap_or(first.color), res.color_mode),
                 x: paragraph.indent as f32 * scale,
                 drop: centred(ba, bd, size) - centred(fa, fd, first_size),
             })
@@ -3380,6 +3798,10 @@ pub(crate) fn text_body_element(
                             _ => segments.push((c.to_string(), m, other)),
                         }
                     }
+                    if r.style.math.is_some() {
+                        // A formula is one piece.
+                        segments = vec![(r.text.clone(), latin, false)];
+                    }
                     if segments.is_empty() {
                         segments.push((String::new(), latin, false));
                     }
@@ -3398,23 +3820,32 @@ pub(crate) fn text_body_element(
                                 text,
                                 font: piece_font,
                                 size: size * k,
-                                color: if r.style.invisible { Hsla::transparent_black() } else { rgb_hsla(s.color) },
+                                color: if r.style.invisible {
+                                    Hsla::transparent_black()
+                                } else {
+                                    rgb_hsla_mode(s.color, res.color_mode)
+                                },
                                 underline: r.style.underline && !r.style.invisible,
                                 underline_kind: r.style.underline_kind,
                                 raise: r.style.baseline as f32 / 100_000.0 * full,
                                 spacing: r.style.spacing as f32 / 100.0 * px_per_point,
-                                highlight: r.style.highlight.filter(|_| !r.style.invisible).map(rgb_hsla),
-                                outline: r.style.outline.filter(|_| !r.style.invisible).map(|(c, w)| (rgb_hsla(c), w as f32 * scale)),
-                                shadow: r.style.shadow.filter(|_| !r.style.invisible).map(|s| {
-                                    let rad = (s.direction as f32 / 60_000.0).to_radians();
-                                    let dist = s.distance as f32 * scale;
-                                    (hsla(s.color), dist * rad.cos(), dist * rad.sin())
-                                }),
+                                highlight: r.style.highlight.filter(|_| !r.style.invisible).map(|c| rgb_hsla_mode(c, res.color_mode)),
+                                outline: r.style.outline.filter(|_| !r.style.invisible).map(|(c, w)| (rgb_hsla_mode(c, res.color_mode), w as f32 * scale)),
+                                shadow: if res.color_mode == ColorMode::HighContrast {
+                                    None
+                                } else {
+                                    r.style.shadow.filter(|_| !r.style.invisible).map(|s| {
+                                        let rad = (s.direction as f32 / 60_000.0).to_radians();
+                                        let dist = s.distance as f32 * scale;
+                                        (hsla_mode(s.color, res.color_mode), dist * rad.cos(), dist * rad.sin())
+                                    })
+                                },
                                 fill: r.style.fill.clone().filter(|_| !r.style.invisible),
                                 ascent: a * size,
                                 descent: d * size,
                                 strike: if r.style.invisible { ibis_doc_model::Strike::None } else { r.style.strike },
                                 strike_size: size,
+                                math: r.style.math.as_deref().cloned(),
                             }
                         })
                         .collect::<Vec<_>>()
@@ -3430,7 +3861,7 @@ pub(crate) fn text_body_element(
                 align,
                 font_align: paragraph.font_align,
                 line,
-                wrap: body.wrap,
+                wrap: body.wrap && !single_path,
                 first_line: first_line as f32 * scale,
                 room: width.map(|w| {
                     let total_w = (w as f32 - (body.insets.left + body.insets.right) as f32).max(0.0);
@@ -3487,7 +3918,7 @@ pub(crate) fn text_body_element(
                     .text_size(size)
                     // A smaller bullet sits in the middle of the first line.
                     .line_height(px(line_px))
-                    .text_color(rgb_hsla(color))
+                    .text_color(rgb_hsla_mode(color, res.color_mode))
                     .child(SharedString::from(b.text.clone())),
             }
         });
@@ -3551,8 +3982,17 @@ pub(crate) fn text_body_element(
                     block.place(top + insets.0, height - insets.0 - insets.1, anchor);
                     let middle = bounds.center();
                     block.turn(f32::from(middle.x), f32::from(middle.y), turn);
+                    // (The glyphs of a bent text are collected again as the paragraphs paint.)
+                    if let Some(w) = block.warp.borrow_mut().as_mut() {
+                        w.glyphs.clear();
+                        w.lines.clear();
+                    }
                 },
-                |_, _, _, _| {},
+                move |bounds, _, window, _| {
+                    if let Some(w) = warped.warp.borrow().as_ref() {
+                        crate::render::rich_text::paint_warp(window, w, (f32::from(bounds.origin.x), f32::from(bounds.origin.y), f32::from(bounds.size.width), f32::from(bounds.size.height)));
+                    }
+                },
             )
             .absolute()
             .top_0()
@@ -3583,7 +4023,7 @@ fn vertical_text_element(body: &TextBody, scale: f32, res: &Resources) -> Div {
             let style = res.with_theme_font(body.style.with_run(&run.style), &run.text);
             let font = res.font(&style);
             let size = style.font_size_pt() * font_scale * px_per_point;
-            let color = rgb_hsla(style.color);
+            let color = rgb_hsla_mode(style.color, res.color_mode);
             for c in run.text.chars() {
                 let (w, h) = if crate::render::rich_text::is_cjk(c) { (1.2857 * size, 1.1657 * size) } else { (1.4229 * size, 1.4229 * size) };
                 cells.push(

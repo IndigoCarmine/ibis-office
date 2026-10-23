@@ -106,6 +106,8 @@ pub enum Command {
     /// the theme itself: the shapes drawn in the new colours come with it
     /// as [`Command::SetSlide`]s; its own inverse.
     SetTheme { colors: Vec<(String, crate::drawing::Rgb)>, fonts: Option<crate::text::ThemeFonts> },
+    /// The theme's format / effect scheme changed (テーマ効果: `a:fmtScheme/@name`).
+    SetThemeEffects { name: Option<String> },
     /// The number the first slide has (スライド番号の開始値); the slides'
     /// number fields follow. Its own inverse.
     SetFirstSlideNumber { number: usize },
@@ -127,6 +129,12 @@ pub enum Command {
     SetDocProperties { properties: crate::flow::DocProperties },
     /// 既定の図形・線の書式設定（`<a:objectDefaults>`）。
     SetObjectDefaults { defaults: crate::model::ObjectDefaults },
+    /// フォントの代替（フォント代替マップの更新）。
+    SetFontSubstitutions { substitutions: std::collections::BTreeMap<String, String> },
+    /// 埋め込みフォント一覧の更新。
+    SetEmbeddedFonts { fonts: Vec<crate::model::EmbeddedFont> },
+    /// フォトアルバムの設定 (`p:photoAlbum`)。
+    SetPhotoAlbum { album: Option<crate::model::PhotoAlbum> },
     /// Atomic inverse of leaf insertion/deletion and its group membership.
     ShapeStructure {slide:SlideId,command:Box<Command>,groups:Vec<crate::model::ShapeGroup>},
     /// Replace the slide group hierarchy; the flattened shapes retain their frames.
@@ -163,6 +171,10 @@ pub enum Command {
     SetShapeZoomShowBg { slide: SlideId, shape: ShapeId, show_bg: Option<bool> },
     /// ズームの継続時間: zoom transition duration in milliseconds (`dur`).
     SetShapeZoomDuration { slide: SlideId, shape: ShapeId, duration_ms: Option<u32> },
+    /// コネクタの接続（結合点）: what its ends are attached to (`a:stCxn`, `a:endCxn`).
+    SetShapeGlue { slide: SlideId, shape: ShapeId, glue: Option<crate::model::Glue> },
+    /// コネクタの配置と反転（追従時更新用）.
+    SetConnectorFrame { slide: SlideId, shape: ShapeId, frame: EmuRect, flip_h: bool, flip_v: bool },
     /// Set a slide's speaker notes (スピーカー ノート), paragraphs joined by `\n`.
     SetNotes { slide: SlideId, notes: String },
     /// Set a slide's name (スライド名・非表示タイトル: p:cSld/@name).
@@ -210,6 +222,8 @@ pub enum EditError {
     CustomViewsDisabledByTable,
     /// 指定された項目が見つからない.
     NotFound,
+    /// A locked content control (`w:lock`): it cannot be deleted or its content edited.
+    ControlLocked,
     /// 変更履歴の記録がロックされている（Word の変更履歴の記録のロック / w:documentProtection w:edit="trackedChanges"）.
     TrackingLocked,
     /// A slide uses the layout.
@@ -230,6 +244,7 @@ impl std::fmt::Display for EditError {
             Self::LastSlide => write!(f, "a presentation keeps at least one slide"),
             Self::NotText(id) => write!(f, "shape {} has no text", id.0),
             Self::NotApplicable(id) => write!(f, "shape {} cannot take this change", id.0),
+            Self::ControlLocked => write!(f, "the content control is locked"),
             Self::Attached(id) => write!(f, "shape {} is part of another shape", id.0),
             Self::DataTablePart => write!(f, "a cell of a data table cannot be changed on its own"),
             Self::WorkbookProtected => write!(f, "workbook structure is protected"),
@@ -619,6 +634,12 @@ impl Presentation {
             Command::SetTheme { colors, fonts } => {
                 let old_colors = std::mem::replace(&mut self.theme_colors, colors.clone());
                 let old_fonts = std::mem::replace(&mut self.theme_fonts, fonts.clone());
+                if let Some(flow_arc) = &mut self.flow
+                    && colors != old_colors
+                {
+                    let flow = std::sync::Arc::make_mut(flow_arc);
+                    flow.retheme(&colors);
+                }
                 if let Some(workbook) = &mut self.workbook {
                     let wb = std::sync::Arc::make_mut(workbook);
                     wb.theme_colors = colors.clone();
@@ -649,6 +670,22 @@ impl Presentation {
                     }
                 }
                 Ok(Command::SetTheme { colors: old_colors, fonts: old_fonts })
+            }
+            Command::SetThemeEffects { name } => {
+                let old = std::mem::replace(&mut self.theme_effects, name);
+                Ok(Command::SetThemeEffects { name: old })
+            }
+            Command::SetFontSubstitutions { substitutions } => {
+                let old = std::mem::replace(&mut self.font_substitutions, substitutions);
+                Ok(Command::SetFontSubstitutions { substitutions: old })
+            }
+            Command::SetEmbeddedFonts { fonts } => {
+                let old = std::mem::replace(&mut self.fonts, fonts);
+                Ok(Command::SetEmbeddedFonts { fonts: old })
+            }
+            Command::SetPhotoAlbum { album } => {
+                let old = std::mem::replace(&mut self.photo_album, album);
+                Ok(Command::SetPhotoAlbum { album: old })
             }
             Command::SetFirstSlideNumber { number } => {
                 let old = std::mem::replace(&mut self.first_slide_number, number.min(9999));
@@ -824,6 +861,28 @@ impl Presentation {
                 };
                 Ok(Command::SetShapeZoomDuration { slide, shape, duration_ms: old })
             }
+            Command::SetShapeGlue { slide, shape, glue } => {
+                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
+                if s.shape(shape).is_none() {
+                    return Err(EditError::NoSuchShape(shape));
+                }
+                let old = match glue {
+                    Some(g) => s.shape_glues.insert(shape, g),
+                    None => s.shape_glues.remove(&shape),
+                };
+                Ok(Command::SetShapeGlue { slide, shape, glue: old })
+            }
+            Command::SetConnectorFrame { slide, shape, frame, flip_h, flip_v } => {
+                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
+                let target = s.shapes.iter_mut().find(|x| x.id == shape).ok_or(EditError::NoSuchShape(shape))?;
+                let old_frame = target.frame;
+                let old_flip_h = target.flip_h;
+                let old_flip_v = target.flip_v;
+                target.frame = frame;
+                target.flip_h = flip_h;
+                target.flip_v = flip_v;
+                Ok(Command::SetConnectorFrame { slide, shape, frame: old_frame, flip_h: old_flip_h, flip_v: old_flip_v })
+            }
             Command::SetBackdropHidden { slide, hidden } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 let was = std::mem::replace(&mut s.hide_backdrop, hidden);
@@ -955,6 +1014,9 @@ pub struct Document {
     last_state: u64,
     /// The state the presentation was in when it was last saved (or opened).
     saved_state: u64,
+    /// The file this document is saved as (its whole path), for what the calculation says of it
+    /// (`CELL("filename")`).
+    file: Option<String>,
 }
 
 /// One undo (or redo) step, with the state it leads to: the state the
@@ -967,11 +1029,20 @@ struct Step {
 
 impl Document {
     pub fn new(presentation: Presentation) -> Self {
-        Self { presentation, undo: Vec::new(), redo: Vec::new(), last_state: 0, saved_state: 0 }
+        Self { presentation, undo: Vec::new(), redo: Vec::new(), last_state: 0, saved_state: 0, file: None }
+    }
+
+    /// Tell the document which file it is (`None`: not saved yet).
+    pub fn set_file(&mut self, file: Option<String>) {
+        self.file = file;
     }
 
     pub fn presentation(&self) -> &Presentation {
         &self.presentation
+    }
+
+    pub fn presentation_mut(&mut self) -> &mut Presentation {
+        &mut self.presentation
     }
 
     /// For id allocation only; edits must go through [`Document::execute`].
@@ -1095,6 +1166,8 @@ impl Document {
 
     /// Apply in order; return inverses in the order that undoes them.
     fn apply_all(&mut self, commands: Vec<Command>) -> Result<Vec<Command>, EditError> {
+        // (Calculated for this document: its file's name, not another open one's.)
+        ibis_calc::eval::convert::set_workbook_file(self.file.clone());
         let mut inverses = Vec::with_capacity(commands.len());
         for command in commands {
             match self.presentation.apply(command) {

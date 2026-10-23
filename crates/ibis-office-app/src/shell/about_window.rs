@@ -5,7 +5,7 @@
 //! the version, "Powered by ibisOffice" with the link to the project, the
 //! copyright and the license. The "Powered by ibisOffice" line and its link
 //! are the additional term under AGPL-3.0 section 7(b) (NOTICE,
-//! TRADEMARK.md): a derivative keeps them on its own About screen.
+//! docs/TRADEMARK.md): a derivative keeps them on its own About screen.
 use gpui_kit::component::{ActiveTheme as _, Root, v_flex};
 use gpui_kit::*;
 
@@ -84,7 +84,7 @@ impl Render for AboutWindow {
             .gap_2()
             .bg(theme.background)
             .text_color(theme.foreground)
-            .child(div().text_size(px(28.)).font_weight(FontWeight::SEMIBOLD).child("ibisOffice"))
+            .child(div().text_size(px(28.)).font_weight(FontWeight::SEMIBOLD).child("Acauda Office"))
             .child(div().text_color(theme.muted_foreground).child(version_line()))
             .child(div().id("about-powered").mt_3().text_color(theme.link).underline().cursor_pointer().child(POWERED_BY).on_click(|_, _, cx| cx.open_url(PROJECT_URL)))
             .child(div().id("about-url").text_size(px(12.)).text_color(theme.link).cursor_pointer().child(PROJECT_URL).on_click(|_, _, cx| cx.open_url(PROJECT_URL)))

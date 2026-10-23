@@ -1,4 +1,4 @@
-# ibisOffice UI text (English): fix 担当。キー<TAB>文字（shell/i18n.rs）。
+# Acauda Office UI text (English): fix 担当。キー<TAB>文字（shell/i18n.rs）。
 fix.dedupe-edit.my-data-has-headers	My data has headers: On
 fix.dedupe-edit.my-data-has-headers-off	My data has headers: Off
 fix.dedupe-edit.columns-compare	Columns to Compare
@@ -466,13 +466,18 @@ fix.font-name.ms-gothic	MS Gothic
 fix.font-name.biz-udp-mincho	BIZ UDPMincho
 fix.font-name.biz-udp-gothic	BIZ UDPGothic
 help.update-log	Show Update Log
-fix.update.found	A new version of ibisOffice is available. Do you want to update?
-fix.update.found.detail	Version {version} (you have {current}). ibisOffice will quit and open again to update.
+fix.update.found	A new version of Acauda Office is available. Do you want to update?
+fix.update.found.detail	Version {version} (you have {current}). Acauda Office will quit and open again to update.
 fix.update.yes	Yes
 fix.update.open-site	Open the download page
 fix.update.no	No
-fix.update.failed	ibisOffice could not be updated.
+fix.update.failed	Acauda Office could not be updated.
 fix.update.failed.detail	Please download and install it again from the download page: {url}
 fix.update.setting	Check for updates at startup
-fix.update.setting.note	If there is a newer version, ibisOffice downloads it and asks whether to update.
+fix.update.setting.note	If there is a newer version, Acauda Office downloads it and asks whether to update.
 fix.update.log-path	Update log: {log}
+fix.formula-bar.expand	Expand Formula Bar
+fix.formula-bar.collapse	Collapse Formula Bar
+xlsx.chart-type	Chart Type
+fix.validation.continue	Continue?
+fix.validation.cancel	Cancel

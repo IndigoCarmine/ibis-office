@@ -27,7 +27,7 @@ fn range_args(name: &str) -> Option<Option<&'static [usize]>> {
         "SUM" | "SUMSQ" | "PRODUCT" | "AVERAGE" | "AVERAGEA" | "COUNT" | "COUNTA" | "COUNTBLANK" | "MAX" | "MAXA" | "MIN" | "MINA" | "MEDIAN" | "MODE" | "MODE.SNGL" | "STDEV" | "STDEV.S" | "STDEV.P" | "STDEVA"
         | "STDEVP" | "STDEVPA" | "VAR" | "VAR.S" | "VAR.P" | "VARA" | "VARP" | "VARPA" | "DEVSQ" | "AVEDEV" | "GEOMEAN" | "HARMEAN" | "KURT" | "SKEW" | "SKEW.P" | "AND" | "OR" | "XOR" | "CONCAT" | "SUMPRODUCT"
         | "SUMX2MY2" | "SUMX2PY2" | "SUMXMY2" | "CORREL" | "COVAR" | "COVARIANCE.P" | "COVARIANCE.S" | "PEARSON" | "RSQ" | "SLOPE" | "INTERCEPT" | "STEYX" | "IRR" | "ROWS" | "COLUMNS" | "AREAS" | "SUBTOTAL"
-        | "NPV" | "COUNTIFS" | "SUMIFS" | "AVERAGEIFS" | "MAXIFS" | "MINIFS" | "TEXTJOIN" | "AGGREGATE" => ALL,
+        | "NPV" | "COUNTIFS" | "SUMIFS" | "AVERAGEIFS" | "MAXIFS" | "MINIFS" | "TEXTJOIN" | "AGGREGATE" | "ARRAYTOTEXT" | "VALUETOTEXT" => ALL,
         "SUMIF" | "AVERAGEIF" => Some(&[0, 2]),
         "COUNTIF" | "LARGE" | "SMALL" | "PERCENTILE" | "PERCENTILE.INC" | "PERCENTILE.EXC" | "QUARTILE" | "QUARTILE.INC" | "QUARTILE.EXC" | "MIRR" => Some(&[0]),
         "VLOOKUP" | "HLOOKUP" | "MATCH" | "XMATCH" | "RANK" | "RANK.EQ" | "RANK.AVG" | "PERCENTRANK" | "PERCENTRANK.INC" | "PERCENTRANK.EXC" => Some(&[1]),

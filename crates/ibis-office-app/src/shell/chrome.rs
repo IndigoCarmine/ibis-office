@@ -63,6 +63,13 @@ const DIVIDER: u32 = 0xc7c7c7;
 const BORDER: u32 = 0xdadce0;
 const SIDEBAR_WIDTH: f32 = 300.0;
 
+/// Padding at the left of the title row. On macOS, leaves space for the native
+/// traffic light buttons (close, minimize, fullscreen). On other platforms, standard padding.
+#[cfg(target_os = "macos")]
+pub(crate) const TITLE_ROW_PADDING_LEFT: f32 = 78.0;
+#[cfg(not(target_os = "macos"))]
+pub(crate) const TITLE_ROW_PADDING_LEFT: f32 = 14.0;
+
 fn disabled_color() -> Hsla {
     hsla(0.0, 0.0, 0.12, 0.38)
 }
@@ -272,6 +279,26 @@ impl Menus {
         self.menus.iter_mut().find_map(|(_, entries)| find(entries, id))
     }
 
+    /// Put `items` in the submenu with id `id`, wherever it is (nothing if there is none).
+    pub(crate) fn fill_submenu(&mut self, id: &str, items: Vec<MenuEntry>) {
+        fn find<'a>(entries: &'a mut [MenuEntry], id: &str) -> Option<&'a mut Submenu> {
+            for entry in entries {
+                if let MenuEntry::Submenu(sub) = entry {
+                    if sub.id == id {
+                        return Some(sub);
+                    }
+                    if let Some(found) = find(&mut sub.items, id) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+        if let Some(sub) = self.menus.iter_mut().find_map(|(_, entries)| find(entries, id)) {
+            sub.items = items;
+        }
+    }
+
     /// Give the item with id `id` its handler (it becomes enabled).
     /// Whether the item was found.
     pub(crate) fn connect(&mut self, id: &str, f: impl Fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) -> bool {
@@ -283,6 +310,15 @@ impl Menus {
             None => false,
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SegmentRounding {
+    #[default]
+    All,
+    Left,
+    Middle,
+    Right,
 }
 
 /// A button of the toolbar.
@@ -304,16 +340,29 @@ pub(crate) struct ToolButton {
     /// A split button (as Office's): what the left half does at once (the last used choice), the ▼ on the
     /// right having the menu.
     pub quick: Option<Handler>,
+    /// Not drawn in the toolbar (its menu is for the Format menu, `menu_bridge.rs`, only).
+    pub hidden: bool,
+    pub segment: SegmentRounding,
 }
 
 impl ToolButton {
     pub(crate) fn new(id: &'static str, icon: &'static str, tooltip: impl Into<SharedString>) -> Self {
-        Self { id, icon: Some(icon), text: None, tooltip: tooltip.into(), on: false, disabled: false, color: None, menu: None, handler: None, quick: None }
+        Self { id, icon: Some(icon), text: None, tooltip: tooltip.into(), on: false, disabled: false, color: None, menu: None, handler: None, quick: None, hidden: false, segment: SegmentRounding::All }
     }
 
     /// A text button.
     pub(crate) fn text(id: &'static str, text: impl Into<SharedString>, tooltip: impl Into<SharedString>) -> Self {
-        Self { id, icon: None, text: Some(text.into()), tooltip: tooltip.into(), on: false, disabled: false, color: None, menu: None, handler: None, quick: None }
+        Self { id, icon: None, text: Some(text.into()), tooltip: tooltip.into(), on: false, disabled: false, color: None, menu: None, handler: None, quick: None, hidden: false, segment: SegmentRounding::All }
+    }
+
+    /// A drop-down button that has only a ▼ arrow (no separate icon).
+    pub(crate) fn dropdown(id: &'static str, tooltip: impl Into<SharedString>) -> Self {
+        Self { id, icon: None, text: None, tooltip: tooltip.into(), on: false, disabled: false, color: None, menu: None, handler: None, quick: None, hidden: false, segment: SegmentRounding::All }
+    }
+
+    pub(crate) fn segment(mut self, segment: SegmentRounding) -> Self {
+        self.segment = segment;
+        self
     }
 
     pub(crate) fn on(mut self, on: bool) -> Self {
@@ -359,6 +408,83 @@ impl ToolButton {
         self
     }
 
+    /// A split button of the kind that remembers the choice (Office's borders, bullets, numbering, underline, shading):
+    /// the left half does at once what was last chosen from the menu in this window (else the first item `default`
+    /// accepts), the ▼ opens the menu. Only the items `record` accepts are remembered; with `follow_icon` the button
+    /// shows the icon of that item. Call it after `menu`.
+    pub(crate) fn last_used(mut self, editor: &SlideEditor, id: &'static str, record: fn(&MenuItem) -> bool, default: fn(&MenuItem) -> bool, follow_icon: bool) -> Self {
+        fn key(item: &MenuItem) -> String {
+            format!("{}\t{}", item.id, item.label)
+        }
+        fn wrap(entries: &mut [MenuEntry], id: &'static str, record: fn(&MenuItem) -> bool) {
+            for entry in entries {
+                match entry {
+                    MenuEntry::Item(item) if record(item) => {
+                        let (k, inner) = (key(item), item.handler.clone());
+                        item.handler = inner.map(|inner| -> Handler {
+                            Rc::new(move |e, w, cx| {
+                                e.last_choices.insert(id, k.clone());
+                                inner(e, w, cx)
+                            })
+                        });
+                    }
+                    MenuEntry::Submenu(sub) => wrap(&mut sub.items, id, record),
+                    _ => {}
+                }
+            }
+        }
+        fn leaves(entries: &[MenuEntry], record: fn(&MenuItem) -> bool, out: &mut Vec<MenuItem>) {
+            for entry in entries {
+                match entry {
+                    MenuEntry::Item(item) if record(item) && item.enabled() => out.push(item.clone()),
+                    MenuEntry::Submenu(sub) => leaves(&sub.items, record, out),
+                    _ => {}
+                }
+            }
+        }
+        let Some(menu) = self.menu.as_mut() else { return self };
+        wrap(menu, id, record);
+        let mut all = Vec::new();
+        leaves(menu, record, &mut all);
+        let last = editor.last_choices.get(id);
+        let chosen = last.and_then(|k| all.iter().find(|i| &key(i) == k)).or_else(|| all.iter().find(|i| default(i))).cloned();
+        if let Some(item) = chosen {
+            if follow_icon {
+                self.icon = item.icon.or(self.icon);
+            }
+            self.quick = item.handler;
+        }
+        self
+    }
+
+    /// The left half of a split button with its own action.
+    pub(crate) fn quick(mut self, f: impl Fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) -> Self {
+        self.quick = Some(Rc::new(f));
+        self
+    }
+
+    /// The left half of a split button that is also a switch: while it is `on`, it does `off`; else the last choice
+    /// (or `off` itself, when nothing was chosen yet, the switch being what the button did before the menu).
+    pub(crate) fn quick_off(mut self, on: bool, off: impl Fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) -> Self {
+        let inner = self.quick.take();
+        self.quick = Some(Rc::new(move |e, w, cx| match &inner {
+            Some(inner) if !on => inner(e, w, cx),
+            _ => off(e, w, cx),
+        }));
+        self
+    }
+
+    /// Not drawn in the toolbar.
+    pub(crate) fn hidden(mut self) -> Self {
+        self.hidden = true;
+        self
+    }
+
+    /// What the left half does: the last choice of a split button.
+    pub(crate) fn left_action(&self) -> Option<&Handler> {
+        self.menu.as_ref().and(self.quick.as_ref())
+    }
+
     pub(crate) fn menu(mut self, items: Vec<MenuEntry>) -> Self {
         self.menu = Some(items);
         self
@@ -378,7 +504,9 @@ impl ToolButton {
         let text = self.text.as_ref().map_or(0.0, |t| text_width(t, 14.0) + 12.0);
         let icon = if self.icon.is_some() { 26.0 } else { 0.0 };
         let caret = if self.menu.is_some() { 14.0 } else { 0.0 };
-        (icon + text + caret).max(28.0)
+        // A split button is the icon's button and the ▼'s side by side.
+        let split = if self.left_action().is_some() { 4.0 } else { 0.0 };
+        (icon + text + caret + split).max(28.0)
     }
 }
 
@@ -472,17 +600,57 @@ pub(crate) fn menu_item_row(item: &MenuItem, editor: &WeakEntity<SlideEditor>) -
                 // Icon (or ✓) in the menu's icon column, the label, the shortcut.
                 // The code's words in the UI's language; a document's names (sheets,
                 // layouts, styles, fonts, files) as they are.
-                const NAMES: [&str; 8] = ["file.recent.item", "xlsx.unhide-sheet", "xlsx.validation-item", "pptx.new-slide.layout", "pptx.layout.apply", "docx.style.update", "xlsx.font", "xlsx.function"];
-                let label = if NAMES.contains(&item.id) { item.label.clone() } else if crate::shell::i18n::is_font_name(&item.label) { crate::shell::i18n::font_label(&item.label) } else { crate::shell::i18n::text(&item.label) };
+                const NAMES: [&str; 7] = ["file.recent.item", "xlsx.unhide-sheet", "xlsx.validation-item", "pptx.new-slide.layout", "pptx.layout.apply", "docx.style.update", "xlsx.function"];
+                // The items of the font lists: the name of an installed font (in English in the English UI where the system gives it one).
+                const FONT_ITEMS: [&str; 4] = ["xlsx.font", "pptx.font", "docx.font", "font.recent.item"];
+                let is_font_item = FONT_ITEMS.contains(&item.id);
+                let is_font_section = item.id.starts_with("font.section.");
+
+                if is_font_section {
+                    let label = item.label.clone();
+                    return PopupMenuItem::element(move |_, cx| {
+                        div()
+                            .w_full()
+                            .px(px(6.))
+                            .py(px(3.))
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(cx.theme().muted_foreground)
+                            .child(label.clone())
+                    })
+                    .disabled(true);
+                }
+
+                let label = if is_font_item { crate::shell::i18n::font_label(&item.label) } else if NAMES.contains(&item.id) { item.label.clone() } else if crate::shell::i18n::is_font_name(&item.label) { crate::shell::i18n::font_label(&item.label) } else { crate::shell::i18n::text(&item.label) };
                 let (shortcut, enabled) = (item.shortcut, item.enabled());
                 let has_icon = item.icon.is_some_and(|i| !i.is_empty()) && !item.checked;
+                let raw_font_name = item.label.to_string();
+                let display_label = label.clone();
+
                 let mut row = PopupMenuItem::element(move |_, cx| {
                     let fg: Hsla = if enabled { rgb(TEXT).into() } else { disabled_color() };
+                    let content = if is_font_item {
+                        let preview = crate::shell::font_preview::get_or_render_preview(&raw_font_name, &display_label);
+                        if let Some(preview) = preview {
+                            let fallback_label = display_label.clone();
+                            div().pl(px(14.)).child(
+                                img(preview.image)
+                                    .w(px(preview.width))
+                                    .h(px(preview.height))
+                                    .with_loading(move || div().text_color(fg).child(fallback_label.clone()).into_any_element()),
+                            )
+                        } else {
+                            div().pl(px(14.)).text_color(fg).child(display_label.clone())
+                        }
+                    } else {
+                        div().text_color(fg).when(has_icon, |d| d.pl(px(3.))).child(display_label.clone())
+                    };
+
                     h_flex()
                         .w_full()
                         .gap(px(16.))
                         .items_center()
-                        .child(div().flex_1().text_color(fg).when(has_icon, |d| d.pl(px(3.))).child(label.clone()))
+                        .child(div().flex_1().child(content))
                         .when_some(shortcut, |d, key| d.child(div().text_color(if enabled { cx.theme().muted_foreground } else { disabled_color() }).child(key)))
                 })
                 .checked(item.checked)
@@ -541,7 +709,7 @@ pub(crate) fn fill_menu(mut menu: PopupMenu, entries: &[MenuEntry], editor: &Wea
     menu
 }
 
-/// The ibisOffice logo (the mark and the name, logo/ibisOffice_logo.svg) as
+/// The Acauda Office logo (the mark and the name, logo/AcaudaOffice_logo.svg) as
 /// the start view's title row shows it: its height in pixels, and its width
 /// over its height. The SVG's own size is this size (99.25×22): GPUI draws
 /// an SVG picture at twice its own size and scales that to the element, and
@@ -551,11 +719,244 @@ const LOGO_ASPECT: f32 = 600.0 / 133.0;
 
 fn app_logo() -> std::sync::Arc<Image> {
     static LOGO: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
-    LOGO.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, include_bytes!("../../logo/ibisOffice_logo.svg").to_vec()))).clone()
+    LOGO.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, include_bytes!("../../logo/AcaudaOffice_logo.svg").to_vec()))).clone()
 }
 
 fn icon(name: &'static str, size: f32, color: Hsla) -> Icon {
     Icon::new(Material(name)).size(px(size)).text_color(color)
+}
+
+/// Returns true if this platform requires client-drawn window control buttons
+/// (Minimize, Maximize/Restore, Close).
+pub(crate) fn should_render_window_controls(window: &Window) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window;
+        false
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = window;
+        true
+    }
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        matches!(window.window_decorations(), Decorations::Client { .. })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux", target_os = "freebsd")))]
+    {
+        let _ = window;
+        false
+    }
+}
+
+/// Configures a div as a window titlebar drag area.
+/// On Windows, registers it as a native caption drag area.
+/// On Linux (CSD), starts window dragging on left mouse press, toggles maximized state
+/// on double click, and shows the native window menu on right click.
+pub(crate) fn apply_title_drag(div: Div, window: &Window) -> Div {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = window;
+        div.window_control_area(WindowControlArea::Drag)
+    }
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        if matches!(window.window_decorations(), Decorations::Client { .. }) {
+            div.on_mouse_down(MouseButton::Left, |e, window, _| {
+                eprintln!("[DEBUG-WAYLAND] titlebar mouse down! click_count={}", e.click_count);
+                if e.click_count == 2 {
+                    eprintln!("[DEBUG-WAYLAND] titlebar double-click -> zoom_window()");
+                    window.zoom_window();
+                } else {
+                    eprintln!("[DEBUG-WAYLAND] titlebar single-click -> start_window_move()");
+                    window.start_window_move();
+                }
+            })
+            .on_mouse_down(MouseButton::Right, |e, window, _| {
+                eprintln!("[DEBUG-WAYLAND] titlebar right-click -> show_window_menu()");
+                window.show_window_menu(e.position);
+            })
+        } else {
+            eprintln!("[DEBUG-WAYLAND] apply_title_drag: NOT client decorations! {:?}", window.window_decorations());
+            div
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "freebsd")))]
+    {
+        let _ = window;
+        div
+    }
+}
+
+/// The app's icon at the left end of the title row (Windows): a click shows
+/// the window's system menu below it, as the icon of a native title bar does.
+#[cfg(target_os = "windows")]
+fn system_menu_icon() -> AnyElement {
+    static ICON: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
+    let image = ICON.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../windows/png/ico/AcaudaOffice_icon_win_48px_transparent.png").to_vec()))).clone();
+    div()
+        .id("system-menu")
+        .w(px(28.))
+        .h(px(28.))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded(px(4.))
+        .hover(|s| s.bg(hsla(0.0, 0.0, 0.0, 0.08)))
+        .child(img(image).w(px(20.)).h(px(20.)))
+        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+            // Below the icon, in the window's client pixels.
+            let scale = window.scale_factor();
+            show_system_menu((TITLE_ROW_PADDING_LEFT * scale) as i32, (36.0 * scale) as i32);
+            cx.stop_propagation();
+        })
+        .into_any_element()
+}
+
+/// Shows the active window's system menu (元のサイズに戻す・移動・サイズ変更・
+/// 最小化・最大化・閉じる) at `x`, `y` of its client area, and carries out
+/// the command chosen. GPUI's Windows platform has no `show_window_menu`.
+#[cfg(target_os = "windows")]
+fn show_system_menu(x: i32, y: i32) {
+    use std::ffi::c_void;
+    #[repr(C)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+    const MF_BYCOMMAND: u32 = 0x0000;
+    const MF_ENABLED: u32 = 0x0000;
+    const MF_GRAYED: u32 = 0x0001;
+    const TPM_RETURNCMD: u32 = 0x0100;
+    const TPM_RIGHTBUTTON: u32 = 0x0002;
+    const WM_SYSCOMMAND: u32 = 0x0112;
+    const SC_SIZE: u32 = 0xF000;
+    const SC_MOVE: u32 = 0xF010;
+    const SC_MAXIMIZE: u32 = 0xF030;
+    const SC_RESTORE: u32 = 0xF120;
+    const SC_CLOSE: u32 = 0xF060;
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetActiveWindow() -> *mut c_void;
+        fn GetSystemMenu(hwnd: *mut c_void, revert: i32) -> *mut c_void;
+        fn IsZoomed(hwnd: *mut c_void) -> i32;
+        fn EnableMenuItem(menu: *mut c_void, id: u32, enable: u32) -> i32;
+        fn SetMenuDefaultItem(menu: *mut c_void, item: u32, by_position: u32) -> i32;
+        fn ClientToScreen(hwnd: *mut c_void, point: *mut Point) -> i32;
+        fn TrackPopupMenu(menu: *mut c_void, flags: u32, x: i32, y: i32, reserved: i32, hwnd: *mut c_void, rect: *const c_void) -> i32;
+        fn PostMessageW(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> i32;
+    }
+    // SAFETY: the calls take the window and menu handles Windows gave here,
+    // and `point` is a POINT that ClientToScreen writes.
+    unsafe {
+        let hwnd = GetActiveWindow();
+        if hwnd.is_null() {
+            return;
+        }
+        let menu = GetSystemMenu(hwnd, 0);
+        if menu.is_null() {
+            return;
+        }
+        // DefWindowProc sets these when it shows the menu itself; here, by hand.
+        let zoomed = IsZoomed(hwnd) != 0;
+        let state = |enabled: bool| MF_BYCOMMAND | if enabled { MF_ENABLED } else { MF_GRAYED };
+        EnableMenuItem(menu, SC_RESTORE, state(zoomed));
+        EnableMenuItem(menu, SC_MOVE, state(!zoomed));
+        EnableMenuItem(menu, SC_SIZE, state(!zoomed));
+        EnableMenuItem(menu, SC_MAXIMIZE, state(!zoomed));
+        SetMenuDefaultItem(menu, SC_CLOSE, 0);
+        let mut point = Point { x, y };
+        ClientToScreen(hwnd, &mut point);
+        let command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0, hwnd, std::ptr::null());
+        if command != 0 {
+            PostMessageW(hwnd, WM_SYSCOMMAND, command as usize, 0);
+        }
+    }
+}
+
+/// Renders the Minimize, Maximize/Restore, and Close buttons on platforms requiring CSD.
+pub(crate) fn render_window_controls(window: &Window) -> Option<AnyElement> {
+    if !should_render_window_controls(window) {
+        return None;
+    }
+
+    let is_maximized = window.is_maximized();
+
+    // Minimize button (―)
+    let min_btn = div()
+        .id("window-control-minimize")
+        .w(px(46.))
+        .h(px(36.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .hover(|s| s.bg(hsla(0.0, 0.0, 0.0, 0.08)))
+        .child(Icon::new(Material("remove")).size(px(18.)))
+        .on_click(|_, window, _| {
+            eprintln!("[DEBUG-WAYLAND] minimize button clicked! calling window.minimize_window()");
+            window.minimize_window();
+        })
+        .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text("_shell.minimize")).build(window, cx));
+
+    #[cfg(target_os = "windows")]
+    let min_btn = min_btn.window_control_area(WindowControlArea::Min);
+
+    // Maximize / Restore button (□ / ❐)
+    let max_icon = if is_maximized { "filter_none" } else { "crop_square" };
+    let max_tip = if is_maximized { "_shell.restore" } else { "_shell.maximize" };
+    let max_btn = div()
+        .id("window-control-maximize")
+        .w(px(46.))
+        .h(px(36.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .hover(|s| s.bg(hsla(0.0, 0.0, 0.0, 0.08)))
+        .child(Icon::new(Material(max_icon)).size(px(16.)))
+        .on_click(|_, window, _| {
+            eprintln!("[DEBUG-WAYLAND] maximize button clicked! calling window.zoom_window()");
+            window.zoom_window();
+        })
+        .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text(max_tip)).build(window, cx));
+
+    #[cfg(target_os = "windows")]
+    let max_btn = max_btn.window_control_area(WindowControlArea::Max);
+
+    // Close button (✕, red on hover)
+    let close_btn = div()
+        .id("window-control-close")
+        .w(px(46.))
+        .h(px(36.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .text_color(rgb(ICON))
+        .hover(|s| s.bg(rgb(0xe81123)).text_color(white()))
+        .child(Icon::new(Material("close")).size(px(18.)))
+        .on_click(|_, window, _| {
+            eprintln!("[DEBUG-WAYLAND] close button clicked! calling window.remove_window()");
+            window.remove_window();
+        })
+        .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text("_shell.close")).build(window, cx));
+
+    #[cfg(target_os = "windows")]
+    let close_btn = close_btn.window_control_area(WindowControlArea::Close);
+
+    Some(
+        h_flex()
+            .flex_none()
+            .items_center()
+            .gap(px(0.))
+            .child(min_btn)
+            .child(max_btn)
+            .child(close_btn)
+            .into_any_element(),
+    )
 }
 
 impl SlideEditor {
@@ -596,25 +997,25 @@ impl SlideEditor {
         items
     }
 
-    /// The title row: the app's icon, undo and redo, the slide show (a
+    /// The title row: the app's icon for the system menu (Windows), the
+    /// start window's button, undo and redo, the slide show (a
     /// presentation), the file name in the middle, comments, the outline
-    /// (a document) and the sidebar.
-    pub(crate) fn render_title_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// (a document) and the sidebar; on Linux (CSD) and Windows, also includes
+    /// the window drag region and control buttons (minimize, maximize/restore, close).
+    pub(crate) fn render_title_row(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = cx.entity().downgrade();
-        let row = h_flex().h(px(36.)).flex_shrink_0().pl(px(14.)).pr(px(12.)).gap(px(8.)).items_center().bg(rgb(APP_BG)).text_color(rgb(TEXT));
+        let controls = render_window_controls(window);
+        let pr = if controls.is_some() { px(0.) } else { px(12.) };
+        let row = h_flex().h(px(36.)).flex_shrink_0().pl(px(TITLE_ROW_PADDING_LEFT)).pr(pr).gap(px(8.)).items_center().bg(rgb(APP_BG)).text_color(rgb(TEXT));
         if !self.has_document {
             // The start view: the app's logo (開く and 新規作成 are in the view).
             return row
                 .child(img(app_logo()).h(px(LOGO_HEIGHT)).w(px(LOGO_HEIGHT * LOGO_ASPECT)))
-                .child(div().flex_1())
+                .child(apply_title_drag(div().flex_1().h_full(), window))
                 .child(title_button("help", "help", "_shell.help", None, &editor))
+                .children(controls)
                 .into_any_element();
         }
-        let (app_icon, app_color) = match self.kind() {
-            ibis_pptx::Kind::Document => ("description", 0x2f6fd6),
-            ibis_pptx::Kind::Workbook => ("table_chart", 0x1e8e3e),
-            ibis_pptx::Kind::Presentation => ("slideshow", 0xe8a100),
-        };
         let fill_icon = |name: &'static str, size: f32, color: Hsla| Icon::new(Material::fill(name)).size(px(size)).text_color(color);
         let can_undo = self.document.can_undo() && !self.loading;
         let can_redo = self.document.can_redo() && !self.loading;
@@ -644,6 +1045,17 @@ impl SlideEditor {
                         })), &editor),
                     )
                 })
+                .when(self.pages_are_slides(), |d| {
+                    // The notes pane (below the slide): its button stands left of the sidebar's.
+                    let open = self.notes_shown();
+                    d.child(title_button_icon(
+                        "notes-pane",
+                        if open { fill_icon("dock_to_bottom", 20.0, rgb(ICON).into()) } else { icon("dock_to_bottom", 20.0, rgb(ICON).into()) },
+                        if open { "_shell.hide-notes-pane" } else { "_shell.show-notes-pane" },
+                        Some(Rc::new(|this: &mut SlideEditor, window, cx| this.toggle_notes(window, cx))),
+                        &editor,
+                    ))
+                })
                 .child(title_button_icon(
                     "sidebar",
                     if sidebar_open { fill_icon("dock_to_left", 20.0, rgb(ICON).into()) } else { icon("dock_to_left", 20.0, rgb(ICON).into()) },
@@ -654,27 +1066,79 @@ impl SlideEditor {
                     &editor,
                 ))
         };
-        let slideshow = self.pages_are_slides().then(|| self.render_slideshow_button(&editor, cx));
-        row.child(fill_icon(app_icon, 24.0, rgb(app_color).into()))
-            .child(
-                h_flex()
-                    .child(title_button("undo", "undo", "_shell.undo-z", can_undo.then(|| -> Handler { Rc::new(|this: &mut SlideEditor, window, cx| this.undo(&crate::Undo, window, cx)) }), &editor))
-                    .child(title_button("redo", "redo", "_shell.redo-z", can_redo.then(|| -> Handler { Rc::new(|this: &mut SlideEditor, window, cx| this.redo(&crate::Redo, window, cx)) }), &editor)),
-            )
+        let slideshow = self.pages_are_slides().then(|| self.render_slideshow_button(&editor, false));
+        #[cfg(target_os = "windows")]
+        let row = row.child(system_menu_icon());
+        #[cfg(not(target_arch = "wasm32"))]
+        let row = row.child(self.start_window_button(&editor));
+        #[cfg(target_arch = "wasm32")]
+        let row = {
+            let (app_icon, app_color) = match self.kind() {
+                ibis_pptx::Kind::Document => ("description", 0x2f6fd6),
+                ibis_pptx::Kind::Workbook => ("table_chart", 0x1e8e3e),
+                ibis_pptx::Kind::Presentation => ("slideshow", 0xe8a100),
+            };
+            row.child(div().w(px(28.)).h(px(28.)).flex().items_center().justify_center().child(fill_icon(app_icon, 24.0, rgb(app_color).into())))
+        };
+        row.child(
+            h_flex()
+                .child(title_button("undo", "undo", "_shell.undo-z", can_undo.then(|| -> Handler { Rc::new(|this: &mut SlideEditor, window, cx| this.undo(&crate::Undo, window, cx)) }), &editor))
+                .child(title_button("redo", "redo", "_shell.redo-z", can_redo.then(|| -> Handler { Rc::new(|this: &mut SlideEditor, window, cx| this.redo(&crate::Redo, window, cx)) }), &editor))
+                .children(self.quick_access_buttons(&editor)),
+        )
             .children(slideshow)
             .child(
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .justify_center()
-                    .child(div().text_size(px(15.)).px(px(6.)).truncate().child(name)),
+                apply_title_drag(
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .justify_center()
+                        .items_center(),
+                    window,
+                )
+                .child(div().text_size(px(15.)).px(px(6.)).truncate().child(name)),
             )
             .child(buttons(h_flex()))
+            .children(controls)
             .into_any_element()
     }
 
-    /// スライドショー, with ▼ for how to start.
-    fn render_slideshow_button(&self, editor: &WeakEntity<SlideEditor>, _cx: &mut Context<Self>) -> AnyElement {
+    /// The button with the format's icon that opens a start window.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_window_button(&self, editor: &WeakEntity<SlideEditor>) -> AnyElement {
+        let (app_icon, app_color) = match self.kind() {
+            ibis_pptx::Kind::Document => ("description", 0x2f6fd6),
+            ibis_pptx::Kind::Workbook => ("table_chart", 0x1e8e3e),
+            ibis_pptx::Kind::Presentation => ("slideshow", 0xe8a100),
+        };
+        let handler: Handler = Rc::new(|_, _, cx| crate::open_editor(None, None, cx));
+        title_button_icon("start-window", Icon::new(Material::fill(app_icon)).size(px(24.)).text_color(rgb(app_color)), "file.start-window", Some(handler), editor)
+    }
+
+    /// The commands of the クイック アクセス ツール バー the open document has, as buttons beside undo and redo.
+    pub(crate) fn quick_access_buttons(&self, editor: &WeakEntity<SlideEditor>) -> Vec<AnyElement> {
+        let ids = crate::shell::qat::commands();
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let menus = self.menus();
+        ids.iter()
+            .filter_map(|id| match menus.find_entry(id)? {
+                MenuEntry::Item(item) => {
+                    let icon_name = item.icon?;
+                    let handler = if item.disabled { None } else { item.handler.clone() };
+                    let color: Hsla = if handler.is_some() { rgb(ICON).into() } else { disabled_color() };
+                    Some(title_button_icon(item.id, icon(icon_name, 20.0, color), item.id, handler, editor))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// スライドショー, with ▼ for how to start; `icon_only` leaves out its
+    /// label (in the toolbar's title row).
+    fn render_slideshow_button(&self, editor: &WeakEntity<SlideEditor>, icon_only: bool) -> AnyElement {
         let disabled = self.loading;
         let start: Handler = Rc::new(|this: &mut SlideEditor, window, cx| this.start_slideshow(window, cx));
         let from_start: Handler = Rc::new(|this: &mut SlideEditor, window, cx| {
@@ -715,8 +1179,8 @@ impl SlideEditor {
                 div()
                     .id("slideshow")
                     .h_full()
-                    .pl(px(10.))
-                    .pr(px(8.))
+                    .pl(px(if icon_only { 8. } else { 10. }))
+                    .pr(px(if icon_only { 6. } else { 8. }))
                     .flex()
                     .items_center()
                     .gap(px(6.))
@@ -726,7 +1190,7 @@ impl SlideEditor {
                     .cursor_pointer()
                     .hover(|s| s.bg(hsla(0.0, 0.0, 0.0, 0.04)))
                     .child(icon("slideshow", 18.0, rgb(ICON).into()))
-                    .child(crate::shell::i18n::text("_shell.slide-show"))
+                    .when(!icon_only, |d| d.child(crate::shell::i18n::text("_shell.slide-show")))
                     .when(!disabled, |d| d.on_click(listener(editor, &start)))
                     .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text("_shell.play-from-current-slide")).build(window, cx)),
             )
@@ -748,10 +1212,23 @@ impl SlideEditor {
     /// buttons that do not fit folded into ︙, and ^ to hide the menus.
     pub(crate) fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = cx.entity().downgrade();
-        let items = self.toolbar_items();
+        let mut items = self.toolbar_items();
+        items.retain(|item| !matches!(item, ToolItem::Button(b) if b.hidden));
+        // On Windows, and on Linux where the window's buttons are drawn here
+        // (CSD), with the menus hidden, the toolbar is the title row: between
+        // the system menu's icon (Windows) and the start window's button and
+        // the window's buttons.
+        let in_title_row = cfg!(any(target_os = "windows", target_os = "linux", target_os = "freebsd")) && self.chrome_compact && should_render_window_controls(window);
         // What fits: the bar is the window less 8 px each side, 6 px padding
-        // each side, and ︙ and ^ on the right.
-        let available = f32::from(window.viewport_size().width) - 16.0 - 12.0 - 2.0 * 29.0;
+        // each side, and ︙ and ^ on the right (and in the title row, the
+        // icons and the three window buttons).
+        let system_menu_icon_width = if cfg!(target_os = "windows") { 28.0 + 8.0 } else { 0.0 };
+        // The slide show's button, its icon and ▾ (a presentation).
+        let slideshow_width = if self.pages_are_slides() { 8.0 + 64.0 } else { 0.0 };
+        let title_parts = if in_title_row { TITLE_ROW_PADDING_LEFT + system_menu_icon_width + 28.0 + slideshow_width + 3.0 * 46.0 } else { 0.0 };
+        // Linux (CSD) draws the window's shadow inside the viewport, at its sides.
+        let paddings = gpui_kit::component::window_paddings(window);
+        let available = f32::from(window.viewport_size().width - paddings.left - paddings.right) - 16.0 - 12.0 - 2.0 * 29.0 - title_parts;
         let mut used = 0.0;
         let mut shown = Vec::new();
         let mut folded = Vec::new();
@@ -787,28 +1264,44 @@ impl SlideEditor {
                         .children(folded.iter().enumerate().map(|(i, item)| tool_item(item, i + 1000, &editor)))
                 })
         });
-        div().px(px(8.)).pt(px(2.)).pb(px(6.)).flex_shrink_0().bg(rgb(APP_BG)).child(
-            h_flex()
-                .h(px(36.))
-                .px(px(6.))
-                .gap(px(1.))
-                .items_center()
-                .rounded(px(18.))
-                .bg(rgb(TOOLBAR_BG))
-                .children(shown.iter().enumerate().map(|(i, item)| tool_item(item, i, &editor)))
-                .child(div().flex_1())
-                .children(more)
-                .child(tool_item(
-                    &ToolButton::new("toggle-menus", if compact { "keyboard_arrow_down" } else { "keyboard_arrow_up" }, if compact { "_shell.show-menus-f" } else { "_shell.hide-menus-f" })
-                        .click(|this, _, cx| {
-                            this.chrome_compact = !this.chrome_compact;
-                            cx.notify();
-                        })
-                        .into(),
-                    9999,
-                    &editor,
-                )),
-        )
+        // In the title row, the bar's empty middle moves the window.
+        let gap = if in_title_row { apply_title_drag(div().flex_1().h_full(), window) } else { div().flex_1() };
+        let bar = h_flex()
+            .h(px(36.))
+            .px(px(6.))
+            .gap(px(1.))
+            .items_center()
+            .rounded(px(18.))
+            .bg(rgb(TOOLBAR_BG))
+            .children(shown.iter().enumerate().map(|(i, item)| tool_item(item, i, &editor)))
+            .child(gap)
+            .children(more)
+            .child(tool_item(
+                &ToolButton::new("toggle-menus", if compact { "keyboard_arrow_down" } else { "keyboard_arrow_up" }, if compact { "_shell.show-menus-f" } else { "_shell.hide-menus-f" })
+                    .click(|this, _, cx| {
+                        this.chrome_compact = !this.chrome_compact;
+                        cx.notify();
+                    })
+                    .into(),
+                9999,
+                &editor,
+            ));
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        if in_title_row {
+            let icons = h_flex().flex_none().gap(px(8.)).pl(px(TITLE_ROW_PADDING_LEFT)).pt(px(8.));
+            #[cfg(target_os = "windows")]
+            let icons = icons.child(system_menu_icon());
+            // The icons centred in the row's 44 px; the window's buttons at its top, as Windows' own.
+            return h_flex()
+                .flex_shrink_0()
+                .items_start()
+                .bg(rgb(APP_BG))
+                .child(icons.child(self.start_window_button(&editor)).children(self.pages_are_slides().then(|| self.render_slideshow_button(&editor, true))))
+                .child(div().flex_1().min_w_0().px(px(8.)).py(px(4.)).child(bar))
+                .children(render_window_controls(window))
+                .into_any_element();
+        }
+        div().px(px(8.)).pt(px(2.)).pb(px(6.)).flex_shrink_0().bg(rgb(APP_BG)).child(bar).into_any_element()
     }
 
     /// The sidebar, right of the document: the panel, under the tabs the
@@ -913,6 +1406,7 @@ pub(crate) fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<Slide
             let enabled = !disabled && !menu.is_empty();
             let color: Hsla = if enabled { rgb(TEXT).into() } else { disabled_color() };
             let (menu, editor) = (Rc::new(menu.clone()), editor.clone());
+            let is_font = *id == "font";
             Button::new(SharedString::from(format!("{id}-{index}")))
                 .ghost()
                 .xsmall()
@@ -928,10 +1422,20 @@ pub(crate) fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<Slide
                         .justify_between()
                         .text_size(px(14.))
                         .text_color(color)
-                        .child(div().truncate().child(if *id == "font" { crate::shell::i18n::font_label(value) } else { value.clone() }))
+                        .child(div().truncate().child(if is_font { crate::shell::i18n::font_label(value) } else { value.clone() }))
                         .child(icon("arrow_drop_down", 18.0, if enabled { rgb(ICON).into() } else { disabled_color() })),
                 )
-                .dropdown_menu(move |m, window, cx| fill_menu(m.min_w(px(220.)), &menu, &editor, window, cx))
+                .dropdown_menu(move |m, window, cx| {
+                    let mut m = m.min_w(px(220.));
+                    if is_font {
+                        // Limit font dropdown height to: window client height minus toolbar bottom minus 1 item row.
+                        let item_height = px(32.);
+                        let toolbar_bottom = px(108.);
+                        let max_height = (window.viewport_size().height - toolbar_bottom - item_height).max(px(200.));
+                        m = m.max_h(max_height).scrollable(true);
+                    }
+                    fill_menu(m, &menu, &editor, window, cx)
+                })
                 .into_any_element()
         }
         ToolItem::FontSize { value, smaller, larger } => {
@@ -986,8 +1490,9 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
         })
         .when_some(b.text.clone(), |d, text| d.child(div().px(px(3.)).text_size(px(14.)).text_color(if enabled { rgb(TEXT).into() } else { disabled_color() }).child(crate::shell::i18n::text(&text))))
         .when(b.menu.is_some(), |d| d.child(div().ml(px(-2.)).child(icon("arrow_drop_down", 16.0, color))));
-    // A split button: the icon (what was last used is done at once) and the ▼ (the menu) are two buttons side by side.
-    if let (Some(menu), Some(quick), true) = (&b.menu, &b.quick, enabled) {
+    // A split button: the icon (what was last used is done at once) and the ▼ (the menu) are two buttons side by side,
+    // each with its own hover and click.
+    if let (Some(menu), Some(quick), true) = (&b.menu, b.left_action(), enabled) {
         let left = Button::new(SharedString::from(format!("{}-{index}", b.id)))
             .ghost()
             .xsmall()
@@ -995,11 +1500,19 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
             .min_w(px(28.))
             .px(px(3.))
             .rounded_l(px(4.))
+            .rounded_r(px(0.))
             .tooltip(crate::shell::i18n::text(&b.tooltip))
-            .child(h_flex().items_center().justify_center().when_some(b.icon, |d, name| match b.color {
-                Some(bar) => d.child(v_flex().items_center().pt(px(2.)).child(icon(name, 18.0, color)).child(div().w(px(18.)).h(px(3.)).mt(px(-1.)).rounded(px(1.)).bg(bar))),
-                None => d.child(icon(name, 20.0, color)),
-            }))
+            .selected(b.on)
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_center()
+                    .when_some(b.icon, |d, name| match b.color {
+                        Some(bar) => d.child(v_flex().items_center().pt(px(2.)).child(icon(name, 18.0, color)).child(div().w(px(18.)).h(px(3.)).mt(px(-1.)).rounded(px(1.)).bg(bar))),
+                        None => d.child(icon(name, 20.0, color)),
+                    })
+                    .when_some(b.text.clone(), |d, text| d.child(div().px(px(3.)).text_size(px(14.)).text_color(rgb(TEXT)).child(crate::shell::i18n::text(&text)))),
+            )
             .on_click(listener(editor, quick));
         let (menu, editor) = (Rc::new(menu.clone()), editor.clone());
         let right = Button::new(SharedString::from(format!("{}-{index}-menu", b.id)))
@@ -1009,6 +1522,7 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
             .w(px(16.))
             .px(px(0.))
             .rounded_r(px(4.))
+            .rounded_l(px(0.))
             .tooltip(crate::shell::i18n::text(&b.tooltip))
             .child(icon("arrow_drop_down", 16.0, color))
             .dropdown_menu(move |m, window, cx| fill_menu(m.min_w(px(220.)), &menu, &editor, window, cx));
@@ -1020,11 +1534,16 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
         .h(px(28.))
         .min_w(px(28.))
         .px(px(3.))
-        .rounded(px(4.))
         .tooltip(crate::shell::i18n::text(&b.tooltip))
         .selected(b.on)
         .disabled(!enabled)
         .child(content);
+    let button = match b.segment {
+        SegmentRounding::All => button.rounded(px(4.)),
+        SegmentRounding::Left => button.rounded_l(px(4.)).rounded_r(px(0.)),
+        SegmentRounding::Middle => button.rounded(px(0.)),
+        SegmentRounding::Right => button.rounded_r(px(4.)).rounded_l(px(0.)),
+    };
     match (&b.menu, &b.handler) {
         (Some(menu), _) if enabled => {
             let (menu, editor) = (Rc::new(menu.clone()), editor.clone());
@@ -1132,4 +1651,24 @@ mod tests {
         }
         assert!(missing.is_empty(), "{missing:?}");
     }
+
+    #[test]
+    fn window_control_labels_and_icons_are_present() {
+        for key in ["_shell.minimize", "_shell.maximize", "_shell.restore", "_shell.close"] {
+            let label = crate::shell::i18n::text(key);
+            assert!(!label.is_empty() && label != key, "Missing i18n label for {key}");
+        }
+        for icon in ["remove", "crop_square", "filter_none", "close"] {
+            assert!(crate::shell::icons::has(icon), "Missing window control icon {icon}");
+        }
+    }
+
+    #[test]
+    fn title_row_left_padding_leaves_space_for_traffic_lights_on_macos() {
+        #[cfg(target_os = "macos")]
+        assert!(super::TITLE_ROW_PADDING_LEFT >= 78.0);
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(super::TITLE_ROW_PADDING_LEFT, 14.0);
+    }
 }
+

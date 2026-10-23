@@ -74,6 +74,114 @@ fn parse_cells_input(text: &str) -> Vec<String> {
 }
 
 impl SlideEditor {
+    pub(crate) fn current_selection_a1_string(&self) -> String {
+        self.selected_range()
+            .map(|r| {
+                if r.first_row == r.last_row && r.first_column == r.last_column {
+                    ibis_doc_model::cell_name(r.first_column, r.first_row)
+                } else {
+                    format!(
+                        "{}:{}",
+                        ibis_doc_model::cell_name(r.first_column, r.first_row),
+                        ibis_doc_model::cell_name(r.last_column, r.last_row)
+                    )
+                }
+            })
+            .or_else(|| self.current_cell().map(|(c, r)| ibis_doc_model::cell_name(c, r)))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn resolve_scenario_cells(&self, text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for piece in text.split([',', ' ', ';']) {
+            let trimmed = piece.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some((slide_id, range)) = parse_reference(trimmed).and_then(|ref_| self.resolve_reference(&ref_))
+                && slide_id == self.current_slide
+            {
+                for row in range.first_row..=range.last_row {
+                    for col in range.first_column..=range.last_column {
+                        let name = ibis_doc_model::cell_name(col, row);
+                        if !out.contains(&name) {
+                            out.push(name);
+                        }
+                    }
+                }
+                continue;
+            }
+            for c in parse_cells_input(trimmed) {
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+        }
+        out
+    }
+
+    pub(crate) fn set_scenario_changing_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let here = self.current_selection_a1_string();
+        if here.is_empty() {
+            return;
+        }
+        if let Some(p) = self.wb_mut().panels.scenario_manager.as_mut() {
+            p.changing_cells_input.update(cx, |i, cx| i.set_value(here, window, cx));
+        }
+        self.prepare_scenario_value_inputs(window, cx);
+    }
+
+    pub(crate) fn set_scenario_results_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let here = self.current_selection_a1_string();
+        if here.is_empty() {
+            return;
+        }
+        if let Some(p) = self.wb_mut().panels.scenario_manager.as_mut() {
+            p.result_cells_input.update(cx, |i, cx| i.set_value(here, window, cx));
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn duplicate_selected_scenario(&mut self, cx: &mut Context<Self>) {
+        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return;
+        }
+        let Some((sc, existing_names)) = (|| {
+            let p = self.sheet_state()?.panels.scenario_manager.as_ref()?;
+            let idx = p.selected_index?;
+            let (_, sheet) = self.current_sheet()?;
+            let scs = sheet.scenarios.as_ref()?;
+            let sc = scs.scenarios.get(idx)?.clone();
+            let names: Vec<String> = scs.scenarios.iter().map(|s| s.name.clone()).collect();
+            Some((sc, names))
+        })() else {
+            return;
+        };
+        let mut n = 2usize;
+        let new_name = loop {
+            let candidate = format!("{} ({n})", sc.name);
+            if !existing_names.contains(&candidate) {
+                break candidate;
+            }
+            n += 1;
+        };
+        let mut dup = sc;
+        dup.name = new_name;
+        let slide = self.current_slide;
+        self.run_sheet(vec![Command::Sheet(SheetCommand::AddScenario { slide, scenario: dup })], cx);
+        let total = self
+            .presentation()
+            .slide(slide)
+            .and_then(sheet_of)
+            .and_then(|s| s.1.scenarios.as_ref())
+            .map(|sc| sc.scenarios.len())
+            .unwrap_or(1);
+        if let Some(p) = self.wb_mut().panels.scenario_manager.as_mut() {
+            p.selected_index = Some(total.saturating_sub(1));
+        }
+        cx.notify();
+    }
+
     pub(crate) fn open_scenario_manager(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let current_scenarios = self.current_sheet().and_then(|(_, s)| s.scenarios.clone());
@@ -89,17 +197,7 @@ impl SlideEditor {
             state.update(cx, |i, cx| i.set_value(t, window, cx));
             state
         };
-        let here = self
-            .selected_range()
-            .map(|r| {
-                if r.first_row == r.last_row && r.first_column == r.last_column {
-                    ibis_doc_model::cell_name(r.first_column, r.first_row)
-                } else {
-                    format!("{}:{}", ibis_doc_model::cell_name(r.first_column, r.first_row), ibis_doc_model::cell_name(r.last_column, r.last_row))
-                }
-            })
-            .or_else(|| self.current_cell().map(|(c, r)| ibis_doc_model::cell_name(c, r)))
-            .unwrap_or_default();
+        let here = self.current_selection_a1_string();
 
         let panel = ScenarioManagerPanel {
             mode: ScenarioDialogMode::List,
@@ -156,17 +254,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn open_add_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let here = self
-            .selected_range()
-            .map(|r| {
-                if r.first_row == r.last_row && r.first_column == r.last_column {
-                    ibis_doc_model::cell_name(r.first_column, r.first_row)
-                } else {
-                    format!("{}:{}", ibis_doc_model::cell_name(r.first_column, r.first_row), ibis_doc_model::cell_name(r.last_column, r.last_row))
-                }
-            })
-            .or_else(|| self.current_cell().map(|(c, r)| ibis_doc_model::cell_name(c, r)))
-            .unwrap_or_default();
+        let here = self.current_selection_a1_string();
 
         if let Some(p) = self.wb_mut().panels.scenario_manager.as_mut() {
             p.mode = ScenarioDialogMode::AddOrEdit;
@@ -215,7 +303,7 @@ impl SlideEditor {
         } else {
             return;
         };
-        let cells = parse_cells_input(&cells_str);
+        let cells = self.resolve_scenario_cells(&cells_str);
         let (_, sheet) = if let Some(s) = self.current_sheet() { s } else { return };
         let mut new_inputs = Vec::new();
         for r_name in cells {
@@ -483,6 +571,15 @@ impl SlideEditor {
                         .into_any_element(),
                 ));
                 row2 = row2.child(mark(
+                    "scenario-duplicate",
+                    Button::new("sc-dup-btn")
+                        .small()
+                        .disabled(!has_selection)
+                        .label(text("xlsx.scenario-duplicate"))
+                        .on_click(cx.listener(|this, _, _, cx| this.duplicate_selected_scenario(cx)))
+                        .into_any_element(),
+                ));
+                row2 = row2.child(mark(
                     "scenario-del",
                     Button::new("sc-del-btn")
                         .small()
@@ -535,7 +632,21 @@ impl SlideEditor {
                 body = body.child(div().text_size(px(12.)).child(text("_xlsx.scenario-name-colon")));
                 body = body.child(mark("scenario-name", Input::new(&p.name_input).small().into_any_element()));
 
-                body = body.child(div().text_size(px(12.)).child(text("_xlsx.changing-cells-colon")));
+                body = body.child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(div().text_size(px(12.)).child(text("_xlsx.changing-cells-colon")))
+                        .child(mark(
+                            "scenario-use-changing",
+                            Button::new("sc-use-changing-btn")
+                                .xsmall()
+                                .ghost()
+                                .label(text("xlsx.subtotal-use-selection"))
+                                .on_click(cx.listener(|this, _, window, cx| this.set_scenario_changing_from_selection(window, cx)))
+                                .into_any_element(),
+                        )),
+                );
                 let mut changing_row = h_flex().gap_2();
                 changing_row = changing_row.child(div().flex_1().child(mark("scenario-changing", Input::new(&p.changing_cells_input).small().into_any_element())));
                 changing_row = changing_row.child(mark(
@@ -596,7 +707,21 @@ impl SlideEditor {
             }
             ScenarioDialogMode::Summary => {
                 body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.scenario-summary-report")));
-                body = body.child(div().text_size(px(12.)).child(text("_xlsx.result-cells-colon")));
+                body = body.child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(div().text_size(px(12.)).child(text("_xlsx.result-cells-colon")))
+                        .child(mark(
+                            "scenario-use-results",
+                            Button::new("sc-use-results-btn")
+                                .xsmall()
+                                .ghost()
+                                .label(text("xlsx.subtotal-use-selection"))
+                                .on_click(cx.listener(|this, _, window, cx| this.set_scenario_results_from_selection(window, cx)))
+                                .into_any_element(),
+                        )),
+                );
                 body = body.child(mark("scenario-result-cells", Input::new(&p.result_cells_input).small().into_any_element()));
 
                 if !p.message.is_empty() {

@@ -86,6 +86,24 @@ fn label_pos_str(pos: LabelPosition) -> &'static str {
     }
 }
 
+fn safe_label_pos_str(pos: LabelPosition, chart_tag: &str) -> &'static str {
+    match chart_tag {
+        "lineChart" | "line3DChart" | "areaChart" | "area3DChart" | "scatterChart" | "bubbleChart" | "radarChart" | "stockChart" | "surfaceChart" | "surface3DChart" => {
+            match pos {
+                LabelPosition::OutsideEnd | LabelPosition::InsideEnd => "t",
+                LabelPosition::InsideBase => "b",
+                LabelPosition::Center => "ctr",
+                LabelPosition::Above => "t",
+                LabelPosition::Below => "b",
+                LabelPosition::Left => "l",
+                LabelPosition::Right => "r",
+                LabelPosition::BestFit => "bestFit",
+            }
+        }
+        _ => label_pos_str(pos),
+    }
+}
+
 fn legend_pos_str(pos: Option<LegendPosition>, side: Side) -> &'static str {
     if let Some(p) = pos {
         match p {
@@ -265,7 +283,7 @@ pub fn chart_to_xml(chart: &Chart) -> Result<String, Error> {
 
             // Labels
             if let Some(l) = &ser.labels {
-                let pos = l.position.map(label_pos_str).map(|p| format!("<c:dLblPos val=\"{p}\"/>")).unwrap_or_default();
+                let pos = l.position.map(|p| safe_label_pos_str(p, tag)).map(|p| format!("<c:dLblPos val=\"{p}\"/>")).unwrap_or_default();
                 out.push_str(&format!(
                     "<c:dLbls><c:showVal val=\"{}\"/><c:showCatName val=\"{}\"/><c:showSerName val=\"{}\"/><c:showPercent val=\"{}\"/>{pos}</c:dLbls>",
                     if l.show_value { 1 } else { 0 },

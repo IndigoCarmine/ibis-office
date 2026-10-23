@@ -24,7 +24,7 @@ impl SlideEditor {
 
     /// Edits are refused: by the password to modify, or the read-only recommendation not yet set aside.
     pub(crate) fn is_pptx_read_only_blocked(&self) -> bool {
-        self.is_pptx_modify_locked() || (self.is_pptx_read_only_recommended() && !self.is_pptx_read_only_dismissed())
+        self.is_read_only() || self.is_pptx_modify_locked() || (self.is_pptx_read_only_recommended() && !self.is_pptx_read_only_dismissed())
     }
 
     /// Whether `password` is the one to modify the file; if so, the file can be edited.

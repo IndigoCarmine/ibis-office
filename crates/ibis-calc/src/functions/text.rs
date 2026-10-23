@@ -1283,7 +1283,10 @@ fn arraytotext(c: &mut Ctx, a: &[Expr]) -> Value {
     if strict {
         out.push('}');
     }
-    limit(out)
+    if utf16(&out).len() > MAX_TEXT {
+        return err(CellError::Value);
+    }
+    Value::Text(out)
 }
 
 fn regextest(c: &mut Ctx, a: &[Expr]) -> Value {

@@ -47,11 +47,15 @@ pub(crate) enum Item {
     /// A two-color shading pattern across `(x, y, w, h)`, expanded into
     /// absolute page coordinates before rendering.
     Shading { pattern: ShadingPattern, color: Hsla, x: f32, y: f32, w: f32, h: f32 },
+    /// A comment speech-bubble icon drawn outside the right edge of the paper.
+    CommentBubble { x: f32, y: f32, size: f32 },
 }
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Page {
     pub(crate) items: Vec<Item>,
+    /// Number of items that belong to the document body (before headers and footers).
+    pub(crate) body_items_count: usize,
     /// The paper's size (points), its section's.
     pub(crate) width: f32,
     pub(crate) height: f32,
@@ -70,7 +74,7 @@ pub(crate) struct Pagination {
     pub(crate) pages: Vec<Page>,
 }
 
-fn pt(emu: i64) -> f32 {
+pub(crate) fn pt(emu: i64) -> f32 {
     emu as f32 / EMU_PER_POINT as f32
 }
 
@@ -119,6 +123,7 @@ pub(crate) fn showing_markup() -> bool {
 }
 
 /// Show tracked changes or not: the pages are laid out again.
+#[allow(dead_code)]
 pub(crate) fn show_markup(on: bool) {
     set_markup_display_mode(if on { MarkupDisplayMode::All } else { MarkupDisplayMode::None });
 }
@@ -148,6 +153,19 @@ pub(crate) fn set_shown_reviewers(reviewers: Option<std::collections::HashSet<St
 
 /// The colour tracked changes are shown in (Word's first author's).
 const REVISION_COLOR: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xC00000);
+/// The colour tracked moves are shown in (Word's standard green).
+pub(crate) const MOVE_REVISION_COLOR: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0x008000);
+
+/// The highlight colour for commented text ranges (Word-compatible pale amber/yellow).
+pub(crate) const COMMENT_HIGHLIGHT_COLOR: ibis_doc_model::Color = ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0xfff2ac), alpha: 180 };
+/// The background colour of the comment indicator bubble in the margin.
+#[allow(dead_code)]
+pub(crate) const COMMENT_BUBBLE_BG: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xfef7e0);
+/// The border colour of the comment indicator bubble in the margin.
+#[allow(dead_code)]
+pub(crate) const COMMENT_BUBBLE_BORDER: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xf9ab00);
+/// The icon colour inside the comment indicator bubble in the margin.
+pub(crate) const COMMENT_BUBBLE_ICON: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xd9822b);
 
 /// The Latin typeface drawn for ＭＳ 明朝's half-width characters.
 const MINCHO_LATIN: &str = "Times New Roman";
@@ -164,15 +182,25 @@ fn full_width(c: char) -> bool {
 }
 
 /// Characters a line may not start with (closing brackets, punctuation,
-/// small kana).
-fn no_line_start(c: char) -> bool {
-    NO_LINE_START.contains(c)
-}
-
-/// The standard characters a line may not start with (禁則文字の設定の「標準」).
-pub(crate) const NO_LINE_START: &str = "、。，．・：；？！゛゜ヽヾゝゞ々ー）］｝」』】〕〉》’”)]}.,:;!?ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ―…‥％%"; // i18n-ok（行頭禁則の文字の集合。文字の並び）
+/// The strict characters a line may not start with (禁則文字の設定の「厳密」: 小書き仮名や長音記号等を含む).
+pub(crate) const STRICT_NO_LINE_START: &str = "、。，．・：；？！゛゜ヽヾゝゞ々ー）］｝」』】〕〉》’”)]}.,:;!?ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ―…‥％%"; // i18n-ok（行頭禁則の文字の集合。文字の並び）
+/// The normal/standard characters a line may not start with (禁則文字の設定の「標準」: 小書き仮名や長音記号を行頭に許す).
+pub(crate) const NORMAL_NO_LINE_START: &str = "、。，．・：；？！゛゜ヽヾゝゞ々）］｝」』】〕〉》’”)]}.,:;!?―…‥％%"; // i18n-ok（行頭禁則の文字の集合。文字の並び）
+/// Backward compatible alias for strict line-breaking start characters.
+#[allow(dead_code)]
+pub(crate) const NO_LINE_START: &str = STRICT_NO_LINE_START;
 /// The standard characters a line may not end with.
 pub(crate) const NO_LINE_END: &str = "（［｛「『【〔〈《‘“([{"; // i18n-ok（行末禁則の文字の集合。文字の並び）
+
+/// Characters a line may not start with (closing brackets, punctuation,
+/// small kana when strict).
+fn no_line_start(c: char, strict: bool) -> bool {
+    if strict {
+        STRICT_NO_LINE_START.contains(c)
+    } else {
+        NORMAL_NO_LINE_START.contains(c)
+    }
+}
 
 /// Characters a line may not end with (opening brackets).
 fn no_line_end(c: char) -> bool {
@@ -182,6 +210,15 @@ fn no_line_end(c: char) -> bool {
 fn is_cjk(c: char) -> bool {
     c as u32 >= 0x2e80
 }
+
+/// Kana, kanji and full-width forms (not emoji or other symbols past U+2E80).
+fn is_japanese(c: char) -> bool {
+    matches!(c as u32, 0x2e80..=0x9fff | 0xf900..=0xfaff | 0xff00..=0xffef | 0x20000..=0x3ffff)
+}
+
+/// The typeface Word for Windows draws Japanese in when the run's East
+/// Asian typeface has none (see `units`).
+const JAPANESE_FALLBACK: &str = "ＭＳ 明朝"; // i18n-ok（フォント名そのもの。訳さない）
 
 /// One unit of a paragraph's text.
 #[derive(Clone, Debug)]
@@ -196,6 +233,8 @@ enum Unit {
     ListTab,
     Picture { media: MediaId, w: f32, h: f32 },
     Shape { shape: Box<ibis_doc_model::Shape>, w: f32, h: f32 },
+    /// A typeset formula (`w`, `h` its width and height, `descent` the part of `h` below its baseline).
+    Math { boxed: Arc<crate::render::math_view::MathBox>, w: f32, h: f32, descent: f32, font: Font, color: Hsla, display: bool },
     LineBreak,
     PageBreak,
     ColumnBreak,
@@ -211,6 +250,7 @@ struct LineBox {
     page_break: bool,
     column_break: bool,
     has_revision: bool,
+    comment_marks: Vec<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -220,6 +260,7 @@ struct WrapObstacle {
     y_top: f32,
     y_bottom: f32,
     wrap_text: String,
+    wrap_polygon: Option<(ibis_doc_model::WrapPolygon, f32, f32, f32, f32, f32, f32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -229,14 +270,35 @@ struct WrapObstacleInPara {
     rel_top: f32,
     rel_bottom: f32,
     wrap_text: String,
+    wrap_polygon: Option<(ibis_doc_model::WrapPolygon, f32, f32, f32, f32, f32, f32)>,
     shape_to_emit: Option<(ibis_doc_model::Shape, f32, f32, f32, f32, bool)>,
+    drop_cap_to_emit: Option<Item>,
+    /// Other obstacles on the page the lines keep off too (left, right, top,
+    /// bottom; the text wraps round them on both sides).
+    extra: Vec<(f32, f32, f32, f32)>,
 }
 
-fn square_shape(p: &FlowParagraph) -> Option<&ibis_doc_model::Shape> {
-    p.runs.iter().find_map(|r| match &r.kind {
+/// A shape placed above its paragraph (see `Layouter::raised`): the page's
+/// index, its obstacle, the shape as placed and its id.
+type RaisedShape = (usize, WrapObstacle, Item, u64);
+
+/// How many times a document with shapes placed above their paragraphs is
+/// laid out again at most (see `paginate_whole`).
+const MAX_RAISED_PASSES: usize = 4;
+
+/// The paragraph's shape the text wraps round (square, tight, through),
+/// but one of deleted text when the view leaves that out (`hide_deleted`).
+fn square_shape(p: &FlowParagraph, hide_deleted: bool) -> Option<&ibis_doc_model::Shape> {
+    p.runs.iter().filter(|r| !run_deleted(r, hide_deleted)).find_map(|r| match &r.kind {
         FlowRunKind::Shape(shape) if shape.floating.as_ref().is_some_and(|f| matches!(f.wrap.as_str(), "square" | "tight" | "through")) => Some(&**shape),
         _ => None,
     })
+}
+
+/// Whether a run is deleted text the view leaves out: when it hides
+/// deletions (Simple, No Markup), and always a hidden reviewer's.
+fn run_deleted(run: &ibis_doc_model::FlowRun, hide_deleted: bool) -> bool {
+    run.revision.as_ref().is_some_and(|r| r.kind.is_delete() && (hide_deleted || !is_reviewer_shown(&r.author)))
 }
 
 pub(crate) struct Layouter<'r> {
@@ -251,6 +313,8 @@ pub(crate) struct Layouter<'r> {
     chapter_prefix: std::cell::RefCell<String>,
     /// The line grid's pitch for the current section.
     line_pitch: std::cell::Cell<Option<Emu>>,
+    /// The width (points) of the line the paragraph being laid out breaks into (`f32::MAX` where it is not known).
+    line_room: std::cell::Cell<f32>,
     /// The number of pages of the document and of the current section, and
     /// the section's number, for `NUMPAGES`, `SECTIONPAGES` and `SECTION`,
     /// once the body is paginated (the headers and footers); before, the
@@ -269,10 +333,51 @@ pub(crate) struct Layouter<'r> {
     /// 同じスタイルの段落間にスペースを追加しない: the paragraphs whose
     /// space before (first) or after (second) is not added, by paragraph.
     contextual: std::collections::HashMap<u32, (bool, bool)>,
+    /// Floating shapes put off to the top of the next page (their paragraph's
+    /// place left no room for them): their paragraphs leave them out.
+    deferred_shapes: std::cell::RefCell<std::collections::HashSet<u64>>,
+    /// How far the column being laid out is from the left margin (points),
+    /// for placing floating shapes on the page from it.
+    column_dx: std::cell::Cell<f32>,
+    /// Shapes the text wraps round placed above their paragraph, over text
+    /// laid out before them (the page index, the obstacle, the shape as
+    /// placed, its id): a second laying out has them from the page's start.
+    raised: std::cell::RefCell<Vec<RaisedShape>>,
+    /// Those of a first laying out, placed at their pages' starts.
+    seeds: Vec<RaisedShape>,
+    /// Where the paragraphs of those landed (the shape's id, the page's
+    /// index): the laying out is done again while one is not on its page.
+    seed_landed: std::cell::RefCell<Vec<(u64, usize)>>,
     /// The table and cell coordinate (table_id, row_index, grid_col_index) being laid out, for formula evaluation.
     current_cell: std::cell::Cell<Option<(u32, usize, usize)>>,
     /// The paragraph whose fields are being made into text (a `STYLEREF` in the body looks back from it).
     field_paragraph: std::cell::Cell<Option<u32>>,
+    /// Active comment IDs covering run `(para_id, run_index)` in the document.
+    comment_runs: std::collections::HashMap<(u32, usize), Vec<u32>>,
+}
+
+fn map_comment_runs(doc: &FlowDocument) -> std::collections::HashMap<(u32, usize), Vec<u32>> {
+    let mut map: std::collections::HashMap<(u32, usize), Vec<u32>> = std::collections::HashMap::new();
+    let mut active: Vec<u32> = Vec::new();
+    for p in ibis_doc_model::all_paragraphs(doc) {
+        for (idx, r) in p.runs.iter().enumerate() {
+            match r.kind {
+                FlowRunKind::CommentStart(id) => {
+                    active.push(id);
+                }
+                FlowRunKind::CommentEnd(id) => {
+                    active.retain(|&c| c != id);
+                }
+                FlowRunKind::CommentRef(_) => {}
+                _ => {
+                    if !active.is_empty() {
+                        map.insert((p.id, idx), active.clone());
+                    }
+                }
+            }
+        }
+    }
+    map
 }
 
 /// The run index of a list item's number (drawn in `list_style`).
@@ -313,6 +418,15 @@ fn run_border_items(
     x_right: f32,
     y_bottom: f32,
 ) -> Vec<Item> {
+    // A wave is a line along each side, as a paragraph's.
+    if matches!(b.style, ibis_doc_model::BorderStyle::Wave | ibis_doc_model::BorderStyle::DoubleWave) {
+        let half = pt(b.total()) / 2.0;
+        let mut out = border_items(b, true, true, y_top + half, x_left, x_right, true, true);
+        out.extend(border_items(b, true, false, y_bottom - half, x_left, x_right, true, true));
+        out.extend(border_items(b, false, true, x_left + half, y_top, y_bottom, true, true));
+        out.extend(border_items(b, false, false, x_right - half, y_top, y_bottom, true, true));
+        return out;
+    }
     let color = hsla(ibis_doc_model::Color::opaque(b.color));
     let mut out = Vec::new();
     let dashes = b.dashes().map(|d| d.into_iter().map(pt).collect::<Vec<f32>>());
@@ -369,6 +483,18 @@ fn run_border_items(
     out
 }
 
+/// Where Word for Windows puts the baseline in a line of exact height, of
+/// the height (see `baseline_in_line`).
+const WORD_EXACT_BASELINE: f32 = 0.8;
+
+/// The height of a line with Hangul (ems) and how much of what it adds to a Latin or Japanese line is above the text.
+const HANGUL_LINE: f32 = 1.51;
+const HANGUL_ASCENT_SHARE: f32 = 0.8;
+
+fn is_hangul(c: char) -> bool {
+    matches!(c, '\u{1100}'..='\u{11ff}' | '\u{3130}'..='\u{318f}' | '\u{ac00}'..='\u{d7af}')
+}
+
 fn push_styled_text_items(
     items: &mut Vec<Item>,
     s: &ibis_doc_model::FlowRunStyle,
@@ -380,6 +506,71 @@ fn push_styled_text_items(
     size: f32,
     color: Hsla,
 ) {
+    // Word 2010's effects: a glow and a shadow behind, the outline around (a ring of copies), a gradient fill
+    // by the character.
+    if let Some(e) = &s.effects {
+        let rgba = |rgb: ibis_doc_model::Rgb, alpha: u8| {
+            let mut c = hsla(ibis_doc_model::Color::opaque(rgb));
+            c.a *= alpha as f32 / 255.0;
+            c
+        };
+        let copy = |items: &mut Vec<Item>, dx: f32, dy: f32, color: Hsla| items.push(Item::Text { x: x0 + dx, y: y_base + dy, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color });
+        if let Some((radius, rgb, alpha)) = e.glow {
+            let r = (radius as f32 / 12_700.0).min(1.5);
+            if r > 0.0 {
+                for ring in 1..=3 {
+                    let d = r * ring as f32 / 3.0;
+                    for k in 0..12 {
+                        let angle = k as f32 * std::f32::consts::TAU / 12.0;
+                        copy(items, d * angle.cos(), d * angle.sin(), rgba(rgb, (alpha as f32 * 0.25) as u8));
+                    }
+                }
+            }
+        }
+        if let Some(sh) = e.shadow {
+            let dist = sh.distance as f32 / 12_700.0;
+            let angle = (sh.direction as f32 / 60_000.0).to_radians();
+            let (dx, dy) = (dist * angle.cos(), dist * angle.sin());
+            let blur = sh.blur as f32 / 12_700.0;
+            if blur > 0.5 {
+                for (ox, oy) in [(-blur / 3.0, 0.0), (blur / 3.0, 0.0), (0.0, -blur / 3.0), (0.0, blur / 3.0)] {
+                    copy(items, dx + ox, dy + oy, rgba(sh.color, (sh.alpha as f32 * 0.25) as u8));
+                }
+            } else {
+                copy(items, dx, dy, rgba(sh.color, sh.alpha));
+            }
+        }
+        if let Some((width, rgb)) = e.outline {
+            let r = (width as f32 / 12_700.0 / 2.0).max(0.25);
+            for k in 0..8 {
+                let angle = k as f32 * std::f32::consts::TAU / 8.0;
+                copy(items, r * angle.cos(), r * angle.sin(), rgba(rgb, 255));
+            }
+        }
+        if let Some((stops, _angle)) = &e.gradient {
+            // The colour at a position across the run (left to right).
+            let total = offsets.last().copied().unwrap_or(0.0).max(0.001);
+            let at = |t: f32| -> ibis_doc_model::Rgb {
+                let t = (t * 100_000.0).clamp(0.0, 100_000.0);
+                let upper = stops.iter().position(|(p, _)| *p as f32 >= t).unwrap_or(stops.len() - 1);
+                if upper == 0 {
+                    return stops[0].1;
+                }
+                let (p0, c0) = stops[upper - 1];
+                let (p1, c1) = stops[upper];
+                let f = if p1 > p0 { ((t - p0 as f32) / (p1 - p0) as f32).clamp(0.0, 1.0) } else { 0.0 };
+                let mix = |a: u32, b: u32| ((a as f32) * (1.0 - f) + (b as f32) * f).round() as u32;
+                ibis_doc_model::Rgb((mix(c0.0 >> 16 & 255, c1.0 >> 16 & 255) << 16) | (mix(c0.0 >> 8 & 255, c1.0 >> 8 & 255) << 8) | mix(c0.0 & 255, c1.0 & 255))
+            };
+            for ((i, c), start) in text.char_indices().zip(offsets.iter()) {
+                let _ = i;
+                let width_of_char = offsets.get(text[..i].chars().count() + 1).map_or(0.0, |next| next - start);
+                let colour = rgba(at((start + width_of_char / 2.0) / total), 255);
+                items.push(Item::Text { x: x0 + start, y: y_base, text: c.to_string().into(), offsets: vec![0.0].into(), font: font.clone(), size, color: colour });
+            }
+            return;
+        }
+    }
     if s.shadow {
         let dx = (size * 0.05).max(0.6);
         let dy = (size * 0.05).max(0.6);
@@ -392,16 +583,16 @@ fn push_styled_text_items(
             items.push(Item::Text { x: x0 + ox, y: y_base + oy, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color });
         }
         items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffffff))) });
-    } else if s.emboss {
-        let ed = 0.5f32;
-        items.push(Item::Text { x: x0 - ed, y: y_base - ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffffff))) });
-        items.push(Item::Text { x: x0 + ed, y: y_base + ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x808080))) });
-        items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xbfbfbf))) });
-    } else if s.imprint {
-        let ed = 0.5f32;
-        items.push(Item::Text { x: x0 - ed, y: y_base - ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x808080))) });
-        items.push(Item::Text { x: x0 + ed, y: y_base + ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffffff))) });
-        items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xbfbfbf))) });
+    } else if s.emboss || s.imprint {
+        // Word's PDF: the text in its colour with a copy of it in 60 % grey (#999999) a point down and right (an
+        // emboss) or up and left (an imprint), behind it.
+        let ed = if s.emboss { 1.0f32 } else { -1.0f32 };
+        items.push(Item::Text { x: x0 + ed, y: y_base + ed, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x999999))) });
+        // The strokes of the text itself are heavier than plain text's (a third more black on the page).
+        for (ox, oy) in [(-0.3f32, -0.3f32), (0.3, -0.3), (-0.3, 0.3)] {
+            items.push(Item::Text { x: x0 + ox, y: y_base + oy, text: text.clone().into(), offsets: offsets.clone().into(), font: font.clone(), size, color });
+        }
+        items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color });
     } else {
         items.push(Item::Text { x: x0, y: y_base, text: text.into(), offsets: offsets.into(), font, size, color });
     }
@@ -444,6 +635,20 @@ impl<'r> Layouter<'r> {
         self.doc.default_tab_stop.map_or(851.0 / 20.0, pt)
     }
 
+    /// Effective markup display mode for this layout pass (honours print_markup during printing DOCX-SEC-014).
+    fn markup_mode(&self) -> MarkupDisplayMode {
+        if self.res.print && !self.res.print_markup {
+            MarkupDisplayMode::None
+        } else {
+            markup_display_mode()
+        }
+    }
+
+    /// Whether this view leaves deleted text out.
+    fn hides_deleted(&self) -> bool {
+        matches!(self.markup_mode(), MarkupDisplayMode::Simple | MarkupDisplayMode::None)
+    }
+
     /// The lines of the text in text boxes on the line grid (`w:docGrid type="lines"`), as Word puts
     /// them: each paragraph's line is as many `linePitch`es high as its text needs (a 14 pt 游明朝
     /// line in two grids of 20 pt), as the lines of the body text are.
@@ -458,7 +663,7 @@ impl<'r> Layouter<'r> {
                     _ => None,
                 };
                 let Some(body) = body else { continue };
-                if shape.floating.is_none() || body.vertical {
+                if body.vertical {
                     continue;
                 }
                 // The first paragraph's baseline: where the text box draws it in an exact line, and
@@ -483,7 +688,7 @@ impl<'r> Layouter<'r> {
                         let font = self.res.font(&TextStyle { font_size: (size * 100.0) as u32, bold: r.style.bold.unwrap_or(false), italic: r.style.italic.unwrap_or(false), font: name.map(str::to_string), ..TextStyle::default() });
                         let (ascent, line) = self.line_metrics(name, &font, size);
                         let mincho = name.map(str::trim).is_some_and(|n| n.starts_with("游明朝") || n.starts_with("Yu Mincho") || n.starts_with("YuMincho")); // i18n-ok（フォント名の判定（游明朝）。訳さない）
-                        let lead = if mincho { 0.143 * size } else { Self::leading(name) * size };
+                        let lead = if mincho && !self.res.word_windows_lines { 0.143 * size } else { self.leading(name) * size };
                         if line + lead > tall.1 + tall.2 {
                             tall = (ascent, line, lead, size);
                         }
@@ -551,10 +756,25 @@ impl<'r> Layouter<'r> {
     /// high, in an 18 pt grid line has its baseline 12.0 pt down).
     fn baseline_in_line(&self, p: &FlowParagraph, natural: f32, lead: f32, text_line: f32, text_ascent: f32, in_table: bool) -> f32 {
         let (height, grid) = self.line_height_parts(p, natural, lead, in_table);
+        // Word for Windows, off a grid (its PDFs: Arial, Times New Roman,
+        // Calibri, ＭＳ 明朝, 游明朝 and メイリオ at 9 to 20 pt): an exact line has
+        // its baseline 0.8 of it down whatever the text (9.61 pt in 12, 14.41
+        // in 18, 24.01 in 30); an at-least line taller than the text has the
+        // room above it.
+        if self.res.word_windows_lines && grid == 0.0 {
+            match p.line {
+                LineHeight::Exact(_) => return WORD_EXACT_BASELINE * height,
+                LineHeight::AtLeast(_) => return (height - (text_line - text_ascent)).max(text_ascent),
+                LineHeight::Auto(_) => {}
+            }
+        }
         // An exact line spacing leaves no room for the leading (DSEC-00011:
         // 10 pt 游ゴシック in an exact 15 pt line).
         let text_line = if grid > 0.0 || matches!(p.line, LineHeight::Exact(_)) { text_line } else { text_line + lead };
-        (height - grid - text_line).max(0.0) * 0.58 + grid * 0.5 + text_ascent
+        // A multiple (`w:lineRule="auto"`) puts all of its extra room below the text
+        // (DRUX-00730: 8 pt text in a double line sits at the top of it).
+        let above = if matches!(p.line, LineHeight::Auto(_)) { 0.0 } else { 0.58 };
+        (height - grid - text_line).max(0.0) * above + grid * 0.5 + text_ascent
     }
 
     fn font_for_size(&self, style: &FlowRunStyle, name: Option<&str>, size: u32) -> Font {
@@ -576,6 +796,14 @@ impl<'r> Layouter<'r> {
     /// the font drawn's when it is the typeface, else those Office gives the
     /// typeface (another font stands in for it), else the font drawn's.
     fn line_metrics(&self, name: Option<&str>, font: &Font, size: f32) -> (f32, f32) {
+        // Word for Windows: GDI's line of a Latin font, 1.3 × the height of
+        // an East Asian one (`font_metrics::word_windows_line_of`).
+        if self.res.word_windows_lines
+            && name.is_none_or(|n| self.res.has_typeface(n.trim()))
+            && let Some((ascent, line)) = self.res.word_windows_line(font)
+        {
+            return (ascent * size, line * size);
+        }
         let drawn = || {
             let (a, d, _) = self.res.line_metrics(font);
             (a, d)
@@ -602,7 +830,11 @@ impl<'r> Layouter<'r> {
     /// Word's PDFs: lines of 10 to 20 pt of a section without a grid in
     /// DSEC, of DBDY with snapToGrid=0 and of DPAR in table cells). On a
     /// grid the line is centred without it (DBDY-00007).
-    fn leading(name: Option<&str>) -> f32 {
+    fn leading(&self, name: Option<&str>) -> f32 {
+        // Word for Windows has it in the line already (`line_metrics`).
+        if self.res.word_windows_lines {
+            return 0.0;
+        }
         match name.map(str::trim) {
             Some(n) if (n.starts_with("游ゴシック") || n.starts_with("Yu Gothic") || n.starts_with("YuGothic")) && !n.contains("UI") => 0.143, // i18n-ok（フォント名の判定（游ゴシック）。訳さない）
             _ => 0.0,
@@ -863,9 +1095,97 @@ impl<'r> Layouter<'r> {
             "INFO" => return self.doc.info_text(t),
             "ASK" => return Some(String::new()),
             "FILLIN" | "FILL-IN" => return Some(self.doc.fillin_text(t)),
+            "AUTOTEXT" => return Some(ibis_doc_model::field_format::format_autotext(t)),
+            "AUTOTEXTLIST" => return Some(ibis_doc_model::field_format::format_autotextlist(t)),
+            "CITATION" => return Some(ibis_doc_model::field_format::format_citation(t)),
+            "BIBLIOGRAPHY" => return Some(ibis_doc_model::field_format::format_bibliography(t)),
             _ => return None,
         };
         Some(format_field_number(n.into(), t).unwrap_or_else(|| n.to_string()))
+    }
+
+    /// A text box in the text that does not wrap its text (`wrap="none"`) is as wide as its longest line (and its
+    /// margins) when that is less than its width, as Word draws it (DTXB: a 2-character box is 33 pt wide
+    /// whatever the extent says); a longer line wraps at the extent.
+    fn fit_unwrapped_text_box(&self, shape: &mut ibis_doc_model::Shape) {
+        let frame_width = shape.frame.width;
+        let body = match &mut shape.kind {
+            ibis_doc_model::ShapeKind::Auto(a) => a.text.as_mut(),
+            ibis_doc_model::ShapeKind::TextBox(body) => Some(body),
+            _ => None,
+        };
+        let Some(body) = body else { return };
+        if body.wrap || body.vertical || body.sideways != 0 {
+            return;
+        }
+        let mut widest = 0.0f32;
+        for paragraph in &body.paragraphs {
+            let mut width = 0.0f32;
+            for r in paragraph.runs.iter().filter(|r| !r.text.is_empty()) {
+                let size = r.style.font_size.unwrap_or(body.style.font_size) as f32 / 100.0;
+                let cjk = r.text.chars().any(crate::render::rich_text::is_cjk);
+                let name = if cjk { r.style.font.as_deref() } else { r.style.fallback_font.as_deref().or(r.style.font.as_deref()) };
+                let font = self.res.font(&TextStyle { font_size: (size * 100.0) as u32, bold: r.style.bold.unwrap_or(false), italic: r.style.italic.unwrap_or(false), font: name.map(str::to_string), ..TextStyle::default() });
+                width += self.res.text_width(&r.text, &font, size);
+            }
+            widest = widest.max(width);
+        }
+        let natural = ((widest * 12_700.0).round() as i64) + body.insets.left + body.insets.right;
+        if natural > 0 && natural < frame_width {
+            shape.frame.width = natural;
+        } else {
+            // Too long for the box: it grows to the line it is on (the cell's width: DTXB, a 78.7 pt box in an
+            // 89.4 pt cell is 89.4 pt wide) and wraps there.
+            let room = self.line_room.get();
+            if room < f32::MAX && pt(frame_width) < room {
+                shape.frame.width = ((room * 12_700.0) as i64).min(natural);
+            }
+            body.wrap = true;
+        }
+    }
+
+    /// A formula as a unit: typeset at the run's size in the run's typeface, as wide and as high as it comes. Word's math typeface
+    /// is Cambria Math (the shared alias table finds a substitute for it).
+    fn math_unit(&self, math: &ibis_doc_model::math::Math, display: bool, style: &ibis_doc_model::FlowRunStyle, size: f32) -> Unit {
+        let font = self.font(style, Some("Cambria Math"));
+        let mut measure = |text: &str, size: f32, italic: bool| {
+            let mut f = font.clone();
+            if italic {
+                f.style = FontStyle::Italic;
+            }
+            let (ascent, descent, _) = self.res.line_metrics(&f);
+            (self.res.text_width(text, &f, size), ascent * size, descent * size)
+        };
+        let boxed = crate::render::math_view::typeset(math, size, &mut measure);
+        let (w, h, descent) = (boxed.width, boxed.ascent + boxed.descent, boxed.descent);
+        let color = hsla(ibis_doc_model::Color::opaque(style.color));
+        Unit::Math { boxed: Arc::new(boxed), w, h, descent, font, color, display }
+    }
+
+    /// A typeset formula as page items: its text where its pieces are (from `x` on the baseline `baseline`), its rules and lines.
+    fn math_items(&self, boxed: &crate::render::math_view::MathBox, x: f32, baseline: f32, font: &Font, color: Hsla) -> Vec<Item> {
+        use crate::render::math_view::Piece;
+        boxed
+            .pieces
+            .iter()
+            .map(|piece| match piece {
+                Piece::Text { x: dx, y, text, size, italic } => {
+                    let mut f = font.clone();
+                    if *italic {
+                        f.style = FontStyle::Italic;
+                    }
+                    let mut offsets = Vec::with_capacity(text.chars().count());
+                    let mut at = 0.0;
+                    for c in text.chars() {
+                        offsets.push(at);
+                        at += self.res.text_width(&c.to_string(), &f, *size);
+                    }
+                    Item::Text { x: x + dx, y: baseline + y, text: SharedString::from(text.clone()), offsets: offsets.into(), font: f, size: *size, color }
+                }
+                Piece::Rule { x: dx, y, w, h } => Item::Rect { x: x + dx, y: baseline + y, w: *w, h: *h, color },
+                Piece::Line { x0, y0, x1, y1, t } => Item::Stroke { x: x + x0, y: baseline + y0, x2: x + x1, y2: baseline + y1, w: *t, color },
+            })
+            .collect()
     }
 
     /// The paragraph's text as units, with the page number for `PAGE`.
@@ -897,8 +1217,13 @@ impl<'r> Layouter<'r> {
                 });
                 let font = self.font(style, name);
                 let width = self.res.text_width(&c.to_string(), &font, size);
-                let (ascent, line) = self.line_metrics(name, &font, size);
-                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(name) * size, auto_space: 0.0 });
+                let (mut ascent, mut line) = self.line_metrics(name, &font, size);
+                if is_hangul(c) && line < size * HANGUL_LINE {
+                    let extra = size * HANGUL_LINE - line;
+                    ascent += extra * HANGUL_ASCENT_SHARE;
+                    line += extra;
+                }
+                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.leading(name) * size, auto_space: 0.0 });
                 positions.push((0, false));
             }
             let suffix = self.doc.styles.numbering.level(list.num_id, list.level).map(|l| l.suffix).unwrap_or_default();
@@ -911,10 +1236,33 @@ impl<'r> Layouter<'r> {
                     let font = self.font(style, style.font_for(' '));
                     let width = self.res.text_width(" ", &font, size);
                     let (ascent, line) = self.line_metrics(style.font_for(' '), &font, size);
-                    out.push(Unit::Char { c: ' ', width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: Self::leading(style.font_for(' ')) * size, auto_space: 0.0 });
+                    out.push(Unit::Char { c: ' ', width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.leading(style.font_for(' ')) * size, auto_space: 0.0 });
                     positions.push((0, false));
                 }
                 ListSuffix::Nothing => {}
+            }
+        }
+        if let Some(sub) = &p.subdoc {
+            let style = &p.mark;
+            let size = (style.size as f32 / 100.0).max(9.0);
+            let lock_str = if sub.locked { " [ロック]" } else { "" }; // i18n-ok
+            let expand_str = if sub.expanded && !sub.content_paragraphs.is_empty() {
+                format!(" ({})", sub.content_paragraphs.join(" / "))
+            } else {
+                String::new()
+            };
+            let badge = if p.runs.is_empty() {
+                format!("[サブ文書: {}{}{}]", sub.target, lock_str, expand_str) // i18n-ok
+            } else {
+                format!("[サブ文書: {}{}] ", sub.target, lock_str) // i18n-ok
+            };
+            for c in badge.chars() {
+                let name = style.font_for(c);
+                let font = self.font(style, name);
+                let width = self.res.text_width(&c.to_string(), &font, size);
+                let (ascent, line) = self.line_metrics(name, &font, size);
+                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.leading(name) * size, auto_space: 0.0 });
+                positions.push((0, false));
             }
         }
         for (index, run) in p.runs.iter().enumerate() {
@@ -923,7 +1271,7 @@ impl<'r> Layouter<'r> {
             let size = style.size as f32 / 100.0 * if style.position == VerticalPosition::Baseline { 1.0 } else { 0.65 };
             let half_points = (style.size + 25) / 50;
             let small_half_points = (half_points * 8 + 5) / 10;
-            let small_size = (small_half_points * 50) as f32 / 100.0 * if style.position == VerticalPosition::Baseline { 1.0 } else { 0.65 };
+            let _small_size = (small_half_points * 50) as f32 / 100.0 * if style.position == VerticalPosition::Baseline { 1.0 } else { 0.65 };
             let push_text = |text: &str, out: &mut Vec<Unit>| {
                 for c in text.chars() {
                     let char_style_size = style.size_for(c);
@@ -944,6 +1292,19 @@ impl<'r> Layouter<'r> {
                         (c, base_size)
                     };
                     let name = style.font_for(c);
+                    // Japanese in a typeface without it (an East Asian typeface
+                    // that is a Latin one: Arial): Word for Windows draws it in
+                    // ＭＳ 明朝 (its PDFs), as tall as that.
+                    let name = if self.res.word_windows_lines
+                        && is_japanese(c)
+                        && !style.east_asian_chinese
+                        && name.is_some_and(|n| self.res.has_typeface(n) && !self.res.is_east_asian_font(&self.font_for_size(style, Some(n), char_style_size)))
+                        && self.res.has_typeface(JAPANESE_FALLBACK)
+                    {
+                        Some(JAPANESE_FALLBACK)
+                    } else {
+                        name
+                    };
                     // ＭＳ 明朝's half-width letters are a light serif; the
                     // substitute's are heavier, so they are drawn in one.
                     let mincho_latin = name.is_some_and(|n| fixed_width(n) && n.contains("明朝") || n == "MS Mincho") && c.is_ascii() && !c.is_whitespace(); // i18n-ok（フォント名の判定（明朝体の名前）。訳さない）
@@ -959,13 +1320,20 @@ impl<'r> Layouter<'r> {
                     // A comment's mark (U+200B) takes no room.
                     let width = if c == '\u{200b}' { 0.0 } else { cell * style.scale as f32 / 100.0 + pt(style.spacing) };
                     let (mut ascent, mut line) = self.line_metrics(name, &font, base_size);
+                    // A line with Hangul is 1.72 em high in Word (18.1 pt of 10.5 pt text, DNUM: its fallback font for
+                    // Hangul), the text sitting low in it.
+                    if is_hangul(c) && line < base_size * HANGUL_LINE {
+                        let extra = base_size * HANGUL_LINE - line;
+                        ascent += extra * HANGUL_ASCENT_SHARE;
+                        line += extra;
+                    }
                     if let Some(b) = &style.border {
                         let pad_v = pt(b.space);
                         let extra_bw = (pt(b.total()) - pt(b.width)).max(0.0);
                         ascent += 1.2 + pad_v;
                         line += 1.2 + 2.8 + 2.0 * pad_v + 2.0 * extra_bw;
                     }
-                    out.push(Unit::Char { c, width, inset, font, size: char_size, style: index, line, ascent, lead: Self::leading(name) * base_size, auto_space: 0.0 });
+                    out.push(Unit::Char { c, width, inset, font, size: char_size, style: index, line, ascent, lead: self.leading(name) * base_size, auto_space: 0.0 });
                 }
             };
             // Tracked changes visibility: All shows both; Simple and None hide deleted text; Original hides inserted text.
@@ -975,20 +1343,24 @@ impl<'r> Layouter<'r> {
                 showing_hidden_text()
             };
             let rev_hidden = match run.revision.as_ref() {
-                Some(r) if is_reviewer_shown(&r.author) => match markup_display_mode() {
+                Some(r) if is_reviewer_shown(&r.author) => match self.markup_mode() {
                     MarkupDisplayMode::All => false,
-                    MarkupDisplayMode::Simple | MarkupDisplayMode::None => matches!(r.kind, ibis_doc_model::RevisionKind::Delete),
-                    MarkupDisplayMode::Original => matches!(r.kind, ibis_doc_model::RevisionKind::Insert),
+                    MarkupDisplayMode::Simple | MarkupDisplayMode::None => r.kind.is_delete(),
+                    MarkupDisplayMode::Original => r.kind.is_insert(),
                 },
                 Some(r) => {
                     // 非表示校閲者の変更は確定テキスト（挿入は表示、削除は非表示）として扱う
-                    matches!(r.kind, ibis_doc_model::RevisionKind::Delete)
+                    r.kind.is_delete()
                 }
                 None => false,
             };
             let hidden = (run.style.hidden && !show_hidden) || rev_hidden;
             let show_code = run.is_field_code_shown(self.doc.show_field_codes);
             match &run.kind {
+                // A picture or a shape of deleted (or hidden) text is not drawn,
+                // nor one put off to the next page.
+                FlowRunKind::Picture { .. } | FlowRunKind::PictureControl { .. } | FlowRunKind::Shape(_) if hidden => {}
+                FlowRunKind::Shape(shape) if self.deferred_shapes.borrow().contains(&shape.id.0) => {}
                 FlowRunKind::Text(t) if hidden => push_text(&"\u{200b}".repeat(t.chars().count()), &mut out),
                 FlowRunKind::Text(t) => push_text(t, &mut out),
                 FlowRunKind::CheckBox { checked, checked_char, unchecked_char } => {
@@ -1004,14 +1376,54 @@ impl<'r> Layouter<'r> {
                     }
                 }
                 FlowRunKind::DatePicker { text, .. }
-                | FlowRunKind::RichText { text }
-                | FlowRunKind::PlainText { text } => {
+                | FlowRunKind::RichText { text, .. }
+                | FlowRunKind::PlainText { text, .. }
+                | FlowRunKind::BuildingBlockGallery { text, .. }
+                | FlowRunKind::Group { text, .. } => {
                     if hidden {
                         push_text(&"\u{200b}".repeat(text.chars().count()), &mut out);
                     } else {
                         push_text(text, &mut out);
                     }
                 }
+                FlowRunKind::RepeatingSection { items, selected, .. } => {
+                    let text = items.get(*selected).map(|s| s.as_str()).unwrap_or("");
+                    if hidden {
+                        push_text(&"\u{200b}".repeat(text.chars().count()), &mut out);
+                    } else {
+                        push_text(text, &mut out);
+                    }
+                }
+                FlowRunKind::FormField(field) => match &field.kind {
+                    ibis_doc_model::FormFieldKind::TextInput { value, default, .. } => {
+                        let text = if value.is_empty() {
+                            if !default.is_empty() {
+                                default.as_str()
+                            } else {
+                                "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}"
+                            }
+                        } else {
+                            value.as_str()
+                        };
+                        if hidden {
+                            push_text(&"\u{200b}".repeat(text.chars().count()), &mut out);
+                        } else {
+                            push_text(text, &mut out);
+                        }
+                    }
+                    ibis_doc_model::FormFieldKind::CheckBox { checked, .. } => {
+                        let ch = if *checked { '☒' } else { '☐' };
+                        push_text(&ch.to_string(), &mut out);
+                    }
+                    ibis_doc_model::FormFieldKind::DropDown { items, selected, .. } => {
+                        let text = items.get(*selected).map(|s| s.as_str()).unwrap_or("");
+                        if hidden {
+                            push_text(&"\u{200b}".repeat(text.chars().count()), &mut out);
+                        } else {
+                            push_text(text, &mut out);
+                        }
+                    }
+                },
                 FlowRunKind::PageNumber if show_code => push_text("{ PAGE }", &mut out),
                 FlowRunKind::PageNumber => {
                     let text = match &*self.page_format.borrow() {
@@ -1032,7 +1444,11 @@ impl<'r> Layouter<'r> {
                     // is drawn over it).
                     None => match ibis_doc_model::field_format::enclosed(instruction) {
                         Some((enclosure, _)) => push_text(enclosure.chars().next().map(String::from).as_deref().unwrap_or("○"), &mut out),
-                        None => push_text(shown, &mut out),
+                        // An EQ field of fractions, roots, scripts…: typeset as a formula.
+                        None => match ibis_doc_model::eq_field::eq_math(instruction) {
+                            Some(math) => out.push(self.math_unit(&math, false, style, size)),
+                            None => push_text(shown, &mut out),
+                        },
                     },
                 },
                 FlowRunKind::PageRef { bookmark, .. } if show_code => {
@@ -1055,14 +1471,14 @@ impl<'r> Layouter<'r> {
                 FlowRunKind::LineBreak => out.push(Unit::LineBreak),
                 FlowRunKind::PageBreak => out.push(Unit::PageBreak),
                 FlowRunKind::ColumnBreak => out.push(Unit::ColumnBreak),
-                FlowRunKind::Picture { media, size, look } if look.is_visual_default() => out.push(Unit::Picture { media: *media, w: pt(size.width), h: pt(size.height) }),
+                FlowRunKind::Picture { media, size, look } | FlowRunKind::PictureControl { media, size, look, .. } if look.is_visual_default() => out.push(Unit::Picture { media: *media, w: pt(size.width), h: pt(size.height) }),
                 // A picture turned, flipped, cut or outlined: a shape (drawn as the pictures of a
                 // presentation are) whose room in the line is the box around it turned.
-                FlowRunKind::Picture { media, size, look } => {
+                FlowRunKind::Picture { media, size, look } | FlowRunKind::PictureControl { media, size, look, .. } => {
                     let angle = look.rotation as f32 / 60_000.0 * std::f32::consts::PI / 180.0;
                     let (sin, cos) = (angle.sin().abs(), angle.cos().abs());
                     let (w, h) = (pt(size.width), pt(size.height));
-                    let picture = ibis_doc_model::Picture { media: *media, crop: look.crop, stroke: look.stroke.clone(), corner: 0, duotone: look.duotone, clear: None, luminance: look.luminance, clip: None, alt_text: look.alt_text.clone(), decorative: look.decorative, name: look.name.clone(), shadow: None, reflection: None, soft_edge: None };
+                    let picture = ibis_doc_model::Picture { media: *media, crop: look.crop, stroke: look.stroke.clone(), corner: 0, duotone: look.duotone, clear: None, luminance: look.luminance, clip: None, alt_text: look.alt_text.clone(), decorative: look.decorative, name: look.name.clone(), shadow: None, reflection: None, soft_edge: look.soft_edge, geometry: look.geometry.clone(), effects: look.effects.clone(), tile: None, fill_rect: None, artistic_effect: None, ole: look.ole };
                     let shape = ibis_doc_model::Shape {
                         id: ibis_doc_model::ShapeId(0),
                         frame: ibis_doc_model::EmuRect::new(0, 0, size.width, size.height),
@@ -1074,10 +1490,15 @@ impl<'r> Layouter<'r> {
                     };
                     out.push(Unit::Shape { shape: Box::new(shape), w: w * cos + h * sin, h: w * sin + h * cos });
                 }
+                FlowRunKind::Math { math, display } => out.push(self.math_unit(math, *display, style, size)),
                 FlowRunKind::Shape(shape) => {
                     let is_floating = shape.floating.is_some();
+                    let mut shape = shape.clone();
+                    if !is_floating {
+                        self.fit_unwrapped_text_box(&mut shape);
+                    }
                     let (w, h) = if is_floating { (0.0, 0.0) } else { (pt(shape.frame.width), pt(shape.frame.height)) };
-                    out.push(Unit::Shape { shape: shape.clone(), w, h });
+                    out.push(Unit::Shape { shape, w, h });
                 }
             }
             // 組み文字: the run's room is its two half-size lines' (and
@@ -1163,7 +1584,9 @@ impl<'r> Layouter<'r> {
 
     /// Break a paragraph `width` points wide into lines.
     fn paragraph(&self, p: &FlowParagraph, width: f32, page_number: u32, obstacle: Option<&WrapObstacleInPara>, in_table: bool) -> Vec<LineBox> {
-        let (mut units, positions) = self.units(p, page_number);
+        self.line_room.set(width - pt(p.left) - pt(p.right));
+        let (mut units, mut positions) = self.units(p, page_number);
+        self.line_room.set(f32::MAX);
         let left = pt(p.left);
         let right = pt(p.right);
         // A list item's number centred on, or ending at, its position.
@@ -1181,15 +1604,12 @@ impl<'r> Layouter<'r> {
 
         let mark_size = p.mark.size as f32 / 100.0;
         let mark_metrics = {
-            let name = p.mark.font_for('あ');
-            let font = self.font(&p.mark, name);
-            let (ascent, line) = self.line_metrics(name, &font, mark_size);
-            (line, ascent, Self::leading(name) * mark_size)
+            self.mark_metrics(p, mark_size)
         };
         let default_line_h = self.resolve_line_height(p, mark_metrics.0, mark_metrics.2, in_table);
 
         let default_obs = if obstacle.is_none() {
-            square_shape(p).map(|shape| {
+            square_shape(p, self.hides_deleted()).filter(|s| !self.deferred_shapes.borrow().contains(&s.id.0)).map(|shape| {
                 let f = shape.floating.as_ref().unwrap();
                 let sw = pt(shape.frame.width);
                 let sh = pt(shape.frame.height);
@@ -1267,19 +1687,83 @@ impl<'r> Layouter<'r> {
                     };
                     abs_y - margin_t
                 };
+                let wrap_polygon = matches!(f.wrap.as_str(), "tight" | "through")
+                    .then(|| f.wrap_polygon.clone())
+                    .flatten()
+                    .map(|poly| (poly, sx, sy, sw, sh, dl, dr));
                 WrapObstacleInPara {
                     shape_left: sx - dl,
                     shape_right: sx + sw + dr,
                     rel_top: sy - dt,
                     rel_bottom: sy + sh + db,
                     wrap_text,
+                    wrap_polygon,
                     shape_to_emit: Some((shape.clone(), sx, sy, sw, sh, f.behind_doc)),
+                    drop_cap_to_emit: None,
+                    extra: Vec::new(),
                 }
             })
         } else {
             None
         };
-        let effective_obs = obstacle.or(default_obs.as_ref());
+        let drop_cap_obs = if obstacle.is_none() && default_obs.is_none() {
+            if let Some(dc) = p.drop_cap.filter(|d| d.location != ibis_doc_model::DropCapLocation::None) {
+                let first_char_idx = units.iter().position(|u| matches!(u, Unit::Char { c, .. } if !c.is_whitespace() && *c != '\u{200b}'));
+                if let Some(idx) = first_char_idx {
+                    let (c, font, style) = match &units[idx] {
+                        Unit::Char { c, font, style, .. } => (*c, font.clone(), *style),
+                        _ => unreachable!(),
+                    };
+                    units.remove(idx);
+                    if idx < positions.len() {
+                        positions.remove(idx);
+                    }
+                    let lines_count = (dc.lines as f32).clamp(1.0, 10.0);
+                    let cap_h = default_line_h * lines_count;
+                    let cap_font_size = default_line_h * lines_count * 0.78;
+                    let cap_w = self.res.text_width(&c.to_string(), &font, cap_font_size);
+                    let space_pt = pt(dc.space);
+                    let cap_baseline = (lines_count - 1.0) * default_line_h + mark_metrics.1;
+                    let cap_color = p.runs.get(style).map_or_else(
+                        || hsla(ibis_doc_model::Color::opaque(p.list_style.color)),
+                        |r| hsla(ibis_doc_model::Color::opaque(r.style.color)),
+                    );
+                    let start_x = line_start_x(true);
+                    let (cap_x, obs_right) = if dc.location == ibis_doc_model::DropCapLocation::Margin {
+                        (start_x - cap_w - space_pt, start_x)
+                    } else {
+                        (start_x, start_x + cap_w + space_pt)
+                    };
+                    let item = Item::Text {
+                        x: cap_x,
+                        y: cap_baseline,
+                        text: c.to_string().into(),
+                        offsets: Arc::from([0.0]),
+                        font,
+                        size: cap_font_size,
+                        color: cap_color,
+                    };
+                    Some(WrapObstacleInPara {
+                        shape_left: cap_x,
+                        shape_right: obs_right,
+                        rel_top: 0.0,
+                        rel_bottom: cap_h,
+                        wrap_text: "right".to_string(),
+                        wrap_polygon: None,
+                        shape_to_emit: None,
+                        drop_cap_to_emit: Some(item),
+                        extra: Vec::new(),
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let effective_obs = obstacle.or(default_obs.as_ref()).or(drop_cap_obs.as_ref());
 
         if let Some(obs) = effective_obs {
             let shape_left = obs.shape_left;
@@ -1307,21 +1791,38 @@ impl<'r> Layouter<'r> {
                 let line_end = width - right;
                 let full_room = (line_end - line_start).max(0.0);
 
-                let is_intersecting = (cur_y < shape_bottom - 0.01) && (cur_y + default_line_h > shape_top + 0.01);
-                let slots = if is_intersecting {
-                    let left_w = (shape_left - line_start).max(0.0);
-                    let right_w = (line_end - shape_right).max(0.0);
-                    let min_slot_w = 15.0;
+                let (line_shape_left, line_shape_right, is_intersecting) = if (cur_y < shape_bottom - 0.01) && (cur_y + default_line_h > shape_top + 0.01) {
+                    if let Some((poly, sx, sy, sw, sh, dl, dr)) = &obs.wrap_polygon {
+                        if let Some((min_x, max_x)) = poly.x_span_for_y_band(*sx, *sy, *sw, *sh, cur_y, cur_y + default_line_h) {
+                            (min_x - dl, max_x + dr, true)
+                        } else {
+                            (shape_left, shape_right, false)
+                        }
+                    } else {
+                        (shape_left, shape_right, true)
+                    }
+                } else {
+                    (shape_left, shape_right, false)
+                };
+                // Only the part of the shape over this line's own range cuts it: a shape
+                // past the column's edge leaves the line its full width, never more.
+                let line_shape_left = line_shape_left.clamp(line_start, line_end.max(line_start));
+                let line_shape_right = line_shape_right.clamp(line_start, line_end.max(line_start));
+                let is_intersecting = is_intersecting && line_shape_right > line_shape_left;
+                let mut slots = if is_intersecting {
+                    let left_w = (line_shape_left - line_start).max(0.0);
+                    let right_w = (line_end - line_shape_right).max(0.0);
+                    let min_slot_w = MIN_WRAP_ROOM;
                     match wrap_text {
                         "left" => {
                             if left_w >= min_slot_w { vec![(line_start, left_w)] } else { vec![] }
                         }
                         "right" => {
-                            if right_w >= min_slot_w { vec![(shape_right, right_w)] } else { vec![] }
+                            if right_w >= min_slot_w { vec![(line_shape_right, right_w)] } else { vec![] }
                         }
                         "largest" => {
                             if right_w >= left_w && right_w >= min_slot_w {
-                                vec![(shape_right, right_w)]
+                                vec![(line_shape_right, right_w)]
                             } else if left_w >= min_slot_w {
                                 vec![(line_start, left_w)]
                             } else {
@@ -1331,13 +1832,39 @@ impl<'r> Layouter<'r> {
                         _ /* "bothSides" */ => {
                             let mut s = Vec::new();
                             if left_w >= min_slot_w { s.push((line_start, left_w)); }
-                            if right_w >= min_slot_w { s.push((shape_right, right_w)); }
+                            if right_w >= min_slot_w { s.push((line_shape_right, right_w)); }
                             s
                         }
                     }
                 } else {
                     vec![(line_start, full_room)]
                 };
+                // The other obstacles over this line cut its room too.
+                let mut cut = false;
+                for &(l, r, t, b) in &obs.extra {
+                    if cur_y < b - 0.01 && cur_y + default_line_h > t + 0.01 {
+                        let (l, r) = (l.clamp(line_start, line_end.max(line_start)), r.clamp(line_start, line_end.max(line_start)));
+                        if r <= l {
+                            continue;
+                        }
+                        cut = true;
+                        slots = slots
+                            .into_iter()
+                            .flat_map(|(x, w)| {
+                                let mut parts = Vec::new();
+                                if l > x {
+                                    parts.push((x, (l - x).min(w)));
+                                }
+                                if r < x + w {
+                                    parts.push((r.max(x), x + w - r.max(x)));
+                                }
+                                parts
+                            })
+                            .filter(|&(_, w)| w >= 15.0)
+                            .collect();
+                    }
+                }
+                let is_intersecting = is_intersecting || cut;
 
                 let mut phys_line: Vec<Segment> = Vec::new();
                 let mut line_forced_break = false;
@@ -1358,6 +1885,8 @@ impl<'r> Layouter<'r> {
                     let mut x = 0.0;
                     let mut last_break: Option<usize> = None;
                     let mut slot_ended = false;
+                    // What the spaces so far may give (justified text: `SPACE_GIVE`).
+                    let mut give = 0.0f32;
 
                     while i < units.len() {
                         match &units[i] {
@@ -1401,7 +1930,11 @@ impl<'r> Layouter<'r> {
                                 last_break = Some(i);
                             }
                         }
-                        if x + w > slot_w + 0.01 && i > start {
+                        let squeezed_out = || {
+                            let word_start = last_break.filter(|b| *b > start).unwrap_or(start);
+                            !keeps_word(&units, i, word_start, x, slot_w, give, |j| may_break(unit_char(&units[j - 1]), unit_char(&units[j]), p.kinsoku, p.word_wrap, self.doc))
+                        };
+                        if i > start && (x + w > slot_w + give + 0.01 || (give > 0.0 && x + w > slot_w + 0.01 && c != Some(' ') && squeezed_out())) {
                             if c == Some(' ') {
                                 x += w;
                                 i += 1;
@@ -1424,6 +1957,9 @@ impl<'r> Layouter<'r> {
                             i = at;
                             slot_ended = true;
                             break;
+                        }
+                        if p.align == FlowAlign::Justify {
+                            give += squeezable(&units[i]) * space_give(self.doc);
                         }
                         x += w;
                         i += 1;
@@ -1448,7 +1984,7 @@ impl<'r> Layouter<'r> {
 
                 let (text_line, lead) = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Char { line, lead, .. } = u { Some((*line, *lead)) } else { None }).fold((0.0f32, 0.0f32), |(l, d), (l2, d2)| (l.max(l2), d.max(d2)));
                 let (text_line, lead) = if text_line > 0.0 { (text_line, lead) } else { (mark_metrics.0, mark_metrics.2) };
-                let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
+                let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } | Unit::Math { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
                 let natural = text_line.max(picture);
                 let lead = if picture > text_line { 0.0 } else { lead };
                 let height = self.resolve_line_height(p, natural, lead, in_table);
@@ -1466,11 +2002,17 @@ impl<'r> Layouter<'r> {
                 let largest = if largest > 0.0 { largest } else { mark_size };
                 let (text_line, text_ascent, lead) = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Char { c, line, ascent, lead, style, size, .. } = u { let (line, ascent) = mark_room(p, *c, *style, *size, *line, *ascent); Some((line, ascent, *lead)) } else { None }).fold((0.0f32, 0.0f32, 0.0f32), |(l, a, d), (l2, a2, d2)| (l.max(l2), a.max(a2), d.max(d2)));
                 let (text_line, text_ascent, lead) = if text_line > 0.0 { (text_line, text_ascent, lead) } else { mark_metrics };
-                let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
+                let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } | Unit::Math { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
                 let natural = text_line.max(picture);
                 let lead = if picture > text_line { 0.0 } else { lead };
                 let height = self.resolve_line_height(p, natural, lead, in_table);
-                let baseline = if picture > text_line { height } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
+                let height = if physical_lines.len() <= 1 && obs.drop_cap_to_emit.is_some() {
+                    height.max(obs.rel_bottom)
+                } else {
+                    height
+                };
+                let math_below = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Math { descent, .. } = u { Some(*descent) } else { None }).fold(0.0f32, f32::max);
+                let baseline = if picture > text_line { height - math_below } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
                 let page_break = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).any(|u| matches!(u, Unit::PageBreak));
                 let column_break = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).any(|u| matches!(u, Unit::ColumnBreak));
                 let has_revision = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).any(|u| {
@@ -1484,7 +2026,31 @@ impl<'r> Layouter<'r> {
                         false
                     }
                 });
-                let mut line = LineBox { height, baseline, items: Vec::new(), page_break, column_break, has_revision };
+                let mut comment_marks = Vec::new();
+                for u in phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]) {
+                    if let Unit::Char { style, .. } = u {
+                        if *style != LABEL {
+                            if let Some(c_ids) = self.comment_runs.get(&(p.id, *style)) {
+                                for &id in c_ids {
+                                    if !comment_marks.contains(&id) {
+                                        comment_marks.push(id);
+                                    }
+                                }
+                            }
+                            if let Some(r) = p.runs.get(*style) {
+                                match r.kind {
+                                    FlowRunKind::CommentStart(id) | FlowRunKind::CommentRef(id) => {
+                                        if !comment_marks.contains(&id) {
+                                            comment_marks.push(id);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut line = LineBox { height, baseline, items: Vec::new(), page_break, column_break, has_revision, comment_marks };
 
                 if n == 0 {
                     if let Some((shape, sx, sy, sw, sh, behind_doc)) = &obs.shape_to_emit {
@@ -1501,6 +2067,27 @@ impl<'r> Layouter<'r> {
                             line.items.push(item);
                         }
                     }
+                    if let Some(item) = &obs.drop_cap_to_emit {
+                        line.items.push(item.clone());
+                    }
+                    // The paragraph's other floating shapes than the one the text
+                    // wraps round (pictures over a text box), from its top: with
+                    // its first line, wherever the units fall.
+                    for u in &units {
+                        if let Unit::Shape { shape, .. } = u
+                            && let Some(f) = &shape.floating
+                            && f.wrap != "topAndBottom"
+                            && !obs.shape_to_emit.as_ref().is_some_and(|(s, ..)| s.id == shape.id)
+                            && !square_shape(p, self.hides_deleted()).is_some_and(|s| s.id == shape.id)
+                        {
+                            let item = self.floating_item(shape, 0.0, width, line.height, page_number);
+                            if f.behind_doc {
+                                line.items.insert(0, item);
+                            } else {
+                                line.items.push(item);
+                            }
+                        }
+                    }
                 }
 
                 for (seg_idx, seg) in phys_line.iter().enumerate() {
@@ -1508,17 +2095,11 @@ impl<'r> Layouter<'r> {
                     let visible_end = slice.iter().rposition(|u| unit_char(u).is_none_or(|c| c != ' ')).map_or(0, |p| p + 1);
                     let used: f32 = slice[..visible_end].iter().map(unit_width).sum();
                     let last = (n + 1 == physical_lines.len() && seg_idx + 1 == phys_line.len()) || seg.forced;
-                    let justify = match p.align {
-                        FlowAlign::Justify => !last,
-                        FlowAlign::Distribute => true,
-                        _ => false,
-                    };
-                    let has_tab = slice.iter().any(|u| matches!(u, Unit::Tab));
-                    let marks = slice[..visible_end].iter().filter(|u| unit_char(u) == Some('\u{200b}')).count();
-                    let gaps = visible_end.saturating_sub(1 + marks).max(1) as f32;
                     let room = seg.slot_w;
-                    let extra = if justify && !has_tab && used < room { (room - used) / gaps } else { 0.0 };
-                    let shift = match p.align {
+                    let (extra, expands) = justify_extra(slice, visible_end, p.align, last, room, used);
+                    // A displayed formula alone on its line is centred.
+                    let align = if slice.iter().any(|u| matches!(u, Unit::Math { display: true, .. })) && slice.iter().all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace())) { FlowAlign::Center } else { p.align };
+                    let shift = match align {
                         FlowAlign::Center => ((room - used) / 2.0).max(0.0),
                         FlowAlign::Right => (room - used).max(0.0),
                         FlowAlign::Left if p.bidi => (room - used).max(0.0),
@@ -1533,7 +2114,7 @@ impl<'r> Layouter<'r> {
                         if let Some((x0, text, offsets, font, size, style)) = run.take() {
                             let s = if style == LABEL { &p.list_style } else { &p.runs[style].style };
                             let revised;
-                            let is_all_markup = markup_display_mode() == MarkupDisplayMode::All;
+                            let is_all_markup = self.markup_mode() == MarkupDisplayMode::All;
                             let is_hidden_dotted = p.runs.get(style).is_some_and(|r| r.style.hidden && !self.res.print && showing_hidden_text() && style != LABEL);
                             let active_rev = p.runs.get(style).and_then(|r| r.revision.as_ref()).filter(|r| is_reviewer_shown(&r.author));
                             let s = match active_rev.map(|r| &r.kind).filter(|_| is_all_markup) {
@@ -1543,6 +2124,14 @@ impl<'r> Layouter<'r> {
                                 }
                                 Some(ibis_doc_model::RevisionKind::Delete) if style != LABEL => {
                                     revised = ibis_doc_model::FlowRunStyle { strike: true, color: REVISION_COLOR, ..s.clone() };
+                                    &revised
+                                }
+                                Some(ibis_doc_model::RevisionKind::MoveTo) if style != LABEL => {
+                                    revised = ibis_doc_model::FlowRunStyle { underline: true, underline_style: ibis_doc_model::UnderlineStyle::Single, color: MOVE_REVISION_COLOR, ..s.clone() };
+                                    &revised
+                                }
+                                Some(ibis_doc_model::RevisionKind::MoveFrom) if style != LABEL => {
+                                    revised = ibis_doc_model::FlowRunStyle { strike: true, color: MOVE_REVISION_COLOR, ..s.clone() };
                                     &revised
                                 }
                                 _ if is_hidden_dotted => {
@@ -1568,6 +2157,39 @@ impl<'r> Layouter<'r> {
                             };
                             let y_base = line.baseline + raise + align_shift;
                             let end = offsets.last().copied().unwrap_or(0.0);
+                            let show_comments = self.markup_mode() != MarkupDisplayMode::None && self.markup_mode() != MarkupDisplayMode::Original;
+                            if show_comments && style != LABEL && end > 0.0 {
+                                if let Some(c_ids) = self.comment_runs.get(&(p.id, style)) && !c_ids.is_empty() {
+                                    let color = hsla(COMMENT_HIGHLIGHT_COLOR);
+                                    if let Some(Item::Rect { x: last_x, w: last_w, color: last_c, .. }) = dec.highlights.last_mut()
+                                        && *last_c == color
+                                        && (*last_x + *last_w - x0).abs() < 0.02
+                                    {
+                                        *last_w = (x0 + end) - *last_x;
+                                    } else {
+                                        dec.highlights.push(Item::Rect { x: x0, y: 0.0, w: end, h: line.height, color });
+                                    }
+                                    let comment_ucolor = hsla(ibis_doc_model::Color::opaque(COMMENT_BUBBLE_ICON));
+                                    if let Some(last_u) = dec.underlines.last_mut()
+                                        && last_u.style == UnderlineStyle::Dash
+                                        && last_u.color == comment_ucolor
+                                        && (last_u.baseline - y_base).abs() < 0.01
+                                        && (last_u.size - s_size).abs() < 0.01
+                                        && (last_u.x + last_u.w - x0).abs() < 0.02
+                                    {
+                                        last_u.w = (x0 + end) - last_u.x;
+                                    } else {
+                                        dec.underlines.push(UnderlineBox {
+                                            style: UnderlineStyle::Dash,
+                                            size: s_size,
+                                            x: x0,
+                                            w: end,
+                                            baseline: y_base,
+                                            color: comment_ucolor,
+                                        });
+                                    }
+                                }
+                            }
                             if let Some(h) = s.highlight && end > 0.0 {
                                 let color = hsla(ibis_doc_model::Color::opaque(h));
                                 if let Some(Item::Rect { x: last_x, w: last_w, color: last_c, .. }) = dec.highlights.last_mut()
@@ -1577,6 +2199,10 @@ impl<'r> Layouter<'r> {
                                     *last_w = (x0 + end) - *last_x;
                                 } else {
                                     dec.highlights.push(Item::Rect { x: x0, y: 0.0, w: end, h: line.height, color });
+                                }
+                                // A stripe or a grid over the fill.
+                                if let Some((pattern, pattern_color)) = s.shd_pattern {
+                                    dec.highlights.push(Item::Shading { pattern, color: hsla(ibis_doc_model::Color::opaque(pattern_color)), x: x0, y: 0.0, w: end, h: line.height });
                                 }
                             }
                             if let Some(ref b) = s.border && end > 0.0 {
@@ -1709,7 +2335,7 @@ impl<'r> Layouter<'r> {
                                 let at = x - r.0 + inset;
                                 r.2.pop();
                                 r.2.push(at);
-                                x += width + if k + 1 < visible_end && *c != '\u{200b}' { extra } else { 0.0 };
+                                x += width + if expands.get(k).copied().unwrap_or(false) { extra } else { 0.0 };
                                 r.2.push(x - r.0);
                             }
                             Unit::ListTab if left > x + 0.01 => {
@@ -1745,6 +2371,12 @@ impl<'r> Layouter<'r> {
                                 line.items.push(Item::Picture { media: *media, x, y: line.baseline - h, w: *w, h: *h });
                                 x += w;
                             }
+                            Unit::Math { boxed, w, font, color, .. } => {
+                                flush(&mut run, &mut line, &mut dec);
+                                let items = self.math_items(boxed, x, line.baseline, font, *color);
+                                line.items.extend(items);
+                                x += w;
+                            }
                             Unit::Shape { .. } => {
                                 flush(&mut run, &mut line, &mut dec);
                             }
@@ -1768,9 +2400,14 @@ impl<'r> Layouter<'r> {
         let mut x = 0.0;
         let mut i = 0;
         let mut last_break: Option<usize> = None;
+        // How much the spaces so far on the line may give (justified text).
+        let mut give = 0.0f32;
         while i < units.len() {
             let first_line = lines.is_empty();
             let room = width - right - line_start_x(first_line);
+            if i == start {
+                give = 0.0;
+            }
             match &units[i] {
                 Unit::LineBreak | Unit::PageBreak | Unit::ColumnBreak => {
                     lines.push((start, i + 1, true));
@@ -1815,7 +2452,11 @@ impl<'r> Layouter<'r> {
                     last_break = Some(i);
                 }
             }
-            if x + w > room + 0.01 && i > start {
+            let squeezed_out = || {
+                let word_start = last_break.filter(|b| *b > start).unwrap_or(start);
+                !keeps_word(&units, i, word_start, x, room, give, |j| may_break(unit_char(&units[j - 1]), unit_char(&units[j]), p.kinsoku, p.word_wrap, self.doc))
+            };
+            if i > start && (x + w > room + give + 0.01 || (give > 0.0 && x + w > room + 0.01 && c != Some(' ') && squeezed_out())) {
                 // Spaces at the end of a line hang past the edge.
                 if c == Some(' ') {
                     x += w;
@@ -1843,6 +2484,9 @@ impl<'r> Layouter<'r> {
                 i = at;
                 continue;
             }
+            if p.align == FlowAlign::Justify {
+                give += squeezable(&units[i]) * space_give(self.doc);
+            }
             x += w;
             i += 1;
         }
@@ -1856,10 +2500,7 @@ impl<'r> Layouter<'r> {
 
         let mark_size = p.mark.size as f32 / 100.0;
         let mark_metrics = {
-            let name = p.mark.font_for('あ');
-            let font = self.font(&p.mark, name);
-            let (ascent, line) = self.line_metrics(name, &font, mark_size);
-            (line, ascent, Self::leading(name) * mark_size)
+            self.mark_metrics(p, mark_size)
         };
         let mut out = Vec::new();
         for (n, &(s, e, forced)) in lines.iter().enumerate() {
@@ -1870,12 +2511,13 @@ impl<'r> Layouter<'r> {
             // paragraph mark's on an empty line).
             let (text_line, text_ascent, lead) = slice.iter().filter_map(|u| if let Unit::Char { c, line, ascent, lead, style, size, .. } = u { let (line, ascent) = mark_room(p, *c, *style, *size, *line, *ascent); Some((line, ascent, *lead)) } else { None }).fold((0.0f32, 0.0f32, 0.0f32), |(l, a, d), (l2, a2, d2)| (l.max(l2), a.max(a2), d.max(d2)));
             let (text_line, text_ascent, lead) = if text_line > 0.0 { (text_line, text_ascent, lead) } else { mark_metrics };
-            let picture = slice.iter().filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
+            let picture = slice.iter().filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } | Unit::Math { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
             let natural = text_line.max(picture);
             let lead = if picture > text_line { 0.0 } else { lead };
                 let height = self.resolve_line_height(p, natural, lead, in_table);
             // Where Word puts the baseline in a line: see `baseline_in_line`.
-            let baseline = if picture > text_line { height } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
+            let math_below = slice.iter().filter_map(|u| if let Unit::Math { descent, .. } = u { Some(*descent) } else { None }).fold(0.0f32, f32::max);
+            let baseline = if picture > text_line { height - math_below } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
             let start_x = line_start_x(n == 0);
             let room = width - right - start_x;
             // Width used (without trailing spaces), and the gaps to spread
@@ -1883,16 +2525,10 @@ impl<'r> Layouter<'r> {
             let visible_end = slice.iter().rposition(|u| unit_char(u).is_none_or(|c| c != ' ')).map_or(0, |p| p + 1);
             let used: f32 = slice[..visible_end].iter().map(unit_width).sum();
             let last = n + 1 == lines.len() || forced;
-            let justify = match p.align {
-                FlowAlign::Justify => !last,
-                FlowAlign::Distribute => true,
-                _ => false,
-            };
-            let has_tab = slice.iter().any(|u| matches!(u, Unit::Tab));
-            let marks = slice[..visible_end].iter().filter(|u| unit_char(u) == Some('\u{200b}')).count();
-            let gaps = visible_end.saturating_sub(1 + marks).max(1) as f32;
-            let extra = if justify && !has_tab && used < room { (room - used) / gaps } else { 0.0 };
-            let shift = match p.align {
+            let (extra, expands) = justify_extra(slice, visible_end, p.align, last, room, used);
+            // A displayed formula alone on its line is centred.
+            let align = if slice.iter().any(|u| matches!(u, Unit::Math { display: true, .. })) && slice.iter().all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace())) { FlowAlign::Center } else { p.align };
+            let shift = match align {
                 FlowAlign::Center => ((room - used) / 2.0).max(0.0),
                 FlowAlign::Right => (room - used).max(0.0),
                 FlowAlign::Left if p.bidi => (room - used).max(0.0),
@@ -1909,13 +2545,37 @@ impl<'r> Layouter<'r> {
                     false
                 }
             });
-            let mut line = LineBox { height, baseline, items: Vec::new(), page_break: slice.iter().any(|u| matches!(u, Unit::PageBreak)), column_break: slice.iter().any(|u| matches!(u, Unit::ColumnBreak)), has_revision };
+            let mut comment_marks = Vec::new();
+            for u in slice {
+                if let Unit::Char { style, .. } = u {
+                    if *style != LABEL {
+                        if let Some(c_ids) = self.comment_runs.get(&(p.id, *style)) {
+                            for &id in c_ids {
+                                if !comment_marks.contains(&id) {
+                                    comment_marks.push(id);
+                                }
+                            }
+                        }
+                        if let Some(r) = p.runs.get(*style) {
+                            match r.kind {
+                                FlowRunKind::CommentStart(id) | FlowRunKind::CommentRef(id) => {
+                                    if !comment_marks.contains(&id) {
+                                        comment_marks.push(id);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            let mut line = LineBox { height, baseline, items: Vec::new(), page_break: slice.iter().any(|u| matches!(u, Unit::PageBreak)), column_break: slice.iter().any(|u| matches!(u, Unit::ColumnBreak)), has_revision, comment_marks };
             let mut x = start_x + shift;
             let line_x = x;
             let mut stops: Vec<(usize, f32)> = Vec::new();
             let mut run: Option<OpenRun> = None;
             let mut dec = LineDecorations::default();
-            let is_all_markup = markup_display_mode() == MarkupDisplayMode::All;
+            let is_all_markup = self.markup_mode() == MarkupDisplayMode::All;
             let flush = |run: &mut Option<OpenRun>, line: &mut LineBox, dec: &mut LineDecorations| {
                 if let Some((x0, text, offsets, font, size, style)) = run.take() {
                     let s = if style == LABEL { &p.list_style } else { &p.runs[style].style };
@@ -1931,6 +2591,14 @@ impl<'r> Layouter<'r> {
                         }
                         Some(ibis_doc_model::RevisionKind::Delete) if style != LABEL => {
                             revised = ibis_doc_model::FlowRunStyle { strike: true, color: REVISION_COLOR, ..s.clone() };
+                            &revised
+                        }
+                        Some(ibis_doc_model::RevisionKind::MoveTo) if style != LABEL => {
+                            revised = ibis_doc_model::FlowRunStyle { underline: true, underline_style: ibis_doc_model::UnderlineStyle::Single, color: MOVE_REVISION_COLOR, ..s.clone() };
+                            &revised
+                        }
+                        Some(ibis_doc_model::RevisionKind::MoveFrom) if style != LABEL => {
+                            revised = ibis_doc_model::FlowRunStyle { strike: true, color: MOVE_REVISION_COLOR, ..s.clone() };
                             &revised
                         }
                         _ if is_hidden_dotted => {
@@ -1956,6 +2624,39 @@ impl<'r> Layouter<'r> {
                     };
                     let y_base = line.baseline + raise + align_shift;
                     let end = offsets.last().copied().unwrap_or(0.0);
+                    let show_comments = self.markup_mode() != MarkupDisplayMode::None && self.markup_mode() != MarkupDisplayMode::Original;
+                    if show_comments && style != LABEL && end > 0.0 {
+                        if let Some(c_ids) = self.comment_runs.get(&(p.id, style)) && !c_ids.is_empty() {
+                            let color = hsla(COMMENT_HIGHLIGHT_COLOR);
+                            if let Some(Item::Rect { x: last_x, w: last_w, color: last_c, .. }) = dec.highlights.last_mut()
+                                && *last_c == color
+                                && (*last_x + *last_w - x0).abs() < 0.02
+                            {
+                                *last_w = (x0 + end) - *last_x;
+                            } else {
+                                dec.highlights.push(Item::Rect { x: x0, y: 0.0, w: end, h: line.height, color });
+                            }
+                            let comment_ucolor = hsla(ibis_doc_model::Color::opaque(COMMENT_BUBBLE_ICON));
+                            if let Some(last_u) = dec.underlines.last_mut()
+                                && last_u.style == UnderlineStyle::Dash
+                                && last_u.color == comment_ucolor
+                                && (last_u.baseline - y_base).abs() < 0.01
+                                && (last_u.size - s_size).abs() < 0.01
+                                && (last_u.x + last_u.w - x0).abs() < 0.02
+                            {
+                                last_u.w = (x0 + end) - last_u.x;
+                            } else {
+                                dec.underlines.push(UnderlineBox {
+                                    style: UnderlineStyle::Dash,
+                                    size: s_size,
+                                    x: x0,
+                                    w: end,
+                                    baseline: y_base,
+                                    color: comment_ucolor,
+                                });
+                            }
+                        }
+                    }
                     if let Some(h) = s.highlight && end > 0.0 {
                         let color = hsla(ibis_doc_model::Color::opaque(h));
                         if let Some(Item::Rect { x: last_x, w: last_w, color: last_c, .. }) = dec.highlights.last_mut()
@@ -1965,6 +2666,10 @@ impl<'r> Layouter<'r> {
                             *last_w = (x0 + end) - *last_x;
                         } else {
                             dec.highlights.push(Item::Rect { x: x0, y: 0.0, w: end, h: line.height, color });
+                        }
+                        // A stripe or a grid over the fill.
+                        if let Some((pattern, pattern_color)) = s.shd_pattern {
+                            dec.highlights.push(Item::Shading { pattern, color: hsla(ibis_doc_model::Color::opaque(pattern_color)), x: x0, y: 0.0, w: end, h: line.height });
                         }
                     }
                     if let Some(ref b) = s.border && end > 0.0 {
@@ -2099,7 +2804,7 @@ impl<'r> Layouter<'r> {
                         let at = x - r.0 + inset;
                         r.2.pop();
                         r.2.push(at);
-                        x += width + if k + 1 < visible_end && *c != '\u{200b}' { extra } else { 0.0 };
+                        x += width + if expands.get(k).copied().unwrap_or(false) { extra } else { 0.0 };
                         r.2.push(x - r.0);
                     }
                     Unit::ListTab if left > x + 0.01 => {
@@ -2137,92 +2842,19 @@ impl<'r> Layouter<'r> {
                         line.items.push(Item::Picture { media: *media, x, y: line.baseline - h, w: *w, h: *h });
                         x += w;
                     }
+                    Unit::Math { boxed, w, font, color, .. } => {
+                        flush(&mut run, &mut line, &mut dec);
+                        let items = self.math_items(boxed, x, line.baseline, font, *color);
+                        line.items.extend(items);
+                        x += w;
+                    }
                     Unit::Shape { shape, w, h } => {
                         flush(&mut run, &mut line, &mut dec);
                         if let Some(f) = &shape.floating {
                             if f.wrap == "topAndBottom" {
                                 continue;
                             }
-                            let sw = pt(shape.frame.width);
-                            let sh = pt(shape.frame.height);
-                            let page_w = pt(self.doc.page.size.width);
-                            let margin_l = pt(self.doc.page.left);
-                            let margin_r = pt(self.doc.page.right);
-                            let is_even = page_number % 2 == 0;
-
-                            let (base_x0, base_w) = match f.relative_h.as_str() {
-                                "page" => (0.0, page_w),
-                                "leftMargin" => (0.0, margin_l),
-                                "rightMargin" => (page_w - margin_r, margin_r),
-                                "insideMargin" => if is_even { (page_w - margin_r, margin_r) } else { (0.0, margin_l) },
-                                "outsideMargin" => if is_even { (0.0, margin_l) } else { (page_w - margin_r, margin_r) },
-                                "character" => (margin_l + x, (width - x).max(0.0)),
-                                _ /* "column" | "margin" */ => (margin_l, width),
-                            };
-
-                            let abs_x = if f.relative_h == "character" {
-                                match f.align_h.as_deref() {
-                                    Some("center") => margin_l + x - sw / 2.0,
-                                    Some("right") => margin_l + x - sw,
-                                    Some("left") => margin_l + x,
-                                    _ => margin_l + x + pt(f.offset_x),
-                                }
-                            } else {
-                                match f.align_h.as_deref() {
-                                    Some("left") => base_x0,
-                                    Some("center") => base_x0 + (base_w - sw) / 2.0,
-                                    Some("right") => base_x0 + base_w - sw,
-                                    Some("inside") => if is_even { base_x0 + base_w - sw } else { base_x0 },
-                                    Some("outside") => if is_even { base_x0 } else { base_x0 + base_w - sw },
-                                    _ => base_x0 + pt(f.offset_x),
-                                }
-                            };
-                            let abs_x = abs_x.clamp(0.0, (page_w - sw).max(0.0));
-                            let sx = abs_x - margin_l;
-                            let page_h = pt(self.doc.page.size.height);
-                            let margin_t = pt(self.doc.page.top);
-                            let margin_b = pt(self.doc.page.bottom);
-                            let sy = if f.relative_v == "line" {
-                                match f.align_v.as_deref() {
-                                    Some("center") => (line.height - sh) / 2.0,
-                                    Some("bottom") => line.height - sh,
-                                    Some("top") => 0.0,
-                                    _ => pt(f.offset_y),
-                                }
-                            } else if f.relative_v == "paragraph" {
-                                match f.align_v.as_deref() {
-                                    Some("center") => (line.height - sh) / 2.0,
-                                    Some("bottom") => line.height - sh,
-                                    Some("top") => 0.0,
-                                    _ => pt(f.offset_y),
-                                }
-                            } else {
-                                let (base_y0, base_h) = match f.relative_v.as_str() {
-                                    "page" => (0.0, page_h),
-                                    "margin" => (margin_t, (page_h - margin_t - margin_b).max(0.0)),
-                                    "topMargin" => (0.0, margin_t),
-                                    "bottomMargin" => (page_h - margin_b, margin_b),
-                                    "insideMargin" => if is_even { (page_h - margin_b, margin_b) } else { (0.0, margin_t) },
-                                    "outsideMargin" => if is_even { (0.0, margin_t) } else { (page_h - margin_b, margin_b) },
-                                    _ => (margin_t, page_h),
-                                };
-                                let abs_y = match f.align_v.as_deref() {
-                                    Some("top") => base_y0,
-                                    Some("center") => if base_h > 0.0 { base_y0 + (base_h - sh) / 2.0 } else { base_y0 },
-                                    Some("bottom") => if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 },
-                                    Some("inside") => if is_even { if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 } } else { base_y0 },
-                                    Some("outside") => if is_even { base_y0 } else { if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 } },
-                                    _ => base_y0 + pt(f.offset_y),
-                                };
-                                abs_y - margin_t
-                            };
-                            let item = Item::Shape {
-                                shape: shape.clone(),
-                                x: sx,
-                                y: sy,
-                                w: sw,
-                                h: sh,
-                            };
+                            let item = self.floating_item(shape, x, width, line.height, page_number);
                             if f.behind_doc {
                                 line.items.insert(0, item);
                             } else {
@@ -2262,8 +2894,8 @@ struct CachedPieces {
 }
 
 thread_local! {
-    /// Laid-out blocks, by (id, width, styles, in_table, line_pitch, print, print_hidden): see `Layouter::pieces`.
-    static PIECES: std::cell::RefCell<std::collections::HashMap<(u32, u32, usize, bool, Option<Emu>, bool, bool), CachedPieces>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Laid-out blocks, by (id, width, styles, in_table, line_pitch, print, print_hidden, print_markup): see `Layouter::pieces`.
+    static PIECES: std::cell::RefCell<std::collections::HashMap<(u32, u32, usize, bool, Option<Emu>, bool, bool, bool), CachedPieces>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// Whether field `instruction` is one whose text depends on the page
@@ -2293,8 +2925,180 @@ type OpenRun = (f32, String, Vec<f32>, Font, f32, usize);
 fn unit_width(u: &Unit) -> f32 {
     match u {
         Unit::Char { width, .. } => *width,
-        Unit::Picture { w, .. } | Unit::Shape { w, .. } => *w,
+        Unit::Picture { w, .. } | Unit::Shape { w, .. } | Unit::Math { w, .. } => *w,
         _ => 0.0,
+    }
+}
+
+impl Layouter<'_> {
+    /// The line an empty paragraph (or its mark) takes, its ascent and its
+    /// leading: its mark's Latin typeface's (Word's PDFs: Arial's with 游明朝
+    /// or ＭＳ 明朝 for East Asian text, with `w:hint="eastAsia"` or
+    /// `w:lang/@w:val="ja-JP"` too, no line grid).
+    fn mark_metrics(&self, p: &FlowParagraph, size: f32) -> (f32, f32, f32) {
+        let name = p.mark.font_for('a');
+        let font = self.font(&p.mark, name);
+        let (ascent, line) = self.line_metrics(name, &font, size);
+        (line, ascent, self.leading(name) * size)
+    }
+
+    /// The pictures of text boxes (`OverShape`) where their boxes landed
+    /// (another column or page than their paragraph's line, below a figure
+    /// across the column…), down by the box's text above them as it is laid
+    /// out in its typefaces.
+    fn place_over_shapes(&self, pages: &mut [Page]) {
+        let mut moves: Vec<(usize, usize, usize, f32, f32)> = Vec::new();
+        for (pi, page) in pages.iter().enumerate() {
+            for (ii, item) in page.items.iter().enumerate() {
+                let Item::Shape { shape, .. } = item else { continue };
+                let Some(over) = shape.floating.as_ref().and_then(|f| f.over) else { continue };
+                let found = pages.iter().enumerate().find_map(|(bp, page)| {
+                    page.items.iter().find_map(|it| match it {
+                        Item::Shape { shape: b, x, y, w, .. } if b.id.0 == over.shape => Some((bp, *x, *y, *w, b)),
+                        _ => None,
+                    })
+                });
+                let Some((bp, bx, by, bw, b)) = found else { continue };
+                let dy = self.text_box_line_top(b, bw, over.paragraph).map_or(pt(over.dy), |top| top + pt(over.down));
+                moves.push((pi, ii, bp, bx + pt(over.dx), by + dy));
+            }
+        }
+        // From the last, so that the indices left stay right.
+        for (pi, ii, to, x, y) in moves.into_iter().rev() {
+            if let Item::Shape { x: ix, y: iy, .. } = &mut pages[pi].items[ii] {
+                (*ix, *iy) = (x, y);
+            }
+            if to != pi {
+                let item = pages[pi].items.remove(ii);
+                if ii < pages[pi].body_items_count {
+                    pages[pi].body_items_count -= 1;
+                }
+                let at = pages[to].body_items_count;
+                pages[to].items.insert(at, item);
+                pages[to].body_items_count += 1;
+            }
+        }
+    }
+
+    /// How far down a text box (`width` points wide) paragraph `k` of its
+    /// text starts, its line kept for pictures (a fixed line): the
+    /// paragraphs above measured in their typefaces, each line as tall as
+    /// its tallest. An estimate: a paragraph's lines are its text's width
+    /// over the box's, not broken at words or by kinsoku (close enough for
+    /// the caption or heading a figure box usually has above its picture).
+    fn text_box_line_top(&self, shape: &ibis_doc_model::Shape, width: f32, k: usize) -> Option<f32> {
+        let ibis_doc_model::ShapeKind::Auto(auto) = &shape.kind else { return None };
+        let body = auto.text.as_ref()?;
+        let target = body.paragraphs.get(k)?;
+        if !matches!(target.line_spacing, Some(ibis_doc_model::LineSpacing::Points(_))) {
+            return None;
+        }
+        let room = width - pt(body.insets.left) - pt(body.insets.right);
+        let style = |r: &ibis_doc_model::RunStyle| FlowRunStyle { font: r.font.clone(), bold: r.bold.unwrap_or(false), italic: r.italic.unwrap_or(false), size: r.font_size.unwrap_or(1050), ..Default::default() };
+        let mut y = pt(body.insets.top);
+        for p in &body.paragraphs[..k] {
+            let mut text_w = 0.0f32;
+            let mut line = 0.0f32;
+            let mut measure = |s: &FlowRunStyle, text: &str| {
+                let size = s.size as f32 / 100.0;
+                let name = s.font.as_deref();
+                let font = self.font(s, name);
+                text_w += self.res.text_width(text, &font, size);
+                line = line.max(self.line_metrics(name, &font, size).1 + self.leading(name) * size);
+            };
+            for r in &p.runs {
+                measure(&style(&r.style), &r.text);
+            }
+            if p.runs.iter().all(|r| r.text.is_empty()) {
+                measure(&style(&p.end_style), "");
+            }
+            let room = (room - pt(p.margin_left) - pt(p.indent.max(0))).max(1.0);
+            let lines = (text_w / room - 0.001).ceil().max(1.0);
+            let line = match p.line_spacing {
+                Some(ibis_doc_model::LineSpacing::Points(h)) => h as f32 / 100.0,
+                Some(ibis_doc_model::LineSpacing::Percent(n)) => line * n as f32 / 100_000.0,
+                None => line,
+            };
+            y += p.space_before as f32 / 100.0 + lines * line + p.space_after as f32 / 100.0;
+        }
+        Some(y + target.space_before as f32 / 100.0)
+    }
+
+    /// A floating shape of a paragraph placed as its anchor says, from the
+    /// paragraph's line (`x` along it, `width` of text, the line `line_h` tall):
+    /// x from the left margin, y from the line's top (or the top margin).
+    fn floating_item(&self, shape: &ibis_doc_model::Shape, x: f32, width: f32, line_h: f32, page_number: u32) -> Item {
+        let f = shape.floating.as_ref().expect("a floating shape");
+        let sw = pt(shape.frame.width);
+        let sh = pt(shape.frame.height);
+        let page_w = pt(self.doc.page.size.width);
+        let margin_l = pt(self.doc.page.left);
+        let margin_r = pt(self.doc.page.right);
+        let is_even = page_number % 2 == 0;
+        // The column's left on the page, from the left margin.
+        let col = self.column_dx.get();
+
+        let (base_x0, base_w) = match f.relative_h.as_str() {
+            "page" => (0.0, page_w),
+            "leftMargin" => (0.0, margin_l),
+            "rightMargin" => (page_w - margin_r, margin_r),
+            "insideMargin" => if is_even { (page_w - margin_r, margin_r) } else { (0.0, margin_l) },
+            "outsideMargin" => if is_even { (0.0, margin_l) } else { (page_w - margin_r, margin_r) },
+            "character" => (margin_l + col + x, (width - x).max(0.0)),
+            "margin" => (margin_l, (page_w - margin_l - margin_r).max(0.0)),
+            _ /* "column" */ => (margin_l + col, width),
+        };
+
+        let abs_x = if f.relative_h == "character" {
+            match f.align_h.as_deref() {
+                Some("center") => margin_l + col + x - sw / 2.0,
+                Some("right") => margin_l + col + x - sw,
+                Some("left") => margin_l + col + x,
+                _ => margin_l + col + x + pt(f.offset_x),
+            }
+        } else {
+            match f.align_h.as_deref() {
+                Some("left") => base_x0,
+                Some("center") => base_x0 + (base_w - sw) / 2.0,
+                Some("right") => base_x0 + base_w - sw,
+                Some("inside") => if is_even { base_x0 + base_w - sw } else { base_x0 },
+                Some("outside") => if is_even { base_x0 } else { base_x0 + base_w - sw },
+                _ => base_x0 + pt(f.offset_x),
+            }
+        };
+        let abs_x = abs_x.clamp(0.0, (page_w - sw).max(0.0));
+        let sx = abs_x - margin_l - col;
+        let page_h = pt(self.doc.page.size.height);
+        let margin_t = pt(self.doc.page.top);
+        let margin_b = pt(self.doc.page.bottom);
+        let sy = if f.relative_v == "line" || f.relative_v == "paragraph" {
+            match f.align_v.as_deref() {
+                Some("center") => (line_h - sh) / 2.0,
+                Some("bottom") => line_h - sh,
+                Some("top") => 0.0,
+                _ => pt(f.offset_y),
+            }
+        } else {
+            let (base_y0, base_h) = match f.relative_v.as_str() {
+                "page" => (0.0, page_h),
+                "margin" => (margin_t, (page_h - margin_t - margin_b).max(0.0)),
+                "topMargin" => (0.0, margin_t),
+                "bottomMargin" => (page_h - margin_b, margin_b),
+                "insideMargin" => if is_even { (page_h - margin_b, margin_b) } else { (0.0, margin_t) },
+                "outsideMargin" => if is_even { (0.0, margin_t) } else { (page_h - margin_b, margin_b) },
+                _ => (margin_t, page_h),
+            };
+            let abs_y = match f.align_v.as_deref() {
+                Some("top") => base_y0,
+                Some("center") => if base_h > 0.0 { base_y0 + (base_h - sh) / 2.0 } else { base_y0 },
+                Some("bottom") => if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 },
+                Some("inside") => if is_even { if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 } } else { base_y0 },
+                Some("outside") => if is_even { base_y0 } else { if base_h > 0.0 { base_y0 + base_h - sh } else { base_y0 } },
+                _ => base_y0 + pt(f.offset_y),
+            };
+            abs_y - margin_t
+        };
+        Item::Shape { shape: Box::new(shape.clone()), x: sx, y: sy, w: sw, h: sh }
     }
 }
 
@@ -2303,6 +3107,91 @@ fn unit_char(u: &Unit) -> Option<char> {
         Unit::Char { c, .. } => Some(*c),
         _ => None,
     }
+}
+
+/// The narrowest room beside a shape lines go into (points): narrower, the
+/// text goes on past the shape (and a shape leaving no wider room on either
+/// side of a column is across it).
+const MIN_WRAP_ROOM: f32 = 15.0;
+
+/// How much of its width a space of a justified line may give to fit one
+/// more word, in Word 2013 and later (`compatibilityMode` 15; earlier modes
+/// only widen spaces): just under a quarter (Word's PDFs: Times New Roman and
+/// Arial at 8.5 and 10 pt keep a line's last word with 24.0 to 24.7 % of the
+/// spaces' width to give, not with 24.7 to 25.3 %; the same lines in mode 14
+/// never).
+const SPACE_GIVE: f32 = 0.247;
+
+/// What a space of a justified line of `doc` may give, of its width (see
+/// `SPACE_GIVE`).
+fn space_give(doc: &FlowDocument) -> f32 {
+    if doc.compatibility_mode.is_some_and(|m| m >= 15) { SPACE_GIVE } else { 0.0 }
+}
+
+/// Whether a justified line keeps the word unit `i` is in (from
+/// `word_start`; `x` where unit `i` starts) although it goes on past the
+/// line's `room`, its spaces narrowed (by `give` at most): Word keeps it
+/// when no more than a third of it, with the space before it, is past the
+/// room (its PDFs: Times New Roman words of 2, 4 and 8 letters kept with
+/// 33.3 % of them past the room, not with 35 %).
+/// `breaks(j)`: a line may break before unit `j`.
+fn keeps_word(units: &[Unit], i: usize, word_start: usize, x: f32, room: f32, give: f32, breaks: impl Fn(usize) -> bool) -> bool {
+    let mut end = i + 1;
+    while end < units.len() && !breaks(end) && unit_char(&units[end]).is_some_and(|c| c != ' ') {
+        end += 1;
+    }
+    let over = x + units[i..end].iter().map(unit_width).sum::<f32>() - room;
+    let space = word_start.checked_sub(1).filter(|&b| unit_char(&units[b]) == Some(' ')).map_or(0.0, |b| unit_width(&units[b]));
+    let word: f32 = units[word_start..end].iter().map(unit_width).sum();
+    over <= give + 0.01 && over <= (word + space) / 3.0 + 0.01
+}
+
+/// The width of a unit a justified line may narrow (by `SPACE_GIVE` of it): a
+/// space's, or the quarter em after a Japanese character next to a Latin
+/// letter or digit (Word's PDF of a Japanese paper: 1.9 pt of 2.25 pt where a
+/// line's last character needed it).
+fn squeezable(u: &Unit) -> f32 {
+    match u {
+        Unit::Char { c: ' ', width, .. } => *width,
+        Unit::Char { auto_space, .. } => *auto_space,
+        _ => 0.0,
+    }
+}
+
+/// The extra width at each gap of a justified line (negative where the line
+/// is over its room: then only spaces give, see `SPACE_GIVE`), and where.
+fn justify_extra(slice: &[Unit], visible_end: usize, align: FlowAlign, last: bool, room: f32, used: f32) -> (f32, Vec<bool>) {
+    let has_tab = slice.iter().any(|u| matches!(u, Unit::Tab));
+    if has_tab || !matches!(align, FlowAlign::Justify | FlowAlign::Distribute) {
+        return (0.0, Vec::new());
+    }
+    if used > room + 0.01 && align == FlowAlign::Justify {
+        let spaces: Vec<bool> = (0..visible_end).map(|k| k + 1 < visible_end && slice.get(k).is_some_and(|u| squeezable(u) > 0.0)).collect();
+        let n = spaces.iter().filter(|s| **s).count();
+        return if n > 0 { ((room - used) / n as f32, spaces) } else { (0.0, Vec::new()) };
+    }
+    if last && align == FlowAlign::Justify {
+        return (0.0, Vec::new());
+    }
+    let expands = justify_gaps(slice, visible_end, align == FlowAlign::Distribute);
+    let gaps = expands.iter().filter(|e| **e).count();
+    if used < room && gaps > 0 { ((room - used) / gaps as f32, expands) } else { (0.0, Vec::new()) }
+}
+
+/// Which characters of a justified line take extra width after them, as
+/// Word: spaces, and characters with a CJK one on either side (Latin words
+/// keep their letters together); every character for 均等割り付け.
+fn justify_gaps(slice: &[Unit], visible_end: usize, distribute: bool) -> Vec<bool> {
+    (0..visible_end)
+        .map(|k| {
+            let Some(c) = slice.get(k).and_then(unit_char) else { return false };
+            if c == '\u{200b}' || k + 1 >= visible_end {
+                return false;
+            }
+            let next = slice.get(k + 1).and_then(unit_char);
+            distribute || c == ' ' || is_cjk(c) || next.is_some_and(is_cjk)
+        })
+        .collect()
 }
 
 /// A character's line height and ascent with room for its 傍点 above
@@ -2330,8 +3219,8 @@ fn mark_room(p: &FlowParagraph, c: char, style: usize, size: f32, line: f32, asc
 /// Whether a line may break between `before` and `after`.
 pub(crate) fn may_break(before: Option<char>, after: Option<char>, kinsoku: bool, word_wrap: bool, doc: &FlowDocument) -> bool {
     let (Some(b), Some(a)) = (before, after) else { return true };
-    // The lists the document sets (禁則文字の設定) replace the standard ones.
-    let cannot_start = match &doc.no_line_start { Some(list) => list.contains(a), None => no_line_start(a) };
+    // The lists the document sets (禁則文字の設定) replace the standard/strict ones.
+    let cannot_start = match &doc.no_line_start { Some(list) => list.contains(a), None => no_line_start(a, doc.strict_first_and_last_chars) };
     let cannot_end = match &doc.no_line_end { Some(list) => list.contains(b), None => no_line_end(b) };
     if kinsoku && (cannot_start || cannot_end) {
         return false;
@@ -2340,6 +3229,11 @@ pub(crate) fn may_break(before: Option<char>, after: Option<char>, kinsoku: bool
         return true;
     }
     if !word_wrap {
+        return true;
+    }
+    // After a hyphen within a word ("well-|known"), but not a minus before
+    // a number (UAX #14's HY and BA classes).
+    if (b == '-' && a.is_alphabetic()) || (matches!(b, '\u{2010}' | '\u{2012}' | '\u{2013}') && a.is_alphanumeric()) {
         return true;
     }
     // Latin words hold together; anything next to CJK may break.
@@ -2481,7 +3375,7 @@ fn turn_japanese(items: impl Iterator<Item = Item>) -> Vec<Item> {
 fn item_top(item: &Item) -> f32 {
     match item {
         Item::Text { y, size, .. } | Item::Turned { y, size, .. } => y - size * 0.8,
-        Item::Rect { y, .. } | Item::Art { y, .. } | Item::Picture { y, .. } | Item::Shape { y, .. } | Item::Line { y, .. } | Item::Shading { y, .. } => *y,
+        Item::Rect { y, .. } | Item::Art { y, .. } | Item::Picture { y, .. } | Item::Shape { y, .. } | Item::Line { y, .. } | Item::Shading { y, .. } | Item::CommentBubble { y, .. } => *y,
         Item::Stroke { y, y2, .. } => y.min(*y2),
     }
 }
@@ -2566,7 +3460,7 @@ impl<'r> Layouter<'r> {
         label.extend(self.block_note_numbers(block));
         let fields = has_fields(block);
         let styles = Arc::as_ptr(&self.doc.styles) as usize;
-        let key = (id, width.to_bits(), styles, in_table, self.line_pitch.get(), self.res.print, self.res.print_hidden_text);
+        let key = (id, width.to_bits(), styles, in_table, self.line_pitch.get(), self.res.print, self.res.print_hidden_text, self.res.print_markup);
         let hit = PIECES.with(|cache| {
             let cache = cache.borrow();
             cache.get(&key).filter(|c| c.block == *block && c.labels == label && (!fields || (c.page == page_number && c.counts == self.counts()))).map(|c| c.pieces.clone())
@@ -2649,8 +3543,9 @@ impl<'r> Layouter<'r> {
                 let text_right = width - pt(p.right);
                 let inner_left = text_left - left.map_or(0.0, |b| pt(b.space));
                 let inner_right = text_right + right.map_or(0.0, |b| pt(b.space));
-                let top_shapes: Vec<&Box<ibis_doc_model::Shape>> = p.runs.iter().filter_map(|r| match &r.kind {
-                    FlowRunKind::Shape(shape) if shape.floating.as_ref().is_some_and(|f| f.wrap == "topAndBottom") => Some(shape),
+                let hide_deleted = self.hides_deleted();
+                let top_shapes: Vec<&Box<ibis_doc_model::Shape>> = p.runs.iter().filter(|r| !run_deleted(r, hide_deleted)).filter_map(|r| match &r.kind {
+                    FlowRunKind::Shape(shape) if shape.floating.as_ref().is_some_and(|f| f.wrap == "topAndBottom") && !self.deferred_shapes.borrow().contains(&shape.id.0) => Some(shape),
                     _ => None,
                 }).collect();
                 if top_shapes.is_empty() {
@@ -2692,7 +3587,7 @@ impl<'r> Layouter<'r> {
                                 }
                             }
                             items.extend(l.items.into_iter().map(|it| offset(it, 0.0, before + above)));
-                            let mode = markup_display_mode();
+                            let mode = self.markup_mode();
                             if (mode == MarkupDisplayMode::All || mode == MarkupDisplayMode::Simple) && l.has_revision && !in_table {
                                 let margin_l = pt(self.doc.page.left);
                                 let bar_x = (inner_left - 10.0).max(-margin_l + 8.0);
@@ -2702,6 +3597,17 @@ impl<'r> Layouter<'r> {
                                     w: 1.5,
                                     h: l.height,
                                     color: hsla(ibis_doc_model::Color::opaque(REVISION_COLOR)),
+                                });
+                            }
+                            if (mode == MarkupDisplayMode::All || mode == MarkupDisplayMode::Simple) && !l.comment_marks.is_empty() && !in_table {
+                                let margin_l = pt(self.doc.page.left);
+                                let bubble_size = 16.0;
+                                let bubble_x = pt(self.doc.page.size.width) - margin_l + 8.0;
+                                let bubble_y = before + above + (l.height - bubble_size).max(0.0) / 2.0;
+                                items.push(Item::CommentBubble {
+                                    x: bubble_x,
+                                    y: bubble_y,
+                                    size: bubble_size,
                                 });
                             }
                             let page_break = l.page_break || (matches!(p.section_break, SectionBreak::NextPage | SectionBreak::OddPage | SectionBreak::EvenPage) && i + 1 == count);
@@ -2747,15 +3653,30 @@ impl<'r> Layouter<'r> {
                     let below = if !has_lines && si + 1 == top_shapes.len() { pad_bottom } else { 0.0 };
                     let dt = pt(f.dist_t);
                     let db = pt(f.dist_b);
+                    // From the paragraph's top by its offset (Word: a logo raised a
+                    // little over its header line). Placed below its paragraph's
+                    // top, it takes no room in the text: the lines go on as they
+                    // would, those it would be over below it (an obstacle across
+                    // the column where it lands; Word's PDFs: a line fits above a
+                    // picture 24 pt down, the next is put right under it). The two
+                    // ways meet at `oy == dt`: the obstacle then starts at the
+                    // paragraph's top, so its first line goes below the picture,
+                    // where the room kept would have put it.
+                    let (top, room) = if matches!(f.relative_v.as_str(), "paragraph" | "line") && f.align_v.is_none() {
+                        let oy = pt(f.offset_y);
+                        (oy, if oy > dt { 0.0 } else { (oy + sh + db).max(0.0) })
+                    } else {
+                        (dt, dt + sh + db)
+                    };
                     let items = vec![Item::Shape {
                         shape: (*shape).clone(),
                         x: sx,
-                        y: before + above + dt,
+                        y: before + above + top,
                         w: sw,
                         h: sh,
                     }];
                     shape_pieces.push(Piece {
-                        height: before + above + dt + sh + db + below + after,
+                        height: before + above + room + below + after,
                         items,
                         page_break: !has_lines && si + 1 == top_shapes.len() && matches!(p.section_break, SectionBreak::NextPage | SectionBreak::OddPage | SectionBreak::EvenPage),
                         column_break: !has_lines && si + 1 == top_shapes.len() && p.section_break == SectionBreak::NextColumn,
@@ -2794,7 +3715,7 @@ impl<'r> Layouter<'r> {
                             }
                         }
                         items.extend(l.items);
-                        let mode = markup_display_mode();
+                        let mode = self.markup_mode();
                         if (mode == MarkupDisplayMode::All || mode == MarkupDisplayMode::Simple) && l.has_revision && !in_table {
                             let bar_x = (inner_left - 10.0).max(-margin_l + 8.0);
                             items.push(Item::Rect {
@@ -2803,6 +3724,16 @@ impl<'r> Layouter<'r> {
                                 w: 1.5,
                                 h: l.height,
                                 color: hsla(ibis_doc_model::Color::opaque(REVISION_COLOR)),
+                            });
+                        }
+                        if (mode == MarkupDisplayMode::All || mode == MarkupDisplayMode::Simple) && !l.comment_marks.is_empty() && !in_table {
+                            let bubble_size = 16.0;
+                            let bubble_x = pt(self.doc.page.size.width) - margin_l + 8.0;
+                            let bubble_y = (l.height - bubble_size).max(0.0) / 2.0;
+                            items.push(Item::CommentBubble {
+                                x: bubble_x,
+                                y: bubble_y,
+                                size: bubble_size,
                             });
                         }
                         let page_break = l.page_break || (matches!(p.section_break, SectionBreak::NextPage | SectionBreak::OddPage | SectionBreak::EvenPage) && i + 1 == count);
@@ -3161,7 +4092,9 @@ impl<'r> Layouter<'r> {
                         items.extend(shading_items(cell.shading_pattern, bg, cell.shading_color, left, cell_top, right - left, cell_h));
                     }
                     // The top border's width is taken off the room first.
-                    let border = cell.borders[0].map_or(0.0, |b| pt(b.width));
+                    // An art border takes as much room as its `w:sz` in points (a 1.5 pt line, 12 pt of room:
+                    // Word's text is 10 pt lower, DTBB).
+                    let border = cell.borders[0].map_or(0.0, |b| if b.art.is_some() { pt(b.width) * 8.0 } else { pt(b.width) });
                     let room = cell_h - pt(cell.margins[0]) - pt(cell.margins[2]) - border;
                     let dy = cell_top
                         + border
@@ -3231,7 +4164,10 @@ impl<'r> Layouter<'r> {
                 let is_table_left = laid.col == 0;
                 let is_table_right = laid.col + laid.span == t.columns.len();
                 if cell.merge != VerticalMerge::Continue {
-                    borders.push((top, true, true, row_top, left, right, is_table_top && is_table_left, is_table_top && is_table_right));
+                    // The table's top border starts at its top edge and goes down into the row (Word counts it in the
+                    // row and does not draw half of it above the table: DTBB).
+                    let top_at = if is_table_top { row_top + top.map_or(0.0, |b| pt(b.total()) / 2.0) } else { row_top };
+                    borders.push((top, true, true, top_at, left, right, is_table_top && is_table_left, is_table_top && is_table_right));
                     // Diagonal lines across the cell (as high as it spans).
                     let n = if cell.merge == VerticalMerge::Start { spans_down(r, laid.col) } else { 1 };
                     let h: f32 = heights[r..(r + n).min(heights.len())].iter().sum();
@@ -3248,10 +4184,16 @@ impl<'r> Layouter<'r> {
                     c.borders = [top, rgt, bottom, lft];
                 }
                 if cell.merge == VerticalMerge::None || cell.merge == VerticalMerge::Continue && !continues_below(t, &grid, r, laid.col) {
-                    borders.push((bottom, true, false, row_h, left, right, is_table_bottom && is_table_left, is_table_bottom && is_table_right));
+                    // At the table's bottom edge the border ends where the row does (it is inside the room the row
+                    // reserves for it), as the top one starts at the top edge.
+                    let bottom_at = if is_table_bottom { row_h - bottom.map_or(0.0, |b| pt(b.total()) / 2.0) } else { row_h };
+                    borders.push((bottom, true, false, bottom_at, left, right, is_table_bottom && is_table_left, is_table_bottom && is_table_right));
                 }
-                borders.push((lft, false, true, left, row_top, row_h, is_table_left && is_table_top, is_table_left && is_table_bottom));
-                borders.push((rgt, false, false, right, row_top, row_h, is_table_right && is_table_top, is_table_right && is_table_bottom));
+                // The sides meet the top border where it starts (at the table's top edge, see above).
+                let side_top = if is_table_top { row_top + top.map_or(0.0, |b| pt(b.total()) / 2.0) } else { row_top };
+                let side_bottom = if is_table_bottom { row_h - bottom.map_or(0.0, |b| pt(b.total()) / 2.0) } else { row_h };
+                borders.push((lft, false, true, left, side_top, side_bottom, is_table_left && is_table_top, is_table_left && is_table_bottom));
+                borders.push((rgt, false, false, right, side_top, side_bottom, is_table_right && is_table_top, is_table_right && is_table_bottom));
             }
             for (b, horizontal, outer_first, at, from, to, extend_start, extend_end) in borders {
                 if let Some(b) = b {
@@ -3303,21 +4245,64 @@ impl<'r> Layouter<'r> {
             let page = &setups[s].page;
             if page.gutter_at_top { (0, page.gutter) } else { (page.gutter, 0) }
         };
-        let text_frame = |s: usize| {
+        let margin_frame = |s: usize| {
             let page = &setups[s].page;
             let (w, h) = (pt(page.size.width), pt(page.size.height));
             let (gl, gt) = gutters(s);
             Frame { left: pt(page.left + gl), top: pt(page.top + gt), width: w - pt(page.left + gl) - pt(page.right), bottom: h - pt(page.bottom) }
         };
+        // The header and footer a page has: its section's first-page ones
+        // (表紙), even-page ones, or the default ones.
+        const DEFAULT_PAGE: usize = 0;
+        let page_kind = |s: usize, number: u32, first_in_section: bool| -> usize {
+            if setups[s].title_page && first_in_section {
+                1
+            } else if self.doc.even_and_odd && number % 2 == 0 {
+                2
+            } else {
+                DEFAULT_PAGE
+            }
+        };
+        let header_footer = |s: usize, kind: usize| -> (&Vec<Block>, &Vec<Block>) {
+            match kind {
+                1 => (&parts[s][2], &parts[s][3]),
+                2 => (&parts[s][4], &parts[s][5]),
+                _ => (&parts[s][0], &parts[s][1]),
+            }
+        };
+        // As Word: a header taller than the top margin pushes the body down,
+        // a footer taller than the bottom one pushes its end up.
+        let body_limits: Vec<[(f32, f32); 3]> = (0..setups.len())
+            .map(|s| {
+                let margins = margin_frame(s);
+                let page = &setups[s].page;
+                self.line_pitch.set(page.line_pitch);
+                let height = |blocks: &Vec<Block>| -> f32 { blocks.iter().flat_map(|b| self.pieces(b, margins.width, 1, None, true)).map(|p| p.height).sum() };
+                std::array::from_fn(|kind| {
+                    let (header, footer) = header_footer(s, kind);
+                    let top = if header.is_empty() { margins.top } else { margins.top.max(pt(page.header) + height(header)) };
+                    let bottom = if footer.is_empty() { margins.bottom } else { margins.bottom.min(pt(page.size.height) - pt(page.footer) - height(footer)) };
+                    (top, bottom)
+                })
+            })
+            .collect();
+        // The page being laid out: its section (the one it starts in, whose
+        // header and footer it has) and their kind.
+        let kind_now = std::cell::Cell::new((0usize, DEFAULT_PAGE));
+        let text_frame = |s: usize| {
+            let (page_s, kind) = kind_now.get();
+            let (top, bottom) = body_limits[page_s][kind];
+            Frame { top, bottom, ..margin_frame(s) }
+        };
         let columns_of = |s: usize| -> Vec<(f32, f32)> {
             let page = &setups[s].page;
             page.columns.layout(page.size.width - page.left - gutters(s).0 - page.right).into_iter().map(|(x, w)| (pt(x), pt(w))).collect()
         };
-        // 見開きページ: an even page's margins swapped (the inside on the
+        // 見開きページ・袋とじ: an even page's margins swapped (the inside on the
         // right): how far its text moves.
         let mirror_dx = |s: usize, number: u32| -> f32 {
             let page = &setups[s].page;
-            if page.mirror_margins && number % 2 == 0 { pt(page.right) - pt(page.left + gutters(s).0) } else { 0.0 }
+            if page.is_mirrored() && number % 2 == 0 { pt(page.right) - pt(page.left + gutters(s).0) } else { 0.0 }
         };
         let column_frame = |s: usize, c: usize| {
             let text = text_frame(s);
@@ -3328,6 +4313,7 @@ impl<'r> Layouter<'r> {
         let frame_of = |s: usize| column_frame(s, 0);
         let page_of = |s: usize, number: u32, first: bool| Page {
             items: Vec::new(),
+            body_items_count: 0,
             width: pt(setups[s].page.size.width),
             height: pt(setups[s].page.size.height),
             section: s,
@@ -3405,6 +4391,7 @@ impl<'r> Layouter<'r> {
         };
         let notes_room = |page: &Page| -> f32 { if page.notes.is_empty() { 0.0 } else { separator_h + page.notes.iter().map(|id| note_heights.get(id).copied().unwrap_or(0.0)).sum::<f32>() } };
         let mut pages: Vec<Page> = vec![page_of(0, setups[0].page.first_page, true)];
+        kind_now.set((0, page_kind(0, setups[0].page.first_page, true)));
         let mut frame = frame_of(0);
         let mut y = frame.top;
         // Where the last piece placed ended (pages so far, column, y) and the
@@ -3417,6 +4404,7 @@ impl<'r> Layouter<'r> {
             let first = pages.last().is_some_and(|p| p.section != s);
             *number = if first && setups[s].restart_numbering { setups[s].page.first_page } else { *number + 1 };
             pages.push(page_of(s, *number, first));
+            kind_now.set((s, page_kind(s, *number, first)));
             *frame = frame_of(s);
             *y = frame.top;
         };
@@ -3426,7 +4414,7 @@ impl<'r> Layouter<'r> {
                     continue;
                 }
                 if let Block::Paragraph(p) = b {
-                    if let Some(shape) = square_shape(p) {
+                    if let Some(shape) = square_shape(p, self.hides_deleted()).filter(|s| !self.deferred_shapes.borrow().contains(&s.id.0)) {
                         let f = shape.floating.as_ref().unwrap();
                         if f.relative_v != "paragraph" && f.relative_v != "line" {
                             let sw = pt(shape.frame.width);
@@ -3494,12 +4482,17 @@ impl<'r> Layouter<'r> {
                                 _ => base_y0 + pt(f.offset_y),
                             };
                             let sx = abs_x - margin_l;
+                            let wrap_polygon = matches!(f.wrap.as_str(), "tight" | "through")
+                                .then(|| f.wrap_polygon.clone())
+                                .flatten()
+                                .map(|poly| (poly, sx, abs_y, sw, sh, dl, dr));
                             return Some(WrapObstacle {
                                 shape_left: sx - dl,
                                 shape_right: sx + sw + dr,
                                 y_top: abs_y - dt,
                                 y_bottom: abs_y + sh + db,
                                 wrap_text,
+                                wrap_polygon,
                             });
                         }
                     }
@@ -3546,6 +4539,30 @@ impl<'r> Layouter<'r> {
             }
         };
         let mut active_obstacle = find_page_obstacle(0, number, &frame);
+        // The obstacles placed on the page so far: one wider than its column
+        // (a figure across both) keeps the text of the next column off it too.
+        let mut page_obstacles: Vec<WrapObstacle> = Vec::new();
+        // Floating shapes put off to the next page's top: the shape, x from
+        // the left margin, y from the first of them, width and height.
+        let mut deferred: Vec<(Box<ibis_doc_model::Shape>, f32, f32, f32, f32)> = Vec::new();
+        // The same put off to the next column's top (a picture over and under
+        // which the text goes, too low in its paragraph's column).
+        let mut deferred_column: Vec<(Box<ibis_doc_model::Shape>, f32, f32, f32, f32)> = Vec::new();
+        // The shapes a first laying out placed above their paragraphs, on the
+        // page just begun: there from its start, the text round them.
+        macro_rules! seed_page {
+            () => {{
+                let index = pages.len() - 1;
+                for (_, obs, item, _) in self.seeds.iter().filter(|s| s.0 == index) {
+                    page_obstacles.push(obs.clone());
+                    if active_obstacle.is_none() {
+                        active_obstacle = Some(obs.clone());
+                    }
+                    pages.last_mut().expect("a page").items.push(item.clone());
+                }
+            }};
+        }
+        seed_page!();
         // The columns being filled on the page (段組み): the section's, the
         // column, where they start, how far each is filled, and the pieces
         // put in them (their items on the page, top, height and column; to
@@ -3577,10 +4594,44 @@ impl<'r> Layouter<'r> {
                 close_region!();
                 next_page(&mut pages, &mut frame, &mut y, &mut number, $s);
                 region_s = $s;
-                col = 0;
+                // A new page starts again in its first column.
+                #[allow(unused_assignments)]
+                {
+                    col = 0;
+                }
                 col_top = y;
                 col_fill.clear();
                 placed.clear();
+                page_obstacles.clear();
+                active_obstacle = None;
+                // The shapes put off to this page (and those to a next column
+                // the last page did not have): at its top, the text round them.
+                deferred.extend(deferred_column.drain(..));
+                let margin_l = pt(setups[$s].page.left);
+                for (shape, x, dy, w, h) in deferred.drain(..) {
+                    let (sx, sy) = (margin_l + x, frame.top + dy);
+                    if let Some(f) = shape.floating.as_ref()
+                        && matches!(f.wrap.as_str(), "square" | "tight" | "through" | "topAndBottom")
+                    {
+                        // One the text goes over and under: across the column, the
+                        // lines it would be over below it (see `landed`).
+                        let across = f.wrap == "topAndBottom";
+                        let obs = WrapObstacle {
+                            shape_left: if across { frame.left - margin_l } else { sx - margin_l - pt(f.dist_l) },
+                            shape_right: if across { frame.left - margin_l + frame.width } else { sx + w - margin_l + pt(f.dist_r) },
+                            y_top: sy - pt(f.dist_t),
+                            y_bottom: sy + h + pt(f.dist_b),
+                            wrap_text: f.wrap_text.clone().unwrap_or_else(|| "bothSides".to_string()),
+                            wrap_polygon: None,
+                        };
+                        if !across && active_obstacle.is_none() {
+                            active_obstacle = Some(obs.clone());
+                        }
+                        page_obstacles.push(obs);
+                    }
+                    pages.last_mut().expect("a page").items.push(Item::Shape { shape, x: sx, y: sy, w, h });
+                }
+                seed_page!();
             }};
         }
         // On in the next column, or the next page after the last.
@@ -3590,11 +4641,43 @@ impl<'r> Layouter<'r> {
                     col += 1;
                     frame = column_frame($s, col);
                     y = col_top;
+                    // An obstacle of the page reaching into this column.
+                    let (left, right) = (frame.left - pt(setups[$s].page.left), frame.left - pt(setups[$s].page.left) + frame.width);
+                    active_obstacle = page_obstacles
+                        .iter()
+                        .filter(|o| o.shape_right > left && o.shape_left < right && o.y_bottom > y)
+                        .min_by(|a, b| a.y_top.total_cmp(&b.y_top))
+                        .cloned();
+                    // The pictures put off to this column: from its top, the
+                    // text over and under them.
+                    let margin_l = pt(setups[$s].page.left);
+                    for (shape, x, dy, w, h) in deferred_column.drain(..) {
+                        let (sx, sy) = (margin_l + x, col_top + dy);
+                        if let Some(f) = shape.floating.as_ref() {
+                            // Across the column, the lines it would be over below it
+                            // (see `landed`).
+                            let obs = WrapObstacle {
+                                shape_left: if f.wrap == "topAndBottom" { left } else { sx - margin_l - pt(f.dist_l) },
+                                shape_right: if f.wrap == "topAndBottom" { right } else { sx + w - margin_l + pt(f.dist_r) },
+                                y_top: sy - pt(f.dist_t),
+                                y_bottom: sy + h + pt(f.dist_b),
+                                wrap_text: "bothSides".to_string(),
+                                wrap_polygon: None,
+                            };
+                            if f.wrap != "topAndBottom" && active_obstacle.is_none() {
+                                active_obstacle = Some(obs.clone());
+                            }
+                            page_obstacles.push(obs);
+                        }
+                        pages.last_mut().expect("a page").items.push(Item::Shape { shape, x: sx, y: sy, w, h });
+                    }
                 } else {
                     new_page!($s);
                 }
             }};
         }
+        // The block before had its mark deleted (joined with this one).
+        let mut joins_next = false;
         // Pieces are laid out with the number of the page they start on.
         for (b, block) in self.doc.body.iter().enumerate() {
             let s = sections_of[b];
@@ -3605,12 +4688,15 @@ impl<'r> Layouter<'r> {
                 let first = true;
                 number = if setups[s].restart_numbering { setups[s].page.first_page } else { number };
                 *pages.last_mut().expect("a page") = page_of(s, number, first);
+                kind_now.set((s, page_kind(s, number, first)));
                 frame = frame_of(s);
                 y = frame.top;
-                active_obstacle = find_page_obstacle(s, number, &frame);
+                active_obstacle = find_page_obstacle(s, number, &frame).or(active_obstacle.take());
                 (region_s, col, col_top) = (s, 0, y);
                 col_fill.clear();
                 placed.clear();
+                page_obstacles.clear();
+                seed_page!();
             }
             // A section that starts on the page (continuous): the columns
             // before are balanced (as Word does where a section ends), and
@@ -3670,12 +4756,73 @@ impl<'r> Layouter<'r> {
                 && !pages.last().is_some_and(|pg| pg.items.iter().all(|it| matches!(it, Item::Line { .. })))
             {
                 new_page!(s);
-                active_obstacle = find_page_obstacle(s, number, &frame);
+                active_obstacle = find_page_obstacle(s, number, &frame).or(active_obstacle.take());
+            }
+            // No block starts inside an obstacle across its column down to the
+            // column's end (a figure over the page): in the next column. (One
+            // ending in the column, the block's lines go below it, a line at a
+            // time as Word's do.)
+            loop {
+                let (left, right) = (frame.left - pt(setups[s].page.left), frame.left - pt(setups[s].page.left) + frame.width);
+                let Some(bottom) = page_obstacles
+                    .iter()
+                    .filter(|o| o.shape_left - left < MIN_WRAP_ROOM && right - o.shape_right < MIN_WRAP_ROOM && o.y_top <= y + 0.5 && o.y_bottom > y + 0.01)
+                    .map(|o| o.y_bottom)
+                    .reduce(f32::max)
+                else {
+                    break;
+                };
+                if bottom >= frame.bottom - 0.01 {
+                    advance!(s);
+                } else {
+                    break;
+                }
+            }
+            self.column_dx.set(frame.left - pt(setups[s].page.left));
+            // A picture the text goes over and under, too low in its paragraph's
+            // column to end in it: put off to the next column's top (or the next
+            // page's), its offset from there (Word's PDF of a two-column paper).
+            if let Block::Paragraph(p) = block
+                && y > col_top + 0.5
+            {
+                let hide = self.hides_deleted();
+                let top = y + self.space_before(p);
+                for r in p.runs.iter().filter(|r| !run_deleted(r, hide)) {
+                    if let FlowRunKind::Shape(shape) = &r.kind
+                        && let Some(f) = shape.floating.as_ref()
+                        && f.wrap == "topAndBottom"
+                        && matches!(f.relative_v.as_str(), "paragraph" | "line")
+                        && f.align_v.is_none()
+                        && !self.deferred_shapes.borrow().contains(&shape.id.0)
+                        && top + pt(f.offset_y) + pt(shape.frame.height) + pt(f.dist_b) > frame.bottom + 0.5
+                        && let Item::Shape { shape: placed, x, w, h, .. } = self.floating_item(shape, 0.0, frame.width, 0.0, number)
+                    {
+                        let entry = (placed, x + (frame.left - pt(setups[s].page.left)), pt(f.offset_y).max(0.0), w, h);
+                        if region_s == s && col + 1 < columns_of(s).len() {
+                            deferred_column.push(entry);
+                        } else {
+                            deferred.push(entry);
+                        }
+                        self.deferred_shapes.borrow_mut().insert(shape.id.0);
+                    }
+                }
             }
             let obstacle_for_block = if let Block::Paragraph(p) = block {
                 let pad = |b: Option<FlowBorder>| b.map_or(0.0, |b| pt(b.space) + pt(b.total()));
                 let before_pad = self.space_before(p) + pad(p.borders[0]);
-                if let Some(shape) = square_shape(p) {
+                // Obstacles are kept from the left margin; the paragraph's
+                // own x is from its column's left.
+                let col_dx = frame.left - pt(setups[s].page.left);
+                // The page's obstacles still below the paragraph's top (but
+                // `main`), from the paragraph's place.
+                let top = y + before_pad;
+                let extra_obstacles = |all: &[WrapObstacle], main: Option<&WrapObstacle>| -> Vec<(f32, f32, f32, f32)> {
+                    all.iter()
+                        .filter(|o| o.y_bottom > top + 0.01 && main.is_none_or(|m| (m.y_top, m.shape_left, m.shape_right) != (o.y_top, o.shape_left, o.shape_right)))
+                        .map(|o| (o.shape_left - col_dx, o.shape_right - col_dx, o.y_top - top, o.y_bottom - top))
+                        .collect()
+                };
+                if let Some(shape) = square_shape(p, self.hides_deleted()).filter(|s| !self.deferred_shapes.borrow().contains(&s.id.0)) {
                     let f = shape.floating.as_ref().unwrap();
                     let sw = pt(shape.frame.width);
                     let sh = pt(shape.frame.height);
@@ -3691,7 +4838,7 @@ impl<'r> Layouter<'r> {
                     let margin_r = pt(setups[s].page.right);
                     let margin_t = pt(setups[s].page.top);
                     let margin_b = pt(setups[s].page.bottom);
-                    let content_w = frame.width;
+                    let content_w = text_frame(s).width;
                     let _content_h = frame.bottom - frame.top;
                     let is_even = number % 2 == 0;
 
@@ -3701,7 +4848,8 @@ impl<'r> Layouter<'r> {
                         "rightMargin" => (page_w - margin_r, margin_r),
                         "insideMargin" => if is_even { (page_w - margin_r, margin_r) } else { (0.0, margin_l) },
                         "outsideMargin" => if is_even { (0.0, margin_l) } else { (page_w - margin_r, margin_r) },
-                        _ /* "column" | "margin" */ => (margin_l, content_w),
+                        "column" => (frame.left, frame.width),
+                        _ /* "margin" */ => (margin_l, content_w),
                     };
 
                     let abs_x = if f.relative_h == "character" {
@@ -3726,10 +4874,7 @@ impl<'r> Layouter<'r> {
                     let para_top = y + before_pad;
                     let mark_size = p.mark.size as f32 / 100.0;
                     let mark_metrics = {
-                        let name = p.mark.font_for('あ');
-                        let font = self.font(&p.mark, name);
-                        let (ascent, line) = self.line_metrics(name, &font, mark_size);
-                        (line, ascent, Self::leading(name) * mark_size)
+                        self.mark_metrics(p, mark_size)
                     };
                     let line_h = self.resolve_line_height(p, mark_metrics.0, mark_metrics.2, false);
                     let (base_y0, base_h) = match f.relative_v.as_str() {
@@ -3754,6 +4899,39 @@ impl<'r> Layouter<'r> {
                     };
                     let sx = abs_x - margin_l;
                     let sy = abs_y - para_top;
+                    // Too tall for what is left of the page below its paragraph
+                    // (Word's PDF of a paper: a figure box of a page's height goes
+                    // to the top of the next page, the paragraph's text staying):
+                    // its paragraph's floating shapes, it and those over it, are
+                    // put off to the next page's top, the paragraph laid out
+                    // without them.
+                    let put_off = matches!(f.relative_v.as_str(), "paragraph" | "line")
+                        && f.align_v.is_none()
+                        && abs_y + sh + db > frame.bottom + 0.5
+                        && y > col_top + 0.5;
+                    if put_off {
+                        // Placed from the next page's first column.
+                        self.column_dx.set(0.0);
+                        for r in p.runs.iter().filter(|r| !run_deleted(r, self.hides_deleted())) {
+                            if let FlowRunKind::Shape(other) = &r.kind
+                                && other.floating.as_ref().is_some_and(|g| matches!(g.relative_v.as_str(), "paragraph" | "line"))
+                                && let Item::Shape { shape: placed, x, y: oy, w, h } = self.floating_item(other, 0.0, frame.width, 0.0, number)
+                            {
+                                deferred.push((placed, x, oy - sy, w, h));
+                                self.deferred_shapes.borrow_mut().insert(other.id.0);
+                            }
+                        }
+                        self.column_dx.set(col_dx);
+                        None
+                    } else {
+                    let wrap_poly_abs = matches!(f.wrap.as_str(), "tight" | "through")
+                        .then(|| f.wrap_polygon.clone())
+                        .flatten()
+                        .map(|poly| (poly, sx, abs_y, sw, sh, dl, dr));
+                    let wrap_poly_rel = matches!(f.wrap.as_str(), "tight" | "through")
+                        .then(|| f.wrap_polygon.clone())
+                        .flatten()
+                        .map(|poly| (poly, sx - col_dx, sy, sw, sh, dl, dr));
 
                     let obs = WrapObstacle {
                         shape_left: sx - dl,
@@ -3761,27 +4939,45 @@ impl<'r> Layouter<'r> {
                         y_top: abs_y - dt,
                         y_bottom: abs_y + sh + db,
                         wrap_text: wrap_text.clone(),
+                        wrap_polygon: wrap_poly_abs,
                     };
+                    // Above its paragraph, over text laid out before it.
+                    if abs_y + sh + db > col_top + 0.5 && abs_y - dt < para_top - 1.0 {
+                        let item = Item::Shape { shape: Box::new(shape.clone()), x: abs_x, y: abs_y, w: sw, h: sh };
+                        self.raised.borrow_mut().push((pages.len() - 1, obs.clone(), item, shape.id.0));
+                    }
+                    let extra = extra_obstacles(&page_obstacles, None);
                     active_obstacle = Some(obs.clone());
+                    page_obstacles.push(obs.clone());
                     Some(WrapObstacleInPara {
-                        shape_left: obs.shape_left,
-                        shape_right: obs.shape_right,
+                        shape_left: obs.shape_left - col_dx,
+                        shape_right: obs.shape_right - col_dx,
                         rel_top: sy - dt,
                         rel_bottom: sy + sh + db,
                         wrap_text,
-                        shape_to_emit: Some((shape.clone(), sx, sy, sw, sh, f.behind_doc)),
+                        wrap_polygon: wrap_poly_rel,
+                        shape_to_emit: Some((shape.clone(), sx - col_dx, sy, sw, sh, f.behind_doc)),
+                        drop_cap_to_emit: None,
+                        extra,
                     })
+                    }
                 } else if let Some(ref obs) = active_obstacle {
                     let rel_top = obs.y_top - (y + before_pad);
                     let rel_bottom = obs.y_bottom - (y + before_pad);
                     if rel_bottom > 0.01 {
+                        let wrap_polygon = obs.wrap_polygon.as_ref().map(|(poly, sx, abs_y, sw, sh, dl, dr)| {
+                            (poly.clone(), *sx - col_dx, *abs_y - (y + before_pad), *sw, *sh, *dl, *dr)
+                        });
                         Some(WrapObstacleInPara {
-                            shape_left: obs.shape_left,
-                            shape_right: obs.shape_right,
+                            shape_left: obs.shape_left - col_dx,
+                            shape_right: obs.shape_right - col_dx,
                             rel_top,
                             rel_bottom,
                             wrap_text: obs.wrap_text.clone(),
+                            wrap_polygon,
                             shape_to_emit: None,
+                            drop_cap_to_emit: None,
+                            extra: extra_obstacles(&page_obstacles, Some(obs)),
                         })
                     } else {
                         active_obstacle = None;
@@ -3856,10 +5052,13 @@ impl<'r> Layouter<'r> {
                     at += piece.height;
                 }
                 let [dl, dr, dt, db] = f.distance.map(pt);
-                active_obstacle = Some(WrapObstacle { shape_left: left - dl - text.left, shape_right: left + w + dr - text.left, y_top: top - dt, y_bottom: top + h + db, wrap_text: "bothSides".into() });
+                active_obstacle = Some(WrapObstacle { shape_left: left - dl - text.left, shape_right: left + w + dr - text.left, y_top: top - dt, y_bottom: top + h + db, wrap_text: "bothSides".into(), wrap_polygon: None });
                 continue;
             }
             let mut pieces = self.pieces(block, frame.width, number, obstacle_for_block.as_ref(), false);
+            self.column_dx.set(0.0);
+            // Where the pieces were laid out for (their obstacles are that column's).
+            let laid_for = (pages.len(), col);
             // A section ending with the document's last paragraph starts no page.
             if b + 1 == self.doc.body.len()
                 && matches!(block, Block::Paragraph(p) if p.section_break != SectionBreak::None)
@@ -3874,10 +5073,11 @@ impl<'r> Layouter<'r> {
             {
                 let total: f32 = pieces.iter().map(|p| p.height).sum();
                 if y + total > frame.bottom + 0.01 && (y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len()) && total <= frame.bottom - frame.top {
-                    active_obstacle = None;
                     advance!(s);
                     if obstacle_for_block.is_some() {
+                        self.column_dx.set(frame.left - pt(setups[s].page.left));
                         pieces = self.pieces(block, frame.width, number, None, false);
+                        self.column_dx.set(0.0);
                     }
                 }
             }
@@ -3906,10 +5106,11 @@ impl<'r> Layouter<'r> {
                 let can_move = y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len();
                 if fit > 0 && fit < n && can_move {
                     if fit == 1 || (fit == n - 1 && n == 3) {
-                        active_obstacle = None;
                         advance!(s);
                         if obstacle_for_block.is_some() {
-                            pieces = self.pieces(block, frame.width, number, None, false);
+                            self.column_dx.set(frame.left - pt(setups[s].page.left));
+                        pieces = self.pieces(block, frame.width, number, None, false);
+                        self.column_dx.set(0.0);
                         }
                     } else if fit == n - 1 {
                         break_before = Some(n - 2);
@@ -3917,15 +5118,50 @@ impl<'r> Layouter<'r> {
                 }
             }
             let headers: Vec<Piece> = pieces.iter().take_while(|p| p.header).cloned().collect();
+            // An empty paragraph that only ends a section, the next going on
+            // on the page in columns or after them: Word gives it no room, its
+            // spacing neither (its PDFs: 1 → 2, 2 → 1, 2 → 2). One column on to
+            // one column is not measured: that paragraph keeps its line.
+            let no_height = matches!(block, Block::Paragraph(p) if p.runs.is_empty() && p.section.is_some() && p.section_break == SectionBreak::Continuous)
+                && (columns_of(s).len() > 1 || columns_of((s + 1).min(setups.len() - 1)).len() > 1);
+            // A paragraph whose mark is deleted, where the view leaves deleted
+            // text out, is one with the next: nothing of it when its text is all
+            // deleted too, else no space between the two (their lines are not
+            // joined).
+            let hide_deleted = self.hides_deleted();
+            let mark_gone = matches!(block, Block::Paragraph(p) if p.mark_deleted.as_ref().is_some_and(|a| hide_deleted || !is_reviewer_shown(a)));
+            let all_gone = matches!(block, Block::Paragraph(p) if p.runs.iter().all(|r| run_deleted(r, hide_deleted)));
+            let no_height = no_height || (mark_gone && all_gone);
+            let joined = joins_next;
+            if !no_height {
+                joins_next = mark_gone;
+            }
             let mut queue: std::collections::VecDeque<Piece> = pieces.into();
             let mut popped = 0usize;
             while let Some(mut piece) = queue.pop_front() {
                 if break_before == Some(popped) {
-                    active_obstacle = None;
                     advance!(s);
                     break_before = None;
                 }
                 popped += 1;
+                if joined && popped == 1 && !no_height {
+                    let above = piece.space_before;
+                    piece.items = piece.items.into_iter().map(|it| offset(it, 0.0, -above)).collect();
+                    piece.height -= above;
+                    piece.space_before = 0.0;
+                }
+                if mark_gone && queue.is_empty() && !no_height {
+                    piece.height -= piece.space_after;
+                    piece.space_after = 0.0;
+                }
+                if no_height {
+                    // Its line stays (for the caret), at the top of its place.
+                    let above = piece.space_before;
+                    piece.items = piece.items.into_iter().map(|it| offset(it, 0.0, -above)).collect();
+                    piece.height = 0.0;
+                    piece.space_before = 0.0;
+                    piece.space_after = 0.0;
+                }
                 // Paragraphs side by side: the larger of the space after one
                 // and before the next, not both.
                 if let Some((pc, c, ye, after)) = prev_end
@@ -3936,6 +5172,26 @@ impl<'r> Layouter<'r> {
                     && piece.space_before > 0.0
                 {
                     y -= after.min(piece.space_before);
+                }
+                // A piece laid out before an obstacle of the page was there (a
+                // figure put off to this page, or the piece gone on to another
+                // column) goes below one across its column.
+                while obstacle_for_block.is_none() || (pages.len(), col) != laid_for {
+                    let (left, right) = (frame.left - pt(setups[s].page.left), frame.left - pt(setups[s].page.left) + frame.width);
+                    let Some(bottom) = page_obstacles
+                        .iter()
+                        .filter(|o| o.shape_left - left < MIN_WRAP_ROOM && right - o.shape_right < MIN_WRAP_ROOM && o.y_top < y + piece.height - piece.space_after - 0.01 && o.y_bottom > y + 0.01)
+                        .map(|o| o.y_bottom)
+                        .reduce(f32::max)
+                    else {
+                        break;
+                    };
+                    if bottom + piece.height - piece.space_after > frame.bottom + 0.01 {
+                        advance!(s);
+                    } else {
+                        y = bottom;
+                        break;
+                    }
                 }
                 // A table row that does not fit is divided where the page
                 // ends (when a line of each cell fits there), its rest
@@ -3957,7 +5213,6 @@ impl<'r> Layouter<'r> {
                         col_fill.resize(col + 1, col_top);
                     }
                     col_fill[col] = frame.bottom;
-                    active_obstacle = None;
                     advance!(s);
                     for h in &headers {
                         pages.last_mut().expect("a page").items.extend(h.items.iter().cloned().map(|it| place_item(it, y, s, number, frame.left)));
@@ -3987,14 +5242,27 @@ impl<'r> Layouter<'r> {
                 let new_notes: Vec<u32> = notes_of(&piece).into_iter().filter(|id| !page.notes.contains(id)).collect();
                 let room = notes_room(page);
                 let more = new_notes.iter().map(|id| note_heights.get(id).copied().unwrap_or(0.0)).sum::<f32>() + if page.notes.is_empty() && !new_notes.is_empty() { separator_h } else { 0.0 };
-                if y + piece.height + kept > frame.bottom - room - more + 0.01 && (y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len()) {
-                    active_obstacle = None;
+                // (A paragraph's space after need not fit above the page's end,
+                // as in Word: its last line does.)
+                if y + piece.height - piece.space_after + kept > frame.bottom - room - more + 0.01 && (y > col_top + 0.01 || col_top > frame.top + 0.01 || col + 1 < columns_of(s).len()) {
                     advance!(s);
                     // A table's heading rows start the new page.
                     if !piece.header {
                         for h in &headers {
                             pages.last_mut().expect("a page").items.extend(h.items.iter().cloned().map(|it| place_item(it, y, s, number, frame.left)));
                             y += h.height;
+                        }
+                    }
+                }
+                if popped == 1
+                    && let Block::Paragraph(p) = block
+                {
+                    let at = pages.len() - 1;
+                    for r in &p.runs {
+                        if let FlowRunKind::Shape(shape) = &r.kind
+                            && self.seeds.iter().any(|s| s.3 == shape.id.0)
+                        {
+                            self.seed_landed.borrow_mut().push((shape.id.0, at));
                         }
                     }
                 }
@@ -4007,6 +5275,44 @@ impl<'r> Layouter<'r> {
                 let items = piece.items.into_iter().map(|it| place_item(it, y, s, number, frame.left));
                 let start = page.items.len();
                 page.items.extend(items);
+                // A shape the text wraps round, where it landed (its paragraph may
+                // have gone on to another page or column than it was laid out
+                // for): an obstacle of this page there.
+                let margin_l = pt(setups[s].page.left);
+                let landed: Vec<(WrapObstacle, bool)> = page.items[start..]
+                    .iter()
+                    .filter_map(|it| match it {
+                        Item::Shape { shape, x, y, w, h } => {
+                            let f = shape.floating.as_ref()?;
+                            // A picture the text goes over and under: across its column.
+                            let (left, right) = if f.wrap == "topAndBottom" {
+                                (frame.left - margin_l, frame.left - margin_l + frame.width)
+                            } else {
+                                (x - margin_l - pt(f.dist_l), x + w - margin_l + pt(f.dist_r))
+                            };
+                            matches!(f.wrap.as_str(), "square" | "tight" | "through" | "topAndBottom").then(|| WrapObstacle {
+                                shape_left: left,
+                                shape_right: right,
+                                y_top: y - pt(f.dist_t),
+                                y_bottom: y + h + pt(f.dist_b),
+                                wrap_text: f.wrap_text.clone().unwrap_or_else(|| "bothSides".to_string()),
+                                wrap_polygon: None,
+                            })
+                            .map(|obs| (obs, f.wrap == "topAndBottom"))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                for (obs, across) in landed {
+                    let same = |o: &WrapObstacle| (o.y_top - obs.y_top).abs() < 0.5 && (o.shape_left - obs.shape_left).abs() < 0.5;
+                    if !page_obstacles.iter().any(same) {
+                        if !across && active_obstacle.as_ref().is_none_or(|a| !same(a)) {
+                            active_obstacle = Some(obs.clone());
+                        }
+                        page_obstacles.push(obs);
+                    }
+                }
+                let page = pages.last_mut().expect("a page");
                 placed.push((start..page.items.len(), y, piece.height, col));
                 y += piece.height;
                 prev_end = Some((pages.len(), col, y, piece.space_after));
@@ -4029,7 +5335,7 @@ impl<'r> Layouter<'r> {
                     // The page after a section's end is the next section's.
                     let s_next = if ends_section { (s + 1).min(setups.len() - 1) } else { s };
                     new_page!(s_next);
-                    active_obstacle = find_page_obstacle(s_next, number, &frame);
+                    active_obstacle = find_page_obstacle(s_next, number, &frame).or(active_obstacle.take());
                     // An odd- or even-page section break: a blank page
                     // between when the next page has the other parity.
                     let wanted = match block {
@@ -4100,6 +5406,7 @@ impl<'r> Layouter<'r> {
                 continue;
             }
             if let Some(pg_idx) = pages.iter().rposition(|p| p.section == s) {
+                kind_now.set((pages[pg_idx].section, page_kind(pages[pg_idx].section, pages[pg_idx].number, pages[pg_idx].first_in_section)));
                 let frame = frame_of(s);
                 let pg = &mut pages[pg_idx];
                 let body_bottom = pg
@@ -4112,7 +5419,9 @@ impl<'r> Layouter<'r> {
                     })
                     .fold(frame.top, f32::max);
                 let mut note_y = (body_bottom + 12.0).min(frame.bottom);
-                pg.items.push(Item::Rect { x: frame.left, y: note_y + separator_h / 2.0, w: 144.0, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) });
+                if let Some(w) = separator_width(self.doc.note_separators[0], frame.width) {
+                    pg.items.push(Item::Rect { x: frame.left, y: note_y + separator_h / 2.0, w, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) });
+                }
                 note_y += separator_h;
                 for id in ids {
                     for piece in note_pieces(true, id) {
@@ -4125,7 +5434,8 @@ impl<'r> Layouter<'r> {
         if !doc_endnotes.is_empty() {
             let s = setups.len() - 1;
             let mut queue: Vec<Piece> = Vec::new();
-            queue.push(Piece { height: separator_h, items: vec![Item::Rect { x: 0.0, y: separator_h / 2.0, w: 144.0, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) }], page_break: false, column_break: false, keep_with_next: true, header: false, split: None, ..Default::default() });
+            let end_separator: Vec<Item> = separator_width(self.doc.note_separators[1], frame.width).map(|w| Item::Rect { x: 0.0, y: separator_h / 2.0, w, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) }).into_iter().collect();
+            queue.push(Piece { height: separator_h, items: end_separator, page_break: false, column_break: false, keep_with_next: true, header: false, split: None, ..Default::default() });
             for id in &doc_endnotes {
                 queue.extend(note_pieces(true, *id));
             }
@@ -4143,6 +5453,7 @@ impl<'r> Layouter<'r> {
             if pg.notes.is_empty() {
                 continue;
             }
+            kind_now.set((pg.section, page_kind(pg.section, pg.number, pg.first_in_section)));
             let frame = frame_of(pg.section);
             let pos = setups.get(pg.section).map_or(self.doc.page.footnotes.position, |s| s.page.footnotes.position);
             let mut y = match pos {
@@ -4161,7 +5472,9 @@ impl<'r> Layouter<'r> {
                 }
                 _ => frame.bottom - notes_room(pg),
             };
-            pg.items.push(Item::Rect { x: frame.left, y: y + separator_h / 2.0, w: 144.0, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) });
+            if let Some(w) = separator_width(self.doc.note_separators[0], frame.width) {
+                pg.items.push(Item::Rect { x: frame.left, y: y + separator_h / 2.0, w, h: 0.5, color: hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb::BLACK)) });
+            }
             y += separator_h;
             for id in pg.notes.clone() {
                 for piece in note_pieces(false, id) {
@@ -4181,6 +5494,7 @@ impl<'r> Layouter<'r> {
         // to its swapped margins.
         for pg in &mut pages {
             let page = &setups[pg.section].page;
+            kind_now.set((pg.section, page_kind(pg.section, pg.number, pg.first_in_section)));
             let frame = text_frame(pg.section);
             let used = pg
                 .items
@@ -4311,22 +5625,17 @@ impl<'r> Layouter<'r> {
             chapter_now.as_ref().map_or(String::new(), |l| format!("{l}{separator}"))
         }).collect();
         for ((pg, &in_section), chapter) in pages.iter_mut().zip(&section_pages).zip(&chapter_prefixes) {
+            pg.body_items_count = pg.items.len();
             *self.chapter_prefix.borrow_mut() = chapter.clone();
             self.page_counts.set(Some((total, in_section, pg.section as u32 + 1)));
             let s = pg.section;
             let setup = &setups[s];
-            let mut frame = text_frame(s);
+            let mut frame = margin_frame(s);
             let n = pg.number;
             frame.left += mirror_dx(s, n);
             *self.page_format.borrow_mut() = setup.page_number_format.clone();
             self.line_pitch.set(setup.page.line_pitch);
-            let (header, footer) = if setup.title_page && pg.first_in_section {
-                (&parts[s][2], &parts[s][3])
-            } else if self.doc.even_and_odd && n % 2 == 0 {
-                (&parts[s][4], &parts[s][5])
-            } else {
-                (&parts[s][0], &parts[s][1])
-            };
+            let (header, footer) = header_footer(s, page_kind(s, n, pg.first_in_section));
             let mut y = pt(setup.page.header);
             for block in header {
                 for piece in self.pieces(block, frame.width, n, None, true) {
@@ -4353,7 +5662,7 @@ impl<'r> Layouter<'r> {
             if !page.borders.iter().any(Option::is_some) {
                 continue;
             }
-            let frame = text_frame(pg.section);
+            let frame = margin_frame(pg.section);
             let (page_w, page_h) = (pg.width, pg.height);
             let [top, right, bottom, left] = page.borders;
             let total = |b: Option<FlowBorder>| b.map_or(0.0, |b| pt(b.total()));
@@ -4428,6 +5737,7 @@ impl<'r> Layouter<'r> {
                 }
             }
         }
+        self.place_over_shapes(&mut pages);
         for pg in &mut pages {
             let mut expanded = Vec::with_capacity(pg.items.len());
             for it in pg.items.drain(..) {
@@ -4556,6 +5866,15 @@ fn draw_art_edge(fb: &FlowBorder, art: ibis_doc_model::ArtBorder, part: ArtPart,
 /// when the border's outer side is the top or left one. The border is
 /// centred on the edge; its lines are extended by half its width at the
 /// ends, so the corners meet.
+/// The width (points) of the line above the notes: the short line is 2 inches, the full one the text's width; none for no line.
+fn separator_width(kind: ibis_doc_model::NoteSeparator, text_width: f32) -> Option<f32> {
+    match kind {
+        ibis_doc_model::NoteSeparator::Standard => Some(144.0),
+        ibis_doc_model::NoteSeparator::Full => Some(text_width),
+        ibis_doc_model::NoteSeparator::Hidden => None,
+    }
+}
+
 fn border_items(
     b: &FlowBorder,
     horizontal: bool,
@@ -4572,16 +5891,23 @@ fn border_items(
     // thinThickSmallGap has its thick line first, top to bottom and left to
     // right, on all four sides; thickThinSmallGap its thin one), not from
     // the outer side.
-    let _ = outer_first;
     let bands = b.bands();
     let total = pt(bands.iter().map(|b| b.0).sum());
     let dashes = b.dashes().map(|d| d.into_iter().map(pt).collect::<Vec<f32>>());
     let mut out = Vec::new();
     let mut across = at - total / 2.0;
-    let start = if extend_start { from - total / 2.0 } else { from };
-    let end = if extend_end { to + total / 2.0 } else { to };
+    let mut depth_from_top = 0.0f32;
+    let mut drawn_so_far = 0usize;
     for (width, drawn) in bands {
         let t = pt(width).max(0.25);
+        // The lines meet at the corners as nested rectangles do (a mitre): a band reaches past the edge's end by
+        // half the border's width less its own distance from the border's outer side (an inner line stops at
+        // the inner line of the border across).
+        let depth = if outer_first { depth_from_top } else { (total - depth_from_top - pt(width)).max(0.0) };
+        let reach = total / 2.0 - depth;
+        depth_from_top += pt(width);
+        let start = if extend_start { from - reach } else { from };
+        let end = if extend_end { to + reach } else { to };
         if drawn {
             let mut segments = Vec::new();
             match &dashes {
@@ -4598,6 +5924,31 @@ fn border_items(
                     }
                 }
                 _ => segments.push((start, end)),
+            }
+            // A wave is a sine line (Word's: 2.5 pt high, 5.75 pt long, measured on its PDF of DBRD); a double
+            // wave is two of them, a half turn apart, one above the other.
+            if matches!(b.style, ibis_doc_model::BorderStyle::Wave | ibis_doc_model::BorderStyle::DoubleWave) {
+                let (line, amplitude) = (0.5f32, (t - 0.75) / 2.0);
+                let length = 5.75f32;
+                let centre = across + t / 2.0;
+                let phase = if drawn_so_far % 2 == 1 { std::f32::consts::PI } else { 0.0 };
+                drawn_so_far += 1;
+                let steps = ((end - start) / length * 8.0).ceil().max(1.0) as usize;
+                let point = |i: usize| {
+                    let a = start + (end - start) * i as f32 / steps as f32;
+                    (a, centre + amplitude * ((a - start) / length * std::f32::consts::TAU + phase).sin())
+                };
+                for i in 0..steps {
+                    let (a0, c0) = point(i);
+                    let (a1, c1) = point(i + 1);
+                    out.push(if horizontal {
+                        Item::Stroke { x: a0, y: c0, x2: a1, y2: c1, w: line, color }
+                    } else {
+                        Item::Stroke { x: c0, y: a0, x2: c1, y2: a1, w: line, color }
+                    });
+                }
+                across += pt(width);
+                continue;
             }
             for (a, z) in segments {
                 out.push(if horizontal { Item::Rect { x: a, y: across, w: z - a, h: t, color } } else { Item::Rect { x: across, y: a, w: t, h: z - a, color } });
@@ -4619,6 +5970,7 @@ fn offset(item: Item, dx: f32, dy: f32) -> Item {
         Item::Line { para, x, y, h, stops, vertical } => Item::Line { para, x: x + dx, y: y + dy, h, stops, vertical },
         Item::Stroke { x, y, x2, y2, w, color } => Item::Stroke { x: x + dx, y: y + dy, x2: x2 + dx, y2: y2 + dy, w, color },
         Item::Shading { pattern, color, x, y, w, h } => Item::Shading { pattern, color, x: x + dx, y: y + dy, w, h },
+        Item::CommentBubble { x, y, size } => Item::CommentBubble { x: x + dx, y: y + dy, size },
     }
 }
 
@@ -4765,7 +6117,8 @@ pub(crate) fn paginate(doc: &FlowDocument, res: &Resources) -> Pagination {
 
 fn paginate_collapsed(doc: &FlowDocument, res: &Resources) -> Pagination {
     // Headings shown collapsed: what is under them is not laid out.
-    if !res.collapsed_headings.is_empty()
+    let any_collapsed = !res.collapsed_headings.is_empty() || doc.body.iter().any(|b| matches!(b, Block::Paragraph(p) if p.collapsed));
+    if any_collapsed
         && let Some(view) = super::outline_ops::collapsed_view(doc, &res.collapsed_headings)
     {
         return paginate_whole(&view, res);
@@ -4776,7 +6129,7 @@ fn paginate_collapsed(doc: &FlowDocument, res: &Resources) -> Pagination {
 fn paginate_whole(doc: &FlowDocument, res: &Resources) -> Pagination {
     let ids = ibis_doc_model::flow_command::sections(doc);
     let first_pitch = ids.first().and_then(|id| ibis_doc_model::flow_command::section_setup(doc, *id)).and_then(|s| s.page.line_pitch);
-    let lay_out = |known_pages: Option<(u32, Vec<u32>)>, known_notes: Option<std::collections::HashMap<(bool, u32), String>>| {
+    let lay_out = |known_pages: Option<(u32, Vec<u32>)>, known_notes: Option<std::collections::HashMap<(bool, u32), String>>, seeds: Vec<RaisedShape>| {
         let layouter = Layouter {
             res,
             doc,
@@ -4784,20 +6137,42 @@ fn paginate_whole(doc: &FlowDocument, res: &Resources) -> Pagination {
             page_format: std::cell::RefCell::new(doc.page_number_format.clone()),
             chapter_prefix: std::cell::RefCell::new(String::new()),
             line_pitch: std::cell::Cell::new(first_pitch),
+            line_room: std::cell::Cell::new(f32::MAX),
             page_counts: std::cell::Cell::new(None),
             known_pages,
             body_section: std::cell::Cell::new(0),
             note_numbers: known_notes.unwrap_or_else(|| note_numbers(doc)),
             current_note: std::cell::RefCell::new(String::new()),
             contextual: contextual_spacing(doc),
+            deferred_shapes: std::cell::RefCell::new(seeds.iter().map(|s| s.3).collect()),
+            column_dx: std::cell::Cell::new(0.0),
+            raised: Default::default(),
+            seeds,
+            seed_landed: Default::default(),
             current_cell: std::cell::Cell::new(None),
             field_paragraph: std::cell::Cell::new(None),
+            comment_runs: map_comment_runs(doc),
         };
         let mut pagination = layouter.lay_out();
         layouter.grid_text_boxes(&mut pagination);
-        pagination
+        (pagination, layouter.raised.take(), layouter.seed_landed.take())
     };
-    let first = lay_out(None, None);
+    let (mut first, mut raised, mut landed) = lay_out(None, None, Vec::new());
+    // Shapes placed above their paragraphs, over text laid out before them:
+    // again, with them there from their pages' starts (Word lays such a page
+    // out again round them), till each one's paragraph lands on its page and
+    // no other is raised (one more laying out is the usual).
+    let mut seeds: Vec<RaisedShape> = Vec::new();
+    for _ in 0..MAX_RAISED_PASSES {
+        let kept: Vec<RaisedShape> = seeds.iter().filter(|s| landed.contains(&(s.3, s.0))).cloned().collect();
+        if kept.len() == seeds.len() && raised.is_empty() {
+            break;
+        }
+        seeds = kept;
+        seeds.append(&mut raised);
+        (first, raised, landed) = lay_out(None, None, seeds.clone());
+    }
+    let lay_out = |known_pages, known_notes| lay_out(known_pages, known_notes, seeds.clone()).0;
     let need_page_counts = doc.body.iter().any(has_page_counts);
     let need_each_page_notes = has_each_page_notes(doc);
     if !need_page_counts && !need_each_page_notes {
@@ -4833,7 +6208,7 @@ fn has_page_counts(block: &Block) -> bool {
 thread_local! {
     /// Pagination of the documents open, by the document (held so its
     /// address is not reused).
-    static PAGINATIONS: std::cell::RefCell<Vec<(Arc<FlowDocument>, Arc<Pagination>, u64, bool, bool, Arc<std::collections::BTreeSet<u32>>, Option<Arc<std::collections::HashMap<String, String>>>)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PAGINATIONS: std::cell::RefCell<Vec<(Arc<FlowDocument>, Arc<Pagination>, u64, bool, bool, bool, Arc<std::collections::BTreeSet<u32>>, Option<Arc<std::collections::HashMap<String, String>>>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The pages of `doc`, laid out once.
@@ -4843,8 +6218,8 @@ pub(crate) fn pages(doc: &Arc<FlowDocument>, res: &Resources) -> Arc<Pagination>
         // Laid out again when art borders' pictures have come since (the
         // web version fetches them).
         let generation = crate::docx::art_border::generation();
-        cache.retain(|(_, _, g, _, _, _, _)| *g == generation);
-        if let Some((_, p, _, _, _, _, _)) = cache.iter().find(|(d, _, _, pr, ph, co, mv)| Arc::ptr_eq(d, doc) && *pr == res.print && *ph == res.print_hidden_text && **co == *res.collapsed_headings && *mv == res.merge_values) {
+        cache.retain(|(_, _, g, _, _, _, _, _)| *g == generation);
+        if let Some((_, p, _, _, _, _, _, _)) = cache.iter().find(|(d, _, _, pr, ph, pm, co, mv)| Arc::ptr_eq(d, doc) && *pr == res.print && *ph == res.print_hidden_text && *pm == res.print_markup && **co == *res.collapsed_headings && *mv == res.merge_values) {
             return p.clone();
         }
         let started = crate::debug_timing::start();
@@ -4855,7 +6230,7 @@ pub(crate) fn pages(doc: &Arc<FlowDocument>, res: &Resources) -> Arc<Pagination>
         if cache.len() >= 4 {
             cache.remove(0);
         }
-        cache.push((doc.clone(), p.clone(), generation, res.print, res.print_hidden_text, res.collapsed_headings.clone(), res.merge_values.clone()));
+        cache.push((doc.clone(), p.clone(), generation, res.print, res.print_hidden_text, res.print_markup, res.collapsed_headings.clone(), res.merge_values.clone()));
         p
     })
 }
@@ -4930,6 +6305,9 @@ fn add_watermark(doc: &FlowDocument, pagination: &mut Pagination) {
                 allow_overlap: true,
                 layout_in_cell: true,
                 relative_height: ibis_doc_model::FloatingAnchor::DEFAULT_RELATIVE_HEIGHT,
+                wrap_polygon: None,
+                glue: Default::default(),
+                over: None,
             });
             // The piece's centre along the turned text.
             let along = (i as f32 + 0.5) * slot - sw / 2.0;
@@ -5369,4 +6747,105 @@ fn turn_page_items(items: Vec<Item>, direction: ibis_doc_model::CellDirection, w
         }
     }
     out
+}
+
+#[cfg(test)]
+mod word_lines_tests {
+    use super::{FlowAlign, FlowDocument, SPACE_GIVE, Unit, is_japanese, justify_extra, keeps_word, may_break, space_give, squeezable};
+    use gpui_kit::font;
+
+    /// A character `width` wide, `auto_space` of it the space after it.
+    fn ch(c: char, width: f32, auto_space: f32) -> Unit {
+        Unit::Char { c, width: width + auto_space, inset: 0.0, font: font("Arial"), size: 10.0, style: 0, line: 12.0, ascent: 9.0, lead: 0.0, auto_space }
+    }
+
+    /// Latin text: letters 5 wide, spaces 2.5.
+    fn latin(text: &str) -> Vec<Unit> {
+        text.chars().map(|c| ch(c, if c == ' ' { 2.5 } else { 5.0 }, 0.0)).collect()
+    }
+
+    fn at(gaps: &[bool]) -> Vec<usize> {
+        gaps.iter().enumerate().filter(|(_, g)| **g).map(|(k, _)| k).collect()
+    }
+
+    #[test]
+    fn a_line_breaks_after_a_hyphen_inside_a_word() {
+        let doc = FlowDocument::default();
+        assert!(may_break(Some('-'), Some('k'), true, true, &doc), "well-|known");
+        assert!(!may_break(Some('-'), Some('5'), true, true, &doc), "not a minus before a number");
+        assert!(may_break(Some('\u{2013}'), Some('5'), true, true, &doc), "after an en dash");
+        assert!(!may_break(Some('a'), Some('b'), true, true, &doc), "a word holds together");
+    }
+
+    #[test]
+    fn justified_latin_text_spreads_at_its_spaces() {
+        let units = latin("ab cd ef");
+        // 6 letters and 2 spaces: 35 of 40.
+        let (extra, gaps) = justify_extra(&units, units.len(), FlowAlign::Justify, false, 40.0, 35.0);
+        assert!((extra - 2.5).abs() < 1e-4, "{extra}");
+        assert_eq!(at(&gaps), vec![2, 5]);
+        // The last line is not spread.
+        assert_eq!(justify_extra(&units, units.len(), FlowAlign::Justify, true, 40.0, 35.0).0, 0.0);
+    }
+
+    #[test]
+    fn justified_japanese_text_spreads_between_its_characters() {
+        let units: Vec<Unit> = "日本語".chars().map(|c| ch(c, 10.0, 0.0)).collect();
+        let (extra, gaps) = justify_extra(&units, 3, FlowAlign::Justify, false, 32.0, 30.0);
+        assert!((extra - 1.0).abs() < 1e-4, "{extra}");
+        assert_eq!(at(&gaps), vec![0, 1]);
+    }
+
+    #[test]
+    fn an_overfull_justified_line_narrows_only_its_spaces() {
+        let units = latin("ab cd ef");
+        // A word more than the room: the two spaces give a point.
+        let (extra, gaps) = justify_extra(&units, units.len(), FlowAlign::Justify, true, 34.0, 35.0);
+        assert!((extra + 0.5).abs() < 1e-4, "{extra}");
+        assert_eq!(at(&gaps), vec![2, 5]);
+        // Text not justified is never narrowed.
+        assert_eq!(justify_extra(&units, units.len(), FlowAlign::Left, false, 34.0, 35.0).0, 0.0);
+    }
+
+    #[test]
+    fn spaces_narrow_only_in_word_2013_and_later() {
+        let mut doc = FlowDocument::default();
+        for (mode, give) in [(None, 0.0), (Some(12), 0.0), (Some(14), 0.0), (Some(15), SPACE_GIVE)] {
+            doc.compatibility_mode = mode;
+            assert_eq!(space_give(&doc), give, "{mode:?}");
+        }
+        assert_eq!(SPACE_GIVE, 0.247);
+    }
+
+    #[test]
+    fn a_word_past_the_room_stays_if_a_third_of_it_at_most_is_out() {
+        // "aa bb cc": "cc" (10 wide, from 25, the space before it 2.5) past
+        // a room of 35 - over.
+        let units = latin("aa bb cc");
+        let breaks = |j: usize| matches!(units[j - 1], Unit::Char { c: ' ', .. });
+        let keeps = |over: f32, give: f32| keeps_word(&units, 6, 6, 25.0, 35.0 - over, give, breaks);
+        // A third of 12.5: 4.17.
+        assert!(keeps(4.0, 5.0));
+        assert!(!keeps(4.5, 5.0), "more than a third out");
+        assert!(!keeps(4.0, 3.0), "more than the spaces give");
+        // From its second letter on, the same word.
+        assert_eq!(keeps_word(&units, 7, 6, 30.0, 31.0, 5.0, breaks), keeps(4.0, 5.0));
+    }
+
+    #[test]
+    fn japanese_is_kana_kanji_and_full_width_forms() {
+        for c in ['あ', 'ア', '漢', '、', 'Ａ', '\u{20b9f}'] {
+            assert!(is_japanese(c), "{c}");
+        }
+        for c in ['a', '–', '→', '①', '😀'] {
+            assert!(!is_japanese(c), "{c}");
+        }
+    }
+
+    #[test]
+    fn spaces_and_the_space_between_japanese_and_latin_may_narrow() {
+        assert_eq!(squeezable(&ch(' ', 2.5, 0.0)), 2.5);
+        assert_eq!(squeezable(&ch('語', 10.0, 2.25)), 2.25);
+        assert_eq!(squeezable(&ch('a', 5.0, 0.0)), 0.0);
+    }
 }

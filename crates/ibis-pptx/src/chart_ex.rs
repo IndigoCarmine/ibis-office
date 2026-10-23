@@ -50,6 +50,24 @@ fn dims(data: Node) -> Vec<Dim> {
         .collect()
 }
 
+/// The `a:solidFill` of a `cx:spPr` of `node` (a series or a data point), as the source writes it.
+fn own_fill(node: Node) -> Option<String> {
+    let solid = child(node, "spPr").and_then(|s| child(s, "solidFill"))?;
+    Some(solid.document().input_text()[solid.range()].to_string())
+}
+
+/// The colour of that fill.
+fn own_color(node: Node, colors: &Colors) -> Option<ibis_doc_model::Color> {
+    let solid = child(node, "spPr").and_then(|s| child(s, "solidFill"))?;
+    colors.in_parent(solid, None)
+}
+
+/// The owner of each point of a waterfall (0 an increase, 1 a decrease, 2 a total): a point of the totals (`subtotals`) is a total,
+/// the others increase or decrease by the sign of their value.
+pub(crate) fn waterfall_roles(values: &[Option<f64>], subtotals: &[usize]) -> Vec<Option<usize>> {
+    values.iter().enumerate().map(|(i, v)| v.map(|v| if subtotals.contains(&i) { 2 } else if v >= 0.0 { 0 } else { 1 })).collect()
+}
+
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -85,12 +103,19 @@ fn read_ex(space: Node, colors: &Colors, legacy_border: bool) -> Option<Chart> {
     let xml = match layout {
         "boxWhisker" => {
             let (xml, boxes, flags) = box_whisker(chart, plot, series, &dims)?;
-            ex = Some(ibis_doc_model::ChartEx::Box { boxes, fill: ibis_doc_model::Fill::Solid(colors.named("accent1")), mean_marker: flags.0, mean_line: flags.1, outliers: flags.2 });
+            ex = Some(ibis_doc_model::ChartEx::Box { boxes, fill: ibis_doc_model::Fill::Solid(own_color(series, colors).unwrap_or_else(|| colors.named("accent1"))), mean_marker: flags.0, mean_line: flags.1, outliers: flags.2 });
             xml
         }
         "treemap" | "sunburst" => {
-            let tree = tree_nodes(&dims, colors, layout == "sunburst");
-            ex = Some(if layout == "treemap" { ibis_doc_model::ChartEx::Treemap(tree) } else { ibis_doc_model::ChartEx::Sunburst(tree) });
+            let overlapping = child(series, "layoutPr").and_then(|l| child(l, "parentLabelLayout")).and_then(|p| attr(p, "val")) == Some("overlapping");
+            let tree = tree_nodes(&dims, colors, layout == "sunburst" || overlapping);
+            let labels = child(series, "dataLabels");
+            let shows = |what: &str, default: bool| labels.and_then(|l| child(l, "visibility")).and_then(|v| attr(v, what)).map_or(default, |v| v == "1" || v == "true");
+            ex = Some(if layout == "treemap" {
+                ibis_doc_model::ChartEx::Treemap { nodes: tree, overlapping, values: shows("value", true), labels_at_end: labels.and_then(|l| attr(l, "pos")) == Some("inEnd") }
+            } else {
+                ibis_doc_model::ChartEx::Sunburst(tree)
+            });
             tree_dummy(chart)
         }
         _ => String::new(),
@@ -99,10 +124,16 @@ fn read_ex(space: Node, colors: &Colors, legacy_border: bool) -> Option<Chart> {
         let doc = roxmltree::Document::parse(&xml).ok()?;
         let mut chart = crate::chart::read_in(doc.root_element(), colors, legacy_border)?;
         chart.ex = ex;
+        chart.ex_format = Some(read_format(plot, region, series, layout, &dims, colors));
         return Some(chart);
     }
+    let mut links = Vec::new();
     let xml = match layout {
-        "waterfall" => waterfall(space, chart, plot, series, &dims)?,
+        "waterfall" => {
+            let (xml, found) = waterfall(space, chart, plot, series, &dims)?;
+            links = found;
+            xml
+        }
         "clusteredColumn" => histogram(chart, plot, series, &dims)?,
         "pareto" => pareto(chart, plot, series, &dims)?,
         "funnel" => funnel(chart, plot, series, &dims)?,
@@ -116,15 +147,58 @@ fn read_ex(space: Node, colors: &Colors, legacy_border: bool) -> Option<Chart> {
         }
     }
     // Read as an old kind of chart, but a new one's (drawn with its padding).
-    chart.ex = Some(ibis_doc_model::ChartEx::Synthesized);
+    chart.ex = Some(ibis_doc_model::ChartEx::Synthesized { links });
+    chart.ex_format = Some(read_format(plot, region, series, layout, &dims, colors));
     Some(chart)
+}
+
+/// What of the chart's format can be changed: the first series' data labels, the value axis' range, the series' fills.
+fn read_format(plot: Node, _region: Node, series: Node, layout: &str, dims: &[Dim], colors: &Colors) -> ibis_doc_model::ExFormat {
+    use ibis_doc_model::{ExFormat, ExLabels, LabelPosition, Number};
+    let labels = child(series, "dataLabels").map(|l| {
+        let shows = |what: &str, default: bool| child(l, "visibility").and_then(|v| attr(v, what)).map_or(default, |v| v == "1" || v == "true");
+        ExLabels {
+            value: shows("value", true),
+            category: shows("categoryName", false),
+            series_name: shows("seriesName", false),
+            position: match attr(l, "pos") {
+                Some("outEnd") => Some(LabelPosition::OutsideEnd),
+                Some("inEnd") => Some(LabelPosition::InsideEnd),
+                Some("ctr") => Some(LabelPosition::Center),
+                Some("inBase") => Some(LabelPosition::InsideBase),
+                _ => None,
+            },
+        }
+    });
+    let scaling = children(plot, "axis").find_map(|a| child(a, "valScaling"));
+    let number = |name: &str| scaling.and_then(|s| attr(s, name)).and_then(|v| v.parse::<f64>().ok()).map(Number);
+    let fills: Vec<Option<ibis_doc_model::Rgb>> = if layout == "waterfall" {
+        // The increase, decrease and total: the fill of the first point of each (its `cx:dataPt`).
+        let val = dims.iter().find(|d| d.kind == "val");
+        let numbers: Vec<Option<f64>> = val.map_or(Vec::new(), |v| v.points.iter().map(|p| p.as_ref().and_then(|t| t.trim().parse().ok())).collect());
+        let subtotals: Vec<usize> = child(series, "layoutPr").and_then(|l| child(l, "subtotals")).map(|s| children(s, "idx").filter_map(|i| attr(i, "val").and_then(|v| v.parse().ok())).collect()).unwrap_or_default();
+        let roles = waterfall_roles(&numbers, &subtotals);
+        (0..3)
+            .map(|role| {
+                children(series, "dataPt")
+                    .find(|d| attr(*d, "idx").and_then(|i| i.parse::<usize>().ok()).is_some_and(|i| roles.get(i).copied().flatten() == Some(role)))
+                    .and_then(|d| own_color(d, colors))
+                    .map(|c| c.rgb)
+            })
+            .collect()
+    } else {
+        vec![own_color(series, colors).map(|c| c.rgb)]
+    };
+    ExFormat { labels, axis_min: number("min"), axis_max: number("max"), axis_major: number("majorUnit"), fills }
 }
 
 /// The `c:title` of a `cx:title`.
 fn title_xml(chart: Node) -> String {
     let Some(title) = child(chart, "title") else { return "<c:autoTitleDeleted val=\"1\"/>".into() };
+    // Excel's own look of a title: 14 pt, not bold, grey.
+    let run_pr = "<a:rPr sz=\"1400\" b=\"0\"><a:solidFill><a:srgbClr val=\"595959\"/></a:solidFill></a:rPr>";
     let text = child(title, "tx").and_then(|tx| {
-        child(tx, "txData").and_then(|d| child(d, "v")).and_then(|v| v.text().map(escape)).map(|t| format!("<c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>{t}</a:t></a:r></a:p></c:rich></c:tx>")).or_else(|| {
+        child(tx, "txData").and_then(|d| child(d, "v")).and_then(|v| v.text().map(escape)).map(|t| format!("<c:tx><c:rich><a:bodyPr/><a:p><a:r>{run_pr}<a:t>{t}</a:t></a:r></a:p></c:rich></c:tx>")).or_else(|| {
             child(tx, "rich").map(|r| {
                 let text = inner(r);
                 format!("<c:tx><c:rich>{text}</c:rich></c:tx>")
@@ -134,7 +208,11 @@ fn title_xml(chart: Node) -> String {
     let tx_pr = child(title, "txPr").map(|t| format!("<c:txPr>{}</c:txPr>", inner(t))).unwrap_or_default();
     match text {
         Some(text) => format!("<c:title>{text}{tx_pr}<c:overlay val=\"0\"/></c:title><c:autoTitleDeleted val=\"0\"/>"),
-        None => format!("<c:title>{tx_pr}<c:overlay val=\"0\"/></c:title><c:autoTitleDeleted val=\"0\"/>"),
+        // A title Excel was asked for but not given a text shows its placeholder (the series' name is not used).
+        None => {
+            let placeholder = if crate::english_names() { "Chart Title" } else { "グラフ タイトル" };
+            format!("<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r>{run_pr}<a:t>{placeholder}</a:t></a:r></a:p></c:rich></c:tx>{tx_pr}<c:overlay val=\"0\"/></c:title><c:autoTitleDeleted val=\"0\"/>")
+        }
     }
 }
 
@@ -229,7 +307,9 @@ fn ser_xml(idx: usize, name: &str, fill: &str, values: &[Option<f64>], format: &
     )
 }
 
-fn waterfall(space: Node, chart: Node, plot: Node, series: Node, dims: &[Dim]) -> Option<String> {
+type Links = Vec<(usize, ibis_doc_model::Number, usize, ibis_doc_model::Number)>;
+
+fn waterfall(space: Node, chart: Node, plot: Node, series: Node, dims: &[Dim]) -> Option<(String, Links)> {
     let cat = dims.iter().find(|d| d.kind == "cat");
     let val = dims.iter().find(|d| d.kind == "val")?;
     let n = val.points.len().max(cat.map_or(0, |c| c.points.len()));
@@ -322,44 +402,44 @@ fn waterfall(space: Node, chart: Node, plot: Node, series: Node, dims: &[Dim]) -
 
     let mut sers = String::new();
     sers.push_str(&ser_xml(0, "", &none, &base, format, &categories, ""));
-    sers.push_str(&ser_xml(1, up_name, &scheme("accent1"), &up, format, &categories, &label_for(0)));
-    sers.push_str(&ser_xml(2, down_name, &scheme("accent2"), &down, format, &categories, &label_for(1)));
-    sers.push_str(&ser_xml(3, total_name, &scheme("accent3"), &total, format, &categories, &label_for(2)));
-    sers.push_str(&ser_xml(4, up_name, &scheme("accent1"), &up_neg, format, &categories, ""));
-    sers.push_str(&ser_xml(5, down_name, &scheme("accent2"), &down_neg, format, &categories, ""));
+    // The fill of an increase, a decrease and a total: that of the first data point of its kind that has one, else the theme's.
+    let role_fill = |role: usize, theme: &str| -> String {
+        children(series, "dataPt")
+            .filter(|d| attr(*d, "idx").and_then(|i| i.parse::<usize>().ok()).is_some_and(|i| owner.get(i).copied().flatten() == Some(role)))
+            .find_map(own_fill)
+            .unwrap_or_else(|| scheme(theme))
+    };
+    let (up_fill, down_fill, total_fill) = (role_fill(0, "accent1"), role_fill(1, "accent2"), role_fill(2, "accent3"));
+    sers.push_str(&ser_xml(1, up_name, &up_fill, &up, format, &categories, &label_for(0)));
+    sers.push_str(&ser_xml(2, down_name, &down_fill, &down, format, &categories, &label_for(1)));
+    sers.push_str(&ser_xml(3, total_name, &total_fill, &total, format, &categories, &label_for(2)));
+    sers.push_str(&ser_xml(4, up_name, &up_fill, &up_neg, format, &categories, ""));
+    sers.push_str(&ser_xml(5, down_name, &down_fill, &down_neg, format, &categories, ""));
 
-    // Connector lines: a level line from the end of each bar to the next bar,
-    // drawn as two-point line series on the same axes (a line runs from the
-    // middle of one column to the middle of the next, along the bars' edges).
+    // Connector lines: from the end of each bar to where the next one starts (a total starts at zero), drawn from the
+    // right edge of the one column to the left edge of the other.
     let connectors = child(series, "layoutPr").and_then(|l| child(l, "visibility")).and_then(|v| attr(v, "connectorLines")).is_none_or(|v| v == "1" || v == "true");
-    let mut hidden = vec![0, 4, 5];
-    let mut lines = String::new();
+    let hidden = vec![0, 4, 5];
+    let mut links: Links = Vec::new();
     if connectors {
         let points: Vec<usize> = (0..n).filter(|i| levels[*i].is_some()).collect();
         for pair in points.windows(2) {
-            let level = levels[pair[0]];
-            let mut values = vec![None; n];
-            values[pair[0]] = level;
-            values[pair[1]] = level;
-            let idx = 6 + hidden.len() - 3;
-            hidden.push(idx);
-            lines.push_str(&format!(
-                "<c:ser><c:idx val=\"{idx}\"/><c:order val=\"{idx}\"/><c:tx><c:v></c:v></c:tx><c:spPr><a:ln w=\"9525\"><a:solidFill><a:srgbClr val=\"7F7F7F\"/></a:solidFill></a:ln></c:spPr><c:marker><c:symbol val=\"none\"/></c:marker>{}<c:val><c:numRef><c:f></c:f>{}</c:numRef></c:val><c:smooth val=\"0\"/></c:ser>",
-                category_cache(&categories),
-                number_cache(&values, format),
-            ));
+            let (Some(from), Some(end)) = (levels[pair[0]], levels[pair[1]]) else { continue };
+            let to = if owner[pair[1]] == Some(2) { 0.0 } else { from };
+            let _ = end;
+            links.push((pair[0], ibis_doc_model::Number(from), pair[1], ibis_doc_model::Number(to)));
         }
     }
-    let line_chart = if lines.is_empty() { String::new() } else { format!("<c:lineChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{lines}<c:marker val=\"1\"/><c:axId val=\"1\"/><c:axId val=\"2\"/></c:lineChart>") };
+    let line_chart = String::new();
     let title = title_xml(chart);
     let legend = legend_xml(chart, &hidden);
     let axes = axes_xml(plot, format);
-    Some(format!(
+    Some((format!(
         "<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
          <c:chart>{title}<c:plotArea><c:layout/><c:barChart><c:barDir val=\"col\"/><c:grouping val=\"stacked\"/><c:varyColors val=\"0\"/>{sers}<c:gapWidth val=\"{gap}\"/><c:overlap val=\"100\"/><c:axId val=\"1\"/><c:axId val=\"2\"/></c:barChart>{line_chart}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/></c:chart>\
          <c:spPr><a:solidFill><a:schemeClr val=\"bg1\"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr>\
          <c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"900\"><a:solidFill><a:srgbClr val=\"595959\"/></a:solidFill></a:defRPr></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p></c:txPr></c:chartSpace>"
-    ))
+    ), links))
 }
 
 fn space_xml(title: &str, plot_body: &str, legend: &str) -> String {
@@ -424,7 +504,9 @@ fn histogram(chart: Node, plot: Node, series: Node, dims: &[Dim]) -> Option<Stri
     values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let binning = child(series, "layoutPr").and_then(|l| child(l, "binning"));
     let closed_left = binning.and_then(|b| attr(b, "intervalClosed")) == Some("l");
-    let number = |name: &str| binning.and_then(|b| child(b, name)).and_then(|n| attr(n, "val")).and_then(|v| v.parse::<f64>().ok());
+    // (The size and the count are a `val` attribute, as Excel opens them without a repair: the schema the validator
+    // knows has them as the element's text; the text is read as well.)
+    let number = |name: &str| binning.and_then(|b| child(b, name)).and_then(|n| attr(n, "val").map(str::to_string).or_else(|| n.text().map(|t| t.trim().to_string()))).and_then(|v| v.parse::<f64>().ok());
     let bound = |name: &str| binning.and_then(|b| attr(b, name)).and_then(|v| v.parse::<f64>().ok());
     let (underflow, overflow) = (bound("underflow"), bound("overflow"));
     let n = values.len() as f64;
@@ -494,10 +576,17 @@ fn histogram(chart: Node, plot: Node, series: Node, dims: &[Dim]) -> Option<Stri
     let numbers: Vec<Option<f64>> = data.iter().map(|c| Some(*c as f64)).collect();
     let texts: Vec<String> = data.iter().map(|c| c.to_string()).collect();
     let name = series_name(series).unwrap_or_else(|| if is_japanese(&labels.iter().map(String::as_str).collect::<Vec<_>>()) { "頻度".into() } else { "Frequency".into() });
-    let ser = ser_xml(0, &name, "<a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill>", &numbers, "General", &labels, &value_labels(series, &texts));
     let gap = gap_percent(plot, 0.0);
+    let ser = ser_xml(0, &name, &column_fill(series, gap), &numbers, "General", &labels, &value_labels(series, &texts));
     let body = format!("<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/><c:varyColors val=\"0\"/>{ser}<c:gapWidth val=\"{gap}\"/><c:axId val=\"1\"/><c:axId val=\"2\"/></c:barChart>{}", axes_xml(plot, "General"));
     Some(space_xml(&title_xml(chart), &body, &legend_xml(chart, &[])))
+}
+
+/// The fill of columns: the first accent; with no gap between them (a histogram, a Pareto chart) Excel draws a white
+/// line round each.
+fn column_fill(series: Node, gap: i64) -> String {
+    let fill = own_fill(series).unwrap_or_else(|| "<a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill>".to_string());
+    if gap == 0 { format!("{fill}<a:ln w=\"9525\"><a:solidFill><a:schemeClr val=\"bg1\"/></a:solidFill></a:ln>") } else { fill.to_string() }
 }
 
 /// パレート図: the categories' totals (or counts) from the largest down as
@@ -528,13 +617,13 @@ fn pareto(chart: Node, plot: Node, series: Node, dims: &[Dim]) -> Option<String>
     let format = val.and_then(|v| v.format.as_deref()).unwrap_or("General");
     let texts: Vec<String> = totals.iter().map(|t| ibis_doc_model::format_number(t.1, format)).collect();
     let name = series_name(series).unwrap_or_default();
-    let bars = ser_xml(0, &name, "<a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill>", &numbers, format, &labels, &value_labels(series, &texts));
+    let gap = gap_percent(plot, 0.5);
+    let bars = ser_xml(0, &name, &column_fill(series, gap), &numbers, format, &labels, &value_labels(series, &texts));
     let line = format!(
-        "<c:ser><c:idx val=\"1\"/><c:order val=\"1\"/><c:tx><c:v></c:v></c:tx><c:spPr><a:ln w=\"9525\"><a:solidFill><a:schemeClr val=\"accent2\"/></a:solidFill></a:ln></c:spPr><c:marker><c:symbol val=\"none\"/></c:marker>{}<c:val><c:numRef><c:f></c:f>{}</c:numRef></c:val><c:smooth val=\"0\"/></c:ser>",
+        "<c:ser><c:idx val=\"1\"/><c:order val=\"1\"/><c:tx><c:v></c:v></c:tx><c:spPr><a:ln w=\"28575\" cap=\"rnd\"><a:solidFill><a:schemeClr val=\"accent2\"/></a:solidFill><a:round/></a:ln></c:spPr><c:marker><c:symbol val=\"none\"/></c:marker>{}<c:val><c:numRef><c:f></c:f>{}</c:numRef></c:val><c:smooth val=\"0\"/></c:ser>",
         category_cache(&labels),
         number_cache(&shares, "0%"),
     );
-    let gap = gap_percent(plot, 0.5);
     // The share axis on the right: 0 to 100 %, its category axis not shown.
     let second = "<c:valAx><c:axId val=\"4\"/><c:scaling><c:orientation val=\"minMax\"/><c:max val=\"1\"/><c:min val=\"0\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"r\"/><c:numFmt formatCode=\"0%\" sourceLinked=\"0\"/><c:majorTickMark val=\"none\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:spPr><a:ln><a:noFill/></a:ln></c:spPr><c:crossAx val=\"3\"/><c:crosses val=\"max\"/><c:crossBetween val=\"between\"/></c:valAx>\
         <c:catAx><c:axId val=\"3\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"1\"/><c:axPos val=\"b\"/><c:majorTickMark val=\"none\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"4\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>";
@@ -557,11 +646,11 @@ fn funnel(chart: Node, plot: Node, series: Node, dims: &[Dim]) -> Option<String>
     let spacer: Vec<Option<f64>> = numbers.iter().map(|v| v.map(|v| (max - v) / 2.0)).collect();
     let format = val.format.as_deref().unwrap_or("General");
     let texts: Vec<String> = numbers.iter().map(|v| ibis_doc_model::format_number(v.unwrap_or(0.0), format)).collect();
-    let fill = "<a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill>";
+    let fill = own_fill(series).unwrap_or_else(|| "<a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill>".to_string());
     let sers = format!(
         "{}{}",
         ser_xml(0, "", "<a:noFill/>", &spacer, format, &labels, ""),
-        ser_xml(1, &series_name(series).unwrap_or_default(), fill, &numbers, format, &labels, &value_labels_centered(series, &texts)),
+        ser_xml(1, &series_name(series).unwrap_or_default(), &fill, &numbers, format, &labels, &value_labels_centered(series, &texts)),
     );
     let gap = gap_percent(plot, 0.06).max(0);
     let axes = format!("<c:catAx><c:axId val=\"1\"/><c:scaling><c:orientation val=\"maxMin\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"l\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:majorTickMark val=\"none\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:spPr><a:ln><a:noFill/></a:ln></c:spPr><c:crossAx val=\"2\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>\
@@ -644,7 +733,7 @@ fn box_whisker(chart: Node, plot: Node, series: Node, dims: &[Dim]) -> Option<(S
 }
 
 /// The paths (outermost level first) and sizes of a hierarchy's leaves.
-fn tree_nodes(dims: &[Dim], colors: &Colors, sunburst: bool) -> Vec<ibis_doc_model::TreeNode> {
+fn tree_nodes(dims: &[Dim], colors: &Colors, flat: bool) -> Vec<ibis_doc_model::TreeNode> {
     use ibis_doc_model::{Number, TreeNode};
     let Some(cat) = dims.iter().find(|d| d.kind == "cat") else { return Vec::new() };
     let size = dims.iter().find(|d| d.kind == "size" || d.kind == "val");
@@ -682,20 +771,20 @@ fn tree_nodes(dims: &[Dim], colors: &Colors, sunburst: bool) -> Vec<ibis_doc_mod
         let rgb = c.rgb.0;
         ibis_doc_model::Color { rgb: ibis_doc_model::Rgb((mix((rgb >> 16) & 0xff) << 16) | (mix((rgb >> 8) & 0xff) << 8) | mix(rgb & 0xff)), ..c }
     }
-    fn paint(nodes: &mut [TreeNode], base: ibis_doc_model::Color, level: usize, sunburst: bool) {
+    fn paint(nodes: &mut [TreeNode], base: ibis_doc_model::Color, level: usize, flat: bool) {
         let n = nodes.len().max(1);
         for (j, node) in nodes.iter_mut().enumerate() {
             // Treemap: siblings alternate a little; a sunburst's rings go lighter outwards.
-            let t = if sunburst { 0.18 * level as f32 } else { 0.07 * (j % 4) as f32 + 0.1 * (level as f32 - 1.0).max(0.0) };
+            let t = if flat { 0.0 } else { 0.07 * (j % 4) as f32 + 0.1 * (level as f32 - 1.0).max(0.0) };
             node.color = lighten(base, t.min(0.7) + 0.0 * n as f32);
             let child_base = base;
-            paint(&mut node.children, child_base, level + 1, sunburst);
+            paint(&mut node.children, child_base, level + 1, flat);
         }
     }
     for (k, root) in roots.iter_mut().enumerate() {
         let base = accents[k % 6];
         root.color = base;
-        paint(&mut root.children, base, 1, sunburst);
+        paint(&mut root.children, base, 1, flat);
     }
     roots
 }
@@ -788,4 +877,288 @@ mod tests {
         assert_eq!(dims[0].points, vec![Some("A".to_string()), None, Some("C".to_string()), None]);
         assert_eq!(dims[1].points, vec![Some("10".to_string()), None]);
     }
+}
+
+/// The cells a range holds, row by row: each cell's text, number and number format.
+pub(crate) type CellGrid = Vec<Vec<(String, Option<f64>, String)>>;
+
+/// The sheet and cells a reference names: the text of a `cx:f`, or the defined name it is (Excel writes the data of
+/// a chartEx as hidden names, `_xlchart.v1.0`).
+fn target_of(text: &str, names: &std::collections::HashMap<String, String>) -> Option<(String, ibis_doc_model::CellRange)> {
+    let target = names.get(text).map(String::as_str).unwrap_or(text);
+    let first = target.split(',').next()?;
+    let (sheet, _) = first.rsplit_once('!')?;
+    let sheet = sheet.trim().trim_matches('\'').replace("''", "'");
+    Some((sheet, crate::xlsx::parse_range(first)?))
+}
+
+/// `xml` (a `cx:chartSpace`) with the data its dimensions only name filled in from the cells: a `cx:lvl` for each
+/// column of the range (the finest, the rightmost, first), as the file would hold them cached.
+pub(crate) fn fill_refs(xml: &str, names: &std::collections::HashMap<String, String>, cells: &dyn Fn(&str, ibis_doc_model::CellRange) -> Option<CellGrid>) -> String {
+    let Ok(doc) = roxmltree::Document::parse(xml) else { return xml.to_string() };
+    let mut inserts: Vec<(usize, String)> = Vec::new();
+    for dim in doc.descendants().filter(|n| n.is_element() && n.tag_name().namespace() == Some(CX_NS) && matches!(n.tag_name().name(), "strDim" | "numDim")) {
+        if child(dim, "lvl").is_some() {
+            continue;
+        }
+        let Some(f) = child(dim, "f") else { continue };
+        let Some((sheet, range)) = target_of(f.text().unwrap_or("").trim(), names) else { continue };
+        let Some(grid) = cells(&sheet, range) else { continue };
+        let columns = grid.first().map_or(0, Vec::len);
+        let numeric = dim.tag_name().name() == "numDim";
+        let tag = match dim.lookup_prefix(CX_NS) {
+            Some(p) if !p.is_empty() => format!("{p}:"),
+            _ => String::new(),
+        };
+        let mut out = String::new();
+        for c in (0..columns).rev() {
+            let format = grid.iter().find_map(|r| r.get(c).map(|x| x.2.clone())).filter(|_| numeric);
+            out += &format!("<{tag}lvl ptCount=\"{}\"{}>", grid.len(), format.map(|f| format!(" formatCode=\"{}\"", escape(&f))).unwrap_or_default());
+            for (i, row) in grid.iter().enumerate() {
+                let Some((text, number, _)) = row.get(c) else { continue };
+                let value = if numeric { number.map(ibis_calc::number_to_xml) } else if text.is_empty() { None } else { Some(text.clone()) };
+                if let Some(v) = value {
+                    out += &format!("<{tag}pt idx=\"{i}\">{}</{tag}pt>", escape(&v));
+                }
+            }
+            out += &format!("</{tag}lvl>");
+        }
+        inserts.push((f.range().end, out));
+    }
+    let mut text = xml.to_string();
+    inserts.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    for (at, s) in inserts {
+        text.insert_str(at, &s);
+    }
+    text
+}
+
+/// What a chartEx chart of a worksheet is made from: its part's XML, the names its data goes by, the theme.
+#[derive(Debug)]
+pub(crate) struct ExSourceImpl {
+    raw: String,
+    names: std::sync::Arc<std::collections::HashMap<String, String>>,
+    theme: std::sync::Arc<crate::theme::Theme>,
+}
+
+impl ExSourceImpl {
+    pub(crate) fn new(raw: String, names: std::sync::Arc<std::collections::HashMap<String, String>>, theme: std::sync::Arc<crate::theme::Theme>) -> Self {
+        Self { raw, names, theme }
+    }
+
+    /// The chart made from `cells`, as a worksheet's chartEx chart is read.
+    pub(crate) fn chart(&self, cells: &dyn Fn(&str, ibis_doc_model::CellRange) -> Option<CellGrid>) -> Option<Chart> {
+        let xml = fill_refs(&self.raw, &self.names, cells);
+        let doc = roxmltree::Document::parse(&xml).ok()?;
+        let colors = Colors::new(&self.theme, None, &[]);
+        let mut chart = crate::chart::read(doc.root_element(), &colors)?;
+        chart.excel_layout = true;
+        if child(doc.root_element(), "spPr").is_none() && chart.border.is_none() {
+            chart.border = Some(ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x868686)), 9_525));
+        }
+        Some(chart)
+    }
+}
+
+impl ibis_doc_model::ChartExSource for ExSourceImpl {
+    fn rebuild(&self, cells: &dyn Fn(&str, ibis_doc_model::CellRange) -> Option<CellGrid>) -> Option<Chart> {
+        self.chart(cells)
+    }
+
+    fn options(&self) -> ibis_doc_model::ChartExOptions {
+        use ibis_doc_model::{BinBy, ChartExOptions, Number};
+        let mut o = ChartExOptions { closed_right: true, ..ChartExOptions::default() };
+        let Ok(doc) = roxmltree::Document::parse(&self.raw) else { return o };
+        if let Some(cat_scaling) = doc.descendants().find(|n| n.is_element() && n.tag_name().namespace() == Some(CX_NS) && n.tag_name().name() == "catScaling") {
+            if let Some(gw) = attr(cat_scaling, "gapWidth").and_then(|v| v.parse::<f64>().ok()) {
+                o.gap_width = Some((gw * 100.0).round() as u32);
+            }
+        }
+        let Some(series) = doc.descendants().find(|n| n.is_element() && n.tag_name().namespace() == Some(CX_NS) && n.tag_name().name() == "series") else { return o };
+        if let Some(layout) = child(series, "layoutPr") {
+            if let Some(sub) = child(layout, "subtotals") {
+                o.subtotals = children(sub, "idx").filter_map(|i| attr(i, "val").and_then(|v| v.parse().ok())).collect();
+            }
+            if let Some(bins) = child(layout, "binning") {
+                o.closed_right = attr(bins, "intervalClosed") != Some("l");
+                o.underflow = attr(bins, "underflow").and_then(|v| v.parse().ok()).map(Number);
+                o.overflow = attr(bins, "overflow").and_then(|v| v.parse().ok()).map(Number);
+                let value = |name: &str| child(bins, name).and_then(|n| attr(n, "val").map(str::to_string).or_else(|| n.text().map(|t| t.trim().to_string())));
+                if let Some(w) = value("binSize").and_then(|v| v.parse::<f64>().ok()) {
+                    o.bin_by = BinBy::Width(Number(w));
+                } else if let Some(c) = value("binCount").and_then(|v| v.parse::<u32>().ok()) {
+                    o.bin_by = BinBy::Count(c);
+                }
+            }
+            if is_box_whisker(&self.raw) {
+                let flag = |name: &str, default: bool| child(layout, "visibility").and_then(|v| attr(v, name)).map_or(default, |v| v == "1" || v == "true");
+                o.box_mean_marker = flag("meanMarker", true);
+                o.box_mean_line = flag("meanLine", false);
+                o.box_outliers = flag("outliers", true);
+                o.box_inclusive = child(layout, "statistics").and_then(|s| attr(s, "quartileMethod")) == Some("inclusive");
+            }
+            if is_treemap(&self.raw) {
+                o.treemap_overlapping = child(layout, "parentLabelLayout").and_then(|p| attr(p, "val")) == Some("overlapping");
+            }
+        }
+        o
+    }
+
+    fn with_options(&self, o: &ibis_doc_model::ChartExOptions) -> Option<ibis_doc_model::ExSourceRef> {
+        use ibis_doc_model::BinBy;
+        let mut doc = ibis_ooxml::XmlDocument::parse(self.raw.as_bytes()).ok()?;
+        let root = doc.root_element()?;
+        let tag = match doc.lookup_prefix(root, CX_NS) {
+            Some(p) if !p.is_empty() => format!("{p}:"),
+            _ => String::new(),
+        };
+        let series = doc.descendants(root).into_iter().find(|&n| doc.local_name(n) == "series")?;
+        let layout = match doc.child(series, "layoutPr") {
+            Some(l) => l,
+            None => {
+                let at = doc.elements(series).position(|c| matches!(doc.local_name(c), "axisId" | "extLst")).unwrap_or_else(|| doc.children(series).len());
+                // (An index among the children, not only the elements: put it before the first of them.)
+                let index = doc.children(series).iter().position(|&c| doc.is_element(c) && matches!(doc.local_name(c), "axisId" | "extLst")).unwrap_or(doc.children(series).len());
+                let _ = at;
+                doc.insert_element(series, index, &format!("{tag}layoutPr"))
+            }
+        };
+        // Totals (a waterfall): written when the chart already has them or some are set.
+        if let Some(old) = doc.child(layout, "subtotals") {
+            doc.detach(old);
+        }
+        if !o.subtotals.is_empty() || self.options().subtotals != o.subtotals || doc.descendants(layout).iter().all(|&n| doc.local_name(n) != "binning") && is_waterfall(&self.raw) {
+            let sub = doc.insert_element(layout, 0, &format!("{tag}subtotals"));
+            let mut sorted = o.subtotals.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            for i in sorted {
+                let idx = doc.append_element(sub, &format!("{tag}idx"));
+                doc.set_attr(idx, "val", &i.to_string());
+            }
+        }
+        // Bins (a histogram).
+        if let Some(bins) = doc.child(layout, "binning") {
+            doc.detach(bins);
+        }
+        let wants_bins = o.bin_by != BinBy::Auto || o.underflow.is_some() || o.overflow.is_some() || !o.closed_right || self.raw.contains("binning");
+        if wants_bins {
+            let end = doc.children(layout).len();
+            let bins = doc.insert_element(layout, end, &format!("{tag}binning"));
+            doc.set_attr(bins, "intervalClosed", if o.closed_right { "r" } else { "l" });
+            if let Some(u) = o.underflow {
+                doc.set_attr(bins, "underflow", &ibis_calc::number_to_xml(u.0));
+            }
+            if let Some(v) = o.overflow {
+                doc.set_attr(bins, "overflow", &ibis_calc::number_to_xml(v.0));
+            }
+            match o.bin_by {
+                BinBy::Auto => {}
+                BinBy::Width(w) => {
+                    let n = doc.append_element(bins, &format!("{tag}binSize"));
+                    doc.set_attr(n, "val", &ibis_calc::number_to_xml(w.0));
+                }
+                BinBy::Count(c) => {
+                    let n = doc.append_element(bins, &format!("{tag}binCount"));
+                    doc.set_attr(n, "val", &c.to_string());
+                }
+            }
+        }
+        // Box & Whisker settings.
+        if is_box_whisker(&self.raw) {
+            if let Some(vis) = doc.child(layout, "visibility") {
+                doc.detach(vis);
+            }
+            if let Some(stat) = doc.child(layout, "statistics") {
+                doc.detach(stat);
+            }
+            let vis = doc.append_element(layout, &format!("{tag}visibility"));
+            doc.set_attr(vis, "meanMarker", if o.box_mean_marker { "1" } else { "0" });
+            doc.set_attr(vis, "meanLine", if o.box_mean_line { "1" } else { "0" });
+            doc.set_attr(vis, "nonoutliers", "0");
+            doc.set_attr(vis, "outliers", if o.box_outliers { "1" } else { "0" });
+
+            let stat = doc.append_element(layout, &format!("{tag}statistics"));
+            doc.set_attr(stat, "quartileMethod", if o.box_inclusive { "inclusive" } else { "exclusive" });
+        }
+        // Treemap settings.
+        if is_treemap(&self.raw) {
+            if let Some(parent) = doc.child(layout, "parentLabelLayout") {
+                doc.detach(parent);
+            }
+            let parent = doc.append_element(layout, &format!("{tag}parentLabelLayout"));
+            doc.set_attr(parent, "val", if o.treemap_overlapping { "overlapping" } else { "banner" });
+        }
+        // Gap width setting (<cx:catScaling gapWidth="..."/>).
+        if let Some(gap) = o.gap_width {
+            let cat_scaling = doc.descendants(root).into_iter().find(|&n| doc.local_name(n) == "catScaling");
+            if let Some(cat_scaling) = cat_scaling {
+                let frac = gap as f64 / 100.0;
+                doc.set_attr(cat_scaling, "gapWidth", &ibis_calc::number_to_xml(frac));
+            } else if let Some(axis) = doc.descendants(root).into_iter().find(|&n| doc.local_name(n) == "axis") {
+                let frac = gap as f64 / 100.0;
+                let cs = doc.insert_element(axis, 0, &format!("{tag}catScaling"));
+                doc.set_attr(cs, "gapWidth", &ibis_calc::number_to_xml(frac));
+            }
+        }
+        let raw = String::from_utf8(doc.to_bytes()).ok()?;
+        Some(ibis_doc_model::ExSourceRef(std::sync::Arc::new(ExSourceImpl { raw, names: self.names.clone(), theme: self.theme.clone() }), true))
+    }
+
+    fn xml(&self) -> String {
+        self.raw.clone()
+    }
+
+    fn rewrite_references(&self, f: &dyn Fn(&str) -> String) -> Option<ibis_doc_model::ExSourceRef> {
+        let mut doc = ibis_ooxml::XmlDocument::parse(self.raw.as_bytes()).ok()?;
+        let root = doc.root_element()?;
+        let mut raw_changed = false;
+        for node in doc.descendants(root) {
+            if doc.local_name(node) == "f" {
+                let text = doc.text(node);
+                if !text.is_empty() {
+                    let next = f(&text);
+                    if next != text {
+                        doc.set_text(node, &next);
+                        raw_changed = true;
+                    }
+                }
+            }
+        }
+        let mut names_changed = false;
+        let mut new_names = (*self.names).clone();
+        for val in new_names.values_mut() {
+            let next = f(val);
+            if next != *val {
+                *val = next;
+                names_changed = true;
+            }
+        }
+        if !raw_changed && !names_changed {
+            return None;
+        }
+        let raw = if raw_changed {
+            String::from_utf8(doc.to_bytes()).ok()?
+        } else {
+            self.raw.clone()
+        };
+        let names = if names_changed {
+            std::sync::Arc::new(new_names)
+        } else {
+            self.names.clone()
+        };
+        Some(ibis_doc_model::ExSourceRef(std::sync::Arc::new(ExSourceImpl { raw, names, theme: self.theme.clone() }), true))
+    }
+}
+
+fn is_waterfall(raw: &str) -> bool {
+    raw.contains("layoutId=\"waterfall\"")
+}
+
+fn is_box_whisker(raw: &str) -> bool {
+    raw.contains("layoutId=\"boxWhisker\"")
+}
+
+fn is_treemap(raw: &str) -> bool {
+    raw.contains("layoutId=\"treemap\"")
 }

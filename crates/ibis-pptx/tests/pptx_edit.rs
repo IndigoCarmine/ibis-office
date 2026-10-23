@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use ibis_doc_model::{
-    AutoShape, Color, Command, Document, EmuRect, Fill, Geometry, LineEnd, EndSize, MediaFormat, MediaId, Picture, Paragraph, Presentation, Rgb, Run, RunStyle, Shape,
+    ArtisticEffect, AutoShape, Color, Command, Document, EmuRect, Fill, Geometry, LineEnd, EndSize, MediaFormat, MediaId, Picture, Paragraph, Presentation, Rgb, Run, RunStyle, Shape,
     ShapeId, ShapeKind, Slide, SlideId, Stroke, TextBody, TextStyle, ObjectDefaults, ShapeDefault,
 };
 use ibis_doc_model::model::HeaderFooterMarks;
@@ -158,6 +158,23 @@ fn normalize(p: &Presentation) -> Presentation {
         let return_to_zoom_by_place = slide.shape_return_to_zoom.iter().filter(|id| slide.shape(**id).is_some()).map(place).collect();
         let zoom_show_bg_by_place = slide.shape_zoom_show_bg.iter().filter(|(id, _)| slide.shape(**id).is_some()).map(|(id, v)| (place(id), *v)).collect();
         let zoom_durations_by_place = slide.shape_zoom_durations.iter().filter(|(id, _)| slide.shape(**id).is_some()).map(|(id, v)| (place(id), *v)).collect();
+        let glues_by_place = slide
+            .shape_glues
+            .iter()
+            .filter(|(id, _)| slide.shape(**id).is_some())
+            .map(|(id, glue)| {
+                let normalize_end = |end: Option<(u64, u32)>| -> Option<(u64, u32)> {
+                    let (target_id, site) = end?;
+                    let target_index = slide.shape_index(ShapeId(target_id))?;
+                    Some((target_index as u64, site))
+                };
+                let norm_glue = ibis_doc_model::Glue {
+                    start: normalize_end(glue.start),
+                    end: normalize_end(glue.end),
+                };
+                (place(id), norm_glue)
+            })
+            .collect();
         slide.hidden_shapes = hidden_by_place;
         slide.shape_links = links_by_place;
         slide.shape_link_tooltips = link_tooltips_by_place;
@@ -166,6 +183,7 @@ fn normalize(p: &Presentation) -> Presentation {
         slide.shape_return_to_zoom = return_to_zoom_by_place;
         slide.shape_zoom_show_bg = zoom_show_bg_by_place;
         slide.shape_zoom_durations = zoom_durations_by_place;
+        slide.shape_glues = glues_by_place;
         slide.shape_names.clear();
         slide.attached = attached_by_place;
         slide.groups = groups_by_place;
@@ -461,7 +479,7 @@ fn new_shapes(p: &mut Presentation) -> Vec<Shape> {
     let picture = Shape::new(
         p.new_shape_id(),
         EmuRect::new(6_400_800, 4_572_000, 1_219_200, 914_400),
-        ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new() }),
+        ShapeKind::Picture(Picture { media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: None, shadow: None, reflection: None, soft_edge: None, alt_text: Default::default(), decorative: false, name: String::new(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None }),
     );
     vec![text_box, rect, oval, round, line, picture]
 }
@@ -776,10 +794,10 @@ fn chart_labels_positions_and_content_round_trip() {
         .slides
         .iter()
         .find_map(|sl| sl.shapes.iter().find_map(|sh| match &sh.kind {
-            ShapeKind::Chart(c) if c.groups.iter().flat_map(|g| &g.series).any(|x| x.labels.is_some()) => Some((sl.id, sh.id, (**c).clone())),
+            ShapeKind::Chart(c) if c.groups.iter().all(|g| matches!(g.kind, ibis_doc_model::ChartType::Bar { .. })) && c.groups.iter().flat_map(|g| &g.series).any(|x| x.labels.is_some()) => Some((sl.id, sh.id, (**c).clone())),
             _ => None,
         }))
-        .expect("a chart with labels");
+        .expect("a bar chart with labels");
 
     // 1. ラベル位置を InsideEnd にし、category と percent を有効化して保存・再読込
     let mut modified = chart.clone();
@@ -1666,8 +1684,14 @@ fn slides_pasted_from_another_file() {
         }
     }
     s.document.ids().layouts.extend(layouts);
-    s.run(vec![Command::InsertSlide { index: 1, slide }]);
+    let keep_bytes = s.run(vec![Command::InsertSlide { index: 1, slide }]);
     assert!(s.p().layouts.len() > layouts_before);
+    let pkg = ibis_ooxml::Package::open(keep_bytes).unwrap();
+    assert!(!pkg.names().any(|p| p.starts_with("customXml/")), "customXml parts are not leaked");
+    for part in pkg.names().filter(|n| n.starts_with("ppt/slides/slide") && n.ends_with(".xml")) {
+        let xml = String::from_utf8(pkg.read(part).unwrap()).unwrap();
+        assert!(!xml.contains("custDataLst"), "{part} does not contain custDataLst");
+    }
 }
 
 fn s_layout(p: &Presentation) -> ibis_doc_model::LayoutId {
@@ -1683,7 +1707,7 @@ fn animations_added_changed_and_removed() {
     let Some(mut s) = Scenario::open("animations", "editing/pptx-plan.pptx") else { return };
     let slide = s.p().slides[0].clone();
     let (title, subtitle) = (slide.shapes[0].id, slide.shapes[1].id);
-    let effect = |shape, class, start, look, duration, preset| Animation { shape, class, start, look, delay: 0, duration, preset, repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, path: Vec::new() };
+    let effect = |shape, class, start, look, duration, preset| Animation { shape, class, start, look, delay: 0, duration, preset, repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None };
     let mut a = vec![
         effect(title, C::Entrance, S::OnClick, L::Fade, 500, (10, 0)),
         effect(subtitle, C::Entrance, S::WithPrevious, L::Fly(AnimationSide::Bottom), 500, (2, 4)),
@@ -2161,6 +2185,84 @@ fn table_cell_text() {
     let red = Some(ibis_doc_model::Stroke::solid(Color::opaque(Rgb(0xff0000)), 19_050));
     filled.rows[r].cells[c].borders = ibis_doc_model::CellBorders { left: red.clone(), right: red.clone(), top: red.clone(), bottom: None, ..Default::default() };
     s.run(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Table(Box::new(filled))) }]);
+}
+
+/// PPTX-OBJECT-023: 表（Table）セル内テキストへのハイパーリンク設定と保存・再読込保持
+#[test]
+fn table_cell_hyperlinks_round_trip() {
+    use ibis_doc_model::SlideLink;
+    let file = "benchmark/earnings-presentation.pptx";
+    let Some(mut s) = Scenario::open("table-cell-link", file) else { return };
+    let (slide, shape) = s
+        .p()
+        .slides
+        .iter()
+        .find_map(|sl| sl.shapes.iter().find_map(|sh| match &sh.kind { ShapeKind::Table(_) => Some((sl.id, sh.id)), _ => None }))
+        .expect("a table");
+    let target_slide = s.p().slides[0].id;
+    let url_link = SlideLink::Url("https://example.com/test-table-cell".into());
+    let slide_link = SlideLink::Slide(target_slide);
+
+    let mut p = s.p().clone();
+    let sl = p.slides.iter_mut().find(|sl| sl.id == slide).unwrap();
+    let sh = sl.shapes.iter_mut().find(|sh| sh.id == shape).unwrap();
+    let ShapeKind::Table(ref mut table) = sh.kind else { panic!("table") };
+    table.rows[1].cells[1].text.format_runs(
+        0,
+        2,
+        &ibis_doc_model::CharacterFormat {
+            link: Some(Some(url_link.clone())),
+            link_tooltip: Some(Some("Cell Tooltip".to_string())),
+            underline: Some(true),
+            ..Default::default()
+        },
+    );
+    table.rows[1].cells[2].text.format_runs(
+        0,
+        2,
+        &ibis_doc_model::CharacterFormat {
+            link: Some(Some(slide_link.clone())),
+            underline: Some(true),
+            ..Default::default()
+        },
+    );
+    let read = s.opened.source.as_read(&p, slide, shape).unwrap();
+
+    let saved = s.run(vec![Command::SetKind {
+        slide,
+        shape,
+        kind: Box::new(read.kind),
+    }]);
+
+    // Verify in-memory model
+    let in_mem = s.p().slide(slide).unwrap().shape(shape).unwrap();
+    let ShapeKind::Table(t) = &in_mem.kind else { panic!("table") };
+    assert_eq!(t.rows[1].cells[1].text.paragraphs[0].runs[0].style.link, Some(url_link.clone()));
+    assert_eq!(t.rows[1].cells[1].text.paragraphs[0].runs[0].style.link_tooltip, Some("Cell Tooltip".to_string()));
+    assert!(t.rows[1].cells[1].text.paragraphs[0].runs[0].style.underline);
+    assert_eq!(t.rows[1].cells[2].text.paragraphs[0].runs[0].style.link, Some(slide_link.clone()));
+    assert!(t.rows[1].cells[2].text.paragraphs[0].runs[0].style.underline);
+
+    // Verify saved OOXML XML contents
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let slide_part = s.p().slides.iter().position(|sl| sl.id == slide).map(|idx| format!("ppt/slides/slide{}.xml", idx + 1)).unwrap();
+    let xml = String::from_utf8(package.read(&slide_part).unwrap().to_vec()).unwrap();
+    assert!(xml.contains("hlinkClick"), "saved slide XML must contain hlinkClick for table cell text");
+    assert!(xml.contains("tooltip=\"Cell Tooltip\""), "saved slide XML must contain cell link tooltip");
+
+    // Verify reread
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    let re_shape = reopened.slide(slide).unwrap().shape(shape).unwrap();
+    let ShapeKind::Table(re_table) = &re_shape.kind else { panic!("table") };
+    assert_eq!(re_table.rows[1].cells[1].text.paragraphs[0].runs[0].style.link, Some(url_link));
+    assert_eq!(re_table.rows[1].cells[1].text.paragraphs[0].runs[0].style.link_tooltip, Some("Cell Tooltip".to_string()));
+    assert!(re_table.rows[1].cells[1].text.paragraphs[0].runs[0].style.underline);
+    assert_eq!(re_table.rows[1].cells[2].text.paragraphs[0].runs[0].style.link, Some(slide_link));
+    assert!(re_table.rows[1].cells[2].text.paragraphs[0].runs[0].style.underline);
+
+    // Undo / Redo
+    assert!(s.document.undo());
+    assert!(s.document.redo());
 }
 
 /// 行・列の挿入と削除: a row inserted (the table grows), a column removed,
@@ -2805,6 +2907,104 @@ fn picture_luminance_round_trip() {
     let xml = package.xml("ppt/slides/slide1.xml").unwrap();
     let root = xml.root_element().unwrap();
     assert!(xml.descendants(root).into_iter().all(|n| !xml.is_element(n) || xml.local_name(n) != "lum"));
+}
+
+#[test]
+fn picture_clear_transparent_color_round_trip() {
+    let Some(mut s) = Scenario::open("picture-clear", "editing/pptx-plan.pptx") else { return };
+    let slide = s.p().slides[0].id;
+    let mut picture_shape = new_shapes(s.document.ids()).pop().unwrap();
+    let ShapeKind::Picture(picture) = &mut picture_shape.kind else { panic!("picture") };
+    picture.clear = Some(ibis_doc_model::Rgb(0xffffff));
+    let index = s.p().slides[0].shapes.len();
+    let saved = s.run(vec![Command::InsertShape { slide, index, shape: picture_shape.clone() }]);
+
+    // Verify XML has <a:clrChange> with clrFrom=FFFFFF and clrTo=FFFFFF alpha=0
+    let package = ibis_ooxml::Package::open(saved).unwrap();
+    let xml = package.xml("ppt/slides/slide1.xml").unwrap();
+    let root = xml.root_element().unwrap();
+    let change = xml.descendants(root).into_iter().find(|&n| xml.is_element(n) && xml.local_name(n) == "clrChange").expect("clrChange element");
+    let from = xml.path(change, &["clrFrom", "srgbClr"]).expect("clrFrom srgbClr");
+    assert_eq!(xml.attr(from, "val"), Some("FFFFFF"));
+    let to_alpha = xml.path(change, &["clrTo", "srgbClr", "alpha"]).expect("clrTo alpha");
+    assert_eq!(xml.attr(to_alpha, "val"), Some("0"));
+
+    // Modify existing picture's clear color to black (0x000000)
+    let ShapeKind::Picture(mut p2) = picture_shape.kind.clone() else { panic!("picture") };
+    p2.clear = Some(ibis_doc_model::Rgb(0x000000));
+    let saved = s.run(vec![Command::SetKind { slide, shape: picture_shape.id, kind: Box::new(ShapeKind::Picture(p2)) }]);
+    let package = ibis_ooxml::Package::open(saved).unwrap();
+    let xml = package.xml("ppt/slides/slide1.xml").unwrap();
+    let root = xml.root_element().unwrap();
+    let change = xml.descendants(root).into_iter().find(|&n| xml.is_element(n) && xml.local_name(n) == "clrChange").expect("clrChange element");
+    let from = xml.path(change, &["clrFrom", "srgbClr"]).expect("clrFrom srgbClr");
+    assert_eq!(xml.attr(from, "val"), Some("000000"));
+
+    // Reset clear color to None
+    let ShapeKind::Picture(mut p3) = picture_shape.kind else { panic!("picture") };
+    p3.clear = None;
+    let saved = s.run(vec![Command::SetKind { slide, shape: picture_shape.id, kind: Box::new(ShapeKind::Picture(p3)) }]);
+    let package = ibis_ooxml::Package::open(saved).unwrap();
+    let xml = package.xml("ppt/slides/slide1.xml").unwrap();
+    let root = xml.root_element().unwrap();
+    assert!(xml.descendants(root).into_iter().all(|n| !xml.is_element(n) || xml.local_name(n) != "clrChange"));
+}
+
+#[test]
+fn picture_artistic_effect_round_trip() {
+    let Some(mut s) = Scenario::open("picture-artistic", "editing/pptx-plan.pptx") else { return };
+    let slide = s.p().slides[0].id;
+    let mut picture_shape = new_shapes(s.document.ids()).pop().unwrap();
+    let ShapeKind::Picture(picture) = &mut picture_shape.kind else { panic!("picture") };
+    picture.artistic_effect = Some(ArtisticEffect::marker());
+    let index = s.p().slides[0].shapes.len();
+    let saved = s.run(vec![Command::InsertShape { slide, index, shape: picture_shape.clone() }]);
+
+    // Verify XML has <a:ext uri="{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"> and <a14:artisticMarker>
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let xml = package.xml("ppt/slides/slide1.xml").unwrap();
+    let root = xml.root_element().unwrap();
+    let marker = xml.descendants(root).into_iter().find(|&n| xml.is_element(n) && xml.local_name(n) == "artisticMarker").expect("artisticMarker element");
+    assert_eq!(xml.attr(marker, "size"), Some("15"));
+    assert_eq!(xml.attr(marker, "trans"), Some("0"));
+
+    // Verify reopening deserializes artistic_effect
+    let reopened = ibis_pptx::open(saved).unwrap();
+    let last_shape = reopened.presentation.slides[0].shapes.last().unwrap();
+    let ShapeKind::Picture(p) = &last_shape.kind else { panic!("picture") };
+    assert_eq!(p.artistic_effect, Some(ArtisticEffect::marker()));
+
+    // Modify existing picture's artistic effect to ArtisticEffect::glass()
+    let ShapeKind::Picture(mut p2) = picture_shape.kind.clone() else { panic!("picture") };
+    p2.artistic_effect = Some(ArtisticEffect::glass());
+    let saved = s.run(vec![Command::SetKind { slide, shape: picture_shape.id, kind: Box::new(ShapeKind::Picture(p2)) }]);
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let xml = package.xml("ppt/slides/slide1.xml").unwrap();
+    let root = xml.root_element().unwrap();
+    let glass = xml.descendants(root).into_iter().find(|&n| xml.is_element(n) && xml.local_name(n) == "artisticGlass").expect("artisticGlass element");
+    assert_eq!(xml.attr(glass, "scaling"), Some("25"));
+    assert_eq!(xml.attr(glass, "trans"), Some("0"));
+    assert!(xml.descendants(root).into_iter().all(|n| !xml.is_element(n) || xml.local_name(n) != "artisticMarker"));
+
+    let reopened = ibis_pptx::open(saved).unwrap();
+    let last_shape = reopened.presentation.slides[0].shapes.last().unwrap();
+    let ShapeKind::Picture(p) = &last_shape.kind else { panic!("picture") };
+    assert_eq!(p.artistic_effect, Some(ArtisticEffect::glass()));
+
+    // Reset artistic effect to None
+    let ShapeKind::Picture(mut p3) = picture_shape.kind else { panic!("picture") };
+    p3.artistic_effect = None;
+    let saved = s.run(vec![Command::SetKind { slide, shape: picture_shape.id, kind: Box::new(ShapeKind::Picture(p3)) }]);
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let xml = package.xml("ppt/slides/slide1.xml").unwrap();
+    let root = xml.root_element().unwrap();
+    assert!(xml.descendants(root).into_iter().all(|n| !xml.is_element(n) || xml.local_name(n) != "artisticGlass"));
+    assert!(xml.descendants(root).into_iter().all(|n| !xml.is_element(n) || xml.attr(n, "uri") != Some("{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}")));
+
+    let reopened = ibis_pptx::open(saved).unwrap();
+    let last_shape = reopened.presentation.slides[0].shapes.last().unwrap();
+    let ShapeKind::Picture(p) = &last_shape.kind else { panic!("picture") };
+    assert_eq!(p.artistic_effect, None);
 }
 
 #[test]
@@ -4008,8 +4208,8 @@ fn animations_delay_round_trip() {
     let slide = s.p().slides[0].clone();
     let (title, subtitle) = (slide.shapes[0].id, slide.shapes[1].id);
     let a = vec![
-        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fade, delay: 1000, duration: 500, preset: (10, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, path: Vec::new() },
-        Animation { shape: subtitle, class: C::Entrance, start: S::WithPrevious, look: L::Appear, delay: 500, duration: 1, preset: (1, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, path: Vec::new() },
+        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fade, delay: 1000, duration: 500, preset: (10, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: subtitle, class: C::Entrance, start: S::WithPrevious, look: L::Appear, delay: 500, duration: 1, preset: (1, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
     ];
     let saved = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a.clone() }]);
 
@@ -4037,8 +4237,8 @@ fn animations_effect_options_round_trip() {
 
     // 1. スライドイン (上から Top = 1) および スピン (半回転 180° = 10_800_000) を設定
     let a1 = vec![
-        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fly(AnimationSide::Top), delay: 0, duration: 500, preset: (2, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, path: Vec::new() },
-        Animation { shape: subtitle, class: C::Emphasis, start: S::WithPrevious, look: L::Spin(10_800_000), delay: 0, duration: 2000, preset: (8, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, path: Vec::new() },
+        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fly(AnimationSide::Top), delay: 0, duration: 500, preset: (2, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: subtitle, class: C::Emphasis, start: S::WithPrevious, look: L::Spin(10_800_000), delay: 0, duration: 2000, preset: (8, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
     ];
     let saved1 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a1.clone() }]);
 
@@ -4059,8 +4259,8 @@ fn animations_effect_options_round_trip() {
 
     // 2. 効果のオプションを変更: スライドインを「左から (Left = 8)」へ変更
     let a2 = vec![
-        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fly(AnimationSide::Left), delay: 0, duration: 500, preset: (2, 8), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, path: Vec::new() },
-        Animation { shape: subtitle, class: C::Emphasis, start: S::WithPrevious, look: L::Scale(200_000, 200_000), delay: 0, duration: 2000, preset: (6, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, path: Vec::new() },
+        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fly(AnimationSide::Left), delay: 0, duration: 500, preset: (2, 8), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: subtitle, class: C::Emphasis, start: S::WithPrevious, look: L::Scale(200_000, 200_000), delay: 0, duration: 2000, preset: (6, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
     ];
     let saved2 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a2.clone() }]);
 
@@ -4076,6 +4276,64 @@ fn animations_effect_options_round_trip() {
     let re2 = &s.p().slides[0].animations;
     assert_eq!(re2[0].look, L::Fly(AnimationSide::Left));
     assert_eq!(re2[1].look, L::Scale(200_000, 200_000));
+}
+
+#[test]
+fn animations_zoom_float_wipe_round_trip() {
+    use ibis_doc_model::{Animation, AnimationClass as C, AnimationLook as L, AnimationSide, AnimationStart as S};
+    let Some(mut s) = Scenario::open("anim-zoom-float-wipe", "editing/pptx-plan.pptx") else { return };
+    let slide = s.p().slides[0].clone();
+    let (title, subtitle) = (slide.shapes[0].id, slide.shapes[1].id);
+
+    // 1. Entrance: Zoom, Float In (Top), Wipe (Bottom)
+    let a1 = vec![
+        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Zoom, delay: 0, duration: 500, preset: (24, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: subtitle, class: C::Entrance, start: S::WithPrevious, look: L::Float(AnimationSide::Top), delay: 0, duration: 1000, preset: (25, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: title, class: C::Entrance, start: S::AfterPrevious, look: L::Wipe(AnimationSide::Bottom), delay: 0, duration: 500, preset: (22, 4), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+    ];
+    let saved1 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a1 }]);
+
+    let package1 = ibis_ooxml::Package::open(saved1.clone()).unwrap();
+    let xml1 = package1.xml("ppt/slides/slide1.xml").unwrap();
+    let root1 = xml1.root_element().unwrap();
+    let zoom_node = xml1.descendants(root1).into_iter().find(|&n| xml1.is_element(n) && xml1.attr(n, "presetID") == Some("24")).expect("zoom effect");
+    assert_eq!(xml1.attr(zoom_node, "presetSubtype"), Some("0"));
+    let float_node = xml1.descendants(root1).into_iter().find(|&n| xml1.is_element(n) && xml1.attr(n, "presetID") == Some("25")).expect("float effect");
+    assert_eq!(xml1.attr(float_node, "presetSubtype"), Some("1"));
+    let wipe_node = xml1.descendants(root1).into_iter().find(|&n| xml1.is_element(n) && xml1.attr(n, "presetID") == Some("22")).expect("wipe effect");
+    assert_eq!(xml1.attr(wipe_node, "presetSubtype"), Some("4"));
+
+    s.data = saved1;
+    s.opened = ibis_pptx::open(s.data.clone()).unwrap();
+    s.document = Document::new(s.opened.presentation.clone());
+    let re1 = &s.p().slides[0].animations;
+    assert_eq!(re1[0].look, L::Zoom);
+    assert_eq!(re1[1].look, L::Float(AnimationSide::Top));
+    assert_eq!(re1[2].look, L::Wipe(AnimationSide::Bottom));
+
+    // 2. Exit: Zoom, Float Out (Bottom = Down), Wipe (Top = Up)
+    let a2 = vec![
+        Animation { shape: title, class: C::Exit, start: S::OnClick, look: L::Zoom, delay: 0, duration: 500, preset: (24, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: subtitle, class: C::Exit, start: S::WithPrevious, look: L::Float(AnimationSide::Bottom), delay: 0, duration: 1000, preset: (25, 2), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: title, class: C::Exit, start: S::AfterPrevious, look: L::Wipe(AnimationSide::Top), delay: 0, duration: 500, preset: (22, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+    ];
+    let saved2 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a2 }]);
+
+    let package2 = ibis_ooxml::Package::open(saved2.clone()).unwrap();
+    let xml2 = package2.xml("ppt/slides/slide1.xml").unwrap();
+    let root2 = xml2.root_element().unwrap();
+    let float_node2 = xml2.descendants(root2).into_iter().find(|&n| xml2.is_element(n) && xml2.attr(n, "presetID") == Some("25")).expect("float exit effect");
+    assert_eq!(xml2.attr(float_node2, "presetSubtype"), Some("2"));
+    let wipe_node2 = xml2.descendants(root2).into_iter().find(|&n| xml2.is_element(n) && xml2.attr(n, "presetID") == Some("22")).expect("wipe exit effect");
+    assert_eq!(xml2.attr(wipe_node2, "presetSubtype"), Some("1"));
+
+    s.data = saved2;
+    s.opened = ibis_pptx::open(s.data.clone()).unwrap();
+    s.document = Document::new(s.opened.presentation.clone());
+    let re2 = &s.p().slides[0].animations;
+    assert_eq!(re2[0].look, L::Zoom);
+    assert_eq!(re2[1].look, L::Float(AnimationSide::Bottom));
+    assert_eq!(re2[2].look, L::Wipe(AnimationSide::Top));
 }
 
 #[test]
@@ -4144,12 +4402,16 @@ fn custom_shows_round_trip() {
     assert_eq!(s.p().show_properties.slide_range, ShowSlideRange::Custom(0));
     assert_eq!(s.p().custom_shows, shows);
 
-    // 4. カスタムショーを空にして保存 -> custShowLst が削除されることを検証
+    // 4. カスタムショーを空にして保存 -> custShowLst が削除され、presProps.xml の dangling custShow が除去されることを検証
     let saved3 = s.run(vec![Command::SetCustomShows { custom_shows: Vec::new() }]);
     let package3 = ibis_ooxml::Package::open(saved3.clone()).unwrap();
     let xml3 = package3.xml("ppt/presentation.xml").unwrap();
     let root3 = xml3.root_element().unwrap();
     assert!(xml3.descendants(root3).into_iter().all(|n| !xml3.is_element(n) || xml3.local_name(n) != "custShowLst"));
+
+    let pres_props_xml = package3.xml("ppt/presProps.xml").unwrap();
+    let pres_props_root = pres_props_xml.root_element().unwrap();
+    assert!(pres_props_xml.descendants(pres_props_root).into_iter().all(|n| !pres_props_xml.is_element(n) || pres_props_xml.local_name(n) != "custShow"), "presProps.xml does not have dangling custShow");
 
     s.data = saved3;
     s.opened = ibis_pptx::open(s.data.clone()).unwrap();
@@ -4180,8 +4442,10 @@ fn animations_custom_path_round_trip() {
         decel: 0,
         after_effect: ibis_doc_model::AnimationAfterEffect::Hold,
         trigger: ibis_doc_model::AnimationTrigger::None,
-        paragraph: None,
+        paragraph: None, chars: None, text_unit: None,
         path: path.clone(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     }];
     let saved = s.run(vec![Command::SetAnimations { slide: slide.id, animations }]);
     let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
@@ -4203,7 +4467,7 @@ fn animations_custom_path_round_trip() {
 #[test]
 fn new_chart_ex_kinds_are_made_and_read_back() {
     use ibis_pptx::NewChartKind;
-    for (kind, layout) in [(NewChartKind::Waterfall, "waterfall"), (NewChartKind::Histogram, "clusteredColumn"), (NewChartKind::Pareto, "paretoLine"), (NewChartKind::Funnel, "funnel")] {
+    for (kind, layout) in [(NewChartKind::Waterfall, "waterfall"), (NewChartKind::Histogram, "clusteredColumn"), (NewChartKind::Pareto, "paretoLine"), (NewChartKind::Funnel, "funnel"), (NewChartKind::BoxWhisker, "boxWhisker"), (NewChartKind::Treemap, "treemap"), (NewChartKind::Sunburst, "sunburst")] {
         let Some(mut s) = Scenario::open("chart-ex-new", "editing/pptx-plan.pptx") else { return };
         let slide = s.p().slides[0].id;
         let id = s.document.ids().new_shape_id();
@@ -4221,6 +4485,14 @@ fn new_chart_ex_kinds_are_made_and_read_back() {
         assert!(package.names().any(|n| n.starts_with("ppt/embeddings/") && n.ends_with(".xlsx")), "{kind:?}: its workbook");
         let types = String::from_utf8(package.read("[Content_Types].xml").unwrap()).unwrap();
         assert!(types.contains("application/vnd.ms-office.chartex+xml"), "{kind:?}");
+        // Its style and colour style (PowerPoint and Excel do not open the chart without them).
+        let rels = package.relationships(&part).unwrap();
+        for (kind_url, content_type) in [("2011/relationships/chartStyle", "application/vnd.ms-office.chartstyle+xml"), ("2011/relationships/chartColorStyle", "application/vnd.ms-office.chartcolorstyle+xml")] {
+            let rel = rels.iter().find(|r| r.kind.ends_with(kind_url)).unwrap_or_else(|| panic!("{kind:?}: no {kind_url}"));
+            let target = ibis_ooxml::package::resolve("ppt/charts", &rel.target);
+            assert!(package.contains(&target), "{kind:?}: {target}");
+            assert_eq!(package.content_type(&target).unwrap().as_deref(), Some(content_type), "{kind:?}");
+        }
         let slide_xml = String::from_utf8(package.read("ppt/slides/slide1.xml").unwrap()).unwrap();
         assert!(slide_xml.contains("mc:AlternateContent") && slide_xml.contains("Requires=\"cx1\""), "{kind:?}");
         // Read again: a chart of that kind.
@@ -4336,7 +4608,9 @@ fn animations_motion_path_round_trip() {
         decel: 0,
         after_effect: ibis_doc_model::AnimationAfterEffect::Hold,
         trigger: ibis_doc_model::AnimationTrigger::None,
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     }];
     let saved1 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a1.clone() }]);
 
@@ -4375,7 +4649,9 @@ fn animations_motion_path_round_trip() {
         decel: 0,
         after_effect: ibis_doc_model::AnimationAfterEffect::Hold,
         trigger: ibis_doc_model::AnimationTrigger::None,
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     }];
     let saved2 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a2.clone() }]);
 
@@ -4811,6 +5087,36 @@ fn save_template_potx() {
     );
 }
 
+#[test]
+fn save_theme_thmx_round_trip() {
+    let data = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/pptx-plan.pptx")).unwrap();
+    let opened = ibis_pptx::open(data).unwrap();
+
+    // 1. .thmx (Office テーマ形式) として保存
+    let thmx_bytes = opened.source.save_theme(&opened.presentation, Some("Ibis Custom Theme")).unwrap();
+    assert!(!thmx_bytes.is_empty());
+
+    // 2. OOXML パッケージ構造の検証
+    let thmx_pkg = ibis_ooxml::Package::open(thmx_bytes).unwrap();
+    let ct = thmx_pkg.content_type("theme/theme/theme1.xml").unwrap();
+    assert_eq!(
+        ct.as_deref(),
+        Some("application/vnd.openxmlformats-officedocument.theme+xml")
+    );
+    let mgr_ct = thmx_pkg.content_type("theme/theme/themeManager.xml").unwrap();
+    assert_eq!(
+        mgr_ct.as_deref(),
+        Some("application/vnd.openxmlformats-officedocument.themeManager+xml")
+    );
+
+    // 3. テーマ XML の中身を検証
+    let theme_xml = String::from_utf8(thmx_pkg.read("theme/theme/theme1.xml").unwrap()).unwrap();
+    assert!(theme_xml.contains("Ibis Custom Theme"));
+    assert!(theme_xml.contains("<a:theme"));
+    assert!(theme_xml.contains("<a:clrScheme"));
+}
+
+
 /// 最終版としてマーク（Mark as Final）および読み取り専用を推奨（ReadOnlyRecommended）の
 /// 設定・保存・OOXML検証・再読込・解除のラウンドトリップ検証。
 #[test]
@@ -5092,8 +5398,7 @@ fn insert_and_save_svg_picture_round_trip() {
         soft_edge: None,
         alt_text: Default::default(),
         decorative: false,
-        name: String::new(),
-    };
+        name: String::new(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None };
     let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
     let index = s.p().slides[0].shapes.len();
     let saved = s.run(vec![Command::InsertShape { slide, index, shape }]);
@@ -5438,7 +5743,9 @@ fn test_animation_repeat_and_autoreverse_round_trip() {
         decel: 0,
         after_effect: ibis_doc_model::AnimationAfterEffect::Hold,
         trigger: ibis_doc_model::AnimationTrigger::None,
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     };
     let saved = s.run(vec![Command::SetAnimations { slide, animations: vec![anim.clone()] }]);
 
@@ -5520,7 +5827,9 @@ fn test_animation_smooth_start_and_end_round_trip() {
         decel: 50_000,
         after_effect: ibis_doc_model::AnimationAfterEffect::Hold,
         trigger: ibis_doc_model::AnimationTrigger::None,
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     };
     let saved = s.run(vec![Command::SetAnimations { slide, animations: vec![anim.clone()] }]);
 
@@ -5604,7 +5913,9 @@ fn test_animation_after_effect_round_trip() {
         decel: 0,
         after_effect: ibis_doc_model::AnimationAfterEffect::Hide,
         trigger: ibis_doc_model::AnimationTrigger::None,
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     };
     let saved = s.run(vec![Command::SetAnimations { slide, animations: vec![anim.clone()] }]);
 
@@ -5660,7 +5971,9 @@ fn test_animation_rewind_round_trip() {
         decel: 0,
         after_effect: ibis_doc_model::AnimationAfterEffect::Hold,
         trigger: ibis_doc_model::AnimationTrigger::None,
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     };
     let saved = s.run(vec![Command::SetAnimations { slide, animations: vec![anim.clone()] }]);
 
@@ -5717,7 +6030,9 @@ fn test_animation_triggers_round_trip() {
         decel: 0,
         after_effect: ibis_doc_model::AnimationAfterEffect::Hold,
         trigger: ibis_doc_model::AnimationTrigger::None,
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     };
     let anim_click_trigger = ibis_doc_model::Animation {
         shape: shape_target1,
@@ -5734,7 +6049,9 @@ fn test_animation_triggers_round_trip() {
         decel: 0,
         after_effect: ibis_doc_model::AnimationAfterEffect::Hold,
         trigger: ibis_doc_model::AnimationTrigger::OnShapeClick(shape_trigger),
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     };
     let anim_bmk_trigger = ibis_doc_model::Animation {
         shape: shape_trigger,
@@ -5754,7 +6071,9 @@ fn test_animation_triggers_round_trip() {
             shape: shape_trigger,
             bookmark: "Bookmark 1".to_string(),
         },
-        paragraph: None, path: Vec::new(),
+        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+        chart_element: None, chart_build: None,
+        dgm_element: None, dgm_build: None,
     };
 
     let anims = vec![anim_normal.clone(), anim_click_trigger.clone(), anim_bmk_trigger.clone()];
@@ -6406,6 +6725,107 @@ fn test_connectors_insert_save_and_round_trip() {
 }
 
 #[test]
+fn test_connector_glue_and_follow_round_trip() {
+    let Some(mut s) = Scenario::open("connectors-glue-round-trip", "editing/pptx-plan.pptx") else { return };
+    let slide = s.p().slides[0].id;
+
+    // 1. 2つの図形（四角形 rect_a と round_rect_b）を作成
+    let a_id = s.document.ids().new_shape_id();
+    let a_frame = EmuRect::new(100_000, 100_000, 1_000_000, 600_000);
+    let a_geom = ibis_pptx::preset_geometry("rect").expect("rect preset");
+    let a_auto = AutoShape::new(a_geom, Fill::Solid(Color::opaque(Rgb(0x4472c4))), Some(Stroke::solid(Color::opaque(Rgb(0x000000)), 12_700)));
+    let a_shape = Shape::new(a_id, a_frame, ShapeKind::Auto(a_auto));
+
+    let b_id = s.document.ids().new_shape_id();
+    let b_frame = EmuRect::new(4_000_000, 2_000_000, 1_000_000, 600_000);
+    let b_geom = ibis_pptx::preset_geometry("roundRect").expect("roundRect preset");
+    let b_auto = AutoShape::new(b_geom, Fill::Solid(Color::opaque(Rgb(0xed7d31))), Some(Stroke::solid(Color::opaque(Rgb(0x000000)), 12_700)));
+    let b_shape = Shape::new(b_id, b_frame, ShapeKind::Auto(b_auto));
+
+    // 2. カギ線コネクタ（bentConnector3）を a の右接続点 (3) から b の左接続点 (1) に作成
+    // aの右 (site 3): (1_100_000, 400_000), bの左 (site 1): (4_000_000, 2_300_000)
+    let c_id = s.document.ids().new_shape_id();
+    let (c_frame, c_fh, c_fv) = ibis_doc_model::connector::frame_between((1_100_000, 400_000), (4_000_000, 2_300_000));
+    let mut c_stroke = Stroke::solid(Color::opaque(Rgb(0x70ad47)), 25_400);
+    c_stroke.tail = LineEnd::Triangle(ibis_doc_model::EndSize { width: 1, length: 1 });
+    let c_geom = ibis_pptx::preset_geometry("bentConnector3").expect("bentConnector3 preset");
+    let c_auto = AutoShape::new(c_geom, Fill::None, Some(c_stroke));
+    let mut c_shape = Shape::new(c_id, c_frame, ShapeKind::Auto(c_auto));
+    c_shape.flip_h = c_fh;
+    c_shape.flip_v = c_fv;
+
+    let count = s.p().slides[0].shapes.len();
+    let glue = ibis_doc_model::Glue {
+        start: Some((a_id.0, 3)),
+        end: Some((b_id.0, 1)),
+    };
+    let saved_bytes = s.run(vec![
+        Command::InsertShape { slide, shape: a_shape, index: count },
+        Command::InsertShape { slide, shape: b_shape, index: count + 1 },
+        Command::InsertShape { slide, shape: c_shape, index: count + 2 },
+        Command::SetShapeGlue { slide, shape: c_id, glue: Some(glue) },
+    ]);
+
+    // 3. OOXML XML の検証: slide1.xml に stCxn と endCxn が書き出されていること
+    let pkg = ibis_ooxml::Package::open(saved_bytes.clone()).expect("open package");
+    let slide_xml = String::from_utf8(pkg.read("ppt/slides/slide1.xml").expect("read slide1.xml")).unwrap();
+    assert!(slide_xml.contains("<a:stCxn"), "slide1.xml should contain <a:stCxn");
+    assert!(slide_xml.contains("<a:endCxn"), "slide1.xml should contain <a:endCxn");
+    assert!(slide_xml.contains(r#"idx="3""#), "stCxn idx should be 3");
+    assert!(slide_xml.contains(r#"idx="1""#), "endCxn idx should be 1");
+
+    // 4. 再読込での保持検証
+    let reopened = ibis_pptx::open(saved_bytes.clone()).expect("reopen presentation");
+    let r_slide = &reopened.presentation.slides[0];
+    let r_a = &r_slide.shapes[count];
+    let r_b = &r_slide.shapes[count + 1];
+    let r_c = &r_slide.shapes[count + 2];
+    assert!(r_slide.shape_glues.contains_key(&r_c.id), "r_c glue must be preserved");
+    let r_glue = r_slide.shape_glues.get(&r_c.id).unwrap();
+    assert_eq!(r_glue.start, Some((r_a.id.0, 3)), "start glue preserved");
+    assert_eq!(r_glue.end, Some((r_b.id.0, 1)), "end glue preserved");
+
+    // 5. 図形 B を下方 (y: 2_000_000 -> 3_500_000) へ移動し、コネクタが追従
+    let new_b_frame = EmuRect::new(4_000_000, 3_500_000, 1_000_000, 600_000);
+    // 追従計算
+    let mut updated_shapes = s.p().slides[0].shapes.clone();
+    for sh in &mut updated_shapes {
+        if sh.id == b_id {
+            sh.frame = new_b_frame;
+        }
+    }
+    let rerouted = ibis_doc_model::connector::rerouted_on_slide(&updated_shapes, &s.p().slides[0].shape_glues);
+    assert_eq!(rerouted.len(), 1, "connector C should be rerouted");
+    let (cid, new_c_frame, new_cfh, new_cfv) = rerouted[0];
+    assert_eq!(cid, c_id);
+
+    let saved_moved = s.run(vec![
+        Command::SetFrame { slide, shape: b_id, frame: new_b_frame },
+        Command::SetConnectorFrame { slide, shape: c_id, frame: new_c_frame, flip_h: new_cfh, flip_v: new_cfv },
+    ]);
+
+    // 移動後の再読込検証
+    let reopened_moved = ibis_pptx::open(saved_moved).expect("reopen moved");
+    let rm_slide = &reopened_moved.presentation.slides[0];
+    let rm_a = &rm_slide.shapes[count];
+    let rm_b = &rm_slide.shapes[count + 1];
+    let rm_c = &rm_slide.shapes[count + 2];
+    assert_eq!(rm_c.frame, new_c_frame, "connector frame updated");
+    let rm_glue = rm_slide.shape_glues.get(&rm_c.id).unwrap();
+    assert_eq!(rm_glue.start, Some((rm_a.id.0, 3)), "glue start preserved after move");
+    assert_eq!(rm_glue.end, Some((rm_b.id.0, 1)), "glue end preserved after move");
+
+    // 6. Undo/Redo の検証
+    assert!(s.document.undo());
+    assert_eq!(s.p().slides[0].shape(b_id).unwrap().frame, b_frame, "b frame restored on undo");
+    assert_eq!(s.p().slides[0].shape(c_id).unwrap().frame, c_frame, "c frame restored on undo");
+
+    assert!(s.document.redo());
+    assert_eq!(s.p().slides[0].shape(b_id).unwrap().frame, new_b_frame, "b frame restored on redo");
+    assert_eq!(s.p().slides[0].shape(c_id).unwrap().frame, new_c_frame, "c frame restored on redo");
+}
+
+#[test]
 fn test_media_playback_options_round_trip() {
     use ibis_doc_model::{Clip, ClipOptions, MediaStart, MediaVolume};
 
@@ -6452,8 +6872,7 @@ fn test_media_playback_options_round_trip() {
             soft_edge: None,
             alt_text: Default::default(),
             decorative: false,
-            name: "Video 1".to_string(),
-        }),
+            name: "Video 1".to_string(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None }),
     );
 
     // 3. 音声図形（クリック時、音量ミュート、ループなし、巻き戻しなし、スライドショー実行中非表示、スライド切り替え後も再生）
@@ -6491,8 +6910,7 @@ fn test_media_playback_options_round_trip() {
             soft_edge: None,
             alt_text: Default::default(),
             decorative: false,
-            name: "Audio 1".to_string(),
-        }),
+            name: "Audio 1".to_string(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None }),
     );
 
     // 4. 図形を挿入して保存
@@ -6754,8 +7172,7 @@ fn test_media_trim_and_fade_options_round_trip() {
             soft_edge: None,
             alt_text: Default::default(),
             decorative: false,
-            name: "Video 1".to_string(),
-        }),
+            name: "Video 1".to_string(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None }),
     );
 
     let audio_clip = Clip {
@@ -6786,8 +7203,7 @@ fn test_media_trim_and_fade_options_round_trip() {
             soft_edge: None,
             alt_text: Default::default(),
             decorative: false,
-            name: "Audio 1".to_string(),
-        }),
+            name: "Audio 1".to_string(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None }),
     );
 
     s.run(vec![
@@ -6956,8 +7372,7 @@ fn test_media_bookmarks_round_trip() {
             soft_edge: None,
             alt_text: Default::default(),
             decorative: false,
-            name: "Video 1".to_string(),
-        }),
+            name: "Video 1".to_string(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None }),
     );
 
     let audio_clip = Clip {
@@ -6988,8 +7403,7 @@ fn test_media_bookmarks_round_trip() {
             soft_edge: None,
             alt_text: Default::default(),
             decorative: false,
-            name: "Audio 1".to_string(),
-        }),
+            name: "Audio 1".to_string(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None }),
     );
 
     s.run(vec![
@@ -7137,8 +7551,7 @@ fn test_media_captions_round_trip() {
             soft_edge: None,
             alt_text: Default::default(),
             decorative: false,
-            name: "Video 1".to_string(),
-        }),
+            name: "Video 1".to_string(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None }),
     );
 
     let saved = s.run(vec![
@@ -7254,8 +7667,7 @@ fn test_video_border_shape_and_effects_round_trip() {
             soft_edge: Some(soft_edge),
             alt_text: Default::default(),
             decorative: false,
-            name: "Styled Video".to_string(),
-        }),
+            name: "Styled Video".to_string(), ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None }),
     );
 
     let saved_bytes = s.run(vec![
@@ -7589,8 +8001,7 @@ fn test_insert_icon_save_and_round_trip() {
         name: name.clone(),
         shadow: None,
         reflection: None,
-        soft_edge: None,
-    };
+        soft_edge: None, ole: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None };
     let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
 
     // 3. スライドへ挿入・保存
@@ -7734,6 +8145,88 @@ fn test_keep_slideshow_ink_shapes_round_trip() {
     assert_eq!(s.p().slides[0].shapes.len(), base_count);
     s.document.redo();
     assert_eq!(s.p().slides[0].shapes.len(), base_count + 2);
+}
+
+/// インク手描きの鉛筆ツール（PPTX-INK-001）:
+/// 鉛筆ストローク（細線 0.5pt = 6,350 EMU、半透明グラファイト調 alpha: 192）から生成されたカスタム手描き図形を挿入し、
+/// DrawingML <a:custGeom> 保存、色・線幅・半透明度・座標の再読込保持、Undo/Redo を検証する。
+#[test]
+fn test_pencil_ink_shape_round_trip() {
+    let Some(mut s) = Scenario::open("pencil-ink", "editing/pptx-plan.pptx") else { return };
+    let slide = s.p().slides[0].id;
+    let base_count = s.p().slides[0].shapes.len();
+
+    let make_ink_shape = |id: ShapeId, frame: EmuRect, points: &[(i64, i64)], stroke: ibis_doc_model::Stroke| {
+        let ops = points.iter().enumerate().map(|(i, &(x, y))| {
+            if i == 0 {
+                ibis_doc_model::PathOp::MoveTo(x.to_string(), y.to_string())
+            } else {
+                ibis_doc_model::PathOp::LineTo(x.to_string(), y.to_string())
+            }
+        }).collect();
+        let path = ibis_doc_model::GeometryPath {
+            width: frame.width,
+            height: frame.height,
+            fill: ibis_doc_model::PathFill::None,
+            stroke: true,
+            ops,
+        };
+        let def = ibis_doc_model::GeometryDef {
+            adjust: Vec::new(),
+            guides: Vec::new(),
+            paths: vec![path],
+            text_rect: None,
+        };
+        let geom = ibis_doc_model::FormulaGeometry {
+            preset: None,
+            adjust: Vec::new(),
+            def: std::sync::Arc::new(def),
+        };
+        let auto = ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Formula(geom), ibis_doc_model::Fill::None, Some(stroke));
+        Shape::new(id, frame, ShapeKind::Auto(auto))
+    };
+
+    // 鉛筆インク図形（グラファイトグレー 0x404040、半透明 192、0.5pt = 6,350 EMU）
+    let pencil_id = s.document.ids().new_shape_id();
+    let pencil_frame = EmuRect::new(1_200_000, 1_200_000, 1_800_000, 1_000_000);
+    let pencil_points = vec![(0, 0), (600_000, 500_000), (1_200_000, 300_000), (1_800_000, 1_000_000)];
+    let mut pencil_stroke = ibis_doc_model::Stroke::solid(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0x404040), alpha: 192 }, 6_350);
+    pencil_stroke.cap = ibis_doc_model::LineCap::Round;
+    pencil_stroke.join = ibis_doc_model::LineJoin::Round;
+    let pencil_shape = make_ink_shape(pencil_id, pencil_frame, &pencil_points, pencil_stroke);
+
+    // スライドへ挿入
+    let saved = s.run(vec![
+        Command::InsertShape { slide, index: base_count, shape: pencil_shape },
+    ]);
+
+    // OOXML XML検証
+    let pkg = ibis_ooxml::Package::open(saved.clone()).expect("open package");
+    let xml = String::from_utf8(pkg.read("ppt/slides/slide1.xml").unwrap()).unwrap();
+    assert!(xml.contains("custGeom"), "must contain custGeom");
+    assert!(xml.contains("moveTo"), "must contain moveTo");
+    assert!(xml.contains("lnTo"), "must contain lnTo");
+    assert!(xml.contains("404040"), "must contain pencil graphite color");
+
+    // 再読込ラウンドトリップ検証
+    let reopened = ibis_pptx::open(saved).expect("reopen pptx");
+    let re_shapes = &reopened.presentation.slides[0].shapes;
+    assert_eq!(re_shapes.len(), base_count + 1);
+
+    let re_pencil = &re_shapes[base_count];
+    assert_eq!(re_pencil.frame, pencil_frame);
+    let ShapeKind::Auto(re_pencil_auto) = &re_pencil.kind else { panic!("must be AutoShape") };
+    assert!(re_pencil_auto.stroke.is_some());
+    let stroke = re_pencil_auto.stroke.as_ref().unwrap();
+    assert_eq!(stroke.color.rgb, ibis_doc_model::Rgb(0x404040));
+    assert_eq!(stroke.color.alpha, 192, "pencil stroke must preserve 75% opacity (alpha 192)");
+    assert_eq!(stroke.width, 6_350, "pencil stroke width must be 0.5pt (6,350 EMU)");
+
+    // Undo / Redo
+    s.document.undo();
+    assert_eq!(s.p().slides[0].shapes.len(), base_count);
+    s.document.redo();
+    assert_eq!(s.p().slides[0].shapes.len(), base_count + 1);
 }
 
 /// スライド ズーム機能（PPTX-TRANS-014）:
@@ -8836,6 +9329,10 @@ fn notes_header_and_footer() {
         let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
         let pages = package.names().filter(|n| n.starts_with("ppt/notesSlides/notesSlide") && n.ends_with(".xml")).count();
         assert_eq!(pages, again.slides.len(), "{file}: a notes page for each slide");
+        // The handout master's places say the same (the handout prints them in its margins).
+        let handout = package.names().find(|n| n.starts_with("ppt/handoutMasters/handoutMaster") && n.ends_with(".xml")).map(str::to_string).expect("a handout master");
+        let handout_xml = String::from_utf8(package.read(&handout).unwrap()).unwrap();
+        assert!(handout_xml.contains("社外秘") && handout_xml.contains("2026/10/10") && handout_xml.contains("ヘッダー &amp; &lt;1&gt;"), "{file}: {handout_xml}");
         // Changed (the date a field), then the footer and number taken away.
         let changed = NotesMarks { header: None, date: Some(NotesDate::Auto("2026/10/10".into())), footer: None, number: false };
         s.run(vec![Command::SetNotesMarks { marks: changed.clone() }]);
@@ -8896,6 +9393,8 @@ fn linked_video_round_trip() {
         alt_text: Default::default(),
         decorative: false,
         name: String::new(),
+        ole: None, geometry: None,
+        effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None,
     };
     let index = s.p().slides[0].shapes.len();
     let shape = Shape::new(id, EmuRect::new(1_000_000, 1_000_000, 3_200_000, 1_800_000), ShapeKind::Picture(picture));
@@ -8923,3 +9422,174 @@ fn linked_video_round_trip() {
     let reopened = ibis_pptx::open(saved.clone()).unwrap();
     assert!(reopened.source.save(&reopened.presentation, SaveOptions::default()).unwrap() == saved, "an unchanged save keeps the file");
 }
+
+/// スクリーンショット挿入 (Insert Screenshot / Window Snapshot):
+/// verifies that `ibis_pptx::screenshot_snapshot` produces a valid PNG,
+/// that inserting it as a picture shape saves correctly as `<p:pic>` with `image*.png` in media,
+/// and that reading back the saved presentation preserves the picture shape and dimensions.
+#[test]
+fn test_insert_screenshot_and_save_round_trip() {
+    let Some(mut s) = Scenario::open("screenshot", "editing/pptx-plan.pptx") else { return };
+    let slide = s.p().slides[0].id;
+    let (png_bytes, width, height) = ibis_pptx::screenshot_snapshot(640, 360);
+    assert_eq!(&png_bytes[0..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], "valid PNG header");
+    assert_eq!(width, 640);
+    assert_eq!(height, 360);
+
+    let media_id = s.document.ids().add_media(MediaFormat::Png, png_bytes.clone());
+    let shape_id = s.document.ids().new_shape_id();
+    let emu_w = 640 * 9525;
+    let emu_h = 360 * 9525;
+    let picture = Picture {
+        media: media_id,
+        crop: Default::default(),
+        stroke: None,
+        corner: 0,
+        duotone: None,
+        clear: None,
+        luminance: None,
+        clip: None,
+        shadow: None,
+        reflection: None,
+        soft_edge: None,
+        alt_text: Default::default(),
+        decorative: false,
+        name: "Screenshot_Window.png".into(),
+        geometry: None,
+        effects: Default::default(),
+        tile: None,
+        fill_rect: None,
+        artistic_effect: None,
+        ole: None,
+    };
+    let index = s.p().slides[0].shapes.len();
+    let shape = Shape::new(shape_id, EmuRect::new(1_000_000, 1_000_000, emu_w, emu_h), ShapeKind::Picture(picture));
+
+    let saved = s.run(vec![Command::InsertShape { slide, index, shape }]);
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let xml = String::from_utf8(package.read("ppt/slides/slide1.xml").unwrap()).unwrap();
+    assert!(xml.contains("<p:pic>") || xml.contains("<p:pic "), "{xml}");
+    assert!(xml.contains("Screenshot_Window.png") || xml.contains("descr=\"\""), "{xml}");
+
+    let has_image_png = package.names().any(|n| n.starts_with("ppt/media/image") && n.ends_with(".png"));
+    assert!(has_image_png, "package contains saved screenshot media png");
+
+    let again = ibis_pptx::read(&saved).unwrap();
+    let read_pic = again.slides[0].shapes.iter().find(|sh| sh.frame == EmuRect::new(1_000_000, 1_000_000, emu_w, emu_h)).expect("the screenshot shape");
+    assert_eq!(read_pic.frame, EmuRect::new(1_000_000, 1_000_000, emu_w, emu_h));
+    match &read_pic.kind {
+        ShapeKind::Picture(p) => {
+            let m = again.media(p.media).expect("media present");
+            assert_eq!(&*m.data, png_bytes.as_slice(), "media bytes match screenshot snapshot");
+        }
+        _ => panic!("expected Picture shape"),
+    }
+}
+
+#[test]
+fn numbered_list_start_at_round_trip() {
+    use ibis_doc_model::{ListKind, ParagraphFormat};
+    let Some(mut s) = Scenario::open("numbered-start-at", "editing/pptx-plan.pptx") else { return };
+    let (slide, shape, text) = text_shapes(s.p(), 2).into_iter().next().unwrap();
+    let original = s.p().clone();
+
+    // 1. Apply numbered list starting at 5.
+    let cmd = Command::SetParagraphFormat {
+        slide,
+        shape,
+        start: 0,
+        end: text.chars().count(),
+        format: ParagraphFormat {
+            list: Some(ListKind::Numbered),
+            start_at: Some(5),
+            ..Default::default()
+        },
+    };
+    let slide_idx = s.p().slide_index(slide).unwrap() + 1;
+    let saved = s.run(vec![cmd]);
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let xml = String::from_utf8(package.read(&format!("ppt/slides/slide{slide_idx}.xml")).unwrap()).unwrap();
+    assert!(xml.contains("startAt=\"5\""), "OOXML contains startAt=\"5\": {xml}");
+
+    let reopened = ibis_pptx::read(&saved).unwrap();
+    let body = reopened.slide(slide).unwrap().shape(shape).unwrap().text_body().unwrap();
+    assert_eq!(body.paragraphs[0].bullet.as_ref().unwrap().text, "5.");
+    assert_eq!(body.paragraphs[0].bullet.as_ref().unwrap().auto.as_ref().unwrap().start_at, 5);
+    if body.paragraphs.len() > 1 {
+        assert_eq!(body.paragraphs[1].bullet.as_ref().unwrap().text, "6.");
+    }
+
+    // 2. Change start_at to 10.
+    let cmd_update = Command::SetParagraphFormat {
+        slide,
+        shape,
+        start: 0,
+        end: text.chars().count(),
+        format: ParagraphFormat {
+            start_at: Some(10),
+            ..Default::default()
+        },
+    };
+    let saved10 = s.run(vec![cmd_update]);
+    let package10 = ibis_ooxml::Package::open(saved10.clone()).unwrap();
+    let xml10 = String::from_utf8(package10.read(&format!("ppt/slides/slide{slide_idx}.xml")).unwrap()).unwrap();
+    assert!(xml10.contains("startAt=\"10\""), "OOXML contains startAt=\"10\": {xml10}");
+
+    let reopened10 = ibis_pptx::read(&saved10).unwrap();
+    let body10 = reopened10.slide(slide).unwrap().shape(shape).unwrap().text_body().unwrap();
+    assert_eq!(body10.paragraphs[0].bullet.as_ref().unwrap().text, "10.");
+    assert_eq!(body10.paragraphs[0].bullet.as_ref().unwrap().auto.as_ref().unwrap().start_at, 10);
+    if body10.paragraphs.len() > 1 {
+        assert_eq!(body10.paragraphs[1].bullet.as_ref().unwrap().text, "11.");
+    }
+
+    // 3. Undo round trip
+    assert!(s.document.undo());
+    assert!(s.document.undo());
+    assert_eq!(s.p(), &original, "undo returns to original state");
+}
+
+#[test]
+fn slide_sldimg_and_hdr_placeholder_roundtrip() {
+    let base = ibis_pptx::blank_file(ibis_pptx::Kind::Presentation).unwrap();
+    let mut pkg = ibis_ooxml::Package::open(base).unwrap();
+    let slide_xml = String::from_utf8(pkg.read("ppt/slides/slide1.xml").unwrap()).unwrap();
+    let extra_shapes = concat!(
+        r#"<p:sp><p:nvSpPr><p:cNvPr id="30" name="sldImgPh"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg" idx="10"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="4000000" cy="3000000"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="ja-JP" dirty="0"/><a:t>プレースホルダー sldImg</a:t></a:r></a:p></p:txBody></p:sp>"#,
+        r#"<p:sp><p:nvSpPr><p:cNvPr id="31" name="hdrPh"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="hdr" idx="11"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="5000000" y="914400"/><a:ext cx="4000000" cy="3000000"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="ja-JP" dirty="0"/><a:t>プレースホルダー hdr</a:t></a:r></a:p></p:txBody></p:sp>"#,
+        r#"<p:sp><p:nvSpPr><p:cNvPr id="32" name="minimalSldImg"/><p:cNvSpPr/><p:nvPr><p:ph type="sldImg" idx="12"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>"#,
+        r#"<p:sp><p:nvSpPr><p:cNvPr id="33" name="minimalHdr"/><p:cNvSpPr/><p:nvPr><p:ph type="hdr" idx="13"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>"#,
+    );
+    let slide_xml = slide_xml.replacen("</p:spTree>", &format!("{extra_shapes}</p:spTree>"), 1);
+    pkg.set_bytes("ppt/slides/slide1.xml", slide_xml.into_bytes());
+    let bytes = pkg.save(SaveOptions::default()).unwrap();
+
+    let opened = ibis_pptx::open(bytes).unwrap();
+    let slide = &opened.presentation.slides[0];
+    let sld_img_id = *slide.placeholders.iter().find(|(_, p)| p.placeholder.kind.as_deref() == Some("sldImg") && p.placeholder.index.as_deref() == Some("10")).expect("sldImg placeholder read").0;
+    let hdr_id = *slide.placeholders.iter().find(|(_, p)| p.placeholder.kind.as_deref() == Some("hdr") && p.placeholder.index.as_deref() == Some("11")).expect("hdr placeholder read").0;
+
+    let mut doc = Document::new(opened.presentation.clone());
+    doc.execute(vec![Command::EditText {
+        slide: slide.id,
+        shape: sld_img_id,
+        at: 0,
+        remove: 0,
+        insert: "!".into(),
+    }]).unwrap();
+
+    let saved = opened.source.save(doc.presentation(), SaveOptions::default()).unwrap();
+    let saved_pkg = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let saved_xml = String::from_utf8(saved_pkg.read("ppt/slides/slide1.xml").unwrap()).unwrap();
+    assert!(saved_xml.contains(r#"type="sldImg" idx="10""#), "sldImg placeholder preserved: {saved_xml}");
+    assert!(saved_xml.contains(r#"type="hdr" idx="11""#), "hdr placeholder preserved: {saved_xml}");
+    assert!(saved_xml.contains(r#"type="sldImg" idx="12""#), "minimal sldImg placeholder preserved: {saved_xml}");
+    assert!(saved_xml.contains(r#"type="hdr" idx="13""#), "minimal hdr placeholder preserved: {saved_xml}");
+
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let r_slide = &reread.slides[0];
+    assert_eq!(r_slide.shape(sld_img_id).unwrap().text_body().unwrap().text(), "!プレースホルダー sldImg");
+    assert_eq!(r_slide.shape(hdr_id).unwrap().text_body().unwrap().text(), "プレースホルダー hdr");
+}
+
+

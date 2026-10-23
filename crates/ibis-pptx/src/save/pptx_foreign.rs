@@ -33,10 +33,16 @@ pub struct ForeignSlide {
 }
 
 /// Relationships not carried over: the layout (this presentation's is
-/// used), the notes page and comments.
+/// used), the notes page, comments, and customer data (customXml).
 fn left_behind(kind: &str) -> bool {
     let name = kind.rsplit('/').next().unwrap_or("");
-    matches!(name, "slideLayout" | "notesSlide" | "comments" | "commentAuthors" | "authors")
+    matches!(name, "slideLayout" | "notesSlide" | "comments" | "commentAuthors" | "authors" | "customXml" | "customXmlProps")
+}
+
+/// Relationships that should never be copied across parts (package-level customer data, comments).
+fn unneeded_rel(kind: &str) -> bool {
+    let name = kind.rsplit('/').next().unwrap_or("");
+    matches!(name, "comments" | "commentAuthors" | "authors" | "customXml" | "customXmlProps")
 }
 
 /// Copy part `from` of `src` into `dest` (a new name like it), with the
@@ -53,6 +59,9 @@ fn copy_across(src: &Package, from: &str, dest: &mut Package, copies: &mut HashM
     }
     let mut renamed: HashMap<String, String> = HashMap::new();
     for rel in src.relationships(from)? {
+        if unneeded_rel(&rel.kind) {
+            continue;
+        }
         let new_id = if rel.external {
             dest.add_relationship(&to, &rel.kind, &rel.target, true)?
         } else {
@@ -66,12 +75,28 @@ fn copy_across(src: &Package, from: &str, dest: &mut Package, copies: &mut HashM
         renamed.insert(rel.id.clone(), new_id);
     }
     // An XML part names its relationships by id: the new ones.
-    if !renamed.is_empty() && ibis_ooxml::package::is_xml_name(&to) {
+    if ibis_ooxml::package::is_xml_name(&to) {
         let mut doc = dest.xml(&to)?;
-        rename_ids(&mut doc, &renamed);
+        if !renamed.is_empty() {
+            rename_ids(&mut doc, &renamed);
+        }
+        strip_cust_data(&mut doc);
         dest.set_xml(&to, doc);
     }
     Ok(to)
+}
+
+/// Remove customer data (`custDataLst`) elements whose `customXml` relationships are not copied.
+fn strip_cust_data(doc: &mut XmlDocument) {
+    let Some(root) = doc.root_element() else { return };
+    let cust_nodes: Vec<NodeId> = doc
+        .descendants(root)
+        .into_iter()
+        .filter(|&e| doc.is_element(e) && doc.name(e).split_once(':').map_or(doc.name(e), |(_, n)| n) == "custDataLst")
+        .collect();
+    for e in cust_nodes {
+        doc.detach(e);
+    }
 }
 
 /// Every relationship id (`r:id`, `r:embed`, `r:dm`, …) in `doc` renamed.
@@ -191,6 +216,7 @@ pub(crate) fn foreign_slide_part(dest: &mut Package, presentation: &str, layout:
     }
     dest.add_relationship(part, REL_SLIDE_LAYOUT, &relative(part, &layout), false)?;
     rename_ids(&mut doc, &renamed);
+    strip_cust_data(&mut doc);
     // The threaded comments' reference goes with them.
     if let Some(root) = doc.root_element()
         && let Some(list) = doc.child(root, "extLst")

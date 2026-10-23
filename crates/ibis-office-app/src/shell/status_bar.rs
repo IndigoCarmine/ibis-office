@@ -10,7 +10,7 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarHandle};
 use gpui_kit::component::slider::Slider;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -27,6 +27,7 @@ impl SlideEditor {
             (Tool::TextBox, _, _) => crate::shell::i18n::text("status.hint.textbox"),
             (_, true, _) => crate::shell::i18n::text("status.hint.esc"),
             (_, _, Some(status)) => status.clone(),
+            _ if crate::render::web_image::curl_missing_notice() => "xlsx.image.curl-missing".into(),
             _ => "".into(),
         };
         // In the UI's language (the tables' texts by the Japanese one).
@@ -131,27 +132,16 @@ impl SlideEditor {
                 }
             }))
             .child(
-                Button::new("zoom-out")
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Minus)
-                    .tooltip(crate::shell::i18n::text("view.zoom-out"))
-                    .disabled(at_min)
-                    .on_click(cx.listener(|this, _, window, cx| this.step_zoom(false, window, cx))),
+                zoom_step_button("zoom-out", IconName::Minus, "view.zoom-out", at_min)
+                    .when(!at_min, |d| d.on_click(cx.listener(|this, _, window, cx| this.step_zoom(false, window, cx)))),
             )
             .child(div().w(px(120.)).child(Slider::new(&self.zoom_slider)))
             .child(
-                Button::new("zoom-in")
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Plus)
-                    .tooltip(crate::shell::i18n::text("view.zoom-in"))
-                    .disabled(at_max)
-                    .on_click(cx.listener(|this, _, window, cx| this.step_zoom(true, window, cx))),
+                zoom_step_button("zoom-in", IconName::Plus, "view.zoom-in", at_max)
+                    .when(!at_max, |d| d.on_click(cx.listener(|this, _, window, cx| this.step_zoom(true, window, cx)))),
             )
-            .child(div().w(px(36.)).ml_1().text_right().child(SharedString::from(format!("{:.0}%", zoom * 100.0))))
             .child(self.render_zoom_menu(cx))
-            .child(
+            .when(with_format!(self, CAN_FIT), |d| d.child(
                 Button::new("zoom-fit")
                     .ghost()
                     .xsmall()
@@ -159,10 +149,10 @@ impl SlideEditor {
                     .tooltip(crate::shell::i18n::text(with_format!(self, FIT_TOOLTIP)))
                     .selected(self.zoom.is_none())
                     .on_click(cx.listener(|this, _, window, cx| this.set_zoom(None, window, cx))),
-            )
+            ))
     }
 
-    /// ▲ by the percentage, and the list of zooms it opens upwards: the
+    /// The percentage with the pulldown's arrow (up: the list opens upwards), as one button, and the list of zooms it opens: the
     /// zooms of `zoom_levels`, 「指定」 (a zoom typed in), and 「画面にフィット」
     /// (not for a worksheet, which is not fitted from here).
     fn render_zoom_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -181,7 +171,7 @@ impl SlideEditor {
             .anchor(Anchor::BottomRight)
             .open(self.zoom_menu_open)
             .on_open_change(on_open_change)
-            .trigger(Button::new("zoom-menu-button").ghost().xsmall().label("▲").tooltip(crate::shell::i18n::text("view.zoom-menu")))
+            .trigger(ZoomTrigger { percent: format!("{:.0}%", self.current_zoom() * 100.0).into(), selected: false, bounds: self.zoom_trigger_bounds.clone() })
             .p_1()
             .min_w(px(132.))
             .content(move |_, _, cx| {
@@ -247,6 +237,65 @@ impl SlideEditor {
         }
         self.zoom_menu_open = open;
         cx.notify();
+    }
+}
+
+/// The − / + button of the zoom: the same hover (and size) as the percentage's button beside it.
+fn zoom_step_button(id: &'static str, icon: IconName, tooltip: &'static str, disabled: bool) -> Stateful<Div> {
+    let hover = hsla(0.0, 0.0, 0.27, 0.08);
+    div()
+        .id(id)
+        .size(px(22.))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
+        .when(!disabled, |d| d.cursor_pointer().hover(move |s| s.bg(hover)))
+        .child(gpui_kit::component::Icon::new(icon).size(px(14.)).when(disabled, |i| i.opacity(0.4)))
+        .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text(tooltip)).build(window, cx))
+}
+
+/// The zoom percentage with the toolbar's pulldown arrow turned up: all of it is the button of the list of zooms, with the hover of the toolbar's buttons.
+#[derive(IntoElement)]
+struct ZoomTrigger {
+    percent: SharedString,
+    selected: bool,
+    bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+}
+
+impl gpui_kit::component::Selectable for ZoomTrigger {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected
+    }
+}
+
+impl RenderOnce for ZoomTrigger {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let hover = hsla(0.0, 0.0, 0.27, 0.08);
+        div()
+            .id("zoom-menu-button")
+            .relative()
+            .h(px(22.))
+            .pl_1()
+            .flex()
+            .items_center()
+            .rounded_sm()
+            .cursor_pointer()
+            .when(self.selected, |d| d.bg(hover))
+            .hover(move |s| s.bg(hover))
+            .child(crate::shell::editor::bounds_observer({
+                let cell = self.bounds.clone();
+                move |bounds, _, _| cell.set(Some(bounds))
+            }))
+            .child(div().min_w(px(36.)).text_right().child(self.percent))
+            .child(gpui_kit::component::Icon::new(crate::shell::icons::Material("arrow_drop_down")).size(px(16.)).rotate(percentage(0.5)))
+            .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text("view.zoom-menu")).build(window, cx))
     }
 }
 

@@ -172,6 +172,7 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
                     let x = numbers("xVal");
                     series.x_values = if x.iter().all(Option::is_some) { x } else { Vec::new() };
                     series.bubble_sizes = numbers("bubbleSize");
+                    series.bubble_3d = matches!(kind, ChartType::Bubble { .. }) && child(ser, "bubble3D").is_some_and(|n| attr_bool(n, "val").unwrap_or(true));
                     // Scatter markers: the series' own, else the automatic
                     // ones (marker-only styles, and lines with markers).
                     let style = val(node, "scatterStyle").unwrap_or("marker");
@@ -211,7 +212,18 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
             custom_points: child(node, "custSplit").map(|n| children(n, "secondPiePt").map(|p| attr(p, "val").and_then(|v| v.parse().ok())).collect()),
             connector: child(node, "serLines").map(|n| path(n, &["spPr", "ln"]).and_then(|ln| stroke(ln, colors))),
         });
-        groups.push(ChartGroup { kind, of_pie, grouping: grouping(node), series, axes });
+        let three_d = node.tag_name().name().ends_with("3DChart") && !node.has_tag_name("surface3DChart");
+        let three_d = three_d.then(|| {
+            let view = child(chart, "view3D");
+            let get = |name: &str| view.and_then(|v| val_f64(v, name));
+            ibis_doc_model::View3D {
+                rot_x: get("rotX").unwrap_or(15.0) as i32,
+                rot_y: get("rotY").unwrap_or(20.0) as i32,
+                right_angle_axes: view.and_then(|v| val_bool(v, "rAngAx")).unwrap_or(true),
+                depth_percent: get("depthPercent").unwrap_or(100.0).clamp(20.0, 2000.0) as u32,
+            }
+        });
+        groups.push(ChartGroup { kind, of_pie, grouping: grouping(node), series, axes, three_d });
     }
     if groups.is_empty() {
         return None;
@@ -290,7 +302,12 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
         };
         if let Some(a) = axes.iter_mut().find(|a| a.id == id) {
             let base = unit(val(axis, "baseTimeUnit"));
-            let major = val_f64(axis, "majorUnit").map(|u| (Number(u), val(axis, "majorTimeUnit").map_or(base, |m| unit(Some(m)))));
+            let is_auto = val_bool(axis, "auto").unwrap_or(false);
+            let major = if is_auto {
+                None
+            } else {
+                val_f64(axis, "majorUnit").map(|u| (Number(u), val(axis, "majorTimeUnit").map_or(base, |m| unit(Some(m)))))
+            };
             let shown = dates.iter().zip(&keep).filter(|(_, k)| **k).map(|(d, _)| d.map(Number)).collect();
             a.time = Some(TimeScale { base, major, dates: shown });
             // Japanese Excel shows the built-in short date (m/d/yy) year
@@ -449,6 +466,7 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
         .or_else(|| child(chart, "pivotSource"))
         .and_then(|ps| child(ps, "name"))
         .and_then(|n| n.text().map(|t| t.to_string()));
+    let groups_len: usize = groups.iter().map(|g| g.series.len()).sum();
     Some(Chart {
         groups,
         axes,
@@ -468,8 +486,28 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
         rounded_corners: val_bool(space, "roundedCorners").unwrap_or(false),
         title_overlay: child(chart, "title").and_then(|t| val_bool(t, "overlay")).unwrap_or(false),
         ex: None,
+        ex_format: None,
         excel_layout: false,
+        cell_refs: cell_refs(plot, &groups_len),
+        ex_source: None,
     })
+}
+
+/// The references (`c:f`) of each series of the plot area, in the order the groups hold them; none when they are not
+/// as many as the series read.
+fn cell_refs(plot: Node, series_read: &usize) -> Vec<ibis_doc_model::SeriesCells> {
+    let formula = |node: Option<Node>| node.and_then(|n| n.descendants().find(|d| d.is_element() && d.tag_name().name() == "f")).and_then(|f| f.text()).map(|t| t.to_string()).filter(|t| !t.is_empty());
+    let refs: Vec<ibis_doc_model::SeriesCells> = elements(plot)
+        .filter(|g| crate::save::pptx_chart::GROUP_ELEMENTS.contains(&g.tag_name().name()))
+        .flat_map(|g| elements(g).filter(|s| s.tag_name().name() == "ser").collect::<Vec<_>>())
+        .map(|ser| ibis_doc_model::SeriesCells {
+            name: formula(child(ser, "tx")),
+            categories: formula(child(ser, "cat").or_else(|| child(ser, "xVal"))),
+            values: formula(child(ser, "val").or_else(|| child(ser, "yVal"))),
+            sizes: formula(child(ser, "bubbleSize")),
+        })
+        .collect();
+    if refs.len() == *series_read && refs.iter().any(|r| r.values.is_some() || r.categories.is_some()) { refs } else { Vec::new() }
 }
 
 fn grouping(node: Node) -> Grouping {
@@ -561,6 +599,7 @@ fn stroke(ln: Node, colors: &Colors) -> Option<Stroke> {
         join: ibis_doc_model::LineJoin::Miter,
         compound: ibis_doc_model::LineCompound::Single,
         alignment: ibis_doc_model::LineAlignment::Center,
+        fill: None,
     })
 }
 
@@ -845,6 +884,7 @@ fn read_series(ser: Node, index: usize, line_like: bool, vary: bool, base: &Char
         error_bars,
         x_values: Vec::new(),
         bubble_sizes: Vec::new(),
+        bubble_3d: false,
     }
 }
 
@@ -1049,6 +1089,9 @@ fn read_axis(node: Node, base: &ChartText, colors: &Colors, legacy: bool, legacy
         time: None,
         ticks_outside: matches!(val(node, "majorTickMark"), Some("out" | "cross")),
         line: match child(node, "spPr") {
+            // (A vertical value axis of the old defaults has no line of its own; Word and Excel draw the
+            // horizontal axis only: measured against Word with DCHT.)
+            None if legacy && node.has_tag_name((CHART_NS, "valAx")) && matches!(val(node, "axPos"), Some("l" | "r")) => None,
             None if legacy => Some(Stroke::solid(Color::opaque(if legacy_border { ibis_doc_model::Rgb(0x868686) } else { ibis_doc_model::Rgb::BLACK }), 9_525)),
             sp => shape_props(sp, colors).1.flatten(),
         },

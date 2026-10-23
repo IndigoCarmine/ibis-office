@@ -164,6 +164,10 @@ impl SlideEditor {
             return;
         }
         self.end_text_edit(window, cx);
+        // (The slide's text takes the keys and the typing from the outline's line.)
+        if let Some(s) = self.pptx_mut() {
+            s.outline_edit = None;
+        }
         let slide = self.current_slide;
         // A shape with no text yet gets a body to type into.
         if let Some(s) = self.slide().shape(shape)
@@ -241,7 +245,9 @@ impl SlideEditor {
             }
             // A web address or a mail address finished by a space or Enter becomes a link (as PowerPoint's autoformat).
             if matches!(text, " " | "\n" | "\u{3000}") {
-                self.autolink_before(range.start, cx);
+                // 自動修正: a typo or a mark typed out (`teh`, `(c)`) is put right first (as PowerPoint's AutoCorrect).
+                let end = self.autocorrect_before(range.start, cx);
+                self.autolink_before(end, cx);
             }
             // "- " or "1. " at the start of a paragraph: a bulleted or numbered list (as PowerPoint's autoformat).
             if text == " " {
@@ -280,6 +286,30 @@ impl SlideEditor {
         let command = Command::SetParagraphFormat { slide, shape: edit.shape, start, end: start, format: ibis_doc_model::ParagraphFormat { list: Some(kind), ..Default::default() } };
         let commands = self.in_edited_cell(vec![command]);
         self.run(commands, cx);
+    }
+
+    /// 自動修正: the word just before `end` (the typed space or Enter's place) replaced by what the table of
+    /// corrections has for it. The place the typed space is at after that.
+    fn autocorrect_before(&mut self, end: usize, cx: &mut Context<Self>) -> usize {
+        let Some(edit) = self.text_editing().cloned() else { return end };
+        let Some(chars) = self.edited_text().map(|t| t.chars().collect::<Vec<char>>()) else { return end };
+        let end = end.min(chars.len());
+        let start = chars[..end].iter().rposition(|c| c.is_whitespace()).map_or(0, |i| i + 1);
+        let word: String = chars[start..end].iter().collect();
+        // Not what follows a character of a word (`(c)` in the middle of one is not the mark).
+        let Some(correct) = autocorrection(&word) else { return end };
+        let slide = self.current_slide;
+        let command = Command::EditText { slide, shape: edit.shape, at: start, remove: word.chars().count(), insert: correct.clone() };
+        if !self.edit_text(command, false, cx) {
+            return end;
+        }
+        let space_at = start + correct.chars().count();
+        // The caret after the typed space that follows.
+        if let Some(e) = self.text_editing_mut() {
+            e.anchor = space_at + 1;
+            e.caret = space_at + 1;
+        }
+        space_at
     }
 
     /// The word just before `end` (the typed space or Enter's place) made a link if it is a web or mail address.
@@ -325,6 +355,9 @@ impl SlideEditor {
 
     /// ⌘C ⌘X: the selected text on the system's clipboard (`cut`: and taken away). `false` when no text is edited.
     pub(crate) fn copy_edited_text(&mut self, cut: bool, cx: &mut Context<Self>) -> bool {
+        if self.is_outline_editing() {
+            return self.outline_copy(cut, cx);
+        }
         let Some(edit) = self.text_editing().cloned() else { return false };
         let range = edit.range();
         if range.is_empty() {
@@ -340,6 +373,9 @@ impl SlideEditor {
 
     /// ⌘V in a text: the clipboard's text put in (paragraphs as they are), in place of the selection. `false` if none.
     pub(crate) fn paste_edited_text(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.is_outline_editing() {
+            return self.outline_paste(cx);
+        }
         if self.text_editing().is_none() {
             return false;
         }
@@ -409,6 +445,15 @@ impl SlideEditor {
     /// apart by a blank line). The shapes themselves are kept here (for pasting here).
     pub(crate) fn write_shapes_to_system_clipboard(&mut self, cx: &mut Context<Self>) {
         let shapes: Vec<ibis_doc_model::Shape> = self.selected_shapes().into_iter().cloned().collect();
+        // One embedded object: as the object, for Office and its application.
+        #[cfg(not(target_family = "wasm"))]
+        if let [one] = shapes.as_slice()
+            && let ibis_doc_model::ShapeKind::Picture(p) = &one.kind
+            && p.ole.is_some()
+            && self.copy_embedded(p, (one.frame.width, one.frame.height))
+        {
+            return;
+        }
         let picture = match shapes.as_slice() {
             [one] => match &one.kind {
                 ibis_doc_model::ShapeKind::Picture(p) => self.presentation().media(p.media).and_then(|m| {
@@ -455,6 +500,11 @@ impl SlideEditor {
 
     /// ⌘V with no text edited and no shapes copied: the clipboard's text in a new text box in the middle of the slide.
     pub(crate) fn paste_text_as_text_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // An object copied in its application (OLE) stays one.
+        #[cfg(not(target_family = "wasm"))]
+        if self.paste_embedded(cx) {
+            return true;
+        }
         // A picture (a screenshot, a copied image) or picture files (copied in the Finder) come first.
         if let Some(item) = cx.read_from_clipboard() {
             let mut inserted = false;
@@ -799,6 +849,23 @@ impl SlideEditor {
         Some(CaretGeometry { caret, selection })
     }
 
+    /// The words of the edited text the spell checker does not know, as ranges of characters (for the red wavy line
+    /// under them while the text is edited). The checker is asked again only when the text has changed.
+    pub(crate) fn misspelled_ranges(&self) -> Vec<Range<usize>> {
+        if !crate::spelling::available() || !crate::shell::autocorrect::settings().spell_as_you_type || self.text_editing().is_some_and(|e| e.marked.is_some()) {
+            return Vec::new();
+        }
+        let (Some(text), Some(state)) = (self.edited_text(), self.pptx()) else { return Vec::new() };
+        let mut cache = state.spell_cache.borrow_mut();
+        if let Some((cached, found)) = cache.as_ref().filter(|(t, _)| *t == text) {
+            let _ = cached;
+            return found.clone();
+        }
+        let found: Vec<Range<usize>> = crate::spelling::check_by_settings(&text, None).into_iter().map(|m| m.start..m.end).collect();
+        *cache = Some((text, found.clone()));
+        found
+    }
+
     /// What the caret and the selection marks are, for painting them
     /// where the edited text was painted.
     pub(crate) fn caret_marks(&self) -> Option<CaretMarks> {
@@ -926,6 +993,11 @@ pub(crate) struct CaretMarks {
 }
 
 impl CaretMarks {
+    /// These marks with characters `range` as the selection and no caret (for the rectangles of a word).
+    pub(crate) fn with_selection(&self, range: Range<usize>) -> CaretMarks {
+        CaretMarks { positions: self.positions.clone(), lengths: self.lengths.clone(), caret: None, selection: range }
+    }
+
     /// Each paragraph's positions, when the text drawn is this text.
     fn painted(&self) -> Option<Vec<crate::render::rich_text::ParagraphPositions>> {
         let list = self.positions.paragraphs.borrow();
@@ -1090,6 +1162,33 @@ mod word_tests {
         // Back: to the start of the previous one.
         let back: Vec<usize> = [14, 23, 21, 7, 0].iter().map(|&i| word_boundary(&t, i, false)).collect();
         assert_eq!(back, [7, 21, 17, 5, 0]);
+    }
+}
+
+/// What the typed `word` is corrected to (自動修正): by the AutoCorrect all the formats share (`shell::autocorrect`: its
+/// list, the case of the word kept, two initial capitals…). `None` for a word it leaves as it is.
+fn autocorrection(word: &str) -> Option<String> {
+    let settings = crate::shell::autocorrect::settings();
+    if !settings.as_you_type {
+        return None;
+    }
+    let corrected = settings.correct_word(word, false);
+    (corrected != word).then_some(corrected)
+}
+
+#[cfg(test)]
+mod autocorrect_tests {
+    use super::autocorrection;
+
+    #[test]
+    fn the_table_corrects_what_it_knows() {
+        assert_eq!(autocorrection("teh").as_deref(), Some("the"));
+        assert_eq!(autocorrection("Teh").as_deref(), Some("The"));
+        assert_eq!(autocorrection("(c)").as_deref(), Some("©"));
+        assert_eq!(autocorrection("i").as_deref(), Some("I"));
+        assert_eq!(autocorrection("I"), None);
+        assert_eq!(autocorrection("the"), None);
+        assert_eq!(autocorrection("日本語"), None);
     }
 }
 

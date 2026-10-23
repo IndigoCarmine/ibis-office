@@ -241,7 +241,7 @@ pub(crate) struct FindState {
 
 /// The paragraphs searched, in order: the body (with its tables), the
 /// section-owned/default/first/even headers and footers, notes, and comments.
-fn paragraphs(doc: &FlowDocument, scope: SearchScope) -> Vec<(u32, Vec<(usize, char)>)> {
+pub(super) fn paragraphs(doc: &FlowDocument, scope: SearchScope) -> Vec<(u32, Vec<(usize, char)>)> {
     fn walk(blocks: &[Block], out: &mut Vec<(u32, Vec<(usize, char)>)>) {
         for b in blocks {
             match b {
@@ -768,7 +768,7 @@ impl SlideEditor {
 
     /// The commands replacing the match `a`..`b` with `text`, in its first
     /// character's formatting (or applying `replace_format` if specified).
-    fn replacement_commands(
+    pub(super) fn replacement_commands(
         doc: &FlowDocument,
         a: FlowPos,
         b: FlowPos,
@@ -1002,6 +1002,7 @@ impl SlideEditor {
         self.doc_state().and_then(|s| s.find.as_ref()).map(|f| &f.find_format)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn replace_format(&self) -> Option<&ReplaceFormatting> {
         self.doc_state().and_then(|s| s.find.as_ref()).map(|f| &f.replace_format)
     }
@@ -1076,6 +1077,7 @@ impl SlideEditor {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_find_format_style(&mut self, style: Option<String>, cx: &mut Context<Self>) {
         let Some(state) = self.doc_state_mut().and_then(|s| s.find.as_mut()) else { return };
         state.find_format.style = style;
@@ -1084,6 +1086,7 @@ impl SlideEditor {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_find_format_color(&mut self, color: Option<Rgb>, cx: &mut Context<Self>) {
         let Some(state) = self.doc_state_mut().and_then(|s| s.find.as_mut()) else { return };
         state.find_format.color = color;
@@ -1132,12 +1135,14 @@ impl SlideEditor {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_replace_format_style(&mut self, style: Option<String>, cx: &mut Context<Self>) {
         let Some(state) = self.doc_state_mut().and_then(|s| s.find.as_mut()) else { return };
         state.replace_format.style = style;
         cx.notify();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_replace_format_color(&mut self, color: Option<Rgb>, cx: &mut Context<Self>) {
         let Some(state) = self.doc_state_mut().and_then(|s| s.find.as_mut()) else { return };
         state.replace_format.color = color;

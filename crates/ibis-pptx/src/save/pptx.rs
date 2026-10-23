@@ -128,7 +128,7 @@ pub struct SourceMap {
 
 /// Whether two models have the same content (slides and what is on them).
 pub(crate) fn same_content(a: &Presentation, b: &Presentation) -> bool {
-    a.slide_size == b.slide_size && a.first_slide_number == b.first_slide_number && a.layout_scale == b.layout_scale && !super::pptx_layouts::changed(a, b) && a.slides == b.slides && a.sections == b.sections && a.header_footer == b.header_footer && a.notes_marks == b.notes_marks && a.show_properties == b.show_properties && a.custom_shows == b.custom_shows && a.mark_as_final == b.mark_as_final && a.read_only_recommended == b.read_only_recommended && a.modify_verifier == b.modify_verifier && a.properties == b.properties && a.object_defaults == b.object_defaults
+    a.slide_size == b.slide_size && a.first_slide_number == b.first_slide_number && a.layout_scale == b.layout_scale && !super::pptx_layouts::changed(a, b) && a.slides == b.slides && a.sections == b.sections && a.header_footer == b.header_footer && a.notes_marks == b.notes_marks && a.show_properties == b.show_properties && a.custom_shows == b.custom_shows && a.mark_as_final == b.mark_as_final && a.read_only_recommended == b.read_only_recommended && a.modify_verifier == b.modify_verifier && a.properties == b.properties && a.object_defaults == b.object_defaults && a.theme_colors == b.theme_colors && a.theme_fonts == b.theme_fonts && a.theme_effects == b.theme_effects && a.fonts == b.fonts && a.font_substitutions == b.font_substitutions
 }
 
 /// Change only p:sldSz; slide parts, masters and p:notesSz stay intact.
@@ -254,16 +254,30 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
     if baseline.header_footer != current.header_footer {
         super::pptx_header_footer::write(package, &map.presentation, current.header_footer)?;
     }
-    if baseline.show_properties != current.show_properties {
-        super::pptx_show::write(package, &map.presentation, &current.show_properties)?;
+    let show_props_need_update = baseline.show_properties != current.show_properties
+        || (baseline.custom_shows != current.custom_shows
+            && matches!(current.show_properties.slide_range, ibis_doc_model::ShowSlideRange::Custom(_)));
+    if show_props_need_update {
+        super::pptx_show::write(package, &map.presentation, &current.show_properties, &current.custom_shows)?;
     }
     if baseline.custom_shows != current.custom_shows {
         write_custom_shows(package, &map.presentation, &current.custom_shows, map)?;
     }
-    if baseline.properties != current.properties || baseline.mark_as_final != current.mark_as_final {
+    if baseline.photo_album != current.photo_album {
+        write_photo_album(package, &map.presentation, current.photo_album.as_ref())?;
+    }
+    if baseline.properties != current.properties || baseline.mark_as_final != current.mark_as_final || baseline.font_substitutions != current.font_substitutions {
         super::docx::write_core_properties(package, &current.properties)?;
         super::docx::write_app_properties(package, &current.properties)?;
-        super::docx::write_custom_properties(package, &current.properties.custom, current.mark_as_final)?;
+        let mut custom_props = current.properties.custom.clone();
+        custom_props.retain(|p| !p.name.starts_with("_FontSub_"));
+        for (target, sub) in &current.font_substitutions {
+            custom_props.push(ibis_doc_model::CustomProperty {
+                name: format!("_FontSub_{target}"),
+                value: ibis_doc_model::CustomPropertyValue::Text(sub.clone()),
+            });
+        }
+        super::docx::write_custom_properties(package, &custom_props, current.mark_as_final)?;
     }
     if baseline.modify_verifier != current.modify_verifier {
         write_modify_verifier(package, map, current.modify_verifier.as_ref())?;
@@ -273,6 +287,15 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
     }
     if baseline.object_defaults != current.object_defaults {
         super::pptx_theme::write_defaults(package, &map.presentation, &current.object_defaults)?;
+    }
+    if baseline.theme_colors != current.theme_colors || baseline.theme_fonts != current.theme_fonts {
+        super::pptx_theme::write(package, &map.presentation, &current.theme_colors, current.theme_fonts.as_ref())?;
+    }
+    if baseline.theme_effects != current.theme_effects {
+        super::pptx_theme::write_effects(package, &map.presentation, current.theme_effects.as_deref())?;
+    }
+    if baseline.fonts != current.fonts {
+        write_embedded_fonts(package, &map.presentation, &current.fonts)?;
     }
     let old_slides: HashMap<SlideId, &Slide> = baseline.slides.iter().map(|s| (s.id, s)).collect();
     // The shapes comments are on, as they are in the file before anything
@@ -378,6 +401,8 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
         for (i, target) in targets.iter().enumerate() {
             super::pptx_notes::write_marks(package, &map.presentation, &target.part, &current.notes_marks, i + current.first_slide_number)?;
         }
+        // The handout master's places say the same (what a handout prints in its margins).
+        crate::handout_master::write_marks(package, &map.presentation, &current.notes_marks)?;
     }
     // Transitions (a copy has its original's).
     for (slide, target) in current.slides.iter().zip(&targets) {
@@ -1346,6 +1371,35 @@ fn write_custom_shows(package: &mut Package, presentation_part: &str, custom_sho
     Ok(())
 }
 
+/// Write or update `<p:photoAlbum>` of the presentation.
+fn write_photo_album(package: &mut Package, presentation_part: &str, album: Option<&ibis_doc_model::PhotoAlbum>) -> Result<(), Error> {
+    let doc = package.xml_mut(presentation_part)?;
+    let root = doc.root_element().ok_or_else(|| Error::new("プレゼンテーションが空です"))?;
+    for old in doc.children(root).to_vec() {
+        if doc.is_element(old) && doc.local_name(old) == "photoAlbum" {
+            doc.detach(old);
+        }
+    }
+    let Some(album) = album else { return Ok(()); };
+    let x = Prefixes::at(doc, root);
+    let mut xml = format!(r#"<{}photoAlbum"#, x.p);
+    if album.bw {
+        xml.push_str(r#" bw="1""#);
+    }
+    if album.show_captions {
+        xml.push_str(r#" showCaptions="1""#);
+    }
+    xml.push_str(&format!(r#" layout="{}" frame="{}"/>"#, album.layout.as_str(), album.frame.as_str()));
+    let node = x.import(doc, &xml)?;
+    let next = doc.elements(root).find(|&n| matches!(doc.local_name(n), "custDataLst" | "kinsoku" | "defaultTextStyle" | "modifyVerifier" | "extLst"));
+    if let Some(next) = next {
+        doc.insert_before(next, node);
+    } else {
+        doc.insert(root, doc.children(root).len(), node);
+    }
+    Ok(())
+}
+
 /// `p:modifyVerifier` of the presentation as `verifier` says (none takes it away): after the
 /// default text style, before the extension list.
 fn write_modify_verifier(package: &mut Package, map: &SourceMap, verifier: Option<&ibis_doc_model::ModifyVerifier>) -> Result<(), Error> {
@@ -1418,6 +1472,105 @@ fn write_read_only_recommended(package: &mut Package, map: &SourceMap, recommend
     } else if let Some(ext) = found_ext {
         doc.detach(ext);
     }
+    Ok(())
+}
+
+fn write_embedded_fonts(package: &mut Package, presentation_part: &str, fonts: &[ibis_doc_model::EmbeddedFont]) -> Result<(), Error> {
+    // 1. Collect all relationship IDs from any existing embeddedFontLst in doc, and detach it.
+    let (old_rids, x) = {
+        let doc = package.xml_mut(presentation_part)?;
+        let root = doc.root_element().ok_or_else(|| Error::new("プレゼンテーションが空です"))?;
+        let x = Prefixes::at(doc, root);
+        let mut old_rids: Vec<String> = Vec::new();
+        let existing_list = doc.elements(root).find(|&n| doc.local_name(n) == "embeddedFontLst");
+        if let Some(list) = existing_list {
+            let entries: Vec<_> = doc.elements(list).filter(|&n| doc.local_name(n) == "embeddedFont").collect();
+            for entry in entries {
+                let children: Vec<_> = doc.elements(entry).collect();
+                for child in children {
+                    if let Some(rid) = doc.attr(child, "id").or_else(|| doc.attr(child, "r:id")) {
+                        old_rids.push(rid.to_string());
+                    }
+                }
+            }
+            doc.detach(list);
+        }
+        (old_rids, x)
+    };
+
+    // 2. Remove old font relationships and parts in package.
+    for rid in old_rids {
+        if let Ok(rels) = package.relationships(presentation_part) {
+            if let Some(rel) = rels.into_iter().find(|r| r.id == rid) {
+                let target_part = if rel.target.starts_with('/') {
+                    rel.target.trim_start_matches('/').to_string()
+                } else {
+                    format!("ppt/{}", rel.target.trim_start_matches('/'))
+                };
+                let _ = package.remove_override(&target_part);
+                package.remove(&target_part);
+            }
+        }
+        let _ = package.remove_relationship(presentation_part, &rid);
+    }
+
+    if fonts.is_empty() {
+        return Ok(());
+    }
+
+    // 3. Group fonts by typeface.
+    let mut grouped: std::collections::BTreeMap<&str, Vec<&ibis_doc_model::EmbeddedFont>> = std::collections::BTreeMap::new();
+    for f in fonts {
+        grouped.entry(&f.typeface).or_default().push(f);
+    }
+
+    // 4. For each font entry, write font file, add override, add relationship, build XML.
+    let mut font_idx = 1usize;
+    for name in package.names() {
+        if let Some(rest) = name.strip_prefix("ppt/fonts/font") {
+            if let Some(num_str) = rest.strip_suffix(".fntdata") {
+                if let Ok(n) = num_str.parse::<usize>() {
+                    font_idx = font_idx.max(n + 1);
+                }
+            }
+        }
+    }
+
+    let mut xml = format!("<{}embeddedFontLst>", x.p);
+    for (typeface, variants) in grouped {
+        xml.push_str(&format!(r#"<{}embeddedFont><{}font typeface="{}"/>"#, x.p, x.p, super::pptx_new::escape_attr(typeface)));
+        for v in variants {
+            let part_name = format!("ppt/fonts/font{font_idx}.fntdata");
+            let rel_target = format!("fonts/font{font_idx}.fntdata");
+            font_idx += 1;
+
+            package.set_bytes(&part_name, v.data.clone());
+            let _ = package.set_override(&part_name, "application/x-fontdata");
+            let rid = package.add_relationship(presentation_part, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/font", &rel_target, false)?;
+
+            let tag = match (v.bold, v.italic) {
+                (false, false) => "regular",
+                (true, false) => "bold",
+                (false, true) => "italic",
+                (true, true) => "boldItalic",
+            };
+            xml.push_str(&format!(r#"<{p}{tag} {r}id="{rid}"/>"#, p = x.p, tag = tag, r = x.r, rid = rid));
+        }
+        xml.push_str(&format!("</{}embeddedFont>", x.p));
+    }
+    xml.push_str(&format!("</{}embeddedFontLst>", x.p));
+
+    // 5. Re-borrow doc to import and insert the new embeddedFontLst node.
+    let doc = package.xml_mut(presentation_part)?;
+    let root = doc.root_element().ok_or_else(|| Error::new("プレゼンテーションが空です"))?;
+    let node = x.import(doc, &xml)?;
+    let next = doc.elements(root).find(|&n| matches!(doc.local_name(n), "custShowLst" | "photoAlbum" | "custDataLst" | "kinsoku" | "defaultTextStyle" | "modifyVerifier" | "extLst"));
+    if let Some(next) = next {
+        doc.insert_before(next, node);
+    } else {
+        doc.insert(root, doc.children(root).len(), node);
+    }
+
     Ok(())
 }
 

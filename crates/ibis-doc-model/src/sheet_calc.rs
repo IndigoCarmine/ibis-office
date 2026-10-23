@@ -104,6 +104,18 @@ impl<'a> BookView<'a> {
         out
     }
 
+    /// The cells whose formula calls IMAGE (calculated when the book is opened: the picture they ask for is a result of
+    /// the calculation, not kept in the file).
+    pub fn image_formula_cells(&self) -> Vec<CellId> {
+        let mut out = Vec::new();
+        for (i, s) in self.sheets.iter().enumerate() {
+            if let Some(sheet) = s.sheet {
+                out.extend(sheet.cells.iter().filter(|c| c.formula.as_deref().is_some_and(|f| f.as_bytes().windows(6).any(|w| w.eq_ignore_ascii_case(b"IMAGE(")))).map(|c| (i, c.row, c.column)));
+            }
+        }
+        out
+    }
+
     /// The formula cells with no value: a file written by a program that does
     /// not calculate (C#'s Open XML SDK, openpyxl) has none cached.
     pub fn formula_cells_without_value(&self) -> Vec<CellId> {
@@ -164,7 +176,34 @@ impl Book for BookView<'_> {
     }
 
     fn external_sheet(&self, book: &str, sheet: &str) -> Option<usize> {
-        (self.real_sheets..self.sheets.len()).find(|&i| self.sheets[i].external.is_some_and(|(b, s)| b.eq_ignore_ascii_case(book) && s.name.eq_ignore_ascii_case(sheet)))
+        let raw = if let Some(p) = book.find('[') && let Some(e) = book[p + 1..].find(']') {
+            &book[p + 1..p + 1 + e]
+        } else {
+            book
+        };
+        (self.real_sheets..self.sheets.len()).find(|&i| {
+            self.sheets[i].external.is_some_and(|(b, s)| {
+                (b.eq_ignore_ascii_case(book) || b.eq_ignore_ascii_case(raw) || book.ends_with(b) || b.ends_with(book)) && s.name.eq_ignore_ascii_case(sheet)
+            })
+        })
+    }
+
+    fn external_sheets(&self, book: &str, first: &str, last: &str) -> Option<(usize, usize)> {
+        let f = self.external_sheet(book, first)?;
+        let l = self.external_sheet(book, last)?;
+        let min = f.min(l);
+        let max = f.max(l);
+        let raw = if let Some(p) = book.find('[') && let Some(e) = book[p + 1..].find(']') {
+            &book[p + 1..p + 1 + e]
+        } else {
+            book
+        };
+        for i in min..=max {
+            if !self.sheets.get(i).and_then(|s| s.external).is_some_and(|(b, _)| b.eq_ignore_ascii_case(book) || b.eq_ignore_ascii_case(raw) || book.ends_with(b) || b.ends_with(book)) {
+                return None;
+            }
+        }
+        Some((min, max))
     }
 
     fn table(&self, name: &str) -> Option<ibis_calc::eval::TableInfo> {
@@ -196,6 +235,20 @@ impl Book for BookView<'_> {
 
     fn formula(&self, sheet: usize, row: u32, column: u32) -> Option<&str> {
         self.sheets.get(sheet)?.sheet?.cell(row, column)?.formula.as_deref()
+    }
+
+    fn cell_info(&self, sheet: usize, row: u32, column: u32) -> Option<ibis_calc::eval::CellInfo> {
+        let sheet = self.sheets.get(sheet)?.sheet?;
+        let style = sheet.cell(row, column).and_then(|c| sheet.styles.get(c.style as usize)).cloned().unwrap_or_default();
+        let prefix = match style.align {
+            crate::sheet::CellAlign::Right => Some('"'),
+            crate::sheet::CellAlign::Center | crate::sheet::CellAlign::CenterAcross => Some('^'),
+            crate::sheet::CellAlign::Fill => Some('\\'),
+            _ => Some('\''),
+        };
+        // A column's width in characters of the default font (the reader gives a column of n characters about 6 n points).
+        let width_emu = sheet.columns.get(column as usize).copied().filter(|w| *w > 0).unwrap_or(sheet.default_column);
+        Some(ibis_calc::eval::CellInfo { number_format: style.number_format.clone(), locked: !style.unlocked, prefix, column_width: width_emu as f64 / 12_700.0 / 6.0 })
     }
 
     fn for_each_cell(&self, sheet: usize, area: (u32, u32, u32, u32), f: &mut dyn FnMut(u32, u32, &CellValue)) {
@@ -297,6 +350,23 @@ impl Book for BookView<'_> {
 
     fn phonetic(&self, sheet: usize, row: u32, column: u32) -> Option<&str> {
         self.sheets.get(sheet)?.sheet?.cell(row, column)?.phonetic.as_deref()
+    }
+
+    fn pivot_data(
+        &self,
+        sheet: usize,
+        row: u32,
+        column: u32,
+        data_field: &str,
+        fields: &[(&str, &str)],
+    ) -> Option<CellValue> {
+        let sheet_obj = self.sheets.get(sheet)?.sheet?;
+        for pivot in &sheet_obj.pivots {
+            if pivot.contains_cell(row, column) {
+                return pivot.get_pivot_data(sheet_obj, data_field, fields);
+            }
+        }
+        None
     }
 }
 

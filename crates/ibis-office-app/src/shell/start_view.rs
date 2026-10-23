@@ -59,10 +59,58 @@ const NEW_KINDS: [(ibis_pptx::Kind, &str, u32); 3] = [
 /// A page of 新規作成, in pixels.
 const PAGE_WIDTH: f32 = 52.0;
 const PAGE_HEIGHT: f32 = 66.0;
+/// How far a page's badge reaches out left of the page, in pixels.
+const BADGE_OVERHANG: f32 = 6.0;
+/// The column's padding on each side (`px_8`), in pixels: also the space
+/// between the recent files list and the 協力のお願い panel, and right of it.
+const COLUMN_PADDING: f32 = 32.0;
+/// The 協力のお願い panel right of the column: as wide as the recent files
+/// list, and as narrow as this when the window is (its text wraps), in pixels.
+const REQUEST_WIDTH: f32 = COLUMN_WIDTH - 2.0 * COLUMN_PADDING;
+const REQUEST_MIN_WIDTH: f32 = 220.0;
+/// The narrowest the column gets beside the panel, in pixels.
+const COLUMN_MIN_WIDTH: f32 = 320.0;
+/// The size of the panel's letters, in pixels: 1.2 times `text_sm`'s.
+const REQUEST_TEXT_SIZE: f32 = 14.0 * 1.2;
+/// The width a start window opens at: the column, the panel and the space right of it.
+pub(crate) const START_WINDOW_WIDTH: f32 = COLUMN_WIDTH + REQUEST_WIDTH + COLUMN_PADDING;
+/// Where 協力のお願い asks for reports.
+const ISSUES_URL: &str = "https://github.com/IndigoCarmine/ibis-office/issues";
 
 /// The window's title while no file is open: the app and its version.
 pub(crate) fn start_title() -> String {
-    format!("ibisOffice {}", env!("IBIS_VERSION"))
+    format!("Acauda Office {}", env!("IBIS_VERSION"))
+}
+
+/// 協力のお願い, right of the column: what ibisOffice aims at, and a link to
+/// GitHub's issues (opened in the default browser) for reports.
+fn request_panel(muted: Hsla) -> Div {
+    // The link's words go where the text has {link}.
+    let report = crate::shell::i18n::text("start.request-report");
+    let link = crate::shell::i18n::text("start.request-link");
+    let (before, after) = report.split_once("{link}").unwrap_or((&report, ""));
+    let range = before.len()..before.len() + link.len();
+    let link_style = HighlightStyle {
+        color: Some(rgb(LINK_COLOR).into()),
+        underline: Some(UnderlineStyle { thickness: px(1.), color: Some(rgb(LINK_COLOR).into()), wavy: false }),
+        ..Default::default()
+    };
+    let report = InteractiveText::new("start-request-report", StyledText::new(format!("{before}{link}{after}")).with_highlights([(range.clone(), link_style)]))
+        .on_click(vec![range], |_, _, cx| cx.open_url(ISSUES_URL));
+    v_flex()
+        .w(px(REQUEST_WIDTH))
+        .min_w(px(REQUEST_MIN_WIDTH))
+        .flex_shrink(1.0)
+        .mt(px(BOTTOM_MARGIN))
+        .mr(px(COLUMN_PADDING))
+        .p_4()
+        .gap_2()
+        .rounded(px(8.))
+        .bg(rgb(0xf0f4f9))
+        .text_size(px(REQUEST_TEXT_SIZE))
+        .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("start.request")))
+        .child(div().text_color(muted).child(crate::shell::i18n::text("start.request-body")))
+        .child(div().text_color(muted).child(report))
 }
 
 impl SlideEditor {
@@ -85,7 +133,8 @@ impl SlideEditor {
             .child(Icon::new(Material("folder_open")).size(px(20.)).text_color(rgb(LINK_COLOR)))
             .child(crate::shell::i18n::text("start.open"))
             .on_click(cx.listener(|this, _, window, cx| this.open_file(&OpenFile, window, cx)));
-        let new_files = div().flex().gap_4().ml(px(-TILE_PADDING)).children(NEW_KINDS.iter().map(|&(kind, label, color)| self.new_file_tile(kind, label, color, cx)));
+        // The first badge's left edge under 新規作成's.
+        let new_files = div().flex().gap_4().ml(px(BADGE_OVERHANG - TILE_PADDING)).children(NEW_KINDS.iter().map(|&(kind, label, color)| self.new_file_tile(kind, label, color, cx)));
 
         div()
             .id("start-view")
@@ -96,10 +145,13 @@ impl SlideEditor {
             .w_full()
             .bg(rgb(0xffffff))
             .overflow_hidden()
+            .flex()
+            .items_start()
             .child(
                 v_flex()
                     .w(px(COLUMN_WIDTH))
-                    .max_w_full()
+                    .min_w(px(COLUMN_MIN_WIDTH))
+                    .flex_shrink(1.0)
                     .h_full()
                     .px_8()
                     .pb(px(BOTTOM_MARGIN))
@@ -111,6 +163,7 @@ impl SlideEditor {
                     .map(|d| self.recent_files_list(d, cx))
                     .when_some(self.status.clone(), |d, status| d.child(div().mt_3().text_sm().text_color(muted).child(status))),
             )
+            .child(request_panel(muted))
     }
 
     /// One kind of 新規作成: a blank page with the format's badge on its
@@ -125,7 +178,7 @@ impl SlideEditor {
             .rounded(px(3.));
         let badge = div()
             .absolute()
-            .left(px(-6.))
+            .left(px(-BADGE_OVERHANG))
             .bottom(px(8.))
             .px(px(5.))
             .py(px(1.))

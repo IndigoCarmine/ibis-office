@@ -1,4 +1,4 @@
-# ibisOffice の UI の文字（日本語）：xlsx 担当。キー<TAB>文字（shell/i18n.rs）。
+# Acauda Office の UI の文字（日本語）：xlsx 担当。キー<TAB>文字（shell/i18n.rs）。
 xlsx.sort	範囲を並べ替え
 xlsx.delete-row	行を削除
 xlsx.delete-column	列を削除
@@ -8,11 +8,61 @@ xlsx.duplicate-sheet	シートを複製
 xlsx.hide-sheet	シートを非表示
 xlsx.delete-sheet	シートを削除
 xlsx.freeze	固定
+xlsx.freeze-panes	ウィンドウ枠の固定
+xlsx.unfreeze-panes	ウィンドウ枠固定の解除
+xlsx.freeze-top-row	先頭行の固定
+xlsx.freeze-first-column	先頭列の固定
+xlsx.print-area-menu	印刷範囲
+xlsx.print-area-set	印刷範囲の設定
+xlsx.print-area-add	印刷範囲に追加
+xlsx.print-area-clear	印刷範囲のクリア
+xlsx.cell-link-open	ハイパーリンクを開く
+xlsx.cell-link-edit	ハイパーリンクの編集…
+xlsx.cell-link-remove	ハイパーリンクの削除
+xlsx.ruler	ルーラー
+xlsx.ruler-unit	ルーラーの単位
+xlsx.ruler-unit.cm	センチメートル (cm)
+xlsx.ruler-unit.mm	ミリメートル (mm)
+xlsx.ruler-unit.inch	インチ (in)
+xlsx.ruler-unit.point	ポイント (pt)
+xlsx.ruler-unit.pica	ピカ (pica)
 xlsx.gridlines	グリッド線を表示
 xlsx.headings	見出しを表示
 xlsx.formula-bar	数式バーを表示
+xlsx.show-formulas	数式の表示
+xlsx.show-zeros	ゼロ値の表示
+xlsx.hide-ink	インクを非表示
+xlsx.normal-view	標準
 xlsx.page-break-preview	改ページ プレビュー
 xlsx.page-layout	ページ レイアウト
+xlsx.clear-filter	フィルターのクリア
+xlsx.name-manager	名前の管理
+xlsx.define-name	名前の定義…
+xlsx.page-setup	ページ設定…
+xlsx.margins	余白…
+xlsx.header-footer	ヘッダーとフッター…
+xlsx.spelling.check	スペルチェック…
+xlsx.spelling	スペルチェック…
+xlsx.insert-link	リンクの挿入…
+xlsx.insert-symbol	記号と特殊文字…
+xlsx.logical-functions	論理関数
+xlsx.datetime-functions	日付/時刻関数
+xlsx.fn.ifs	IFS (複数条件判定)
+xlsx.fn.iferror	IFERROR (エラー時判定)
+xlsx.fn.and	AND (すべての条件が真)
+xlsx.fn.or	OR (いずれかの条件が真)
+xlsx.fn.not	NOT (論理否定)
+xlsx.underline-menu	下線
+xlsx.underline-single	下線
+xlsx.underline-double	二重下線
+xlsx.screenshot	スクリーンショット
+xlsx.screenshot.available-windows	使用できるウィンドウ
+xlsx.screenshot.clipping	画面の領域…
+xlsx.screenshot.clipboard	クリップボードのスクリーンショット
+xlsx.insert.screenshot	スクリーンショット
+xlsx.insert.screenshot.available-windows	使用できるウィンドウ
+xlsx.insert.screenshot.clipping	画面の領域…
+xlsx.insert.screenshot.clipboard	クリップボードのスクリーンショット
 xlsx.zoom-selection	選択範囲に合わせて拡大/縮小
 xlsx.custom-views	ユーザー設定のビュー…
 xlsx.hide-window	ウィンドウの非表示
@@ -52,12 +102,19 @@ xlsx.move-sheet-right	シートを右へ移動
 xlsx.split	分割
 xlsx.sort-manage	並べ替えの設定…
 xlsx.remove-duplicates	重複の削除…
+xlsx.goto	ジャンプ…
+xlsx.goto-destination	移動先:
+xlsx.goto-no-destinations	（名前定義または履歴はありません）
+xlsx.goto-type-name	名前
+xlsx.goto-type-history	履歴
+xlsx.goto-special-button	セル選択…
 xlsx.goto-special	条件を選択してジャンプ…
 xlsx.text-to-columns	区切り位置…
 xlsx.sort-descending	範囲を並べ替え（降順）
 xlsx.export-csv	CSV UTF-8（.csv、現在のシート）
 xlsx.export-csv-sjis	CSV Shift_JIS（.csv、現在のシート）
 xlsx.export-tsv	テキスト（.tsv、タブ区切り、現在のシート）
+xlsx.export-ods	OpenDocument スプレッドシート（.ods、ブック全体）
 xlsx.insert-cells-right	セルを挿入（右方向にシフト）
 xlsx.delete-cells-left	セルを削除（左方向にシフト）
 xlsx.group	グループ化
@@ -73,6 +130,15 @@ xlsx.unhide-sheets	シートを再表示
 xlsx.tab-colors	見出しの色
 xlsx.compatibility-version	計算の互換バージョン
 xlsx.paste-special	形式を選択して貼り付け
+xlsx.paste-special-dots	形式を選択して貼り付け…
+xlsx.paste-comments	コメントとメモ
+xlsx.paste-all-except-borders	罫線を除くすべて
+xlsx.paste-column-widths	列幅
+xlsx.paste-formulas-and-number-formats	数式と数値の書式
+xlsx.paste-values-and-number-formats	値と数値の書式
+xlsx.paste-operation	演算
+xlsx.paste-none	なし
+xlsx.paste-options	オプション
 xlsx.flash-fill	フラッシュ フィル
 xlsx.chart-axis-min	最小値
 xlsx.chart-axis-max	最大値
@@ -225,6 +291,13 @@ xlsx.shape.heart	ハート
 xlsx.shape.line	直線
 xlsx.shape.line-arrow	矢印線
 xlsx.insert-picture	画像
+xlsx.insert-picture-menu	画像
+xlsx.insert-picture-in-cell	セル内に配置
+xlsx.insert-picture-over-cells	セル上に配置
+xlsx.place-in-cell	セルに配置
+xlsx.place-over-cells	セル上に配置
+_xlsx.place-in-cell	セルに配置
+_xlsx.place-over-cells	セル上に配置
 xlsx.image-file	画像ファイルから挿入
 xlsx.order	順序
 xlsx.order-front	最前面へ移動
@@ -305,6 +378,10 @@ xlsx.picture.color.green	緑（モノトーン）
 xlsx.picture.color.red	赤（モノトーン）
 xlsx.picture.color.orange	オレンジ（モノトーン）
 xlsx.picture.color.purple	紫（モノトーン）
+xlsx.picture.remove-background	背景の削除（透明色）
+xlsx.picture.color.transparent-white	透明色を指定（白）
+xlsx.picture.color.transparent-black	透明色を指定（黒）
+xlsx.picture.color.transparent-clear	透明色の解除
 xlsx.picture.correction	画像の補正（明るさとコントラスト）
 xlsx.picture.lum.normal	標準（明るさ 0%、コントラスト 0%）
 xlsx.picture.lum.bright-p40	明るさ: +40%
@@ -406,6 +483,12 @@ xlsx.shape-textlink.clear	セルとの連動を解除
 xlsx.copy-as-picture	画像としてコピー
 xlsx.move-chart	グラフの移動…
 xlsx.chart-radar-style	レーダーのスタイル
+xlsx.chart-3d-rotation	3-D 回転
+xlsx.chart-3d-x-rotation	X 回転
+xlsx.chart-3d-y-rotation	Y 回転
+xlsx.chart-3d-right-angle-axes	直角の軸
+xlsx.chart-3d-depth	奥行き
+xlsx.chart-3d-reset-defaults	既定値に戻す
 
 xlsx.import-text	テキスト/CSV から…
 import-text.done	{rows} 行を読み込みました。
@@ -601,6 +684,7 @@ _xlsx.a-range-containing-merged-cells-cannot-be-made-i	結合したセルを含�
 _xlsx.the-cell-just-below-the-range-is-not-empty-so-a	範囲のすぐ下のセルが空いていないので、見出しの行を入れられません。
 _xlsx.create-table	テーブルの作成
 _xlsx.specify-the-data-range-to-convert-to-a-table	テーブルに変換するデータ範囲を指定してください
+_xlsx.specify-the-new-data-range-for-your-table	テーブルの新しいデータ範囲を指定してください
 _xlsx.my-table-has-headers	先頭行をテーブルの見出しとして使用する
 _xlsx.text	文字列
 _xlsx.light-orange	薄いオレンジ
@@ -954,6 +1038,9 @@ _xlsx.create-or-remove-filter	フィルターの作成・解除
 _xlsx.filter-by-selected-cell-s-value	選択したセルの値でフィルター
 _xlsx.format-cells	セルの書式設定…
 _xlsx.hyperlink	ハイパーリンク…
+_xlsx.open-hyperlink	ハイパーリンクを開く
+_xlsx.edit-hyperlink	ハイパーリンクの編集…
+_xlsx.remove-hyperlink	ハイパーリンクの削除
 _xlsx.define-name	名前の定義…
 _xlsx.protect-sheet	シートの保護…
 _xlsx.the-number-in-this-cell-is-formatted-as-text	このセルの数値は、文字列形式で保存されています
@@ -1425,3 +1512,1007 @@ _xlsx.scenario-manager	シナリオの登録と管理
 xlsx.format-pane.custom	ユーザー定義
 xlsx.format-pane.border-inside	内側
 xlsx.format-pane.border-hint	見本の線をクリックすると、線を付けたり外したりできます。線のスタイルと色は、上で選びます。
+xlsx.toolbar.function-item	{name}（{label}）
+xlsx.currency.jpy	¥ 日本語
+xlsx.currency.usd	$ 英語（米国）
+xlsx.currency.gbp	£ 英語（英国）
+xlsx.currency.eur	€ ユーロ（€ 123）
+xlsx.currency.cny	¥ 中国語（中国）
+xlsx.currency.chf	CHF スイス フラン
+xlsx.currency.more	その他の会計表示形式…
+xlsx.analysis.out.column	列
+xlsx.analysis.out.row	行
+xlsx.analysis.out.x-variable	X 値
+xlsx.analysis.out.mean	平均
+xlsx.analysis.out.standard-error	標準誤差
+xlsx.analysis.out.median	中央値 (メジアン)
+xlsx.analysis.out.mode	最頻値 (モード)
+xlsx.analysis.out.standard-deviation	標準偏差
+xlsx.analysis.out.sample-variance	分散
+xlsx.analysis.out.kurtosis	尖度
+xlsx.analysis.out.skewness	歪度
+xlsx.analysis.out.range	範囲
+xlsx.analysis.out.minimum	最小
+xlsx.analysis.out.maximum	最大
+xlsx.analysis.out.sum	合計
+xlsx.analysis.out.count	データの個数
+xlsx.analysis.out.largest	最大値
+xlsx.analysis.out.smallest	最小値
+xlsx.analysis.out.confidence-level	信頼区間
+xlsx.analysis.out.point	ポイント
+xlsx.analysis.out.rank	順位
+xlsx.analysis.out.percent	パーセント
+xlsx.analysis.out.bin	データ区間
+xlsx.analysis.out.frequency	頻度
+xlsx.analysis.out.more	次の級
+xlsx.analysis.out.cumulative	累積 %
+xlsx.analysis.out.summary-output	概要
+xlsx.analysis.out.regression-statistics	回帰統計
+xlsx.analysis.out.multiple-r	重相関 R
+xlsx.analysis.out.r-square	重決定 R2
+xlsx.analysis.out.adjusted-r-square	補正 R2
+xlsx.analysis.out.observations	観測数
+xlsx.analysis.out.anova	分散分析表
+xlsx.analysis.out.df	自由度
+xlsx.analysis.out.ss	変動
+xlsx.analysis.out.ms	分散
+xlsx.analysis.out.f	観測された分散比
+xlsx.analysis.out.significance-f	有意 F
+xlsx.analysis.out.regression	回帰
+xlsx.analysis.out.residual	残差
+xlsx.analysis.out.total	合計
+xlsx.analysis.out.coefficients	係数
+xlsx.analysis.out.t-stat	t
+xlsx.analysis.out.p-value	P-値
+xlsx.analysis.out.lower	下限
+xlsx.analysis.out.upper	上限
+xlsx.analysis.out.intercept	切片
+xlsx.analysis.out.residual-output	残差出力
+xlsx.analysis.out.observation	観測値
+xlsx.analysis.out.predicted-y	予測: Y
+xlsx.analysis.out.residuals	残差
+xlsx.analysis.out.standard-residuals	標準残差
+xlsx.analysis.out.t-paired	t 検定: 一対の標本による平均の検定ツール
+xlsx.analysis.out.t-equal	t 検定: 等分散を仮定した 2 標本による検定
+xlsx.analysis.out.t-unequal	t 検定: 分散が等しくないと仮定した 2 標本による検定
+xlsx.analysis.out.z-test	z 検定: 2 標本による平均の検定ツール
+xlsx.analysis.out.f-test	F 検定: 2 標本を使った分散の検定
+xlsx.analysis.out.variable-1	変数 1
+xlsx.analysis.out.variable-2	変数 2
+xlsx.analysis.out.variance	分散
+xlsx.analysis.out.pearson	ピアソン相関
+xlsx.analysis.out.pooled-variance	プールされた分散
+xlsx.analysis.out.hypothesized-diff	仮説平均との差異
+xlsx.analysis.out.p-t-one	P(T<=t) 片側
+xlsx.analysis.out.t-crit-one	t 境界値 片側
+xlsx.analysis.out.p-t-two	P(T<=t) 両側
+xlsx.analysis.out.t-crit-two	t 境界値 両側
+xlsx.analysis.out.known-variance	既知の分散
+xlsx.analysis.out.z	z
+xlsx.analysis.out.p-z-one	P(Z<=z) 片側
+xlsx.analysis.out.z-crit-one	z 境界値 片側
+xlsx.analysis.out.p-z-two	P(Z<=z) 両側
+xlsx.analysis.out.z-crit-two	z 境界値 両側
+xlsx.analysis.out.p-f-one	P(F<=f) 片側
+xlsx.analysis.out.f-crit-one	F 境界値 片側
+xlsx.analysis.out.anova-single	分散分析: 一元配置
+xlsx.analysis.out.anova-two-without	分散分析: 繰り返しのない二元配置
+xlsx.analysis.out.anova-two-with	分散分析: 繰り返しのある二元配置
+xlsx.analysis.out.summary	概要
+xlsx.analysis.out.groups	グループ
+xlsx.analysis.out.sample-count	標本数
+xlsx.analysis.out.average	平均
+xlsx.analysis.out.source	変動要因
+xlsx.analysis.out.between	グループ間
+xlsx.analysis.out.within	グループ内
+xlsx.analysis.out.f-crit	F 境界値
+xlsx.analysis.out.rows	行
+xlsx.analysis.out.columns	列
+xlsx.analysis.out.error	誤差
+xlsx.analysis.out.sample	標本
+xlsx.analysis.out.interaction	交互作用
+xlsx.analysis.out.within-error	繰り返し誤差
+xlsx.data-analysis	データ分析…
+xlsx.analysis.title	データ分析
+xlsx.analysis.tool.anova-single	分散分析: 一元配置
+xlsx.analysis.tool.anova-two-with	分散分析: 繰り返しのある二元配置
+xlsx.analysis.tool.anova-two-without	分散分析: 繰り返しのない二元配置
+xlsx.analysis.tool.correlation	相関
+xlsx.analysis.tool.covariance	共分散
+xlsx.analysis.tool.descriptive	基本統計量
+xlsx.analysis.tool.exponential-smoothing	指数平滑
+xlsx.analysis.tool.f-test	F 検定: 2 標本を使った分散の検定
+xlsx.analysis.tool.fourier	フーリエ解析
+xlsx.analysis.tool.histogram	ヒストグラム
+xlsx.analysis.tool.moving-average	移動平均
+xlsx.analysis.tool.random	乱数発生
+xlsx.analysis.tool.rank	順位と百分位
+xlsx.analysis.tool.regression	回帰分析
+xlsx.analysis.tool.sampling	サンプリング
+xlsx.analysis.tool.t-paired	t 検定: 一対の標本による平均の検定
+xlsx.analysis.tool.t-equal	t 検定: 等分散を仮定した 2 標本による検定
+xlsx.analysis.tool.t-unequal	t 検定: 分散が等しくないと仮定した 2 標本による検定
+xlsx.analysis.tool.z-test	z 検定: 2 標本による平均の検定
+xlsx.analysis.dist.uniform	一様
+xlsx.analysis.dist.normal	正規
+xlsx.analysis.dist.bernoulli	ベルヌーイ
+xlsx.analysis.dist.binomial	二項
+xlsx.analysis.dist.poisson	ポアソン
+xlsx.analysis.dist.patterned	パターン
+xlsx.analysis.dist.discrete	離散
+xlsx.analysis.field.tool	分析ツール
+xlsx.analysis.field.input	入力範囲
+xlsx.analysis.field.input-y	入力 Y 範囲
+xlsx.analysis.field.input-x	入力 X 範囲
+xlsx.analysis.field.variable-1	変数 1 の入力範囲
+xlsx.analysis.field.variable-2	変数 2 の入力範囲
+xlsx.analysis.field.bins	データ区間（省略可）
+xlsx.analysis.field.discrete-range	値と確率の入力範囲
+xlsx.analysis.field.grouped-by	データ方向
+xlsx.analysis.field.labels	先頭行（先頭列）をラベルとして使用
+xlsx.analysis.field.alpha	α
+xlsx.analysis.field.rows-per-sample	標本あたりの行数
+xlsx.analysis.field.confidence-level	信頼度 (%)
+xlsx.analysis.field.kth-largest	第 K 位の最大値（空欄：なし）
+xlsx.analysis.field.kth-smallest	第 K 位の最小値（空欄：なし）
+xlsx.analysis.field.hypothesized-diff	仮説平均との差異
+xlsx.analysis.field.variance-1	変数 1 の分散（既知）
+xlsx.analysis.field.variance-2	変数 2 の分散（既知）
+xlsx.analysis.field.interval	区間
+xlsx.analysis.field.damping	減衰率
+xlsx.analysis.field.period	周期（空欄：ランダム）
+xlsx.analysis.field.random-count	標本数（ランダム）
+xlsx.analysis.field.variables	変数の数
+xlsx.analysis.field.count	乱数の数
+xlsx.analysis.field.seed	乱数シード（空欄：任意）
+xlsx.analysis.field.distribution	分布
+xlsx.analysis.field.between	下限
+xlsx.analysis.field.and	上限
+xlsx.analysis.field.mean	平均
+xlsx.analysis.field.standard-deviation	標準偏差
+xlsx.analysis.field.p-value	p 値
+xlsx.analysis.field.trials	試行回数
+xlsx.analysis.field.lambda	λ
+xlsx.analysis.field.from	開始
+xlsx.analysis.field.to	終了
+xlsx.analysis.field.step	増分
+xlsx.analysis.field.repeat-each	各数値の繰り返し
+xlsx.analysis.field.repeat-sequence	数列の繰り返し
+xlsx.analysis.field.output	出力先（左上のセル）
+xlsx.analysis.flag.pareto	パレート図（降順）
+xlsx.analysis.flag.cumulative	累積度数分布の表示
+xlsx.analysis.flag.constant-zero	定数に 0 を使用
+xlsx.analysis.flag.residuals	残差
+xlsx.analysis.flag.standard-residuals	標準化された残差
+xlsx.analysis.flag.standard-errors	標準誤差
+xlsx.analysis.flag.inverse	逆変換
+xlsx.analysis.flag.chart-output	グラフ出力
+xlsx.analysis.message.bad-range	「{text}」はセル範囲ではありません。A1:C10 のように入力してください。
+xlsx.analysis.message.no-sheet	シート「{name}」がありません。
+xlsx.analysis.message.no-data	分析するデータがありません。
+xlsx.analysis.message.bad-number	「{name}」に数値を入力してください。
+xlsx.analysis.message.regression	回帰分析を計算できません（データの行が少ないか、X の列が互いに従属しています）。
+xlsx.analysis.message.paired-size	対の検定では、2 つの範囲の数値の個数が同じである必要があります。
+xlsx.analysis.message.anova-blank	入力範囲に空白または数値以外のセルがあります。
+xlsx.analysis.message.anova-size	入力範囲には 2 行 2 列以上のデータが必要です。
+xlsx.analysis.message.rows-per-sample	標本あたりの行数が、データの行数を割り切る値ではありません。
+xlsx.analysis.message.interval	区間には 1 以上の整数を入力してください。
+xlsx.analysis.message.damping	減衰率は 0 以上 1 以下で入力してください。
+xlsx.analysis.message.sampling	周期とランダムの標本数のどちらか一方だけを入力してください。
+xlsx.analysis.message.random-size	変数の数は 1〜256、乱数の数は 1〜100,000 で入力してください。
+xlsx.analysis.message.random-parameters	分布のパラメータが正しくありません。
+xlsx.analysis.message.discrete	離散分布の範囲は、1 列目に値、2 列目に確率を入力してください。
+xlsx.analysis.message.fourier-blank	フーリエ解析の入力範囲は数値だけにしてください。
+xlsx.analysis.message.fourier-size	データの個数は 2 のべき乗（4096 以下）にしてください。
+xlsx.analysis.message.done	分析結果を {range} に出力しました。
+xlsx.autocorrect	オートコレクトのオプション…
+xlsx.autocorrect.title	オートコレクト
+xlsx.autocorrect.two-initials	2 文字目を小文字にする（TWo INitial CApitals の訂正）
+xlsx.autocorrect.sentences	文の先頭文字を大文字にする
+xlsx.autocorrect.days	曜日の先頭文字を大文字にする
+xlsx.autocorrect.caps-lock	CapsLock キーの押し間違いを訂正する
+xlsx.autocorrect.replace	入力中に自動修正する
+xlsx.autocorrect.as-you-type	入力中にオートコレクトを使う
+xlsx.autocorrect.spell-as-you-type	入力中にスペルチェックの波線を表示する
+xlsx.autocorrect.replace-box	修正前
+xlsx.autocorrect.with-box	修正後
+xlsx.solver	ソルバー…
+xlsx.solver.title	ソルバーのパラメーター
+xlsx.solver.objective	目的セルの設定
+xlsx.solver.goal-max	最大値
+xlsx.solver.goal-min	最小値
+xlsx.solver.goal-value	指定値：
+xlsx.solver.variables	変化させるセル
+xlsx.solver.constraints	制約条件
+xlsx.solver.cell-reference	セル参照
+xlsx.solver.constraint-value	制約条件の値（数値またはセル）
+xlsx.solver.add	追加
+xlsx.solver.change	変更
+xlsx.solver.delete	削除
+xlsx.solver.non-negative	制約のない変数を非負数にする
+xlsx.solver.method	解決方法の選択
+xlsx.solver.precision	制約条件の精度
+xlsx.solver.convergence	収束
+xlsx.solver.integer-tolerance	整数の最適性 (%)
+xlsx.solver.max-iterations	反復回数の上限（空欄：なし）
+xlsx.solver.max-time	最大時間（秒、空欄：なし）
+xlsx.solver.solve	解決
+xlsx.solver.keep	ソルバーの解を保持
+xlsx.solver.restore	元の値に戻す
+xlsx.solver.answer-report	解答レポート
+xlsx.solver.sensitivity-report	感度レポート
+xlsx.solver.limits-report	条件レポート
+xlsx.solver.bad-objective	目的セルは 1 つのセルにしてください。
+xlsx.solver.bad-variables	変化させるセルを $B$1:$B$3 のように入力してください。
+xlsx.solver.bad-constraint	制約条件には、セル参照と（<=、=、>= のときは）数値またはセルが必要です。
+xlsx.solver.bad-number	設定には数値を入力してください。
+xlsx.solver.rel.le	<=
+xlsx.solver.rel.eq	=
+xlsx.solver.rel.ge	>=
+xlsx.solver.rel.int	int
+xlsx.solver.rel.bin	bin
+xlsx.solver.rel.dif	dif
+xlsx.solver.method.grg	GRG 非線形
+xlsx.solver.method.simplex	シンプレックス LP
+xlsx.solver.method.evolutionary	エボリューショナリー
+xlsx.solver.status.optimal	ソルバーによって解が見つかりました。すべての制約条件と最適条件が満たされました。
+xlsx.solver.status.converged	ソルバーは現在の解に収束しました。すべての制約条件が満たされました。
+xlsx.solver.status.infeasible	ソルバーは実行可能な解を見つけられませんでした。
+xlsx.solver.status.unbounded	目的セルの値が収束しません。
+xlsx.solver.status.iteration-limit	反復回数の上限に達しました。すべての制約条件は満たされていますが、最適な解とは限りません。
+xlsx.solver.status.stopped	最大時間で停止しました。すべての制約条件は満たされています。
+xlsx.solver.status.not-linear	このシンプレックス LP に必要な線形の条件が満たされていません。
+xlsx.solver.status.missing-bounds	エボリューショナリーでは、すべての変化させるセルに上限と下限が必要です。
+xlsx.solver.status.bad-model	モデルを評価できません。使っているセルに数値でないものがあります。
+xlsx.solver.report.title	解答レポート
+xlsx.solver.report.worksheet	ワークシート: {sheet}
+xlsx.solver.report.goal-value	指定値 {value}
+xlsx.solver.report.objective-cell	目的セル ({goal})
+xlsx.solver.report.variable-cells	変化させるセル
+xlsx.solver.report.constraints	制約条件
+xlsx.solver.report.cell	セル
+xlsx.solver.report.name	名前
+xlsx.solver.report.original	初期値
+xlsx.solver.report.final	最終値
+xlsx.solver.report.integer	整数
+xlsx.solver.report.cell-value	セルの値
+xlsx.solver.report.formula	数式
+xlsx.solver.report.status	状態
+xlsx.solver.report.slack	余裕
+xlsx.solver.report.binding	制限あり
+xlsx.solver.report.not-binding	制限なし
+xlsx.solver.report.continuous	連続
+xlsx.solver.report.reduced-cost	逓減コスト
+xlsx.solver.report.objective-coefficient	目的係数
+xlsx.solver.report.allowable-increase	許容増加量
+xlsx.solver.report.allowable-decrease	許容減少量
+xlsx.solver.report.shadow-price	潜在価格
+xlsx.solver.report.constraint-rhs	制約条件右辺
+xlsx.solver.report.value	値
+xlsx.solver.report.lower-limit	下限
+xlsx.solver.report.upper-limit	上限
+xlsx.solver.report.objective-result	目的セルの結果
+xlsx.forecast-sheet	予測シート…
+xlsx.forecast.title	予測シート
+xlsx.forecast.field.timeline	タイムラインの範囲
+xlsx.forecast.field.values	値の範囲
+xlsx.forecast.field.end	予測の終了
+xlsx.forecast.field.confidence	信頼区間（%）
+xlsx.forecast.field.chart	グラフの種類
+xlsx.forecast.chart-line	折れ線
+xlsx.forecast.chart-column	縦棒
+xlsx.forecast.field.statistics	予測の統計情報を含める
+xlsx.forecast.create	作成
+xlsx.forecast.sheet-name	予測
+xlsx.forecast.timeline	タイムライン
+xlsx.forecast.values	値
+xlsx.forecast.forecast	予測
+xlsx.forecast.lower	下限信頼境界
+xlsx.forecast.upper	上限信頼境界
+xlsx.forecast.statistics	予測の統計情報
+xlsx.forecast.slope	傾き
+xlsx.forecast.intercept	切片
+xlsx.forecast.r-squared	決定係数 (R2)
+xlsx.forecast.standard-error	標準誤差
+xlsx.forecast.confidence-level	信頼水準
+xlsx.forecast.message.sizes	タイムラインと値のセルの数が違います。
+xlsx.forecast.message.not-numbers	タイムラインと値には、空白や文字のない数値（日付）を指定してください。
+xlsx.forecast.message.end	予測の終了に、日付か数値を入力してください。
+xlsx.forecast.message.done	シート「{name}」を作りました。
+xlsx.forecast.error.too-few	データは 3 点以上必要です。
+xlsx.forecast.error.not-ascending	タイムラインは昇順にしてください。
+xlsx.forecast.error.irregular	タイムラインの間隔が一定ではありません（同じ間隔の数値、または毎月・毎年同じ日の日付が必要です）。
+xlsx.forecast.error.end-too-early	予測の終了は、最後のデータより後にしてください。
+xlsx.forecast.error.confidence	信頼区間は 0 より大きく 100 より小さい値にしてください。
+xlsx.forecast.error.too-long	予測が長すぎます（5000 点まで）。
+xlsx.forecast.field.start	予測の開始
+xlsx.forecast.field.seasonality	季節性
+xlsx.forecast.seasonality-auto	自動検出
+xlsx.forecast.seasonality-manual	手動設定
+xlsx.forecast.field.data-completion	欠損ポイントの補完
+xlsx.forecast.completion-interpolate	補間
+xlsx.forecast.completion-zero	ゼロ
+xlsx.forecast.field.aggregation	重複データの集計
+xlsx.forecast.agg-average	平均
+xlsx.forecast.agg-count	個数
+xlsx.forecast.agg-counta	データの個数
+xlsx.forecast.agg-max	最大値
+xlsx.forecast.agg-median	中央値
+xlsx.forecast.agg-min	最小値
+xlsx.forecast.agg-sum	合計
+xlsx.forecast.message.start	予測の開始に、日付か数値を入力してください。
+xlsx.forecast.error.seasonality	季節性には 0 以上の整数を入力してください。
+xlsx.forecast.error.start-after-end	予測の開始は予測の終了より前にしてください。
+xlsx.forecast.error.start-too-late	予測の開始は最後のデータ以前にしてください。
+xlsx.forecast.error.start-too-early	予測の開始は最初のデータ以降にしてください。
+xlsx.error-options	エラー チェックのオプション…
+xlsx.error-options.title	エラー チェック
+xlsx.error-options.background	バックグラウンドでエラー チェックを行う
+xlsx.error-options.number-as-text	文字列形式の数値、またはアポストロフィで始まる数値
+xlsx.error-options.eval-error	エラーとなる値を含む数式
+xlsx.error-options.inconsistent-formula	領域内で他の数式と一致しない数式
+xlsx.error-options.two-digit-year	2 桁の年が含まれるセル
+xlsx.error-options.unlocked-formula	ロックされていない、数式が入力されているセル
+xlsx.error-options.empty-cell-reference	空白セルを参照する数式
+xlsx.error-options.formula-range	隣接するセルを含まない数式
+xlsx.error-options.calculated-column	テーブル内の不整合な計算列数式
+xlsx.error-options.list-data-validation	データの入力規則に違反する値
+xlsx.error-options.reset-ignored	無視したエラーをリセット
+xlsx.error.number-as-text	このセルの数値は、文字列形式で保存されています
+xlsx.error.eval-error	このセルの数式の結果はエラーです
+xlsx.error.inconsistent-formula	この数式は、周囲の数式と異なっています
+xlsx.error.two-digit-year	このセルの日付は 2 桁の年で表されています
+xlsx.error.unlocked-formula	この数式を含むセルはロックされていません
+xlsx.error.empty-cell-reference	この数式は空のセルを参照しています
+xlsx.error.formula-range	この数式は、隣接するセルを含んでいません
+xlsx.error.calculated-column	この数式は、この列の他の数式と矛盾しています
+xlsx.error.list-data-validation	このセルの値は、データの入力規則に違反しています
+xlsx.error-restore-column	計算列の数式を復元
+xlsx.external.file-not-found	ブック「{name}」が、このブックと同じ場所に見つかりません。
+xlsx.export-without-macros	マクロなしで書き出し…
+xlsx.ink	描画…
+xlsx.ink.title	描画
+xlsx.ink.pen	ペン
+xlsx.ink.pencil	鉛筆
+xlsx.ink.highlighter	蛍光ペン
+xlsx.ink.eraser	消しゴム
+xlsx.ink.lasso	投げ縄選択
+xlsx.ink.select	選択
+xlsx.ink.color	色
+xlsx.ink.effects	効果
+xlsx.ink.effect.rainbow	レインボー
+xlsx.ink.effect.galaxy	ギャラクシー
+xlsx.ink.effect.lava	溶岩
+xlsx.ink.effect.ocean	海洋
+xlsx.ink.effect.rose-gold	ローズ ゴールド
+xlsx.ink.effect.gold	ゴールド
+xlsx.ink.effect.silver	シルバー
+xlsx.ink.effect.bronze	ブロンズ
+xlsx.ink.width	太さ
+xlsx.ink.width-pt	{pt} pt
+xlsx.ink.mouse	マウスで描画する（オフ：ペンまたはタッチのみ）
+xlsx.ink.to-shape	インクを図形に変換
+xlsx.ink.name	インク {n}
+xlsx.ink.message.no-ink	先にインクを選んでください。
+xlsx.ink.message.not-recognized	線・四角形・楕円・三角形には見えないストロークです。
+xlsx.ink.message.converted	インクを図形に変換しました。
+xlsx.slicer-insert	スライサー…
+xlsx.slicer-insert.title	スライサーの挿入
+xlsx.slicer-insert.select-table	先にテーブルまたはピボットテーブルのセルを選んでください。
+xlsx.slicer-insert.choose	フィールドを 1 つ以上チェックしてください。
+xlsx.slicer-insert.choose-fields	スライサーを作るフィールド
+xlsx.slicer-insert.cache-prefix	スライサー_
+xlsx.slicer-settings	スライサーの設定…
+xlsx.slicer-settings.title	スライサーの設定
+xlsx.slicer-settings.select	先にスライサーを選んでください。
+xlsx.slicer-settings.caption	見出し
+xlsx.slicer-settings.show-caption	見出しを表示する
+xlsx.slicer-settings.columns	列数
+xlsx.slicer-settings.height	ボタンの高さ (pt)
+xlsx.slicer-settings.connections	レポートの接続：スライサーで絞り込むピボットテーブル
+xlsx.slicer-settings.bad-number	列数は 1〜20 の整数、高さは 5〜200 pt で入力してください。
+xlsx.slicer-settings.connect-one	ピボットテーブルを 1 つ以上つないでください。
+xlsx.links-banner.text	セキュリティの警告：このブックには他のブック（{count} 件）へのリンクがあります。値は最後に保存されたままです。
+xlsx.links-banner.update	値を更新
+xlsx.links-banner.edit	リンクの編集…
+xlsx.links-banner.close	閉じる
+xlsx.links-banner.updated	{count} 件のリンクの値を更新しました。
+xlsx.links-banner.partly	{count} 件のリンクの値を更新しました。見つからないファイル：{missing}
+xlsx.query-from-table	テーブルまたは範囲から…
+xlsx.query-blank	空のクエリ…
+xlsx.queries	クエリと接続
+query.no-data	データのあるセルを選んでください。
+query.default-name	クエリ
+query.step-failed	ステップ {step} でエラー：{error}
+query.fill-in	「{field}」を入力してください。
+query.loaded	クエリの結果を読み込みました。
+query.none	このブックにクエリはありません。
+query.summary	元：{source}　ステップ：{steps}
+query.edit	編集
+query.refresh	更新
+query.delete	削除
+query.deleted	クエリ {name} を削除しました。読み込んだシートは残ります。
+query.refresh-failed	{name} を更新できません：{error}
+query.refreshed	{name} を更新しました（{rows} 行）。
+query.queries-title	クエリと接続
+query.editor-title	クエリ エディター
+query.close-and-load	閉じて読み込む
+query.cancel	キャンセル
+query.advanced-editor	詳細エディター
+query.manage-parameters	パラメーターの管理
+query.parameters-note	フィルターや置換の文字に、パラメーターの名前を波かっこで囲んで書くと、その値が入ります。
+query.set-parameter	設定
+query.applied-steps	適用したステップ
+query.source	ソース
+query.source-blank	空のクエリ
+query.ok	OK
+query.hint	上のボタンで操作を選びます。列の見出しを押して列を選んでから押すと、その列に使います。
+query.status	{columns} 列、{rows} 行
+query.tab.home	ホーム
+query.tab.transform	変換
+query.tab.add	列の追加
+query.tab.combine	結合
+query.op.promote	1 行目をヘッダーとして使用
+query.op.demote	ヘッダーを 1 行目として使用
+query.op.change-type	データ型の変更
+query.op.select-columns	列の選択
+query.op.remove-columns	列の削除
+query.op.rename	列名の変更
+query.op.reorder	列の並べ替え
+query.op.filter	行のフィルター
+query.op.keep-top	上の行を保持
+query.op.keep-bottom	下の行を保持
+query.op.remove-top	上の行を削除
+query.op.remove-bottom	下の行を削除
+query.op.remove-duplicates	重複の削除
+query.op.remove-blank-rows	空白行の削除
+query.op.remove-errors	エラーの削除
+query.op.replace-errors	エラーの置換
+query.op.sort	並べ替え
+query.op.split	列の分割
+query.op.merge-columns	列のマージ
+query.op.replace	値の置換
+query.op.replace-null	null の置換
+query.op.fill-down	フィル（下方向）
+query.op.fill-up	フィル（上方向）
+query.op.transpose	テーブルの転置
+query.op.reverse	行を逆順にする
+query.op.trim	トリム
+query.op.upper	大文字
+query.op.lower	小文字
+query.op.pivot	列のピボット
+query.op.unpivot	列のピボット解除
+query.op.unpivot-other	その他の列のピボット解除
+query.op.group-by	グループ化
+query.op.merge	クエリのマージ
+query.op.append	クエリの追加
+query.op.add-column	カスタム列
+query.op.add-conditional	条件列
+query.op.add-index	インデックス列
+query.field.column	列
+query.field.columns	列（カンマで区切る）
+query.field.type	データ型
+query.field.culture	ロケール
+query.field.from	変更前の列名
+query.field.to	新しい列名
+query.field.comparison	条件
+query.field.value	値
+query.field.count	行数
+query.field.with	置換後の値
+query.field.order	順序
+query.field.column2	2 つ目の列
+query.field.order2	2 つ目の順序
+query.field.by	区切り方
+query.field.separator	区切り記号
+query.field.new-name	新しい列名
+query.field.find	検索する値
+query.field.whole	セル全体が一致する場合のみ
+query.field.attribute	列にする値の列
+query.field.values	値の列
+query.field.aggregate	集計
+query.field.attribute-name	属性の列名
+query.field.value-name	値の列名
+query.field.name1	集計 1 の列名
+query.field.aggregate1	集計 1
+query.field.column1	集計 1 の列
+query.field.name2	集計 2 の列名（省略可）
+query.field.aggregate2	集計 2
+query.field.right	マージするクエリまたはテーブル
+query.field.left-keys	この表のキーの列
+query.field.right-keys	相手のキーの列
+query.field.join	結合の種類
+query.field.expand	展開する相手の列
+query.field.other	追加するクエリまたはテーブル
+query.field.formula	式（例：[数量] * [単価]）
+query.field.output	そのときの値
+query.field.comparison2	2 つ目の条件
+query.field.value2	2 つ目の値
+query.field.output2	2 つ目のときの値
+query.field.otherwise	それ以外の値
+query.field.start	開始値
+query.field.step	増分
+query.field.parameter-name	パラメーター名
+query.field.parameter-value	現在の値
+query.type.any	任意
+query.type.text	テキスト
+query.type.whole	整数
+query.type.decimal	10 進数
+query.type.date	日付
+query.type.datetime	日付/時刻
+query.type.time	時刻
+query.type.logical	True/False
+query.culture.invariant	既定
+query.culture.en-us	英語 (米国)
+query.culture.ja-jp	日本語 (日本)
+query.culture.de-de	ドイツ語 (ドイツ)
+query.culture.fr-fr	フランス語 (フランス)
+query.cmp.equals	と等しい
+query.cmp.not-equals	と等しくない
+query.cmp.greater	より大きい
+query.cmp.greater-or-equal	以上
+query.cmp.less	より小さい
+query.cmp.less-or-equal	以下
+query.cmp.contains	を含む
+query.cmp.does-not-contain	を含まない
+query.cmp.begins-with	で始まる
+query.cmp.ends-with	で終わる
+query.cmp.is-null	null である
+query.cmp.is-not-null	null でない
+query.agg.sum	合計
+query.agg.average	平均
+query.agg.min	最小
+query.agg.max	最大
+query.agg.count	行数
+query.agg.distinct	個別の行数
+query.agg.median	中央値
+query.agg.first	集計しない（最初の値）
+query.join.left	左外部（最初の全部と、2 番目の一致する行）
+query.join.right	右外部（2 番目の全部と、最初の一致する行）
+query.join.full	完全外部（両方の全部）
+query.join.inner	内部（一致する行のみ）
+query.join.left-anti	左アンチ（最初のみの行）
+query.join.right-anti	右アンチ（2 番目のみの行）
+query.order.ascending	昇順
+query.order.descending	降順
+query.split.delimiter	区切り記号
+query.split.length	文字数
+cells.insert-title	セルの挿入
+cells.delete-title	セルの削除
+cells.insert-menu	挿入…
+cells.delete-menu	削除…
+xlsx.forecast.alpha	α（水準）
+xlsx.forecast.beta	β（傾向）
+xlsx.forecast.gamma	γ（季節）
+xlsx.forecast.mase	MASE
+xlsx.forecast.smape	SMAPE
+xlsx.forecast.mae	MAE
+xlsx.forecast.rmse	RMSE
+import-text.fixed-on	固定長：オン
+import-text.fixed-off	固定長：オフ
+import-text.breaks	区切る位置（先頭からの文字数、カンマ区切り。空なら自動）
+import-text.to-this-sheet	読み込み先：このシート
+import-text.to-new-sheet	読み込み先：新しいシート
+xlsx.export-xls	Excel 97-2003 ブック（.xls、ブック全体）
+xls.left-out	保存しました。旧形式（.xls）では持てないため、省いたもの：{items}
+xls.item.drawings	図・グラフ・図形 {n} 個
+xls.item.other	メモ・条件付き書式・入力規則・表 {n} 個
+xls.item.formulas	値だけにした数式 {n} 個
+xls.item.cells	行・列の上限を越えたセル {n} 個
+xls.separator	、
+xlsx.timeline.all-periods	すべての期間
+xlsx.timeline.level.years	年
+xlsx.timeline.level.quarters	四半期
+xlsx.timeline.level.months	月
+xlsx.timeline.level.days	日
+xlsx.timeline.year	{y}年
+xlsx.timeline.quarter	第{n}四半期
+xlsx.timeline.month	{n}月
+xlsx.timeline.year-quarter	{y}年 第{n}四半期
+xlsx.timeline.year-month	{y}年{n}月
+xlsx.timeline.date	{y}年{m}月{d}日
+xlsx.timeline.range	{a} - {b}
+xlsx.timeline-insert	タイムライン…
+xlsx.timeline-insert.title	タイムラインの挿入
+xlsx.timeline-insert.select-pivot	先にピボットテーブルまたはテーブルのセルを選んでください。
+xlsx.timeline-insert.choose	フィールドを 1 つ以上チェックしてください。
+xlsx.timeline-insert.choose-fields	タイムラインを作るフィールド
+xlsx.timeline-insert.cache-prefix	タイムライン_
+xlsx.pivot-insert-timeline	タイムラインの挿入…
+xlsx.get-data	データの取得
+xlsx.insert-control	フォーム コントロールの挿入
+xlsx.insert-control.button	ボタン
+xlsx.insert-control.checkbox	チェック ボックス
+xlsx.insert-control.radio	オプション ボタン
+xlsx.insert-control.dropdown	コンボ ボックス
+xlsx.insert-control.list	リスト ボックス
+xlsx.insert-control.spin	スピン ボタン
+xlsx.insert-control.scroll	スクロール バー
+xlsx.insert-control.groupbox	グループ ボックス
+xlsx.insert-control.label	ラベル
+xlsx.control-properties	コントロールの書式設定…
+xlsx.control-properties.title	コントロールの書式設定
+xlsx.control-properties.select	先にフォーム コントロールを選んでください。
+xlsx.control-properties.text	表示テキスト
+xlsx.control-properties.link	リンクするセル
+xlsx.control-properties.range	入力範囲
+xlsx.control-properties.min	最小値
+xlsx.control-properties.max	最大値
+xlsx.control-properties.step	変化の増分
+xlsx.control-properties.page	ページの増分
+xlsx.control-properties.three-d	3-D 陰影表示
+xlsx.control-properties.font	フォント名
+xlsx.control-properties.font-size	フォント サイズ (pt)
+xlsx.control-properties.text-color	文字の色 (#RRGGBB)
+xlsx.design-mode	デザイン モード
+xlsx.design-mode.enabled	デザイン モード: 有効
+xlsx.design-mode.disabled	デザイン モード: 無効
+xlsx.view-code	コードの表示
+xlsx.view-code.no-code	このシートに関連付けられた VBA マクロ コードはありません。
+xlsx.view-code.control-info	コントロール: {name} ({kind})
+xlsx.new-table-style	新しいテーブル スタイル…
+xlsx.new-table-style.title	新しいテーブル スタイル
+xlsx.new-table-style.select-table	先にテーブル内のセルを選んでください。
+xlsx.new-table-style.name	テーブル スタイル名
+xlsx.xml-source	XML ソース…
+xlsx.xml-source.title	XML ソース
+xlsx.xml-source.maps-in-workbook	このブック内の XML マップ
+xlsx.xml-source.no-maps	このブックには XML マップがありません。
+xlsx.xml-map-properties	XML マップのプロパティ…
+xlsx.xml-map-properties.title	XML マップのプロパティ
+xlsx.xml-map-properties.name	名前
+xlsx.xml-map-properties.name-required	名前を入力してください。
+xlsx.xml-map-properties.root-element	ルート要素
+xlsx.xml-map-properties.schema	スキーマ
+xlsx.xml-map-properties.validate	スキーマに照らしてデータを検証する
+xlsx.xml-map-properties.overwrite	既存のデータを新しいデータで上書きする
+xlsx.3d-model	3D モデル…
+xlsx.signature-line	署名欄…
+xlsx.chart-ex.totals	合計として設定（ウォーターフォール）
+xlsx.chart-ex.bins	ビンの設定（ヒストグラム）
+xlsx.chart-ex.bin-width	ビンの幅
+xlsx.chart-ex.bin-count	ビンの数
+xlsx.chart-ex.underflow	アンダーフロー（この値以下を 1 つにまとめる）
+xlsx.chart-ex.overflow	オーバーフロー（この値より上を 1 つにまとめる）
+xlsx.chart-ex.closed-right	区間の右端を含める
+xlsx.chart-ex.apply	ビンを適用
+xlsx.chart-ex.bins-hint	幅と数の両方を空にすると自動になります。
+xlsx.chart-ex.box-whisker	箱ひげ図の設定
+xlsx.chart-ex.box-mean-marker	平均マーカーを表示
+xlsx.chart-ex.box-mean-line	平均線を表示
+xlsx.chart-ex.box-outliers	外れ値を表示
+xlsx.chart-ex.box-inclusive	四分位数の計算に包含的中央値を含める
+xlsx.chart-ex.treemap	ツリーマップの設定
+xlsx.chart-ex.treemap-overlapping	親ラベルを重ねて表示
+xlsx.chart-ex.funnel	じょうごグラフの設定
+xlsx.chart-ex.pareto	パレート図の設定
+xlsx.chart-ex.gap-width	要素の間隔 (%)
+xlsx.chart-ex.apply-gap	間隔を適用
+xlsx.image.curl-missing	curlがみつかりません。
+xlsx.paste-picture	図
+xlsx.paste-linked-picture	リンクされた図
+xlsx.camera-tool	カメラ
+xlsx.pasted-linked-picture	リンクされた図を貼り付けました
+xlsx.pasted-picture	図を貼り付けました
+xlsx.external.change-source	リンク元の変更…
+xlsx.external.source-changed	リンク元を「{name}」に変更しました。
+xlsx.external.add-link	外部ブックのリンクを追加…
+xlsx.external.link-added	ブック「{name}」へのリンクを追加しました。
+xlsx.fill-menu	フィル
+xlsx.fill-up	上方向へコピー
+xlsx.fill-left	左方向へコピー
+xlsx.clear-menu	クリア
+xlsx.clear-formats	書式のクリア
+xlsx.clear-contents	数式と値のクリア
+xlsx.clear-hyperlinks	ハイパーリンクのクリア
+xlsx.comma-style	桁区切りスタイル
+xlsx.reapply-filter	再適用
+xlsx.sparkline-points	表示する点
+xlsx.sparkline-high-point	頂点
+xlsx.sparkline-low-point	低点
+xlsx.sparkline-negative-points	負の点
+xlsx.sparkline-first-point	始点
+xlsx.sparkline-last-point	終点
+xlsx.sparkline-markers	マーカー
+xlsx.previous-comment	前のコメント/メモ
+xlsx.next-comment	次のコメント/メモ
+xlsx.show-all-notes	すべてのメモを表示
+xlsx.page-orientation	印刷の向き
+xlsx.orientation-portrait	縦
+xlsx.orientation-landscape	横
+xlsx.paper-size	サイズ
+xlsx.paper-a4	A4 (210 x 297 mm)
+xlsx.paper-a3	A3 (297 x 420 mm)
+xlsx.paper-b5	B5 (182 x 257 mm)
+xlsx.paper-letter	レター (8.5 x 11 インチ)
+xlsx.print-titles	印刷タイトル…
+xlsx.print-titles-dialog	ページ設定（印刷タイトル）…
+xlsx.print-titles-set-rows	選択行をタイトル行に設定
+xlsx.print-titles-clear	印刷タイトルのクリア
+xlsx.insert-function	関数の挿入
+xlsx.recent-functions	最近使った関数
+xlsx.financial-functions	財務関数
+xlsx.text-functions	文字列操作関数
+xlsx.lookup-functions	検索/行列関数
+xlsx.math-functions	数学/三角関数
+xlsx.other-functions	その他の関数
+xlsx.use-in-formula	数式で使用
+xlsx.use-in-formula-paste	名前の貼り付け…
+xlsx.create-from-selection	選択範囲から作成…
+xlsx.create-names-top-row	上端行
+xlsx.create-names-left-col	左端列
+xlsx.create-names-both	上端行と左端列
+xlsx.fn.sum	SUM (合計)
+xlsx.fn.average	AVERAGE (平均)
+xlsx.fn.if	IF (論理式)
+xlsx.fn.count	COUNT (数値の個数)
+xlsx.fn.max	MAX (最大値)
+xlsx.fn.min	MIN (最小値)
+xlsx.fn.vlookup	VLOOKUP (垂直検索)
+xlsx.fn.xlookup	XLOOKUP (配列検索)
+xlsx.fn.pmt	PMT (定期支払額)
+xlsx.fn.fv	FV (将来価値)
+xlsx.fn.pv	PV (現在価値)
+xlsx.fn.npv	NPV (正味現在価値)
+xlsx.fn.irr	IRR (内部利益率)
+xlsx.fn.rate	RATE (利率)
+xlsx.fn.nper	NPER (期間数)
+xlsx.fn.concat	CONCAT (文字列結合)
+xlsx.fn.text	TEXT (表示形式変換)
+xlsx.fn.left	LEFT (左端文字)
+xlsx.fn.right	RIGHT (右端文字)
+xlsx.fn.mid	MID (中間文字)
+xlsx.fn.len	LEN (文字数)
+xlsx.fn.trim	TRIM (空白削除)
+xlsx.fn.substitute	SUBSTITUTE (文字置換)
+xlsx.fn.hlookup	HLOOKUP (水平検索)
+xlsx.fn.index	INDEX (値または参照)
+xlsx.fn.match	MATCH (相対位置)
+xlsx.fn.xmatch	XMATCH (配列相対位置)
+xlsx.fn.filter	FILTER (配列抽出)
+xlsx.fn.unique	UNIQUE (一意な値)
+xlsx.fn.sort	SORT (並べ替え)
+xlsx.fn.sumif	SUMIF (条件付き合計)
+xlsx.fn.sumifs	SUMIFS (複数条件合計)
+xlsx.fn.round	ROUND (四捨五入)
+xlsx.fn.roundup	ROUNDUP (切り上げ)
+xlsx.fn.rounddown	ROUNDDOWN (切り捨て)
+xlsx.fn.abs	ABS (絶対値)
+xlsx.fn.product	PRODUCT (積)
+xlsx.fn.mod	MOD (剰余)
+xlsx.fn.countif	COUNTIF (条件付き個数)
+xlsx.fn.countifs	COUNTIFS (複数条件個数)
+xlsx.fn.averageif	AVERAGEIF (条件付き平均)
+xlsx.fn.median	MEDIAN (中央値)
+xlsx.fn.stdev-s	STDEV.S (標本標準偏差)
+xlsx.fn.isblank	ISBLANK (空白判定)
+xlsx.fn.iserror	ISERROR (エラー判定)
+xlsx.theme-fonts	テーマのフォント
+xlsx.theme-fonts.customize	フォントのカスタマイズ…
+xlsx.theme-font.office	Office（Calibri / 游ゴシック）
+xlsx.theme-font.aptos	Aptos（Aptos / BIZ UDPゴシック）
+xlsx.theme-font.arial	Arial
+xlsx.theme-font.century-gothic	Century Gothic
+xlsx.theme-font.meiryo	メイリオ
+xlsx.theme-font.yu-gothic	游ゴシック
+xlsx.theme-fonts-applied	テーマのフォントを変更しました
+xlsx.theme-effects	テーマの効果
+xlsx.theme-effects.office	Office
+xlsx.theme-effects.subtle	控えめ
+xlsx.theme-effects.moderate	普通
+xlsx.theme-effects.intense	鮮やか
+xlsx.theme-effect.office	Office
+xlsx.theme-effect.subtle	控えめ
+xlsx.theme-effect.moderate	普通
+xlsx.theme-effect.intense	鮮やか
+xlsx.theme-effect-applied	テーマの効果を「{name}」に変更しました
+xlsx.pivot-change-data-source	データ ソースの変更…
+xlsx.pivot-source-range	テーブル/範囲
+xlsx.pivot-source-changed	ピボットテーブルのデータ ソースを変更しました
+xlsx.pivot-drill-buttons	+/- ボタン
+xlsx.pivot-drill-buttons-shown	ピボットテーブルの +/- ボタンを表示しました
+xlsx.pivot-drill-buttons-hidden	ピボットテーブルの +/- ボタンを非表示にしました
+xlsx.recommended-charts	おすすめグラフ
+xlsx.recommended-chart-inserted	おすすめグラフを挿入しました
+xlsx.thesaurus	類義語辞典
+xlsx.thesaurus.select-word	単語が入力されたセルを選択してください
+xlsx.thesaurus.lookup	「{word}」の類義語を検索します
+xlsx.chart-quick-layout	クイック レイアウト
+xlsx.chart-quick-layout-1	レイアウト 1
+xlsx.chart-quick-layout-2	レイアウト 2
+xlsx.chart-quick-layout-3	レイアウト 3
+xlsx.chart-quick-layout-4	レイアウト 4
+xlsx.chart-quick-layout-5	レイアウト 5
+xlsx.chart-quick-layout-6	レイアウト 6
+xlsx.chart-quick-layout-7	レイアウト 7
+xlsx.chart-quick-layout-8	レイアウト 8
+xlsx.chart-quick-layout-9	レイアウト 9
+xlsx.chart-quick-layout-10	レイアウト 10
+xlsx.picture.compress	図の圧縮
+xlsx.picture.compress.print	印刷用（220 ppi）
+xlsx.picture.compress.web	Web 用（150 ppi）
+xlsx.picture.compress.email	電子メール用（96 ppi）
+xlsx.picture.compress.delete-crop	トリミング部分を削除して圧縮
+_xlsx.row-height	行の高さ…
+_xlsx.row-height-pt	行の高さ（pt）
+_xlsx.column-width	列の幅…
+_xlsx.column-width-chars	列の幅（標準文字数）
+_xlsx.presets	プリセット
+_xlsx.apply	適用
+_xlsx.applied	適用しました
+_xlsx.enter-a-valid-number	有効な数値を入力してください
+_xlsx.banded-rows-enabled	縞模様（行）を有効にしました
+_xlsx.banded-rows-disabled	縞模様（行）を無効にしました
+_xlsx.banded-columns-enabled	縞模様（列）を有効にしました
+_xlsx.banded-columns-disabled	縞模様（列）を無効にしました
+_xlsx.pivot-layout-updated	レポートのレイアウトを変更しました
+_xlsx.pivot-compact-layout	コンパクト形式で表示
+_xlsx.pivot-outline-layout	アウトライン形式で表示
+_xlsx.pivot-tabular-layout	表形式で表示
+_xlsx.table-resize	テーブルのサイズ変更…
+_xlsx.table-resized	テーブルのサイズを変更しました
+xlsx.pivot-clear	クリア
+xlsx.pivot-clear-all	すべてクリア
+xlsx.pivot-clear-filters	フィルターのクリア
+xlsx.pivot-select	選択
+xlsx.pivot-select-entire-table	ピボットテーブル全体
+xlsx.pivot-select-values	値
+xlsx.pivot-select-labels	ラベル
+xlsx.pivot-blank-rows	空白行
+xlsx.pivot-insert-blank-line	各アイテムの後に空行を挿入
+xlsx.pivot-remove-blank-line	各アイテムの後の空行を削除
+xlsx.pivot-move	ピボットテーブルの移動…
+xlsx.pivot-cleared	ピボットテーブルをクリアしました
+xlsx.pivot-filters-cleared	ピボットテーブルのフィルターをクリアしました
+xlsx.recommended-pivots	おすすめピボットテーブル
+xlsx.recommended-pivot-inserted	おすすめピボットテーブルを挿入しました
+xlsx.pivot-styles	ピボットテーブル スタイル
+xlsx.pivot-style-applied	ピボットテーブルのスタイルを変更しました
+xlsx.pivot-style.none	（なし）
+xlsx.recommended-pivot-tables	おすすめピボットテーブル
+xlsx.pivot-row-headers	行の見出し
+xlsx.pivot-col-headers	列の見出し
+_xlsx.pivot-fields-cleared	ピボットテーブルのフィールドをクリアしました
+_xlsx.pivot-table-selected	ピボットテーブルを選択しました
+_xlsx.pivot-table-moved	ピボットテーブルを移動しました
+_xlsx.blank-rows-inserted	各アイテムの後に空行を挿入しました
+_xlsx.blank-rows-removed	各アイテムの後の空行を削除しました
+_xlsx.row-headers-enabled	行の見出しスタイルを有効にしました
+_xlsx.row-headers-disabled	行の見出しスタイルを無効にしました
+_xlsx.col-headers-enabled	列の見出しスタイルを有効にしました
+_xlsx.col-headers-disabled	列の見出しスタイルを無効にしました
+_xlsx.pivot-style-applied	ピボットテーブル スタイル「{style}」を適用しました
+_xlsx.cannot-use-on-multiple-selections	その操作は複数の選択範囲に対しては実行できません
+xlsx.match-entire-cell	セル内容が完全に同一であるものを検索
+xlsx.find-all	すべて検索
+_xlsx.find-matches-count	{n} 件見つかりました
+xlsx.find-results	検索結果
+xlsx.comment-new	新しいコメント
+xlsx.comment-reply	コメントに返信…
+xlsx.table-insert-row-above	上にテーブルの行を挿入
+xlsx.table-insert-row-below	下にテーブルの行を挿入
+xlsx.table-insert-col-left	左にテーブルの列を挿入
+xlsx.table-insert-col-right	右にテーブルの列を挿入
+xlsx.table-delete-row	テーブルの行の削除
+xlsx.table-delete-col	テーブルの列の削除
+_xlsx.cf-top	上位
+_xlsx.cf-bottom	下位
+_xlsx.cf-items	項目
+_xlsx.cf-percent	% (選択範囲に対する割合)
+_xlsx.repeat-item-labels	アイテムのラベルを繰り返す
+xlsx.slicer-settings.name	名前
+xlsx.slicer-settings.name-in-use	この名前は既に使われています。
+xlsx.slicer-settings.style	スタイル
+_xlsx.auto-fill	オートフィル
+xlsx.sparkline-show-axis	軸の表示
+xlsx.sparkline-right-to-left	右から左の方向にデータをプロットする
+xlsx.sparkline-min-individual	最小値: 各スパークラインの自動値
+xlsx.sparkline-min-group	最小値: すべてのスパークラインで同じ値
+xlsx.sparkline-min-custom	最小値: ユーザー設定値…
+xlsx.sparkline-max-individual	最大値: 各スパークラインの自動値
+xlsx.sparkline-max-group	最大値: すべてのスパークラインで同じ値
+xlsx.sparkline-max-custom	最大値: ユーザー設定値…
+_xlsx.vertical-axis-min	縦軸の最小値
+_xlsx.vertical-axis-max	縦軸の最大値
+_xlsx.automatic-for-each	個別自動
+_xlsx.same-for-all	グループ共通
+_xlsx.custom-value	固定値
+xlsx.sparkline-marker-colors	マーカーの色
+xlsx.sparkline-weight	太さ
+xlsx.sparkline-empty-cells	空白セルの表示
+xlsx.find-and-select	検索と選択
+xlsx.select-formulas	数式
+xlsx.select-notes	メモ
+xlsx.select-conditional-formats	条件付き書式
+xlsx.select-constants	定数
+xlsx.select-data-validation	データの入力規則
+xlsx.select-objects	オブジェクトの選択
+xlsx.format-as-table	テーブルとして書式設定
+xlsx.format-as-table.light-1	淡色 1
+xlsx.format-as-table.light-9	淡色 9
+xlsx.format-as-table.medium-2	中間 2
+xlsx.format-as-table.medium-4	中間 4
+xlsx.format-as-table.medium-9	中間 9
+xlsx.format-as-table.dark-1	濃色 1
+xlsx.format-as-table.dark-2	濃色 2
+xlsx.scale-to-fit	拡大縮小印刷
+xlsx.scale-width-auto	横: 自動
+xlsx.scale-width-1	横: 1 ページ
+xlsx.scale-width-2	横: 2 ページ
+xlsx.scale-height-auto	縦: 自動
+xlsx.scale-height-1	縦: 1 ページ
+xlsx.scale-height-2	縦: 2 ページ
+xlsx.scale-100	拡大/縮小: 100%
+xlsx.scale-80	拡大/縮小: 80%
+xlsx.scale-50	拡大/縮小: 50%
+xlsx.timeline.show-header	ヘッダー
+xlsx.timeline.show-selection-label	選択ラベル
+xlsx.timeline.show-time-level	時間レベル
+xlsx.timeline.show-scroll-bar	スクロール バー
+xlsx.table-select	選択
+xlsx.table-select-all	テーブル全体
+xlsx.table-select-data	テーブルのデータ
+xlsx.table-select-col	テーブルの列全体
+xlsx.table-select-col-data	テーブルの列データ
+xlsx.table-select-row	テーブルの行
+_xlsx.table-selected	テーブルを選択しました
+xlsx.report-connections	レポートの接続
+xlsx.names.scope	範囲 (スコープ)
+xlsx.names.scope.workbook	ブック
+xlsx.names.scope.sheet	現在のシート
+xlsx.move-sheet-first	先頭へ移動
+xlsx.move-sheet-last	末尾へ移動
+xlsx.unhide-all-sheets	すべての非表示シートを再表示
+xlsx.status-bar-summary	ステータス バーの集計
+xlsx.status-summary-average	平均
+xlsx.status-summary-count	データの個数
+xlsx.status-summary-num-count	数値の個数
+xlsx.status-summary-min	最小値
+xlsx.status-summary-max	最大値
+xlsx.status-summary-sum	合計
+xlsx.cf.preset-red	濃い赤の文字、明るい赤の背景
+xlsx.cf.preset-yellow	濃い黄色の文字、黄色の背景
+xlsx.cf.preset-green	濃い緑の文字、緑の背景
+xlsx.cf.preset-red-text	赤の文字
+xlsx.cf.text-color-rgb	文字の色 (RGB)
+xlsx.cf.filter-sheet	このワークシート
+xlsx.cf.filter-selection	現在の選択範囲
+xlsx.validation.apply-same	同じ入力規則のすべてのセルに変更を適用する
+xlsx.validation.select-same	同じ入力規則のセルを選択
+xlsx.validation.select-all	すべての入力規則セルを選択
+xlsx.validation.next-invalid	次の無効データへ移動
+xlsx.formula-auditing	ワークシート分析
+xlsx.filter-by-selected-icon	選択したセルのアイコンでフィルター
+xlsx.sort-by-selected-color	選択したセルの色を上に表示
+xlsx.sort-by-selected-font-color	選択したセルのフォントの色を上に表示
+xlsx.sort-by-selected-icon	選択したセルのアイコンを上に表示
+xlsx.sort-copy-level	レベルのコピー
+xlsx.sort-icon-key	条件付き書式のアイコン: {set} ({id})
+xlsx.find-prev	前を検索
+xlsx.find-within-workbook	ブック全体を対象にする
+xlsx.find-by-columns	列方向に検索する
+xlsx.find-include-comments	メモ・コメントも対象にする
+xlsx.link-display-text	表示文字列
+xlsx.link-tooltip	ヒント (ScreenTip)
+xlsx.link-places-in-workbook	このドキュメント内
+xlsx.select-blanks	空白セル
+xlsx.select-visible-cells	可視セル
+xlsx.select-current-region	アクティブ セル領域
+xlsx.cell-select-special	条件を選択して選択
+xlsx.use-selected-cell	選択セルを使用
+xlsx.subtotal-select-all	すべて選択
+xlsx.subtotal-unselect-all	すべて解除
+xlsx.subtotal-use-selection	選択範囲を取得
+xlsx.data-tools	データ ツール
+xlsx.what-if-analysis	What-If 分析
+xlsx.consolidate-add-selection	選択範囲を追加
+xlsx.consolidate-clear-all	すべてクリア
+xlsx.scenario-duplicate	複製
+xlsx.solver.reset-all	すべてリセット
+xlsx.pivot.sum-of	合計 / {name}
+xlsx.pivot.count-of	個数 / {name}
+xlsx.size.preset-default-row	18.75 pt (標準)
+xlsx.size.preset-chars	{n} 文字
+xlsx.size.preset-default-column	8.43 文字 (標準)
+_xlsx.data-validation	データの入力規則
+_xlsx.clear-all	すべてクリア
+_xlsx.remove-duplicates	重複の削除

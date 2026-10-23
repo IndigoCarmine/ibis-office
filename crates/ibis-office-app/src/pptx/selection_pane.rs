@@ -108,6 +108,73 @@ impl SlideEditor {
         self.order_selected(if forward { super::editing::Order::Forward } else { super::editing::Order::Backward }, cx);
     }
 
+    /// Context menu entries for a shape row in the Selection Pane.
+    pub(crate) fn selection_pane_context_menu_entries(&self, id: ShapeId) -> Vec<crate::shell::chrome::MenuEntry> {
+        use crate::shell::chrome::{MenuEntry, MenuItem};
+        let hidden = self.slide().hidden_shapes.contains(&id);
+        vec![
+            MenuItem::tr("pptx.selection-pane.rename").icon("edit").on(move |e, w, cx| e.start_renaming(id, w, cx)).into(),
+            MenuItem::tr(if hidden { "_xlsx.show" } else { "pptx.selection-pane.hide" })
+                .icon(if hidden { "visibility" } else { "visibility_off" })
+                .on(move |e, _, cx| e.set_shape_hidden(id, !hidden, cx))
+                .into(),
+            MenuItem::tr("pptx.selection-pane.show-all").icon("visibility").on(|e, _, cx| e.set_all_hidden(false, cx)).into(),
+            MenuItem::tr("pptx.selection-pane.hide-all").icon("visibility_off").on(|e, _, cx| e.set_all_hidden(true, cx)).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.order.front").icon("flip_to_front").on(move |e, _, cx| {
+                e.set_selection(vec![id]);
+                e.order_selected(super::editing::Order::Front, cx);
+            }).into(),
+            MenuItem::tr("pptx.order.forward").icon("arrow_upward").on(move |e, _, cx| e.order_one(id, true, cx)).into(),
+            MenuItem::tr("pptx.order.backward").icon("arrow_downward").on(move |e, _, cx| e.order_one(id, false, cx)).into(),
+            MenuItem::tr("pptx.order.back").icon("flip_to_back").on(move |e, _, cx| {
+                e.set_selection(vec![id]);
+                e.order_selected(super::editing::Order::Back, cx);
+            }).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.group")
+                .icon("group_work")
+                .shortcut("⌥⌘G")
+                .disabled(!self.can_group())
+                .on(|e, _, cx| e.group_selected(cx))
+                .into(),
+            MenuItem::tr("pptx.ungroup")
+                .icon("workspaces")
+                .shortcut("⌥⇧⌘G")
+                .disabled(!self.can_ungroup())
+                .on(|e, _, cx| e.ungroup_selected(cx))
+                .into(),
+            MenuEntry::Separator,
+            MenuItem::tr("pptx.frame.settings").icon("straighten").on(move |e, w, cx| {
+                e.set_selection(vec![id]);
+                e.open_frame_panel(w, cx);
+            }).into(),
+            MenuItem::tr("pptx.alt-text").icon("accessibility").on(move |e, w, cx| {
+                e.set_selection(vec![id]);
+                e.open_alt_text_panel(w, cx);
+            }).into(),
+            MenuEntry::Separator,
+            MenuItem::tr("edit.duplicate").icon("control_point_duplicate").shortcut("⌘D").on(move |e, _, cx| {
+                e.set_selection(vec![id]);
+                e.duplicate_selected(cx);
+            }).into(),
+            MenuItem::tr("edit.delete").icon("delete").shortcut("⌫").on(move |e, _, cx| {
+                e.set_selection(vec![id]);
+                e.delete_selected(cx);
+            }).into(),
+        ]
+    }
+
+    /// Open context menu for shape `id` in the Selection Pane at pointer `position`.
+    pub(crate) fn open_selection_pane_context_menu(&mut self, id: ShapeId, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.slide().hidden_shapes.contains(&id) && !self.selected_ids().contains(&id) {
+            self.set_selection(vec![id]);
+            cx.notify();
+        }
+        let entries = self.selection_pane_context_menu_entries(id);
+        self.open_popup_entries(entries, position, window, cx);
+    }
+
     pub(crate) fn selection_pane(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let pane = self.pptx()?.selection_pane.as_ref()?;
         let t = crate::shell::i18n::text;
@@ -159,7 +226,12 @@ impl SlideEditor {
                     .into_any_element(),
             };
             let row = h_flex()
+                .id(("sel-row", n))
                 .gap_1()
+                .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    e.open_selection_pane_context_menu(id, event.position, window, cx);
+                }))
                 .child(eye)
                 .child(name)
                 .child(Button::new(("sel-rename", n)).small().ghost().icon(Icon::new(Material("edit"))).tooltip(t("pptx.selection-pane.rename")).on_click(cx.listener(move |e, _, w, cx| e.start_renaming(id, w, cx))))

@@ -96,3 +96,26 @@ fn a_real_handout_master_comes_back() {
     assert_eq!(handout_master::layout(&back).unwrap(), before);
     ibis_pptx::open(back).unwrap();
 }
+
+#[test]
+fn the_background_set_on_the_page_is_the_handout_masters() {
+    use ibis_doc_model::{Color, Fill, Rgb};
+    let Some(data) = file("editing/pptx-plan.pptx") else { return };
+    let opened = ibis_pptx::open(handout_master::build(&data).unwrap()).unwrap();
+    let slide = opened.presentation.slides[0].id;
+    let blue = Fill::Solid(Color::opaque(Rgb(0xDDEBF7)));
+    let mut document = Document::new(opened.presentation.clone());
+    document.execute(vec![Command::SetBackground { slide, fill: blue.clone() }]).unwrap();
+    let edited = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let back = handout_master::apply(&data, &edited).unwrap();
+    let package = ibis_ooxml::Package::open(back.clone()).unwrap();
+    let xml = String::from_utf8(package.read("ppt/handoutMasters/handoutMaster1.xml").unwrap()).unwrap();
+    assert!(xml.contains("DDEBF7"), "{xml}");
+    // The page opened again has it; edited again with nothing changed, it stays.
+    let again = ibis_pptx::open(handout_master::build(&back).unwrap()).unwrap();
+    assert_eq!(again.presentation.slides[0].background, blue);
+    let edited = again.source.save(&again.presentation, SaveOptions::default()).unwrap();
+    let back2 = handout_master::apply(&back, &edited).unwrap();
+    let after = ibis_pptx::open(handout_master::build(&back2).unwrap()).unwrap();
+    assert_eq!(after.presentation.slides[0].background, blue, "kept");
+}

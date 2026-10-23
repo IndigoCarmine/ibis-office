@@ -67,7 +67,7 @@ pub(crate) fn write_marks(package: &mut Package, presentation: &str, slide: &str
 }
 
 /// A paragraph of `text`, a field of `field` (`slidenum`, `datetime1`) if there is one.
-fn mark_paragraph(a: &str, text: &str, field: Option<&str>) -> String {
+pub(crate) fn mark_paragraph(a: &str, text: &str, field: Option<&str>) -> String {
     const RPR: &str = "lang=\"ja-JP\" altLang=\"en-US\"";
     match field {
         Some("slidenum") => format!("<{a}p><{a}fld id=\"{{8E16B1EE-AF2B-9545-B564-41C11E7F89AC}}\" type=\"slidenum\"><{a}rPr {RPR}/><{a}t>{}</{a}t></{a}fld><{a}endParaRPr {RPR}/></{a}p>", escape(text)),

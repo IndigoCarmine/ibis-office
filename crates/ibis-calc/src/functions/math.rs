@@ -205,7 +205,7 @@ pub(super) fn get(name: &str) -> Option<Func> {
         "COMBINA" => |c, a| {
             numeric(c, a, |n| {
                 let (x, k) = (n[0].trunc(), n[1].trunc());
-                if x < 0.0 || k < 0.0 || (x == 0.0 && k > 0.0) {
+                if x < 0.0 || k < 0.0 || x == 0.0 {
                     return if x == 0.0 && k == 0.0 { number(1.0) } else { err(CellError::Num) };
                 }
                 combin(x + k - 1.0, k)
@@ -253,14 +253,14 @@ pub(super) fn get(name: &str) -> Option<Func> {
         },
         "SEQUENCE" => sequence,
         "RANDARRAY" => randarray,
-        "RAND" => |c, _| {
-            c.unsupported = true;
-            number(0.5)
+        "RAND" => |c, _| match crate::random::next() {
+            Some(r) => number(r),
+            None => {
+                c.unsupported = true;
+                number(0.5)
+            }
         },
-        "RANDBETWEEN" => |c, a| {
-            c.unsupported = true;
-            numeric(c, a, |n| if n[0] > n[1] { err(CellError::Num) } else { number(n[0].ceil()) })
-        },
+        "RANDBETWEEN" => randbetween,
         "PERCENTOF" => |c, a| {
             for expr in a {
                 if matches!(c.eval(expr), Value::Text(_)) {
@@ -781,6 +781,9 @@ fn decimal(c: &mut Ctx, a: &[Expr]) -> Value {
     if !(2.0..=36.0).contains(&radix) || t.len() > 255 {
         return err(CellError::Num);
     }
+    if t.is_empty() {
+        return number(0.0);
+    }
     let mut v = 0f64;
     for ch in t.chars() {
         match ch.to_digit(radix as u32) {
@@ -900,7 +903,7 @@ fn sequence(c: &mut Ctx, a: &[Expr]) -> Value {
         (Err(e), ..) | (_, Err(e), ..) | (_, _, Err(e), _) | (.., Err(e)) => return err(e),
     };
     if rows < 1.0 || columns < 1.0 {
-        return err(CellError::Calc);
+        return err(CellError::Value);
     }
     if rows * columns > 1_048_576.0 * 16_384.0 {
         return err(CellError::Num);
@@ -910,27 +913,68 @@ fn sequence(c: &mut Ctx, a: &[Expr]) -> Value {
     array_value(rows, columns, data)
 }
 
+/// A scalar argument of RANDBETWEEN and RANDARRAY: a logical value is refused, and so is a range or an array
+/// (they would make an array of results).
+fn random_arg(c: &mut Ctx, e: &Expr, default: f64, allow_bool: bool) -> Result<f64, CellError> {
+    if matches!(e, Expr::Missing) {
+        return Ok(default);
+    }
+    match c.eval(e) {
+        Value::Ref(r) if r.len() > 1 || r.first().is_some_and(|a| a.rows() * a.columns() > 1) => Err(CellError::Value),
+        Value::Bool(_) if !allow_bool => Err(CellError::Value),
+        v => {
+            let v = match v {
+                Value::Ref(r) => c.deref_implicit(&r),
+                Value::Array(a) => a.data.first().cloned().unwrap_or(Value::Empty),
+                v => v,
+            };
+            if !allow_bool && matches!(v, Value::Bool(_)) {
+                return Err(CellError::Value);
+            }
+            to_number(&v, c.date1904())
+        }
+    }
+}
+
+fn randbetween(c: &mut Ctx, a: &[Expr]) -> Value {
+    let (low, high) = match (random_arg(c, &a[0], 0.0, false), random_arg(c, &a[1], 0.0, false)) {
+        (Ok(l), Ok(h)) => (l, h),
+        (Err(e), _) | (_, Err(e)) => return err(e),
+    };
+    let (low, high) = (low.ceil(), high.floor());
+    if low > high {
+        return err(CellError::Num);
+    }
+    match crate::random::next() {
+        Some(r) => number(low + (r * (high - low + 1.0)).floor()),
+        None => {
+            c.unsupported = true;
+            number(low)
+        }
+    }
+}
+
 fn randarray(c: &mut Ctx, a: &[Expr]) -> Value {
-    c.unsupported = true;
     let mut get_num = |i: usize, d: f64| -> Result<f64, CellError> {
         match a.get(i) {
-            None | Some(Expr::Missing) => Ok(d),
-            Some(_) => arg_num(c, a, i),
+            None => Ok(d),
+            Some(e) => random_arg(c, e, d, true),
         }
     };
     let (rows, columns, min, max) = match (get_num(0, 1.0), get_num(1, 1.0), get_num(2, 0.0), get_num(3, 1.0)) {
         (Ok(r), Ok(cl), Ok(m), Ok(mx)) => (r.trunc(), cl.trunc(), m, mx),
         (Err(e), ..) | (_, Err(e), ..) | (_, _, Err(e), _) | (.., Err(e)) => return err(e),
     };
+    // The fifth argument is a logical value (TRUE: whole numbers); a number or text is refused.
     let whole = match a.get(4) {
         None | Some(Expr::Missing) => false,
-        Some(_) => {
-            let v = c.eval_scalar(&a[4]);
-            match crate::eval::to_bool(&v) {
-                Ok(b) => b,
-                Err(e) => return err(e),
-            }
-        }
+        Some(e) => match c.eval_scalar(e) {
+            Value::Bool(b) => b,
+            Value::Empty => false,
+            Value::Number(n) if n == 0.0 => false,
+            Value::Error(e) => return err(e),
+            _ => return err(CellError::Value),
+        },
     };
     if rows < 1.0 || columns < 1.0 || rows > 1_048_576.0 || columns > 16_384.0 {
         return err(CellError::Value);
@@ -945,12 +989,19 @@ fn randarray(c: &mut Ctx, a: &[Expr]) -> Value {
         return err(CellError::Value);
     }
     let (rows, columns) = (rows as usize, columns as usize);
-    let val = if whole {
-        min.ceil()
-    } else {
-        (min + max) / 2.0
-    };
-    let data = vec![num(val); rows * columns];
+    let (low, high) = (min.ceil(), max.floor());
+    let mut data = Vec::with_capacity(rows * columns);
+    for _ in 0..rows * columns {
+        let value = match crate::random::next() {
+            Some(r) if whole => low + (r * (high - low + 1.0)).floor(),
+            Some(r) => min + r * (max - min),
+            None => {
+                c.unsupported = true;
+                if whole { low } else { (min + max) / 2.0 }
+            }
+        };
+        data.push(num(value));
+    }
     array_value(rows, columns, data)
 }
 

@@ -20,7 +20,7 @@ use ibis_calc::formula::{Axis, adjust_references};
 
 use crate::geometry::{Emu, EmuRect};
 use crate::model::{Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId};
-use crate::sheet::{CellRange, Sheet, WorkbookSheet};
+use crate::sheet::{CellKind, CellRange, CellValue, Sheet, SheetCell, WorkbookSheet};
 
 /// A structural change, on the sheet at `sheet` in the workbook's order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -173,6 +173,20 @@ fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
         }
         Some(c)
     }).collect();
+    sheet.cell_images = std::mem::take(&mut sheet.cell_images).into_iter().filter_map(|mut img| {
+        match axis {
+            Axis::Rows => img.row = move_index(img.row, at, count)?,
+            Axis::Columns => img.column = move_index(img.column, at, count)?,
+        }
+        Some(img)
+    }).collect();
+    sheet.web_images = std::mem::take(&mut sheet.web_images).into_iter().filter_map(|((r, c), spec)| {
+        let (r, c) = match axis {
+            Axis::Rows => (move_index(r, at, count)?, c),
+            Axis::Columns => (r, move_index(c, at, count)?),
+        };
+        Some(((r, c), spec))
+    }).collect();
     sheet.spills = std::mem::take(&mut sheet.spills)
         .into_iter()
         .filter_map(|(a, r)| {
@@ -199,6 +213,7 @@ fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
         Axis::Columns => &mut sheet.print.column_breaks,
     };
     *breaks = breaks.iter().filter_map(|b| move_index(*b, at, count)).collect();
+    let mut new_table_headers = Vec::new();
     sheet.tables = std::mem::take(&mut sheet.tables)
         .into_iter()
         .filter_map(|mut t| {
@@ -212,9 +227,28 @@ fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
                         let rel_at = (at - first) as usize;
                         for i in 0..n {
                             let name = unused_table_column_name(&t.columns, (i + 1) as usize);
-                            t.columns.insert(rel_at + i as usize, name);
+                            t.columns.insert(rel_at + i as usize, name.clone());
                             if !t.totals.is_empty() {
                                 t.totals.insert(rel_at + i as usize, Default::default());
+                            }
+                            if t.header_rows > 0 {
+                                let row = t.range.first_row;
+                                let col = at + i;
+                                let style = sheet.cells.iter()
+                                    .find(|c| c.row == row && (c.column == first || c.column == last + n))
+                                    .map(|c| c.style)
+                                    .unwrap_or(0);
+                                new_table_headers.push(SheetCell {
+                                    row,
+                                    column: col,
+                                    value: CellValue::Text(name.clone()),
+                                    formula: None,
+                                    text: name,
+                                    kind: CellKind::Text,
+                                    style,
+                                    runs: None,
+                                    phonetic: None,
+                                });
                             }
                         }
                     }
@@ -253,6 +287,29 @@ fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
                 } else {
                     t.filter = None;
                 }
+            }
+            Some(t)
+        })
+        .collect();
+    if !new_table_headers.is_empty() {
+        sheet.cells.extend(new_table_headers);
+        sheet.cells.sort_by_key(|c| (c.row, c.column));
+    }
+    let move_pos = |(r, c): (u32, u32)| -> Option<(u32, u32)> {
+        match axis {
+            Axis::Rows => Some((move_index(r, at, count)?, c)),
+            Axis::Columns => Some((r, move_index(c, at, count)?)),
+        }
+    };
+    sheet.data_tables = std::mem::take(&mut sheet.data_tables)
+        .into_iter()
+        .filter_map(|mut t| {
+            t.range = move_range(t.range, axis, at, count)?;
+            if let Some(p) = t.row_input {
+                t.row_input = Some(move_pos(p)?);
+            }
+            if let Some(p) = t.column_input {
+                t.column_input = Some(move_pos(p)?);
             }
             Some(t)
         })
@@ -304,6 +361,20 @@ pub fn apply_structure(presentation: &mut Presentation, edit: &StructureEdit) ->
         match ws.slide {
             Some(id) => {
                 let Some(slide) = presentation.slide_mut(id) else { continue };
+                let (old_cell_images, old_xs, old_ys) = if index == target {
+                    if let Some(sh) = slide.shapes.iter().find(|s| matches!(s.kind, ShapeKind::Sheet(_))) {
+                        if let ShapeKind::Sheet(sheet) = &sh.kind {
+                            (sheet.cell_images.clone(), sheet.column_offsets(), sheet.row_offsets())
+                        } else {
+                            (Vec::new(), Vec::new(), Vec::new())
+                        }
+                    } else {
+                        (Vec::new(), Vec::new(), Vec::new())
+                    }
+                } else {
+                    (Vec::new(), Vec::new(), Vec::new())
+                };
+
                 for shape in slide.shapes.iter_mut() {
                     if let ShapeKind::Sheet(sheet) = &mut shape.kind {
                         let s = Arc::make_mut(sheet);
@@ -315,6 +386,64 @@ pub fn apply_structure(presentation: &mut Presentation, edit: &StructureEdit) ->
                         }
                     }
                 }
+
+                if index == target && !old_cell_images.is_empty() {
+                    let (new_xs, new_ys, new_cell_images) = if let Some(sh) = slide.shapes.iter().find(|s| matches!(s.kind, ShapeKind::Sheet(_))) {
+                        if let ShapeKind::Sheet(sheet) = &sh.kind {
+                            (sheet.column_offsets(), sheet.row_offsets(), sheet.cell_images.clone())
+                        } else {
+                            (Vec::new(), Vec::new(), Vec::new())
+                        }
+                    } else {
+                        (Vec::new(), Vec::new(), Vec::new())
+                    };
+
+                    let mut shapes_to_remove = std::collections::HashSet::new();
+                    for old_img in &old_cell_images {
+                        let old_c = old_img.column as usize;
+                        let old_r = old_img.row as usize;
+                        if old_c + 1 >= old_xs.len() || old_r + 1 >= old_ys.len() {
+                            continue;
+                        }
+                        let (ox0, oy0) = (old_xs[old_c], old_ys[old_r]);
+                        let (ox1, oy1) = (old_xs[old_c + 1], old_ys[old_r + 1]);
+
+                        let new_img = new_cell_images.iter().find(|img| {
+                            match axis {
+                                Axis::Rows => move_index(old_img.row, at, count) == Some(img.row) && img.column == old_img.column,
+                                Axis::Columns => move_index(old_img.column, at, count) == Some(img.column) && img.row == old_img.row,
+                            }
+                        });
+
+                        for shape in slide.shapes.iter_mut() {
+                            if matches!(shape.kind, ShapeKind::Picture(_)) {
+                                let cx = shape.frame.x + shape.frame.width / 2;
+                                let cy = shape.frame.y + shape.frame.height / 2;
+                                if (ox0..=ox1).contains(&cx) && (oy0..=oy1).contains(&cy) {
+                                    if let Some(target_img) = new_img {
+                                        let tc = target_img.column as usize;
+                                        let tr = target_img.row as usize;
+                                        if tc + 1 < new_xs.len() && tr + 1 < new_ys.len() {
+                                            let (nx0, ny0) = (new_xs[tc], new_ys[tr]);
+                                            let (nx1, ny1) = (new_xs[tc + 1], new_ys[tr + 1]);
+                                            let (cw, ch) = ((nx1 - nx0).max(1), (ny1 - ny0).max(1));
+                                            let (w, h) = (shape.frame.width.max(1), shape.frame.height.max(1));
+                                            let scale = (cw as f64 / w as f64).min(ch as f64 / h as f64);
+                                            let (fw, fh) = ((w as f64 * scale) as i64, (h as f64 * scale) as i64);
+                                            shape.frame = EmuRect::new(nx0 + (cw - fw) / 2, ny0 + (ch - fh) / 2, fw.max(1), fh.max(1));
+                                        }
+                                    } else {
+                                        shapes_to_remove.insert(shape.id);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !shapes_to_remove.is_empty() {
+                        slide.shapes.retain(|s| !shapes_to_remove.contains(&s.id));
+                    }
+                }
             }
             None => {
                 if let Some(hidden) = presentation.workbook.as_mut().and_then(|w| Arc::make_mut(w).sheets[index].hidden.as_mut()) {
@@ -323,7 +452,7 @@ pub fn apply_structure(presentation: &mut Presentation, edit: &StructureEdit) ->
             }
         }
     }
-    // Defined names refer to sheets by name.
+    // Defined names and chart references refer to sheets by name.
     if let Some(wb) = presentation.workbook.as_mut() {
         let wb = Arc::make_mut(wb);
         for name in wb.names.iter_mut() {
@@ -331,6 +460,7 @@ pub fn apply_structure(presentation: &mut Presentation, edit: &StructureEdit) ->
             name.formula = adjust_references(&name.formula, &own, &target_name, axis, at, count);
         }
     }
+    crate::chart_refresh::rewrite_chart_references(presentation, &|f| adjust_references(f, "", &target_name, axis, at, count));
     changed
 }
 
@@ -375,6 +505,7 @@ pub(crate) fn rewrite_formulas(presentation: &mut Presentation, f: &dyn Fn(usize
             name.formula = f(name.sheet.unwrap_or(usize::MAX), &name.formula);
         }
     }
+    crate::chart_refresh::rewrite_chart_references(presentation, &|r| f(usize::MAX, r));
     changed
 }
 

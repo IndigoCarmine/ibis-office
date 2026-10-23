@@ -1,0 +1,20 @@
+[package]
+name = "ibis-appimage"
+description = "The AppImage of ibisOffice for Linux: its runtime (unpacks the image once per version and starts the app, without FUSE) and the tool that packs an AppDir into an AppImage."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Reading and writing SquashFS (MIT OR Apache-2.0), gzip only: flate2 on
+# miniz_oxide, all Rust.
+backhand = { version = "=0.25.5", default-features = false, features = ["gzip"] }
+
+[[bin]]
+name = "ibis-appimage-runtime"
+path = "src/bin/runtime.rs"
+
+[[bin]]
+name = "ibis-appimage-pack"
+path = "src/bin/pack.rs"

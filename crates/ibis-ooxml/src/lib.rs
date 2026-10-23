@@ -11,6 +11,8 @@
 //!   every node it does not change.
 //! - [`package`]: the parts of a file, `[Content_Types].xml` and the
 //!   relationships, changed in place and saved.
+//! - [`cfb`] and [`ole`]: compound files and the embedded OLE objects kept
+//!   in them, read and written without COM.
 //! - [`canon`]: comparing two files by meaning (normalized XML), for tests
 //!   and the `ibis-ooxml-diff` tool.
 //!
@@ -20,7 +22,9 @@ pub mod canon;
 pub mod base64;
 pub mod cfb;
 pub mod encryption;
+pub mod legacy_crypt;
 pub mod modify_password;
+pub mod ole;
 pub mod package;
 pub mod xml;
 pub mod zip;

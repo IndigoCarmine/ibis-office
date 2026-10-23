@@ -12,13 +12,13 @@ When you distribute or provide a modified version of ibisOffice, or a product
 or service that includes ibisOffice (a "derivative"), you must preserve this
 attribution: display "Powered by ibisOffice", with a link to
 https://github.com/ibisjp/ibis-office, in the derivative's user interface (its
-"About" screen, or the equivalent place). The details are in TRADEMARK.md.
+"About" screen, or the equivalent place). The details are in docs/TRADEMARK.md.
 
 Name and logo
 -------------
 The ibisOffice name and logo are trademarks of ibis inc. Neither license
 grants any right to use them. How they may be used is described in
-TRADEMARK.md.
+docs/TRADEMARK.md.
 
 Language
 --------
@@ -39,13 +39,13 @@ ibisOffice を改変したもの、または ibisOffice を組み込んだ製品
 なりません。派生物の画面（「このアプリについて」の画面、またはそれに当たる
 場所）に、「Powered by ibisOffice」と表示し、
 https://github.com/ibisjp/ibis-office へのリンクを付けなければなりません。詳しくは
-TRADEMARK.md にあります。
+docs/TRADEMARK.md にあります。
 
 名前とロゴ
 ----------
 「ibisOffice」の名前とロゴは、株式会社アイビスの商標です。どちらの
 ライセンスも、これらを使う権利までは与えていません。使い方は
-TRADEMARK.md に書いてあります。
+docs/TRADEMARK.md に書いてあります。
 
 言語
 ----

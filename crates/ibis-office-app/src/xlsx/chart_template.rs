@@ -49,10 +49,13 @@ pub(crate) struct ChartTemplatePanel {
 /// Returns the default directory where user chart templates are stored.
 pub(crate) fn default_chart_templates_dir() -> PathBuf {
     let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
-    let base = env("XDG_DATA_HOME")
-        .or_else(|| env("APPDATA"))
-        .or_else(|| env("HOME").map(|h| h.join("Library").join("Application Support")));
-    base.unwrap_or_else(|| PathBuf::from(".")).join("ibisOffice").join("ChartTemplates")
+    #[cfg(target_os = "macos")]
+    let base = env("HOME").map(|home| home.join("Library/Application Support"));
+    #[cfg(target_os = "windows")]
+    let base = env("APPDATA");
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
+    base.unwrap_or_else(|| PathBuf::from(".")).join("AcaudaOffice").join("ChartTemplates")
 }
 
 /// Lists all saved `.crtx` chart templates from the templates directory.
@@ -274,7 +277,7 @@ impl SlideEditor {
         {
             let picked = cx.prompt_for_paths(PathPromptOptions {
                 files: true,
-                directories: false,
+                directories: false, extensions: Vec::new(),
                 multiple: false,
                 prompt: Some(crate::shell::i18n::text("fix.chart-template.select-chart-template").into()),
             });

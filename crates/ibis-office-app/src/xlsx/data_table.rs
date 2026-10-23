@@ -6,13 +6,16 @@
 //! take those values: 行の入力セル (for the values across), 列の入力セル (for
 //! the values down), one or both. The results fill the rest of the
 //! selection (`ibis_doc_model::data_table`).
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, Command, DataTable, SheetCommand};
 
-use super::sheet_ui::{Reference, Target, parse_reference};
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
@@ -23,6 +26,7 @@ pub(crate) struct DataTablePanel {
     pub(crate) row_input: Entity<InputState>,
     pub(crate) column_input: Entity<InputState>,
     pub(crate) message: String,
+    pub(crate) ui: Rc<RefCell<BTreeMap<String, Bounds<Pixels>>>>,
 }
 
 impl SlideEditor {
@@ -33,7 +37,13 @@ impl SlideEditor {
             return cx.notify();
         };
         let input = |window: &mut Window, cx: &mut Context<Self>| cx.new(|cx| InputState::new(window, cx));
-        let panel = DataTablePanel { range, row_input: input(window, cx), column_input: input(window, cx), message: String::new() };
+        let panel = DataTablePanel {
+            range,
+            row_input: input(window, cx),
+            column_input: input(window, cx),
+            message: String::new(),
+            ui: Default::default(),
+        };
         let s = self.wb_mut();
         s.custom_format = None;
         s.page_setup = false;
@@ -46,6 +56,15 @@ impl SlideEditor {
         s.panels.close();
         s.panels.data_table = Some(panel);
         self.sidebar_open = true;
+        cx.notify();
+    }
+
+    pub(crate) fn set_data_table_input_from_selection(&mut self, for_column: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((col, row)) = self.current_cell() else { return };
+        let cell_ref = ibis_doc_model::cell_name(col, row);
+        let Some(p) = self.sheet_state().and_then(|s| s.panels.data_table.as_ref()) else { return };
+        let target_input = if for_column { p.column_input.clone() } else { p.row_input.clone() };
+        target_input.update(cx, |i, cx| i.set_value(cell_ref, window, cx));
         cx.notify();
     }
 
@@ -62,15 +81,16 @@ impl SlideEditor {
             return;
         }
         let Some(p) = self.sheet_state().and_then(|s| s.panels.data_table.as_ref()) else { return };
-        let (range, row_text, column_text) = (p.range, p.row_input.read(cx).value().to_string(), p.column_input.read(cx).value().to_string());
+        let (range, row_text, column_text) = (
+            p.range,
+            p.row_input.read(cx).value().to_string(),
+            p.column_input.read(cx).value().to_string(),
+        );
         let cell = |t: &str| -> Result<Option<(u32, u32)>, ()> {
             if t.trim().is_empty() {
                 return Ok(None);
             }
-            match parse_reference(t) {
-                Some(Reference { sheet: None, target: Target::Cells(r) }) if r.first_row == r.last_row && r.first_column == r.last_column => Ok(Some((r.first_row, r.first_column))),
-                _ => Err(()),
-            }
+            self.resolve_single_cell_on_current_sheet(t).map(Some).ok_or(())
         };
         let (Ok(row_input), Ok(column_input)) = (cell(&row_text), cell(&column_text)) else {
             return self.data_table_message(text("_xlsx.an-input-cell-must-be-a-single-cell-on-this-shee"), cx);
@@ -90,23 +110,88 @@ impl SlideEditor {
 
     pub(crate) fn data_table_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.sheet_state()?.panels.data_table.as_ref()?;
+        let ui = p.ui.clone();
+        let mark = move |id: &str, child: AnyElement| {
+            let ui = ui.clone();
+            let id = id.to_string();
+            div()
+                .relative()
+                .child(child)
+                .child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, _, _, _| {
+                            ui.borrow_mut().insert(id.clone(), bounds);
+                        },
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
+                .into_any_element()
+        };
         let body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(13.)).child(text("_xlsx.row-input-cell")))
-            .child(Input::new(&p.row_input).small())
-            .child(div().text_size(px(13.)).child(text("_xlsx.column-input-cell")))
-            .child(Input::new(&p.column_input).small())
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_size(px(13.)).child(text("_xlsx.row-input-cell")))
+                    .child(mark(
+                        "xlsx.data-table.use-row",
+                        Button::new("data-table-use-row")
+                            .xsmall()
+                            .ghost()
+                            .label(text("xlsx.use-selected-cell"))
+                            .on_click(cx.listener(|this, _, window, cx| this.set_data_table_input_from_selection(false, window, cx)))
+                            .into_any_element(),
+                    )),
+            )
+            .child(mark("xlsx.data-table.row-input", Input::new(&p.row_input).small().into_any_element()))
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_size(px(13.)).child(text("_xlsx.column-input-cell")))
+                    .child(mark(
+                        "xlsx.data-table.use-col",
+                        Button::new("data-table-use-col")
+                            .xsmall()
+                            .ghost()
+                            .label(text("xlsx.use-selected-cell"))
+                            .on_click(cx.listener(|this, _, window, cx| this.set_data_table_input_from_selection(true, window, cx)))
+                            .into_any_element(),
+                    )),
+            )
+            .child(mark("xlsx.data-table.column-input", Input::new(&p.column_input).small().into_any_element()))
             .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Button::new("data-table-ok").small().primary().label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_data_table(cx))))
-                    .child(Button::new("data-table-close").small().ghost().label(text("_shell.close")).on_click(cx.listener(|this, _, _, cx| {
-                        this.wb_mut().panels.data_table = None;
-                        cx.notify();
-                    }))),
+                    .child(mark(
+                        "xlsx.data-table.ok",
+                        Button::new("data-table-ok")
+                            .small()
+                            .primary()
+                            .label(text("OK"))
+                            .on_click(cx.listener(|this, _, _, cx| this.apply_data_table(cx)))
+                            .into_any_element(),
+                    ))
+                    .child(mark(
+                        "xlsx.data-table.close",
+                        Button::new("data-table-close")
+                            .small()
+                            .ghost()
+                            .label(text("_shell.close"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.wb_mut().panels.data_table = None;
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    )),
             );
         Some(SidebarPanel { title: text("_xlsx.data-table").to_string().into(), body: body.into_any_element() })
     }

@@ -22,6 +22,8 @@
 //! Needs the `export` feature (on by default), which enables GPUI's test
 //! support for its headless renderer.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,6 +33,21 @@ use gpui_kit::*;
 use ibis_doc_model::{EmuRect, Presentation, SheetPrint, Slide};
 
 use crate::render::shape_view::{Resources, shape_element, slide_backdrop};
+
+/// The bounding box and overflow status of text inside an element.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextBounds {
+    /// Text bounds x in pixels relative to slide image top-left.
+    pub text_x: i64,
+    /// Text bounds y in pixels relative to slide image top-left.
+    pub text_y: i64,
+    /// Width of the rendered text in pixels.
+    pub text_width: i64,
+    /// Height of the rendered text in pixels.
+    pub text_height: i64,
+    /// Whether the text overflows the shape frame in any direction.
+    pub overflow: bool,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
@@ -60,6 +77,11 @@ pub struct Options {
     pub print_backgrounds: bool,
     /// 印刷オプション: 隠し文字を印刷する (DOCX-OPTIONS-010).
     pub print_hidden_text: bool,
+    /// 印刷オプション: 変更履歴とコメントを印刷する (DOCX-SEC-014).
+    pub print_markup: bool,
+    /// Word documents: lines as Word for Windows (`true`) or Mac makes them;
+    /// `None`: the platform's (`Resources::word_windows_lines`).
+    pub word_windows_lines: Option<bool>,
     /// 印刷の設定: the colour of the pictures (`PdfImage`).
     pub color: crate::export_print::PrintColor,
     /// 配布資料: slides to a page (`PdfImage`).
@@ -70,6 +92,8 @@ pub struct Options {
     pub handout_landscape: bool,
     /// ノート ページ (`PdfImage`): each slide above its notes on a page.
     pub notes_pages: bool,
+    /// アウトライン (`PdfImage`): the slides' titles and bodies as text.
+    pub outline_pages: bool,
     /// The file's bytes, for the notes' formatting (`notes_pages`).
     pub notes_source: Option<Vec<u8>>,
     pub handout_marks: crate::export_print::HandoutMarks,
@@ -151,11 +175,15 @@ struct SlidePicture {
     /// rows and columns): each its origin in the slide, its place on the
     /// page and its size, in pixels.
     extra: Vec<((f32, f32), (f32, f32), Size<Pixels>)>,
+    /// Text positions collected during rendering for layout inspection.
+    shape_positions: Rc<RefCell<Vec<(ibis_doc_model::ShapeId, crate::render::rich_text::TextPositions)>>>,
 }
 
 impl Render for SlidePicture {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let (scale, res) = (self.scale, &self.resources);
+        self.shape_positions.borrow_mut().clear();
+        let shape_positions = self.shape_positions.clone();
         let part = |origin: (f32, f32), inset: (f32, f32), view: Size<Pixels>| {
             div().absolute().left(px(inset.0)).top(px(inset.1)).w(view.width).h(view.height).overflow_hidden().child(
                 div()
@@ -176,7 +204,15 @@ impl Render for SlidePicture {
                     .top(px(-self.origin.1))
                     .size_full()
                     .child(slide_backdrop(&self.slide, scale, res))
-                    .children(self.slide.shown_shapes().map(|s| shape_element(s, s.frame, scale, res, None))),
+                    .children(self.slide.shown_shapes().map(|s| {
+                        if s.text_body().is_some_and(|b| !b.is_empty()) {
+                            let pos = crate::render::rich_text::TextPositions::default();
+                            shape_positions.borrow_mut().push((s.id, pos.clone()));
+                            crate::render::shape_view::shape_element_with_positions(s, s.frame, scale, res, None, Some(&pos))
+                        } else {
+                            shape_element(s, s.frame, scale, res, None)
+                        }
+                    })),
             ),
         )
         .when(!self.marks.is_empty() || !self.rules.is_empty(), |d| {
@@ -433,14 +469,20 @@ pub(crate) fn headless_app() -> (Rc<dyn Platform>, HeadlessAppContext) {
 }
 
 /// The platform's renderer drawing without a window: GPUI's Metal one, or
-/// on Windows the DirectX one of ibisOffice's fork (GPUI has none there).
-fn headless_renderer() -> Option<Box<dyn PlatformHeadlessRenderer>> {
+/// on Windows the DirectX one and on Linux the wgpu one of ibisOffice's
+/// forks (GPUI has none there).
+pub(crate) fn headless_renderer() -> Option<Box<dyn PlatformHeadlessRenderer>> {
     #[cfg(windows)]
     return gpui_windows::DirectXHeadlessRenderer::new()
         .map_err(|e| log::error!("DirectX: {e:#}"))
         .ok()
         .map(|renderer| Box::new(renderer) as Box<dyn PlatformHeadlessRenderer>);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return gpui_wgpu::WgpuHeadlessRenderer::new()
+        .map_err(|e| log::error!("wgpu: {e:#}"))
+        .ok()
+        .map(|renderer| Box::new(renderer) as Box<dyn PlatformHeadlessRenderer>);
+    #[cfg(not(any(windows, target_os = "linux")))]
     gpui_kit::platform::current_headless_renderer()
 }
 
@@ -471,6 +513,10 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
         resources.print = true;
         resources.print_backgrounds = options.print_backgrounds;
         resources.print_hidden_text = options.print_hidden_text;
+        resources.print_markup = options.print_markup;
+        if let Some(windows) = options.word_windows_lines {
+            resources.word_windows_lines = windows;
+        }
         // Shapes where they are meant to be, as PDF rasterizers draw them.
         // A presentation's picture (PNG, a picture per PDF page) stays on
         // whole pixels as the screen draws it; its vector PDF is exact, its
@@ -572,7 +618,7 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
                     }
                     let resources = resources.clone();
                     let window = cx
-                        .open_window(window_size, |_, app| app.new(|_| SlidePicture { slide, scale, size: window_size, origin, inset: (0.0, 0.0), view: window_size, resources, marks: Vec::new(), extra: Vec::new(), rules: Vec::new() }))
+                        .open_window(window_size, |_, app| app.new(|_| SlidePicture { slide, scale, size: window_size, origin, inset: (0.0, 0.0), view: window_size, resources, marks: Vec::new(), extra: Vec::new(), rules: Vec::new(), shape_positions: Rc::new(RefCell::new(Vec::new())) }))
                         .map_err(|e| format!("Cannot create the window for drawing: {e}"))?;
                     cx.update_window(window.into(), |_, window, _| {
                         window.record_paints();
@@ -608,8 +654,9 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
             continue;
         }
         let resources = resources.clone();
+        let shape_positions = Rc::new(RefCell::new(Vec::new()));
         let window = cx
-            .open_window(window_size, |_, app| app.new(|_| SlidePicture { slide, scale, size: window_size, origin, inset: (0.0, 0.0), view: window_size, resources, marks: Vec::new(), extra: Vec::new(), rules: Vec::new() }))
+            .open_window(window_size, |_, app| app.new(|_| SlidePicture { slide, scale, size: window_size, origin, inset: (0.0, 0.0), view: window_size, resources, marks: Vec::new(), extra: Vec::new(), rules: Vec::new(), shape_positions: shape_positions.clone() }))
             .map_err(|e| format!("Cannot create the window for drawing: {e}"))?;
         // Pictures decode asynchronously; draw until they have all arrived.
         let mut image = None;
@@ -621,7 +668,7 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
         }
         let mut image = image.expect("at least one capture");
         crate::export_print::recolor(&mut image, options.color);
-        if options.frame && options.handout.is_none() && !options.notes_pages {
+        if options.frame && options.handout.is_none() && !options.notes_pages && !options.outline_pages {
             crate::export_print::frame(&mut image);
         }
         cx.update_window(window.into(), |_, window, _| window.remove_window()).ok();
@@ -636,9 +683,18 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
                 println!("{}", path.display());
                 if options.layout {
                     let px_per_emu = image.width() as f32 / area.width as f32;
-                    let path = options.out_dir.join(format!("{}-{number:02}.layout.tsv", options.name));
                     let slide = &presentation.slides[number - 1];
-                    std::fs::write(&path, layout_tsv(slide, px_per_emu, (area.x, area.y))).map_err(|e| format!("{}: {e}", path.display()))?;
+                    let mut measured_bounds = HashMap::new();
+                    let positions_list = shape_positions.borrow();
+                    for (shape_id, pos) in positions_list.iter() {
+                        if let Some(shape) = slide.shapes.iter().find(|s| s.id == *shape_id) {
+                            if let Some(bounds) = compute_text_bounds_from_positions(pos, shape.frame, px_per_emu, density, (0.0, 0.0), (area.x, area.y)) {
+                                measured_bounds.insert(*shape_id, bounds);
+                            }
+                        }
+                    }
+                    let path = options.out_dir.join(format!("{}-{number:02}.layout.tsv", options.name));
+                    std::fs::write(&path, layout_tsv(slide, px_per_emu, (area.x, area.y), Some(&measured_bounds))).map_err(|e| format!("{}: {e}", path.display()))?;
                     // The size of the area drawn, in points (a sheet's print
                     // area), for matching the picture to a printed page.
                     let path = options.out_dir.join(format!("{}-{number:02}.area.txt", options.name));
@@ -657,13 +713,13 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
     if let Some(writer) = vector {
         crate::render::chart_view::VECTOR_EXPORT.with(|v| v.set(false));
         if writer.missing_glyphs > 0 {
-            eprintln!("ibisOffice: could not get the font data, so {} characters could not be written", writer.missing_glyphs);
+            eprintln!("AcaudaOffice: could not get the font data, so {} characters could not be written", writer.missing_glyphs);
         }
         let path = options.out_dir.join(format!("{}.pdf", options.name));
         let (pdf, outlined) = writer.finish()?;
         lap("PDF written (finish)", &mut lap_at);
         if !outlined.is_empty() {
-            eprintln!("ibisOffice: characters of fonts that cannot be subsetted were written as outlines (they cannot be selected as text): {}", outlined.join(", "));
+            eprintln!("AcaudaOffice: characters of fonts that cannot be subsetted were written as outlines (they cannot be selected as text): {}", outlined.join(", "));
         }
         std::fs::write(&path, pdf).map_err(|e| format!("{}: {e}", path.display()))?;
         println!("{}", path.display());
@@ -671,7 +727,19 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
     if options.format == Format::PdfImage {
         let path = options.out_dir.join(format!("{}.pdf", options.name));
         // ノート ページ: each slide's picture above its notes.
-        if options.notes_pages {
+        if options.outline_pages {
+            // アウトライン: no pictures, the text of the slides.
+            let lines: Vec<crate::export_print::NotePara> = numbers
+                .iter()
+                .flat_map(|n| {
+                    use crate::export_print::{NotePara, NoteRun};
+                    let (title, body) = crate::pptx::outline_edit::outline_of(&presentation.slides[n - 1]);
+                    let head = NotePara { level: 0, bullet: None, runs: vec![NoteRun { text: format!("{n}  "), size_pt: Some(12.0), ..Default::default() }, NoteRun { text: title, bold: true, size_pt: Some(14.0), ..Default::default() }] };
+                    std::iter::once(head).chain(body.into_iter().map(|(level, text)| NotePara { level: level.saturating_add(1), bullet: Some("•".to_string()), runs: vec![NoteRun { text, size_pt: Some(12.0), ..Default::default() }] }))
+                })
+                .collect();
+            pages = crate::export_print::outline_pages(&crate::export_print::NoteText { paragraphs: lines }, &options.handout_marks);
+        } else if options.notes_pages {
             let images: Vec<image::RgbaImage> = pages.into_iter().map(|(image, _)| image).collect();
             let notes: Vec<crate::export_print::NoteText> = numbers.iter().map(|n| rich_notes(options.notes_source.as_deref(), n - 1, &presentation.slides[n - 1].notes)).collect();
             pages = crate::export_print::notes_pages(&images, &notes, &options.handout_marks);
@@ -738,7 +806,7 @@ fn print_sheet(
         .unwrap_or_default();
     let window = cx
         .open_window(window_size, |_, app| {
-            app.new(|_| SlidePicture { slide, scale: px_per_emu, size: window_size, origin: (0.0, 0.0), inset: (0.0, 0.0), view: window_size, resources, marks: Vec::new(), extra: Vec::new(), rules: Vec::new() })
+            app.new(|_| SlidePicture { slide, scale: px_per_emu, size: window_size, origin: (0.0, 0.0), inset: (0.0, 0.0), view: window_size, resources, marks: Vec::new(), extra: Vec::new(), rules: Vec::new(), shape_positions: Rc::new(RefCell::new(Vec::new())) })
         })
         .map_err(|e| format!("Cannot create the window for drawing: {e}"))?;
     cx.update_window(window.into(), |_, window, _| {
@@ -887,16 +955,173 @@ fn print_sheet(
     Ok(())
 }
 
+/// Compute rendered text bounds from captured TextPositions.
+pub(crate) fn compute_text_bounds_from_positions(
+    positions: &crate::render::rich_text::TextPositions,
+    frame: EmuRect,
+    px_per_emu: f32,
+    density: f32,
+    slide_origin_px: (f32, f32),
+    origin_emu: (i64, i64),
+) -> Option<TextBounds> {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    let mut has_chars = false;
+
+    let paragraphs = positions.paragraphs.borrow();
+    for para in paragraphs.iter() {
+        let p = para.borrow();
+        for line in &p.lines {
+            let start = line.start;
+            let end = line.end.min(p.chars.len());
+            if start < end {
+                let left = p.chars[start].x;
+                let right = p.chars[end - 1].x + p.chars[end - 1].advance;
+                if right > left {
+                    min_x = min_x.min(left);
+                    max_x = max_x.max(right);
+                    min_y = min_y.min(line.top);
+                    max_y = max_y.max(line.top + line.height);
+                    has_chars = true;
+                }
+            }
+        }
+    }
+
+    if !has_chars {
+        return None;
+    }
+
+    let text_x = ((min_x - slide_origin_px.0) * density).round() as i64;
+    let text_y = ((min_y - slide_origin_px.1) * density).round() as i64;
+    let text_width = ((max_x - min_x) * density).round().max(0.0) as i64;
+    let text_height = ((max_y - min_y) * density).round().max(0.0) as i64;
+
+    let px = |v: i64| (v as f32 * px_per_emu).round() as i64;
+    let frame_x = px(frame.x - origin_emu.0);
+    let frame_y = px(frame.y - origin_emu.1);
+    let frame_w = px(frame.width);
+    let frame_h = px(frame.height);
+
+    let eps = 1;
+    let overflow = text_x < frame_x - eps
+        || text_y < frame_y - eps
+        || text_x + text_width > frame_x + frame_w + eps
+        || text_y + text_height > frame_y + frame_h + eps;
+
+    Some(TextBounds { text_x, text_y, text_width, text_height, overflow })
+}
+
+/// Fallback text bounds estimation from model metadata when rendering positions are unavailable.
+pub(crate) fn estimate_text_bounds(
+    shape: &ibis_doc_model::Shape,
+    px_per_emu: f32,
+    origin_emu: (i64, i64),
+) -> Option<TextBounds> {
+    let body = shape.text_body()?;
+    if body.is_empty() {
+        return None;
+    }
+    let text = body.text();
+    if text.trim().is_empty() {
+        return None;
+    }
+
+    let f = shape.frame;
+    let px = |v: i64| (v as f32 * px_per_emu).round() as i64;
+    let frame_x = px(f.x - origin_emu.0);
+    let frame_y = px(f.y - origin_emu.1);
+    let frame_w = px(f.width);
+    let frame_h = px(f.height);
+
+    let inset_l = (body.insets.left as f32 * px_per_emu).round() as i64;
+    let inset_t = (body.insets.top as f32 * px_per_emu).round() as i64;
+    let inset_r = (body.insets.right as f32 * px_per_emu).round() as i64;
+    let _inset_b = (body.insets.bottom as f32 * px_per_emu).round() as i64;
+
+    let avail_w = (frame_w - inset_l - inset_r).max(1) as f32;
+    let px_per_point = px_per_emu * 12_700.0;
+    let font_scale = body.font_scale as f32 / 100_000.0;
+    let default_fs = body.style.font_size_pt();
+
+    let mut total_h = 0.0f32;
+    let mut max_w = 0.0f32;
+
+    for (i, p) in body.paragraphs.iter().enumerate() {
+        if i > 0 {
+            total_h += p.space_before as f32 * px_per_point / 100.0;
+        }
+        let font_size_pt = p
+            .runs
+            .first()
+            .and_then(|r| r.style.font_size)
+            .or(p.end_style.font_size)
+            .map_or(default_fs, |sz| sz as f32 / 100.0)
+            * font_scale;
+        let line_height_px = match p.line_spacing {
+            Some(ibis_doc_model::LineSpacing::Percent(pct)) => font_size_pt * px_per_point * 1.2 * (pct as f32 / 100_000.0),
+            Some(ibis_doc_model::LineSpacing::Points(pts)) => pts as f32 / 100.0 * px_per_point,
+            None => font_size_pt * px_per_point * 1.2,
+        };
+
+        let mut para_text_w = 0.0f32;
+        for run in &p.runs {
+            let run_fs = run.style.font_size.map_or(default_fs, |sz| sz as f32 / 100.0) * font_scale;
+            for c in run.text.chars() {
+                let em = if c.is_ascii() { 0.55 } else { 1.0 };
+                para_text_w += em * run_fs * px_per_point;
+            }
+        }
+
+        if body.wrap && avail_w > 0.0 && para_text_w > avail_w {
+            let num_lines = (para_text_w / avail_w).ceil();
+            total_h += num_lines * line_height_px;
+            max_w = max_w.max(avail_w);
+        } else {
+            total_h += line_height_px;
+            max_w = max_w.max(para_text_w);
+        }
+
+        if i + 1 < body.paragraphs.len() {
+            total_h += p.space_after as f32 * px_per_point / 100.0;
+        }
+    }
+
+    let text_w = max_w.round() as i64;
+    let text_h = total_h.round() as i64;
+
+    let text_x = frame_x + inset_l;
+    let text_y = frame_y + inset_t;
+
+    let eps = 1;
+    let overflow = text_x < frame_x - eps
+        || text_y < frame_y - eps
+        || text_x + text_w > frame_x + frame_w + eps
+        || text_y + text_h > frame_y + frame_h + eps;
+
+    Some(TextBounds {
+        text_x,
+        text_y,
+        text_width: text_w,
+        text_height: text_h,
+        overflow,
+    })
+}
+
 /// What each element of `slide` is and where it is drawn, back to front, in
 /// pixels of the exported picture.
 ///
-/// Columns: `z layer kind x y width height detail`. `kind` is one of `text`,
-/// `picture`, `picture-rotated`, `picture-undrawable`, `chart`,
-/// `chart-unread`, `table`, `shape`, `preset` (a preset geometry drawn as its
-/// bounding box), `line`.
-fn layout_tsv(slide: &Slide, px_per_emu: f32, origin: (i64, i64)) -> String {
+/// Columns: `z layer kind x y width height text_x text_y text_width text_height overflow detail`.
+pub(crate) fn layout_tsv(
+    slide: &Slide,
+    px_per_emu: f32,
+    origin: (i64, i64),
+    measured_bounds: Option<&HashMap<ibis_doc_model::ShapeId, TextBounds>>,
+) -> String {
     use ibis_doc_model::{Geometry, Placeholder, ShapeKind};
-    let mut out = String::from("z\tlayer\tkind\tx\ty\twidth\theight\tdetail\n");
+    let mut out = String::from("z\tlayer\tkind\tx\ty\twidth\theight\ttext_x\ttext_y\ttext_width\ttext_height\toverflow\tdetail\n");
     let shapes = slide.shown_backdrop().iter().map(|s| ("backdrop", s)).chain(slide.shown_shapes().map(|s| ("slide", s)));
     for (z, (layer, shape)) in shapes.enumerate() {
         let has_text = shape.text_body().is_some_and(|b| !b.is_empty());
@@ -918,6 +1143,8 @@ fn layout_tsv(slide: &Slide, px_per_emu: f32, origin: (i64, i64)) -> String {
             ShapeKind::Sheet(_) => ("sheet", String::new()),
             ShapeKind::Page { .. } => ("page", String::new()),
             ShapeKind::Slicer(s) => ("slicer", s.name.clone()),
+            ShapeKind::Control(c) => ("control", c.name.clone()),
+            ShapeKind::Timeline(t) => ("timeline", t.name.clone()),
             ShapeKind::Placeholder(Placeholder::Table) => ("table", String::new()),
             ShapeKind::Placeholder(Placeholder::Chart) => ("chart-unread", String::new()),
             ShapeKind::Placeholder(Placeholder::Diagram) => ("smartart", String::new()),
@@ -925,8 +1152,38 @@ fn layout_tsv(slide: &Slide, px_per_emu: f32, origin: (i64, i64)) -> String {
         };
         let f = shape.frame;
         let px = |v: i64| (v as f32 * px_per_emu).round() as i64;
+        let frame_x = px(f.x - origin.0);
+        let frame_y = px(f.y - origin.1);
+        let frame_w = px(f.width);
+        let frame_h = px(f.height);
         let detail = detail.replace(['\t', '\n'], " ");
-        out.push_str(&format!("{z}\t{layer}\t{kind}\t{}\t{}\t{}\t{}\t{detail}\n", px(f.x - origin.0), px(f.y - origin.1), px(f.width), px(f.height)));
+
+        let tb = measured_bounds.and_then(|m| m.get(&shape.id).copied()).or_else(|| {
+            if has_text {
+                estimate_text_bounds(shape, px_per_emu, origin)
+            } else {
+                None
+            }
+        });
+
+        let (tx, ty, tw, th, ov) = match tb {
+            Some(b) => (
+                format!("{}", b.text_x),
+                format!("{}", b.text_y),
+                format!("{}", b.text_width),
+                format!("{}", b.text_height),
+                if b.overflow { "true" } else { "false" },
+            ),
+            None => (
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+                "false",
+            ),
+        };
+
+        out.push_str(&format!("{z}\t{layer}\t{kind}\t{frame_x}\t{frame_y}\t{frame_w}\t{frame_h}\t{tx}\t{ty}\t{tw}\t{th}\t{ov}\t{detail}\n"));
     }
     out
 }
@@ -1024,5 +1281,108 @@ mod tests {
         // Title rows 0..20: the pages past them hold 20 less.
         let rows: Vec<i64> = (0..=20).map(|i| i * 20).collect();
         assert_eq!(page_spans(&rows, &[], 0, 400, 100.0, Some((20, 20))), vec![(0, 100), (100, 180), (180, 260), (260, 340), (340, 400)]);
+    }
+
+    #[test]
+    fn layout_tsv_header_and_columns() {
+        use ibis_doc_model::{EmuRect, Shape, ShapeId, Slide, SlideId};
+
+        let mut slide = Slide::new(SlideId(1));
+        // Shape 1: Line (no text)
+        slide.shapes.push(Shape::new(
+            ShapeId(1),
+            EmuRect::new(0, 0, 127_000, 127_000),
+            ibis_doc_model::ShapeKind::Line(ibis_doc_model::Stroke::solid(ibis_doc_model::Color::BLACK, 10_000)),
+        ));
+        // Shape 2: Text box fitting within frame
+        slide.shapes.push(Shape::text_box(
+            ShapeId(2),
+            EmuRect::new(127_000, 127_000, 10_000_000, 5_000_000),
+            "Fit",
+        ));
+        // Shape 3: Text box overflowing frame
+        slide.shapes.push(Shape::text_box(
+            ShapeId(3),
+            EmuRect::new(127_000, 127_000, 50_000, 50_000),
+            "This text will overflow the small frame definitely",
+        ));
+
+        let px_per_emu = 1.0 / 12_700.0; // 1 px per point
+        let tsv = super::layout_tsv(&slide, px_per_emu, (0, 0), None);
+        let lines: Vec<&str> = tsv.lines().collect();
+
+        // Check header
+        assert_eq!(
+            lines[0],
+            "z\tlayer\tkind\tx\ty\twidth\theight\ttext_x\ttext_y\ttext_width\ttext_height\toverflow\tdetail"
+        );
+
+        assert_eq!(lines.len(), 4);
+
+        // Line shape: no text -> text bounds should be 0 0 0 0 false
+        let f1: Vec<&str> = lines[1].split('\t').collect();
+        assert_eq!(f1.len(), 13);
+        assert_eq!(f1[2], "line");
+        assert_eq!(f1[7], "0"); // text_x
+        assert_eq!(f1[8], "0"); // text_y
+        assert_eq!(f1[9], "0"); // text_width
+        assert_eq!(f1[10], "0"); // text_height
+        assert_eq!(f1[11], "false"); // overflow
+
+        // Fitting text box -> overflow: false
+        let f2: Vec<&str> = lines[2].split('\t').collect();
+        assert_eq!(f2.len(), 13);
+        assert_eq!(f2[2], "text");
+        assert_eq!(f2[11], "false");
+        let tw2: i64 = f2[9].parse().unwrap();
+        let th2: i64 = f2[10].parse().unwrap();
+        assert!(tw2 > 0);
+        assert!(th2 > 0);
+
+        // Overflowing text box -> overflow: true
+        let f3: Vec<&str> = lines[3].split('\t').collect();
+        assert_eq!(f3.len(), 13);
+        assert_eq!(f3[2], "text");
+        assert_eq!(f3[11], "true");
+        let tw3: i64 = f3[9].parse().unwrap();
+        let th3: i64 = f3[10].parse().unwrap();
+        assert!(tw3 > 0);
+        assert!(th3 > 0);
+    }
+
+    #[test]
+    fn layout_tsv_measured_bounds_override() {
+        use ibis_doc_model::{EmuRect, Shape, ShapeId, Slide, SlideId};
+        use std::collections::HashMap;
+
+        let mut slide = Slide::new(SlideId(1));
+        slide.shapes.push(Shape::text_box(
+            ShapeId(1),
+            EmuRect::new(0, 0, 1_000_000, 1_000_000),
+            "Test",
+        ));
+
+        let mut measured = HashMap::new();
+        measured.insert(
+            ShapeId(1),
+            super::TextBounds {
+                text_x: 12,
+                text_y: 34,
+                text_width: 56,
+                text_height: 78,
+                overflow: true,
+            },
+        );
+
+        let tsv = super::layout_tsv(&slide, 1.0 / 12_700.0, (0, 0), Some(&measured));
+        let lines: Vec<&str> = tsv.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let f: Vec<&str> = lines[1].split('\t').collect();
+        assert_eq!(f.len(), 13);
+        assert_eq!(f[7], "12");
+        assert_eq!(f[8], "34");
+        assert_eq!(f[9], "56");
+        assert_eq!(f[10], "78");
+        assert_eq!(f[11], "true");
     }
 }

@@ -7,8 +7,9 @@
 //! Until updated, the formulas calculate from the values the file cached.
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
-use gpui_kit::component::button::Button;
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
+use crate::shell::icons::Material;
 use gpui_kit::*;
 use ibis_doc_model::{Command, SheetCommand};
 
@@ -42,6 +43,82 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// The commands that link the workbooks a typed formula names that the file does not link yet
+    /// (`=[Budget.xlsx]Sheet1!A1`): each found beside this workbook (its file read for its sheets and the cells
+    /// the formula reads), added before the entry so that one undo takes both. A file not found is told in the
+    /// status, and the formula stays as it was typed (`#REF!`).
+    pub(crate) fn link_new_books_commands(&mut self, formula: &str) -> Vec<Command> {
+        let books: Vec<String> = self.presentation().workbook.as_ref().map(|w| w.external_books.iter().filter(|b| !b.broken).map(|b| b.name.clone()).collect()).unwrap_or_default();
+        let mut unknown: Vec<String> = Vec::new();
+        for name in ibis_calc::formula::unknown_books(formula, &books) {
+            if !unknown.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+                unknown.push(name);
+            }
+        }
+        let mut commands = Vec::new();
+        for name in unknown {
+            #[cfg(not(target_family = "wasm"))]
+            let (path_str, data) = {
+                let resolve_candidate = |candidate: std::path::PathBuf| -> Option<std::path::PathBuf> {
+                    if candidate.is_absolute() {
+                        return Some(candidate);
+                    }
+                    if let Some(base) = self.path.as_ref().and_then(|p| p.parent()) {
+                        let mut cur: Option<&std::path::Path> = Some(base);
+                        while let Some(dir) = cur {
+                            let attempt = dir.join(&candidate);
+                            if attempt.exists() {
+                                return Some(attempt);
+                            }
+                            cur = dir.parent();
+                        }
+                    }
+                    if candidate.exists() {
+                        return Some(candidate);
+                    }
+                    self.path.as_ref().and_then(|base| base.parent()).map(|d| d.join(candidate))
+                };
+                let file_path = if let Some(p) = name.find('[') && let Some(e) = name[p + 1..].find(']') {
+                    let dir_part = &name[..p];
+                    let file_part = &name[p + 1..p + 1 + e];
+                    let dir_part_clean = dir_part.replace('\\', "/");
+                    if dir_part.is_empty() {
+                        self.path.as_ref().and_then(|base| base.parent()).map(|d| d.join(file_part))
+                    } else {
+                        let full = std::path::PathBuf::from(&dir_part_clean).join(file_part);
+                        resolve_candidate(full)
+                    }
+                } else {
+                    let explicit_path = ibis_calc::formula::book_path_in_formula(formula, &name);
+                    if let Some(ref p) = explicit_path {
+                        let p_clean = p.replace('\\', "/");
+                        let candidate = std::path::PathBuf::from(&p_clean).join(&name);
+                        resolve_candidate(candidate)
+                    } else if !name.contains(['/', '\\']) {
+                        self.path.as_ref().and_then(|p| p.parent()).map(|d| d.join(&name))
+                    } else {
+                        let name_clean = name.replace('\\', "/");
+                        let p = std::path::PathBuf::from(&name_clean);
+                        resolve_candidate(p)
+                    }
+                };
+                let found_data = file_path.as_ref().and_then(|p| std::fs::read(p).ok());
+                let final_path = file_path.map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| name.clone());
+                (final_path, found_data)
+            };
+            #[cfg(target_family = "wasm")]
+            let (path_str, data): (String, Option<Vec<u8>>) = (name.clone(), None);
+            let mut book = ibis_pptx::new_external_book(&name, data.as_deref(), formula);
+            book.path = path_str;
+            if book.sheets.is_empty() {
+                self.status = Some(crate::shell::i18n::format("xlsx.external.file-not-found", &[("name", &name)]).into());
+                continue;
+            }
+            commands.push(Command::Sheet(SheetCommand::AddExternalBook { book }));
+        }
+        commands
+    }
+
     /// The links of the workbook still in use: (index, book).
     pub(crate) fn live_external_books(&self) -> Vec<(usize, ibis_doc_model::ExternalBook)> {
         self.presentation().workbook.as_ref().map(|w| w.external_books.iter().cloned().enumerate().filter(|(_, b)| !b.broken && !b.name.is_empty()).collect()).unwrap_or_default()
@@ -59,13 +136,27 @@ impl SlideEditor {
         }
     }
 
+    /// The bytes of the file a link names: at the path the link gives, or else a file of that name in the folder of
+    /// this workbook (a workbook moved with the files it links).
+    #[cfg(not(target_family = "wasm"))]
+    fn link_file(&self, book: &ibis_doc_model::ExternalBook) -> Option<Vec<u8>> {
+        let dir = self.file_path().and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+        if let Some(data) = ibis_pptx::link_path(&book.path, dir.as_deref()).and_then(|p| std::fs::read(p).ok()) {
+            return Some(data);
+        }
+        let name = ibis_pptx::link_path(&book.path, None).as_deref().and_then(|p| p.file_name().map(|n| n.to_owned())).or_else(|| (!book.name.is_empty()).then(|| book.name.clone().into()))?;
+        std::fs::read(dir?.join(name)).ok()
+    }
+
     /// 値の更新 from the file the link names.
     pub(crate) fn refresh_external_book(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(book) = self.presentation().workbook.as_ref().and_then(|w| w.external_books.get(index)).cloned() else { return };
-        let dir = self.file_path().and_then(|p| p.parent().map(std::path::Path::to_path_buf));
-        let found = ibis_pptx::link_path(&book.path, dir.as_deref()).and_then(|p| std::fs::read(&p).ok().map(|d| (p, d)));
+        #[cfg(not(target_family = "wasm"))]
+        let found = self.link_file(&book);
+        #[cfg(target_family = "wasm")]
+        let found: Option<Vec<u8>> = None;
         match found {
-            Some((_, data)) => self.refresh_external_book_from(index, &data, cx),
+            Some(data) => self.refresh_external_book_from(index, &data, cx),
             None => self.external_links_message(crate::shell::i18n::format("external-links.not-found", &[("path", &book.path)]), cx),
         }
     }
@@ -76,7 +167,7 @@ impl SlideEditor {
         {
             let picked = cx.prompt_for_paths(PathPromptOptions {
                 files: true,
-                directories: false,
+                directories: false, extensions: Vec::new(),
                 multiple: false,
                 prompt: Some(crate::shell::i18n::text("_xlsx.update").to_string().into()),
             });
@@ -96,6 +187,180 @@ impl SlideEditor {
             })
             .detach();
         }
+    }
+
+    /// リンク元の変更 of link `index` from bytes `data` of a chosen new workbook file.
+    pub(crate) fn change_external_book_source(
+        &mut self,
+        index: usize,
+        new_name: String,
+        new_path: String,
+        data: &[u8],
+        cx: &mut Context<Self>,
+    ) {
+        let Ok(new_book) = ibis_pptx::read_external_book(&new_name, &new_path, data) else {
+            self.external_links_message(crate::shell::i18n::format("xlsx.external.file-not-found", &[("name", &new_name)]).to_string(), cx);
+            return;
+        };
+        self.run_sheet(
+            vec![Command::Sheet(SheetCommand::ChangeExternalBookSource {
+                index,
+                new_name: new_name.clone(),
+                new_path,
+                sheets: new_book.sheets,
+            })],
+            cx,
+        );
+        self.external_links_message(crate::shell::i18n::format("xlsx.external.source-changed", &[("name", &new_name)]), cx);
+    }
+
+    /// リンク元の変更 from a file chosen.
+    pub(crate) fn change_external_book_source_picked(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                extensions: vec!["xlsx".into(), "xlsm".into(), "xlsb".into()],
+                multiple: false,
+                prompt: Some(crate::shell::i18n::text("xlsx.external.change-source").to_string().into()),
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let Some(path) = paths.into_iter().next() else { return };
+                let Ok(data) = std::fs::read(&path) else { return };
+                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Book.xlsx".to_string());
+                let path_str = path.to_string_lossy().to_string();
+                this.update(cx, |this, cx| this.change_external_book_source(index, name, path_str, &data, cx)).ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Some((name, data))) = crate::web::pick_file().await else { return };
+                this.update(cx, |this, cx| this.change_external_book_source(index, name.clone(), name, &data, cx)).ok();
+            })
+            .detach();
+        }
+    }
+
+    /// 外部ブックのリンクを追加 from bytes `data` of a chosen workbook file.
+    pub(crate) fn add_external_link(&mut self, name: String, path: String, data: &[u8], cx: &mut Context<Self>) {
+        let Ok(book) = ibis_pptx::read_external_book(&name, &path, data) else {
+            self.external_links_message(crate::shell::i18n::format("xlsx.external.file-not-found", &[("name", &name)]).to_string(), cx);
+            return;
+        };
+        self.run_sheet(vec![Command::Sheet(SheetCommand::AddExternalBook { book })], cx);
+        self.external_links_message(crate::shell::i18n::format("xlsx.external.link-added", &[("name", &name)]), cx);
+    }
+
+    /// 外部ブックのリンクを追加 from a file chosen.
+    pub(crate) fn add_external_link_picked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                extensions: vec!["xlsx".into(), "xlsm".into(), "xlsb".into()],
+                multiple: false,
+                prompt: Some(crate::shell::i18n::text("xlsx.external.add-link").to_string().into()),
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let Some(path) = paths.into_iter().next() else { return };
+                let Ok(data) = std::fs::read(&path) else { return };
+                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Book.xlsx".to_string());
+                let path_str = path.to_string_lossy().to_string();
+                this.update(cx, |this, cx| this.add_external_link(name, path_str, &data, cx)).ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Some((name, data))) = crate::web::pick_file().await else { return };
+                this.update(cx, |this, cx| this.add_external_link(name.clone(), name, &data, cx)).ok();
+            })
+            .detach();
+        }
+    }
+
+    /// 起動時のリンクの確認: the bar shown on opening a workbook that links other workbooks.
+    pub(crate) fn render_links_banner(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.sheet_state()?.links_notice {
+            return None;
+        }
+        let count = self.live_external_books().len();
+        if count == 0 {
+            return None;
+        }
+        let text_color = rgb(0x7a4b00);
+        Some(
+            h_flex()
+                .id("links-banner")
+                .w_full()
+                .py_1()
+                .px_3()
+                .bg(rgb(0xfff4ce))
+                .border_b_1()
+                .border_color(rgb(0xf0d58c))
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(Icon::new(Material("link")).size(px(16.)).text_color(text_color))
+                        .child(div().text_xs().font_weight(FontWeight::MEDIUM).text_color(text_color).child(crate::shell::i18n::format("xlsx.links-banner.text", &[("count", &count)]))),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_1()
+                        .child(Button::new("links-banner-update").small().ghost().label(crate::shell::i18n::text("xlsx.links-banner.update")).on_click(cx.listener(|this, _, _, cx| this.update_all_links(cx))))
+                        .child(Button::new("links-banner-edit").small().ghost().label(crate::shell::i18n::text("xlsx.links-banner.edit")).on_click(cx.listener(|this, _, window, cx| this.open_external_links_panel(window, cx))))
+                        .child(Button::new("links-banner-close").small().ghost().label(crate::shell::i18n::text("xlsx.links-banner.close")).on_click(cx.listener(|this, _, _, cx| this.dismiss_links_banner(cx)))),
+                )
+                .into_any_element(),
+        )
+    }
+
+    pub(crate) fn dismiss_links_banner(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = self.sheet_state_mut() {
+            state.links_notice = false;
+        }
+        cx.notify();
+    }
+
+    /// The bar's 値を更新: every link read again from the file it names (beside this workbook or at the path
+    /// the link gives); those not found stay as cached, and the status says how many were updated.
+    pub(crate) fn update_all_links(&mut self, cx: &mut Context<Self>) {
+        let mut updated = 0usize;
+        let mut missing: Vec<String> = Vec::new();
+        for (index, book) in self.live_external_books() {
+            #[cfg(not(target_family = "wasm"))]
+            let data = self.link_file(&book);
+            #[cfg(target_family = "wasm")]
+            let data: Option<Vec<u8>> = None;
+            match data.as_deref().map(|d| ibis_pptx::refreshed_sheets(&book, d)) {
+                Some(Ok(sheets)) => {
+                    self.run_sheet(vec![Command::Sheet(SheetCommand::RefreshExternalBook { index, sheets })], cx);
+                    updated += 1;
+                }
+                _ => missing.push(book.name.clone()),
+            }
+        }
+        if let Some(state) = self.sheet_state_mut() {
+            state.links_notice = false;
+        }
+        let text = if missing.is_empty() {
+            crate::shell::i18n::format("xlsx.links-banner.updated", &[("count", &updated)])
+        } else {
+            crate::shell::i18n::format("xlsx.links-banner.partly", &[("count", &updated), ("missing", &missing.join(", "))])
+        };
+        self.set_status(text.to_string(), cx);
     }
 
     /// リンクの解除.
@@ -137,9 +402,20 @@ impl SlideEditor {
                         .flex_wrap()
                         .child(mark(format!("update-{index}"), Button::new(SharedString::from(format!("external-update-{index}"))).small().label(crate::shell::i18n::text("_xlsx.update-values")).on_click(cx.listener(move |this, _, _, cx| this.refresh_external_book(index, cx))).into_any_element()))
                         .child(mark(format!("pick-{index}"), Button::new(SharedString::from(format!("external-pick-{index}"))).small().label(crate::shell::i18n::text("_xlsx.update-from-file")).on_click(cx.listener(move |this, _, window, cx| this.refresh_external_book_picked(index, window, cx))).into_any_element()))
+                        .child(mark(format!("change-{index}"), Button::new(SharedString::from(format!("external-change-{index}"))).small().label(crate::shell::i18n::text("xlsx.external.change-source")).on_click(cx.listener(move |this, _, window, cx| this.change_external_book_source_picked(index, window, cx))).into_any_element()))
                         .child(mark(format!("break-{index}"), Button::new(SharedString::from(format!("external-break-{index}"))).small().label(crate::shell::i18n::text("_xlsx.break-link")).on_click(cx.listener(move |this, _, _, cx| this.break_external_link(index, cx))).into_any_element())),
                 );
         }
+        body = body.child(
+            mark(
+                "add-link".into(),
+                Button::new("external-add-link")
+                    .small()
+                    .label(crate::shell::i18n::text("xlsx.external.add-link"))
+                    .on_click(cx.listener(|this, _, window, cx| this.add_external_link_picked(window, cx)))
+                    .into_any_element(),
+            ),
+        );
         body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone()))).child(mark(
             "close".into(),
             Button::new("external-links-close")

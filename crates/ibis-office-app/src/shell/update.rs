@@ -1,31 +1,38 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! Automatic update (todo-fix #35; macOS and Windows).
+//! Automatic update (todo-fix #35; macOS, Windows and Linux).
 //!
 //! At startup (ツール > 設定… > 起動時に更新を確かめる, on unless turned off) a
 //! background task reads version.txt on GitHub. If this platform's version
 //! there is newer than the one built in (`IBIS_VERSION`), it downloads that
-//! version's zip and asks 「ibisOffice の新しいバージョンが見つかりました。更新しますか？」.
+//! version's zip and asks 「Acauda Office の新しいバージョンが見つかりました。更新しますか？」.
 //! On 「はい」 the zip is unpacked, the new app is checked, and
-//! `ibisOfficeUpdater` from the new app is started; ibisOffice quits, the
+//! `AcaudaOfficeUpdater` from the new app is started; Acauda Office quits, the
 //! updater swaps the installed copy for the new one and starts it (see
 //! `crates/ibis-office-updater`).
 //!
-//! - macOS: the whole `ibisOffice.app` is replaced (replacing the executable
+//! - macOS: the whole `AcaudaOffice.app` is replaced (replacing the executable
 //!   alone would break the signature). The unpacked app must be signed by
 //!   ibis inc.'s team and accepted by Gatekeeper (`codesign --verify --deep
 //!   --strict`, `spctl -a -t exec`) before anything in it is run.
-//! - Windows (no code signature yet): the zip's SHA-256 must equal the one in
-//!   the `.sha256` file beside it on the Releases page.
-//! - Not done: from a build run out of `target/`, from a folder the user
-//!   cannot write to, or from macOS's App Translocation (the log says which,
-//!   and a window asks to install it again by hand).
+//! - Windows (the code signature is not checked yet): the zip's SHA-256 must
+//!   equal the one in the `.sha256` file beside it on the Releases page.
+//! - Linux: the AppImage (`AcaudaOffice-<version>-Linux.AppImage`, no zip) must
+//!   match its `.sha256` the same way and be an AppImage; it takes the place
+//!   of the one running (`APPIMAGE`, renamed over it in its folder, which a
+//!   running program allows) and is started; no updater is needed. Its
+//!   runtime unpacks the new version at that start (`crates/ibis-appimage`).
+//! - Not done: from a build run out of `target/` (or on Linux not from its
+//!   AppImage), from a folder the user cannot write to, or from macOS's App
+//!   Translocation (the log says which, and a window asks to install it again
+//!   by hand).
 //! - Two attempts at one version that did not end in that version running
 //!   stop the offers (a window says so once).
 //!
 //! Every step goes to `updater.log` (`ibis_office_updater::log`). Downloading
-//! and unpacking use the system's `curl` and `ditto` (`tar` on Windows).
+//! and unpacking use the system's `curl` and `ditto` (`tar` on Windows; the
+//! hashes `certutil` on Windows, `sha256sum` on Linux).
 //! For the tests: `IBIS_UPDATE_URL_BASE` replaces the GitHub addresses,
 //! `IBIS_UPDATE_DIR` the folders of the files, `IBIS_UPDATE_AUTO_YES=1`
 //! answers 「はい」, and `IBIS_UPDATE_SKIP_SIGNATURE=1` skips the signature
@@ -43,8 +50,8 @@ use crate::shell::{i18n, settings};
 
 /// This build's version (version.txt's line for this platform at build time).
 const CURRENT: &str = env!("IBIS_VERSION");
-const VERSION_URL: &str = "https://raw.githubusercontent.com/ibisjp/ibis-office/main/version.txt";
-const RELEASES_URL: &str = "https://github.com/ibisjp/ibis-office/releases";
+const VERSION_URL: &str = "https://raw.githubusercontent.com/IndigoCarmine/ibis-office/main/version.txt";
+const RELEASES_URL: &str = "https://github.com/IndigoCarmine/ibis-office/releases";
 /// Attempts at one version after which no more offers are made.
 const MAX_ATTEMPTS: u32 = 2;
 /// ibis inc.'s Apple developer team.
@@ -122,28 +129,21 @@ pub(crate) fn start(cx: &mut App) {
 
 /// The steps up to the downloaded zip (run off the main thread).
 fn check() -> Found {
-    let Some(log) = log_for("") else { return Found::Nothing };
-    cleanup_old_files(&log);
+    cleanup_old_files();
     clear_attempts_if_updated();
 
-    log.start("check", &format!("current {CURRENT}"));
     let url = env("IBIS_UPDATE_URL_BASE").map(|base| format!("{}/version.txt", base.trim_end_matches('/'))).unwrap_or_else(|| VERSION_URL.to_string());
     let text = match fetch_text(&url) {
         Ok(text) => text,
-        Err(err) => {
-            log.fail("check", &format!("{url}: {err}"));
-            return Found::Nothing;
-        }
+        Err(_) => return Found::Nothing,
     };
     let Some(latest) = version::find(&text, version::PLATFORM) else {
-        log.fail("check", &format!("{url} has no valid {} line", version::PLATFORM));
         return Found::Nothing;
     };
     if !version::is_newer(&latest, CURRENT) {
-        log.ok("check", &format!("up to date (latest {latest}, current {CURRENT})"));
         return Found::Nothing;
     }
-    let log = Log::new(log.path(), &latest);
+    let Some(log) = log_for(&latest) else { return Found::Nothing };
     log.ok("check", &format!("a newer version: {latest} (current {CURRENT})"));
 
     if attempts(&latest) >= MAX_ATTEMPTS {
@@ -165,13 +165,13 @@ fn check() -> Found {
 }
 
 /// Folders of finished or older updates left in the update folder (an updater on Windows cannot remove the folder it runs from).
-fn cleanup_old_files(log: &Log) {
+fn cleanup_old_files() {
     let Some(root) = paths::update_root() else { return };
     let Ok(entries) = std::fs::read_dir(&root) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if version::valid(&name) && !version::is_newer(&name, CURRENT) && std::fs::remove_dir_all(entry.path()).is_ok() {
-            log.info("cleanup", &format!("removed the leftover {}", entry.path().display()));
+        if version::valid(&name) && !version::is_newer(&name, CURRENT) {
+            let _ = std::fs::remove_dir_all(entry.path());
         }
     }
 }
@@ -203,7 +203,7 @@ fn clear_attempts_if_updated() {
 
 // ---- Where this copy is installed --------------------------------------
 
-/// The installed copy to replace: the `.app` (macOS) or the folder of `ibisOffice.exe` (Windows), or why it cannot be.
+/// The installed copy to replace: the `.app` (macOS), the folder of `AcaudaOffice.exe` (Windows) or the AppImage (Linux), or why it cannot be.
 fn installed_copy() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
     let exe = exe.canonicalize().unwrap_or(exe);
@@ -214,16 +214,22 @@ fn installed_copy() -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
     let app = {
         if text.contains("/AppTranslocation/") {
-            return Err("running from macOS's App Translocation (move ibisOffice.app to Applications and open it from there)".into());
+            return Err("running from macOS's App Translocation (move AcaudaOffice.app to Applications and open it from there)".into());
         }
-        // Contents/MacOS/ibisOffice -> the .app.
+        // Contents/MacOS/AcaudaOffice -> the .app.
         let app = exe.parent().and_then(Path::parent).and_then(Path::parent).map(Path::to_path_buf);
         match app {
             Some(app) if app.extension().is_some_and(|e| e == "app") => app,
             _ => return Err(format!("{} is not inside an .app", exe.display())),
         }
     };
-    #[cfg(not(target_os = "macos"))]
+    // The AppImage its runtime started this copy from.
+    #[cfg(target_os = "linux")]
+    let app = match env("APPIMAGE") {
+        Some(appimage) => PathBuf::from(appimage),
+        None => return Err("a build run without its AppImage (APPIMAGE is not set)".into()),
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let app = exe.parent().map(Path::to_path_buf).ok_or("no folder")?;
     let parent = app.parent().ok_or("no parent folder")?;
     let probe = parent.join(format!(".ibis-update-probe-{}", std::process::id()));
@@ -274,14 +280,16 @@ fn fetch_text(url: &str) -> Result<String, String> {
     run(&mut curl(url, 20))
 }
 
+/// The file of `version` on the Releases page: a zip, or on Linux the AppImage itself.
 fn zip_name(version: &str) -> String {
-    format!("ibisOffice-{version}-{}.zip", version::PLATFORM)
+    let extension = if cfg!(target_os = "linux") { "AppImage" } else { "zip" };
+    format!("AcaudaOffice-{version}-{}.{extension}", version::PLATFORM)
 }
 
 fn zip_url(version: &str) -> String {
     match env("IBIS_UPDATE_URL_BASE") {
         Some(base) => format!("{}/{}", base.trim_end_matches('/'), zip_name(version)),
-        None => format!("https://github.com/ibisjp/ibis-office/releases/download/v{version}/{}", zip_name(version)),
+        None => format!("https://github.com/IndigoCarmine/ibis-office/releases/download/v{version}/{}", zip_name(version)),
     }
 }
 
@@ -294,16 +302,27 @@ fn parse_sha256(text: &str) -> Option<String> {
 fn sha256_of(file: &Path) -> Result<String, String> {
     #[cfg(windows)]
     let out = run(command("certutil").args(["-hashfile"]).arg(file).arg("SHA256"))?;
-    #[cfg(not(windows))]
+    // coreutils, on every Linux (shasum is Perl's).
+    #[cfg(target_os = "linux")]
+    let out = run(command("sha256sum").arg(file))?;
+    #[cfg(not(any(windows, target_os = "linux")))]
     let out = run(command("shasum").args(["-a", "256"]).arg(file))?;
-    // certutil: a line of the hash (maybe with spaces between bytes) after the heading.
-    out.lines()
-        .map(|line| line.split_whitespace().collect::<String>().to_ascii_lowercase())
-        .find(|word| word.len() == 64 && word.bytes().all(|b| b.is_ascii_hexdigit()))
-        .ok_or_else(|| format!("no hash in the output: {out}"))
+    hash_in_output(&out).ok_or_else(|| format!("no hash in the output: {out}"))
 }
 
-/// Download `version`'s zip into its update folder; on Windows it must match its `.sha256`.
+/// The hash in the output of `certutil` (a line of the hash, maybe with
+/// spaces between its bytes, after a heading), `sha256sum` and `shasum`
+/// (the hash, then the file's name).
+fn hash_in_output(out: &str) -> Option<String> {
+    let is_hash = |word: &String| word.len() == 64 && word.bytes().all(|b| b.is_ascii_hexdigit());
+    out.lines().find_map(|line| {
+        let first = line.split_whitespace().next().unwrap_or_default().to_ascii_lowercase();
+        let joined = line.split_whitespace().collect::<String>().to_ascii_lowercase();
+        [first, joined].into_iter().find(is_hash)
+    })
+}
+
+/// Download `version`'s zip (Linux: AppImage) into its update folder; on Windows and Linux it must match its `.sha256`.
 fn download(log: &Log, version: &str) -> Result<PathBuf, String> {
     let dir = paths::update_dir(version).ok_or("no folder for the update")?;
     let _ = std::fs::remove_dir_all(&dir);
@@ -321,12 +340,12 @@ fn download(log: &Log, version: &str) -> Result<PathBuf, String> {
     let size = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
     log.ok("download", &format!("{size} bytes"));
 
-    if cfg!(windows) {
+    if cfg!(any(windows, target_os = "linux")) {
         log.start("verify-hash", "SHA-256 against the .sha256 file");
         let verified = (|| {
             let expected = parse_sha256(&fetch_text(&format!("{url}.sha256"))?).ok_or("the .sha256 file has no hash")?;
             let actual = sha256_of(&part)?;
-            if expected == actual { Ok(()) } else { Err(format!("the zip's SHA-256 is {actual}, the .sha256 file says {expected}")) }
+            if expected == actual { Ok(()) } else { Err(format!("the download's SHA-256 is {actual}, the .sha256 file says {expected}")) }
         })();
         if let Err(err) = verified {
             let _ = std::fs::remove_dir_all(&dir);
@@ -359,12 +378,30 @@ fn run_stderr(command: &mut Command) -> String {
 
 /// Unpacked and checked: the new copy and the updater inside it.
 struct Unpacked {
-    /// The new `.app` (macOS) or folder (Windows).
+    /// The new `.app` (macOS), folder (Windows) or AppImage (Linux).
     new: PathBuf,
+    /// None on Linux, where Acauda Office puts the new AppImage in place itself.
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     updater: PathBuf,
 }
 
+/// Check the AppImage downloaded (run off the main thread): an ELF program
+/// with AppImage's mark, nothing to unpack.
+#[cfg(target_os = "linux")]
+fn unpack(log: &Log, _version: &str, appimage: &Path) -> Result<Unpacked, String> {
+    use std::io::Read as _;
+    log.start("verify-app", &appimage.display().to_string());
+    let mut head = [0u8; 11];
+    std::fs::File::open(appimage).and_then(|mut f| f.read_exact(&mut head)).map_err(|e| format!("{}: {e}", appimage.display()))?;
+    if head[..4] != *b"\x7fELF" || head[8..11] != *b"AI\x02" {
+        return Err(format!("{} is not an AppImage", appimage.display()));
+    }
+    log.ok("verify-app", "an AppImage");
+    Ok(Unpacked { new: appimage.to_path_buf(), updater: PathBuf::new() })
+}
+
 /// Unpack `zip` and check what is in it (run off the main thread).
+#[cfg(not(target_os = "linux"))]
 fn unpack(log: &Log, version: &str, zip: &Path) -> Result<Unpacked, String> {
     let dir = zip.parent().ok_or("no folder")?.join("unpacked");
     let _ = std::fs::remove_dir_all(&dir);
@@ -400,9 +437,9 @@ fn unpack(log: &Log, version: &str, zip: &Path) -> Result<Unpacked, String> {
             }
             run(command("spctl").args(["-a", "-t", "exec"]).arg(&app)).map_err(|e| format!("spctl: {e}"))?;
         }
-        let updater = app.join("Contents/MacOS/ibisOfficeUpdater");
+        let updater = app.join("Contents/MacOS/AcaudaOfficeUpdater");
         if !updater.is_file() {
-            return Err("the new app has no ibisOfficeUpdater".into());
+            return Err("the new app has no AcaudaOfficeUpdater".into());
         }
         log.ok("verify-app", &format!("version {version}"));
         Ok(Unpacked { new: app, updater })
@@ -410,11 +447,11 @@ fn unpack(log: &Log, version: &str, zip: &Path) -> Result<Unpacked, String> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = version;
-        // The zip holds one folder, ibisOffice\ (ibisOffice.exe, ibisOfficeUpdater.exe, Resources\).
-        let folder = std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten().map(|e| e.path()).find(|p| p.join("ibisOffice.exe").is_file()).ok_or("the zip has no folder with ibisOffice.exe")?;
-        let updater = folder.join("ibisOfficeUpdater.exe");
+        // The zip holds one folder, AcaudaOffice\ (AcaudaOffice.exe, AcaudaOfficeUpdater.exe, Resources\).
+        let folder = std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten().map(|e| e.path()).find(|p| p.join("AcaudaOffice.exe").is_file()).ok_or("the zip has no folder with AcaudaOffice.exe")?;
+        let updater = folder.join("AcaudaOfficeUpdater.exe");
         if !updater.is_file() {
-            return Err("the new folder has no ibisOfficeUpdater.exe".into());
+            return Err("the new folder has no AcaudaOfficeUpdater.exe".into());
         }
         log.ok("verify-app", &folder.display().to_string());
         Ok(Unpacked { new: folder, updater })
@@ -517,6 +554,42 @@ async fn offer(cx: &mut AsyncApp, version: String, zip: PathBuf) {
     }
 }
 
+/// Put the new AppImage in the place of the one running and start it (Linux):
+/// copied beside it, made executable, and renamed over it, so the AppImage is
+/// at every moment either the old one or the new one whole.
+#[cfg(target_os = "linux")]
+fn start_updater(log: &Log, version: &str, unpacked: &Unpacked) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let old = installed_copy()?;
+    count_attempt(version);
+    let folder = old.parent().ok_or("no folder")?;
+    let partial = folder.join(format!(".AcaudaOffice-{version}.partial-{}", std::process::id()));
+    log.start("replace", &format!("{} -> {}", unpacked.new.display(), old.display()));
+    let replaced = (|| {
+        std::fs::copy(&unpacked.new, &partial).map_err(|e| format!("{}: {e}", partial.display()))?;
+        std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("{}: {e}", partial.display()))?;
+        std::fs::rename(&partial, &old).map_err(|e| format!("{}: {e}", old.display()))
+    })();
+    if let Err(err) = replaced {
+        let _ = std::fs::remove_file(&partial);
+        return Err(err);
+    }
+    log.ok("replace", "the new AppImage is in place");
+    let mut app = command(&old.to_string_lossy());
+    app.current_dir(std::env::temp_dir()).stdout(Stdio::null()).stderr(Stdio::null());
+    // Not the variables this copy's runtime set: the new runtime sets its own.
+    for name in ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] {
+        app.env_remove(name);
+    }
+    app.spawn().map_err(|e| format!("{}: {e}", old.display()))?;
+    if let Some(dir) = paths::update_dir(version) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    log.ok("start", "the new version started; Acauda Office quits now");
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
 fn start_updater(log: &Log, version: &str, unpacked: &Unpacked) -> Result<(), String> {
     let old = installed_copy()?;
     let workdir = paths::update_dir(version).ok_or("no update folder")?;
@@ -537,7 +610,7 @@ fn start_updater(log: &Log, version: &str, unpacked: &Unpacked) -> Result<(), St
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     updater.spawn().map_err(|e| format!("{}: {e}", unpacked.updater.display()))?;
-    log.ok("start-updater", "started; ibisOffice quits now");
+    log.ok("start-updater", "started; Acauda Office quits now");
     Ok(())
 }
 
@@ -548,15 +621,25 @@ mod tests {
     #[test]
     fn a_sha256_file_names_the_hash_first() {
         let hash = "A".repeat(64);
-        assert_eq!(parse_sha256(&format!("{hash}  ibisOffice-0.9.0-Windows.zip\n")), Some("a".repeat(64)));
+        assert_eq!(parse_sha256(&format!("{hash}  AcaudaOffice-0.9.0-Windows.zip\n")), Some("a".repeat(64)));
         assert_eq!(parse_sha256(&hash), Some("a".repeat(64)));
         assert_eq!(parse_sha256("not a hash"), None);
         assert_eq!(parse_sha256(""), None);
     }
 
     #[test]
+    fn the_hash_is_found_in_each_tool_s_output() {
+        let hash = "ab".repeat(32);
+        let spaced = hash.as_bytes().chunks(2).map(|b| std::str::from_utf8(b).unwrap()).collect::<Vec<_>>().join(" ");
+        let certutil = format!("SHA256 hash of file x.zip:\r\n{spaced}\r\nCertUtil: -hashfile command completed successfully.\r\n");
+        assert_eq!(hash_in_output(&certutil), Some(hash.clone()));
+        assert_eq!(hash_in_output(&format!("{hash}  /tmp/a b/AcaudaOffice-0.9.0-Linux.AppImage.part\n")), Some(hash.clone()));
+        assert_eq!(hash_in_output("nothing here\n"), None);
+    }
+
+    #[test]
     fn the_zip_is_named_for_the_version_and_platform() {
         let name = zip_name("0.9.0");
-        assert!(name == "ibisOffice-0.9.0-macOS.zip" || name == "ibisOffice-0.9.0-Windows.zip");
+        assert!(name == "AcaudaOffice-0.9.0-macOS.zip" || name == "AcaudaOffice-0.9.0-Windows.zip" || name == "AcaudaOffice-0.9.0-Linux.AppImage");
     }
 }

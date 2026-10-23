@@ -1,4 +1,4 @@
-# ibisOffice の UI の文字（日本語）：fix 担当。キー<TAB>文字（shell/i18n.rs）。
+# Acauda Office の UI の文字（日本語）：fix 担当。キー<TAB>文字（shell/i18n.rs）。
 dedupe.done	{gone} 個の重複する値が見つかり、削除されました。{left} 個の一意の値が残っています。
 dedupe.column-heading	列 {column}（{heading}）
 dedupe.column	列 {column}
@@ -474,8 +474,8 @@ fix.font-name.ms-gothic	ＭＳ ゴシック
 fix.font-name.biz-udp-mincho	BIZ UDP明朝
 fix.font-name.biz-udp-gothic	BIZ UDPゴシック
 help.update-log	更新のログを表示
-fix.update.found	ibisOffice の新しいバージョンが見つかりました。更新しますか？
-fix.update.found.detail	バージョン {version}（今は {current}）。更新すると ibisOffice を閉じて開き直します。
+fix.update.found	Acauda Office の新しいバージョンが見つかりました。更新しますか？
+fix.update.found.detail	バージョン {version}（今は {current}）。更新すると Acauda Office を閉じて開き直します。
 fix.update.yes	はい
 fix.update.open-site	ダウンロードのページを開く
 fix.update.no	いいえ
@@ -484,3 +484,8 @@ fix.update.failed.detail	ダウンロードのページから入れ直してく�
 fix.update.setting	起動時に更新を確かめる
 fix.update.setting.note	新しいバージョンがあれば、ダウンロードして更新するかどうかを聞きます。
 fix.update.log-path	更新のログ：{log}
+fix.formula-bar.expand	数式バーを展開
+fix.formula-bar.collapse	数式バーを折りたたむ
+xlsx.chart-type	グラフの種類
+fix.validation.continue	続けますか？
+fix.validation.cancel	キャンセル

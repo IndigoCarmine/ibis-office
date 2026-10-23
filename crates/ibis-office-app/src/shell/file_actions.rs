@@ -36,6 +36,13 @@ impl SlideEditor {
     fn show_new(&mut self, opened: ibis_pptx::Opened, name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
         self.load(opened.presentation, name, window, cx);
         self.source = Some(std::sync::Arc::new(opened.source));
+        if self.format.kind() == ibis_pptx::Kind::Document {
+            self.apply_docx_default_design(cx);
+        }
+        // A new presentation opens without the speaker notes (the title row's notes button shows them).
+        if let Some(state) = self.pptx_mut() {
+            state.notes_hidden = true;
+        }
     }
 
     /// ファイル > 新規 > テンプレートから新規作成… (New from Template...)
@@ -45,7 +52,7 @@ impl SlideEditor {
         {
             let picked = cx.prompt_for_paths(PathPromptOptions {
                 files: true,
-                directories: false,
+                directories: false, extensions: Vec::new(),
                 multiple: false,
                 prompt: Some(crate::shell::i18n::text("pptx.new-from-template").into()),
             });
@@ -117,6 +124,8 @@ impl SlideEditor {
     pub(crate) fn copy_to(&self, path: &std::path::Path) -> Result<(), String> {
         let source = self.source.clone().ok_or(crate::shell::i18n::text("_shell.this-file-cannot-be-saved-yet").to_string())?;
         let csv = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"));
+        let ods = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ods"));
+        let xls = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xls"));
         let xltx = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xltx") || e.eq_ignore_ascii_case("xltm"));
         let ppsx = self.is_presentation() && path.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_slideshow);
         let potx = self.is_presentation() && path.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_template);
@@ -125,6 +134,10 @@ impl SlideEditor {
         let bytes = if csv {
             let index = self.presentation().slide_index(self.current_slide).unwrap_or(0);
             ibis_pptx::csv::sheet_to_csv(self.presentation(), index)
+        } else if ods {
+            ibis_pptx::write_ods_with_source(self.presentation(), &source).map_err(|e| e.to_string())?
+        } else if xls {
+            ibis_pptx::write_xls(self.presentation()).map_err(|e| e.to_string())?
         } else if xltx || potx || dotx {
             source.save_template(self.presentation(), ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?
         } else if ppsx {
@@ -135,7 +148,7 @@ impl SlideEditor {
             source.save(self.presentation(), ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?
         };
         // A copy keeps the protection of the file.
-        let bytes = match (&self.protection_password, csv) {
+        let bytes = match (&self.protection_password, csv || ods || xls) {
             (Some(password), false) => crate::shell::save::protect(&bytes, password)?,
             _ => bytes,
         };
@@ -240,17 +253,25 @@ impl SlideEditor {
     /// (the slides, handouts, colour, frame).
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn write_pdf_with(&self, pdf: std::path::PathBuf, printing: bool) -> Result<Box<dyn FnOnce() -> Result<std::path::PathBuf, String> + Send + 'static>, String> {
-        let (bytes, slides) = if self.is_workbook() {
+        let (bytes, slides, docx_print_args) = if self.presentation().flow.is_some() {
+            let b = self.current_bytes()?;
+            if printing {
+                let (pages, args) = self.docx_print_job_args();
+                (b, pages, args)
+            } else {
+                (b, None, None)
+            }
+        } else if self.is_workbook() {
             let print_what = self.wb().print_what;
             let current_idx = self.presentation().slide_index(self.current_slide).unwrap_or(0);
             match print_what {
                 crate::xlsx::PrintWhat::ActiveSheet => {
                     let b = self.current_bytes()?;
-                    (b, Some(vec![current_idx + 1]))
+                    (b, Some(vec![current_idx + 1]), None)
                 }
                 crate::xlsx::PrintWhat::EntireWorkbook => {
                     let b = self.current_bytes()?;
-                    (b, None)
+                    (b, None, None)
                 }
                 crate::xlsx::PrintWhat::Selection => {
                     let range = self.selected_range().or_else(|| self.current_cell().map(|(c, r)| ibis_doc_model::CellRange { first_row: r, first_column: c, last_row: r, last_column: c }));
@@ -267,25 +288,32 @@ impl SlideEditor {
                     }
                     let source = self.source.clone().ok_or(crate::shell::i18n::text("_shell.this-file-cannot-be-saved-yet").to_string())?;
                     let b = source.save(&p, ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?;
-                    (b, Some(vec![current_idx + 1]))
+                    (b, Some(vec![current_idx + 1]), None)
                 }
             }
         } else {
             let b = self.current_bytes()?;
-            (b, None)
+            (b, None, None)
         };
         let (stem, ext) = self.name_parts();
         let print_bg = self.is_print_backgrounds();
         let print_hidden = self.is_print_hidden_text();
+        let print_markup = self.is_print_markup();
         // A presentation's print: the settings' slides, and pictures when the
         // colour, a frame or handouts ask for them.
         let settings = (printing && self.pages_are_slides() && !self.is_workbook() && self.presentation().flow.is_none()).then(|| self.print_settings());
-        let (format, print_args) = match &settings {
-            Some(settings) => {
-                let current = self.presentation().slide_index(self.current_slide).map_or(1, |i| i + 1);
-                (if settings.needs_pictures() { "pdf-image" } else { "pdf" }, Some(settings.arguments(current, &self.presentation().notes_marks)))
+        let (format, print_args) = if let Some(args) = docx_print_args {
+            let format = if args.iter().any(|a| a == "pdf-image") { "pdf-image" } else { "pdf" };
+            let filtered: Vec<String> = args.into_iter().filter(|a| a != "--export" && a != "pdf-image").collect();
+            (format, Some(filtered))
+        } else {
+            match &settings {
+                Some(settings) => {
+                    let current = self.presentation().slide_index(self.current_slide).map_or(1, |i| i + 1);
+                    (if settings.needs_pictures() { "pdf-image" } else { "pdf" }, Some(settings.arguments(current, &self.presentation().notes_marks)))
+                }
+                None => ("pdf", None),
             }
-            None => ("pdf", None),
         };
         Ok(Box::new(move || {
             let dir = std::env::temp_dir().join(format!("ibisoffice-export-{}", std::process::id()));
@@ -308,6 +336,9 @@ impl SlideEditor {
             }
             if print_hidden {
                 cmd.arg("--print-hidden-text");
+            }
+            if !print_markup {
+                cmd.arg("--no-print-markup");
             }
             cmd.arg(&file);
             let status = cmd.status().map_err(|e| e.to_string())?;
@@ -335,6 +366,7 @@ impl SlideEditor {
         let (stem, ext) = self.name_parts();
         let print_bg = self.is_print_backgrounds();
         let print_hidden = self.is_print_hidden_text();
+        let print_markup = self.is_print_markup();
         Ok(Box::new(move || {
             let dir = std::env::temp_dir().join(format!("ibisoffice-export-png-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
@@ -353,6 +385,9 @@ impl SlideEditor {
             }
             if print_hidden {
                 cmd.arg("--print-hidden-text");
+            }
+            if !print_markup {
+                cmd.arg("--no-print-markup");
             }
             let status = cmd.arg(&file).status().map_err(|e| e.to_string())?;
             if !status.success() {
@@ -392,6 +427,7 @@ impl SlideEditor {
         let (stem, ext) = self.name_parts();
         let print_bg = self.is_print_backgrounds();
         let print_hidden = self.is_print_hidden_text();
+        let print_markup = self.is_print_markup();
         let delay_ms = ((seconds_per_slide.unwrap_or(2.0).max(0.1)) * 1000.0) as u64;
         Ok(Box::new(move || {
             let dir = std::env::temp_dir().join(format!("ibisoffice-export-gif-{}", std::process::id()));
@@ -408,6 +444,9 @@ impl SlideEditor {
             }
             if print_hidden {
                 cmd.arg("--print-hidden-text");
+            }
+            if !print_markup {
+                cmd.arg("--no-print-markup");
             }
             let status = cmd.arg(&file).status().map_err(|e| e.to_string())?;
             if !status.success() {
@@ -488,6 +527,21 @@ impl SlideEditor {
                     this.update(cx, |this, cx| this.report(result.map(|p| crate::shell::i18n::format("file.png-done", &[("path", &p.display())])).map_err(|e| crate::shell::i18n::format("file.png-failed", &[("error", &e)])), cx)).ok();
                 })
                 .detach();
+            });
+        }
+        #[cfg(target_family = "wasm")]
+        self.report(Err(crate::shell::i18n::text("_shell.exporting-is-not-yet-available-in-the-browser-ve").into()), cx);
+    }
+
+    /// ファイル > 書き出し > OpenDocument プレゼンテーション（.odp）: the presentation as an OpenDocument presentation.
+    pub(crate) fn export_odp(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_edit(window, cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let (stem, _) = self.name_parts();
+            self.ask_path(format!("{stem}.odp"), window, cx, |this, path, _window, cx| {
+                let result = ibis_pptx::write_odp(this.presentation()).map_err(|e| e.to_string()).and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()));
+                this.report(result.map(|()| crate::shell::i18n::format("file.odp-done", &[("path", &path.display())])).map_err(|e| crate::shell::i18n::format("file.odp-failed", &[("error", &e)])), cx);
             });
         }
         #[cfg(target_family = "wasm")]
@@ -594,6 +648,33 @@ impl SlideEditor {
         self.report(Err(crate::shell::i18n::text("_shell.exporting-is-not-yet-available-in-the-browser-ve").into()), cx);
     }
 
+    /// ファイル > 書き出し > Office テーマ（.thmx）: save the current presentation theme as a .thmx file.
+    pub(crate) fn export_thmx(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_edit(window, cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let (stem, _) = self.name_parts();
+            self.ask_path(format!("{stem}.thmx"), window, cx, |this, path, _, cx| {
+                let result = this.export_theme_to(path.clone())
+                    .map(|()| crate::shell::i18n::format("file.thmx-done", &[("path", &path.display())]))
+                    .map_err(|e| crate::shell::i18n::format("file.save-failed", &[("error", &e)]));
+                this.report(result, cx);
+            });
+        }
+        #[cfg(target_family = "wasm")]
+        self.report(Err(crate::shell::i18n::text("_shell.exporting-is-not-yet-available-in-the-browser-ve").into()), cx);
+    }
+
+    /// テーマファイル（.thmx）を指定パスへ書き出す。
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn export_theme_to(&mut self, path: std::path::PathBuf) -> Result<(), String> {
+        let source = self.source.clone().ok_or_else(|| crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").to_string())?;
+        let theme_name = path.file_stem().and_then(|s| s.to_str());
+        let bytes = source.save_theme(self.presentation(), theme_name).map_err(|e| e.to_string())?;
+        crate::shell::save::write_replacing(&path, &bytes).map_err(|e| crate::shell::i18n::format("file.cannot-write", &[("path", &path.display()), ("error", &e)]))?;
+        Ok(())
+    }
+
     /// ファイル > 書き出し > Excel テンプレート（.xltx）
     pub(crate) fn export_xltx(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(window, cx);
@@ -617,6 +698,41 @@ impl SlideEditor {
         self.report(Err(crate::shell::i18n::text("_shell.exporting-is-not-yet-available-in-the-browser-ve").into()), cx);
     }
 
+    /// ファイル > 書き出し > マクロなしで書き出し: the file without its macros
+    /// (`.xlsx` from an `.xlsm`, `.xltx` from an `.xltm`, …), the loss told in the message.
+    pub(crate) fn export_without_macros(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_edit(window, cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let (stem, extension) = self.name_parts();
+            let plain = match extension.to_ascii_lowercase().as_str() {
+                "xlsm" => "xlsx",
+                "xltm" => "xltx",
+                "docm" => "docx",
+                "dotm" => "dotx",
+                "pptm" => "pptx",
+                "ppsm" => "ppsx",
+                "potm" => "potx",
+                other => if other.is_empty() { "xlsx" } else { other },
+            }
+            .to_string();
+            self.ask_path(format!("{stem}.{plain}"), window, cx, |this, path, _, cx| {
+                let source = match this.source.clone() {
+                    Some(s) => s,
+                    None => return this.report(Err(crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").to_string()), cx),
+                };
+                let result = source.save_without_macros(this.presentation(), ibis_pptx::SaveOptions::default())
+                    .map_err(|e| e.to_string())
+                    .and_then(|bytes| crate::shell::save::write_replacing(&path, &bytes).map_err(|e| crate::shell::i18n::format("file.cannot-write", &[("path", &path.display()), ("error", &e)])))
+                    .map(|()| crate::shell::i18n::format("file.without-macros-done", &[("path", &path.display())]))
+                    .map_err(|e| crate::shell::i18n::format("file.save-failed", &[("error", &e)]));
+                this.report(result, cx);
+            });
+        }
+        #[cfg(target_family = "wasm")]
+        self.report(Err(crate::shell::i18n::text("_shell.exporting-is-not-yet-available-in-the-browser-ve").into()), cx);
+    }
+
     /// ファイル > 印刷… (⌘P): the file as it is now, as a PDF given to the
     /// system to print (Preview's print dialog on macOS).
     pub(crate) fn print(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -624,6 +740,10 @@ impl SlideEditor {
         if self.pages_are_slides() && !self.is_workbook() && self.presentation().flow.is_none() {
             self.commit_edit(window, cx);
             return self.open_print_panel(window, cx);
+        }
+        if self.presentation().flow.is_some() {
+            self.commit_edit(window, cx);
+            return self.open_doc_print_panel(window, cx);
         }
         self.print_now(window, cx);
     }
@@ -671,19 +791,19 @@ impl SlideEditor {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn export_program() -> Result<std::path::PathBuf, String> {
+pub(crate) fn export_program() -> Result<std::path::PathBuf, String> {
     let current = std::env::current_exe().map_err(|e| e.to_string())?;
     let file_name = current.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if file_name.starts_with("ibisOffice") && !file_name.contains("test") {
+    if file_name.starts_with("AcaudaOffice") && !file_name.contains("test") {
         return Ok(current);
     }
     if let Some(dir) = current.parent() {
-        let c1 = dir.join("ibisOffice");
+        let c1 = dir.join("AcaudaOffice");
         if c1.exists() {
             return Ok(c1);
         }
         if let Some(parent) = dir.parent() {
-            let c2 = parent.join("ibisOffice");
+            let c2 = parent.join("AcaudaOffice");
             if c2.exists() {
                 return Ok(c2);
             }

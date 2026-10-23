@@ -96,9 +96,9 @@ fn remove(doc: &mut XmlDocument, parent: NodeId, names: &[&str]) {
     }
 }
 
-fn grouping_value(family: Family, grouping: Grouping) -> &'static str {
+fn grouping_value(family: Family, grouping: Grouping, is_3d: bool) -> &'static str {
     match (family, grouping) {
-        (Family::Bar, Grouping::Standard) => "clustered",
+        (Family::Bar, Grouping::Standard) => if is_3d { "standard" } else { "clustered" },
         (_, Grouping::Standard) => "standard",
         (_, Grouping::Stacked) => "stacked",
         (_, Grouping::PercentStacked) => "percentStacked",
@@ -120,11 +120,12 @@ pub(crate) fn convert_group(doc: &mut XmlDocument, plot: NodeId, node: NodeId, o
     {
         return Err(unsupported("異なる系統のグラフへの変更"));
     }
+    let is_3d = new.three_d.is_some();
     let (name, order, ser_order) = match to {
-        Family::Bar => ("barChart", BAR, BAR_SER),
-        Family::Line => ("lineChart", LINE, LINE_SER),
-        Family::Area => ("areaChart", AREA, AREA_SER),
-        Family::Pie => ("pieChart", PIE, PIE_SER),
+        Family::Bar => (if is_3d { "bar3DChart" } else { "barChart" }, BAR, BAR_SER),
+        Family::Line => (if is_3d { "line3DChart" } else { "lineChart" }, LINE, LINE_SER),
+        Family::Area => (if is_3d { "area3DChart" } else { "areaChart" }, AREA, AREA_SER),
+        Family::Pie => (if is_3d { "pie3DChart" } else { "pieChart" }, PIE, PIE_SER),
         Family::Doughnut => ("doughnutChart", DOUGHNUT, DOUGHNUT_SER),
         Family::Scatter => ("scatterChart", SCATTER, SCATTER_SER),
         Family::Bubble => ("bubbleChart", BUBBLE, BUBBLE_SER),
@@ -201,7 +202,7 @@ pub(crate) fn convert_group(doc: &mut XmlDocument, plot: NodeId, node: NodeId, o
         }
     }
     if to != Family::Pie && to != Family::Doughnut && to != Family::Scatter && to != Family::Bubble && to != Family::Surface {
-        set_val(doc, node, "grouping", order, grouping_value(to, new.grouping));
+        set_val(doc, node, "grouping", order, grouping_value(to, new.grouping, is_3d));
     }
     // Its series.
     if from != to {
@@ -311,7 +312,17 @@ pub(crate) fn convert_group(doc: &mut XmlDocument, plot: NodeId, node: NodeId, o
 /// A bar's or area's fill becomes a line's colour (`a:ln`), and back.
 fn convert_series_paint(doc: &mut XmlDocument, ser: NodeId, from_line: bool, to_line: bool) {
     let Some(sp) = doc.child(ser, "spPr") else { return };
-    let pfx = prefix(doc, sp);
+    // `a:ln` and `a:round` are DrawingML's, not the chart's (`c:`).
+    let pfx = match doc.root_element().and_then(|root| doc.lookup_prefix(root, super::pptx_chart::DRAWING_NS).map(|p| (root, p))) {
+        Some((_, p)) if p.is_empty() => String::new(),
+        Some((_, p)) => format!("{p}:"),
+        None => {
+            if let Some(root) = doc.root_element() {
+                doc.set_attr(root, "xmlns:a", super::pptx_chart::DRAWING_NS);
+            }
+            "a:".to_string()
+        }
+    };
     if to_line && !from_line {
         let fill = doc.child(sp, "solidFill").or_else(|| doc.child(sp, "gradFill"));
         // A bar's own outline (often none) is not the line's.

@@ -131,4 +131,42 @@ mod tests {
         d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { slide: s, table: by_row })]).unwrap();
         assert_eq!((at(&d, s, 9, 6), at(&d, s, 10, 5)), (CellValue::Number(9.0), CellValue::Number(-2.0)));
     }
+
+    #[test]
+    fn data_table_tracks_row_column_insert_delete_and_move() {
+        let (mut d, s) = book();
+        set(&mut d, s, &[(0, 5, n(0.0)), (1, 5, n(0.0)), (2, 0, CellInput::Formula("F1*10+F2".into())), (2, 1, n(1.0)), (2, 2, n(2.0)), (2, 3, n(3.0)), (3, 0, n(1.0)), (4, 0, n(2.0))]);
+        let table = DataTable { range: CellRange { first_row: 3, last_row: 4, first_column: 1, last_column: 3 }, row_input: Some((0, 5)), column_input: Some((1, 5)) };
+        d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { slide: s, table })]).unwrap();
+
+        // Insert 1 row at row 0 and 1 column at column 0 -> table shifts to (4..=5, 2..=4), inputs to (1, 6) and (2, 6).
+        d.execute(vec![
+            Command::Sheet(SheetCommand::Insert { slide: s, axis: crate::sheet_command::Axis::Rows, at: 0, count: 1 }),
+            Command::Sheet(SheetCommand::Insert { slide: s, axis: crate::sheet_command::Axis::Columns, at: 0, count: 1 }),
+        ])
+        .unwrap();
+        let sheet = crate::sheet_calc::sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+        assert_eq!(sheet.data_tables[0].range, CellRange { first_row: 4, last_row: 5, first_column: 2, last_column: 4 });
+        assert_eq!(sheet.data_tables[0].row_input, Some((1, 6)));
+        assert_eq!(sheet.data_tables[0].column_input, Some((2, 6)));
+        // Change a moved header cell and verify the moved data table recalculates.
+        set(&mut d, s, &[(3, 2, n(9.0))]);
+        assert_eq!(at(&d, s, 4, 2), CellValue::Number(91.0));
+        assert_eq!(at(&d, s, 5, 4), CellValue::Number(32.0));
+
+        // Move the input cells from G2:G3 ((1,6)..=(2,6)) to H2:H3 ((1,7)..=(2,7)).
+        d.execute(vec![Command::Sheet(SheetCommand::MoveCells {
+            slide: s,
+            from: CellRange { first_row: 1, last_row: 2, first_column: 6, last_column: 6 },
+            row: 1,
+            column: 7,
+        })])
+        .unwrap();
+        let sheet = crate::sheet_calc::sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+        assert_eq!(sheet.data_tables[0].row_input, Some((1, 7)));
+        assert_eq!(sheet.data_tables[0].column_input, Some((2, 7)));
+        set(&mut d, s, &[(3, 2, n(5.0))]);
+        assert_eq!(at(&d, s, 4, 2), CellValue::Number(51.0));
+    }
 }
+

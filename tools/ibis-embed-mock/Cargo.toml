@@ -1,0 +1,10 @@
+[package]
+name = "ibis-embed-mock"
+description = "Reference external editor for ibisOffice embedded objects; used by the protocol tests."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-embed-protocol.workspace = true

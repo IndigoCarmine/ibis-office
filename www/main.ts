@@ -42,7 +42,7 @@ function pickFile(): Promise<PickedFile | null> {
  */
 function localFile(): Promise<PickedFile | null> {
   return new Promise((resolve, reject) => {
-    const open = indexedDB.open('ibisoffice-playground', 1);
+    const open = indexedDB.open('acaudaoffice-playground', 1);
     open.onupgradeneeded = () => open.result.createObjectStore('files');
     open.onerror = () => reject(open.error);
     open.onsuccess = () => {
@@ -137,7 +137,7 @@ async function fetchWasm(): Promise<Response> {
   }
   progress?.classList.add('starting');
   if (statusText) {
-    statusText.textContent = ja ? 'ibisOffice を起動しています…' : 'Starting ibisOffice…';
+    statusText.textContent = ja ? 'Acauda Office を起動しています…' : 'Starting Acauda Office…';
   }
   // Let the browser paint the full bar and the new text before the page
   // gets busy compiling and starting the app.
@@ -149,7 +149,7 @@ async function fetchWasm(): Promise<Response> {
 function prefersJapanese(): boolean {
   let saved: string | null = null;
   try {
-    saved = localStorage.getItem('ibisoffice-lang');
+    saved = localStorage.getItem('acaudaoffice-lang');
   } catch {
     // Storage may be blocked; fall back to the browser's language.
   }

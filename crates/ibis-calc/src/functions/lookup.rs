@@ -76,17 +76,28 @@ pub(super) fn get(name: &str) -> Option<Func> {
         "MATCH" => match_fn,
         "XLOOKUP" => xlookup,
         "XMATCH" => xmatch,
-        "TRANSPOSE" => |c, a| match arg_array(c, &a[0]) {
-            Ok(x) => {
-                let mut data = Vec::with_capacity(x.data.len());
-                for col in 0..x.columns {
-                    for r in 0..x.rows {
-                        data.push(x.get(r, col).clone());
+        "GETPIVOTDATA" => getpivotdata,
+        "TRANSPOSE" => |c, a| {
+            let val = c.eval(&a[0]);
+            let x = match val {
+                Value::Ref(areas) => {
+                    let v = c.deref_implicit(&areas);
+                    match v {
+                        Value::Error(e) => return err(e),
+                        other => Rc::new(Array::new(1, 1, vec![other])),
                     }
                 }
-                array_value(x.columns, x.rows, data)
+                Value::Array(a) => a,
+                Value::Error(e) => return err(e),
+                other => Rc::new(Array::new(1, 1, vec![other])),
+            };
+            let mut data = Vec::with_capacity(x.data.len());
+            for col in 0..x.columns {
+                for r in 0..x.rows {
+                    data.push(x.get(r, col).clone());
+                }
             }
-            Err(e) => err(e),
+            array_value(x.columns, x.rows, data)
         },
         "FORMULATEXT" => |c, a| match c.eval(&a[0]) {
             Value::Ref(r) => match c.book.formula(r[0].sheet, r[0].first_row, r[0].first_column) {
@@ -139,6 +150,7 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 },
                 _ => 0,
             };
+            let (mut height, mut width) = (0u32, 0u32);
             if sizing == 3 {
                 let h = match a.get(3) {
                     Some(e) if !matches!(e, Expr::Missing) => match to_number(&c.eval_scalar(e), c.date1904()) {
@@ -154,8 +166,10 @@ pub(super) fn get(name: &str) -> Option<Func> {
                     },
                     _ => return err(CellError::Value),
                 };
-                let _ = (h, w);
+                height = h.round().min(u32::MAX as f64) as u32;
+                width = w.round().min(u32::MAX as f64) as u32;
             }
+            c.image = Some(crate::eval::ImageSpec { source: url, alt_text: alt.clone(), sizing: sizing as u8, height, width });
             c.unsupported = true;
             match alt {
                 Some(t) => Value::Text(t),
@@ -1166,10 +1180,10 @@ fn take_drop(c: &mut Ctx, a: &[Expr], take: bool) -> Value {
         (e > s).then_some((s as usize, e as usize))
     };
     if take && (rows_arg == Some(0) || cols_arg == Some(0)) {
-        return err(CellError::Calc);
+        return err(CellError::Value);
     }
     let (Some((r0, r1)), Some((c0, c1))) = (range(rows_arg, x.rows), range(cols_arg, x.columns)) else {
-        return err(if take { CellError::Calc } else { CellError::Value });
+        return err(CellError::Value);
     };
     let mut data = Vec::new();
     for r in r0..r1 {
@@ -1289,7 +1303,7 @@ fn to_line(c: &mut Ctx, a: &[Expr], column: bool) -> Value {
         }
     }
     if values.is_empty() {
-        return err(CellError::Calc);
+        return err(CellError::Value);
     }
     let n = values.len();
     if column { array_value(n, 1, values) } else { array_value(1, n, values) }
@@ -1450,4 +1464,118 @@ fn trimrange(c: &mut Ctx, a: &[Expr]) -> Value {
     }
     array_value(rows, cols, data)
 }
+
+fn getpivotdata(c: &mut Ctx, args: &[Expr]) -> Value {
+    if args.len() < 2 {
+        return err(CellError::Value);
+    }
+    let first = c.eval(&args[0]);
+    if let Value::Error(e) = first {
+        return err(e);
+    }
+
+    let (data_field, sheet, row, col, field_pairs) = match first {
+        Value::Ref(areas) => {
+            let Some(area) = areas.first() else { return err(CellError::Ref); };
+            let desc_val = c.eval_scalar(&args[1]);
+            let descriptor = match crate::eval::to_text(&desc_val) {
+                Ok(s) => s,
+                Err(e) => return err(e),
+            };
+            let (df, pairs) = parse_pivot_descriptor(&descriptor);
+            (df, area.sheet, area.first_row, area.first_column, pairs)
+        }
+        _ => {
+            let df = match crate::eval::to_text(&first) {
+                Ok(s) => s,
+                Err(e) => return err(e),
+            };
+            let table_ref = c.eval(&args[1]);
+            let Value::Ref(areas) = table_ref else { return err(CellError::Ref); };
+            let Some(area) = areas.first() else { return err(CellError::Ref); };
+
+            let pair_args = &args[2..];
+            if pair_args.len() % 2 != 0 {
+                return err(CellError::Ref);
+            }
+            let mut pairs = Vec::with_capacity(pair_args.len() / 2);
+            for i in 0..(pair_args.len() / 2) {
+                let f_val = c.eval_scalar(&pair_args[2 * i]);
+                let f_str = match crate::eval::to_text(&f_val) {
+                    Ok(s) => s,
+                    Err(e) => return err(e),
+                };
+                let it_val = c.eval_scalar(&pair_args[2 * i + 1]);
+                let it_str = match crate::eval::to_text(&it_val) {
+                    Ok(s) => s,
+                    Err(e) => return err(e),
+                };
+                pairs.push((f_str, it_str));
+            }
+            (df, area.sheet, area.first_row, area.first_column, pairs)
+        }
+    };
+
+    let field_refs: Vec<(&str, &str)> = field_pairs.iter().map(|(f, it)| (f.as_str(), it.as_str())).collect();
+    match c.book.pivot_data(sheet, row, col, &data_field, &field_refs) {
+        Some(val) => Value::from(val),
+        None => err(CellError::Ref),
+    }
+}
+
+fn parse_pivot_descriptor(desc: &str) -> (String, Vec<(String, String)>) {
+    let trimmed = desc.trim();
+    if trimmed.contains('[') && trimmed.contains(']') {
+        let mut data_field = String::new();
+        let mut pairs = Vec::new();
+        let mut rest = trimmed;
+        while let Some(start) = rest.find('[') {
+            let prefix = rest[..start].trim();
+            if !prefix.is_empty() && data_field.is_empty() {
+                data_field = prefix.to_string();
+            }
+            let after = &rest[start + 1..];
+            let Some(end) = after.find(']') else { break };
+            let first_token = &after[..end];
+            let remainder = &after[end + 1..];
+            if remainder.starts_with(".[") {
+                let after2 = &remainder[2..];
+                if let Some(end2) = after2.find(']') {
+                    let second_token = &after2[..end2];
+                    if first_token.eq_ignore_ascii_case("Measures") {
+                        data_field = second_token.to_string();
+                    } else {
+                        pairs.push((first_token.to_string(), second_token.to_string()));
+                    }
+                    rest = &after2[end2 + 1..];
+                    continue;
+                }
+            } else if data_field.is_empty() {
+                data_field = first_token.to_string();
+            }
+            rest = remainder;
+        }
+        if data_field.is_empty() && !pairs.is_empty() {
+            data_field = pairs.remove(0).1;
+        }
+        (data_field, pairs)
+    } else {
+        let words: Vec<&str> = trimmed.split_whitespace().collect();
+        if words.is_empty() {
+            (String::new(), Vec::new())
+        } else if words.len() == 1 {
+            (words[0].to_string(), Vec::new())
+        } else {
+            let data_field = words[0].to_string();
+            let mut pairs = Vec::new();
+            let rest_words = &words[1..];
+            let num_pairs = rest_words.len() / 2;
+            for i in 0..num_pairs {
+                pairs.push((rest_words[2 * i].to_string(), rest_words[2 * i + 1].to_string()));
+            }
+            (data_field, pairs)
+        }
+    }
+}
+
 

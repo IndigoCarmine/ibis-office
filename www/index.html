@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ibisOffice</title>
+    <title>Acauda Office</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { width: 100vw; height: 100vh; overflow: hidden; background: #fff; }
@@ -25,15 +25,15 @@
     </style>
   </head>
   <body>
-    <div id="status"><span id="status-text">Loading ibisOffice…</span><div id="progress"><div></div></div></div>
+    <div id="status"><span id="status-text">Loading Acauda Office…</span><div id="progress"><div></div></div></div>
     <script>
       // The same language as the playground page's menu, else the browser's.
       (() => {
         let lang = null;
-        try { lang = localStorage.getItem('ibisoffice-lang'); } catch { /* storage blocked */ }
+        try { lang = localStorage.getItem('acaudaoffice-lang'); } catch { /* storage blocked */ }
         if ((lang ?? navigator.language).toLowerCase().startsWith('ja')) {
           document.documentElement.lang = 'ja';
-          document.getElementById('status-text').textContent = 'ibisOffice を読み込んでいます…';
+          document.getElementById('status-text').textContent = 'Acauda Office を読み込んでいます…';
         }
       })();
     </script>

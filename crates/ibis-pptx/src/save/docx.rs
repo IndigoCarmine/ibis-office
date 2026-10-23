@@ -15,7 +15,7 @@
 use std::collections::{HashMap, HashSet};
 
 use ibis_doc_model::{
-    Block, FlowAlign, FlowCell, FlowDocument, FlowParagraph, FlowRow, FlowRunKind, FlowTable, LineHeight, MediaId, ParaFormat,
+    Block, DropCapLocation, FlowAlign, FlowCell, FlowDocument, FlowParagraph, FlowRow, FlowRunKind, FlowTable, LineHeight, MediaId, ParaFormat,
     PartKind, Presentation, Revision, RevisionKind, Rgb, RunFormat, Shape, ShapeKind, VerticalMerge, VerticalPosition, Link,
 };
 use ibis_ooxml::{NodeId, Package, XmlDocument};
@@ -87,11 +87,26 @@ fn same_document(a: &FlowDocument, b: &FlowDocument) -> bool {
         && a.footnotes == b.footnotes && a.endnotes == b.endnotes && a.comments == b.comments && a.track_changes == b.track_changes && a.watermark == b.watermark && a.section_watermarks == b.section_watermarks
         && a.page_color == b.page_color && a.properties == b.properties
         && a.mark_as_final == b.mark_as_final && a.read_only_recommended == b.read_only_recommended
-        && a.update_fields == b.update_fields && a.view_mode == b.view_mode
+        && a.update_fields == b.update_fields && a.note_separators == b.note_separators && a.mail_merge_type == b.mail_merge_type && a.mail_merge_field_map == b.mail_merge_field_map && a.view_mode == b.view_mode
         && a.no_line_start == b.no_line_start && a.no_line_end == b.no_line_end
         && a.protection == b.protection && a.lock_tracking == b.lock_tracking
         && a.formatting_protection == b.formatting_protection
         && a.interaction_mode == b.interaction_mode
+        && a.do_not_compress_images == b.do_not_compress_images
+        && a.default_image_dpi == b.default_image_dpi
+        && a.discard_image_editing_data == b.discard_image_editing_data
+        && a.save_frequency == b.save_frequency
+        && a.embed_true_type_fonts == b.embed_true_type_fonts
+        && a.embed_system_fonts == b.embed_system_fonts
+        && a.save_subset_fonts == b.save_subset_fonts
+        && a.compatibility_mode == b.compatibility_mode
+        && a.use_fe_layout == b.use_fe_layout
+        && a.do_not_expand_shift_return == b.do_not_expand_shift_return
+        && a.attached_template == b.attached_template
+        && a.link_styles == b.link_styles
+        && a.strict_first_and_last_chars == b.strict_first_and_last_chars
+        && a.theme_font_lang == b.theme_font_lang
+        && a.shape_groups == b.shape_groups
 }
 
 /// The rest of the last section: its other headers and footers and settings.
@@ -159,6 +174,25 @@ fn shape_body(shape: &Shape) -> Option<&ibis_doc_model::TextBody> {
 }
 
 /// The text of a `w:txbxContent`, paragraphs joined by `\n`.
+/// What a text body's runs look like, paragraph by paragraph: the text of each run of the same look, with its look (bold, italic,
+/// size in half points, colour).
+fn run_looks(body: &ibis_doc_model::TextBody) -> Vec<Vec<(String, bool, bool, u32, u32)>> {
+    body.paragraphs
+        .iter()
+        .map(|p| {
+            let mut out: Vec<(String, bool, bool, u32, u32)> = Vec::new();
+            for r in p.runs.iter().filter(|r| !r.text.is_empty()) {
+                let look = (r.style.bold.unwrap_or(body.style.bold), r.style.italic.unwrap_or(body.style.italic), (r.style.font_size.unwrap_or(body.style.font_size) + 25) / 50, r.style.color.unwrap_or(body.style.color).0 & 0xffffff);
+                match out.last_mut() {
+                    Some(last) if (last.1, last.2, last.3, last.4) == look => last.0.push_str(&r.text),
+                    _ => out.push((r.text.clone(), look.0, look.1, look.2, look.3)),
+                }
+            }
+            out
+        })
+        .collect()
+}
+
 fn txbx_text(doc: &XmlDocument, content: NodeId) -> String {
     doc.children_named(content, "p")
         .map(|p| doc.descendants(p).into_iter().filter(|&n| doc.is_element(n) && doc.local_name(n) == "t").map(|n| doc.text(n)).collect::<String>())
@@ -186,11 +220,17 @@ enum AtomKey {
     CommentStart(u32),
     CommentEnd(u32),
     CommentRef(u32),
-    CheckBox(bool, char, char),
-    DropDownList(Vec<(String, String)>, usize, bool),
-    DatePicker(String, String, String),
-    RichText(String),
-    PlainText(String),
+    CheckBox(bool, char, char, Option<Box<ibis_doc_model::ControlInfo>>),
+    DropDownList(Vec<(String, String)>, usize, bool, Option<Box<ibis_doc_model::ControlInfo>>),
+    DatePicker(String, String, String, Option<Box<ibis_doc_model::ControlInfo>>),
+    RichText(String, bool, Option<Box<ibis_doc_model::ControlInfo>>),
+    Math(ibis_doc_model::math::Math, bool),
+    PlainText(String, bool, Option<Box<ibis_doc_model::ControlInfo>>),
+    PictureControl(MediaId, i64, i64, ibis_doc_model::PictureLook, bool, Option<Box<ibis_doc_model::ControlInfo>>),
+    BuildingBlockGallery(String, String, String, bool, Option<Box<ibis_doc_model::ControlInfo>>),
+    RepeatingSection(String, Vec<String>, usize, bool, Option<Box<ibis_doc_model::ControlInfo>>),
+    Group(String, bool, Option<Box<ibis_doc_model::ControlInfo>>),
+    FormField(ibis_doc_model::FormFieldData),
 }
 
 /// The positions of a paragraph: what each is, its run's formatting and
@@ -208,6 +248,11 @@ fn atoms(p: &FlowParagraph) -> Vec<Atom<'_>> {
             FlowRunKind::PageBreak => out.push((AtomKey::PageBreak, f.0, f.1, f.2, f.3)),
             FlowRunKind::ColumnBreak => out.push((AtomKey::ColumnBreak, f.0, f.1, f.2, f.3)),
             FlowRunKind::Picture { media, size, look } => out.push((AtomKey::Picture(*media, size.width, size.height, look.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::PictureControl { media, size, look, placeholder } => out.push((AtomKey::PictureControl(*media, size.width, size.height, look.clone(), *placeholder, run.control.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::BuildingBlockGallery { gallery, category, text, placeholder } => out.push((AtomKey::BuildingBlockGallery(gallery.clone(), category.clone(), text.clone(), *placeholder, run.control.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::RepeatingSection { section_title, items, selected, do_not_allow_insert_delete } => out.push((AtomKey::RepeatingSection(section_title.clone(), items.clone(), *selected, *do_not_allow_insert_delete, run.control.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::Group { text, placeholder } => out.push((AtomKey::Group(text.clone(), *placeholder, run.control.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::FormField(ff) => out.push((AtomKey::FormField(ff.clone()), f.0, f.1, f.2, f.3)),
             FlowRunKind::Shape(s) => out.push((AtomKey::Shape(s.clone()), f.0, f.1, f.2, f.3)),
             FlowRunKind::PageNumber => out.push((AtomKey::PageNumber(run.field_locked), f.0, f.1, f.2, f.3)),
             FlowRunKind::FileName(t) => out.push((AtomKey::FileName(t.clone(), run.field_locked), f.0, f.1, f.2, f.3)),
@@ -219,11 +264,12 @@ fn atoms(p: &FlowParagraph) -> Vec<Atom<'_>> {
             FlowRunKind::CommentStart(id) => out.push((AtomKey::CommentStart(*id), f.0, f.1, f.2, f.3)),
             FlowRunKind::CommentEnd(id) => out.push((AtomKey::CommentEnd(*id), f.0, f.1, f.2, f.3)),
             FlowRunKind::CommentRef(id) => out.push((AtomKey::CommentRef(*id), f.0, f.1, f.2, f.3)),
-            FlowRunKind::CheckBox { checked, checked_char, unchecked_char } => out.push((AtomKey::CheckBox(*checked, *checked_char, *unchecked_char), f.0, f.1, f.2, f.3)),
-            FlowRunKind::DropDownList { items, selected, combo } => out.push((AtomKey::DropDownList(items.clone(), *selected, *combo), f.0, f.1, f.2, f.3)),
-            FlowRunKind::DatePicker { full_date, date_format, text } => out.push((AtomKey::DatePicker(full_date.clone(), date_format.clone(), text.clone()), f.0, f.1, f.2, f.3)),
-            FlowRunKind::RichText { text } => out.push((AtomKey::RichText(text.clone()), f.0, f.1, f.2, f.3)),
-            FlowRunKind::PlainText { text } => out.push((AtomKey::PlainText(text.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::CheckBox { checked, checked_char, unchecked_char } => out.push((AtomKey::CheckBox(*checked, *checked_char, *unchecked_char, run.control.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::DropDownList { items, selected, combo } => out.push((AtomKey::DropDownList(items.clone(), *selected, *combo, run.control.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::DatePicker { full_date, date_format, text } => out.push((AtomKey::DatePicker(full_date.clone(), date_format.clone(), text.clone(), run.control.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::RichText { text, placeholder } => out.push((AtomKey::RichText(text.clone(), *placeholder, run.control.clone()), f.0, f.1, f.2, f.3)),
+            FlowRunKind::Math { math, display } => out.push((AtomKey::Math(math.clone(), *display), f.0, f.1, f.2, f.3)),
+            FlowRunKind::PlainText { text, placeholder } => out.push((AtomKey::PlainText(text.clone(), *placeholder, run.control.clone()), f.0, f.1, f.2, f.3)),
         }
     }
     out
@@ -299,11 +345,51 @@ fn block_id(b: &Block) -> u32 {
     }
 }
 
-pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &Presentation, current: &Presentation) -> Result<(), Error> {
+/// Write theme colors, fonts, and effects to the document's theme part (`word/theme/theme1.xml`).
+fn write_theme(package: &mut Package, main: &str, colors: &[(String, ibis_doc_model::Rgb)], fonts: Option<&ibis_doc_model::ThemeFonts>, effects: Option<&str>) -> Result<(), Error> {
+    let mut parts = Vec::new();
+    if let Ok(rels) = package.relationships(main) {
+        for rel in rels.into_iter().filter(|r| !r.external && (r.kind == crate::package::REL_THEME || r.kind.ends_with("/theme"))) {
+            if let Some(target) = rel.target_part(main) {
+                if package.contains(&target) && !parts.contains(&target) {
+                    parts.push(target);
+                }
+            }
+        }
+    }
+    if parts.is_empty() && package.contains("word/theme/theme1.xml") {
+        parts.push("word/theme/theme1.xml".to_string());
+    }
+    for part in parts {
+        let doc = package.xml_mut(&part)?;
+        super::pptx_theme::write_theme_elements(doc, colors, fonts);
+        if let Some(effects) = effects {
+            let _ = super::pptx_theme::write_theme_effects(doc, effects);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &Presentation, current: &Presentation, new_charts: &HashMap<ibis_doc_model::ShapeId, super::NewChartEntry>, chart_data: &super::pptx_chart_data::ChartDataEdits) -> Result<(), Error> {
     let (base, cur) = match (&baseline.flow, &current.flow) {
         (Some(a), Some(b)) => (a, b),
         (None, None) => return Ok(()),
         _ => return Err(unsupported("文書の変更")),
+    };
+    let theme_changed = baseline.theme_colors != current.theme_colors
+        || baseline.theme_fonts != current.theme_fonts
+        || baseline.theme_effects != current.theme_effects;
+    if theme_changed {
+        write_theme(package, &map.body_part, &current.theme_colors, current.theme_fonts.as_ref(), current.theme_effects.as_deref())?;
+    }
+    let rethemed_base;
+    let base = if baseline.theme_colors != current.theme_colors {
+        let mut cloned = (**base).clone();
+        cloned.retheme(&current.theme_colors);
+        rethemed_base = std::sync::Arc::new(cloned);
+        &rethemed_base
+    } else {
+        base
     };
     if std::sync::Arc::ptr_eq(base, cur) || same_document(base, cur) {
         return Ok(());
@@ -317,7 +403,7 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
             write_styles(package, map, &base.styles, &cur.styles)?;
         }
         if base.styles.numbering != cur.styles.numbering {
-            write_numbering(package, map, &base.styles.numbering, &cur.styles.numbering)?;
+            write_numbering(package, map, &base.styles.numbering, &cur.styles.numbering, current)?;
         }
     }
     if base.properties != cur.properties || base.mark_as_final != cur.mark_as_final {
@@ -343,7 +429,7 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
         if let Block::Paragraph(p) = block {
             for (i, (key, _, _, _, _)) in atoms(p).into_iter().enumerate() {
                 match key {
-                    AtomKey::Picture(media, ..) => {
+                    AtomKey::Picture(media, ..) | AtomKey::PictureControl(media, ..) => {
                         pictures.entry(media).or_insert((id, i));
                     }
                     AtomKey::Shape(shape) => {
@@ -404,9 +490,10 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
         lists.push((part.clone(), old, blocks, created.contains(part)));
     }
     let sections_changed = last_view(base) != last_view(cur) || base.linked != cur.linked || base.even_and_odd != cur.even_and_odd || !created.is_empty();
+    let shape_groups_changed = base.shape_groups != cur.shape_groups;
     for (part, old, new, fresh) in lists {
         let body = part == map.body_part;
-        if old == new && !(body && sections_changed) {
+        if old == new && !(body && (sections_changed || shape_groups_changed)) {
             continue;
         }
         // Pictures new to this part: their media parts and relationships.
@@ -442,15 +529,51 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
                 link_rels.insert(url, rid);
             }
         }
+        let objects = object_rels(package, &part, current, baseline, new, &added)?;
+        let mut subdoc_targets = HashSet::new();
+        subdocs_in(new, &mut subdoc_targets);
+        if !subdoc_targets.is_empty() {
+            let rels = package.relationships(&part)?;
+            for target in subdoc_targets {
+                let rid = match rels.iter().find(|r| r.external && r.kind == SUBDOC_REL && r.target == target) {
+                    Some(r) => r.id.clone(),
+                    None => package.add_relationship(&part, SUBDOC_REL, &target, true)?,
+                };
+                link_rels.insert(format!("subdoc:{target}"), rid);
+            }
+        }
+        // New charts (挿入 > グラフ): their parts from the template, then the changes made to them since.
+        let mut old_charts = Vec::new();
+        charts_in(old, &mut old_charts);
+        let mut new_chart_shapes = Vec::new();
+        charts_in(new, &mut new_chart_shapes);
+        let mut chart_rels: HashMap<u64, String> = HashMap::new();
+        for (id, after) in new_chart_shapes.iter().filter(|(id, _)| !old_charts.iter().any(|(o, _)| o == id)) {
+            let entry = new_charts.get(id).ok_or_else(|| unsupported("グラフの複製・貼り付け"))?;
+            let (rel, chart_part) = super::pptx_new_chart::add_chart_part_at(package, &part, entry.kind, "word/charts/chart1.xml", "word/embeddings/Microsoft_Excel_Worksheet1.xlsx")?;
+            if let Some(template) = &entry.template {
+                super::pptx_shapes::write_chart_changes(package, &chart_part, template, after, super::pptx_chart_data::matching(chart_data, *id, after))?;
+            }
+            chart_rels.insert(id.0, rel);
+        }
+        // The file's own charts, changed (データの編集, a look or a kind changed): their chart part and workbook.
+        for (id, after) in &new_chart_shapes {
+            if let Some((_, before)) = old_charts.iter().find(|(o, _)| o == id) && before != after {
+                let chart_part = existing_chart_part(package, map, old, *id)?;
+                super::pptx_shapes::write_chart_changes(package, &chart_part, before, after, super::pptx_chart_data::matching(chart_data, *id, after))?;
+            }
+        }
+        NEW_CHART_RELS.with(|r| *r.borrow_mut() = chart_rels);
         let pristine = package.xml(&part)?;
         let doc = package.xml_mut(&part)?;
         let root = doc.root_element();
-        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_blocks, new_blocks: &new_blocks, pictures: &pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, empty_parent: if fresh { root } else { None }, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
+        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_blocks, new_blocks: &new_blocks, pictures: &pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, objects: &objects, empty_parent: if fresh { root } else { None }, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new(), old_shape_groups: &base.shape_groups, new_shape_groups: &cur.shape_groups };
         writer.resolve_nodes();
         writer.list(old, new)?;
         if body {
             writer.sections(base, cur, &wanted)?;
         }
+        prune_objects(package, &part)?;
     }
     if base.watermark != cur.watermark || base.section_watermarks != cur.section_watermarks {
         let mut parts: Vec<&String> = part_of.iter().filter(|((_, k), _)| !k.is_footer()).map(|(_, p)| p).collect();
@@ -478,8 +601,24 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
             write_setting(package, map, "trackRevisions", true)?;
         }
     }
-    if base.page.mirror_margins != cur.page.mirror_margins {
-        write_setting(package, map, "mirrorMargins", cur.page.mirror_margins)?;
+    if base.page.multiple_pages != cur.page.multiple_pages
+        || base.page.mirror_margins != cur.page.mirror_margins
+        || base.page.book_fold_sheets != cur.page.book_fold_sheets
+    {
+        use ibis_doc_model::MultiplePages;
+        let mp = if cur.page.multiple_pages != base.page.multiple_pages {
+            cur.page.multiple_pages
+        } else if cur.page.mirror_margins {
+            MultiplePages::MirrorMargins
+        } else {
+            MultiplePages::Normal
+        };
+        write_setting(package, map, "mirrorMargins", mp == MultiplePages::MirrorMargins)?;
+        write_setting(package, map, "bookFoldPrinting", mp == MultiplePages::BookFold)?;
+        write_setting(package, map, "bookFoldRevPrinting", mp == MultiplePages::ReverseBookFold)?;
+        write_setting(package, map, "printTwoOnOne", mp == MultiplePages::TwoOnOne)?;
+        let sheets = cur.page.book_fold_sheets.filter(|_| mp.is_book_fold());
+        write_setting_decimal(package, map, "bookFoldPrintingSheets", sheets)?;
     }
     if base.page.gutter_at_top != cur.page.gutter_at_top {
         write_setting(package, map, "gutterAtTop", cur.page.gutter_at_top)?;
@@ -489,6 +628,23 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
     }
     if base.update_fields != cur.update_fields {
         write_setting(package, map, "updateFields", cur.update_fields)?;
+    }
+    for (i, endnote) in [false, true].into_iter().enumerate() {
+        if base.note_separators[i] != cur.note_separators[i] {
+            write_note_separator(package, map, endnote, cur.note_separators[i])?;
+        }
+    }
+    if base.mail_merge_type != cur.mail_merge_type {
+        write_mail_merge_type(package, map, cur.mail_merge_type.as_deref())?;
+    }
+    if base.mail_merge_field_map != cur.mail_merge_field_map {
+        write_mail_merge_field_map(package, map, &cur.mail_merge_field_map)?;
+    }
+    if base.strict_first_and_last_chars != cur.strict_first_and_last_chars {
+        write_setting(package, map, "strictFirstAndLastChars", cur.strict_first_and_last_chars)?;
+    }
+    if base.theme_font_lang != cur.theme_font_lang {
+        write_theme_font_lang(package, map, &cur.theme_font_lang)?;
     }
     if base.no_line_start != cur.no_line_start {
         write_kinsoku_setting(package, map, "noLineBreaksBefore", cur.no_line_start.as_deref())?;
@@ -504,6 +660,33 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
     }
     if base.page_color != cur.page_color {
         write_page_color(package, map, cur.page_color)?;
+    }
+    if base.do_not_compress_images != cur.do_not_compress_images {
+        write_setting(package, map, "doNotAutoCompressPictures", cur.do_not_compress_images)?;
+    }
+    if base.default_image_dpi != cur.default_image_dpi || base.discard_image_editing_data != cur.discard_image_editing_data {
+        write_image_quality_settings(package, map, cur.default_image_dpi, cur.discard_image_editing_data)?;
+    }
+    if base.save_frequency != cur.save_frequency {
+        write_save_frequency(package, map, cur.save_frequency)?;
+    }
+    if base.embed_true_type_fonts != cur.embed_true_type_fonts {
+        write_setting(package, map, "embedTrueTypeFonts", cur.embed_true_type_fonts)?;
+    }
+    if base.embed_system_fonts != cur.embed_system_fonts {
+        write_setting(package, map, "embedSystemFonts", cur.embed_system_fonts)?;
+    }
+    if base.save_subset_fonts != cur.save_subset_fonts {
+        write_setting(package, map, "saveSubsetFonts", cur.save_subset_fonts)?;
+    }
+    if base.compatibility_mode != cur.compatibility_mode || base.use_fe_layout != cur.use_fe_layout || base.do_not_expand_shift_return != cur.do_not_expand_shift_return {
+        write_compatibility(package, map, cur.compatibility_mode, cur.use_fe_layout, cur.do_not_expand_shift_return)?;
+    }
+    if base.attached_template != cur.attached_template {
+        write_attached_template(package, map, cur.attached_template.as_deref())?;
+    }
+    if base.link_styles != cur.link_styles {
+        write_setting(package, map, "linkStyles", cur.link_styles)?;
     }
     // The footnotes and endnotes.
     for (i, (old, new)) in [(&base.footnotes, &cur.footnotes), (&base.endnotes, &cur.endnotes)].into_iter().enumerate() {
@@ -542,7 +725,7 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
         let doc = package.xml_mut(&part)?;
         let root = doc.root_element().ok_or_else(|| unsupported("空の脚注のパーツ"))?;
         let element = if endnote { "endnote" } else { "footnote" };
-        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_notes, new_blocks: &new_notes, pictures: &pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, empty_parent: None, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
+        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_notes, new_blocks: &new_notes, pictures: &pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, objects: &HashMap::new(), empty_parent: None, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new(), old_shape_groups: &[], new_shape_groups: &[] };
         writer.resolve_nodes();
         let find = |w: &Writer, id: u32| {
             w.doc.elements(root).find(|&e| {
@@ -623,7 +806,7 @@ fn write_comments(package: &mut Package, map: &SourceMap, old: &[ibis_doc_model:
             doc.set_attr(root, "xmlns:w14", W14_NS);
         }
         let w14 = doc.lookup_prefix(root, W14_NS).unwrap_or_else(|| "w14".into());
-        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_blocks, new_blocks: &new_blocks, pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, empty_parent: None, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
+        let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &old_blocks, new_blocks: &new_blocks, pictures, nodes: HashMap::new(), added: &added, svg_media: &svg_media, objects: &HashMap::new(), empty_parent: None, link_rels: &link_rels, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new(), old_shape_groups: &[], new_shape_groups: &[] };
         writer.resolve_nodes();
         let find = |w: &Writer, id: u32| w.doc.elements(root).find(|&e| w.doc.local_name(e) == "comment" && w.doc.attr_local(e, "id") == Some(id.to_string().as_str()));
         for c in old {
@@ -775,7 +958,10 @@ fn write_setting(package: &mut Package, map: &SourceMap, name: &str, on: bool) -
     let doc = package.xml_mut(&part)?;
     let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
     // In CT_Settings, evenAndOddHeaders comes after these.
-    const BEFORE: &[&str] = &["writeProtection", "readOnlyRecommended", "view", "zoom", "removePersonalInformation", "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData", "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate", "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod", "documentType", "mailMerge", "revisionView", "trackRevisions", "doNotTrackMoves", "doNotTrackFormatting", "documentProtection", "autoFormatOverride", "styleLockTheme", "styleLockQFSet", "defaultTabStop", "autoHyphenation", "consecutiveHyphenLimit", "hyphenationZone", "doNotHyphenateCaps", "showEnvelope", "summaryLength", "clickAndTypeStyle", "defaultTableStyle", "evenAndOddHeaders", "updateFields"];
+    const BEFORE: &[&str] = &[
+        "writeProtection", "readOnlyRecommended", "view", "zoom", "removePersonalInformation", "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData", "saveFrequency", "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate", "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod", "documentType", "mailMerge", "revisionView", "trackRevisions", "doNotTrackMoves", "doNotTrackFormatting", "documentProtection", "autoFormatOverride", "styleLockTheme", "styleLockQFSet", "defaultTabStop", "autoHyphenation", "consecutiveHyphenLimit", "hyphenationZone", "doNotHyphenateCaps", "showEnvelope", "summaryLength", "clickAndTypeStyle", "defaultTableStyle", "evenAndOddHeaders", "bookFoldRevPrinting", "bookFoldPrinting", "bookFoldPrintingSheets", "drawingGridHorizontalSpacing", "drawingGridVerticalSpacing", "displayHorizontalDrawingGridEvery", "displayVerticalDrawingGridEvery", "doNotUseMarginsForDrawingGridOrigin", "drawingGridHorizontalOrigin", "drawingGridVerticalOrigin", "doNotShadeFormData", "noPunctuationKerning", "characterSpacingControl", "printTwoOnOne", "strictFirstAndLastChars", "noLineBreaksAfter", "noLineBreaksBefore", "saveThroughXslt", "showXMLTags", "alwaysShowPlaceholderText", "doNotAutoCompressPictures", "updateFields",
+        "footnotePr", "endnotePr", "compat", "docVars", "rsids", "mathPr", "attachedSchema", "themeFontLang", "clrSchemeMapping", "doNotIncludeSubdocsInStats",
+    ];
     // What comes before the setting in CT_Settings.
     let before: &[&str] = match BEFORE.iter().position(|n| *n == name) {
         Some(i) => &BEFORE[..i],
@@ -795,6 +981,182 @@ fn write_setting(package: &mut Package, map: &SourceMap, name: &str, on: bool) -
             }
         }
         (None, false) => {}
+    }
+    Ok(())
+}
+
+/// Set a decimal number setting of `settings.xml` (`w:bookFoldPrintingSheets`).
+fn write_setting_decimal(package: &mut Package, map: &SourceMap, name: &str, val: Option<u32>) -> Result<(), Error> {
+    const SETTINGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+    let main = map.body_part.clone();
+    let part = package.relationships(&main)?.into_iter().find(|r| r.kind == SETTINGS_REL && !r.external).and_then(|r| r.target_part(&main)).ok_or_else(|| unsupported("settings.xml の無い文書の設定の変更"))?;
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
+    const BEFORE: &[&str] = &[
+        "writeProtection", "readOnlyRecommended", "view", "zoom", "removePersonalInformation", "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData", "saveFrequency", "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate", "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod", "documentType", "mailMerge", "revisionView", "trackRevisions", "doNotTrackMoves", "doNotTrackFormatting", "documentProtection", "autoFormatOverride", "styleLockTheme", "styleLockQFSet", "defaultTabStop", "autoHyphenation", "consecutiveHyphenLimit", "hyphenationZone", "doNotHyphenateCaps", "showEnvelope", "summaryLength", "clickAndTypeStyle", "defaultTableStyle", "evenAndOddHeaders", "bookFoldRevPrinting", "bookFoldPrinting", "bookFoldPrintingSheets", "drawingGridHorizontalSpacing", "drawingGridVerticalSpacing", "displayHorizontalDrawingGridEvery", "displayVerticalDrawingGridEvery", "doNotUseMarginsForDrawingGridOrigin", "drawingGridHorizontalOrigin", "drawingGridVerticalOrigin", "doNotShadeFormData", "noPunctuationKerning", "characterSpacingControl", "printTwoOnOne", "strictFirstAndLastChars", "noLineBreaksAfter", "noLineBreaksBefore", "saveThroughXslt", "showXMLTags", "alwaysShowPlaceholderText", "doNotAutoCompressPictures", "updateFields",
+        "footnotePr", "endnotePr", "compat", "docVars", "rsids", "mathPr", "attachedSchema", "themeFontLang", "clrSchemeMapping", "doNotIncludeSubdocsInStats",
+    ];
+    let before: &[&str] = match BEFORE.iter().position(|n| *n == name) {
+        Some(i) => &BEFORE[..i],
+        None => BEFORE,
+    };
+    let existing = doc.elements(root).find(|&c| doc.local_name(c) == name);
+    match (existing, val) {
+        (Some(e), None) => doc.detach(e),
+        (Some(e), Some(v)) => doc.set_attr(e, "w:val", &v.to_string()),
+        (None, Some(v)) => {
+            let e = doc.append_element(root, &format!("w:{name}"));
+            doc.set_attr(e, "w:val", &v.to_string());
+            doc.detach(e);
+            let after = doc.elements(root).filter(|&c| before.contains(&doc.local_name(c))).last();
+            match after {
+                Some(a) => doc.insert_after(a, e),
+                None => doc.insert(root, 0, e),
+            }
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
+/// The line above the footnotes (or the endnotes) as `kind` says: the content of the note of the type `separator` (a mark of the short line,
+/// one of the line across the text, or none).
+fn write_note_separator(package: &mut Package, map: &SourceMap, endnote: bool, kind: ibis_doc_model::NoteSeparator) -> Result<(), Error> {
+    let part = match &map.note_parts[usize::from(endnote)] {
+        Some(p) => p.clone(),
+        None => new_notes_part(package, map, endnote)?,
+    };
+    let element = if endnote { "endnote" } else { "footnote" };
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| unsupported("空の脚注のパート"))?;
+    let note = doc.elements(root).find(|&n| doc.local_name(n) == element && doc.attr(n, "w:type") == Some("separator")).ok_or_else(|| unsupported("注の区切り線の無い脚注のパート"))?;
+    let found = doc.elements(note).find(|&c| doc.local_name(c) == "p");
+    let paragraph = match found {
+        Some(p) => p,
+        None => doc.append_element(note, "w:p"),
+    };
+    // Everything in the paragraph but its properties goes; the mark of the line is put in a run.
+    for child in doc.children(paragraph).to_vec() {
+        if !(doc.is_element(child) && doc.local_name(child) == "pPr") {
+            doc.detach(child);
+        }
+    }
+    let mark = match kind {
+        ibis_doc_model::NoteSeparator::Standard => Some("w:separator"),
+        ibis_doc_model::NoteSeparator::Full => Some("w:continuationSeparator"),
+        ibis_doc_model::NoteSeparator::Hidden => None,
+    };
+    if let Some(mark) = mark {
+        let r = doc.append_element(paragraph, "w:r");
+        doc.append_element(r, mark);
+    }
+    Ok(())
+}
+
+/// Set (`Some`) or take away (`None`) the kind of the mail merge's main document in `settings.xml`
+/// (`w:mailMerge/w:mainDocumentType`, ECMA-376 Part 1 §17.15.1.51, §17.15.1.52). The merge's other settings stay as they are.
+fn write_mail_merge_type(package: &mut Package, map: &SourceMap, kind: Option<&str>) -> Result<(), Error> {
+    const SETTINGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+    let main = map.body_part.clone();
+    let part = package.relationships(&main)?.into_iter().find(|r| r.kind == SETTINGS_REL && !r.external).and_then(|r| r.target_part(&main)).ok_or_else(|| unsupported("settings.xml の無い文書の設定の変更"))?;
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
+    // What comes before `mailMerge` in CT_Settings.
+    const BEFORE: &[&str] = &["writeProtection", "readOnlyRecommended", "view", "zoom", "removePersonalInformation", "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData", "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate", "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod", "documentType"];
+    let existing = doc.elements(root).find(|&c| doc.local_name(c) == "mailMerge");
+    match (existing, kind) {
+        (Some(e), None) => {
+            let found = doc.elements(e).find(|&c| doc.local_name(c) == "mainDocumentType");
+            if let Some(t) = found {
+                doc.detach(t);
+            }
+            if doc.elements(e).next().is_none() {
+                doc.detach(e);
+            }
+        }
+        (Some(e), Some(k)) => {
+            let found = doc.elements(e).find(|&c| doc.local_name(c) == "mainDocumentType");
+            match found {
+            Some(t) => doc.set_attr(t, "w:val", k),
+            None => {
+                let t = doc.append_element(e, "w:mainDocumentType");
+                doc.set_attr(t, "w:val", k);
+                doc.detach(t);
+                doc.insert(e, 0, t);
+            }
+            }
+        }
+        (None, Some(k)) => {
+            let after = doc.elements(root).filter(|&c| BEFORE.contains(&doc.local_name(c))).last();
+            let e = doc.append_element(root, "w:mailMerge");
+            let t = doc.append_element(e, "w:mainDocumentType");
+            doc.set_attr(t, "w:val", k);
+            doc.detach(e);
+            match after {
+                Some(a) => doc.insert_after(a, e),
+                None => doc.insert(root, 0, e),
+            }
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
+/// Write or remove external data source field mappings in `settings.xml`
+/// (`w:mailMerge/w:odso/w:fieldMapData`, ECMA-376 Part 1 §17.14.15).
+fn write_mail_merge_field_map(package: &mut Package, map: &SourceMap, field_map: &[ibis_doc_model::merge::FieldMapData]) -> Result<(), Error> {
+    const SETTINGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+    let main = map.body_part.clone();
+    let part = package.relationships(&main)?.into_iter().find(|r| r.kind == SETTINGS_REL && !r.external).and_then(|r| r.target_part(&main)).ok_or_else(|| unsupported("settings.xml の無い文書の設定の変更"))?;
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
+    const BEFORE: &[&str] = &["writeProtection", "readOnlyRecommended", "view", "zoom", "removePersonalInformation", "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData", "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate", "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod", "documentType"];
+    let existing_mm = doc.elements(root).find(|&c| doc.local_name(c) == "mailMerge");
+    let mail_merge = match existing_mm {
+        Some(e) => e,
+        None if field_map.is_empty() => return Ok(()),
+        None => {
+            let after = doc.elements(root).filter(|&c| BEFORE.contains(&doc.local_name(c))).last();
+            let e = doc.append_element(root, "w:mailMerge");
+            doc.detach(e);
+            match after {
+                Some(a) => doc.insert_after(a, e),
+                None => doc.insert(root, 0, e),
+            }
+            e
+        }
+    };
+    let existing_odso = doc.elements(mail_merge).find(|&c| doc.local_name(c) == "odso");
+    let odso = match existing_odso {
+        Some(o) => o,
+        None if field_map.is_empty() => return Ok(()),
+        None => doc.append_element(mail_merge, "w:odso"),
+    };
+    // Detach existing fieldMapData children
+    for child in doc.elements(odso).collect::<Vec<_>>() {
+        if doc.local_name(child) == "fieldMapData" {
+            doc.detach(child);
+        }
+    }
+    if field_map.is_empty() {
+        if doc.elements(odso).next().is_none() {
+            doc.detach(odso);
+        }
+        if doc.elements(mail_merge).next().is_none() {
+            doc.detach(mail_merge);
+        }
+        return Ok(());
+    }
+    for item in field_map {
+        let fmd = doc.append_element(odso, "w:fieldMapData");
+        let t = doc.append_element(fmd, "w:type");
+        doc.set_attr(t, "w:val", "dbColumn");
+        let name = doc.append_element(fmd, "w:name");
+        doc.set_attr(name, "w:val", &item.name);
+        let mapped = doc.append_element(fmd, "w:mappedName");
+        doc.set_attr(mapped, "w:val", &item.mapped_name);
+        let col = doc.append_element(fmd, "w:column");
+        doc.set_attr(col, "w:val", &item.column.to_string());
     }
     Ok(())
 }
@@ -821,6 +1183,60 @@ fn write_kinsoku_setting(package: &mut Package, map: &SourceMap, name: &str, lis
             doc.set_attr(e, "w:val", l);
             doc.detach(e);
             let after = doc.elements(root).filter(|&c| before.contains(&doc.local_name(c))).last();
+            match after {
+                Some(a) => doc.insert_after(a, e),
+                None => doc.insert(root, 0, e),
+            }
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
+/// Write or remove `w:themeFontLang` in `settings.xml` (ECMA-376 Part 1 §17.15.1.88, DOCX-JA-019).
+fn write_theme_font_lang(package: &mut Package, map: &SourceMap, theme_lang: &Option<ibis_doc_model::ThemeFontLang>) -> Result<(), Error> {
+    const SETTINGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+    let main = map.body_part.clone();
+    let part = package.relationships(&main)?.into_iter().find(|r| r.kind == SETTINGS_REL && !r.external).and_then(|r| r.target_part(&main)).ok_or_else(|| unsupported("settings.xml の無い文書の設定の変更"))?;
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
+    const BEFORE: &[&str] = &[
+        "writeProtection", "readOnlyRecommended", "view", "zoom", "removePersonalInformation", "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData", "saveFrequency", "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate", "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod", "documentType", "mailMerge", "revisionView", "trackRevisions", "doNotTrackMoves", "doNotTrackFormatting", "documentProtection", "autoFormatOverride", "styleLockTheme", "styleLockQFSet", "defaultTabStop", "autoHyphenation", "consecutiveHyphenLimit", "hyphenationZone", "doNotHyphenateCaps", "showEnvelope", "summaryLength", "clickAndTypeStyle", "defaultTableStyle", "evenAndOddHeaders", "bookFoldRevPrinting", "bookFoldPrinting", "bookFoldPrintingSheets", "drawingGridHorizontalSpacing", "drawingGridVerticalSpacing", "displayHorizontalDrawingGridEvery", "displayVerticalDrawingGridEvery", "doNotUseMarginsForDrawingGridOrigin", "drawingGridHorizontalOrigin", "drawingGridVerticalOrigin", "doNotShadeFormData", "noPunctuationKerning", "characterSpacingControl", "printTwoOnOne", "strictFirstAndLastChars", "noLineBreaksAfter", "noLineBreaksBefore", "saveThroughXslt", "showXMLTags", "alwaysShowPlaceholderText", "doNotAutoCompressPictures", "updateFields",
+        "footnotePr", "endnotePr", "compat", "docVars", "rsids", "mathPr", "attachedSchema",
+    ];
+    let existing = doc.elements(root).find(|&c| doc.local_name(c) == "themeFontLang");
+    match (existing, theme_lang) {
+        (Some(e), None) => doc.detach(e),
+        (Some(e), Some(tfl)) => {
+            if let Some(val) = &tfl.val {
+                doc.set_attr(e, "w:val", val);
+            } else {
+                doc.remove_attr(e, "w:val");
+            }
+            if let Some(ea) = &tfl.east_asia {
+                doc.set_attr(e, "w:eastAsia", ea);
+            } else {
+                doc.remove_attr(e, "w:eastAsia");
+            }
+            if let Some(bidi) = &tfl.bidi {
+                doc.set_attr(e, "w:bidi", bidi);
+            } else {
+                doc.remove_attr(e, "w:bidi");
+            }
+        }
+        (None, Some(tfl)) => {
+            let e = doc.append_element(root, "w:themeFontLang");
+            if let Some(val) = &tfl.val {
+                doc.set_attr(e, "w:val", val);
+            }
+            if let Some(ea) = &tfl.east_asia {
+                doc.set_attr(e, "w:eastAsia", ea);
+            }
+            if let Some(bidi) = &tfl.bidi {
+                doc.set_attr(e, "w:bidi", bidi);
+            }
+            doc.detach(e);
+            let after = doc.elements(root).filter(|&c| BEFORE.contains(&doc.local_name(c))).last();
             match after {
                 Some(a) => doc.insert_after(a, e),
                 None => doc.insert(root, 0, e),
@@ -989,6 +1405,254 @@ fn write_page_color(package: &mut Package, map: &SourceMap, color: Option<Rgb>) 
     Ok(())
 }
 
+/// Write image quality extension settings (`w14:defaultImageDpi`, `w14:discardImageEditingData`) to `settings.xml` (DOCX-OPTIONS-011).
+fn write_image_quality_settings(
+    package: &mut Package,
+    map: &SourceMap,
+    default_dpi: Option<u32>,
+    discard_crop: bool,
+) -> Result<(), Error> {
+    const SETTINGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+    let main = map.body_part.clone();
+    let part = package.relationships(&main)?.into_iter().find(|r| r.kind == SETTINGS_REL && !r.external).and_then(|r| r.target_part(&main)).ok_or_else(|| unsupported("settings.xml の無い文書の設定の変更"))?;
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
+
+    if doc.lookup_prefix(root, W14_NS).is_none() {
+        doc.set_attr(root, "xmlns:w14", W14_NS);
+    }
+
+    // w14:defaultImageDpi
+    let existing_dpi = doc.elements(root).find(|&c| doc.local_name(c) == "defaultImageDpi");
+    match (existing_dpi, default_dpi) {
+        (Some(e), None) => doc.detach(e),
+        (Some(e), Some(dpi)) => {
+            doc.set_attr(e, "w14:val", &dpi.to_string());
+        }
+        (None, Some(dpi)) => {
+            let e = doc.append_element(root, "w14:defaultImageDpi");
+            doc.set_attr(e, "w14:val", &dpi.to_string());
+        }
+        (None, None) => {}
+    }
+
+    // w14:discardImageEditingData
+    let existing_discard = doc.elements(root).find(|&c| doc.local_name(c) == "discardImageEditingData");
+    match (existing_discard, discard_crop) {
+        (Some(e), false) => doc.detach(e),
+        (Some(_e), true) => {}
+        (None, true) => {
+            doc.append_element(root, "w14:discardImageEditingData");
+        }
+        (None, false) => {}
+    }
+
+    Ok(())
+}
+
+/// Write auto-recover save frequency (`w:saveFrequency`) to `settings.xml` (DOCX-OPTIONS-012, ECMA-376 Part 1 §17.15.1.72).
+fn write_save_frequency(package: &mut Package, map: &SourceMap, frequency: Option<u32>) -> Result<(), Error> {
+    const SETTINGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+    let main = map.body_part.clone();
+    let part = package.relationships(&main)?.into_iter().find(|r| r.kind == SETTINGS_REL && !r.external).and_then(|r| r.target_part(&main)).ok_or_else(|| unsupported("settings.xml の無い文書の設定の変更"))?;
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
+
+    const BEFORE: &[&str] = &[
+        "writeProtection", "readOnlyRecommended", "view", "zoom", "removePersonalInformation", "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData",
+    ];
+
+    let existing = doc.elements(root).find(|&c| doc.local_name(c) == "saveFrequency");
+    match (existing, frequency) {
+        (Some(e), None) => doc.detach(e),
+        (Some(e), Some(val)) => {
+            doc.set_attr(e, "w:val", &val.to_string());
+        }
+        (None, Some(val)) => {
+            let e = doc.append_element(root, "w:saveFrequency");
+            doc.detach(e);
+            doc.set_attr(e, "w:val", &val.to_string());
+            let after = doc.elements(root).filter(|&c| BEFORE.contains(&doc.local_name(c))).last();
+            match after {
+                Some(a) => doc.insert_after(a, e),
+                None => doc.insert(root, 0, e),
+            }
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
+/// Write attached template (`w:attachedTemplate`) to `settings.xml` and its relationship in `settings.xml.rels` (ECMA-376 Part 1 §17.15.1.13, DOCX-STYLE-017, DOCX-FILE-009).
+fn write_attached_template(package: &mut Package, map: &SourceMap, attached_template: Option<&str>) -> Result<(), Error> {
+    const SETTINGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+    const ATTACHED_TEMPLATE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate";
+    const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let main = map.body_part.clone();
+    let part = package.relationships(&main)?.into_iter().find(|r| r.kind == SETTINGS_REL && !r.external).and_then(|r| r.target_part(&main)).ok_or_else(|| unsupported("settings.xml の無い文書の設定の変更"))?;
+
+    // 1. settings.xml から既存の attachedTemplate の有無と r:id を調べる
+    let existing_rid = {
+        let doc = package.xml_mut(&part)?;
+        let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
+        let existing = doc.elements(root).find(|&c| doc.local_name(c) == "attachedTemplate");
+        existing.map(|e| (true, doc.attr(e, "r:id").map(str::to_string)))
+    };
+
+    // 2. リレーションシップの更新または作成 (attachedTemplate は外部テンプレートのため external: true)
+    let target_rid = match (existing_rid, attached_template) {
+        (Some((_, Some(rid))), None) => {
+            let _ = package.remove_relationship(&part, &rid);
+            None
+        }
+        (Some((_, None)), None) => None,
+        (Some((_, Some(rid))), Some(target)) => {
+            let rels_name = ibis_ooxml::package::relationships_part(&part);
+            if let Ok(rels_doc) = package.xml_mut(&rels_name) {
+                if let Some(r_root) = rels_doc.root_element() {
+                    let r_node = rels_doc.children_named(r_root, "Relationship").find(|&r| rels_doc.attr(r, "Id") == Some(&rid));
+                    if let Some(r) = r_node {
+                        rels_doc.set_attr(r, "Target", target);
+                    }
+                }
+            }
+            Some(rid)
+        }
+        (Some((_, None)), Some(target)) => {
+            let rid = package.add_relationship(&part, ATTACHED_TEMPLATE_REL, target, true)?;
+            Some(rid)
+        }
+        (None, Some(target)) => {
+            let rid = package.add_relationship(&part, ATTACHED_TEMPLATE_REL, target, true)?;
+            Some(rid)
+        }
+        (None, None) => None,
+    };
+
+    // 3. settings.xml のノードを更新
+    const BEFORE: &[&str] = &[
+        "writeProtection", "readOnlyRecommended", "trackRevisions", "doNotTrackMoves", "doNotTrackFormatting", "documentProtection", "autoFormatOverride", "styleLockTheme", "styleLockQFSet", "defaultTabStop", "autoHyphenation", "consecutiveHyphenLimit", "hyphenationZone", "doNotHyphenateCaps", "showEnvelope", "summaryLength", "clickAndTypeStyle", "defaultTableStyle", "evenAndOddHeaders", "bookFoldRevPrinting", "bookFoldPrinting", "bookFoldPrintingSheets", "drawingGridHorizontalSpacing", "drawingGridVerticalSpacing", "displayHorizontalDrawingGridEvery", "displayVerticalDrawingGridEvery", "doNotUseMarginsForDrawingGridOrigin", "drawingGridHorizontalOrigin", "drawingGridVerticalOrigin", "doNotShadeFormData", "noPunctuationKerning", "characterSpacingControl", "printTwoOnOne", "strictFirstAndLastChars", "noLineBreaksAfter", "noLineBreaksBefore", "saveFormsData", "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign",
+    ];
+
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
+    if doc.lookup_prefix(root, R_NS).is_none() {
+        doc.set_attr(root, "xmlns:r", R_NS);
+    }
+    let existing_node = doc.elements(root).find(|&c| doc.local_name(c) == "attachedTemplate");
+
+    match (existing_node, target_rid) {
+        (Some(e), None) => {
+            doc.detach(e);
+        }
+        (Some(e), Some(rid)) => {
+            doc.set_attr(e, "r:id", &rid);
+        }
+        (None, Some(rid)) => {
+            let e = doc.append_element(root, "w:attachedTemplate");
+            doc.detach(e);
+            doc.set_attr(e, "r:id", &rid);
+            let after = doc.elements(root).filter(|&c| BEFORE.contains(&doc.local_name(c))).last();
+            match after {
+                Some(a) => doc.insert_after(a, e),
+                None => doc.insert(root, 0, e),
+            }
+        }
+        (None, None) => {}
+    }
+
+    Ok(())
+}
+
+/// Set or update `<w:compat>` in `settings.xml` (ECMA-376 Part 1 §17.15.1.21, DOCX-OPTIONS-013).
+fn write_compatibility(
+    package: &mut Package,
+    map: &SourceMap,
+    compatibility_mode: Option<u32>,
+    use_fe_layout: bool,
+    do_not_expand_shift_return: bool,
+) -> Result<(), Error> {
+    const SETTINGS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+    let main = map.body_part.clone();
+    let part = package.relationships(&main)?.into_iter().find(|r| r.kind == SETTINGS_REL && !r.external).and_then(|r| r.target_part(&main)).ok_or_else(|| unsupported("settings.xml の無い文書の設定の変更"))?;
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| unsupported("空の settings.xml"))?;
+    const BEFORE: &[&str] = &[
+        "writeProtection", "readOnlyRecommended", "view", "zoom", "removePersonalInformation", "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData", "saveFrequency", "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate", "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod", "documentType", "mailMerge", "revisionView", "trackRevisions", "doNotTrackMoves", "doNotTrackFormatting", "documentProtection", "autoFormatOverride", "styleLockTheme", "styleLockQFSet", "defaultTabStop", "autoHyphenation", "consecutiveHyphenLimit", "hyphenationZone", "doNotHyphenateCaps", "showEnvelope", "summaryLength", "clickAndTypeStyle", "defaultTableStyle", "evenAndOddHeaders", "updateFields", "footnotePr", "endnotePr",
+    ];
+
+    let existing = doc.elements(root).find(|&c| doc.local_name(c) == "compat");
+    let has_any = compatibility_mode.is_some() || use_fe_layout || do_not_expand_shift_return;
+    let compat_node = match (existing, has_any) {
+        (Some(e), _) => e,
+        (None, false) => return Ok(()),
+        (None, true) => {
+            let e = doc.append_element(root, "w:compat");
+            doc.detach(e);
+            let after = doc.elements(root).filter(|&c| BEFORE.contains(&doc.local_name(c))).last();
+            match after {
+                Some(a) => doc.insert_after(a, e),
+                None => doc.insert(root, 0, e),
+            }
+            e
+        }
+    };
+
+    // useFELayout
+    let fe_node = doc.elements(compat_node).find(|&c| doc.local_name(c) == "useFELayout");
+    match (fe_node, use_fe_layout) {
+        (Some(n), false) => doc.detach(n),
+        (Some(_), true) => {}
+        (None, true) => {
+            let setting = doc.elements(compat_node).find(|&c| doc.local_name(c) == "compatSetting");
+            let n = doc.append_element(compat_node, "w:useFELayout");
+            if let Some(s) = setting {
+                doc.detach(n);
+                doc.insert_before(s, n);
+            }
+        }
+        (None, false) => {}
+    }
+
+    // doNotExpandShiftReturn
+    let shift_node = doc.elements(compat_node).find(|&c| doc.local_name(c) == "doNotExpandShiftReturn");
+    match (shift_node, do_not_expand_shift_return) {
+        (Some(n), false) => doc.detach(n),
+        (Some(_), true) => {}
+        (None, true) => {
+            let setting = doc.elements(compat_node).find(|&c| doc.local_name(c) == "compatSetting");
+            let n = doc.append_element(compat_node, "w:doNotExpandShiftReturn");
+            if let Some(s) = setting {
+                doc.detach(n);
+                doc.insert_before(s, n);
+            }
+        }
+        (None, false) => {}
+    }
+
+    // compatSetting for compatibilityMode
+    let mode_node = doc.elements(compat_node).find(|&c| doc.local_name(c) == "compatSetting" && doc.attr(c, "w:name") == Some("compatibilityMode"));
+    match (mode_node, compatibility_mode) {
+        (Some(n), None) => doc.detach(n),
+        (Some(n), Some(val)) => {
+            doc.set_attr(n, "w:val", &val.to_string());
+        }
+        (None, Some(val)) => {
+            let n = doc.append_element(compat_node, "w:compatSetting");
+            doc.set_attr(n, "w:name", "compatibilityMode");
+            doc.set_attr(n, "w:uri", "http://schemas.microsoft.com/office/word");
+            doc.set_attr(n, "w:val", &val.to_string());
+        }
+        (None, None) => {}
+    }
+
+    if doc.elements(compat_node).next().is_none() {
+        doc.detach(compat_node);
+    }
+
+    Ok(())
+}
+
 struct Writer<'a> {
     doc: &'a mut XmlDocument,
     pristine: &'a XmlDocument,
@@ -1004,6 +1668,9 @@ struct Writer<'a> {
     added: &'a HashMap<MediaId, String>,
     /// Pictures new to the part that are SVGs.
     svg_media: &'a HashSet<MediaId>,
+    /// The embedded objects of the part's pictures: the relationships to their
+    /// pictures and parts.
+    objects: &'a HashMap<ibis_doc_model::OleId, ObjectRels>,
     /// The element new paragraphs go into when there are none to copy (a
     /// new header's root).
     empty_parent: Option<NodeId>,
@@ -1016,6 +1683,9 @@ struct Writer<'a> {
     shape_nodes: HashMap<u64, NodeId>,
     /// The old shapes of those, by shape id (to see what was changed).
     shape_olds: HashMap<u64, Box<Shape>>,
+    /// The group hierarchies (`wpg:wgp`) in the baseline and current documents.
+    old_shape_groups: &'a [ibis_doc_model::ShapeGroup],
+    new_shape_groups: &'a [ibis_doc_model::ShapeGroup],
 }
 
 /// CT_RPr's children in order.
@@ -1046,6 +1716,61 @@ enum Host {
 }
 
 impl Writer<'_> {
+    /// The title, tag and lock of a content control (`sdt`, a copy of the
+    /// original or new), in `w:sdtPr`'s order: `w:alias`, `w:tag`, `w:id`,
+    /// `w:lock`.
+    fn apply_control(&mut self, sdt: NodeId, control: &Option<Box<ibis_doc_model::ControlInfo>>) {
+        let Some(pr) = self.doc.child(sdt, "sdtPr") else { return };
+        for name in ["alias", "tag", "lock"] {
+            if let Some(old) = self.doc.child(pr, name) {
+                self.doc.detach(old);
+            }
+        }
+        let Some(info) = control else { return };
+        let put = |this: &mut Self, name: &str, value: &str, after: &[&str]| {
+            let at = this.doc.children(pr).iter().rposition(|&c| this.doc.is_element(c) && after.contains(&this.doc.local_name(c))).map_or(0, |i| i + 1);
+            let element = this.doc.append_element(pr, &this.w(name));
+            this.doc.detach(element);
+            this.doc.set_attr(element, "w:val", value);
+            this.doc.insert(pr, at, element);
+        };
+        if !info.title.is_empty() {
+            put(self, "alias", &info.title, &["rPr"]);
+        }
+        if !info.tag.is_empty() {
+            put(self, "tag", &info.tag, &["rPr", "alias"]);
+        }
+        if let Some(lock) = info.lock.name() {
+            put(self, "lock", lock, &["rPr", "alias", "tag", "id"]);
+        }
+    }
+
+    /// A text content control's text (`sdt`, a copy of the original): the
+    /// first run of its content has it, the others go; `w:showingPlcHdr`
+    /// says whether it is the prompt.
+    fn set_control_text(&mut self, sdt: NodeId, text: &str, showing: bool) {
+        if let Some(content) = self.doc.child(sdt, "sdtContent") {
+            let runs: Vec<_> = self.doc.children_named(content, "r").collect();
+            for (i, r) in runs.into_iter().enumerate() {
+                if i > 0 {
+                    self.doc.detach(r);
+                } else if let Some(t) = self.doc.child(r, "t") {
+                    self.doc.set_text(t, text);
+                }
+            }
+        }
+        let Some(pr) = self.doc.child(sdt, "sdtPr") else { return };
+        if let Some(old) = self.doc.child(pr, "showingPlcHdr") {
+            self.doc.detach(old);
+        }
+        if showing {
+            let at = self.doc.children(pr).iter().rposition(|&c| self.doc.is_element(c) && matches!(self.doc.local_name(c), "rPr" | "alias" | "tag" | "id" | "lock" | "placeholder" | "temporary")).map_or(0, |i| i + 1);
+            let element = self.doc.append_element(pr, &self.w("showingPlcHdr"));
+            self.doc.detach(element);
+            self.doc.insert(pr, at, element);
+        }
+    }
+
     fn w(&self, name: &str) -> String {
         format!("w:{name}")
     }
@@ -1187,6 +1912,7 @@ impl Writer<'_> {
                     let w = self.doc.append_element(holder, &name);
                     self.doc.detach(w);
                     self.doc.set_attr(w, "wrapText", wrap_text);
+                    self.append_wrap_polygon(w, f.wrap_polygon.as_ref());
                     w
                 }
                 "through" => {
@@ -1194,6 +1920,7 @@ impl Writer<'_> {
                     let w = self.doc.append_element(holder, &name);
                     self.doc.detach(w);
                     self.doc.set_attr(w, "wrapText", wrap_text);
+                    self.append_wrap_polygon(w, f.wrap_polygon.as_ref());
                     w
                 }
                 "topAndBottom" => {
@@ -1244,6 +1971,24 @@ impl Writer<'_> {
         }
     }
 
+    fn append_wrap_polygon(&mut self, wrap_elem: NodeId, polygon: Option<&ibis_doc_model::WrapPolygon>) {
+        let default_poly = ibis_doc_model::WrapPolygon::default_rect_21600();
+        let poly = polygon.unwrap_or(&default_poly);
+        let poly_name = self.wp("wrapPolygon");
+        let poly_node = self.doc.append_element(wrap_elem, &poly_name);
+        self.doc.set_attr(poly_node, "edited", if poly.edited { "1" } else { "0" });
+        let start_name = self.wp("start");
+        let start_node = self.doc.append_element(poly_node, &start_name);
+        self.doc.set_attr(start_node, "x", &poly.start.x.to_string());
+        self.doc.set_attr(start_node, "y", &poly.start.y.to_string());
+        let line_name = self.wp("lineTo");
+        for pt in &poly.line_to {
+            let line_node = self.doc.append_element(poly_node, &line_name);
+            self.doc.set_attr(line_node, "x", &pt.x.to_string());
+            self.doc.set_attr(line_node, "y", &pt.y.to_string());
+        }
+    }
+
     fn resolve_nodes(&mut self) {
         for (id, source) in &self.map.paragraphs {
             if source.part == self.part
@@ -1259,6 +2004,30 @@ impl Writer<'_> {
                 self.nodes.insert(*id, node);
             }
         }
+    }
+
+    fn shape_group_of(
+        groups: &[ibis_doc_model::ShapeGroup],
+        id: ibis_doc_model::ShapeId,
+    ) -> Option<&ibis_doc_model::ShapeGroup> {
+        groups.iter().find(|g| g.contains_shape(id))
+    }
+
+    fn paragraph_group_changed(&self, old: &FlowParagraph, new: &FlowParagraph) -> bool {
+        if self.old_shape_groups == self.new_shape_groups {
+            return false;
+        }
+        let check = |p: &FlowParagraph| {
+            p.runs.iter().any(|r| {
+                if let FlowRunKind::Shape(s) = &r.kind {
+                    Self::shape_group_of(self.old_shape_groups, s.id)
+                        != Self::shape_group_of(self.new_shape_groups, s.id)
+                } else {
+                    false
+                }
+            })
+        };
+        check(old) || check(new)
     }
 
     /// Write the changes of a list of blocks.
@@ -1290,7 +2059,7 @@ impl Writer<'_> {
             let node = match (self.old_blocks.get(&id).copied().filter(|_| old_order.contains_key(&id)), block) {
                 (Some(Block::Paragraph(was)), Block::Paragraph(p)) => {
                     let node = *self.nodes.get(&id).ok_or_else(|| unsupported("元の場所が分からない段落の変更"))?;
-                    if was != p {
+                    if was != p || self.paragraph_group_changed(was, p) {
                         let source = &self.map.paragraphs[&id];
                         self.paragraph(node, was, p, &source.atoms)?;
                     }
@@ -1311,15 +2080,22 @@ impl Writer<'_> {
                         Some(Block::Paragraph(t)) if old_order.contains_key(&t.id) => Some(t),
                         _ => None,
                     });
-                    let Some(template) = template else { return Err(unsupported("段落の無い場所への表の追加")) };
+                    // No paragraph to copy (a new header): the cells' paragraphs are
+                    // written from nothing.
+                    if template.is_none() && self.empty_parent.is_none() {
+                        return Err(unsupported("段落の無い場所への表の追加"));
+                    }
                     let node = self.new_table(t, template)?;
                     match previous {
                         Some(prev) => self.doc.insert_after(prev, node),
-                        None => {
-                            let next = new[i + 1..].iter().find_map(|b| self.nodes.get(&block_id(b)).copied().filter(|_| old_order.contains_key(&block_id(b))));
-                            let next = next.ok_or_else(|| unsupported("表の追加"))?;
-                            self.doc.insert_before(next, node);
-                        }
+                        None => match new[i + 1..].iter().find_map(|b| self.nodes.get(&block_id(b)).copied().filter(|_| old_order.contains_key(&block_id(b)))) {
+                            Some(next) => self.doc.insert_before(next, node),
+                            None => {
+                                let parent = self.empty_parent.ok_or_else(|| unsupported("表の追加"))?;
+                                let end = self.doc.children(parent).len();
+                                self.doc.insert(parent, end, node);
+                            }
+                        },
                     }
                     node
                 }
@@ -1529,7 +2305,7 @@ impl Writer<'_> {
         const SECT_ORDER: &[&str] = &["headerReference", "footerReference", "footnotePr", "endnotePr", "type", "pgSz", "pgMar", "paperSrc", "pgBorders", "lnNumType", "pgNumType", "cols", "formProt", "vAlign", "noEndnote", "titlePg", "textDirection", "bidi", "rtlGutter", "docGrid", "printerSettings", "sectPrChange"];
         let (a, b) = (&old.page, &new.page);
         // (見開きページ and とじしろの位置 are the settings', written apart.)
-        let same_rest = ibis_doc_model::PageSetup { size: a.size, top: a.top, right: a.right, bottom: a.bottom, left: a.left, header: a.header, footer: a.footer, first_page: a.first_page, gutter: a.gutter, v_align: a.v_align, mirror_margins: a.mirror_margins, gutter_at_top: a.gutter_at_top, footnotes: a.footnotes, endnotes: a.endnotes, direction: a.direction, line_numbers: a.line_numbers, columns: a.columns, borders: a.borders, borders_from_text: a.borders_from_text, line_pitch: a.line_pitch, char_space: a.char_space, doc_grid_type: a.doc_grid_type, ..*b } == *a;
+        let same_rest = ibis_doc_model::PageSetup { size: a.size, top: a.top, right: a.right, bottom: a.bottom, left: a.left, header: a.header, footer: a.footer, first_page: a.first_page, gutter: a.gutter, v_align: a.v_align, mirror_margins: a.mirror_margins, gutter_at_top: a.gutter_at_top, multiple_pages: a.multiple_pages, book_fold_sheets: a.book_fold_sheets, footnotes: a.footnotes, endnotes: a.endnotes, direction: a.direction, line_numbers: a.line_numbers, columns: a.columns, borders: a.borders, borders_from_text: a.borders_from_text, line_pitch: a.line_pitch, char_space: a.char_space, doc_grid_type: a.doc_grid_type, ..*b } == *a;
         if !same_rest {
             return Err(unsupported("ページ設定の変更"));
         }
@@ -2168,7 +2944,7 @@ impl Writer<'_> {
                     self.write_copy(node, template_para, p, &source.atoms)?;
                 }
                 Block::Table(inner) => {
-                    let node = self.new_table(inner, template_para)?;
+                    let node = self.new_table(inner, Some(template_para))?;
                     let end = self.doc.children(tc).len();
                     self.doc.insert(tc, end, node);
                 }
@@ -2193,7 +2969,7 @@ impl Writer<'_> {
         // What the copy must not keep goes before the new paragraph's own
         // marks (bookmarks, a field's start) are written.
         self.clean_copy(node);
-        let template = FlowParagraph { bookmarks: Vec::new(), field_start: None, field_end: false, section_break: ibis_doc_model::SectionBreak::None, section: None, ..template.clone() };
+        let template = FlowParagraph { bookmarks: Vec::new(), field_start: None, field_end: false, section_break: ibis_doc_model::SectionBreak::None, section: None, subdoc: None, ..template.clone() };
         self.paragraph_props(node, &template, new)?;
         Ok(())
     }
@@ -2338,9 +3114,15 @@ impl Writer<'_> {
 
     /// The element of a new table, its cells' paragraphs written from
     /// `template`'s element.
-    fn new_table(&mut self, t: &FlowTable, template: &FlowParagraph) -> Result<NodeId, Error> {
-        let source = self.map.paragraphs.get(&template.id).ok_or_else(|| unsupported("表の追加"))?;
-        let original = self.pristine.by_path(&source.path).ok_or_else(|| unsupported("表の追加"))?;
+    fn new_table(&mut self, t: &FlowTable, template: Option<&FlowParagraph>) -> Result<NodeId, Error> {
+        // The paragraph the cells' are copied from (none in a new header).
+        let copied = match template {
+            Some(template) => {
+                let source = self.map.paragraphs.get(&template.id).ok_or_else(|| unsupported("表の追加"))?;
+                Some((template, source.atoms.clone(), self.pristine.by_path(&source.path).ok_or_else(|| unsupported("表の追加"))?))
+            }
+            None => None,
+        };
         let w = |l: &str| format!("w:{l}");
         let tbl = self.doc.append_element(XmlDocument::ROOT, &w("tbl"));
         self.doc.detach(tbl);
@@ -2348,14 +3130,6 @@ impl Writer<'_> {
         if let Some(ref st) = t.style {
             let s = self.doc.append_element(pr, &w("tblStyle"));
             self.doc.set_attr(s, "w:val", &st.id);
-            let look = self.doc.append_element(pr, &w("tblLook"));
-            let l = st.look;
-            let bits = [(l.first_row, 0x20, "w:firstRow"), (l.last_row, 0x40, "w:lastRow"), (l.first_column, 0x80, "w:firstColumn"), (l.last_column, 0x100, "w:lastColumn"), (l.no_hband, 0x200, "w:noHBand"), (l.no_vband, 0x400, "w:noVBand")];
-            let val: u32 = bits.iter().filter(|b| b.0).map(|b| b.1).sum();
-            self.doc.set_attr(look, "w:val", &format!("{val:04X}"));
-            for (on, _, name) in bits {
-                self.doc.set_attr(look, name, if on { "1" } else { "0" });
-            }
         }
         if let Some(f) = &t.floating {
             let tblp = self.doc.append_element(pr, &w("tblpPr"));
@@ -2401,8 +3175,19 @@ impl Writer<'_> {
                 None => self.doc.set_attr(e, "w:val", "nil"),
             }
         }
+        // The last child of tblPr (the schema's order): the look of the table style.
         let look = self.doc.append_element(pr, &w("tblLook"));
-        self.doc.set_attr(look, "w:val", "04A0");
+        if let Some(ref st) = t.style {
+            let l = st.look;
+            let bits = [(l.first_row, 0x20, "w:firstRow"), (l.last_row, 0x40, "w:lastRow"), (l.first_column, 0x80, "w:firstColumn"), (l.last_column, 0x100, "w:lastColumn"), (l.no_hband, 0x200, "w:noHBand"), (l.no_vband, 0x400, "w:noVBand")];
+            let val: u32 = bits.iter().filter(|b| b.0).map(|b| b.1).sum();
+            self.doc.set_attr(look, "w:val", &format!("{val:04X}"));
+            for (on, _, name) in bits {
+                self.doc.set_attr(look, name, if on { "1" } else { "0" });
+            }
+        } else {
+            self.doc.set_attr(look, "w:val", "04A0");
+        }
         self.grid(tbl, &t.columns);
         for row in &t.rows {
             let tr = self.doc.append_element(tbl, &w("tr"));
@@ -2441,12 +3226,19 @@ impl Writer<'_> {
                 }
                 for block in &cell.blocks {
                     match block {
-                        Block::Paragraph(p) => {
-                            let node = self.doc.import(self.pristine, original);
-                            let end = self.doc.children(tc).len();
-                            self.doc.insert(tc, end, node);
-                            self.write_copy(node, template, p, &source.atoms)?;
-                        }
+                        Block::Paragraph(p) => match &copied {
+                            Some((template, atoms, original)) => {
+                                let node = self.doc.import(self.pristine, *original);
+                                let end = self.doc.children(tc).len();
+                                self.doc.insert(tc, end, node);
+                                self.write_copy(node, template, p, atoms)?;
+                            }
+                            None => {
+                                let node = self.doc.append_element(tc, &w("p"));
+                                let blank = FlowParagraph { id: p.id, ..FlowParagraph::default() };
+                                self.paragraph(node, &blank, p, &[])?;
+                            }
+                        },
                         Block::Table(inner) => {
                             let node = self.new_table(inner, template)?;
                             let end = self.doc.children(tc).len();
@@ -2680,6 +3472,57 @@ impl Writer<'_> {
                     }
                 }
             }
+            // 透明度 (a:alphaModFix)
+            let existing_alpha = self.doc.child(blip, "alphaModFix");
+            let old_alpha = existing_alpha.and_then(|e| self.doc.attr(e, "amt")).and_then(|v| v.parse::<i32>().ok()).filter(|&a| a < 100_000);
+            if old_alpha != look.effects.opacity {
+                if let Some(e) = existing_alpha {
+                    self.doc.detach(e);
+                }
+                if let Some(amt) = look.effects.opacity {
+                    let at = self.doc.children(blip).iter().position(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "extLst").unwrap_or_else(|| self.doc.children(blip).len());
+                    let e = self.doc.insert_element(blip, at, "a:alphaModFix");
+                    self.doc.set_attr(e, "amt", &amt.to_string());
+                }
+            }
+            // 彩度 (a:satMod)
+            let existing_sat = self.doc.child(blip, "satMod");
+            let old_sat = existing_sat.and_then(|e| self.doc.attr(e, "amt")).and_then(|v| v.parse::<i32>().ok());
+            if old_sat != look.effects.saturation {
+                if let Some(e) = existing_sat {
+                    self.doc.detach(e);
+                }
+                if let Some(amt) = look.effects.saturation {
+                    let at = self.doc.children(blip).iter().position(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "extLst").unwrap_or_else(|| self.doc.children(blip).len());
+                    let e = self.doc.insert_element(blip, at, "a:satMod");
+                    self.doc.set_attr(e, "amt", &amt.to_string());
+                }
+            }
+            // 白黒 (a:biLevel)
+            let existing_bilevel = self.doc.child(blip, "biLevel");
+            let old_bilevel = existing_bilevel.and_then(|e| self.doc.attr(e, "thresh")).and_then(|v| v.parse::<i32>().ok());
+            if old_bilevel != look.effects.bilevel {
+                if let Some(e) = existing_bilevel {
+                    self.doc.detach(e);
+                }
+                if let Some(thresh) = look.effects.bilevel {
+                    let at = self.doc.children(blip).iter().position(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "extLst").unwrap_or_else(|| self.doc.children(blip).len());
+                    let e = self.doc.insert_element(blip, at, "a:biLevel");
+                    self.doc.set_attr(e, "thresh", &thresh.to_string());
+                }
+            }
+            // グレースケール (a:grayscl)
+            let existing_grayscl = self.doc.child(blip, "grayscl");
+            let old_grayscl = existing_grayscl.is_some();
+            if old_grayscl != look.effects.grayscale {
+                if let Some(e) = existing_grayscl {
+                    self.doc.detach(e);
+                }
+                if look.effects.grayscale {
+                    let at = self.doc.children(blip).iter().position(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "extLst").unwrap_or_else(|| self.doc.children(blip).len());
+                    self.doc.insert_element(blip, at, "a:grayscl");
+                }
+            }
         }
         if let Some(sp_pr) = self.doc.child(pic, "spPr") {
             let existing_ln = self.doc.child(sp_pr, "ln");
@@ -2739,6 +3582,69 @@ impl Writer<'_> {
                     }
                 }
             }
+            // ぼかし・ソフトエッジ (a:softEdge in a:effectLst)
+            let existing_effect_lst = self.doc.child(sp_pr, "effectLst");
+            match look.soft_edge {
+                None => {
+                    if let Some(effect_lst) = existing_effect_lst {
+                        if let Some(se) = self.doc.child(effect_lst, "softEdge") {
+                            self.doc.detach(se);
+                        }
+                        if self.doc.elements(effect_lst).next().is_none() {
+                            self.doc.detach(effect_lst);
+                        }
+                    }
+                }
+                Some(rad) => {
+                    let effect_lst = match existing_effect_lst {
+                        Some(e) => e,
+                        None => {
+                            let at = self.doc.children(sp_pr).iter().position(|&n| {
+                                self.doc.is_element(n) && matches!(self.doc.local_name(n), "effectDag" | "scene3d" | "sp3d" | "extLst")
+                            }).unwrap_or_else(|| self.doc.children(sp_pr).len());
+                            self.doc.insert_element(sp_pr, at, "a:effectLst")
+                        }
+                    };
+                    let se = match self.doc.child(effect_lst, "softEdge") {
+                        Some(se) => se,
+                        None => self.doc.append_element(effect_lst, "a:softEdge"),
+                    };
+                    self.doc.set_attr(se, "rad", &rad.to_string());
+                }
+            }
+            // 図形に合わせてトリミング (a:prstGeom in spPr)
+            let target_prst = look.geometry.as_ref().and_then(|g| g.preset_name()).unwrap_or("rect");
+            let existing_prst = self.doc.child(sp_pr, "prstGeom");
+            let prst_node = match existing_prst {
+                Some(g) => {
+                    self.doc.set_attr(g, "prst", target_prst);
+                    g
+                }
+                None => {
+                    let at = self.doc.children(sp_pr).iter().position(|&n| {
+                        self.doc.is_element(n) && matches!(self.doc.local_name(n), "noFill" | "solidFill" | "gradFill" | "blipFill" | "pattFill" | "grpFill" | "ln" | "effectLst" | "effectDag" | "scene3d" | "sp3d" | "extLst")
+                    }).unwrap_or_else(|| self.doc.children(sp_pr).len());
+                    let g = self.doc.insert_element(sp_pr, at, "a:prstGeom");
+                    self.doc.set_attr(g, "prst", target_prst);
+                    g
+                }
+            };
+            let av_lst = match self.doc.child(prst_node, "avLst") {
+                Some(av) => av,
+                None => self.doc.append_element(prst_node, "a:avLst"),
+            };
+            if let Some(ibis_doc_model::Geometry::RoundRect { radius }) = &look.geometry {
+                let gd = match self.doc.child(av_lst, "gd") {
+                    Some(gd) => gd,
+                    None => self.doc.append_element(av_lst, "a:gd"),
+                };
+                self.doc.set_attr(gd, "name", "adj");
+                self.doc.set_attr(gd, "fmla", &format!("val {radius}"));
+            } else {
+                for c in self.doc.children(av_lst).to_vec() {
+                    self.doc.detach(c);
+                }
+            }
         }
     }
 
@@ -2749,27 +3655,32 @@ impl Writer<'_> {
     fn new_shape(&mut self, shape: &Shape, text: Option<&ibis_doc_model::TextBody>) -> NodeId {
         let default_body = ibis_doc_model::TextBody::default();
         let body = text.unwrap_or(&default_body);
+        let px = drawing_prefixes();
         let geometry = match &shape.kind {
-            ShapeKind::Auto(a) => match &a.geometry {
-                ibis_doc_model::Geometry::RoundRect { radius } => format!(r#"<a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val {radius}"/></a:avLst></a:prstGeom>"#),
-                g => format!(r#"<a:prstGeom prst="{}"><a:avLst/></a:prstGeom>"#, g.preset_name().unwrap_or("rect")),
-            },
+            ShapeKind::Auto(a) => crate::save::pptx_new::geometry_xml(&px, &a.geometry)
+                .unwrap_or_else(|_| r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#.to_string()),
             ShapeKind::Line(_) => r#"<a:prstGeom prst="line"><a:avLst/></a:prstGeom>"#.to_string(),
             _ => r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#.to_string(),
         };
-        let is_line = matches!(shape.kind, ShapeKind::Line(_));
+        let is_ink = text.is_none()
+            && matches!(&shape.kind, ShapeKind::Auto(a) if matches!(&a.geometry, ibis_doc_model::Geometry::Formula(f) if f.preset.is_none()));
+        // A line, or a shape of an elbow or curved connector's geometry, is a connector (`wps:cNvCnPr`, with what it is glued to).
+        let is_line = matches!(shape.kind, ShapeKind::Line(_)) || matches!(&shape.kind, ShapeKind::Auto(a) if a.geometry.preset_name().is_some_and(|n| n.contains("Connector")));
+        let connector_pr = {
+            let glue = shape.floating.as_ref().map(|f| f.glue).unwrap_or_default();
+            let end = |tag: &str, e: Option<(u64, u32)>| e.map(|(id, idx)| format!(r#"<a:{tag} id="{id}" idx="{idx}"/>"#)).unwrap_or_default();
+            format!("<wps:cNvCnPr>{}{}</wps:cNvCnPr>", end("stCxn", glue.start), end("endCxn", glue.end))
+        };
+        let flips = format!("{}{}", if shape.flip_h { r#" flipH="1""# } else { "" }, if shape.flip_v { r#" flipV="1""# } else { "" });
         let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
-        let used = self.doc.descendants(root).into_iter().filter(|&n| self.doc.is_element(n) && matches!(self.doc.local_name(n), "docPr" | "cNvPr")).filter_map(|n| self.doc.attr(n, "id").and_then(|v| v.parse::<u64>().ok())).max().unwrap_or(0);
-        let id = used + 1;
+        let used_ids: std::collections::HashSet<u64> = self.doc.descendants(root).into_iter().filter(|&n| self.doc.is_element(n) && matches!(self.doc.local_name(n), "docPr" | "cNvPr")).filter_map(|n| self.doc.attr(n, "id").and_then(|v| v.parse::<u64>().ok())).collect();
+        // The shape's own number when it is free (connectors name the shapes they are glued to by it), else the next one.
+        let id = if shape.id.0 > 0 && !used_ids.contains(&shape.id.0) { shape.id.0 } else { used_ids.iter().max().copied().unwrap_or(0) + 1 };
         let (cx, cy) = (shape.frame.width, shape.frame.height);
-        let px = drawing_prefixes();
         let (fill, line) = match &shape.kind {
             ShapeKind::Auto(a) => (
-                match &a.fill {
-                    ibis_doc_model::Fill::Solid(c) => format!(r#"<a:solidFill><a:srgbClr val="{:06X}"/></a:solidFill>"#, c.rgb.0 & 0xffffff),
-                    _ => "<a:noFill/>".to_string(),
-                },
-                crate::save::pptx_new::line_xml(&px, a.stroke.as_ref()),
+                crate::save::pptx_new::fill_xml(&px, &a.fill).unwrap_or_else(|_| "<a:noFill/>".to_string()),
+                crate::save::pptx_new::line_xml(&px, a.stroke.as_ref()) + &crate::save::pptx_new::auto_effects_xml(&px, a).unwrap_or_default(),
             ),
             ShapeKind::Line(stroke) => (String::new(), crate::save::pptx_new::line_xml(&px, Some(stroke))),
             _ => ("<a:noFill/>".to_string(), "<a:ln><a:noFill/></a:ln>".to_string()),
@@ -2788,30 +3699,60 @@ impl Writer<'_> {
             if italic { "<w:i/><w:iCs/>" } else { "" },
             if color != ibis_doc_model::TextStyle::default().color { format!("<w:color w:val=\"{:06X}\"/>", color.0 & 0xffffff) } else { String::new() },
         );
-        let paragraphs: String = body.text().split('\n').map(|l| format!(r#"<w:p><w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#, esc(l))).collect();
+        // Each run with its own look when the paragraphs have runs that differ (a part of the text bold…); else a run per line.
+        let looks = run_looks(body);
+        let paragraphs: String = if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
+            looks
+                .iter()
+                .map(|p| {
+                    let runs: String = p
+                        .iter()
+                        .map(|(t, b, i, half, c)| {
+                            let rpr = format!(
+                                "{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
+                                if *b { "<w:b/><w:bCs/>" } else { "" },
+                                if *i { "<w:i/><w:iCs/>" } else { "" },
+                                if *c != ibis_doc_model::TextStyle::default().color.0 & 0xffffff { format!("<w:color w:val=\"{c:06X}\"/>") } else { String::new() },
+                            );
+                            format!(r#"<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r>"#, esc(t))
+                        })
+                        .collect();
+                    format!("<w:p>{runs}</w:p>")
+                })
+                .collect()
+        } else {
+            body.text().split('\n').map(|l| format!(r#"<w:p><w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#, esc(l))).collect()
+        };
         let i = body.insets;
+        let anchor_val = match text.map(|b| b.anchor).unwrap_or(ibis_doc_model::VerticalAnchor::Top) {
+            ibis_doc_model::VerticalAnchor::Top => "t",
+            ibis_doc_model::VerticalAnchor::Middle => "ctr",
+            ibis_doc_model::VerticalAnchor::Bottom => "b",
+        };
         let xml = format!(
             concat!(
                 r#"<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><mc:Choice Requires="wps">"#,
                 r#"<w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
                 r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{id}" name="{name} {id}"/><wp:cNvGraphicFramePr/>"#,
                 r#"<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp>{csp}"#,
-                r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>{geometry}{fill}{line}</wps:spPr>"#,
+                r#"<wps:spPr><a:xfrm{flips}><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>{geometry}{fill}{line}</wps:spPr>"#,
                 "{txbx}",
-                r#"<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="{l}" tIns="{t}" rIns="{r}" bIns="{b}" anchor="t" anchorCtr="0"><a:noAutofit/></wps:bodyPr>"#,
+                r#"<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="{l}" tIns="{t}" rIns="{r}" bIns="{b}" anchor="{anchor}" anchorCtr="0"><a:noAutofit/></wps:bodyPr>"#,
                 r#"</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice></mc:AlternateContent>"#
             ),
-            cx = cx, cy = cy, id = id, fill = fill, line = line, geometry = geometry, l = i.left, t = i.top, r = i.right, b = i.bottom,
+            cx = cx, cy = cy, id = id, fill = fill, line = line, geometry = geometry, flips = flips, l = i.left, t = i.top, r = i.right, b = i.bottom, anchor = anchor_val,
             // As Word names them, in the UI's language.
-            name = match (crate::english_names(), text.is_some(), is_line) {
-                (false, true, _) => "テキスト ボックス", // i18n-ok（文書に保存する名前。ibis-pptx は表を持たない）
-                (false, false, true) => "直線", // i18n-ok（同上）
-                (false, false, false) => "図形", // i18n-ok（同上）
-                (true, true, _) => "Text Box",
-                (true, false, true) => "Straight Connector",
-                (true, false, false) => "Shape",
+            name = match (crate::english_names(), text.is_some(), is_line, is_ink) {
+                (false, true, _, _) => "テキスト ボックス", // i18n-ok（文書に保存する名前。ibis-pptx は表を持たない）
+                (false, false, true, _) => "直線", // i18n-ok（同上）
+                (false, false, false, true) => "インク", // i18n-ok（同上）
+                (false, false, false, false) => "図形", // i18n-ok（同上）
+                (true, true, _, _) => "Text Box",
+                (true, false, true, _) => "Straight Connector",
+                (true, false, false, true) => "Ink",
+                (true, false, false, false) => "Shape",
             },
-            csp = if text.is_some() { r#"<wps:cNvSpPr txBox="1"/>"# } else if is_line { r#"<wps:cNvCnPr/>"# } else { r#"<wps:cNvSpPr/>"# },
+            csp = if text.is_some() { r#"<wps:cNvSpPr txBox="1"/>"# } else if is_line { connector_pr.as_str() } else { r#"<wps:cNvSpPr/>"# },
             txbx = if text.is_some() { format!("<wps:txbx><w:txbxContent>{paragraphs}</w:txbxContent></wps:txbx>") } else { String::new() },
         );
         let parsed = XmlDocument::parse(xml.as_bytes()).expect("the shape's XML");
@@ -2830,6 +3771,213 @@ impl Writer<'_> {
                 }
             }
             self.configure_drawing_anchor(drawing, shape.floating.as_ref());
+        }
+        node
+    }
+
+    fn wsp_xml(&self, shape: &Shape, text: Option<&ibis_doc_model::TextBody>, id: u64, off_x: i64, off_y: i64, include_cnvpr: bool) -> String {
+        let default_body = ibis_doc_model::TextBody::default();
+        let body = text.unwrap_or(&default_body);
+        let px = drawing_prefixes();
+        let geometry = match &shape.kind {
+            ShapeKind::Auto(a) => crate::save::pptx_new::geometry_xml(&px, &a.geometry)
+                .unwrap_or_else(|_| r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#.to_string()),
+            ShapeKind::Line(_) => r#"<a:prstGeom prst="line"><a:avLst/></a:prstGeom>"#.to_string(),
+            _ => r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#.to_string(),
+        };
+        let is_ink = text.is_none()
+            && matches!(&shape.kind, ShapeKind::Auto(a) if matches!(&a.geometry, ibis_doc_model::Geometry::Formula(f) if f.preset.is_none()));
+        let is_line = matches!(shape.kind, ShapeKind::Line(_)) || matches!(&shape.kind, ShapeKind::Auto(a) if a.geometry.preset_name().is_some_and(|n| n.contains("Connector")));
+        let connector_pr = {
+            let glue = shape.floating.as_ref().map(|f| f.glue).unwrap_or_default();
+            let end = |tag: &str, e: Option<(u64, u32)>| e.map(|(id, idx)| format!(r#"<a:{tag} id="{id}" idx="{idx}"/>"#)).unwrap_or_default();
+            format!("<wps:cNvCnPr>{}{}</wps:cNvCnPr>", end("stCxn", glue.start), end("endCxn", glue.end))
+        };
+        let flips = format!(
+            "{}{}{}",
+            if shape.rotation != 0 { format!(r#" rot="{}""#, shape.rotation) } else { String::new() },
+            if shape.flip_h { r#" flipH="1""# } else { "" },
+            if shape.flip_v { r#" flipV="1""# } else { "" },
+        );
+        let (cx, cy) = (shape.frame.width, shape.frame.height);
+        let (fill, line) = match &shape.kind {
+            ShapeKind::Auto(a) => (
+                crate::save::pptx_new::fill_xml(&px, &a.fill).unwrap_or_else(|_| "<a:noFill/>".to_string()),
+                crate::save::pptx_new::line_xml(&px, a.stroke.as_ref()) + &crate::save::pptx_new::auto_effects_xml(&px, a).unwrap_or_default(),
+            ),
+            ShapeKind::Line(stroke) => (String::new(), crate::save::pptx_new::line_xml(&px, Some(stroke))),
+            _ => ("<a:noFill/>".to_string(), "<a:ln><a:noFill/></a:ln>".to_string()),
+        };
+        let half = (body.style.font_size / 50).max(2);
+        let esc = |t: &str| t.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let first = body.paragraphs.iter().flat_map(|p| &p.runs).find(|r| !r.text.is_empty());
+        let bold = first.and_then(|r| r.style.bold).unwrap_or(body.style.bold);
+        let italic = first.and_then(|r| r.style.italic).unwrap_or(body.style.italic);
+        let color = first.and_then(|r| r.style.color).unwrap_or(body.style.color);
+        let half = first.and_then(|r| r.style.font_size).map_or(half, |v| (v / 50).max(2));
+        let rpr = format!(
+            "{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
+            if bold { "<w:b/><w:bCs/>" } else { "" },
+            if italic { "<w:i/><w:iCs/>" } else { "" },
+            if color != ibis_doc_model::TextStyle::default().color { format!("<w:color w:val=\"{:06X}\"/>", color.0 & 0xffffff) } else { String::new() },
+        );
+        let looks = run_looks(body);
+        let paragraphs: String = if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
+            looks
+                .iter()
+                .map(|p| {
+                    let runs: String = p
+                        .iter()
+                        .map(|(t, b, i, half, c)| {
+                            let rpr = format!(
+                                "{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
+                                if *b { "<w:b/><w:bCs/>" } else { "" },
+                                if *i { "<w:i/><w:iCs/>" } else { "" },
+                                if *c != ibis_doc_model::TextStyle::default().color.0 & 0xffffff { format!("<w:color w:val=\"{c:06X}\"/>") } else { String::new() },
+                            );
+                            format!(r#"<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r>"#, esc(t))
+                        })
+                        .collect();
+                    format!("<w:p>{runs}</w:p>")
+                })
+                .collect()
+        } else {
+            body.text().split('\n').map(|l| format!(r#"<w:p><w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#, esc(l))).collect()
+        };
+        let i = body.insets;
+        let anchor_val = match text.map(|b| b.anchor).unwrap_or(ibis_doc_model::VerticalAnchor::Top) {
+            ibis_doc_model::VerticalAnchor::Top => "t",
+            ibis_doc_model::VerticalAnchor::Middle => "ctr",
+            ibis_doc_model::VerticalAnchor::Bottom => "b",
+        };
+        let name = match (crate::english_names(), text.is_some(), is_line, is_ink) {
+            (false, true, _, _) => "テキスト ボックス", // i18n-ok（文書に保存する名前。ibis-pptx は表を持たない）
+            (false, false, true, _) => "直線", // i18n-ok（同上）
+            (false, false, false, true) => "インク", // i18n-ok（同上）
+            (false, false, false, false) => "図形", // i18n-ok（同上）
+            (true, true, _, _) => "Text Box",
+            (true, false, true, _) => "Straight Connector",
+            (true, false, false, true) => "Ink",
+            (true, false, false, false) => "Shape",
+        };
+        let cnvpr = if include_cnvpr {
+            format!(r#"<wps:cNvPr id="{id}" name="{name} {id}"/>"#)
+        } else {
+            String::new()
+        };
+        let csp = if text.is_some() { r#"<wps:cNvSpPr txBox="1"/>"# } else if is_line { connector_pr.as_str() } else { r#"<wps:cNvSpPr/>"# };
+        let txbx = if text.is_some() { format!("<wps:txbx><w:txbxContent>{paragraphs}</w:txbxContent></wps:txbx>") } else { String::new() };
+        format!(
+            concat!(
+                "<wps:wsp>{cnvpr}{csp}",
+                r#"<wps:spPr><a:xfrm{flips}><a:off x="{off_x}" y="{off_y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>{geometry}{fill}{line}</wps:spPr>"#,
+                "{txbx}",
+                r#"<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="{l}" tIns="{t}" rIns="{r}" bIns="{b}" anchor="{anchor}" anchorCtr="0"><a:noAutofit/></wps:bodyPr>"#,
+                "</wps:wsp>"
+            ),
+            cnvpr = cnvpr, csp = csp, flips = flips, off_x = off_x, off_y = off_y, cx = cx, cy = cy,
+            geometry = geometry, fill = fill, line = line, txbx = txbx,
+            l = i.left, t = i.top, r = i.right, b = i.bottom, anchor = anchor_val,
+        )
+    }
+
+    /// A new group shape (`<wpg:wgp>` inside `<mc:AlternateContent>`), containing `shapes`.
+    fn new_group_shape(&mut self, group: &ibis_doc_model::ShapeGroup, shapes: &[&Shape]) -> NodeId {
+        let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
+        let mut used_ids: std::collections::HashSet<u64> = self
+            .doc
+            .descendants(root)
+            .into_iter()
+            .filter(|&n| self.doc.is_element(n) && matches!(self.doc.local_name(n), "docPr" | "cNvPr"))
+            .filter_map(|n| self.doc.attr(n, "id").and_then(|v| v.parse::<u64>().ok()))
+            .collect();
+
+        let pos_of = |s: &Shape| -> (i64, i64) {
+            s.floating.as_ref().map_or((s.frame.x, s.frame.y), |f| (f.offset_x, f.offset_y))
+        };
+        let min_x = shapes.iter().map(|s| pos_of(s).0).min().unwrap_or(0);
+        let min_y = shapes.iter().map(|s| pos_of(s).1).min().unwrap_or(0);
+        let max_x = shapes.iter().map(|s| pos_of(s).0 + s.frame.width).max().unwrap_or(min_x + 1);
+        let max_y = shapes.iter().map(|s| pos_of(s).1 + s.frame.height).max().unwrap_or(min_y + 1);
+        let group_cx = (max_x - min_x).max(1);
+        let group_cy = (max_y - min_y).max(1);
+
+        let group_id = group
+            .native_id
+            .parse::<u64>()
+            .ok()
+            .filter(|&id| id > 0 && !used_ids.contains(&id))
+            .unwrap_or_else(|| used_ids.iter().max().copied().unwrap_or(0) + 1);
+        used_ids.insert(group_id);
+        let group_name = if !group.name.is_empty() {
+            group.name.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+        } else if crate::english_names() {
+            format!("Group {group_id}")
+        } else {
+            format!("グループ {group_id}") // i18n-ok（文書に保存する名前。ibis-pptx は表を持たない）
+        };
+
+        let mut children_xml = String::new();
+        for s in shapes {
+            let child_id = if s.id.0 > 0 && !used_ids.contains(&s.id.0) {
+                s.id.0
+            } else {
+                used_ids.iter().max().copied().unwrap_or(0) + 1
+            };
+            used_ids.insert(child_id);
+            let (sx, sy) = pos_of(s);
+            let off_x = sx - min_x;
+            let off_y = sy - min_y;
+            children_xml.push_str(&self.wsp_xml(s, shape_body(s), child_id, off_x, off_y, true));
+        }
+
+        let xml = format!(
+            concat!(
+                r#"<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><mc:Choice Requires="wpg">"#,
+                r#"<w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+                r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{id}" name="{name}"/><wp:cNvGraphicFramePr/>"#,
+                r#"<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"><wpg:wgp><wpg:cNvGrpSpPr/>"#,
+                r#"<wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/><a:chOff x="0" y="0"/><a:chExt cx="{cx}" cy="{cy}"/></a:xfrm></wpg:grpSpPr>"#,
+                "{children}",
+                r#"</wpg:wgp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice></mc:AlternateContent>"#
+            ),
+            cx = group_cx,
+            cy = group_cy,
+            id = group_id,
+            name = group_name,
+            children = children_xml,
+        );
+        let parsed = XmlDocument::parse(xml.as_bytes()).expect("the group shape's XML");
+        let alt = parsed.root_element().expect("the group shape");
+        let node = self.doc.import(&parsed, alt);
+        for (holder, prefix, ns) in [(node, "mc", "http://schemas.openxmlformats.org/markup-compatibility/2006")] {
+            if self.doc.lookup_prefix(root, ns).as_deref() == Some(prefix) {
+                self.doc.remove_attr(holder, &format!("xmlns:{prefix}"));
+            }
+        }
+        let mut group_anchor = shapes
+            .first()
+            .and_then(|s| s.floating.clone())
+            .unwrap_or_else(|| ibis_doc_model::FloatingAnchor {
+                relative_h: "column".to_string(),
+                relative_v: "paragraph".to_string(),
+                wrap: "none".to_string(),
+                allow_overlap: true,
+                layout_in_cell: true,
+                relative_height: ibis_doc_model::FloatingAnchor::DEFAULT_RELATIVE_HEIGHT,
+                ..Default::default()
+            });
+        group_anchor.offset_x = min_x;
+        group_anchor.offset_y = min_y;
+        group_anchor.align_h = None;
+        group_anchor.align_v = None;
+        if let Some(drawing) = self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "drawing") {
+            for (prefix, ns) in [("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main"), ("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing")] {
+                if self.doc.lookup_prefix(root, ns).as_deref() == Some(prefix) {
+                    self.doc.remove_attr(drawing, &format!("xmlns:{prefix}"));
+                }
+            }
+            self.configure_drawing_anchor(drawing, Some(&group_anchor));
         }
         node
     }
@@ -2856,16 +4004,96 @@ impl Writer<'_> {
                 self.configure_drawing_anchor(drawing, shape.floating.as_ref());
             }
         }
+        self.sync_connector(node, shape);
     }
 
-    /// The fill and the line of a shape's old element, when the shape's differ from the old one's.
+    /// A connector's flips and what its ends are glued to (`a:stCxn`, `a:endCxn`), as the shape says.
+    fn sync_connector(&mut self, node: NodeId, shape: &Shape) {
+        let Some(cnv) = self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "cNvCnPr") else { return };
+        if let Some(xfrm) = self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "xfrm") {
+            for (name, on) in [("flipH", shape.flip_h), ("flipV", shape.flip_v)] {
+                if on {
+                    self.doc.set_attr(xfrm, name, "1");
+                } else {
+                    self.doc.remove_attr(xfrm, name);
+                }
+            }
+        }
+        let glue = shape.floating.as_ref().map(|f| f.glue).unwrap_or_default();
+        for (tag, end) in [("stCxn", glue.start), ("endCxn", glue.end)] {
+            if let Some(old) = self.doc.child(cnv, tag) {
+                self.doc.detach(old);
+            }
+            if let Some((id, idx)) = end {
+                let e = self.doc.append_element(cnv, &format!("a:{tag}"));
+                self.doc.set_attr(e, "id", &id.to_string());
+                self.doc.set_attr(e, "idx", &idx.to_string());
+            }
+        }
+    }
+
+    /// The paragraphs of the text box in `node` written run by run as `body` has its runs (the paragraph properties and the first
+    /// run's properties of each paragraph are kept). Nothing happens when the paragraphs are not the same in number.
+    fn write_runs_by_look(&mut self, node: NodeId, body: &ibis_doc_model::TextBody) {
+        let Some(content) = self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent") else { return };
+        let paragraphs: Vec<NodeId> = self.doc.children_named(content, "p").collect();
+        if paragraphs.len() != body.paragraphs.len() {
+            return;
+        }
+        for (p, model) in paragraphs.into_iter().zip(&body.paragraphs) {
+            let first_run = self.doc.children_named(p, "r").next();
+            let old_pr = first_run.and_then(|r| self.doc.child(r, "rPr"));
+            let template = old_pr.map(|n| self.doc.deep_clone(n));
+            for c in self.doc.children(p).to_vec() {
+                if !(self.doc.is_element(c) && self.doc.local_name(c) == "pPr") {
+                    self.doc.detach(c);
+                }
+            }
+            for run in model.runs.iter().filter(|r| !r.text.is_empty()) {
+                let r = self.doc.append_element(p, &self.w("r"));
+                let rpr = match &template {
+                    Some(t) => {
+                        let copy = self.doc.deep_clone(*t);
+                        self.doc.insert(r, 0, copy);
+                        copy
+                    }
+                    None => self.doc.append_element(r, &self.w("rPr")),
+                };
+                let o = RPR_ORDER;
+                self.toggle(rpr, &["b", "bCs"], Some(run.style.bold.unwrap_or(body.style.bold)), o);
+                self.toggle(rpr, &["i", "iCs"], Some(run.style.italic.unwrap_or(body.style.italic)), o);
+                let half = ((run.style.font_size.unwrap_or(body.style.font_size) + 25) / 50).to_string();
+                self.val(rpr, "sz", Some(&half), o);
+                self.val(rpr, "szCs", Some(&half), o);
+                let color = run.style.color.unwrap_or(body.style.color);
+                if color != ibis_doc_model::TextStyle::default().color || self.doc.child(rpr, "color").is_some() {
+                    self.val(rpr, "color", Some(&format!("{:06X}", color.0 & 0xffffff)), o);
+                }
+                let t = self.doc.append_element(r, &self.w("t"));
+                if run.text.starts_with(char::is_whitespace) || run.text.ends_with(char::is_whitespace) {
+                    self.doc.set_attr(t, "xml:space", "preserve");
+                }
+                self.doc.set_text(t, &run.text);
+            }
+        }
+    }
+
+    /// The fill, the line and the effects (a shadow, a glow…) of a shape's old element, when the shape's differ from the old one's.
     fn update_shape_look(&mut self, node: NodeId, shape: &Shape, old: Option<&Shape>) {
-        let (new_fill, new_stroke, old_fill, old_stroke) = match (&shape.kind, old.map(|o| &o.kind)) {
-            (ShapeKind::Auto(n), Some(ShapeKind::Auto(o))) => (Some(&n.fill), n.stroke.as_ref(), Some(&o.fill), o.stroke.as_ref()),
-            (ShapeKind::Line(n), Some(ShapeKind::Line(o))) => (None, Some(n), None, Some(o)),
+        let (new_fill, new_stroke, old_fill, old_stroke, new_auto, old_auto) = match (&shape.kind, old.map(|o| &o.kind)) {
+            (ShapeKind::Auto(n), Some(ShapeKind::Auto(o))) => (Some(&n.fill), n.stroke.as_ref(), Some(&o.fill), o.stroke.as_ref(), Some(n), Some(o)),
+            (ShapeKind::Line(n), Some(ShapeKind::Line(o))) => (None, Some(n), None, Some(o), None, None),
             _ => return,
         };
-        if new_fill == old_fill && new_stroke == old_stroke {
+        let geometry_changed = match (new_auto, old_auto) {
+            (Some(n), Some(o)) => n.geometry != o.geometry,
+            _ => false,
+        };
+        let effects_changed = match (new_auto, old_auto) {
+            (Some(n), Some(o)) => (&n.shadow, &n.glow, &n.inner_shadow, &n.soft_edge, &n.reflection) != (&o.shadow, &o.glow, &o.inner_shadow, &o.soft_edge, &o.reflection),
+            _ => false,
+        };
+        if new_fill == old_fill && new_stroke == old_stroke && !effects_changed && !geometry_changed {
             return;
         }
         let Some(sp_pr) = self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "spPr" && self.doc.parent(n).is_some_and(|p| matches!(self.doc.local_name(p), "wsp" | "sp"))) else { return };
@@ -2878,8 +4106,20 @@ impl Writer<'_> {
             w.doc.detach(inner);
             inner
         };
-        // After the geometry: the fill, then the line (CT_ShapeProperties).
+        // After the geometry: the fill, then the line, then the effects (CT_ShapeProperties).
         let position = |w: &Self, anchors: &[&str]| w.doc.children(sp_pr).iter().rposition(|&c| w.doc.is_element(c) && anchors.contains(&w.doc.local_name(c))).map_or(0, |i| i + 1);
+        if geometry_changed && let Some(auto) = new_auto {
+            for c in self.doc.children(sp_pr).to_vec() {
+                if self.doc.is_element(c) && matches!(self.doc.local_name(c), "custGeom" | "prstGeom") {
+                    self.doc.detach(c);
+                }
+            }
+            if let Ok(xml) = crate::save::pptx_new::geometry_xml(&drawing_prefixes(), &auto.geometry) {
+                let element = fragment(self, xml);
+                let at = position(self, &["xfrm"]);
+                self.doc.insert(sp_pr, at, element);
+            }
+        }
         if new_fill != old_fill {
             for c in self.doc.children(sp_pr).to_vec() {
                 if self.doc.is_element(c) && matches!(self.doc.local_name(c), "noFill" | "solidFill" | "gradFill" | "blipFill" | "pattFill" | "grpFill") {
@@ -2887,8 +4127,8 @@ impl Writer<'_> {
                 }
             }
             let xml = match new_fill {
-                Some(ibis_doc_model::Fill::Solid(c)) => format!(r#"<a:solidFill><a:srgbClr val="{:06X}"/></a:solidFill>"#, c.rgb.0 & 0xffffff),
-                _ => "<a:noFill/>".to_string(),
+                Some(fill) => crate::save::pptx_new::fill_xml(&drawing_prefixes(), fill).unwrap_or_else(|_| "<a:noFill/>".to_string()),
+                None => "<a:noFill/>".to_string(),
             };
             let element = fragment(self, xml);
             let at = position(self, &["xfrm", "custGeom", "prstGeom"]);
@@ -2905,6 +4145,20 @@ impl Writer<'_> {
             let at = position(self, &["xfrm", "custGeom", "prstGeom", "noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"]);
             self.doc.insert(sp_pr, at, element);
         }
+        if effects_changed && let Some(auto) = new_auto {
+            for c in self.doc.children(sp_pr).to_vec() {
+                if self.doc.is_element(c) && matches!(self.doc.local_name(c), "effectLst" | "effectDag") {
+                    self.doc.detach(c);
+                }
+            }
+            if let Ok(xml) = crate::save::pptx_new::auto_effects_xml(&drawing_prefixes(), auto)
+                && !xml.is_empty()
+            {
+                let element = fragment(self, xml);
+                let at = position(self, &["xfrm", "custGeom", "prstGeom", "noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill", "ln"]);
+                self.doc.insert(sp_pr, at, element);
+            }
+        }
     }
 
     fn update_text_box(&mut self, node: NodeId, shape: &Shape, body: &ibis_doc_model::TextBody, old_body: Option<&ibis_doc_model::TextBody>) {
@@ -2914,6 +4168,14 @@ impl Writer<'_> {
             if shape.floating.is_some() {
                 self.configure_drawing_anchor(drawing, shape.floating.as_ref());
             }
+        }
+        if let Some(body_pr) = self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "bodyPr") {
+            let anchor_val = match body.anchor {
+                ibis_doc_model::VerticalAnchor::Top => "t",
+                ibis_doc_model::VerticalAnchor::Middle => "ctr",
+                ibis_doc_model::VerticalAnchor::Bottom => "b",
+            };
+            self.doc.set_attr(body_pr, "anchor", anchor_val);
         }
         let text = body.text();
         // The text's formatting (bold, italic, size, colour) of the first run, from the
@@ -2963,6 +4225,29 @@ impl Writer<'_> {
                 }
             }
         }
+        // A shape drawn without text that got some (DOCX-IMAGE-011): its `wps:txbx` is made before `wps:bodyPr`.
+        if !text.is_empty() && !self.doc.descendants(node).into_iter().any(|n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent") {
+            let wsp = self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "wsp");
+            if let Some(wsp) = wsp {
+                let at = self.doc.children(wsp).iter().position(|&c| self.doc.is_element(c) && self.doc.local_name(c) == "bodyPr").unwrap_or(self.doc.children(wsp).len());
+                let txbx = self.doc.append_element(wsp, "wps:txbx");
+                self.doc.detach(txbx);
+                self.doc.insert(wsp, at, txbx);
+                let content = self.doc.append_element(txbx, &self.w("txbxContent"));
+                let p = self.doc.append_element(content, &self.w("p"));
+                let r = self.doc.append_element(p, &self.w("r"));
+                self.doc.append_element(r, &self.w("t"));
+            }
+        }
+        // The text is the same but a part of it is formatted differently (bold words, another size…): the paragraphs are written
+        // run by run, each with the formatting the model gives it.
+        if let Some(old_body) = old_body
+            && txbx_text(self.doc, self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").unwrap_or(node)) == text
+            && run_looks(body) != run_looks(old_body)
+        {
+            self.write_runs_by_look(node, body);
+            return;
+        }
         for content in self.doc.descendants(node).into_iter().filter(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").collect::<Vec<_>>() {
             if txbx_text(self.doc, content) == text {
                 continue;
@@ -3009,6 +4294,81 @@ impl Writer<'_> {
         }
     }
 
+    /// A new `w:object`: the object's picture as VML (`v:shape`/`v:imagedata`)
+    /// at `cx` × `cy`, and the object (`o:OLEObject`, embedded), as Word writes one.
+    fn new_object(&mut self, object: &ObjectRels, cx: i64, cy: i64) -> NodeId {
+        let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
+        // A shape id and an object id of their own in the part (VML's `_x0000_iNNNN`).
+        let nodes = self.doc.descendants(root);
+        let used = nodes.iter().filter(|&&n| self.doc.is_element(n) && self.doc.local_name(n) == "OLEObject").count() + 1;
+        let last = nodes
+            .iter()
+            .filter(|&&n| self.doc.is_element(n))
+            .filter_map(|&n| self.doc.attr(n, "id").or_else(|| self.doc.attr(n, "ShapeID")))
+            .filter_map(|v| v.strip_prefix("_x0000_i").and_then(|d| d.parse::<u32>().ok()))
+            .max()
+            .unwrap_or(1024);
+        let shape_id = format!("_x0000_i{}", last + 1);
+        let pt = |emu: i64| format!("{:.2}", emu as f64 / 12_700.0);
+        let xml = format!(
+            concat!(
+                r#"<w:object xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" w:dxaOrig="{dxa}" w:dyaOrig="{dya}">"#,
+                r#"<v:shape id="{shape_id}" style="width:{w}pt;height:{h}pt" o:ole=""><v:imagedata r:id="{image}" o:title=""/></v:shape>"#,
+                r#"<o:OLEObject Type="Embed" ProgID="{prog_id}" ShapeID="{shape_id}" DrawAspect="{aspect}" ObjectID="_{object_id}" r:id="{ole}"/>"#,
+                r#"</w:object>"#
+            ),
+            dxa = cx / 635,
+            dya = cy / 635,
+            w = pt(cx),
+            h = pt(cy),
+            shape_id = shape_id,
+            image = object.image,
+            prog_id = super::pptx_new::escape_attr(&object.prog_id),
+            aspect = if object.as_icon { "Icon" } else { "Content" },
+            object_id = 1_000_000_000 + used,
+            ole = object.ole,
+        );
+        let parsed = XmlDocument::parse(xml.as_bytes()).expect("the object's XML");
+        let element = parsed.root_element().expect("the object");
+        let node = self.doc.import(&parsed, element);
+        for (prefix, ns) in [("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main"), ("v", "urn:schemas-microsoft-com:vml"), ("o", "urn:schemas-microsoft-com:office:office"), ("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")] {
+            if self.doc.lookup_prefix(root, ns).as_deref() == Some(prefix) {
+                self.doc.remove_attr(node, &format!("xmlns:{prefix}"));
+            }
+        }
+        node
+    }
+
+    /// A new inline chart (`w:drawing`) showing the chart part related as `rid`.
+    fn new_chart_drawing(&mut self, rid: &str, cx: i64, cy: i64) -> NodeId {
+        let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
+        let used = self.doc.descendants(root).into_iter().filter(|&n| self.doc.is_element(n) && matches!(self.doc.local_name(n), "docPr" | "cNvPr")).filter_map(|n| self.doc.attr(n, "id").and_then(|v| v.parse::<u64>().ok())).max().unwrap_or(0);
+        let id = used + 1;
+        let xml = format!(
+            concat!(
+                r#"<w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#,
+                r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{id}" name="{chart_name}"/><wp:cNvGraphicFramePr/>"#,
+                r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">"#,
+                r#"<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="{rid}"/>"#,
+                r#"</a:graphicData></a:graphic></wp:inline></w:drawing>"#
+            ),
+            cx = cx,
+            cy = cy,
+            id = id,
+            rid = rid,
+            chart_name = crate::chart_name(id)
+        );
+        let parsed = XmlDocument::parse(xml.as_bytes()).expect("the chart's XML");
+        let drawing = parsed.root_element().expect("the drawing");
+        let node = self.doc.import(&parsed, drawing);
+        for (prefix, ns) in [("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main"), ("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"), ("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")] {
+            if self.doc.lookup_prefix(root, ns).as_deref() == Some(prefix) {
+                self.doc.remove_attr(node, &format!("xmlns:{prefix}"));
+            }
+        }
+        node
+    }
+
     fn new_picture(&mut self, rid: &str, cx: i64, cy: i64, is_svg: bool) -> NodeId {
         // An id for its drawing objects, above those of the part.
         let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
@@ -3025,13 +4385,14 @@ impl Writer<'_> {
                 rid = rid
             )
         };
+        let picture_name = crate::picture_name(&id);
         let xml = format!(
             concat!(
                 r#"<w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#,
-                r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{id}" name="図 {id}"/>"#,
+                r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{id}" name="{picture_name}"/>"#,
                 r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>"#,
                 r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
-                r#"<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{id}" name="図 {id}"/><pic:cNvPicPr/></pic:nvPicPr>"#,
+                r#"<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{id}" name="{picture_name}"/><pic:cNvPicPr/></pic:nvPicPr>"#,
                 "{blip_fill}",
                 r#"<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"#,
                 r#"</a:graphicData></a:graphic></wp:inline></w:drawing>"#
@@ -3039,7 +4400,8 @@ impl Writer<'_> {
             cx = cx,
             cy = cy,
             id = id,
-            blip_fill = blip_fill
+            blip_fill = blip_fill,
+            picture_name = picture_name
         );
         let parsed = XmlDocument::parse(xml.as_bytes()).expect("the picture's XML");
         let drawing = parsed.root_element().expect("the drawing");
@@ -3146,7 +4508,7 @@ impl Writer<'_> {
             self.doc.remove_attr(p, attr);
         }
         for node in self.doc.descendants(p) {
-            if matches!(self.doc.local_name(node), "bookmarkStart" | "bookmarkEnd" | "commentRangeStart" | "commentRangeEnd" | "commentReference" | "permStart" | "permEnd") {
+            if matches!(self.doc.local_name(node), "bookmarkStart" | "bookmarkEnd" | "commentRangeStart" | "commentRangeEnd" | "commentReference" | "permStart" | "permEnd" | "subDoc") {
                 self.doc.detach(node);
             }
         }
@@ -3199,7 +4561,7 @@ impl Writer<'_> {
         // The paragraph's properties last: a new `w:pPr` would move the
         // runs' paths.
         let used = self.paragraph_runs(p, old, new, sources)?;
-        if old.runs != new.runs {
+        if old.runs != new.runs || self.paragraph_group_changed(old, new) {
             self.prune_wrappers(p);
         }
         self.paragraph_props(p, old, new)?;
@@ -3210,7 +4572,7 @@ impl Writer<'_> {
         let old_atoms = atoms(old);
         let new_atoms = atoms(new);
         let mut used: HashSet<NodeId> = HashSet::new();
-        if old_atoms == new_atoms {
+        if old_atoms == new_atoms && !self.paragraph_group_changed(old, new) {
             for s in sources {
                 match s {
                     AtomSource::InRun { run, .. } => used.extend(self.below(p, run)),
@@ -3231,7 +4593,32 @@ impl Writer<'_> {
         }
         let keys_old: Vec<&AtomKey> = old_atoms.iter().map(|a| &a.0).collect();
         let keys_new: Vec<&AtomKey> = new_atoms.iter().map(|a| &a.0).collect();
-        let kept = matching(&keys_old, &keys_new);
+        let mut kept = matching(&keys_old, &keys_new);
+        if !self.old_shape_groups.is_empty() || !self.new_shape_groups.is_empty() {
+            let mut unkept_group_shapes = Vec::new();
+            for j in 0..new_atoms.len() {
+                if let AtomKey::Shape(shape) = &new_atoms[j].0 {
+                    let old_grp = Self::shape_group_of(self.old_shape_groups, shape.id);
+                    let new_grp = Self::shape_group_of(self.new_shape_groups, shape.id);
+                    let group_intact = old_grp == new_grp
+                        && new_grp.is_none_or(|g| {
+                            g.leaf_shape_ids().into_iter().all(|member_id| {
+                                new_atoms
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, a)| matches!(&a.0, AtomKey::Shape(s) if s.id == member_id))
+                                    .is_some_and(|(mj, _)| kept[mj].is_some())
+                            })
+                        });
+                    if !group_intact {
+                        unkept_group_shapes.push(j);
+                    }
+                }
+            }
+            for j in unkept_group_shapes {
+                kept[j] = None;
+            }
+        }
 
         // The runs and nodes of the old positions (found before changing).
         let mut run_of: Vec<Option<NodeId>> = Vec::with_capacity(sources.len());
@@ -3310,7 +4697,7 @@ impl Writer<'_> {
         let supported_links: HashSet<_> = link_owners.values().copied().collect::<HashSet<_>>().into_iter().filter(|&h| {
             self.doc.parent(h)==Some(p) && self.doc.elements(h).all(|n| match self.doc.local_name(n) {
                 "r" => simple_run(n),
-                "ins"|"del" => self.doc.elements(n).all(|r| self.doc.local_name(r)=="r" && simple_run(r)),
+                "ins" | "del" | "moveFrom" | "moveTo" => self.doc.elements(n).all(|r| self.doc.local_name(r)=="r" && simple_run(r)),
                 _ => false,
             })
         }).collect();
@@ -3336,7 +4723,7 @@ impl Writer<'_> {
         // its revision is None. Rebuild container placement whenever editing
         // a paragraph with old insertion/deletion scopes, so that borrowed
         // runs cannot leave ordinary text inside an old w:del/w:ins.
-        let revisions_changed = old_atoms.iter().any(|a| a.4.as_ref().is_some_and(|r| matches!(r.kind, RevisionKind::Insert | RevisionKind::Delete)))
+        let revisions_changed = old_atoms.iter().any(|a| a.4.as_ref().is_some_and(|r| matches!(r.kind, RevisionKind::Insert | RevisionKind::Delete | RevisionKind::MoveFrom | RevisionKind::MoveTo)))
             || kept.iter().enumerate().any(|(j, k)| new_atoms[j].4 != k.map_or(&None, |i| old_atoms[i].4));
         // Keep an unchanged original revision as an XML unit. Model revisions
         // carry no container ID or unknown attributes; rebuilding this unit
@@ -3353,7 +4740,7 @@ impl Writer<'_> {
         // match below before its original XML can be restored.
         if revisions_changed {
             for h in self.doc.descendants(p) {
-                if !self.doc.is_element(h) || !matches!(self.doc.local_name(h), "ins" | "del") { continue; }
+                if !self.doc.is_element(h) || !matches!(self.doc.local_name(h), "ins" | "del" | "moveFrom" | "moveTo") { continue; }
                 // Keep only a direct paragraph scope or a scope owned by one
                 // direct hyperlink. Other nested wrappers remain unsupported.
                 let Some(parent) = self.doc.parent(h) else { continue };
@@ -3379,7 +4766,7 @@ impl Writer<'_> {
                 // around replacement text. Each piece keeps source attributes;
                 // only the first uses its original ID. New text never inherits
                 // that source identity. Other revision kinds remain excluded.
-                if (!complete || !contiguous) && self.doc.local_name(h) != "ins" { continue; }
+                if (!complete || !contiguous) && !matches!(self.doc.local_name(h), "ins" | "moveTo") { continue; }
                 let exact = complete && contiguous && positions.iter().all(|&(j,i)| new_atoms[j] == old_atoms[i]);
                 if field_scope && (!exact || indices.iter().any(|&i| field_elements[i].iter().any(|&n| self.doc.parent(n) != Some(h)))) {
                     return Err(unsupported("元の変更履歴内の複雑なフィールドを含む編集"));
@@ -3396,7 +4783,7 @@ impl Writer<'_> {
         if revisions_changed {
             for h in self.doc.descendants(p) {
                 if self.doc.is_element(h)
-                    && matches!(self.doc.local_name(h), "ins" | "del")
+                    && matches!(self.doc.local_name(h), "ins" | "del" | "moveFrom" | "moveTo")
                     && self.doc.parent(h).is_some_and(|q| !matches!(self.doc.local_name(q), "rPr" | "pPr" | "trPr" | "tcPr"))
                 {
                     for c in self.doc.children(h).to_vec() {
@@ -3555,6 +4942,9 @@ impl Writer<'_> {
             self.run_props(copy, f0, c0, f1, c1, false);
             self.revision_format(copy, new_atoms[list[0]].4);
             let made = self.content(copy, list, &kept, &node_of, &new_atoms, new)?;
+            if !self.doc.children(copy).iter().any(|&c| self.doc.is_element(c) && self.doc.local_name(c) != "rPr") && made.is_empty() {
+                continue;
+            }
             self.doc.insert_before(*r, copy);
             let mut last = copy;
             let mut nodes = vec![copy];
@@ -3617,6 +5007,9 @@ impl Writer<'_> {
             self.run_props(run, &old.mark_format, &None, f1, c1, false);
             self.revision_format(run, new_atoms[list[0]].4);
             let made = self.content(run, list, &kept, &node_of, &new_atoms, new)?;
+            if !self.doc.children(run).iter().any(|&c| self.doc.is_element(c) && self.doc.local_name(c) != "rPr") && made.is_empty() {
+                continue;
+            }
             let next = segments[s + 1..].iter().find_map(|(h, _)| match h {
                 Host::Run(r) => first_of.get(r).copied().or(Some(*r)).filter(|n| self.doc.parent(*n).is_some()),
                 _ => None,
@@ -3697,7 +5090,7 @@ impl Writer<'_> {
             // at one time) go into one `w:ins` or `w:del`.
             let mut groups: Vec<(Option<Revision>, Option<NodeId>, Vec<NodeId>)> = Vec::new();
             for (s_index, (_, list)) in segments.iter().enumerate() {
-                let revision = new_atoms[list[0]].4.clone().filter(|r| matches!(r.kind, RevisionKind::Insert | RevisionKind::Delete));
+                let revision = new_atoms[list[0]].4.clone().filter(|r| matches!(r.kind, RevisionKind::Insert | RevisionKind::Delete | RevisionKind::MoveFrom | RevisionKind::MoveTo));
                 let nodes = segment_nodes.get(&s_index).cloned().unwrap_or_default();
                 match groups.last_mut() {
                     Some((g, original, ns)) if revision.is_some() && *g == revision && *original == original_revision_at[list[0]] && ns.last().and_then(|&n| self.doc.parent(n)) == nodes.first().and_then(|&n| self.doc.parent(n)) => ns.extend(nodes),
@@ -3742,7 +5135,14 @@ impl Writer<'_> {
                     continue;
                 }
                 let Some(parent) = self.doc.parent(first) else { continue };
-                let name = self.w(if revision.kind == RevisionKind::Insert { "ins" } else { "del" });
+                let tag = match revision.kind {
+                    RevisionKind::Insert => "ins",
+                    RevisionKind::Delete => "del",
+                    RevisionKind::MoveTo => "moveTo",
+                    RevisionKind::MoveFrom => "moveFrom",
+                    _ => "ins",
+                };
+                let name = self.w(tag);
                 let w = self.doc.append_element(parent, &name);
                 self.doc.detach(w);
                 self.doc.insert_before(first, w);
@@ -3821,7 +5221,7 @@ impl Writer<'_> {
 
     /// Fill `run` with the positions `list` of the new paragraph. Returns
     /// further runs made after it (a new field's).
-    fn content(&mut self, first_run: NodeId, list: &[usize], kept: &[Option<usize>], node_of: &[Option<NodeId>], new_atoms: &[Atom<'_>], _new: &FlowParagraph) -> Result<Vec<NodeId>, Error> {
+    fn content(&mut self, first_run: NodeId, list: &[usize], kept: &[Option<usize>], node_of: &[Option<NodeId>], new_atoms: &[Atom<'_>], para: &FlowParagraph) -> Result<Vec<NodeId>, Error> {
         let mut text = String::new();
         let mut extra = Vec::new();
         // The run content goes into: the host, then after a new field a
@@ -3916,7 +5316,7 @@ impl Writer<'_> {
                     extra.push(next);
                     run = next;
                 }
-                AtomKey::CheckBox(checked, checked_char, unchecked_char) => {
+                AtomKey::CheckBox(checked, checked_char, unchecked_char, control) => {
                     flush(self, run, &mut text);
                     let char_to_show = if *checked { *checked_char } else { *unchecked_char };
                     let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
@@ -3982,6 +5382,7 @@ impl Writer<'_> {
                             sdt
                         }
                     };
+                    self.apply_control(node, control);
                     extra.push(node);
                     let next = self.doc.deep_clone(first_run);
                     for child in self.doc.children(next).to_vec() {
@@ -3992,7 +5393,7 @@ impl Writer<'_> {
                     extra.push(next);
                     run = next;
                 }
-                AtomKey::DropDownList(items, selected, combo) => {
+                AtomKey::DropDownList(items, selected, combo, control) => {
                     flush(self, run, &mut text);
                     let text_to_show = items.get(*selected).map(|(d, _)| d.as_str()).unwrap_or("");
                     let tag_name = if *combo { "comboBox" } else { "dropDownList" };
@@ -4071,6 +5472,7 @@ impl Writer<'_> {
                             sdt
                         }
                     };
+                    self.apply_control(node, control);
                     extra.push(node);
                     let next = self.doc.deep_clone(first_run);
                     for child in self.doc.children(next).to_vec() {
@@ -4081,7 +5483,7 @@ impl Writer<'_> {
                     extra.push(next);
                     run = next;
                 }
-                AtomKey::DatePicker(full_date, date_format, text_to_show) => {
+                AtomKey::DatePicker(full_date, date_format, text_to_show, control) => {
                     flush(self, run, &mut text);
                     let candidate = original.filter(|&n| {
                         self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
@@ -4144,6 +5546,7 @@ impl Writer<'_> {
                             sdt
                         }
                     };
+                    self.apply_control(node, control);
                     extra.push(node);
                     let next = self.doc.deep_clone(first_run);
                     for child in self.doc.children(next).to_vec() {
@@ -4154,7 +5557,7 @@ impl Writer<'_> {
                     extra.push(next);
                     run = next;
                 }
-                AtomKey::RichText(text_to_show) => {
+                AtomKey::RichText(text_to_show, showing, control) => {
                     flush(self, run, &mut text);
                     let candidate = original.filter(|&n| {
                         self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
@@ -4163,6 +5566,7 @@ impl Writer<'_> {
                                 && self.doc.child(pr, "comboBox").is_none()
                                 && self.doc.child(pr, "date").is_none()
                                 && self.doc.child(pr, "text").is_none()
+                                && self.doc.child(pr, "group").is_none()
                         }).unwrap_or(false)
                     }).or_else(|| {
                         node_of.iter().flatten().find(|&&n| {
@@ -4172,6 +5576,7 @@ impl Writer<'_> {
                                     && self.doc.child(pr, "comboBox").is_none()
                                     && self.doc.child(pr, "date").is_none()
                                     && self.doc.child(pr, "text").is_none()
+                                    && self.doc.child(pr, "group").is_none()
                             }).unwrap_or(false)
                         }).copied()
                     });
@@ -4179,13 +5584,7 @@ impl Writer<'_> {
                     let node = match candidate {
                         Some(n) => {
                             let sdt = self.doc.deep_clone(n);
-                            if let Some(content) = self.doc.child(sdt, "sdtContent") {
-                                for r in self.doc.children_named(content, "r").collect::<Vec<_>>() {
-                                    if let Some(t) = self.doc.child(r, "t") {
-                                        self.doc.set_text(t, text_to_show);
-                                    }
-                                }
-                            }
+                            self.set_control_text(sdt, text_to_show, *showing);
                             sdt
                         }
                         None => {
@@ -4198,6 +5597,9 @@ impl Writer<'_> {
                             let placeholder = self.doc.append_element(pr, &self.w("placeholder"));
                             let doc_part = self.doc.append_element(placeholder, &self.w("docPart"));
                             self.doc.set_attr(doc_part, "w:val", "DefaultPlaceholder");
+                            if *showing {
+                                self.doc.append_element(pr, &self.w("showingPlcHdr"));
+                            }
 
                             let content = self.doc.append_element(sdt, &self.w("sdtContent"));
                             let r = self.doc.append_element(content, &self.w("r"));
@@ -4210,6 +5612,7 @@ impl Writer<'_> {
                             sdt
                         }
                     };
+                    self.apply_control(node, control);
                     extra.push(node);
                     let next = self.doc.deep_clone(first_run);
                     for child in self.doc.children(next).to_vec() {
@@ -4220,7 +5623,7 @@ impl Writer<'_> {
                     extra.push(next);
                     run = next;
                 }
-                AtomKey::PlainText(text_to_show) => {
+                AtomKey::PlainText(text_to_show, showing, control) => {
                     flush(self, run, &mut text);
                     let candidate = original.filter(|&n| {
                         self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
@@ -4237,13 +5640,7 @@ impl Writer<'_> {
                     let node = match candidate {
                         Some(n) => {
                             let sdt = self.doc.deep_clone(n);
-                            if let Some(content) = self.doc.child(sdt, "sdtContent") {
-                                for r in self.doc.children_named(content, "r").collect::<Vec<_>>() {
-                                    if let Some(t) = self.doc.child(r, "t") {
-                                        self.doc.set_text(t, text_to_show);
-                                    }
-                                }
-                            }
+                            self.set_control_text(sdt, text_to_show, *showing);
                             sdt
                         }
                         None => {
@@ -4256,6 +5653,9 @@ impl Writer<'_> {
                             let placeholder = self.doc.append_element(pr, &self.w("placeholder"));
                             let doc_part = self.doc.append_element(placeholder, &self.w("docPart"));
                             self.doc.set_attr(doc_part, "w:val", "DefaultPlaceholder");
+                            if *showing {
+                                self.doc.append_element(pr, &self.w("showingPlcHdr"));
+                            }
                             self.doc.append_element(pr, &self.w("text"));
 
                             let content = self.doc.append_element(sdt, &self.w("sdtContent"));
@@ -4269,6 +5669,7 @@ impl Writer<'_> {
                             sdt
                         }
                     };
+                    self.apply_control(node, control);
                     extra.push(node);
                     let next = self.doc.deep_clone(first_run);
                     for child in self.doc.children(next).to_vec() {
@@ -4278,6 +5679,390 @@ impl Writer<'_> {
                     }
                     extra.push(next);
                     run = next;
+                }
+                AtomKey::PictureControl(media, cx, cy, look, showing, control) => {
+                    flush(self, run, &mut text);
+                    let w14 = self.w14_prefix();
+                    let candidate = original.filter(|&n| {
+                        self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
+                            self.doc.child(pr, "picture").is_some()
+                        }).unwrap_or(false)
+                    }).or_else(|| {
+                        node_of.iter().flatten().find(|&&n| {
+                            self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
+                                self.doc.child(pr, "picture").is_some()
+                            }).unwrap_or(false)
+                        }).copied()
+                    });
+
+                    let node = match candidate {
+                        Some(n) => {
+                            let sdt = self.doc.deep_clone(n);
+                            if let Some(pr) = self.doc.child(sdt, "sdtPr") {
+                                if self.doc.child(pr, "picture").is_none() {
+                                    self.doc.append_element(pr, &format!("{w14}:picture"));
+                                }
+                                let existing_plc = self.doc.child(pr, "showingPlcHdr");
+                                if *showing {
+                                    if existing_plc.is_none() {
+                                        self.doc.append_element(pr, &self.w("showingPlcHdr"));
+                                    }
+                                } else if let Some(plc) = existing_plc {
+                                    self.doc.detach(plc);
+                                }
+                            }
+                            let content = self.doc.child(sdt, "sdtContent").unwrap_or_else(|| {
+                                self.doc.append_element(sdt, &self.w("sdtContent"))
+                            });
+                            let existing_drawing = self.doc.descendants(content).into_iter().find(|&d| self.doc.is_element(d) && self.doc.local_name(d) == "drawing");
+                            let drawing = if let Some(drawing) = existing_drawing && !self.added.contains_key(media) {
+                                drawing
+                            } else {
+                                if let Some(old_d) = existing_drawing {
+                                    self.doc.detach(old_d);
+                                }
+                                let d = if let Some(rid) = self.added.get(media) {
+                                    self.new_picture(rid, *cx, *cy, self.svg_media.contains(media))
+                                } else if let Some(&(para, index)) = self.pictures.get(media) {
+                                    let source = &self.map.paragraphs[&para];
+                                    if source.part != self.part {
+                                        return Err(unsupported("ほかのパーツからの画像の貼り付け"));
+                                    }
+                                    let AtomSource::InRun { node, .. } = &source.atoms[index] else {
+                                        return Err(unsupported("画像の挿入"));
+                                    };
+                                    let mut at = self.pristine.by_path(&source.path).ok_or_else(|| unsupported("画像の挿入"))?;
+                                    for &i in node {
+                                        at = self.pristine.elements(at).nth(i as usize).ok_or_else(|| unsupported("画像の挿入"))?;
+                                    }
+                                    self.doc.import(self.pristine, at)
+                                } else {
+                                    return Err(unsupported("画像コントロールの描画"));
+                                };
+                                let r = match self.doc.child(content, "r") {
+                                    Some(r) => r,
+                                    None => {
+                                        let name = self.w("r");
+                                        self.doc.append_element(content, &name)
+                                    }
+                                };
+                                let end = self.doc.children(r).len();
+                                self.doc.insert(r, end, d);
+                                d
+                            };
+                            self.configure_drawing_anchor(drawing, None);
+                            self.set_picture_size(drawing, *cx, *cy);
+                            self.set_picture_look(drawing, look);
+                            sdt
+                        }
+                        None => {
+                            let sdt = self.doc.append_element(first_run, &self.w("sdt"));
+                            self.doc.detach(sdt);
+                            let pr = self.doc.append_element(sdt, &self.w("sdtPr"));
+                            let id = self.doc.append_element(pr, &self.w("id"));
+                            let next_id = (new_atoms.len() as u64) * 1000 + (j as u64) + 100000;
+                            self.doc.set_attr(id, "w:val", &next_id.to_string());
+                            let placeholder = self.doc.append_element(pr, &self.w("placeholder"));
+                            let doc_part = self.doc.append_element(placeholder, &self.w("docPart"));
+                            self.doc.set_attr(doc_part, "w:val", "DefaultPlaceholder");
+                            if *showing {
+                                self.doc.append_element(pr, &self.w("showingPlcHdr"));
+                            }
+                            self.doc.append_element(pr, &format!("{w14}:picture"));
+
+                            let content = self.doc.append_element(sdt, &self.w("sdtContent"));
+                            let r = self.doc.append_element(content, &self.w("r"));
+                            if let Some(rpr) = self.doc.child(run, "rPr") {
+                                let copy = self.doc.deep_clone(rpr);
+                                self.doc.insert(r, 0, copy);
+                            }
+                            let drawing = if let Some(rid) = self.added.get(media) {
+                                self.new_picture(rid, *cx, *cy, self.svg_media.contains(media))
+                            } else if let Some(&(para, index)) = self.pictures.get(media) {
+                                let source = &self.map.paragraphs[&para];
+                                if source.part != self.part {
+                                    return Err(unsupported("ほかのパーツからの画像の貼り付け"));
+                                }
+                                let AtomSource::InRun { node, .. } = &source.atoms[index] else {
+                                    return Err(unsupported("画像の挿入"));
+                                };
+                                let mut at = self.pristine.by_path(&source.path).ok_or_else(|| unsupported("画像の挿入"))?;
+                                for &i in node {
+                                    at = self.pristine.elements(at).nth(i as usize).ok_or_else(|| unsupported("画像の挿入"))?;
+                                }
+                                self.doc.import(self.pristine, at)
+                            } else {
+                                return Err(unsupported("画像コントロールの描画"));
+                            };
+                            self.configure_drawing_anchor(drawing, None);
+                            self.set_picture_size(drawing, *cx, *cy);
+                            self.set_picture_look(drawing, look);
+                            let end = self.doc.children(r).len();
+                            self.doc.insert(r, end, drawing);
+                            sdt
+                        }
+                    };
+                    self.apply_control(node, control);
+                    extra.push(node);
+                    let next = self.doc.deep_clone(first_run);
+                    for child in self.doc.children(next).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    extra.push(next);
+                    run = next;
+                }
+                AtomKey::BuildingBlockGallery(gallery, category, text_to_show, showing, control) => {
+                    flush(self, run, &mut text);
+                    let candidate = original.filter(|&n| {
+                        self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
+                            self.doc.child(pr, "docPartList").is_some() || self.doc.child(pr, "docPartObj").is_some()
+                        }).unwrap_or(false)
+                    }).or_else(|| {
+                        node_of.iter().flatten().find(|&&n| {
+                            self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
+                                self.doc.child(pr, "docPartList").is_some() || self.doc.child(pr, "docPartObj").is_some()
+                            }).unwrap_or(false)
+                        }).copied()
+                    });
+
+                    let node = match candidate {
+                        Some(n) => {
+                            let sdt = self.doc.deep_clone(n);
+                            self.set_control_text(sdt, text_to_show, *showing);
+                            if let Some(pr) = self.doc.child(sdt, "sdtPr") {
+                                let dp = self.doc.child(pr, "docPartList").or_else(|| self.doc.child(pr, "docPartObj")).unwrap_or_else(|| {
+                                    self.doc.append_element(pr, &self.w("docPartList"))
+                                });
+                                let dpg = self.doc.child(dp, "docPartGallery").unwrap_or_else(|| {
+                                    self.doc.append_element(dp, &self.w("docPartGallery"))
+                                });
+                                self.doc.set_attr(dpg, "w:val", gallery);
+                                let dpc = self.doc.child(dp, "docPartCategory").unwrap_or_else(|| {
+                                    self.doc.append_element(dp, &self.w("docPartCategory"))
+                                });
+                                self.doc.set_attr(dpc, "w:val", category);
+                            }
+                            sdt
+                        }
+                        None => {
+                            let sdt = self.doc.append_element(first_run, &self.w("sdt"));
+                            self.doc.detach(sdt);
+                            let pr = self.doc.append_element(sdt, &self.w("sdtPr"));
+                            let id = self.doc.append_element(pr, &self.w("id"));
+                            let next_id = (new_atoms.len() as u64) * 1000 + (j as u64) + 100000;
+                            self.doc.set_attr(id, "w:val", &next_id.to_string());
+                            let placeholder = self.doc.append_element(pr, &self.w("placeholder"));
+                            let doc_part = self.doc.append_element(placeholder, &self.w("docPart"));
+                            self.doc.set_attr(doc_part, "w:val", "DefaultPlaceholder");
+                            if *showing {
+                                self.doc.append_element(pr, &self.w("showingPlcHdr"));
+                            }
+                            let dp = self.doc.append_element(pr, &self.w("docPartList"));
+                            let dpg = self.doc.append_element(dp, &self.w("docPartGallery"));
+                            self.doc.set_attr(dpg, "w:val", gallery);
+                            let dpc = self.doc.append_element(dp, &self.w("docPartCategory"));
+                            self.doc.set_attr(dpc, "w:val", category);
+
+                            let content = self.doc.append_element(sdt, &self.w("sdtContent"));
+                            let r = self.doc.append_element(content, &self.w("r"));
+                            if let Some(rpr) = self.doc.child(run, "rPr") {
+                                let copy = self.doc.deep_clone(rpr);
+                                self.doc.insert(r, 0, copy);
+                            }
+                            let t = self.doc.append_element(r, &self.w("t"));
+                            self.doc.set_text(t, text_to_show);
+                            sdt
+                        }
+                    };
+                    self.apply_control(node, control);
+                    extra.push(node);
+                    let next = self.doc.deep_clone(first_run);
+                    for child in self.doc.children(next).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    extra.push(next);
+                    run = next;
+                }
+                AtomKey::RepeatingSection(section_title, items, _selected, no_edit, control) => {
+                    flush(self, run, &mut text);
+                    let w15 = self.w15_prefix();
+                    let rep_elem = format!("{w15}:repeatingSection");
+                    let title_elem = format!("{w15}:sectionTitle");
+                    let dna_elem = format!("{w15}:doNotAllowInsertDelete");
+                    let item_elem = format!("{w15}:repeatingSectionItem");
+
+                    let candidate = original.filter(|&n| {
+                        self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
+                            self.doc.child(pr, "repeatingSection").is_some()
+                        }).unwrap_or(false)
+                    }).or_else(|| {
+                        node_of.iter().flatten().find(|&&n| {
+                            self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
+                                self.doc.child(pr, "repeatingSection").is_some()
+                            }).unwrap_or(false)
+                        }).copied()
+                    });
+
+                    let node = match candidate {
+                        Some(n) => {
+                            let sdt = self.doc.deep_clone(n);
+                            if let Some(pr) = self.doc.child(sdt, "sdtPr") {
+                                let rep = self.doc.child(pr, "repeatingSection").unwrap_or_else(|| {
+                                    self.doc.append_element(pr, &rep_elem)
+                                });
+                                let st = self.doc.child(rep, "sectionTitle").unwrap_or_else(|| {
+                                    self.doc.append_element(rep, &title_elem)
+                                });
+                                self.doc.set_attr(st, "w:val", section_title);
+                                if *no_edit {
+                                    if self.doc.child(rep, "doNotAllowInsertDelete").is_none() {
+                                        self.doc.append_element(rep, &dna_elem);
+                                    }
+                                } else if let Some(dna) = self.doc.child(rep, "doNotAllowInsertDelete") {
+                                    self.doc.detach(dna);
+                                }
+                            }
+                            if let Some(content) = self.doc.child(sdt, "sdtContent") {
+                                for ch in self.doc.children(content).to_vec() {
+                                    self.doc.detach(ch);
+                                }
+                                for (idx, item_text) in items.iter().enumerate() {
+                                    let item_sdt = self.doc.append_element(content, &self.w("sdt"));
+                                    let item_pr = self.doc.append_element(item_sdt, &self.w("sdtPr"));
+                                    let item_id = self.doc.append_element(item_pr, &self.w("id"));
+                                    let next_id = (new_atoms.len() as u64) * 1000 + (j as u64) + (idx as u64) + 200000;
+                                    self.doc.set_attr(item_id, "w:val", &next_id.to_string());
+                                    self.doc.append_element(item_pr, &item_elem);
+                                    let item_content = self.doc.append_element(item_sdt, &self.w("sdtContent"));
+                                    let r = self.doc.append_element(item_content, &self.w("r"));
+                                    if let Some(rpr) = self.doc.child(run, "rPr") {
+                                        let copy = self.doc.deep_clone(rpr);
+                                        self.doc.insert(r, 0, copy);
+                                    }
+                                    let t = self.doc.append_element(r, &self.w("t"));
+                                    self.doc.set_text(t, item_text);
+                                }
+                            }
+                            sdt
+                        }
+                        None => {
+                            let sdt = self.doc.append_element(first_run, &self.w("sdt"));
+                            self.doc.detach(sdt);
+                            let pr = self.doc.append_element(sdt, &self.w("sdtPr"));
+                            let id = self.doc.append_element(pr, &self.w("id"));
+                            let next_id = (new_atoms.len() as u64) * 1000 + (j as u64) + 100000;
+                            self.doc.set_attr(id, "w:val", &next_id.to_string());
+                            let rep = self.doc.append_element(pr, &rep_elem);
+                            let st = self.doc.append_element(rep, &title_elem);
+                            self.doc.set_attr(st, "w:val", section_title);
+                            if *no_edit {
+                                self.doc.append_element(rep, &dna_elem);
+                            }
+                            let content = self.doc.append_element(sdt, &self.w("sdtContent"));
+                            for (idx, item_text) in items.iter().enumerate() {
+                                let item_sdt = self.doc.append_element(content, &self.w("sdt"));
+                                let item_pr = self.doc.append_element(item_sdt, &self.w("sdtPr"));
+                                let item_id = self.doc.append_element(item_pr, &self.w("id"));
+                                let next_id = (new_atoms.len() as u64) * 1000 + (j as u64) + (idx as u64) + 200000;
+                                self.doc.set_attr(item_id, "w:val", &next_id.to_string());
+                                self.doc.append_element(item_pr, &item_elem);
+                                let item_content = self.doc.append_element(item_sdt, &self.w("sdtContent"));
+                                let r = self.doc.append_element(item_content, &self.w("r"));
+                                if let Some(rpr) = self.doc.child(run, "rPr") {
+                                    let copy = self.doc.deep_clone(rpr);
+                                    self.doc.insert(r, 0, copy);
+                                }
+                                let t = self.doc.append_element(r, &self.w("t"));
+                                self.doc.set_text(t, item_text);
+                            }
+                            sdt
+                        }
+                    };
+                    self.apply_control(node, control);
+                    extra.push(node);
+                    let next = self.doc.deep_clone(first_run);
+                    for child in self.doc.children(next).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    extra.push(next);
+                    run = next;
+                }
+                AtomKey::Group(text_to_show, showing, control) => {
+                    flush(self, run, &mut text);
+                    let candidate = original.filter(|&n| {
+                        self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
+                            self.doc.child(pr, "group").is_some()
+                        }).unwrap_or(false)
+                    }).or_else(|| {
+                        node_of.iter().flatten().find(|&&n| {
+                            self.doc.local_name(n) == "sdt" && self.doc.child(n, "sdtPr").map(|pr| {
+                                self.doc.child(pr, "group").is_some()
+                            }).unwrap_or(false)
+                        }).copied()
+                    });
+
+                    let node = match candidate {
+                        Some(n) => {
+                            let sdt = self.doc.deep_clone(n);
+                            self.set_control_text(sdt, text_to_show, *showing);
+                            sdt
+                        }
+                        None => {
+                            let sdt = self.doc.append_element(first_run, &self.w("sdt"));
+                            self.doc.detach(sdt);
+                            let pr = self.doc.append_element(sdt, &self.w("sdtPr"));
+                            let id = self.doc.append_element(pr, &self.w("id"));
+                            let next_id = (new_atoms.len() as u64) * 1000 + (j as u64) + 100000;
+                            self.doc.set_attr(id, "w:val", &next_id.to_string());
+                            let placeholder = self.doc.append_element(pr, &self.w("placeholder"));
+                            let doc_part = self.doc.append_element(placeholder, &self.w("docPart"));
+                            self.doc.set_attr(doc_part, "w:val", "DefaultPlaceholder");
+                            if *showing {
+                                self.doc.append_element(pr, &self.w("showingPlcHdr"));
+                            }
+                            self.doc.append_element(pr, &self.w("group"));
+
+                            let content = self.doc.append_element(sdt, &self.w("sdtContent"));
+                            let r = self.doc.append_element(content, &self.w("r"));
+                            if let Some(rpr) = self.doc.child(run, "rPr") {
+                                let copy = self.doc.deep_clone(rpr);
+                                self.doc.insert(r, 0, copy);
+                            }
+                            let t = self.doc.append_element(r, &self.w("t"));
+                            self.doc.set_text(t, text_to_show);
+                            sdt
+                        }
+                    };
+                    self.apply_control(node, control);
+                    extra.push(node);
+                    let next = self.doc.deep_clone(first_run);
+                    for child in self.doc.children(next).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    extra.push(next);
+                    run = next;
+                }
+                AtomKey::Picture(media, cx, cy, look) if look.ole.is_some() => {
+                    // An embedded object: kept as it was, or written anew (edited, resized, inserted).
+                    flush(self, run, &mut text);
+                    let node = match original {
+                        Some(n) => self.doc.deep_clone(n),
+                        None => {
+                            let object = look.ole.and_then(|o| self.objects.get(&o)).ok_or_else(|| unsupported("埋め込みオブジェクトの挿入"))?.clone();
+                            let _ = media;
+                            self.new_object(&object, *cx, *cy)
+                        }
+                    };
+                    let end = self.doc.children(run).len();
+                    self.doc.insert(run, end, node);
                 }
                 AtomKey::Picture(media, cx, cy, look) => {
                     flush(self, run, &mut text);
@@ -4306,7 +6091,29 @@ impl Writer<'_> {
                 }
                 AtomKey::Shape(shape) => {
                     flush(self, run, &mut text);
-                    if let ShapeKind::Picture(pic) = &shape.kind {
+                    if let Some(group) = Self::shape_group_of(self.new_shape_groups, shape.id) {
+                        let leaves = group.leaf_shape_ids();
+                        if leaves.first().copied() == Some(shape.id) {
+                            let node = if let Some(n) = original.filter(|&n| {
+                                self.doc.descendants(n).into_iter().any(|d| self.doc.is_element(d) && self.doc.local_name(d) == "wgp")
+                            }) {
+                                self.doc.deep_clone(n)
+                            } else {
+                                let group_shapes: Vec<&Shape> = leaves
+                                    .iter()
+                                    .filter_map(|&id| {
+                                        para.runs.iter().find_map(|r| match &r.kind {
+                                            FlowRunKind::Shape(s) if s.id == id => Some(s.as_ref()),
+                                            _ => None,
+                                        })
+                                    })
+                                    .collect();
+                                self.new_group_shape(group, &group_shapes)
+                            };
+                            let end = self.doc.children(run).len();
+                            self.doc.insert(run, end, node);
+                        }
+                    } else if let ShapeKind::Picture(pic) = &shape.kind {
                         let media = &pic.media;
                         let cx = shape.frame.width;
                         let cy = shape.frame.height;
@@ -4321,6 +6128,11 @@ impl Writer<'_> {
                             alt_text: pic.alt_text.clone(),
                             decorative: pic.decorative,
                             name: pic.name.clone(),
+                            ole: pic.ole,
+                            linked_file: None,
+                            soft_edge: pic.soft_edge,
+                            effects: pic.effects,
+                            geometry: pic.geometry.clone(),
                         };
                         let node = match original {
                             Some(n) => self.doc.deep_clone(n),
@@ -4348,12 +6160,26 @@ impl Writer<'_> {
                         let node = self.doc.deep_clone(n);
                         let end = self.doc.children(run).len();
                         self.doc.insert(run, end, node);
+                    } else if let (ShapeKind::Chart(_), Some(n)) = (&shape.kind, self.shape_nodes.get(&shape.id.0).copied()) {
+                        // A chart of the file, changed: its drawing as it was (the chart part is written apart).
+                        let node = self.doc.deep_clone(n);
+                        let end = self.doc.children(run).len();
+                        self.doc.insert(run, end, node);
+                    } else if let ShapeKind::Chart(_) = &shape.kind {
+                        // A new chart (an old one was copied above): an inline drawing of its part.
+                        let rel = NEW_CHART_RELS.with(|r| r.borrow().get(&shape.id.0).cloned()).ok_or_else(|| unsupported("グラフの挿入"))?;
+                        let node = self.new_chart_drawing(&rel, shape.frame.width, shape.frame.height);
+                        let end = self.doc.children(run).len();
+                        self.doc.insert(run, end, node);
                     } else if matches!(shape.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_) | ShapeKind::Line(_)) {
                         // A shape (a text box, a drawn shape): an edited one (found by its id) is its
                         // old element with the new text, size, place, fill and line; a new one is
                         // written whole.
                         let body = shape_body(shape);
-                        let node = match self.shape_nodes.get(&shape.id.0).copied() {
+                        let existing_wsp = self.shape_nodes.get(&shape.id.0).copied().filter(|&n| {
+                            !self.doc.descendants(n).into_iter().any(|d| self.doc.is_element(d) && self.doc.local_name(d) == "wgp")
+                        });
+                        let node = match existing_wsp {
                             Some(n) => {
                                 let node = self.doc.deep_clone(n);
                                 let old = self.shape_olds.get(&shape.id.0).cloned();
@@ -4365,6 +6191,30 @@ impl Writer<'_> {
                         let end = self.doc.children(run).len();
                         self.doc.insert(run, end, node);
                     }
+                }
+                AtomKey::Math(math, display) => {
+                    flush(self, run, &mut text);
+                    let node = if let Some(n) = original.filter(|&n| matches!(self.doc.local_name(n), "oMath" | "oMathPara")) {
+                        self.doc.deep_clone(n)
+                    } else {
+                        let xml = if *display {
+                            crate::math_xml::write_math(math)
+                        } else {
+                            crate::math_xml::write_math_inline(math)
+                        };
+                        let temp_doc = ibis_ooxml::XmlDocument::parse(xml.as_bytes()).map_err(|_| unsupported("数式の挿入"))?;
+                        let root = temp_doc.root_element().ok_or_else(|| unsupported("数式の挿入"))?;
+                        self.doc.import(&temp_doc, root)
+                    };
+                    extra.push(node);
+                    let next = self.doc.deep_clone(first_run);
+                    for child in self.doc.children(next).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    extra.push(next);
+                    run = next;
                 }
                 AtomKey::CommentStart(id) | AtomKey::CommentEnd(id) => {
                     // Between runs: what follows goes into a new run after it.
@@ -4416,6 +6266,146 @@ impl Writer<'_> {
                     };
                     let end = self.doc.children(run).len();
                     self.doc.insert(run, end, node);
+                }
+                AtomKey::FormField(ff) => {
+                    flush(self, run, &mut text);
+                    let instr = match &ff.kind {
+                        ibis_doc_model::FormFieldKind::TextInput { .. } => " FORMTEXT ".to_string(),
+                        ibis_doc_model::FormFieldKind::CheckBox { .. } => " FORMCHECKBOX ".to_string(),
+                        ibis_doc_model::FormFieldKind::DropDown { .. } => " FORMDROPDOWN ".to_string(),
+                    };
+                    let shown = match &ff.kind {
+                        ibis_doc_model::FormFieldKind::TextInput { value, default, .. } => {
+                            if value.is_empty() {
+                                if !default.is_empty() {
+                                    default.clone()
+                                } else {
+                                    "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}".to_string()
+                                }
+                            } else {
+                                value.clone()
+                            }
+                        }
+                        ibis_doc_model::FormFieldKind::CheckBox { .. } => String::new(),
+                        ibis_doc_model::FormFieldKind::DropDown { items, selected, .. } => {
+                            items.get(*selected).cloned().unwrap_or_default()
+                        }
+                    };
+
+                    // 1. begin run with ffData
+                    let r_begin = self.doc.deep_clone(run);
+                    for child in self.doc.children(r_begin).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    let fld_begin = self.doc.append_element(r_begin, &self.w("fldChar"));
+                    self.doc.set_attr(fld_begin, "w:fldCharType", "begin");
+                    let ff_data = self.doc.append_element(fld_begin, &self.w("ffData"));
+                    if !ff.name.is_empty() {
+                        let n = self.doc.append_element(ff_data, &self.w("name"));
+                        self.doc.set_attr(n, "w:val", &ff.name);
+                    }
+                    let en = self.doc.append_element(ff_data, &self.w("enabled"));
+                    if !ff.enabled {
+                        self.doc.set_attr(en, "w:val", "0");
+                    }
+                    let calc = self.doc.append_element(ff_data, &self.w("calcOnExit"));
+                    self.doc.set_attr(calc, "w:val", if ff.calc_on_exit { "1" } else { "0" });
+                    match &ff.kind {
+                        ibis_doc_model::FormFieldKind::TextInput { default, max_length, .. } => {
+                            let ti = self.doc.append_element(ff_data, &self.w("textInput"));
+                            if !default.is_empty() {
+                                let d = self.doc.append_element(ti, &self.w("default"));
+                                self.doc.set_attr(d, "w:val", default);
+                            }
+                            if *max_length > 0 {
+                                let m = self.doc.append_element(ti, &self.w("maxLength"));
+                                self.doc.set_attr(m, "w:val", &max_length.to_string());
+                            }
+                        }
+                        ibis_doc_model::FormFieldKind::CheckBox { checked, default, size_auto } => {
+                            let cb = self.doc.append_element(ff_data, &self.w("checkBox"));
+                            if *size_auto {
+                                self.doc.append_element(cb, &self.w("sizeAuto"));
+                            }
+                            let def = self.doc.append_element(cb, &self.w("default"));
+                            self.doc.set_attr(def, "w:val", if *default { "1" } else { "0" });
+                            if *checked {
+                                let chk = self.doc.append_element(cb, &self.w("checked"));
+                                self.doc.set_attr(chk, "w:val", "1");
+                            }
+                        }
+                        ibis_doc_model::FormFieldKind::DropDown { items, selected, default } => {
+                            let dd = self.doc.append_element(ff_data, &self.w("ddList"));
+                            let res = self.doc.append_element(dd, &self.w("result"));
+                            self.doc.set_attr(res, "w:val", &selected.to_string());
+                            let def = self.doc.append_element(dd, &self.w("default"));
+                            self.doc.set_attr(def, "w:val", &default.to_string());
+                            for item in items {
+                                let le = self.doc.append_element(dd, &self.w("listEntry"));
+                                self.doc.set_attr(le, "w:val", item);
+                            }
+                        }
+                    }
+                    extra.push(r_begin);
+
+                    // 2. instrText run
+                    let r_instr = self.doc.deep_clone(run);
+                    for child in self.doc.children(r_instr).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    let it = self.doc.append_element(r_instr, &self.w("instrText"));
+                    self.doc.set_attr(it, "xml:space", "preserve");
+                    self.doc.set_text(it, &instr);
+                    extra.push(r_instr);
+
+                    // 3. separate run
+                    let r_sep = self.doc.deep_clone(run);
+                    for child in self.doc.children(r_sep).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    let fld_sep = self.doc.append_element(r_sep, &self.w("fldChar"));
+                    self.doc.set_attr(fld_sep, "w:fldCharType", "separate");
+                    extra.push(r_sep);
+
+                    // 4. result run (if non-empty shown)
+                    if !shown.is_empty() {
+                        let r_res = self.doc.deep_clone(run);
+                        for child in self.doc.children(r_res).to_vec() {
+                            if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                                self.doc.detach(child);
+                            }
+                        }
+                        let t = self.doc.append_element(r_res, &self.w("t"));
+                        self.doc.set_attr(t, "xml:space", "preserve");
+                        self.doc.set_text(t, &shown);
+                        extra.push(r_res);
+                    }
+
+                    // 5. end run
+                    let r_end = self.doc.deep_clone(run);
+                    for child in self.doc.children(r_end).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    let fld_end = self.doc.append_element(r_end, &self.w("fldChar"));
+                    self.doc.set_attr(fld_end, "w:fldCharType", "end");
+                    extra.push(r_end);
+
+                    let next = self.doc.deep_clone(first_run);
+                    for child in self.doc.children(next).to_vec() {
+                        if !(self.doc.is_element(child) && self.doc.local_name(child) == "rPr") {
+                            self.doc.detach(child);
+                        }
+                    }
+                    extra.push(next);
+                    run = next;
                 }
                 AtomKey::PageNumber(_) | AtomKey::FileName(..) | AtomKey::PageRef(..) | AtomKey::Field(..) => {
                     // A new field: begin, instruction, separate, result, end.
@@ -4533,6 +6523,22 @@ impl Writer<'_> {
         }
     }
 
+    fn w14_prefix(&mut self) -> String {
+        let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
+        if self.doc.lookup_prefix(root, W14_NS).is_none() {
+            self.doc.set_attr(root, "xmlns:w14", W14_NS);
+        }
+        self.doc.lookup_prefix(root, W14_NS).unwrap_or_else(|| "w14".into())
+    }
+
+    fn w15_prefix(&mut self) -> String {
+        let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
+        if self.doc.lookup_prefix(root, W15_NS).is_none() {
+            self.doc.set_attr(root, "xmlns:w15", W15_NS);
+        }
+        self.doc.lookup_prefix(root, W15_NS).unwrap_or_else(|| "w15".into())
+    }
+
     /// Change the run properties of `run` (a `w:r`, or a `w:pPr` when
     /// `mark`) from `(f0, c0)` to `(f1, c1)`: only what differs is written.
     fn run_props(&mut self, run: NodeId, f0: &RunFormat, c0: &Option<String>, f1: &RunFormat, c1: &Option<String>, mark: bool) {
@@ -4586,9 +6592,9 @@ impl Writer<'_> {
                 self.doc.detach(fonts);
             }
         }
-        if f0.lang != f1.lang || f0.lang_east_asia != f1.lang_east_asia {
+        if f0.lang != f1.lang || f0.lang_east_asia != f1.lang_east_asia || f0.lang_bidi != f1.lang_bidi {
             let e = self.ensure(rpr, "lang", o);
-            for (attr, now, was) in [("w:val", &f1.lang, &f0.lang), ("w:eastAsia", &f1.lang_east_asia, &f0.lang_east_asia)] {
+            for (attr, now, was) in [("w:val", &f1.lang, &f0.lang), ("w:eastAsia", &f1.lang_east_asia, &f0.lang_east_asia), ("w:bidi", &f1.lang_bidi, &f0.lang_bidi)] {
                 if now != was {
                     match now {
                         Some(v) => self.doc.set_attr(e, attr, v),
@@ -4629,6 +6635,9 @@ impl Writer<'_> {
         }
         if f0.emboss != f1.emboss {
             self.toggle(rpr, &["emboss"], f1.emboss, o);
+        }
+        if f0.no_proof != f1.no_proof {
+            self.toggle(rpr, &["noProof"], f1.no_proof, o);
         }
         if f0.imprint != f1.imprint {
             self.toggle(rpr, &["imprint"], f1.imprint, o);
@@ -4777,6 +6786,73 @@ impl Writer<'_> {
         if f0.border != f1.border {
             self.border_property(rpr, "bdr", f1.border, o);
         }
+        if f0.ligatures != f1.ligatures {
+            match f1.ligatures {
+                Some(lig) => {
+                    let w14 = self.w14_prefix();
+                    let e = match self.doc.child(rpr, "ligatures") {
+                        Some(e) => e,
+                        None => self.doc.append_element(rpr, &format!("{w14}:ligatures")),
+                    };
+                    self.doc.remove_attr(e, "val");
+                    self.doc.set_attr(e, &format!("{w14}:val"), lig.to_ooxml());
+                }
+                None => self.remove_child(rpr, "ligatures"),
+            }
+        }
+        if f0.num_form != f1.num_form {
+            match f1.num_form {
+                Some(nf) => {
+                    let w14 = self.w14_prefix();
+                    let e = match self.doc.child(rpr, "numForm") {
+                        Some(e) => e,
+                        None => self.doc.append_element(rpr, &format!("{w14}:numForm")),
+                    };
+                    self.doc.remove_attr(e, "val");
+                    self.doc.set_attr(e, &format!("{w14}:val"), nf.to_ooxml());
+                }
+                None => self.remove_child(rpr, "numForm"),
+            }
+        }
+        if f0.num_spacing != f1.num_spacing {
+            match f1.num_spacing {
+                Some(ns) => {
+                    let w14 = self.w14_prefix();
+                    let e = match self.doc.child(rpr, "numSpacing") {
+                        Some(e) => e,
+                        None => self.doc.append_element(rpr, &format!("{w14}:numSpacing")),
+                    };
+                    self.doc.remove_attr(e, "val");
+                    self.doc.set_attr(e, &format!("{w14}:val"), ns.to_ooxml());
+                }
+                None => self.remove_child(rpr, "numSpacing"),
+            }
+        }
+        if f0.contextual_alternates != f1.contextual_alternates {
+            match f1.contextual_alternates {
+                Some(true) => {
+                    let w14 = self.w14_prefix();
+                    let e = match self.doc.child(rpr, "cntxtAlts") {
+                        Some(e) => e,
+                        None => self.doc.append_element(rpr, &format!("{w14}:cntxtAlts")),
+                    };
+                    self.doc.remove_attr(e, "val");
+                    self.doc.remove_attr(e, "w:val");
+                    self.doc.remove_attr(e, &format!("{w14}:val"));
+                }
+                Some(false) => {
+                    let w14 = self.w14_prefix();
+                    let e = match self.doc.child(rpr, "cntxtAlts") {
+                        Some(e) => e,
+                        None => self.doc.append_element(rpr, &format!("{w14}:cntxtAlts")),
+                    };
+                    self.doc.remove_attr(e, "val");
+                    self.doc.remove_attr(e, "w:val");
+                    self.doc.set_attr(e, &format!("{w14}:val"), "0");
+                }
+                None => self.remove_child(rpr, "cntxtAlts"),
+            }
+        }
         if !self.doc.elements(rpr).any(|_| true) && self.doc.attributes(rpr).is_empty() {
             self.doc.detach(rpr);
         }
@@ -4786,6 +6862,37 @@ impl Writer<'_> {
     fn paragraph_props(&mut self, p: NodeId, old: &FlowParagraph, new: &FlowParagraph) -> Result<(), Error> {
         if old.bookmarks != new.bookmarks || old.field_start != new.field_start || old.field_end != new.field_end {
             self.paragraph_marks(p, old, new)?;
+        }
+        if old.subdoc != new.subdoc {
+            self.remove_child(p, "subDoc");
+            if let Some(sub) = &new.subdoc && !sub.target.is_empty() {
+                if let Some(rid) = self.link_rels.get(&format!("subdoc:{}", sub.target)) {
+                    let name = self.w("subDoc");
+                    let sd = self.doc.append_element(p, &name);
+                    let r = match self.doc.lookup_prefix(p, "http://schemas.openxmlformats.org/officeDocument/2006/relationships") {
+                        Some(prefix) => prefix,
+                        None => {
+                            if let Some(root) = self.doc.root_element() {
+                                self.doc.set_attr(root, "xmlns:r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+                            }
+                            "r".into()
+                        }
+                    };
+                    self.doc.set_attr(sd, &format!("{r}:id"), rid);
+                    if !sub.title.is_empty() && sub.title != sub.target {
+                        self.doc.set_attr(sd, "w:title", &sub.title);
+                    }
+                    if sub.locked {
+                        self.doc.set_attr(sd, "w:locked", "1");
+                    }
+                    if sub.expanded {
+                        self.doc.set_attr(sd, "w:expanded", "1");
+                    }
+                    for (idx, line) in sub.content_paragraphs.iter().take(64).enumerate() {
+                        self.doc.set_attr(sd, &format!("w:subPara{idx}"), line);
+                    }
+                }
+            }
         }
         if old.style == new.style && old.direct == new.direct && old.mark_format == new.mark_format && old.section_break == new.section_break {
             return Ok(());
@@ -4916,6 +7023,49 @@ impl Writer<'_> {
         ] {
             if x != y {
                 self.toggle(ppr, &[name], y, o);
+            }
+        }
+        if a.collapsed != b.collapsed {
+            let w15 = self.w15_prefix();
+            match b.collapsed {
+                Some(true) => {
+                    let e = match self.doc.child(ppr, "collapsed") {
+                        Some(e) => e,
+                        None => self.doc.append_element(ppr, &format!("{w15}:collapsed")),
+                    };
+                    self.doc.remove_attr(e, "w:val");
+                    self.doc.remove_attr(e, &format!("{w15}:val"));
+                }
+                _ => {
+                    while let Some(e) = self.doc.child(ppr, "collapsed") {
+                        self.doc.detach(e);
+                    }
+                }
+            }
+        }
+        if a.drop_cap != b.drop_cap {
+            match b.drop_cap {
+                Some(Some(dc)) if dc.location != DropCapLocation::None => {
+                    let frame = self.ensure(ppr, "framePr", o);
+                    let val = match dc.location {
+                        DropCapLocation::Drop => "drop",
+                        DropCapLocation::Margin => "margin",
+                        DropCapLocation::None => "none",
+                    };
+                    self.doc.set_attr(frame, "w:dropCap", val);
+                    self.doc.set_attr(frame, "w:lines", &dc.lines.to_string());
+                    self.doc.set_attr(frame, "w:wrap", "around");
+                    self.doc.set_attr(frame, "w:vAnchor", "text");
+                    self.doc.set_attr(frame, "w:hAnchor", if dc.location == DropCapLocation::Margin { "margin" } else { "text" });
+                    if dc.space > 0 {
+                        self.doc.set_attr(frame, "w:hSpace", &(dc.space / 635).to_string());
+                    } else {
+                        self.doc.remove_attr(frame, "w:hSpace");
+                    }
+                }
+                _ => {
+                    self.remove_child(ppr, "framePr");
+                }
             }
         }
         if a.before != b.before || a.after != b.after || a.line != b.line {
@@ -5120,7 +7270,7 @@ fn write_styles(package: &mut Package, map: &SourceMap, old: &ibis_doc_model::Fl
     let none_added = HashMap::new();
     let none_svg = HashSet::new();
     let none_links = HashMap::new();
-    let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &none_blocks, new_blocks: &none_blocks, pictures: &none_pictures, nodes: HashMap::new(), added: &none_added, svg_media: &none_svg, empty_parent: None, link_rels: &none_links, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new() };
+    let mut writer = Writer { doc, pristine: &pristine, map, part: &part, old_blocks: &none_blocks, new_blocks: &none_blocks, pictures: &none_pictures, nodes: HashMap::new(), added: &none_added, svg_media: &none_svg, objects: &HashMap::new(), empty_parent: None, link_rels: &none_links, written: HashMap::new(), shape_nodes: HashMap::new(), shape_olds: HashMap::new(), old_shape_groups: &[], new_shape_groups: &[] };
     let element_of = |doc: &XmlDocument, id: &str| doc.children_named(root, "style").find(|&e| doc.attr(e, "w:styleId") == Some(id));
     for (id, style) in &new.styles {
         let was = old.styles.get(id);
@@ -5169,19 +7319,26 @@ fn write_styles(package: &mut Package, map: &SourceMap, old: &ibis_doc_model::Fl
                 if style.auto_update {
                     writer.toggle(e, &["autoRedefine"], Some(true), STYLE_ORDER);
                 }
-                if style.name.starts_with("toc ") {
-                    writer.val(e, "uiPriority", Some("39"), STYLE_ORDER);
+                if let Some(priority) = style.ui_priority {
+                    writer.val(e, "uiPriority", Some(&priority.to_string()), STYLE_ORDER);
+                }
+                if style.name.starts_with("toc ") || style.name == "caption" {
                     writer.toggle(e, &["unhideWhenUsed"], Some(true), STYLE_ORDER);
                 }
-                if style.name == "caption" {
-                    writer.val(e, "uiPriority", Some("35"), STYLE_ORDER);
-                    writer.toggle(e, &["unhideWhenUsed", "qFormat"], Some(true), STYLE_ORDER);
+                if style.quick {
+                    writer.toggle(e, &["qFormat"], Some(true), STYLE_ORDER);
                 }
                 e
             }
         };
         let empty = ibis_doc_model::FlowStyle::default();
         let was = was.unwrap_or(&empty);
+        if let Some(num_id) = style.num_id {
+            let ppr = writer.ensure(node, "pPr", STYLE_ORDER);
+            let numpr = writer.ensure(ppr, "numPr", &["pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr"]);
+            let numid_el = writer.ensure(numpr, "numId", &["ilvl", "numId"]);
+            writer.doc.set_attr(numid_el, "w:val", &num_id.to_string());
+        }
         if was.para != style.para {
             writer.ensure(node, "pPr", STYLE_ORDER);
             let a = FlowParagraph { direct: was.para.clone(), ..FlowParagraph::default() };
@@ -5199,13 +7356,14 @@ fn write_styles(package: &mut Package, map: &SourceMap, old: &ibis_doc_model::Fl
     Ok(())
 }
 
-fn write_numbering(package: &mut Package, map: &SourceMap, old: &ibis_doc_model::Numbering, new: &ibis_doc_model::Numbering) -> Result<(), Error> {
+fn write_numbering(package: &mut Package, map: &SourceMap, old: &ibis_doc_model::Numbering, new: &ibis_doc_model::Numbering, current: &Presentation) -> Result<(), Error> {
     // A list definition changed: only its levels' number format, number
     // text and what follows the number (番号の書式・番号の後) are written
     // into the existing definition; anything else is not saved yet.
     let only_formats = |a: &ibis_doc_model::AbstractList, b: &ibis_doc_model::AbstractList| {
         a.levels.len() == b.levels.len()
             && a.levels.iter().zip(&b.levels).all(|(x, y)| ibis_doc_model::ListLevel { format: y.format.clone(), text: y.text.clone(), suffix: y.suffix, run: y.run.clone(), ..x.clone() } == *y)
+            && (a.num_style_link == b.num_style_link || a.num_style_link.is_none() || b.num_style_link.is_none())
     };
     let mut patched: Vec<(u32, &ibis_doc_model::AbstractList, &ibis_doc_model::AbstractList)> = Vec::new();
     for (id, a) in &old.abstracts {
@@ -5234,14 +7392,71 @@ fn write_numbering(package: &mut Package, map: &SourceMap, old: &ibis_doc_model:
             part
         }
     };
+    // The pictures of new picture bullets: their media parts, related from the numbering part.
+    let mut new_pictures: Vec<(u32, String, Option<ibis_doc_model::EmuSize>)> = Vec::new();
+    for (id, (media_id, size)) in new.pic_bullets.iter().filter(|(id, _)| !old.pic_bullets.contains_key(id)) {
+        let media = current.media(*media_id).ok_or_else(|| unsupported("図の箇条書きの画像"))?;
+        let rid = add_media(package, &part, media)?;
+        new_pictures.push((*id, rid, *size));
+    }
     let doc = package.xml_mut(&part)?;
     let root = doc.root_element().ok_or_else(|| unsupported("空の numbering.xml への追加"))?;
     let w = |local: &str| format!("w:{local}");
+    // The picture bullets come before the list definitions.
+    for (id, rid, size) in new_pictures {
+        let bullet = doc.append_element(root, &w("numPicBullet"));
+        doc.detach(bullet);
+        let first = doc.children_named(root, "abstractNum").next();
+        let anchor = doc.children_named(root, "numPicBullet").last();
+        match (anchor, first) {
+            (Some(l), _) => doc.insert_after(l, bullet),
+            (None, Some(f)) => doc.insert_before(f, bullet),
+            (None, None) => {
+                let end = doc.children(root).len();
+                doc.insert(root, end, bullet);
+            }
+        }
+        doc.set_attr(bullet, "w:numPicBulletId", &id.to_string());
+        let pict = doc.append_element(bullet, &w("pict"));
+        let shape = doc.append_element(pict, "v:shape");
+        doc.set_attr(shape, "xmlns:v", "urn:schemas-microsoft-com:vml");
+        doc.set_attr(shape, "xmlns:o", "urn:schemas-microsoft-com:office:office");
+        doc.set_attr(shape, "xmlns:r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+        doc.set_attr(shape, "id", &format!("_x0000_i{}", 1025 + id));
+        doc.set_attr(shape, "type", "#_x0000_t75");
+        doc.set_attr(shape, "o:bullet", "t");
+        let (cx, cy) = size.map_or((9.0, 9.0), |s| (s.width as f64 / 12_700.0, s.height as f64 / 12_700.0));
+        doc.set_attr(shape, "style", &format!("width:{cx}pt;height:{cy}pt"));
+        let image = doc.append_element(shape, "v:imagedata");
+        doc.set_attr(image, "r:id", &rid);
+        doc.set_attr(image, "o:title", "");
+    }
     for (id, a, b) in patched {
         let id_text = id.to_string();
         let Some(node) = doc.children_named(root, "abstractNum").find(|&n| doc.attr(n, "w:abstractNumId") == Some(id_text.as_str())) else {
             return Err(unsupported("リストの定義の変更"));
         };
+        if a.num_style_link != b.num_style_link {
+            let found = doc.children_named(node, "numStyleLink").next();
+            match (&b.num_style_link, found) {
+                (Some(link), Some(e)) => doc.set_attr(e, "w:val", link),
+                (Some(link), None) => {
+                    let first_lvl = doc.children_named(node, "lvl").next();
+                    let e = doc.append_element(node, &w("numStyleLink"));
+                    doc.detach(e);
+                    doc.set_attr(e, "w:val", link);
+                    match first_lvl {
+                        Some(first) => doc.insert_before(first, e),
+                        None => {
+                            let end = doc.children(node).len();
+                            doc.insert(node, end, e);
+                        }
+                    }
+                }
+                (None, Some(e)) => doc.detach(e),
+                (None, None) => {}
+            }
+        }
         for (l, (x, y)) in a.levels.iter().zip(&b.levels).enumerate() {
             if x == y {
                 continue;
@@ -5330,6 +7545,10 @@ fn write_numbering(package: &mut Package, map: &SourceMap, old: &ibis_doc_model:
         doc.set_attr(a, "w:abstractNumId", &id.to_string());
         let t = doc.append_element(a, &w("multiLevelType"));
         doc.set_attr(t, "w:val", "hybridMultilevel");
+        if let Some(link) = &list.num_style_link {
+            let nsl = doc.append_element(a, &w("numStyleLink"));
+            doc.set_attr(nsl, "w:val", link);
+        }
         for (l, level) in list.levels.iter().enumerate() {
             let lvl = doc.append_element(a, &w("lvl"));
             doc.set_attr(lvl, "w:ilvl", &l.to_string());
@@ -5343,6 +7562,10 @@ fn write_numbering(package: &mut Package, map: &SourceMap, old: &ibis_doc_model:
             }
             let text = doc.append_element(lvl, &w("lvlText"));
             doc.set_attr(text, "w:val", &level.text);
+            if let Some(picture) = level.pic_bullet {
+                let e = doc.append_element(lvl, &w("lvlPicBulletId"));
+                doc.set_attr(e, "w:val", &picture.to_string());
+            }
             let jc = doc.append_element(lvl, &w("lvlJc"));
             doc.set_attr(jc, "w:val", "left");
             let ppr = doc.append_element(lvl, &w("pPr"));
@@ -5389,6 +7612,60 @@ fn write_numbering(package: &mut Package, map: &SourceMap, old: &ibis_doc_model:
     Ok(())
 }
 
+thread_local! {
+    /// The relationships of the new charts' parts (by shape id), for the part being written.
+    static NEW_CHART_RELS: std::cell::RefCell<HashMap<u64, String>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// The charts (shape ids and charts) in `blocks` (tables' too).
+fn charts_in<'a>(blocks: &'a [Block], out: &mut Vec<(ibis_doc_model::ShapeId, &'a ibis_doc_model::Chart)>) {
+    for b in blocks {
+        match b {
+            Block::Paragraph(p) => {
+                for r in &p.runs {
+                    if let FlowRunKind::Shape(shape) = &r.kind && let ShapeKind::Chart(chart) = &shape.kind {
+                        out.push((shape.id, chart));
+                    }
+                }
+            }
+            Block::Table(t) => t.rows.iter().flat_map(|r| &r.cells).for_each(|c| charts_in(&c.blocks, out)),
+        }
+    }
+}
+
+/// The chart part the file's chart `id` (in `old`, the blocks as read) shows: found from the `c:chart` of its drawing.
+fn existing_chart_part(package: &Package, map: &SourceMap, old: &[Block], id: ibis_doc_model::ShapeId) -> Result<String, Error> {
+    fn find(blocks: &[Block], id: ibis_doc_model::ShapeId) -> Option<(u32, usize)> {
+        for b in blocks {
+            match b {
+                Block::Paragraph(p) => {
+                    if let Some(i) = atoms(p).iter().position(|a| matches!(&a.0, AtomKey::Shape(s) if s.id == id && matches!(s.kind, ShapeKind::Chart(_)))) {
+                        return Some((p.id, i));
+                    }
+                }
+                Block::Table(t) => {
+                    if let Some(found) = t.rows.iter().flat_map(|r| &r.cells).find_map(|c| find(&c.blocks, id)) {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+        None
+    }
+    let fail = || unsupported("このグラフの変更");
+    let (para, index) = find(old, id).ok_or_else(fail)?;
+    let source = map.paragraphs.get(&para).ok_or_else(fail)?;
+    let AtomSource::InRun { node, .. } = source.atoms.get(index).ok_or_else(fail)? else { return Err(fail()) };
+    let doc = package.xml(&source.part)?;
+    let mut at = doc.by_path(&source.path).ok_or_else(fail)?;
+    for &i in node {
+        at = doc.elements(at).nth(i as usize).ok_or_else(fail)?;
+    }
+    let reference = doc.descendants(at).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "chart").ok_or_else(fail)?;
+    let rid = doc.attributes(reference).iter().find(|a| a.name.ends_with(":id") && !a.name.starts_with("xmlns")).map(|a| a.value.clone()).ok_or_else(fail)?;
+    package.relationships(&source.part)?.into_iter().find(|r| r.id == rid).and_then(|r| r.target_part(&source.part)).ok_or_else(fail)
+}
+
 /// The media of the pictures in `blocks` (tables' too).
 fn pictures_in(blocks: &[Block], out: &mut HashSet<MediaId>) {
     for b in blocks {
@@ -5396,7 +7673,7 @@ fn pictures_in(blocks: &[Block], out: &mut HashSet<MediaId>) {
             Block::Paragraph(p) => {
                 for r in &p.runs {
                     match &r.kind {
-                        FlowRunKind::Picture { media, .. } => {
+                        FlowRunKind::Picture { media, .. } | FlowRunKind::PictureControl { media, .. } => {
                             out.insert(*media);
                         }
                         FlowRunKind::Shape(shape) => {
@@ -5420,6 +7697,130 @@ fn pictures_in(blocks: &[Block], out: &mut HashSet<MediaId>) {
 }
 
 const IMAGE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const OLE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject";
+const OLE_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.oleObject";
+
+/// What a `w:object` written anew refers to.
+#[derive(Clone, Debug)]
+struct ObjectRels {
+    /// The relationship to its picture.
+    image: String,
+    /// The relationship to its part.
+    ole: String,
+    prog_id: String,
+    as_icon: bool,
+}
+
+/// The inline pictures of `blocks` (tables' too) that show embedded objects.
+fn objects_in(blocks: &[Block], out: &mut Vec<(MediaId, ibis_doc_model::OleId)>) {
+    for b in blocks {
+        match b {
+            Block::Paragraph(p) => {
+                for r in &p.runs {
+                    if let FlowRunKind::Picture { media, look, .. } = &r.kind
+                        && let Some(ole) = look.ole
+                    {
+                        out.push((*media, ole));
+                    }
+                }
+            }
+            Block::Table(t) => {
+                for cell in t.rows.iter().flat_map(|r| &r.cells) {
+                    objects_in(&cell.blocks, out);
+                }
+            }
+        }
+    }
+}
+
+/// The relationship of `part` (of `kind`) to a part holding `data`: one it has, or a new one.
+fn related_by_bytes(package: &Package, part: &str, kind: &str, data: &[u8]) -> Result<Option<String>, Error> {
+    for rel in package.relationships(part)? {
+        if rel.kind == kind
+            && !rel.external
+            && let Some(target) = rel.target_part(part)
+            && package.read(&target).is_ok_and(|b| b.as_slice() == data)
+        {
+            return Ok(Some(rel.id));
+        }
+    }
+    Ok(None)
+}
+
+/// The relationships each embedded object of `blocks` needs to be written
+/// anew: its picture's (new to the part in `added`, or one the part has) and
+/// its part's (`word/embeddings/oleObjectN.bin`, added when the part has none
+/// of its bytes).
+fn object_rels(package: &mut Package, part: &str, current: &Presentation, baseline: &Presentation, blocks: &[Block], added: &HashMap<MediaId, String>) -> Result<HashMap<ibis_doc_model::OleId, ObjectRels>, Error> {
+    let mut found = Vec::new();
+    objects_in(blocks, &mut found);
+    let mut out = HashMap::new();
+    for (media, ole) in found {
+        if out.contains_key(&ole) {
+            continue;
+        }
+        let object = current.ole(ole).or_else(|| baseline.ole(ole)).ok_or_else(|| unsupported("元の無い埋め込みオブジェクト"))?.clone();
+        let picture = current.media(media).or_else(|| baseline.media(media)).ok_or_else(|| unsupported("元の無い画像"))?.clone();
+        let image = match added.get(&media) {
+            Some(rid) => rid.clone(),
+            None => match related_by_bytes(package, part, IMAGE_REL, &picture.data)? {
+                Some(rid) => rid,
+                None => add_media(package, part, &picture)?,
+            },
+        };
+        let ole_rel = match related_by_bytes(package, part, OLE_REL, &object.data)? {
+            Some(rid) => rid,
+            None => {
+                let dir = part.rsplit_once('/').map_or("", |(d, _)| d);
+                let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+                let n = (1..).find(|n| !package.contains(&format!("{prefix}embeddings/oleObject{n}.bin"))).expect("a free name");
+                package.set_bytes(&format!("{prefix}embeddings/oleObject{n}.bin"), object.data.clone());
+                package.set_override(&format!("{prefix}embeddings/oleObject{n}.bin"), OLE_CONTENT_TYPE)?;
+                package.add_relationship(part, OLE_REL, &format!("embeddings/oleObject{n}.bin"), false)?
+            }
+        };
+        out.insert(ole, ObjectRels { image, ole: ole_rel, prog_id: object.prog_id.clone(), as_icon: object.as_icon });
+    }
+    Ok(out)
+}
+
+/// The embedded objects' relationships of `part` that nothing in it names
+/// any more (an object edited or removed), taken off, and the object parts
+/// nothing relates to.
+fn prune_objects(package: &mut Package, part: &str) -> Result<(), Error> {
+    let rels: Vec<_> = package.relationships(part)?.into_iter().filter(|r| r.kind == OLE_REL && !r.external).collect();
+    if rels.is_empty() {
+        return Ok(());
+    }
+    let named: HashSet<String> = {
+        let doc = package.xml(part)?;
+        let root = doc.root_element();
+        root.map(|r| doc.descendants(r)).unwrap_or_default().into_iter().filter(|&n| doc.is_element(n)).flat_map(|n| doc.attributes(n).iter().map(|a| a.value.clone()).collect::<Vec<_>>()).collect()
+    };
+    let mut orphans = Vec::new();
+    for rel in rels.into_iter().filter(|r| !named.contains(&r.id)) {
+        package.remove_relationship(part, &rel.id)?;
+        orphans.extend(rel.target_part(part));
+    }
+    // A part another relationship still points at stays.
+    let names: Vec<String> = package.names().filter(|n| n.ends_with(".rels")).map(str::to_string).collect();
+    for orphan in orphans {
+        let mut used = false;
+        for rels_part in &names {
+            let source = rels_part.replace("_rels/", "").trim_end_matches(".rels").to_string();
+            let source = if source.is_empty() || rels_part == "_rels/.rels" { String::new() } else { source };
+            if package.relationships(&source)?.iter().any(|r| r.target_part(&source).as_deref() == Some(orphan.as_str())) {
+                used = true;
+                break;
+            }
+        }
+        if !used {
+            package.remove(&orphan);
+            package.remove_override(&orphan)?;
+        }
+    }
+    Ok(())
+}
 
 /// A new media part (`word/media/imageN.ext`) with `media`'s bytes, related
 /// from `part`; its relationship's id.
@@ -5446,6 +7847,27 @@ fn add_media(package: &mut Package, part: &str, media: &ibis_doc_model::Media) -
 }
 
 const HYPERLINK_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+const SUBDOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/subDocument";
+
+/// The targets of the subdocuments (`w:subDoc`) in `blocks`.
+fn subdocs_in(blocks: &[Block], out: &mut HashSet<String>) {
+    for b in blocks {
+        match b {
+            Block::Paragraph(p) => {
+                if let Some(sub) = &p.subdoc && !sub.target.is_empty() {
+                    out.insert(sub.target.clone());
+                }
+            }
+            Block::Table(t) => {
+                for row in &t.rows {
+                    for cell in &row.cells {
+                        subdocs_in(&cell.blocks, out);
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// The addresses of the links in `blocks` (tables' too).
 fn links_in(blocks: &[Block], out: &mut HashSet<String>) {

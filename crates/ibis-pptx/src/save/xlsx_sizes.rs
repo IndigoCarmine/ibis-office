@@ -212,10 +212,10 @@ pub(crate) fn write_merges(doc: &mut XmlDocument, merges: &[CellRange]) {
     doc.set_attr(list, "count", &n.to_string());
 }
 
-/// Frozen panes in the first `sheetView`: `pane` with the split, the
-/// top-left cell of the part that scrolls and `state="frozen"`, and a
-/// `selection` for that part (as Excel writes them); none when unfrozen.
-pub(crate) fn write_frozen(doc: &mut XmlDocument, frozen: Option<(u32, u32)>) -> Result<(), Error> {
+/// Frozen or split panes in the first `sheetView`: `pane` with the split, the
+/// top-left cell of the part that scrolls and `state="frozen"` or `state="split"`, and a
+/// `selection` for that part (as Excel writes them); none when un-paned.
+pub(crate) fn write_panes(doc: &mut XmlDocument, frozen: Option<(u32, u32)>, split: Option<(u32, u32)>) -> Result<(), Error> {
     let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
     let prefix = prefix_of(doc, root);
     let views = match doc.child(root, "sheetViews") {
@@ -237,13 +237,19 @@ pub(crate) fn write_frozen(doc: &mut XmlDocument, frozen: Option<(u32, u32)>) ->
     if let Some(p) = doc.child(view, "pane") {
         doc.detach(p);
     }
-    // Selections of the frozen parts go with the pane.
+    // Selections of the frozen or split parts go with the pane.
     for sel in doc.children_named(view, "selection").collect::<Vec<_>>() {
         if doc.attr(sel, "pane").is_some() {
             doc.detach(sel);
         }
     }
-    let Some((columns, rows)) = frozen else { return Ok(()) };
+    let (columns, rows, state) = if let Some((cols, r)) = frozen {
+        (cols, r, "frozen")
+    } else if let Some((cols, r)) = split {
+        (cols, r, "split")
+    } else {
+        return Ok(());
+    };
     let pane = detached(doc, &format!("{prefix}pane"));
     if columns > 0 {
         doc.set_attr(pane, "xSplit", &columns.to_string());
@@ -258,7 +264,7 @@ pub(crate) fn write_frozen(doc: &mut XmlDocument, frozen: Option<(u32, u32)>) ->
         _ => "bottomLeft",
     };
     doc.set_attr(pane, "activePane", active);
-    doc.set_attr(pane, "state", "frozen");
+    doc.set_attr(pane, "state", state);
     let n = doc.children(view).len();
     let first = doc.elements(view).next();
     match first {
@@ -269,6 +275,11 @@ pub(crate) fn write_frozen(doc: &mut XmlDocument, frozen: Option<(u32, u32)>) ->
     doc.set_attr(sel, "pane", active);
     doc.insert_after(pane, sel);
     Ok(())
+}
+
+#[allow(dead_code)]
+pub(crate) fn write_frozen(doc: &mut XmlDocument, frozen: Option<(u32, u32)>) -> Result<(), Error> {
+    write_panes(doc, frozen, None)
 }
 
 /// The sheet's data validation as the model has it: `dataValidations`
@@ -715,6 +726,90 @@ pub(crate) fn write_headings(doc: &mut XmlDocument, shown: bool) -> Result<(), E
         doc.remove_attr(view, "showRowColHeaders");
     } else {
         doc.set_attr(view, "showRowColHeaders", "0");
+    }
+    Ok(())
+}
+
+/// `sheetView/@showRuler` (absent: shown).
+pub(crate) fn write_show_ruler(doc: &mut XmlDocument, shown: bool) -> Result<(), Error> {
+    let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
+    let prefix = prefix_of(doc, root);
+    let views = match doc.child(root, "sheetViews") {
+        Some(v) => v,
+        None => {
+            let v = detached(doc, &format!("{prefix}sheetViews"));
+            place(doc, root, v, &["sheetFormatPr", "cols", "sheetData"]);
+            v
+        }
+    };
+    let view = match doc.child(views, "sheetView") {
+        Some(v) => v,
+        None => {
+            let v = doc.insert_element(views, 0, &format!("{prefix}sheetView"));
+            doc.set_attr(v, "workbookViewId", "0");
+            v
+        }
+    };
+    if shown {
+        doc.remove_attr(view, "showRuler");
+    } else {
+        doc.set_attr(view, "showRuler", "0");
+    }
+    Ok(())
+}
+
+/// `sheetView/@showFormulas` (absent: false).
+pub(crate) fn write_show_formulas(doc: &mut XmlDocument, shown: bool) -> Result<(), Error> {
+    let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
+    let prefix = prefix_of(doc, root);
+    let views = match doc.child(root, "sheetViews") {
+        Some(v) => v,
+        None => {
+            let v = detached(doc, &format!("{prefix}sheetViews"));
+            place(doc, root, v, &["sheetFormatPr", "cols", "sheetData"]);
+            v
+        }
+    };
+    let view = match doc.child(views, "sheetView") {
+        Some(v) => v,
+        None => {
+            let v = doc.insert_element(views, 0, &format!("{prefix}sheetView"));
+            doc.set_attr(v, "workbookViewId", "0");
+            v
+        }
+    };
+    if shown {
+        doc.set_attr(view, "showFormulas", "1");
+    } else {
+        doc.remove_attr(view, "showFormulas");
+    }
+    Ok(())
+}
+
+/// `sheetView/@showZeros` (absent: true).
+pub(crate) fn write_show_zeros(doc: &mut XmlDocument, shown: bool) -> Result<(), Error> {
+    let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
+    let prefix = prefix_of(doc, root);
+    let views = match doc.child(root, "sheetViews") {
+        Some(v) => v,
+        None => {
+            let v = detached(doc, &format!("{prefix}sheetViews"));
+            place(doc, root, v, &["sheetFormatPr", "cols", "sheetData"]);
+            v
+        }
+    };
+    let view = match doc.child(views, "sheetView") {
+        Some(v) => v,
+        None => {
+            let v = doc.insert_element(views, 0, &format!("{prefix}sheetView"));
+            doc.set_attr(v, "workbookViewId", "0");
+            v
+        }
+    };
+    if shown {
+        doc.remove_attr(view, "showZeros");
+    } else {
+        doc.set_attr(view, "showZeros", "0");
     }
     Ok(())
 }
@@ -1180,7 +1275,7 @@ pub(crate) fn write_conditional(doc: &mut XmlDocument, old_formats: &[ibis_doc_m
                         doc.set_attr(x, "rgb", &rgb(*c));
                     }
                 }
-                CfKind::DataBar { min, max, color, gradient, negative_color, axis_color, axis_position, min_length, max_length } => {
+                CfKind::DataBar { min, max, color, gradient, negative_color, axis_color, axis_position, min_length, max_length, border_color, negative_border_color, direction } => {
                     let db = add(doc, e, "dataBar");
                     if let Some(min_l) = min_length {
                         doc.set_attr(db, "minLength", &min_l.to_string());
@@ -1193,7 +1288,7 @@ pub(crate) fn write_conditional(doc: &mut XmlDocument, old_formats: &[ibis_doc_m
                     let x = add(doc, db, "color");
                     doc.set_attr(x, "rgb", &rgb(*color));
 
-                    if !gradient || negative_color.is_some() || axis_color.is_some() || axis_position.is_some() {
+                    if !gradient || negative_color.is_some() || axis_color.is_some() || axis_position.is_some() || border_color.is_some() || *direction != ibis_doc_model::DataBarDirection::Context {
                         let mut x14_attrs = String::new();
                         if !gradient {
                             x14_attrs.push_str(r#" gradient="0""#);
@@ -1204,6 +1299,14 @@ pub(crate) fn write_conditional(doc: &mut XmlDocument, old_formats: &[ibis_doc_m
                         if let Some(max_l) = max_length {
                             x14_attrs.push_str(&format!(r#" maxLength="{max_l}""#));
                         }
+                        if border_color.is_some() {
+                            x14_attrs.push_str(r#" border="1""#);
+                        }
+                        match direction {
+                            ibis_doc_model::DataBarDirection::LeftToRight => x14_attrs.push_str(r#" direction="leftToRight""#),
+                            ibis_doc_model::DataBarDirection::RightToLeft => x14_attrs.push_str(r#" direction="rightToLeft""#),
+                            ibis_doc_model::DataBarDirection::Context => {}
+                        }
                         if let Some(pos) = axis_position {
                             let pos_str = match pos {
                                 ibis_doc_model::DataBarAxisPosition::Automatic => "automatic",
@@ -1213,8 +1316,14 @@ pub(crate) fn write_conditional(doc: &mut XmlDocument, old_formats: &[ibis_doc_m
                             x14_attrs.push_str(&format!(r#" axisPosition="{pos_str}""#));
                         }
                         let mut x14_children = String::new();
+                        if let Some(c) = border_color {
+                            x14_children.push_str(&format!(r#"<x14:borderColor rgb="{}"/>"#, rgb(*c)));
+                        }
                         if let Some(neg_c) = negative_color {
                             x14_children.push_str(&format!(r#"<x14:negativeFillColor rgb="{}"/>"#, rgb(*neg_c)));
+                        }
+                        if let Some(c) = negative_border_color {
+                            x14_children.push_str(&format!(r#"<x14:negativeBorderColor rgb="{}"/>"#, rgb(*c)));
                         }
                         if let Some(ax_c) = axis_color {
                             x14_children.push_str(&format!(r#"<x14:axisColor rgb="{}"/>"#, rgb(*ax_c)));
@@ -1467,7 +1576,7 @@ fn esc(s: &str) -> String {
 }
 
 /// スパークライン（`extLst/ext/x14:sparklineGroups`）の書き込み。
-pub(crate) fn write_sparklines(doc: &mut XmlDocument, sparklines: &[ibis_doc_model::SparklineGroup]) -> Result<(), Error> {
+pub(crate) fn write_sparklines(doc: &mut XmlDocument, sheet_name: &str, sparklines: &[ibis_doc_model::SparklineGroup]) -> Result<(), Error> {
     const SPARKLINE_URI: &str = "{05C60535-1F16-4fd2-B633-F4F36F0B64E0}";
     let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
     let prefix = prefix_of(doc, root);
@@ -1560,7 +1669,14 @@ pub(crate) fn write_sparklines(doc: &mut XmlDocument, sparklines: &[ibis_doc_mod
         children_xml.push_str(&color_tag("colorLow", g.low_color));
 
         if let Some(ref f) = g.date_range {
-            children_xml.push_str(&format!(r#"<xm:f>{}</xm:f>"#, esc(f)));
+            let f_qual = if f.contains('!') {
+                f.clone()
+            } else if sheet_name.contains(|c: char| !c.is_alphanumeric() && c != '_') {
+                format!("'{}'!{f}", sheet_name.replace('\'', "''"))
+            } else {
+                format!("{sheet_name}!{f}")
+            };
+            children_xml.push_str(&format!(r#"<xm:f>{}</xm:f>"#, esc(&f_qual)));
         }
 
         children_xml.push_str("<x14:sparklines>");
@@ -1570,15 +1686,11 @@ pub(crate) fn write_sparklines(doc: &mut XmlDocument, sparklines: &[ibis_doc_mod
             } else {
                 format!("{}:{}", cell_name(s.data.first_column, s.data.first_row), cell_name(s.data.last_column, s.data.last_row))
             };
-            let f = match &s.sheet {
-                Some(sh) => {
-                    if sh.contains(|c: char| !c.is_alphanumeric() && c != '_') {
-                        format!("'{}'!{}", sh.replace('\'', "''"), range_str)
-                    } else {
-                        format!("{sh}!{range_str}")
-                    }
-                }
-                None => range_str,
+            let sh_target = s.sheet.as_deref().unwrap_or(sheet_name);
+            let f = if sh_target.contains(|c: char| !c.is_alphanumeric() && c != '_') {
+                format!("'{}'!{}", sh_target.replace('\'', "''"), range_str)
+            } else {
+                format!("{sh_target}!{range_str}")
             };
             let sqref = cell_name(s.column, s.row);
             children_xml.push_str(&format!(r#"<x14:sparkline><xm:f>{}</xm:f><xm:sqref>{}</xm:sqref></x14:sparkline>"#, esc(&f), sqref));
@@ -1620,14 +1732,18 @@ pub(crate) fn write_custom_sheet_views(doc: &mut XmlDocument, views: &[ibis_doc_
     for v in views {
         let node = doc.append_element(list, &format!("{prefix}customSheetView"));
         doc.set_attr(node, "guid", &v.guid);
-        if !v.name.is_empty() {
-            doc.set_attr(node, "name", &v.name);
-        }
         if let Some(z) = v.zoom {
             doc.set_attr(node, "scale", &z.to_string());
         }
         doc.set_attr(node, "showGridLines", if v.grid_lines { "1" } else { "0" });
         doc.set_attr(node, "showRowCol", if v.headings { "1" } else { "0" });
+        doc.set_attr(node, "showRuler", if v.show_ruler { "1" } else { "0" });
+        if v.show_formulas {
+            doc.set_attr(node, "showFormulas", "1");
+        }
+        if !v.show_zeros {
+            doc.set_attr(node, "zeroValues", "0");
+        }
         if v.page_break_preview {
             doc.set_attr(node, "view", "pageBreakPreview");
         }
@@ -1635,7 +1751,30 @@ pub(crate) fn write_custom_sheet_views(doc: &mut XmlDocument, views: &[ibis_doc_
             let p = doc.append_element(node, &format!("{prefix}pane"));
             if x > 0 { doc.set_attr(p, "xSplit", &x.to_string()); }
             if y > 0 { doc.set_attr(p, "ySplit", &y.to_string()); }
+            let top_left = cell_name(x, y);
+            doc.set_attr(p, "topLeftCell", &top_left);
+            let active = match (x > 0, y > 0) {
+                (true, true) => "bottomRight",
+                (true, false) => "topRight",
+                (false, true) => "bottomLeft",
+                (false, false) => "topLeft",
+            };
+            doc.set_attr(p, "activePane", active);
             doc.set_attr(p, "state", "frozen");
+        } else if let Some((x, y)) = v.split {
+            let p = doc.append_element(node, &format!("{prefix}pane"));
+            if x > 0 { doc.set_attr(p, "xSplit", &x.to_string()); }
+            if y > 0 { doc.set_attr(p, "ySplit", &y.to_string()); }
+            let top_left = cell_name(x, y);
+            doc.set_attr(p, "topLeftCell", &top_left);
+            let active = match (x > 0, y > 0) {
+                (true, true) => "bottomRight",
+                (true, false) => "topRight",
+                (false, true) => "bottomLeft",
+                (false, false) => "topLeft",
+            };
+            doc.set_attr(p, "activePane", active);
+            doc.set_attr(p, "state", "split");
         }
         if let Some((r, c)) = v.active_cell {
             let sel = doc.append_element(node, &format!("{prefix}selection"));
@@ -1644,9 +1783,6 @@ pub(crate) fn write_custom_sheet_views(doc: &mut XmlDocument, views: &[ibis_doc_
             doc.set_attr(sel, "sqref", &cell);
         }
         if let Some(print) = &v.print {
-            let setup = doc.append_element(node, &format!("{prefix}pageSetUp"));
-            doc.set_attr(setup, "orientation", if print.landscape { "landscape" } else { "portrait" });
-            doc.set_attr(setup, "scale", &print.scale.to_string());
             let margins = doc.append_element(node, &format!("{prefix}pageMargins"));
             doc.set_attr(margins, "left", &number(print.margins[0] as f64 / ibis_doc_model::EMU_PER_INCH as f64));
             doc.set_attr(margins, "right", &number(print.margins[1] as f64 / ibis_doc_model::EMU_PER_INCH as f64));
@@ -1657,6 +1793,9 @@ pub(crate) fn write_custom_sheet_views(doc: &mut XmlDocument, views: &[ibis_doc_
             let opts = doc.append_element(node, &format!("{prefix}printOptions"));
             if print.grid_lines { doc.set_attr(opts, "gridLines", "1"); }
             if print.headings { doc.set_attr(opts, "headings", "1"); }
+            let setup = doc.append_element(node, &format!("{prefix}pageSetup"));
+            doc.set_attr(setup, "orientation", if print.landscape { "landscape" } else { "portrait" });
+            doc.set_attr(setup, "scale", &print.scale.to_string());
         }
         if let Some(Some(af)) = &v.auto_filter {
             let filter_node = doc.append_element(node, &format!("{prefix}autoFilter"));
@@ -1698,12 +1837,13 @@ pub(crate) fn write_phonetic(
         doc.remove_attr(view, "showPhonetic");
     }
 
-    // phoneticPr
+    // phoneticPr (ECMA-376 Part 1 §18.3.1.65: fontId is required).
     if let Some(old) = doc.child(root, "phoneticPr") {
         doc.detach(old);
     }
     if let Some(p) = pr {
         let elem = detached(doc, &format!("{prefix}phoneticPr"));
+        doc.set_attr(elem, "fontId", &p.font_id.to_string());
         doc.set_attr(elem, "type", p.phonetic_type.to_ooxml());
         doc.set_attr(elem, "alignment", p.alignment.to_ooxml());
         place(doc, root, elem, &[

@@ -280,7 +280,7 @@ impl SlideEditor {
         self.end_text_edit(window, cx);
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -308,7 +308,7 @@ impl SlideEditor {
         self.end_text_edit(window, cx);
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -373,7 +373,7 @@ impl SlideEditor {
         self.resources.add_picture(poster_media, ibis_doc_model::MediaFormat::Png, &poster);
         let clip_media = self.document.ids().add_media(format, data);
         let id = self.document.ids().new_shape_id();
-        let picture = ibis_doc_model::Picture { media: poster_media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: Some(Clip { link, ..Clip::new(clip_media, audio) }), alt_text: Default::default(), decorative: false, name: String::new(), shadow: None, reflection: None, soft_edge: None };
+        let picture = ibis_doc_model::Picture { media: poster_media, crop: Default::default(), stroke: None, corner: 0, duotone: None, clear: None, luminance: None, clip: Some(Clip { link, ..Clip::new(clip_media, audio) }), alt_text: Default::default(), decorative: false, name: String::new(), shadow: None, reflection: None, soft_edge: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None, ole: None };
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let slide = self.current_slide;
         let mut commands = Vec::new();
@@ -509,7 +509,7 @@ impl SlideEditor {
         self.end_text_edit(window, cx);
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, multiple: false, prompt: Some(crate::shell::i18n::text("_pptx.poster-image").to_string().into()) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_pptx.poster-image").to_string().into()) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -651,6 +651,92 @@ impl SlideEditor {
         if !commands.is_empty() {
             self.run(commands, cx);
         }
+    }
+
+    /// 挿入 > 3D モデル…: choose a 3D model file (.glb/.gltf/.obj/.3mf) and place it on the slide.
+    pub(crate) fn pick_3d_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_text_edit(window, cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                extensions: vec!["glb".into(), "gltf".into(), "obj".into(), "3mf".into()],
+                multiple: false,
+                prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()),
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let Some(path) = paths.into_iter().next() else { return };
+                this.update(cx, |this, cx| {
+                    this.insert_3d_model_object(&path, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = window;
+            self.set_status(crate::shell::i18n::text("pptx.3d-model.not-available-here").to_string(), cx);
+        }
+    }
+
+    /// Place a 3D model placeholder shape on the slide.
+    pub(crate) fn insert_3d_model_object(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("3D Model");
+        let (w, h) = (3_000_000, 1_500_000);
+        let (slide_w, slide_h) = (self.presentation().slide_size.width, self.presentation().slide_size.height);
+        let x = (slide_w - w) / 2;
+        let y = (slide_h - h) / 2;
+        let shape_id = self.document.ids().new_shape_id();
+        let shape = ibis_doc_model::Shape::text_box(shape_id, ibis_doc_model::EmuRect::new(x, y, w, h), format!("📦 {name}"));
+        let slide = self.current_slide;
+        let idx = self.slide().shapes.len();
+        self.run(vec![ibis_doc_model::Command::InsertShape { slide, index: idx, shape }], cx);
+    }
+
+    /// 挿入 > オブジェクトの挿入…: choose an external file and place it on the slide as an embedded object icon.
+    pub(crate) fn pick_insert_object(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_text_edit(window, cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let picked = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                extensions: Vec::new(),
+                multiple: false,
+                prompt: Some(crate::shell::i18n::text("_shell.insert").to_string().into()),
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = picked.await else { return };
+                let Some(path) = paths.into_iter().next() else { return };
+                this.update(cx, |this, cx| {
+                    this.insert_object_placeholder(&path, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = window;
+            self.set_status(crate::shell::i18n::text("pptx.insert-object.not-available-here").to_string(), cx);
+        }
+    }
+
+    /// Place an embedded object placeholder shape on the slide.
+    pub(crate) fn insert_object_placeholder(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("Object");
+        let (w, h) = (2_500_000, 1_500_000);
+        let (slide_w, slide_h) = (self.presentation().slide_size.width, self.presentation().slide_size.height);
+        let x = (slide_w - w) / 2;
+        let y = (slide_h - h) / 2;
+        let shape_id = self.document.ids().new_shape_id();
+        let shape = ibis_doc_model::Shape::text_box(shape_id, ibis_doc_model::EmuRect::new(x, y, w, h), format!("📎 {name}"));
+        let slide = self.current_slide;
+        let idx = self.slide().shapes.len();
+        self.run(vec![ibis_doc_model::Command::InsertShape { slide, index: idx, shape }], cx);
     }
 }
 

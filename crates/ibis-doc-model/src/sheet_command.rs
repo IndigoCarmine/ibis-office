@@ -69,6 +69,9 @@ pub struct SheetPatch {
     pub slide: SlideId,
     pub cells: Vec<CellSlot>,
     pub styles: Option<Vec<CellStyle>>,
+    /// The pictures IMAGE asked for in cells (`Sheet::web_images`) as they were, so that an undo gives back the picture
+    /// with the formula.
+    pub images: Vec<((u32, u32), Option<ibis_calc::eval::ImageSpec>)>,
 }
 
 /// An edge of a cell, for borders.
@@ -334,6 +337,17 @@ pub enum SheetCommand {
     ShowScenario { slide: SlideId, index: usize },
     /// A What-If scenario summary report sheet generated.
     CreateScenarioSummary { slide: SlideId, result_cells: Vec<String> },
+    /// A new sheet (after the sheet of `slide`) with the given cells, for a
+    /// report: its name made different from the others' (`name`, `name 2`, …).
+    CreateReportSheet { slide: SlideId, name: String, cells: Vec<ReportCell>, widths: Vec<(u32, u32)> },
+    /// 閉じて読み込む of the クエリ エディター: the query's result written to its sheet (made after the
+    /// sheet of `slide`, or rewritten if the query has loaded one) and the query kept in the workbook.
+    LoadQuery { slide: SlideId, query: crate::query::Query, table: crate::query::QTable },
+    /// The workbook's queries and their parameters replaced (a query edited or deleted).
+    SetQueries { queries: Vec<crate::query::Query>, parameters: Vec<crate::query::Parameter> },
+    /// The Solver's model kept in the sheet's hidden names (`solver_*`): the
+    /// listed ones replace those the sheet has.
+    SetSolverNames { slide: SlideId, names: Vec<(String, String)> },
     /// Merge all scenarios from `from_slide` into worksheet `slide`.
     MergeScenarios { slide: SlideId, from_slide: SlideId },
     /// ユーザー設定のビューの追加: A custom view added to the workbook.
@@ -352,6 +366,12 @@ pub enum SheetCommand {
     /// workbook `index` set to `sheets` (read from its file), and the formulas
     /// that read them calculated again.
     RefreshExternalBook { index: usize, sheets: Vec<crate::sheet::ExternalSheet> },
+    /// A formula typed with a workbook the file does not link yet (`[Budget.xlsx]Sheet1!A1`): the link added
+    /// (its cached cells as read from the file, when it was found), numbered after the others.
+    AddExternalBook { book: crate::sheet::ExternalBook },
+    /// データ > ブックのリンク > リンク元の変更: the source of external workbook `index`
+    /// changed to `new_name` and `new_path`, formulas referencing it rewritten, and cached cells set to `sheets`.
+    ChangeExternalBookSource { index: usize, new_name: String, new_path: String, sheets: Vec<crate::sheet::ExternalSheet> },
     /// データ > ブックのリンク > リンクの解除: the formulas that refer to the
     /// external workbook `index` become their values (a defined name, a
     /// conditional format and a validation get `#REF!`), and the link goes
@@ -359,6 +379,14 @@ pub enum SheetCommand {
     BreakExternalLink { index: usize },
     /// エラー チェック > エラーを無視: errors of `kind` in `range` ignored.
     IgnoreErrors { slide: SlideId, range: CellRange, kind: crate::error_check::ErrorKind },
+    /// スライサーの設定: the slicer shape `shape` of `slide` made `slicer` (its items are made again from its source).
+    EditSlicer { slide: SlideId, shape: crate::model::ShapeId, slicer: crate::slicer::Slicer },
+    /// A timeline's selection, level or scroll changed: the timeline shape `shape` of `slide` made `timeline`.
+    EditTimeline { slide: SlideId, shape: crate::model::ShapeId, timeline: crate::timeline::Timeline },
+    /// A form control's state changed: the control shape `shape` of `slide` made `control`.
+    EditControl { slide: SlideId, shape: crate::model::ShapeId, control: crate::form_control::FormControl },
+    /// 無視したエラーをリセット: the errors ignored on the sheet marked again.
+    ResetIgnoredErrors { slide: SlideId },
     /// The sheet tab's colour (`None`: none).
     SetTabColor { slide: SlideId, color: Option<Rgb> },
     /// 目盛線 (the grid lines between cells) shown or not.
@@ -371,9 +399,20 @@ pub enum SheetCommand {
     SetPageBreakPreview { slide: SlideId, shown: bool },
     /// 表示 > ページ レイアウト (turns page break preview off).
     SetPageLayout { slide: SlideId, shown: bool },
+    /// ルーラー (the rulers in page layout view) shown or not.
+    SetShowRuler { slide: SlideId, shown: bool },
+    /// 数式の表示 (`sheetView/@showFormulas`).
+    SetShowFormulas { slide: SlideId, shown: bool },
+    /// ゼロ値の表示 (`sheetView/@showZeros`).
+    SetShowZeros { slide: SlideId, shown: bool },
+    /// インクの非表示.
+    SetHideInk { slide: SlideId, hidden: bool },
     /// Freeze the columns left of and the rows above (columns, rows), or
     /// unfreeze (`None`): ウィンドウ枠の固定.
     Freeze { slide: SlideId, frozen: Option<(u32, u32)> },
+    /// Split the window into panes at (columns, rows), or unsplit (`None`):
+    /// ウィンドウの分割 (`pane/@state="split"`).
+    Split { slide: SlideId, split: Option<(u32, u32)> },
     /// The sheet's print settings, and (`Some`) its print area (`None` in
     /// it: none), kept as the sheet's `_xlnm.Print_Area` name too.
     SetPrint { slide: SlideId, print: crate::sheet::SheetPrint, area: Option<Option<CellRange>> },
@@ -408,6 +447,8 @@ pub enum SheetCommand {
     /// Put the workbook's sheets back as they were (the inverse of
     /// structural changes, which reach every sheet).
     RestoreAll { slides: Vec<Slide>, workbook: Option<Arc<Workbook>> },
+    /// Sizes of columns or rows from `first` put back (the undo of a size change: not a copy of the whole book), with their entries in the hidden ones (the size they come back at, if any).
+    RestoreSizes { slide: SlideId, axis: Axis, first: u32, sizes: Vec<Emu>, hidden: Vec<Option<Emu>> },
     /// The sheet as built elsewhere, in place of the slide's (a pivot table
     /// built again from its source, in its style: ピボットテーブルの更新).
     ReplaceSheet { slide: SlideId, sheet: Box<Sheet> },
@@ -441,6 +482,10 @@ pub enum SheetCommand {
     SetShowPhonetic { slide: SlideId, show: bool },
     /// ふりがなの設定 (書式/配置/文字種): シートの `<phoneticPr>` を設定または解除 (`None`).
     SetPhoneticProperties { slide: SlideId, properties: Option<crate::sheet::PhoneticProperties> },
+    /// 浮動画像をセルに配置 (Place in Cell): セル内に画像を配置し MoveAndSize 設定.
+    PlacePictureInCell { slide: SlideId, shape: ShapeId, row: u32, column: u32 },
+    /// セル内の画像をセル上に配置 (Place over Cells): セル内配置を解除して浮動画像に変換.
+    PlacePictureOverCells { slide: SlideId, shape: ShapeId, row: u32, column: u32 },
 }
 
 /// グラフの移動先 (Move Chart Destination).
@@ -453,10 +498,26 @@ pub enum ChartMoveTarget {
 }
 
 pub(crate) fn apply(presentation: &mut Presentation, command: SheetCommand) -> Result<Command, EditError> {
+    let view_only = matches!(
+        command,
+        SheetCommand::SetZoom { .. }
+            | SheetCommand::SetGridLines { .. }
+            | SheetCommand::SetHeadings { .. }
+            | SheetCommand::SetPageBreakPreview { .. }
+            | SheetCommand::SetPageLayout { .. }
+            | SheetCommand::SetShowRuler { .. }
+            | SheetCommand::SetHideInk { .. }
+            | SheetCommand::Freeze { .. }
+            | SheetCommand::Split { .. }
+            | SheetCommand::SetWindowHidden { .. }
+            | SheetCommand::SetDocProperties(_)
+    );
     let result = apply_command(presentation, command);
-    // The slicers show what the filters keep after the edit (or its undo).
-    if result.is_ok() {
+    // The slicers, controls and charts show what the cells and filters hold after the edit (or its undo).
+    if result.is_ok() && !view_only {
         crate::slicer::refresh_slicers(presentation);
+        crate::form_control::refresh_controls(presentation);
+        crate::chart_refresh::refresh_charts(presentation);
     }
     result
 }
@@ -510,6 +571,7 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
         SheetCommand::Insert { slide, axis, at, count } => structure(presentation, slide, true, axis, at, count),
         SheetCommand::Delete { slide, axis, at, count } => structure(presentation, slide, false, axis, at, count),
         SheetCommand::RestoreAll { slides, workbook } => restore_all(presentation, slides, workbook),
+        SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden } => restore_sizes(presentation, slide, axis, first, sizes, hidden),
         SheetCommand::SetSize { slide, axis, first, last, size } => set_size(presentation, slide, axis, first, last, size),
         SheetCommand::Hide { slide, axis, first, last, hidden } => hide(presentation, slide, axis, first, last, hidden),
         SheetCommand::MoveCells { slide, from, row, column } => move_cells(presentation, slide, from, row, column),
@@ -767,6 +829,16 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
         SheetCommand::DeleteScenario { slide, index } => apply_delete_scenario(presentation, slide, index),
         SheetCommand::ShowScenario { slide, index } => apply_show_scenario(presentation, slide, index),
         SheetCommand::CreateScenarioSummary { slide, result_cells } => apply_create_scenario_summary(presentation, slide, result_cells),
+        SheetCommand::CreateReportSheet { slide, name, cells, widths } => apply_create_report_sheet(presentation, slide, name, cells, widths),
+        SheetCommand::LoadQuery { slide, query, table } => apply_load_query(presentation, slide, query, table),
+        SheetCommand::SetQueries { queries, parameters } => {
+            let inverse = snapshot(presentation);
+            let wb = Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?);
+            wb.queries = queries;
+            wb.query_parameters = parameters;
+            Ok(inverse)
+        }
+        SheetCommand::SetSolverNames { slide, names } => apply_set_solver_names(presentation, slide, names),
         SheetCommand::MergeScenarios { slide, from_slide } => apply_merge_scenarios(presentation, slide, from_slide),
         SheetCommand::AddCustomView { view, sheet_views } => apply_add_custom_view(presentation, view, sheet_views),
         SheetCommand::DeleteCustomView { name } => apply_delete_custom_view(presentation, &name),
@@ -777,7 +849,41 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
             sheet_mut(presentation, slide)?.ignore_errors(range, kind);
             Ok(inverse)
         }
+        SheetCommand::EditSlicer { slide, shape, slicer } => {
+            let inverse = snapshot(presentation);
+            let target = presentation.slides.iter_mut().find(|s| s.id == slide).and_then(|s| s.shapes.iter_mut().find(|sh| sh.id == shape)).ok_or(EditError::IndexOutOfRange)?;
+            if !matches!(target.kind, crate::model::ShapeKind::Slicer(_)) {
+                return Err(EditError::IndexOutOfRange);
+            }
+            target.kind = crate::model::ShapeKind::Slicer(Arc::new(slicer));
+            Ok(inverse)
+        }
+        SheetCommand::EditTimeline { slide, shape, timeline } => {
+            let inverse = snapshot(presentation);
+            let target = presentation.slides.iter_mut().find(|s| s.id == slide).and_then(|s| s.shapes.iter_mut().find(|sh| sh.id == shape)).ok_or(EditError::IndexOutOfRange)?;
+            if !matches!(target.kind, crate::model::ShapeKind::Timeline(_)) {
+                return Err(EditError::IndexOutOfRange);
+            }
+            target.kind = crate::model::ShapeKind::Timeline(Arc::new(timeline));
+            Ok(inverse)
+        }
+        SheetCommand::EditControl { slide, shape, control } => {
+            let inverse = snapshot(presentation);
+            let target = presentation.slides.iter_mut().find(|s| s.id == slide).and_then(|s| s.shapes.iter_mut().find(|sh| sh.id == shape)).ok_or(EditError::IndexOutOfRange)?;
+            if !matches!(target.kind, crate::model::ShapeKind::Control(_)) {
+                return Err(EditError::IndexOutOfRange);
+            }
+            target.kind = crate::model::ShapeKind::Control(Arc::new(control));
+            Ok(inverse)
+        }
+        SheetCommand::ResetIgnoredErrors { slide } => {
+            let inverse = snapshot(presentation);
+            sheet_mut(presentation, slide)?.ignored_errors.clear();
+            Ok(inverse)
+        }
         SheetCommand::RefreshExternalBook { index, sheets } => refresh_external_book(presentation, index, sheets),
+        SheetCommand::AddExternalBook { book } => add_external_book(presentation, book),
+        SheetCommand::ChangeExternalBookSource { index, new_name, new_path, sheets } => change_external_book_source(presentation, index, new_name, new_path, sheets),
         SheetCommand::BreakExternalLink { index } => break_external_link(presentation, index),
         SheetCommand::AddSparklineGroup { slide, group } => apply_add_sparkline_group(presentation, slide, group),
         SheetCommand::EditSparklineGroup { slide, index, group } => apply_edit_sparkline_group(presentation, slide, index, group),
@@ -911,9 +1017,10 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
             Ok(inverse)
         }
         SheetCommand::SetZoom { slide, zoom } => {
-            let inverse = snapshot(presentation);
-            sheet_mut(presentation, slide)?.zoom = zoom;
-            Ok(inverse)
+            let sheet = sheet_zoom_mut(presentation, slide)?;
+            let old = sheet.zoom;
+            sheet.zoom = zoom;
+            Ok(Command::Sheet(SheetCommand::SetZoom { slide, zoom: old }))
         }
         SheetCommand::SetPageBreakPreview { slide, shown } => {
             let inverse = snapshot(presentation);
@@ -933,10 +1040,42 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
             }
             Ok(inverse)
         }
+        SheetCommand::SetShowRuler { slide, shown } => {
+            let inverse = snapshot(presentation);
+            sheet_mut(presentation, slide)?.show_ruler = shown;
+            Ok(inverse)
+        }
+        SheetCommand::SetShowFormulas { slide, shown } => {
+            let inverse = snapshot(presentation);
+            sheet_mut(presentation, slide)?.show_formulas = shown;
+            Ok(inverse)
+        }
+        SheetCommand::SetShowZeros { slide, shown } => {
+            let inverse = snapshot(presentation);
+            sheet_mut(presentation, slide)?.show_zeros = shown;
+            Ok(inverse)
+        }
+        SheetCommand::SetHideInk { slide, hidden } => {
+            let inverse = snapshot(presentation);
+            sheet_mut(presentation, slide)?.hide_ink = hidden;
+            Ok(inverse)
+        }
         SheetCommand::Freeze { slide, frozen } => {
             let inverse = snapshot(presentation);
             let sheet = sheet_mut(presentation, slide)?;
             sheet.frozen = frozen.filter(|&(c, r)| c > 0 || r > 0);
+            if sheet.frozen.is_some() {
+                sheet.split = None;
+            }
+            Ok(inverse)
+        }
+        SheetCommand::Split { slide, split } => {
+            let inverse = snapshot(presentation);
+            let sheet = sheet_mut(presentation, slide)?;
+            sheet.split = split.filter(|&(c, r)| c > 0 || r > 0);
+            if sheet.split.is_some() {
+                sheet.frozen = None;
+            }
             Ok(inverse)
         }
         SheetCommand::AddSheet { index, name, slide, shape } => add_sheet(presentation, index, name, slide, shape),
@@ -998,11 +1137,62 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
             sheet.phonetic_pr = properties;
             Ok(inverse)
         }
+        SheetCommand::PlacePictureInCell { slide, shape, row, column } => {
+            let inverse = snapshot(presentation);
+            let (xs, ys) = {
+                let sheet = sheet_mut(presentation, slide)?;
+                check_bounds(sheet, row, column)?;
+                if !sheet.cell_images.iter().any(|i| i.row == row && i.column == column) {
+                    sheet.cell_images.push(crate::sheet::CellImage { row, column, index: 0 });
+                }
+                (sheet.column_offsets(), sheet.row_offsets())
+            };
+            if let Some(slide_obj) = presentation.slide_mut(slide) {
+                slide_obj.shape_placements.insert(shape, crate::model::ObjectPlacement::MoveAndSize);
+                if let Some(sh) = slide_obj.shapes.iter_mut().find(|s| s.id == shape) {
+                    let col_idx = column as usize;
+                    let row_idx = row as usize;
+                    if col_idx + 1 < xs.len() && row_idx + 1 < ys.len() {
+                        let (x0, y0) = (xs[col_idx], ys[row_idx]);
+                        let (x1, y1) = (xs[col_idx + 1], ys[row_idx + 1]);
+                        let (cw, ch) = ((x1 - x0).max(1), (y1 - y0).max(1));
+                        let (w, h) = (sh.frame.width.max(1), sh.frame.height.max(1));
+                        let scale = (cw as f64 / w as f64).min(ch as f64 / h as f64);
+                        let (fw, fh) = ((w as f64 * scale) as i64, (h as f64 * scale) as i64);
+                        sh.frame = EmuRect::new(x0 + (cw - fw) / 2, y0 + (ch - fh) / 2, fw.max(1), fh.max(1));
+                    }
+                }
+            }
+            Ok(inverse)
+        }
+        SheetCommand::PlacePictureOverCells { slide, shape, row, column } => {
+            let inverse = snapshot(presentation);
+            {
+                let sheet = sheet_mut(presentation, slide)?;
+                sheet.cell_images.retain(|i| !(i.row == row && i.column == column));
+            }
+            if let Some(slide_obj) = presentation.slide_mut(slide) {
+                slide_obj.shape_placements.insert(shape, crate::model::ObjectPlacement::MoveOnly);
+            }
+            Ok(inverse)
+        }
     }
 }
 
 /// The worksheet on `slide`, to change.
-pub(crate) fn sheet_mut(presentation: &mut Presentation, slide: SlideId) -> Result<&mut Sheet, EditError> {
+pub fn sheet_mut(presentation: &mut Presentation, slide: SlideId) -> Result<&mut Sheet, EditError> {
+    let s = presentation.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
+    let Some(shape) = s.shapes.iter_mut().find(|sh| matches!(sh.kind, ShapeKind::Sheet(_))) else {
+        return Err(EditError::IndexOutOfRange);
+    };
+    let ShapeKind::Sheet(sheet) = &mut shape.kind else { unreachable!() };
+    let sheet = Arc::make_mut(sheet);
+    sheet.cells.bump_content_id();
+    Ok(sheet)
+}
+
+/// The worksheet on `slide`, to change only its zoom (leaving `cells.content_id()` unchanged).
+fn sheet_zoom_mut(presentation: &mut Presentation, slide: SlideId) -> Result<&mut Sheet, EditError> {
     let s = presentation.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
     let Some(shape) = s.shapes.iter_mut().find(|sh| matches!(sh.kind, ShapeKind::Sheet(_))) else {
         return Err(EditError::IndexOutOfRange);
@@ -1097,6 +1287,8 @@ fn default_style(presentation: &Presentation) -> CellStyle {
 #[derive(Default)]
 struct Undo {
     patches: Vec<SheetPatch>,
+    /// The cells in `patches` (by sheet), so that a cell is remembered once without looking through them all (a column of a million cells).
+    seen: std::collections::HashSet<(SlideId, u32, u32)>,
 }
 
 impl Undo {
@@ -1104,16 +1296,23 @@ impl Undo {
         match self.patches.iter().position(|p| p.slide == slide) {
             Some(i) => &mut self.patches[i],
             None => {
-                self.patches.push(SheetPatch { slide, cells: Vec::new(), styles: None });
+                self.patches.push(SheetPatch { slide, cells: Vec::new(), styles: None, images: Vec::new() });
                 self.patches.last_mut().unwrap()
             }
         }
     }
 
-    fn remember(&mut self, slide: SlideId, sheet: &Sheet, row: u32, column: u32) {
+    /// Remember the picture of a cell before it changes.
+    fn remember_image(&mut self, slide: SlideId, sheet: &Sheet, at: (u32, u32)) {
         let patch = self.patch(slide);
-        if !patch.cells.iter().any(|c| c.row == row && c.column == column) {
-            patch.cells.push(CellSlot { row, column, cell: sheet.cell(row, column).cloned() });
+        if !patch.images.iter().any(|(k, _)| *k == at) {
+            patch.images.push((at, sheet.web_images.get(&at).cloned()));
+        }
+    }
+
+    fn remember(&mut self, slide: SlideId, sheet: &Sheet, row: u32, column: u32) {
+        if self.seen.insert((slide, row, column)) {
+            self.patch(slide).cells.push(CellSlot { row, column, cell: sheet.cell(row, column).cloned() });
         }
     }
 
@@ -1130,7 +1329,8 @@ impl Undo {
 }
 
 fn check_bounds(sheet: &Sheet, row: u32, column: u32) -> Result<(), EditError> {
-    if row as usize >= sheet.rows.len() || column as usize >= sheet.columns.len() {
+    let _ = sheet;
+    if row >= 1_048_576 || column >= 16_384 {
         return Err(EditError::IndexOutOfRange);
     }
     Ok(())
@@ -1147,6 +1347,7 @@ fn set_cells(presentation: &mut Presentation, slide: SlideId, edits: Vec<CellEdi
     let before = spilling.then(|| snapshot(presentation));
     let mut spill_changed: Vec<(u32, u32)> = Vec::new();
     let mut formula_changed = false;
+    let mut resized_grid = false;
     {
         let sheet = sheet_mut(presentation, slide)?;
         for e in &edits {
@@ -1154,6 +1355,18 @@ fn set_cells(presentation: &mut Presentation, slide: SlideId, edits: Vec<CellEdi
             // A data table is changed as a whole (Excel: 「テーブルの一部を変更することはできません」).
             if sheet.data_tables.iter().any(|t| (t.range.first_row..=t.range.last_row).contains(&e.row) && (t.range.first_column..=t.range.last_column).contains(&e.column)) {
                 return Err(EditError::DataTablePart);
+            }
+        }
+        for e in &edits {
+            if e.row as usize >= sheet.rows.len() {
+                let def_h = if sheet.default_row > 0 { sheet.default_row } else { 20 * crate::EMU_PER_POINT };
+                sheet.rows.resize(e.row as usize + 1, def_h);
+                resized_grid = true;
+            }
+            if e.column as usize >= sheet.columns.len() {
+                let def_w = if sheet.default_column > 0 { sheet.default_column } else { 54 * crate::EMU_PER_POINT };
+                sheet.columns.resize(e.column as usize + 1, def_w);
+                resized_grid = true;
             }
         }
         let styles_before = sheet.styles.clone();
@@ -1248,6 +1461,9 @@ fn set_cells(presentation: &mut Presentation, slide: SlideId, edits: Vec<CellEdi
         invalidate_calc_index(presentation);
     }
     recalculate(presentation, slide, &changed, &mut undo)?;
+    if resized_grid {
+        fit_frame(presentation, slide);
+    }
     match before {
         Some(b) => Ok(b),
         None => Ok(undo.command()),
@@ -1330,6 +1546,20 @@ fn spill(sheet: &mut Sheet, anchor: (u32, u32), value: CellValue, spill: Option<
     (values[0].clone(), changed)
 }
 
+/// Keep the picture IMAGE asked for in the cell (or none), changing the sheet only if it differs.
+fn set_web_image(presentation: &mut Presentation, slide: SlideId, at: (u32, u32), image: Option<&ibis_calc::eval::ImageSpec>) -> Result<(), EditError> {
+    let same = presentation.slide(slide).and_then(crate::sheet_calc::sheet_of_slide).is_none_or(|s| s.web_images.get(&at) == image);
+    if same {
+        return Ok(());
+    }
+    let sheet = sheet_mut(presentation, slide)?;
+    match image {
+        Some(i) => sheet.web_images.insert(at, i.clone()),
+        None => sheet.web_images.remove(&at),
+    };
+    Ok(())
+}
+
 /// Calculate again what depends on the `changed` cells of `slide`'s sheet,
 /// and the changed cells' own formulas, remembering what changes in `undo`.
 fn recalculate(presentation: &mut Presentation, slide: SlideId, changed: &[(u32, u32)], undo: &mut Undo) -> Result<(), EditError> {
@@ -1352,6 +1582,12 @@ fn recalculate(presentation: &mut Presentation, slide: SlideId, changed: &[(u32,
         // In manual calculation mode, do not update dependent formula cells.
         if mode == CalcMode::Manual && !edited {
             continue;
+        }
+        // The picture IMAGE asks for (kept apart from the value, which stays as it was).
+        if presentation.slide(target).and_then(crate::sheet_calc::sheet_of_slide).is_some_and(|s| s.web_images.get(&(row, column)) != r.image.as_ref()) {
+            let sheet = sheet_mut(presentation, target)?;
+            undo.remember_image(target, sheet, (row, column));
+            set_web_image(presentation, target, (row, column), r.image.as_ref())?;
         }
         // A formula the engine cannot calculate keeps the value Excel gave
         // it; a formula just typed has no such value.
@@ -1413,42 +1649,111 @@ fn set_format(presentation: &mut Presentation, slide: SlideId, ranges: Vec<CellR
     let full_precision = presentation.workbook.as_deref().map(|w| w.full_precision).unwrap_or(true);
     let mut undo = Undo::default();
     let sheet = sheet_mut(presentation, slide)?;
+    let mut resized_grid = false;
     for range in &ranges {
         check_bounds(sheet, range.last_row, range.last_column)?;
+        if range.last_row as usize >= sheet.rows.len() {
+            let def_h = if sheet.default_row > 0 { sheet.default_row } else { 20 * crate::EMU_PER_POINT };
+            sheet.rows.resize(range.last_row as usize + 1, def_h);
+            resized_grid = true;
+        }
+        if range.last_column as usize >= sheet.columns.len() {
+            let def_w = if sheet.default_column > 0 { sheet.default_column } else { 54 * crate::EMU_PER_POINT };
+            sheet.columns.resize(range.last_column as usize + 1, def_w);
+            resized_grid = true;
+        }
     }
     let styles_before = sheet.styles.clone();
+    // The style each style of a cell comes to (None: no cell), worked out once: a column is a million cells of a few styles.
+    let mut changed_style: std::collections::HashMap<Option<u32>, u32> = std::collections::HashMap::new();
+    // The cells that were there and take another style (by place in `cells`, and the style), and the cells that were not there (put in after the loop: inserting each shifts every cell after it).
+    let mut changes: Vec<(usize, u32)> = Vec::new();
+    let mut added: Vec<SheetCell> = Vec::new();
     for range in &ranges {
         for row in range.first_row..=range.last_row {
             for column in range.first_column..=range.last_column {
-                let existing = sheet.cell(row, column).cloned();
-                let mut style = match &existing {
-                    Some(c) => sheet.styles[c.style as usize].clone(),
-                    None => default.clone(),
+                let at = sheet.cells.binary_search_by_key(&(row, column), |c| (c.row, c.column));
+                let old = at.ok().map(|i| sheet.cells[i].style);
+                let index = match changed_style.get(&old) {
+                    Some(&index) => index,
+                    None => {
+                        let mut style = match old {
+                            Some(s) => sheet.styles[s as usize].clone(),
+                            None => default.clone(),
+                        };
+                        change.apply(&mut style);
+                        let index = sheet.style_index(style);
+                        changed_style.insert(old, index);
+                        index
+                    }
                 };
-                change.apply(&mut style);
-                let index = sheet.style_index(style.clone());
-                if existing.as_ref().is_some_and(|c| c.style == index) {
+                if old == Some(index) {
                     continue;
                 }
-                undo.remember(slide, sheet, row, column);
-                let cell = match existing {
-                    Some(mut c) => {
-                        if !full_precision {
-                            if let CellValue::Number(n) = c.value {
-                                let rounded = ibis_calc::numfmt::round_to_display_precision(n, &style.number_format, d1904);
-                                c.value = CellValue::Number(rounded);
-                            }
-                        }
-                        SheetCell { text: display_text(&c.value, &style, d1904), style: index, ..c }
-                    }
-                    None => SheetCell { runs: None, phonetic: None, row, column, value: CellValue::Empty, text: String::new(), kind: CellKind::Empty, formula: None, style: index },
-                };
-                sheet.put_cell(row, column, Some(cell));
+                // A cell in two of the ranges: the first time did it (within one range no cell comes twice).
+                if ranges.len() > 1 && !undo.seen.insert((slide, row, column)) {
+                    continue;
+                }
+                undo.patch(slide).cells.push(CellSlot { row, column, cell: at.ok().map(|i| sheet.cells[i].clone()) });
+                match at {
+                    Ok(i) => changes.push((i, index)),
+                    Err(_) => added.push(SheetCell { runs: None, phonetic: None, row, column, value: CellValue::Empty, text: String::new(), kind: CellKind::Empty, formula: None, style: index }),
+                }
             }
         }
     }
+    // What the cells show, by their new formats (the most of the time of a column: on several threads when there are many).
+    let shown: Vec<(Option<CellValue>, String)> = par_map(&changes, |&(i, index)| {
+        let c = &sheet.cells[i];
+        let style = &sheet.styles[index as usize];
+        let rounded = match c.value {
+            CellValue::Number(n) if !full_precision => Some(CellValue::Number(ibis_calc::numfmt::round_to_display_precision(n, &style.number_format, d1904))),
+            _ => None,
+        };
+        let text = display_text(rounded.as_ref().unwrap_or(&c.value), style, d1904);
+        (rounded, text)
+    });
+    for (&(i, index), (rounded, text)) in changes.iter().zip(shown) {
+        let c = &mut sheet.cells[i];
+        if let Some(value) = rounded {
+            c.value = value;
+        }
+        c.text = text;
+        c.style = index;
+    }
+    if added.len() < 32 {
+        for cell in added {
+            let (row, column) = (cell.row, cell.column);
+            sheet.put_cell(row, column, Some(cell));
+        }
+    } else {
+        sheet.cells.extend(added);
+        sheet.cells.sort_by_key(|c| (c.row, c.column));
+    }
     undo.styles_if_grown(slide, styles_before, sheet);
+    if resized_grid {
+        fit_frame(presentation, slide);
+    }
     Ok(undo.command())
+}
+
+/// `f` of each of `items`, in order: on several threads when there are many (a column of a million cells), one on the web.
+fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    #[cfg(target_family = "wasm")]
+    return items.iter().map(f).collect();
+    #[cfg(not(target_family = "wasm"))]
+    {
+        const PER_THREAD: usize = 20_000;
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).max(1)).min(items.len() / PER_THREAD).max(1);
+        if threads <= 1 {
+            return items.iter().map(f).collect();
+        }
+        let size = items.len().div_ceil(threads);
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = items.chunks(size).map(|chunk| scope.spawn(|| chunk.iter().map(&f).collect::<Vec<R>>())).collect();
+            workers.into_iter().flat_map(|w| w.join().unwrap_or_else(|e| std::panic::resume_unwind(e))).collect()
+        })
+    }
 }
 
 fn restore(presentation: &mut Presentation, patches: Vec<SheetPatch>) -> Result<Command, EditError> {
@@ -1465,8 +1770,16 @@ fn restore(presentation: &mut Presentation, patches: Vec<SheetPatch>) -> Result<
             sheet.put_cell(slot.row, slot.column, slot.cell);
         }
         let styles = p.styles.map(|s| std::mem::replace(&mut sheet.styles, s));
+        let mut images = Vec::with_capacity(p.images.len());
+        for (at, image) in p.images {
+            images.push((at, sheet.web_images.get(&at).cloned()));
+            match image {
+                Some(i) => sheet.web_images.insert(at, i),
+                None => sheet.web_images.remove(&at),
+            };
+        }
         cells.reverse();
-        inverse.push(SheetPatch { slide: p.slide, cells, styles });
+        inverse.push(SheetPatch { slide: p.slide, cells, styles, images });
     }
     inverse.reverse();
     Ok(Command::Sheet(SheetCommand::Restore(inverse)))
@@ -1530,7 +1843,7 @@ fn empty_sheet(presentation: &Presentation) -> Sheet {
     let first = presentation.slides.iter().find_map(|s| crate::sheet_calc::sheet_of_slide(s));
     let (row, column) = first.map_or((EMPTY_ROW, EMPTY_COLUMN), |s| (if s.default_row > 0 { s.default_row } else { EMPTY_ROW }, if s.default_column > 0 { s.default_column } else { EMPTY_COLUMN }));
     let (rows, columns) = first.map_or((100, 26), |s| (s.rows.len().max(100), s.columns.len().max(26)));
-    Sheet { columns: vec![column; columns], rows: vec![row; rows], grid_lines: true, headings: true, default_row: row, default_column: column, ..Sheet::default() }
+    Sheet { columns: vec![column; columns], rows: vec![row; rows], grid_lines: true, headings: true, show_ruler: true, default_row: row, default_column: column, ..Sheet::default() }
 }
 
 /// Excel's defaults for a new sheet: 18 pt rows, 64 pt columns (MS P Gothic 11 pt).
@@ -1758,6 +2071,30 @@ fn shift_cells(presentation: &mut Presentation, slide: SlideId, range: CellRange
             v.ranges = v.ranges.iter().filter_map(shift).collect();
         }
         sheet.validations.retain(|v| !v.ranges.is_empty());
+        let shift_pos = |(r, c): (u32, u32)| -> Option<(u32, u32)> {
+            if !in_band(r, c) {
+                return Some((r, c));
+            }
+            let delta = if insert { n } else { -n };
+            if down {
+                Some((crate::sheet_ops::move_index(r, at, delta)?, c))
+            } else {
+                Some((r, crate::sheet_ops::move_index(c, at, delta)?))
+            }
+        };
+        sheet.data_tables = std::mem::take(&mut sheet.data_tables)
+            .into_iter()
+            .filter_map(|mut t| {
+                t.range = shift(&t.range)?;
+                if let Some(p) = t.row_input {
+                    t.row_input = Some(shift_pos(p)?);
+                }
+                if let Some(p) = t.column_input {
+                    t.column_input = Some(shift_pos(p)?);
+                }
+                Some(t)
+            })
+            .collect();
     }
     // References within the band follow (only those wholly across its columns, or rows).
     let names: Vec<String> = presentation.workbook.as_ref().map(|w| w.sheets.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
@@ -1780,6 +2117,9 @@ fn shift_cells(presentation: &mut Presentation, slide: SlideId, range: CellRange
     all.extend(crate::sheet_calc::BookView::new(presentation).formula_cells());
     invalidate_calc_index(presentation);
     recalculate_cells(presentation, &all)?;
+    if calc_mode(presentation) == CalcMode::Auto {
+        refresh_data_tables(presentation, slide, &mut Undo::default())?;
+    }
     Ok(inverse)
 }
 
@@ -2010,6 +2350,21 @@ impl ibis_calc::eval::Book for SheetBook<'_> {
     fn defined_name(&self, _: &str, _: Option<usize>) -> Option<String> {
         None
     }
+    fn pivot_data(
+        &self,
+        _: usize,
+        row: u32,
+        column: u32,
+        data_field: &str,
+        fields: &[(&str, &str)],
+    ) -> Option<CellValue> {
+        for pivot in &self.0.pivots {
+            if pivot.contains_cell(row, column) {
+                return pivot.get_pivot_data(self.0, data_field, fields);
+            }
+        }
+        None
+    }
 }
 
 fn cf_point(book: &SheetBook, p: &crate::sheet::CfValue, values: &[f64], anchor: (u32, u32)) -> Option<f64> {
@@ -2159,7 +2514,7 @@ pub fn cell_icon(sheet: &Sheet, row: u32, column: u32) -> Option<(String, u32)> 
 fn sort_rows(presentation: &mut Presentation, slide: SlideId, range: CellRange, keys: Vec<(u32, SortBy)>, header: bool, match_case: bool) -> Result<Command, EditError> {
     let inverse = snapshot(presentation);
     let index = workbook_index(presentation, slide)?;
-    {
+    let (row_map, moved_cell_images, xs, ys) = {
         let sheet = sheet_mut(presentation, slide)?;
         let first = range.first_row + u32::from(header);
         if first > range.last_row {
@@ -2282,7 +2637,7 @@ fn sort_rows(presentation: &mut Presentation, slide: SlideId, range: CellRange, 
         let inside = |c: &SheetCell| rows.binary_search(&c.row).is_ok() && (range.first_column..=range.last_column).contains(&c.column);
         // (Rebuilt in one pass: putting each cell in the sorted list took
         // minutes for tens of thousands of cells.)
-        let (moved, mut kept): (Vec<SheetCell>, Vec<SheetCell>) = std::mem::take(&mut sheet.cells).into_iter().partition(|c| inside(c));
+        let (moved, mut kept): (Vec<SheetCell>, Vec<SheetCell>) = std::mem::take(&mut sheet.cells).into_vec().into_iter().partition(|c| inside(c));
         let mut by_row: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
         for (i, c) in moved.iter().enumerate() {
             by_row.entry(c.row).or_default().push(i);
@@ -2296,7 +2651,62 @@ fn sort_rows(presentation: &mut Presentation, slide: SlideId, range: CellRange, 
             }
         }
         kept.sort_by_key(|c| (c.row, c.column));
-        sheet.cells = kept;
+        sheet.cells = kept.into();
+        let row_map: std::collections::HashMap<u32, u32> = order.iter().enumerate().map(|(to_idx, (from, _))| (*from, rows[to_idx])).collect();
+        sheet.cell_images = std::mem::take(&mut sheet.cell_images).into_iter().map(|mut img| {
+            if (range.first_column..=range.last_column).contains(&img.column) {
+                if let Some(&to) = row_map.get(&img.row) {
+                    img.row = to;
+                }
+            }
+            img
+        }).collect();
+        sheet.web_images = std::mem::take(&mut sheet.web_images).into_iter().map(|((r, c), spec)| {
+            let new_r = if (range.first_column..=range.last_column).contains(&c) {
+                row_map.get(&r).copied().unwrap_or(r)
+            } else {
+                r
+            };
+            ((new_r, c), spec)
+        }).collect();
+        sheet.comments = std::mem::take(&mut sheet.comments).into_iter().map(|mut c| {
+            if (range.first_column..=range.last_column).contains(&c.column) {
+                if let Some(&to) = row_map.get(&c.row) {
+                    c.row = to;
+                }
+            }
+            c
+        }).collect();
+        let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
+        let moved_cell_images = sheet.cell_images.clone();
+        Ok::<_, EditError>((row_map, moved_cell_images, xs, ys))
+    }?;
+    if let Some(slide_obj) = presentation.slide_mut(slide) {
+        for shape in slide_obj.shapes.iter_mut() {
+            if matches!(shape.kind, ShapeKind::Picture(_)) {
+                for img in &moved_cell_images {
+                    let (col, r) = (img.column as usize, img.row as usize);
+                    if col + 1 < xs.len() && r + 1 < ys.len() {
+                        let (x0, y0) = (xs[col], ys[r]);
+                        let (x1, y1) = (xs[col + 1], ys[r + 1]);
+                        if let Some(from) = row_map.iter().find_map(|(&from, &to)| if to == img.row && from != to { Some(from) } else { None }) {
+                            let old_r = from as usize;
+                            if old_r + 1 < ys.len() {
+                                let old_y0 = ys[old_r];
+                                let old_y1 = ys[old_r + 1];
+                                if old_y0 <= shape.frame.y + 10_000 && shape.frame.bottom() <= old_y1 + 10_000 && xs[col] <= shape.frame.x + 10_000 && shape.frame.right() <= xs[col + 1] + 10_000 {
+                                    let (cw, ch) = ((x1 - x0).max(1), (y1 - y0).max(1));
+                                    let (w, h) = (shape.frame.width.max(1), shape.frame.height.max(1));
+                                    let scale = (cw as f64 / w as f64).min(ch as f64 / h as f64);
+                                    let (fw, fh) = ((w as f64 * scale) as i64, (h as f64 * scale) as i64);
+                                    shape.frame = EmuRect::new(x0 + (cw - fw) / 2, y0 + (ch - fh) / 2, fw.max(1), fh.max(1));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     let mut changed: Vec<(usize, u32, u32)> = Vec::new();
     for row in range.first_row..=range.last_row {
@@ -2581,6 +2991,19 @@ fn replace_sheet(presentation: &mut Presentation, slide: SlideId, sheet: Sheet) 
     Ok(inverse)
 }
 
+/// External workbook `book` linked: added after the others (one of that name is not added again).
+fn add_external_book(presentation: &mut Presentation, book: crate::sheet::ExternalBook) -> Result<Command, EditError> {
+    let wb = presentation.workbook.as_deref().ok_or(EditError::IndexOutOfRange)?;
+    if book.name.is_empty() || wb.external_books.iter().any(|b| !b.broken && b.name.eq_ignore_ascii_case(&book.name)) {
+        return Err(EditError::IndexOutOfRange);
+    }
+    let inverse = snapshot(presentation);
+    let wb = Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?);
+    wb.external_books.push(book);
+    invalidate_calc_index(presentation);
+    Ok(inverse)
+}
+
 /// The cached cells of external workbook `index` replaced, and the formulas
 /// reading them calculated again.
 fn refresh_external_book(presentation: &mut Presentation, index: usize, sheets: Vec<crate::sheet::ExternalSheet>) -> Result<Command, EditError> {
@@ -2590,6 +3013,65 @@ fn refresh_external_book(presentation: &mut Presentation, index: usize, sheets: 
     }
     let inverse = snapshot(presentation);
     let wb = Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?);
+    wb.external_books[index].sheets = sheets;
+    invalidate_calc_index(presentation);
+    let all = crate::sheet_calc::BookView::new(presentation).formula_cells();
+    recalculate_cells_force(presentation, &all)?;
+    Ok(inverse)
+}
+
+/// The source of external workbook `index` changed to `new_name` and `new_path`:
+/// formulas reading the old workbook rewritten to `new_name`, cached cells replaced with `sheets`,
+/// and recalculation triggered.
+fn change_external_book_source(
+    presentation: &mut Presentation,
+    index: usize,
+    new_name: String,
+    new_path: String,
+    sheets: Vec<crate::sheet::ExternalSheet>,
+) -> Result<Command, EditError> {
+    let wb = presentation.workbook.as_deref().ok_or(EditError::IndexOutOfRange)?;
+    let old_name = match wb.external_books.get(index) {
+        Some(b) if !b.broken && !b.name.is_empty() => b.name.clone(),
+        _ => return Err(EditError::IndexOutOfRange),
+    };
+    let inverse = snapshot(presentation);
+    if !old_name.eq_ignore_ascii_case(&new_name) {
+        let slides: Vec<SlideId> = presentation.slides.iter().map(|s| s.id).collect();
+        for slide in slides {
+            let Ok(sheet) = sheet_mut(presentation, slide) else { continue };
+            for cell in sheet.cells.iter_mut() {
+                if let Some(f) = cell.formula.as_deref().filter(|f| ibis_calc::formula::has_external_book(f)) {
+                    let rewritten = ibis_calc::formula::rename_book(f, &old_name, &new_name, None);
+                    if rewritten != f {
+                        cell.formula = Some(rewritten);
+                    }
+                }
+            }
+            sheet.map_rule_formulas(&|f| ibis_calc::formula::rename_book(f, &old_name, &new_name, None));
+        }
+        let wb = Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?);
+        for n in wb.names.iter_mut() {
+            n.formula = ibis_calc::formula::rename_book(&n.formula, &old_name, &new_name, None);
+        }
+        for s in wb.sheets.iter_mut() {
+            if let Some(h) = s.hidden.as_mut() {
+                let h = Arc::make_mut(h);
+                for cell in h.cells.iter_mut() {
+                    if let Some(f) = cell.formula.as_deref().filter(|f| ibis_calc::formula::has_external_book(f)) {
+                        let rewritten = ibis_calc::formula::rename_book(f, &old_name, &new_name, None);
+                        if rewritten != f {
+                            cell.formula = Some(rewritten);
+                        }
+                    }
+                }
+                h.map_rule_formulas(&|f| ibis_calc::formula::rename_book(f, &old_name, &new_name, None));
+            }
+        }
+    }
+    let wb = Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?);
+    wb.external_books[index].name = new_name;
+    wb.external_books[index].path = new_path;
     wb.external_books[index].sheets = sheets;
     invalidate_calc_index(presentation);
     let all = crate::sheet_calc::BookView::new(presentation).formula_cells();
@@ -3629,6 +4111,158 @@ fn apply_create_scenario_summary(presentation: &mut Presentation, slide: SlideId
     })
 }
 
+/// A cell of a report sheet.
+#[derive(Clone, Debug)]
+pub struct ReportCell {
+    pub row: u32,
+    pub column: u32,
+    pub value: CellValue,
+    pub bold: bool,
+}
+
+impl PartialEq for ReportCell {
+    fn eq(&self, other: &Self) -> bool {
+        self.row == other.row && self.column == other.column && self.value == other.value && self.bold == other.bold
+    }
+}
+
+impl Eq for ReportCell {}
+
+fn apply_create_report_sheet(presentation: &mut Presentation, slide: SlideId, name: String, cells: Vec<ReportCell>, widths: Vec<(u32, u32)>) -> Result<Command, EditError> {
+    let index = workbook_index(presentation, slide)?;
+    let d1904 = date1904(presentation);
+    let mut sheet = empty_sheet(presentation);
+    let columns = cells.iter().map(|c| c.column + 1).chain(widths.iter().map(|w| w.0 + 1)).max().unwrap_or(1) as usize;
+    if sheet.columns.len() < columns {
+        sheet.columns.resize(columns, EMPTY_COLUMN);
+    }
+    for (column, points) in widths {
+        sheet.columns[column as usize] = points as i64 * crate::geometry::EMU_PER_POINT;
+    }
+    let plain = default_style(presentation);
+    let bold = CellStyle { bold: true, ..plain.clone() };
+    let plain_index = sheet.style_index(plain.clone());
+    let bold_index = sheet.style_index(bold.clone());
+    for c in cells {
+        let (style, st) = if c.bold { (bold_index, &bold) } else { (plain_index, &plain) };
+        let text = display_text(&c.value, st, d1904);
+        let kind = CellKind::of(&c.value);
+        sheet.put_cell(c.row, c.column, Some(SheetCell { runs: None, phonetic: None, row: c.row, column: c.column, value: c.value, text, kind, formula: None, style }));
+    }
+    let existing: Vec<String> = presentation.workbook.as_ref().map(|w| w.sheets.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
+    let new_name = if !existing.iter().any(|s| s.eq_ignore_ascii_case(&name)) {
+        name
+    } else {
+        (2..).map(|n| format!("{name} {n}")).find(|c| !existing.iter().any(|s| s.eq_ignore_ascii_case(c))).unwrap_or(name)
+    };
+    let new_slide = presentation.new_slide_id();
+    let shape_id = presentation.new_shape_id();
+    structural(presentation, StructureEdit::AddSheet { sheet: index, name: new_name, slide: new_slide, shape: shape_id, content: Arc::new(sheet) })
+}
+
+/// The cells of a query's result as a sheet: the headings in bold, the dates and times in their formats,
+/// the columns as wide as their texts.
+fn query_sheet(presentation: &Presentation, table: &crate::query::QTable) -> Sheet {
+    let d1904 = date1904(presentation);
+    let mut sheet = empty_sheet(presentation);
+    let plain = default_style(presentation);
+    let bold = CellStyle { bold: true, ..plain.clone() };
+    let header_index = sheet.style_index(bold.clone());
+    let columns = table.columns.len().max(1);
+    if sheet.columns.len() < columns {
+        sheet.columns.resize(columns, EMPTY_COLUMN);
+    }
+    let mut widths = vec![0usize; columns];
+    for (c, col) in table.columns.iter().enumerate() {
+        widths[c] = col.name.chars().count() * 2;
+        sheet.put_cell(0, c as u32, Some(SheetCell { runs: None, phonetic: None, row: 0, column: c as u32, value: CellValue::Text(col.name.clone()), text: col.name.clone(), kind: CellKind::Text, formula: None, style: header_index }));
+    }
+    let styles: Vec<(u32, CellStyle)> = table
+        .columns
+        .iter()
+        .map(|col| {
+            let st = match col.ty.number_format() {
+                Some(f) => CellStyle { number_format: f.to_string(), ..plain.clone() },
+                None => plain.clone(),
+            };
+            (sheet.style_index(st.clone()), st)
+        })
+        .collect();
+    for (r, row) in table.rows.iter().enumerate() {
+        for (c, value) in row.iter().enumerate() {
+            if matches!(value, CellValue::Empty) {
+                continue;
+            }
+            let (style, st) = &styles[c];
+            let text = display_text(value, st, d1904);
+            widths[c] = widths[c].max(text.chars().map(|ch| if ch.is_ascii() { 1 } else { 2 }).sum());
+            let row_index = r as u32 + 1;
+            sheet.put_cell(row_index, c as u32, Some(SheetCell { runs: None, phonetic: None, row: row_index, column: c as u32, value: value.clone(), text, kind: CellKind::of(value), formula: None, style: *style }));
+        }
+    }
+    for (c, w) in widths.into_iter().enumerate() {
+        let points = ((w as i64 + 3) * 6).clamp(48, 300);
+        sheet.columns[c] = points * crate::geometry::EMU_PER_POINT;
+    }
+    sheet
+}
+
+fn apply_load_query(presentation: &mut Presentation, slide: SlideId, mut query: crate::query::Query, table: crate::query::QTable) -> Result<Command, EditError> {
+    let index = workbook_index(presentation, slide)?;
+    let fresh = query_sheet(presentation, &table);
+    // The sheet the query loaded before is written again; else a new one is made.
+    let old = query.output.as_ref().and_then(|name| {
+        let wb = presentation.workbook.as_ref()?;
+        let i = wb.sheet_index(name)?;
+        wb.sheets[i].slide
+    });
+    let inverse = match old {
+        Some(old_slide) => {
+            let inverse = snapshot(presentation);
+            let sheet = sheet_mut(presentation, old_slide)?;
+            sheet.cells = fresh.cells;
+            sheet.styles = fresh.styles;
+            sheet.columns = fresh.columns;
+            sheet.rows = fresh.rows;
+            invalidate_calc_index(presentation);
+            inverse
+        }
+        None => {
+            let existing: Vec<String> = presentation.workbook.as_ref().map(|w| w.sheets.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
+            let base = query.name.clone();
+            let name = if !existing.iter().any(|s| s.eq_ignore_ascii_case(&base)) { base.clone() } else { (2..).map(|n| format!("{base} {n}")).find(|c| !existing.iter().any(|s| s.eq_ignore_ascii_case(c))).unwrap_or(base) };
+            let new_slide = presentation.new_slide_id();
+            let shape_id = presentation.new_shape_id();
+            query.output = Some(name.clone());
+            structural(presentation, StructureEdit::AddSheet { sheet: index, name, slide: new_slide, shape: shape_id, content: Arc::new(fresh) })?
+        }
+    };
+    let wb = Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?);
+    match wb.queries.iter().position(|q| q.name == query.name) {
+        Some(i) => wb.queries[i] = query,
+        None => wb.queries.push(query),
+    }
+    Ok(inverse)
+}
+
+fn apply_set_solver_names(presentation: &mut Presentation, slide: SlideId, names: Vec<(String, String)>) -> Result<Command, EditError> {
+    let index = workbook_index(presentation, slide)?;
+    let inverse = snapshot(presentation);
+    let wb = Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?);
+    let is_solver = |n: &str| n.to_ascii_lowercase().starts_with("solver_");
+    // The numbered ones (lhs, rel, rhs) are all replaced; the others where given.
+    let numbered = |n: &str| {
+        let l = n.to_ascii_lowercase();
+        ["solver_lhs", "solver_rel", "solver_rhs"].iter().any(|p| l.starts_with(p))
+    };
+    wb.names.retain(|n| !(n.sheet == Some(index) && is_solver(&n.name) && (numbered(&n.name) || names.iter().any(|(k, _)| k.eq_ignore_ascii_case(&n.name)))));
+    for (name, formula) in names {
+        wb.names.push(crate::sheet::DefinedName { name, sheet: Some(index), formula, hidden: true });
+    }
+    invalidate_calc_index(presentation);
+    Ok(inverse)
+}
+
 fn apply_merge_scenarios(presentation: &mut Presentation, slide: SlideId, from_slide: SlideId) -> Result<Command, EditError> {
     let inverse = snapshot(presentation);
     let from_scenarios = {
@@ -3719,8 +4353,12 @@ fn apply_show_custom_view(presentation: &mut Presentation, name: &str) -> Result
                 sheet.zoom = csv.zoom;
                 sheet.grid_lines = csv.grid_lines;
                 sheet.headings = csv.headings;
+                sheet.show_ruler = csv.show_ruler;
                 sheet.page_break_preview = csv.page_break_preview;
                 sheet.frozen = csv.frozen;
+                sheet.split = csv.split;
+                sheet.show_formulas = csv.show_formulas;
+                sheet.show_zeros = csv.show_zeros;
                 if view.include_print_settings {
                     if let Some(print) = &csv.print {
                         sheet.print = print.clone();
@@ -4417,6 +5055,7 @@ fn structure(presentation: &mut Presentation, slide: SlideId, insert: bool, axis
     Arc::make_mut(presentation.workbook.as_mut().unwrap()).structure.push(edit);
     invalidate_calc_index(presentation);
     recalculate_cells(presentation, &changed)?;
+    refresh_data_tables(presentation, slide, &mut Undo::default())?;
     Ok(inverse)
 }
 
@@ -4495,27 +5134,106 @@ fn clear_formats(presentation: &mut Presentation, slide: SlideId, ranges: Vec<Ce
 /// The slide's shape of the sheet fits its grid again.
 fn fit_frame(presentation: &mut Presentation, slide: SlideId) {
     if let Some(s) = presentation.slide_mut(slide) {
+        let (mut xs, mut ys, mut cell_images) = (Vec::new(), Vec::new(), Vec::new());
         for shape in s.shapes.iter_mut() {
             if let ShapeKind::Sheet(sheet) = &shape.kind {
                 shape.frame.width = sheet.columns.iter().sum();
                 shape.frame.height = sheet.rows.iter().sum();
+                xs = sheet.column_offsets();
+                ys = sheet.row_offsets();
+                cell_images = sheet.cell_images.clone();
+            }
+        }
+        if !cell_images.is_empty() {
+            for shape in s.shapes.iter_mut() {
+                if matches!(shape.kind, ShapeKind::Picture(_)) {
+                    let cx = shape.frame.x + shape.frame.width / 2;
+                    let cy = shape.frame.y + shape.frame.height / 2;
+                    for img in &cell_images {
+                        let (col, r) = (img.column as usize, img.row as usize);
+                        if col + 1 < xs.len() && r + 1 < ys.len() {
+                            let (x0, y0) = (xs[col], ys[r]);
+                            let (x1, y1) = (xs[col + 1], ys[r + 1]);
+                            if (x0..=x1).contains(&cx) && (y0..=y1).contains(&cy) {
+                                let (cw, ch) = ((x1 - x0).max(1), (y1 - y0).max(1));
+                                let (w, h) = (shape.frame.width.max(1), shape.frame.height.max(1));
+                                let scale = (cw as f64 / w as f64).min(ch as f64 / h as f64);
+                                let (fw, fh) = ((w as f64 * scale) as i64, (h as f64 * scale) as i64);
+                                shape.frame = EmuRect::new(x0 + (cw - fw) / 2, y0 + (ch - fh) / 2, fw.max(1), fh.max(1));
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
+/// The sizes of columns or rows `first`.. as they are, and what the hidden ones hold for each.
+fn sizes_now(sheet: &Sheet, axis: Axis, first: u32, count: usize) -> (Vec<Emu>, Vec<Option<Emu>>) {
+    let (sizes, hidden) = match axis {
+        Axis::Rows => (&sheet.rows, &sheet.hidden_rows),
+        Axis::Columns => (&sheet.columns, &sheet.hidden_columns),
+    };
+    let range = first as usize..first as usize + count;
+    (sizes[range.clone()].to_vec(), range.map(|i| hidden.get(&(i as u32)).copied()).collect())
+}
+
+fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, new_sizes: Vec<Emu>, new_hidden: Vec<Option<Emu>>) -> Result<Command, EditError> {
+    let sheet = sheet_mut(presentation, slide)?;
+    let len = match axis {
+        Axis::Rows => sheet.rows.len(),
+        Axis::Columns => sheet.columns.len(),
+    };
+    if first as usize + new_sizes.len() > len || new_sizes.len() != new_hidden.len() {
+        return Err(EditError::IndexOutOfRange);
+    }
+    let (sizes, hidden_of) = sizes_now(sheet, axis, first, new_sizes.len());
+    let (target, hidden) = match axis {
+        Axis::Rows => (&mut sheet.rows, &mut sheet.hidden_rows),
+        Axis::Columns => (&mut sheet.columns, &mut sheet.hidden_columns),
+    };
+    for (i, (size, was)) in new_sizes.into_iter().zip(new_hidden).enumerate() {
+        let at = first + i as u32;
+        target[at as usize] = size;
+        match was {
+            Some(v) => {
+                hidden.insert(at, v);
+            }
+            None => {
+                hidden.remove(&at);
+            }
+        }
+    }
+    fit_frame(presentation, slide);
+    Ok(Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden: hidden_of }))
+}
+
 fn set_size(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, last: u32, size: Emu) -> Result<Command, EditError> {
-    let inverse = snapshot(presentation);
+    let (old, old_hidden) = {
+        let sheet = sheet_mut(presentation, slide)?;
+        let len = match axis {
+            Axis::Rows => sheet.rows.len(),
+            Axis::Columns => sheet.columns.len(),
+        };
+        if first > last || last as usize >= len || size < 0 {
+            return Err(EditError::IndexOutOfRange);
+        }
+        sizes_now(sheet, axis, first, (last - first + 1) as usize)
+    };
+    let visibility_changed = old.iter().any(|&was| (was == 0) != (size == 0));
+    // Hiding or showing rows calculates again (SUBTOTAL and the like), which is undone from a picture of the whole book; a size alone from the sizes it replaces (a copy of the book is a copy of every cell).
+    let inverse = if axis == Axis::Rows && visibility_changed {
+        snapshot(presentation)
+    } else {
+        Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes: old.clone(), hidden: old_hidden })
+    };
     let sheet = sheet_mut(presentation, slide)?;
     let sizes = match axis {
         Axis::Rows => &mut sheet.rows,
         Axis::Columns => &mut sheet.columns,
     };
-    if first > last || last as usize >= sizes.len() || size < 0 {
-        return Err(EditError::IndexOutOfRange);
-    }
-    let old: Vec<Emu> = sizes[first as usize..=last as usize].to_vec();
-    let visibility_changed = old.iter().any(|&was| (was == 0) != (size == 0));
     for s in &mut sizes[first as usize..=last as usize] {
         *s = size;
     }
@@ -4589,6 +5307,38 @@ fn move_cells(presentation: &mut Presentation, slide: SlideId, from: CellRange, 
                 }
             }
         }
+        // Cell images inside go with the cells.
+        for img in sheet.cell_images.iter_mut() {
+            if img.row >= from.first_row && img.row <= from.last_row && img.column >= from.first_column && img.column <= from.last_column {
+                img.row = (img.row as i64 + dr) as u32;
+                img.column = (img.column as i64 + dc) as u32;
+            }
+        }
+        // Data table ranges and input cells inside go with the cells.
+        for dt in sheet.data_tables.iter_mut() {
+            if dt.range.first_row >= from.first_row && dt.range.last_row <= from.last_row && dt.range.first_column >= from.first_column && dt.range.last_column <= from.last_column {
+                dt.range = CellRange {
+                    first_row: (dt.range.first_row as i64 + dr) as u32,
+                    last_row: (dt.range.last_row as i64 + dr) as u32,
+                    first_column: (dt.range.first_column as i64 + dc) as u32,
+                    last_column: (dt.range.last_column as i64 + dc) as u32,
+                };
+            }
+            if let Some((r, c)) = dt.row_input.as_mut()
+                && (from.first_row..=from.last_row).contains(r)
+                && (from.first_column..=from.last_column).contains(c)
+            {
+                *r = (*r as i64 + dr) as u32;
+                *c = (*c as i64 + dc) as u32;
+            }
+            if let Some((r, c)) = dt.column_input.as_mut()
+                && (from.first_row..=from.last_row).contains(r)
+                && (from.first_column..=from.last_column).contains(c)
+            {
+                *r = (*r as i64 + dr) as u32;
+                *c = (*c as i64 + dc) as u32;
+            }
+        }
     }
     // References wholly inside the range, from anywhere, follow it.
     let names: Vec<String> = presentation.workbook.as_ref().map(|w| w.sheets.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
@@ -4625,6 +5375,7 @@ fn move_cells(presentation: &mut Presentation, slide: SlideId, from: CellRange, 
     }
     invalidate_calc_index(presentation);
     recalculate_cells(presentation, &changed)?;
+    refresh_data_tables(presentation, slide, &mut Undo::default())?;
     fit_frame(presentation, slide);
     Ok(inverse)
 }
@@ -4714,7 +5465,11 @@ fn unmerge(presentation: &mut Presentation, slide: SlideId, range: CellRange) ->
 /// Calculate the formula cells that have no value (a file written by a
 /// program that does not calculate has none cached), and what they feed.
 pub fn calculate_missing_values(presentation: &mut Presentation) -> Result<(), EditError> {
-    let missing = crate::sheet_calc::BookView::new(presentation).formula_cells_without_value();
+    let view = crate::sheet_calc::BookView::new(presentation);
+    let mut missing = view.formula_cells_without_value();
+    let images: Vec<_> = view.image_formula_cells().into_iter().filter(|c| !missing.contains(c)).collect();
+    missing.extend(images);
+    drop(view);
     recalculate_cells_deep(presentation, &missing, 0, true)
 }
 
@@ -4745,10 +5500,14 @@ fn recalculate_cells_deep(presentation: &mut Presentation, changed: &[(usize, u3
     let mut follow: Vec<(usize, u32, u32)> = Vec::new();
     for r in results {
         let (sheet_index, row, column) = r.cell;
+        let target = slides.get(sheet_index).copied().flatten();
+        // IMAGE: the picture asked for is kept for the cell to show (the value stays as it was).
+        if let Some(t) = target {
+            set_web_image(presentation, t, (row, column), r.image.as_ref())?;
+        }
         if r.unsupported {
             continue;
         }
-        let target = slides.get(sheet_index).copied().flatten();
         let sheet: &mut Sheet = match target {
             Some(t) => sheet_mut(presentation, t)?,
             None => match presentation.workbook.as_mut().and_then(|w| Arc::make_mut(w).sheets.get_mut(sheet_index)).and_then(|s| s.hidden.as_mut()) {
@@ -4803,6 +5562,73 @@ mod tests {
 
     fn set(d: &mut Document, slide: SlideId, row: u32, column: u32, input: CellInput) {
         d.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row, column, input }] })]).unwrap();
+    }
+
+    /// The picture IMAGE asks for is a result of the book's calculation: its address is read as any reference is
+    /// (another sheet, a name, another workbook's cached cells, a table's row).
+    #[test]
+    fn image_addresses_are_resolved_by_the_calculation() {
+        let (mut d, s1) = workbook();
+        let mut p = d.presentation().clone();
+        let s2 = p.new_slide_id();
+        let mut slide = Slide::new(s2);
+        slide.name = Some("Pictures".into());
+        let shape = p.new_shape_id();
+        let sheet = Sheet { columns: vec![100; 10], rows: vec![100; 20], grid_lines: true, ..Sheet::default() };
+        slide.shapes.push(Shape { id: shape, frame: EmuRect::new(0, 0, 1000, 2000), rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Sheet(Arc::new(sheet)), floating: None });
+        p.slides.push(slide);
+        let mut wb = (**p.workbook.as_ref().unwrap()).clone();
+        wb.sheets.push(crate::sheet::WorkbookSheet { name: "Pictures".into(), state: Default::default(), slide: Some(s2), hidden: None, other: false });
+        wb.names.push(crate::sheet::DefinedName { name: "Pic".into(), sheet: None, formula: "Pictures!$A$2".into(), hidden: false });
+        let mut ext = crate::sheet::ExternalSheet { name: "S".into(), ..Default::default() };
+        ext.cells.insert((0, 0), CellValue::Text("https://x.test/ext.png".into()));
+        wb.external_books.push(crate::sheet::ExternalBook { name: "ext.xlsx".into(), path: "ext.xlsx".into(), sheets: vec![ext], broken: false });
+        p.workbook = Some(Arc::new(wb));
+        d = Document::new(p);
+        set(&mut d, s2, 0, 0, CellInput::Value(CellValue::Text("https://x.test/sheet.png".into())));
+        set(&mut d, s2, 1, 0, CellInput::Value(CellValue::Text("https://x.test/name.png".into())));
+        set(&mut d, s1, 0, 0, CellInput::Formula("IMAGE(Pictures!A1,\"alt\",1)".into()));
+        set(&mut d, s1, 1, 0, CellInput::Formula("IMAGE(Pic)".into()));
+        set(&mut d, s1, 2, 0, CellInput::Formula("IMAGE([ext.xlsx]S!A1)".into()));
+        set(&mut d, s1, 3, 0, CellInput::Formula("IMAGE(\"\")".into()));
+        let sheet = crate::sheet_calc::sheet_of_slide(d.presentation().slide(s1).unwrap()).unwrap();
+        let source = |row: u32| sheet.web_images.get(&(row, 0)).map(|i| (i.source.clone(), i.sizing));
+        assert_eq!(source(0), Some(("https://x.test/sheet.png".into(), 1)), "another sheet");
+        assert_eq!(source(1), Some(("https://x.test/name.png".into(), 0)), "a name");
+        assert_eq!(source(2), Some(("https://x.test/ext.png".into(), 0)), "another workbook");
+        assert_eq!(source(3), None, "an empty address is an error");
+        // The address changes: the picture follows; the formula replaced: it goes.
+        set(&mut d, s2, 0, 0, CellInput::Value(CellValue::Text("https://x.test/other.png".into())));
+        let sheet = crate::sheet_calc::sheet_of_slide(d.presentation().slide(s1).unwrap()).unwrap();
+        assert_eq!(sheet.web_images.get(&(0, 0)).map(|i| i.source.as_str()), Some("https://x.test/other.png"));
+        set(&mut d, s1, 0, 0, CellInput::Formula("1+1".into()));
+        let sheet = crate::sheet_calc::sheet_of_slide(d.presentation().slide(s1).unwrap()).unwrap();
+        assert!(!sheet.web_images.contains_key(&(0, 0)));
+    }
+
+    /// Undo and redo give back the picture IMAGE asked for along with the formula.
+    #[test]
+    fn image_pictures_follow_undo_and_redo() {
+        let (mut d, s) = workbook();
+        let at = |d: &Document| crate::sheet_calc::sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap().web_images.get(&(0, 0)).map(|i| i.source.clone());
+        set(&mut d, s, 0, 0, CellInput::Formula("IMAGE(\"https://x.test/a.png\")".into()));
+        assert_eq!(at(&d).as_deref(), Some("https://x.test/a.png"));
+        set(&mut d, s, 0, 0, CellInput::Formula("IMAGE(\"https://x.test/b.png\")".into()));
+        assert_eq!(at(&d).as_deref(), Some("https://x.test/b.png"));
+        assert!(d.undo());
+        assert_eq!(at(&d).as_deref(), Some("https://x.test/a.png"), "undo: the first picture");
+        assert!(d.redo());
+        assert_eq!(at(&d).as_deref(), Some("https://x.test/b.png"), "redo: the second");
+        // A dependent IMAGE(A2) follows an edit of A2, and its undo.
+        set(&mut d, s, 1, 0, CellInput::Value(CellValue::Text("https://x.test/c.png".into())));
+        set(&mut d, s, 0, 0, CellInput::Formula("IMAGE(A2)".into()));
+        set(&mut d, s, 1, 0, CellInput::Value(CellValue::Text("https://x.test/d.png".into())));
+        assert_eq!(at(&d).as_deref(), Some("https://x.test/d.png"));
+        assert!(d.undo());
+        assert_eq!(at(&d).as_deref(), Some("https://x.test/c.png"), "undo of the edit the picture depends on");
+        assert!(d.undo());
+        assert!(d.undo());
+        assert_eq!(at(&d).as_deref(), Some("https://x.test/b.png"));
     }
 
     #[test]
@@ -4978,7 +5804,17 @@ mod tests {
 
     #[test]
     fn arraytotext_empty_array_errors_are_value_without_changing_sources() {
-        for source in ["TAKE({1;2},0)","FILTER({1;2},{FALSE;FALSE})"]{for suffix in ["",",0",",1"]{let (mut d,s)=workbook();set(&mut d,s,0,0,CellInput::Formula(source.into()));assert_eq!(cell(&d,s,0,0).unwrap().value,CellValue::Error(CellError::Calc));set(&mut d,s,0,1,CellInput::Formula(format!("ARRAYTOTEXT({source}{suffix})")));assert_eq!(cell(&d,s,0,1).unwrap().value,CellValue::Error(CellError::Value));assert!(d.undo());assert!(d.redo());}}
+        for (source, src_err) in [("TAKE({1;2},0)", CellError::Value), ("FILTER({1;2},{FALSE;FALSE})", CellError::Calc)] {
+            for suffix in ["", ",0", ",1"] {
+                let (mut d, s) = workbook();
+                set(&mut d, s, 0, 0, CellInput::Formula(source.into()));
+                assert_eq!(cell(&d, s, 0, 0).unwrap().value, CellValue::Error(src_err));
+                set(&mut d, s, 0, 1, CellInput::Formula(format!("ARRAYTOTEXT({source}{suffix})")));
+                assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Error(CellError::Value));
+                assert!(d.undo());
+                assert!(d.redo());
+            }
+        }
     }
 
     #[test]
@@ -5675,11 +6511,15 @@ mod tests {
         let (mut d, s) = workbook();
         let start = d.presentation().clone();
 
-        // RANDARRAY spills a 2x3 grid (deterministic placeholder 0.5)
+        // RANDARRAY spills a 2x3 grid of random numbers in [0, 1)
         set(&mut d, s, 0, 0, CellInput::Formula("RANDARRAY(2, 3)".into()));
+        let mut grid_sum = 0.0;
         for r in 0..2 {
             for c in 0..3 {
-                assert_eq!(cell(&d, s, r, c).unwrap().value, CellValue::Number(0.5));
+                match cell(&d, s, r, c).unwrap().value {
+                    CellValue::Number(n) if (0.0..1.0).contains(&n) => grid_sum += n,
+                    other => panic!("{other:?}"),
+                }
             }
         }
         let sh = crate::sheet_calc::sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
@@ -5687,17 +6527,18 @@ mod tests {
 
         // SUM over spill area using A1#
         set(&mut d, s, 5, 0, CellInput::Formula("SUM(A1#)".into()));
-        assert_eq!(cell(&d, s, 5, 0).unwrap().value, CellValue::Number(3.0));
+        assert!(matches!(cell(&d, s, 5, 0).unwrap().value, CellValue::Number(n) if (0.0..6.0).contains(&n)));
+        let _ = grid_sum;
 
         // ANCHORARRAY explicit function call
         set(&mut d, s, 6, 0, CellInput::Formula("SUM(ANCHORARRAY(A1))".into()));
-        assert_eq!(cell(&d, s, 6, 0).unwrap().value, CellValue::Number(3.0));
+        assert!(matches!(cell(&d, s, 6, 0).unwrap().value, CellValue::Number(n) if (0.0..6.0).contains(&n)));
 
         // RANDARRAY with integer mode and bounds
         set(&mut d, s, 10, 0, CellInput::Formula("RANDARRAY(2, 2, 5, 10, TRUE)".into()));
         for r in 10..12 {
             for c in 0..2 {
-                assert_eq!(cell(&d, s, r, c).unwrap().value, CellValue::Number(5.0));
+                assert!(matches!(cell(&d, s, r, c).unwrap().value, CellValue::Number(n) if (5.0..=10.0).contains(&n) && n.fract() == 0.0));
             }
         }
 
@@ -5711,7 +6552,7 @@ mod tests {
         while d.undo() {}
         assert!(*d.presentation() == start);
         while d.redo() {}
-        assert_eq!(cell(&d, s, 5, 0).unwrap().value, CellValue::Number(3.0));
+        assert!(matches!(cell(&d, s, 5, 0).unwrap().value, CellValue::Number(n) if (0.0..6.0).contains(&n)));
     }
 
     #[test]
@@ -6953,6 +7794,7 @@ mod tests {
             preserve_formatting: true,
             multiple_field_filters: false,
             calculated_items: vec![],
+            show_drill: true,
         };
 
         let sheet_data = crate::pivot::source_data(sheet_of(d.presentation(), s).unwrap(), pivot.source.range.unwrap());
@@ -7045,8 +7887,10 @@ mod tests {
             zoom: sheet.zoom,
             grid_lines: sheet.grid_lines,
             headings: sheet.headings,
+            show_ruler: sheet.show_ruler,
             page_break_preview: sheet.page_break_preview,
             frozen: sheet.frozen,
+            split: sheet.split,
             active_cell: Some((0, 0)),
             selection_range: None,
             print: Some(sheet.print.clone()),
@@ -7054,6 +7898,8 @@ mod tests {
             hidden_columns: Some(sheet.hidden_columns.clone()),
             auto_filter: Some(sheet.auto_filter.clone()),
             filtered_rows: Some(sheet.filtered_rows.clone()),
+            show_formulas: sheet.show_formulas,
+            show_zeros: sheet.show_zeros,
         };
 
         let wb_view = CustomWorkbookView {
@@ -7265,7 +8111,10 @@ mod tests {
             rounded_corners: false,
             title_overlay: false,
             ex: None,
+            ex_format: None,
             excel_layout: false,
+            cell_refs: Vec::new(),
+            ex_source: None,
         };
         let chart_shape = Shape {
             id: c_id,
@@ -7423,6 +8272,7 @@ mod tests {
         // 6. SetPhoneticProperties and undo/redo
         use crate::sheet::{PhoneticProperties, PhoneticType, PhoneticAlignment};
         let props = PhoneticProperties {
+            font_id: 0,
             phonetic_type: PhoneticType::Hiragana,
             alignment: PhoneticAlignment::Center,
         };
@@ -7432,6 +8282,93 @@ mod tests {
         assert_eq!(get_sheet(&d).phonetic_pr, None);
         assert!(d.redo());
         assert_eq!(get_sheet(&d).phonetic_pr, Some(props));
+    }
+
+    #[test]
+    fn split_panes_command_undo_redo_and_mutual_exclusion() {
+        let (mut d, s) = workbook();
+        let get_sheet = |doc: &Document| crate::sheet_calc::sheet_of_slide(doc.presentation().slide(s).unwrap()).cloned().unwrap();
+
+        assert_eq!(get_sheet(&d).split, None);
+        assert_eq!(get_sheet(&d).frozen, None);
+
+        // 1. Split at column 2, row 3
+        d.execute(vec![Command::Sheet(SheetCommand::Split { slide: s, split: Some((2, 3)) })]).unwrap();
+        assert_eq!(get_sheet(&d).split, Some((2, 3)));
+        assert_eq!(get_sheet(&d).frozen, None);
+
+        // 2. Undo reverts split
+        assert!(d.undo());
+        assert_eq!(get_sheet(&d).split, None);
+
+        // 3. Redo restores split
+        assert!(d.redo());
+        assert_eq!(get_sheet(&d).split, Some((2, 3)));
+
+        // 4. Freeze panes un-splits and sets frozen
+        d.execute(vec![Command::Sheet(SheetCommand::Freeze { slide: s, frozen: Some((1, 1)) })]).unwrap();
+        assert_eq!(get_sheet(&d).frozen, Some((1, 1)));
+        assert_eq!(get_sheet(&d).split, None);
+
+        // 5. Undo restores split and clears frozen
+        assert!(d.undo());
+        assert_eq!(get_sheet(&d).split, Some((2, 3)));
+        assert_eq!(get_sheet(&d).frozen, None);
+
+        // 6. Split at (4, 5) clears frozen if set
+        d.execute(vec![Command::Sheet(SheetCommand::Freeze { slide: s, frozen: Some((2, 2)) })]).unwrap();
+        assert_eq!(get_sheet(&d).frozen, Some((2, 2)));
+        d.execute(vec![Command::Sheet(SheetCommand::Split { slide: s, split: Some((4, 5)) })]).unwrap();
+        assert_eq!(get_sheet(&d).split, Some((4, 5)));
+        assert_eq!(get_sheet(&d).frozen, None);
+    }
+
+    #[test]
+    fn auto_expand_grid_on_cell_edit_or_format() {
+        let (mut d, s) = workbook();
+        let get_sheet = |doc: &Document| {
+            let slide = doc.presentation().slide(s).unwrap();
+            crate::sheet_calc::sheet_of_slide(slide).unwrap().clone()
+        };
+        let initial_rows = get_sheet(&d).rows.len();
+        let initial_cols = get_sheet(&d).columns.len();
+        assert!(initial_rows <= 100);
+        assert!(initial_cols <= 50);
+
+        // Edit cell at (column 30, row 150), which is beyond initial rows and columns.
+        let target_col = (initial_cols + 10) as u32;
+        let target_row = (initial_rows + 20) as u32;
+        d.execute(vec![Command::Sheet(SheetCommand::SetCells {
+            slide: s,
+            edits: vec![CellEdit {
+                row: target_row,
+                column: target_col,
+                input: CellInput::Value(CellValue::Text("Hello Excel Grid".into())),
+            }],
+        })]).unwrap();
+
+        let sheet = get_sheet(&d);
+        assert!(sheet.rows.len() > target_row as usize);
+        assert!(sheet.columns.len() > target_col as usize);
+        assert_eq!(sheet.cell(target_row, target_col).unwrap().text, "Hello Excel Grid");
+
+        // Format cell even further (e.g. bold at row 200, col 50)
+        let format_row = target_row + 30;
+        let format_col = target_col + 15;
+        d.execute(vec![Command::Sheet(SheetCommand::SetFormat {
+            slide: s,
+            ranges: vec![CellRange {
+                first_row: format_row,
+                first_column: format_col,
+                last_row: format_row,
+                last_column: format_col,
+            }],
+            change: StyleChange::Bold(true),
+        })]).unwrap();
+
+        let sheet2 = get_sheet(&d);
+        assert!(sheet2.rows.len() > format_row as usize);
+        assert!(sheet2.columns.len() > format_col as usize);
     }
 }
 

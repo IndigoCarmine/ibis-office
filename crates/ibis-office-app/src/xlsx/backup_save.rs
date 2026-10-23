@@ -95,7 +95,7 @@ fn config_store_path() -> Option<PathBuf> {
     let base = env("APPDATA");
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
-    Some(base?.join("ibisOffice").join("backup-save-config.tsv"))
+    Some(base?.join("AcaudaOffice").join("backup-save-config.tsv"))
 }
 
 pub(crate) fn load_backup_save_config() -> BackupSaveConfig {

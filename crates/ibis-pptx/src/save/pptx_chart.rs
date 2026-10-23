@@ -97,11 +97,34 @@ fn label_pos_str(pos: ibis_doc_model::LabelPosition) -> &'static str {
     }
 }
 
+/// Map label position to a valid OOXML `ST_DLblPos` value for the given chart type.
+/// In ECMA-376 Part 1 §21.2.2.48, line/area/scatter/radar/stock charts only allow:
+/// b, ctr, l, r, t, bestFit (outEnd, inEnd, inBase are invalid and cause Office repair).
+fn safe_label_pos_str(pos: ibis_doc_model::LabelPosition, chart_kind: &str) -> &'static str {
+    use ibis_doc_model::LabelPosition::*;
+    match chart_kind {
+        "lineChart" | "line3DChart" | "areaChart" | "area3DChart" | "scatterChart" | "bubbleChart" | "radarChart" | "stockChart" | "surfaceChart" | "surface3DChart" => {
+            match pos {
+                OutsideEnd | InsideEnd => "t",
+                InsideBase => "b",
+                Center => "ctr",
+                Above => "t",
+                Below => "b",
+                Left => "l",
+                Right => "r",
+                BestFit => "bestFit",
+            }
+        }
+        _ => label_pos_str(pos),
+    }
+}
+
 /// A series' data labels (`c:dLbls`): taken out, position / values / categories / percent / series name updated,
 /// or written new.
 pub(crate) fn write_labels(doc: &mut XmlDocument, ser: NodeId, _old: Option<&ibis_doc_model::DataLabels>, new: Option<&ibis_doc_model::DataLabels>) -> Result<(), Error> {
     let existing = doc.child(ser, "dLbls");
     let prefix = doc.name(ser).split_once(':').map(|(p, _)| format!("{p}:")).unwrap_or_default();
+    let chart_kind = doc.parent(ser).map(|p| doc.local_name(p).to_string()).unwrap_or_default();
     let Some(b) = new else {
         if let Some(d) = existing {
             doc.detach(d);
@@ -113,8 +136,9 @@ pub(crate) fn write_labels(doc: &mut XmlDocument, ser: NodeId, _old: Option<&ibi
         // In-place update of position and boolean visibility flags.
         match b.position {
             Some(pos) => {
+                let pos_val = safe_label_pos_str(pos, &chart_kind);
                 if let Some(p) = doc.child(d, "dLblPos") {
-                    doc.set_attr(p, "val", label_pos_str(pos));
+                    doc.set_attr(p, "val", pos_val);
                 } else {
                     const AFTER_POS: &[&str] = &[
                         "showLegendKey", "showVal", "showCatName", "showSerName", "showPercent",
@@ -122,12 +146,25 @@ pub(crate) fn write_labels(doc: &mut XmlDocument, ser: NodeId, _old: Option<&ibi
                     ];
                     let at = doc.children(d).iter().position(|&c| doc.is_element(c) && AFTER_POS.contains(&doc.local_name(c))).unwrap_or(doc.children(d).len());
                     let p = doc.insert_element(d, at, &format!("{prefix}dLblPos"));
-                    doc.set_attr(p, "val", label_pos_str(pos));
+                    doc.set_attr(p, "val", pos_val);
                 }
             }
             None => {
                 if let Some(p) = doc.child(d, "dLblPos") {
                     doc.detach(p);
+                }
+            }
+        }
+
+        // Also ensure any individual point dLblPos does not contain invalid values for this chart type
+        if matches!(chart_kind.as_str(), "lineChart" | "line3DChart" | "areaChart" | "area3DChart" | "scatterChart" | "bubbleChart" | "radarChart" | "stockChart" | "surfaceChart" | "surface3DChart") {
+            let pos_nodes: Vec<NodeId> = doc.descendants(d).into_iter().filter(|&n| doc.is_element(n) && doc.local_name(n) == "dLblPos").collect();
+            for dlbl in pos_nodes {
+                let current_val = doc.attr(dlbl, "val").map(|s| s.to_string());
+                match current_val.as_deref() {
+                    Some("outEnd" | "inEnd") => doc.set_attr(dlbl, "val", "t"),
+                    Some("inBase") => doc.set_attr(dlbl, "val", "b"),
+                    _ => {}
                 }
             }
         }
@@ -155,7 +192,7 @@ pub(crate) fn write_labels(doc: &mut XmlDocument, ser: NodeId, _old: Option<&ibi
 
     if let Some(pos) = b.position {
         let p = doc.append_element(labels, &format!("{prefix}dLblPos"));
-        doc.set_attr(p, "val", label_pos_str(pos));
+        doc.set_attr(p, "val", safe_label_pos_str(pos, &chart_kind));
     }
     for (name, on) in [
         ("showLegendKey", false),
@@ -564,10 +601,10 @@ pub(crate) fn write_chart(package: &mut Package, part: &str, old: &Chart, new: &
         // グラフの種類の変更: the one group of the chart turned into another
         // bar, line or area kind (or grouping).
         let converted;
-        let a = if (a.kind != b.kind || a.grouping != b.grouping) && old.groups.len() == 1 {
+        let a = if (a.kind != b.kind || a.grouping != b.grouping || a.three_d != b.three_d) && old.groups.len() == 1 {
             super::pptx_chart_type::convert_group(doc, plot, node, a, b)?;
             retyped = true;
-            converted = ibis_doc_model::ChartGroup { kind: b.kind, grouping: b.grouping, ..a.clone() };
+            converted = ibis_doc_model::ChartGroup { kind: b.kind, grouping: b.grouping, three_d: b.three_d, ..a.clone() };
             &converted
         } else {
             a
@@ -594,6 +631,7 @@ pub(crate) fn write_chart(package: &mut Package, part: &str, old: &Chart, new: &
                 marker: t.marker.clone(),
                 x_values: t.x_values.clone(),
                 bubble_sizes: t.bubble_sizes.clone(),
+                bubble_3d: t.bubble_3d,
                 ..s.clone()
             };
             if retyped {
@@ -713,36 +751,29 @@ pub(crate) fn write_chart(package: &mut Package, part: &str, old: &Chart, new: &
         }
         (None, Some(b)) => {
             if let Some(auto_del) = doc.child(chart, "autoTitleDeleted") {
-                doc.set_attr(auto_del, "val", "0");
+                doc.detach(auto_del);
             }
             let c_prefix = doc.name(chart).split_once(':').map(|(p, _)| format!("{p}:")).unwrap_or_default();
-            let a_prefix = doc.descendants(chart).into_iter().find_map(|n| {
-                let name = doc.name(n);
-                if matches!(doc.local_name(n), "spPr" | "bodyPr" | "p") {
-                    name.split_once(':').map(|(p, _)| format!("{p}:"))
-                } else {
-                    None
-                }
-            }).unwrap_or_else(|| "a:".to_string());
+            let a_colon = if a_prefix.is_empty() { String::new() } else { format!("{a_prefix}:") };
 
             let title = doc.insert_element(chart, 0, &format!("{c_prefix}title"));
             let tx = doc.append_element(title, &format!("{c_prefix}tx"));
             let rich = doc.append_element(tx, &format!("{c_prefix}rich"));
-            doc.append_element(rich, &format!("{a_prefix}bodyPr"));
-            doc.append_element(rich, &format!("{a_prefix}lstStyle"));
+            doc.append_element(rich, &format!("{a_colon}bodyPr"));
+            doc.append_element(rich, &format!("{a_colon}lstStyle"));
 
             for line in b.text.split('\n') {
-                let p = doc.append_element(rich, &format!("{a_prefix}p"));
-                let ppr = doc.append_element(p, &format!("{a_prefix}pPr"));
-                let def = doc.append_element(ppr, &format!("{a_prefix}defRPr"));
+                let p = doc.append_element(rich, &format!("{a_colon}p"));
+                let ppr = doc.append_element(p, &format!("{a_colon}pPr"));
+                let def = doc.append_element(ppr, &format!("{a_colon}defRPr"));
                 if b.style.size > 0 {
                     doc.set_attr(def, "sz", &b.style.size.to_string());
                 }
                 if b.style.bold {
                     doc.set_attr(def, "b", "1");
                 }
-                let r = doc.append_element(p, &format!("{a_prefix}r"));
-                let rpr = doc.append_element(r, &format!("{a_prefix}rPr"));
+                let r = doc.append_element(p, &format!("{a_colon}r"));
+                let rpr = doc.append_element(r, &format!("{a_colon}rPr"));
                 doc.set_attr(rpr, "lang", "ja-JP");
                 if b.style.size > 0 {
                     doc.set_attr(rpr, "sz", &b.style.size.to_string());
@@ -750,7 +781,7 @@ pub(crate) fn write_chart(package: &mut Package, part: &str, old: &Chart, new: &
                 if b.style.bold {
                     doc.set_attr(rpr, "b", "1");
                 }
-                let t = doc.append_element(r, &format!("{a_prefix}t"));
+                let t = doc.append_element(r, &format!("{a_colon}t"));
                 doc.set_text(t, line);
             }
 
@@ -762,6 +793,9 @@ pub(crate) fn write_chart(package: &mut Package, part: &str, old: &Chart, new: &
             let matches_except_layout = (ibis_doc_model::ChartTitle { text: b.text.clone(), at: b.at, ..a.clone() }) == *b && !b.text.contains('\n');
             if !matches_except_layout {
                 return Err(refuse("title_matches_except_layout"));
+            }
+            if let Some(auto_del) = doc.child(chart, "autoTitleDeleted") {
+                doc.detach(auto_del);
             }
             let title = doc.child(chart, "title").ok_or_else(|| refuse("title_node"))?;
             if b.at.is_none() {
@@ -776,10 +810,13 @@ pub(crate) fn write_chart(package: &mut Package, part: &str, old: &Chart, new: &
             for &r in others {
                 doc.detach(r);
             }
-            // Further paragraphs (lines) go.
-            let paragraphs: Vec<NodeId> = doc.descendants(title).into_iter().filter(|&n| doc.local_name(n) == "p").collect();
-            for &p in paragraphs.iter().skip(1) {
-                doc.detach(p);
+            // Further paragraphs (lines) in rich text go. Do NOT touch p elements outside rich (e.g. in txPr).
+            let rich = doc.descendants(title).into_iter().find(|&n| doc.local_name(n) == "rich");
+            if let Some(rich) = rich {
+                let paragraphs: Vec<NodeId> = doc.children(rich).iter().copied().filter(|&n| doc.local_name(n) == "p").collect();
+                for &p in paragraphs.iter().skip(1) {
+                    doc.detach(p);
+                }
             }
         }
         (a, b) if a != b => return Err(refuse("title_mismatch")),
@@ -905,6 +942,7 @@ pub(crate) fn write_chart(package: &mut Package, part: &str, old: &Chart, new: &
         style: old.style,
         axes: old.axes.clone(),
         plot_background: old.plot_background.clone(),
+        cell_refs: old.cell_refs.clone(),
         ..new.clone()
     };
     if rest != *old {
@@ -940,6 +978,11 @@ fn builtin_unit_name(divisor: f64) -> Option<&'static str> {
     }
 }
 
+fn place_element(doc: &mut XmlDocument, parent: NodeId, name: &str, before: &[&str]) -> NodeId {
+    let at = doc.children(parent).iter().position(|&c| doc.is_element(c) && before.contains(&doc.local_name(c))).unwrap_or(doc.children(parent).len());
+    doc.insert_element(parent, at, name)
+}
+
 /// Write axis scaling, units, and orientation changes.
 pub(crate) fn write_axes(doc: &mut XmlDocument, plot: NodeId, _old: &[Axis], new_axes: &[Axis]) -> Result<(), Error> {
     let axis_nodes: Vec<NodeId> = doc.elements(plot).filter(|&n| AXIS_ELEMENTS.contains(&doc.local_name(n))).collect();
@@ -952,21 +995,8 @@ pub(crate) fn write_axes(doc: &mut XmlDocument, plot: NodeId, _old: &[Axis], new
         // 1. c:scaling
         let scaling = match doc.child(ax_node, "scaling") {
             Some(s) => s,
-            None => {
-                let at = doc.children(ax_node).iter().position(|&c| c == ax_id_node).map(|i| i + 1).unwrap_or(0);
-                doc.insert_element(ax_node, at, &format!("{prefix}scaling"))
-            }
+            None => place_element(doc, ax_node, &format!("{prefix}scaling"), &["delete", "axPos", "majorGridlines", "minorGridlines", "title", "numFmt", "majorTickMark", "minorTickMark", "tickLblPos", "spPr", "txPr", "crossAx", "crosses", "crossesAt", "crossBetween", "majorUnit", "minorUnit", "majorTimeUnit", "minorTimeUnit", "dispUnits", "extLst"]),
         };
-
-        // orientation: minMax or maxMin
-        let want_orientation = if axis.reversed { "maxMin" } else { "minMax" };
-        match doc.child(scaling, "orientation") {
-            Some(orient) => doc.set_attr(orient, "val", want_orientation),
-            None => {
-                let orient = doc.append_element(scaling, &format!("{prefix}orientation"));
-                doc.set_attr(orient, "val", want_orientation);
-            }
-        }
 
         // logBase
         match axis.log_base {
@@ -974,7 +1004,7 @@ pub(crate) fn write_axes(doc: &mut XmlDocument, plot: NodeId, _old: &[Axis], new
                 match doc.child(scaling, "logBase") {
                     Some(lb) => doc.set_attr(lb, "val", &base.to_string()),
                     None => {
-                        let lb = doc.insert_element(scaling, 0, &format!("{prefix}logBase"));
+                        let lb = place_element(doc, scaling, &format!("{prefix}logBase"), &["orientation", "max", "min", "extLst"]);
                         doc.set_attr(lb, "val", &base.to_string());
                     }
                 }
@@ -986,21 +1016,13 @@ pub(crate) fn write_axes(doc: &mut XmlDocument, plot: NodeId, _old: &[Axis], new
             }
         }
 
-        // min
-        match axis.min {
-            Some(Number(min_val)) => {
-                match doc.child(scaling, "min") {
-                    Some(m) => doc.set_attr(m, "val", &min_val.to_string()),
-                    None => {
-                        let m = doc.append_element(scaling, &format!("{prefix}min"));
-                        doc.set_attr(m, "val", &min_val.to_string());
-                    }
-                }
-            }
+        // orientation: minMax or maxMin
+        let want_orientation = if axis.reversed { "maxMin" } else { "minMax" };
+        match doc.child(scaling, "orientation") {
+            Some(orient) => doc.set_attr(orient, "val", want_orientation),
             None => {
-                if let Some(m) = doc.child(scaling, "min") {
-                    doc.detach(m);
-                }
+                let orient = place_element(doc, scaling, &format!("{prefix}orientation"), &["max", "min", "extLst"]);
+                doc.set_attr(orient, "val", want_orientation);
             }
         }
 
@@ -1010,7 +1032,7 @@ pub(crate) fn write_axes(doc: &mut XmlDocument, plot: NodeId, _old: &[Axis], new
                 match doc.child(scaling, "max") {
                     Some(m) => doc.set_attr(m, "val", &max_val.to_string()),
                     None => {
-                        let m = doc.append_element(scaling, &format!("{prefix}max"));
+                        let m = place_element(doc, scaling, &format!("{prefix}max"), &["min", "extLst"]);
                         doc.set_attr(m, "val", &max_val.to_string());
                     }
                 }
@@ -1022,13 +1044,35 @@ pub(crate) fn write_axes(doc: &mut XmlDocument, plot: NodeId, _old: &[Axis], new
             }
         }
 
+        // min (mathematically undefined and invalid in Office if min <= 0 when log_base is set)
+        let min_value = match (axis.min, axis.log_base) {
+            (Some(Number(min_val)), Some(_)) if min_val <= 0.0 => None,
+            (min, _) => min,
+        };
+        match min_value {
+            Some(Number(min_val)) => {
+                match doc.child(scaling, "min") {
+                    Some(m) => doc.set_attr(m, "val", &min_val.to_string()),
+                    None => {
+                        let m = place_element(doc, scaling, &format!("{prefix}min"), &["extLst"]);
+                        doc.set_attr(m, "val", &min_val.to_string());
+                    }
+                }
+            }
+            None => {
+                if let Some(m) = doc.child(scaling, "min") {
+                    doc.detach(m);
+                }
+            }
+        }
+
         // 2. c:majorUnit
         match axis.major_unit {
             Some(Number(unit_val)) => {
                 match doc.child(ax_node, "majorUnit") {
                     Some(u) => doc.set_attr(u, "val", &unit_val.to_string()),
                     None => {
-                        let u = doc.append_element(ax_node, &format!("{prefix}majorUnit"));
+                        let u = place_element(doc, ax_node, &format!("{prefix}majorUnit"), &["minorUnit", "majorTimeUnit", "minorTimeUnit", "dispUnits", "extLst"]);
                         doc.set_attr(u, "val", &unit_val.to_string());
                     }
                 }
@@ -1046,7 +1090,7 @@ pub(crate) fn write_axes(doc: &mut XmlDocument, plot: NodeId, _old: &[Axis], new
                 match doc.child(ax_node, "minorUnit") {
                     Some(u) => doc.set_attr(u, "val", &unit_val.to_string()),
                     None => {
-                        let u = doc.append_element(ax_node, &format!("{prefix}minorUnit"));
+                        let u = place_element(doc, ax_node, &format!("{prefix}minorUnit"), &["majorTimeUnit", "minorTimeUnit", "dispUnits", "extLst"]);
                         doc.set_attr(u, "val", &unit_val.to_string());
                     }
                 }
@@ -1063,7 +1107,7 @@ pub(crate) fn write_axes(doc: &mut XmlDocument, plot: NodeId, _old: &[Axis], new
             Some(Number(disp_val)) => {
                 let disp = match doc.child(ax_node, "dispUnits") {
                     Some(d) => d,
-                    None => doc.append_element(ax_node, &format!("{prefix}dispUnits")),
+                    None => place_element(doc, ax_node, &format!("{prefix}dispUnits"), &["extLst"]),
                 };
                 if let Some(builtin) = builtin_unit_name(disp_val) {
                     if let Some(cust) = doc.child(disp, "custUnit") {

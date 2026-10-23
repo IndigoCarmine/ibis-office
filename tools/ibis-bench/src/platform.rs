@@ -79,7 +79,7 @@ pub fn process_path(pid: u32) -> Result<std::path::PathBuf> {
 pub fn doctor(root: &std::path::Path) -> Result<()> {
     let office = std::path::Path::new("C:/Program Files/Microsoft Office/root/Office16");
     let apps = [
-        ("ibisoffice", root.join("target/release/ibisOffice.exe")),
+        ("ibisoffice", root.join("target/release/AcaudaOffice.exe")),
         ("msoffice-powerpoint", office.join("POWERPNT.EXE")),
         ("msoffice-word", office.join("WINWORD.EXE")),
         ("msoffice-excel", office.join("EXCEL.EXE")),

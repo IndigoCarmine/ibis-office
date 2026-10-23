@@ -17,7 +17,7 @@ const REL_SLIDE_MASTER: &str = "http://schemas.openxmlformats.org/officeDocument
 const REL_THEME: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 
 /// The theme parts of the masters of `presentation`.
-fn theme_parts(package: &Package, presentation: &str) -> Result<Vec<String>, Error> {
+pub(crate) fn theme_parts(package: &Package, presentation: &str) -> Result<Vec<String>, Error> {
     let mut out = Vec::new();
     for master in package.relationships(presentation)?.into_iter().filter(|r| r.kind == REL_SLIDE_MASTER && !r.external).filter_map(|r| r.target_part(presentation)) {
         for rel in package.relationships(&master)?.into_iter().filter(|r| r.kind == REL_THEME && !r.external) {
@@ -273,6 +273,35 @@ pub(crate) fn write(package: &mut Package, presentation: &str, colors: &[(String
     for part in theme_parts(package, presentation)? {
         let doc = package.xml_mut(&part)?;
         write_theme_elements(doc, colors, fonts);
+    }
+    Ok(())
+}
+
+/// Write theme format/effects scheme (`a:fmtScheme`) into a theme document.
+pub(crate) fn write_theme_effects(doc: &mut ibis_ooxml::XmlDocument, preset_id_or_name: &str) -> Result<(), Error> {
+    use crate::theme_effects::{find_effect_preset, generate_fmt_scheme_xml};
+    let Some(preset) = find_effect_preset(preset_id_or_name) else { return Ok(()) };
+    let Some(root) = doc.root_element() else { return Ok(()) };
+    let Some(elements) = doc.child(root, "themeElements") else { return Ok(()) };
+    let x = Prefixes::at(doc, root);
+    let fmt_xml = generate_fmt_scheme_xml(preset);
+    let new_fmt = x.import(doc, &fmt_xml)?;
+    if let Some(old_fmt) = doc.child(elements, "fmtScheme") {
+        doc.insert_after(old_fmt, new_fmt);
+        doc.detach(old_fmt);
+    } else {
+        let count = doc.children(elements).len();
+        doc.insert(elements, count, new_fmt);
+    }
+    Ok(())
+}
+
+/// Write theme effects into every theme of the presentation.
+pub(crate) fn write_effects(package: &mut Package, presentation: &str, effects: Option<&str>) -> Result<(), Error> {
+    let Some(effects) = effects else { return Ok(()) };
+    for part in theme_parts(package, presentation)? {
+        let doc = package.xml_mut(&part)?;
+        write_theme_effects(doc, effects)?;
     }
     Ok(())
 }

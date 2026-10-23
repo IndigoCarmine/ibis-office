@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Paragraph shading and scoped borders, using existing paragraph replacement undo.
 use gpui_kit::*;
-use ibis_doc_model::{Block, FlowCommand, ParaFormat, FlowBorder, BorderStyle, Rgb};
+use ibis_doc_model::{FlowCommand, ParaFormat, FlowBorder, BorderStyle, Rgb};
 use ibis_doc_model::flow_command;
 use crate::shell::editor::SlideEditor;
 use crate::shell::chrome::{MenuEntry, MenuItem, Submenu};

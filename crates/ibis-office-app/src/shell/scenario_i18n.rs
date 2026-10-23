@@ -9,7 +9,7 @@ use crate::shell::i18n::{self, Language, LanguageSetting};
 use crate::shell::scenario::Scenario;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
-    vec![("shell::i8_language_switch_and_kept", i8_language_switch_and_kept), ("shell::i8_panels_and_status_in_english", i8_panels_and_status_in_english), ("shell::fix16_font_names_in_english", fix16_font_names_in_english), ("shell::i8_docx_panels_in_english", i8_docx_panels_in_english), ("shell::fix34_start_view_in_english", fix34_start_view_in_english), ("shell::fix34_new_file_names_in_english", fix34_new_file_names_in_english)]
+    vec![("shell::i8_language_switch_and_kept", i8_language_switch_and_kept), ("shell::i8_panels_and_status_in_english", i8_panels_and_status_in_english), ("shell::fix16_font_names_in_english", fix16_font_names_in_english), ("shell::i8_docx_panels_in_english", i8_docx_panels_in_english), ("shell::fix34_start_view_in_english", fix34_start_view_in_english), ("shell::fix34_new_file_names_in_english", fix34_new_file_names_in_english), ("shell::fix36_font_lists_from_the_system", fix36_font_lists_from_the_system), ("shell::split_buttons_in_english", split_buttons_in_english), ("shell::fix_font_dialog_item_leads_the_list", fix_font_dialog_item_leads_the_list)]
 }
 
 /// The label of the menu item `id` and of the ファイル menu, as shown now.
@@ -118,4 +118,170 @@ fn fix34_new_file_names_in_english() {
     i18n::show(Language::Japanese);
     assert_eq!(crate::shell::file_actions::new_file_name(Kind::Document), "文書 1.docx");
     assert_eq!(crate::shell::file_actions::new_file_name(Kind::Presentation), "プレゼンテーション 1.pptx");
+}
+
+/// The split buttons (borders, underline, merge, Σ, bullets, numbering, new slide, table borders) in English: their
+/// tooltips and the labels of their menus, as the menus draw them, have no Japanese and no id left as it is; a picture
+/// of the toolbar.
+fn split_buttons_in_english() {
+    use crate::shell::chrome::MenuEntry;
+    fn labels(entries: &[MenuEntry], out: &mut Vec<String>) {
+        for entry in entries {
+            match entry {
+                MenuEntry::Item(item) if item.id != "pptx.new-slide.layout" => out.push(i18n::text(&item.label).to_string()),
+                MenuEntry::Submenu(sub) => {
+                    out.push(i18n::text(&sub.label).to_string());
+                    labels(&sub.items, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    let japanese = |t: &str| t.chars().any(|c| matches!(c, '\u{3040}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}'));
+    let check = |s: &mut Scenario, ids: &[&str]| {
+        for id in ids {
+            let b = s.tool_button(id).unwrap_or_else(|| panic!("no button {id}"));
+            assert!(b.left_action().is_some() && b.menu.is_some(), "{id} is a split button");
+            let mut texts = vec![i18n::text(&b.tooltip).to_string()];
+            labels(b.menu.as_deref().unwrap_or_default(), &mut texts);
+            for t in texts {
+                assert!(!japanese(&t), "{id}: {t:?} is Japanese in the English UI");
+                assert!(!t.is_empty() && !(t.contains('.') && !t.contains(' ') && t.chars().all(|c| c.is_ascii_lowercase() || c == '.' || c == '-' || c.is_ascii_digit() || c == '_')), "{id}: {t:?} is an id drawn as it is");
+            }
+        }
+    };
+    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    i18n::show(Language::English);
+    s.update(|_, _, _| {});
+    check(&mut s, &["borders", "underline", "merge", "functions", "currency"]);
+    s.screenshot("english-xlsx-toolbar");
+    drop(s);
+    let mut s = Scenario::new_document(ibis_pptx::Kind::Document);
+    i18n::show(Language::English);
+    s.update(|_, _, _| {});
+    check(&mut s, &["bullets", "numbered", "underline"]);
+    s.screenshot("english-docx-toolbar");
+    drop(s);
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    i18n::show(Language::English);
+    s.page(2);
+    s.double_click_shape(1);
+    s.key("cmd-a");
+    check(&mut s, &["new-slide", "bullets", "numbered", "underline"]);
+    s.screenshot("english-pptx-toolbar");
+    s.key("escape");
+    s.page(3);
+    s.menu("table.new.3x3");
+    check(&mut s, &["table.borders"]);
+    i18n::show(Language::Japanese);
+    s.update(|_, _, _| {});
+}
+
+/// Select one shape with text on the slide shown (a presentation's font box is there for it).
+fn select_a_text_shape(e: &mut crate::shell::editor::SlideEditor, window: &mut gpui_kit::Window, cx: &mut gpui_kit::Context<crate::shell::editor::SlideEditor>) {
+    let slide = e.slide();
+    let id = slide.shown_shapes().find(|s| s.text_body().is_some_and(|b| !b.text().is_empty())).map(|s| s.id).expect("a shape with text");
+    e.end_text_edit(window, cx);
+    e.set_selection(vec![id]);
+    cx.notify();
+}
+
+/// The font box of a document: (the value shown, the labels of the list, the checked ones).
+fn font_box(s: &mut Scenario) -> (String, Vec<String>, Vec<String>) {
+    use crate::shell::chrome::{MenuEntry, ToolItem};
+    s.with(|e, _| {
+        let Some(ToolItem::Select { value, menu, .. }) = e.toolbar_items().into_iter().find(|i| matches!(i, ToolItem::Select { id: "font", .. })) else { panic!("no font box") };
+        let items: Vec<_> = menu.iter().filter_map(|m| if let MenuEntry::Item(i) = m { Some(i) } else { None }).filter(|i| i.id.ends_with(".font")).collect();
+        (value.to_string(), items.iter().map(|i| i.label.to_string()).collect(), items.iter().filter(|i| i.checked).map(|i| i.label.to_string()).collect())
+    })
+}
+
+/// Choose `label` in the font list of the open document.
+fn choose_font(s: &mut Scenario, label: &str) {
+    use crate::shell::chrome::{MenuEntry, ToolItem};
+    let label = label.to_string();
+    let handler = s.with(move |e, _| {
+        let Some(ToolItem::Select { menu, .. }) = e.toolbar_items().into_iter().find(|i| matches!(i, ToolItem::Select { id: "font", .. })) else { panic!("no font box") };
+        menu.into_iter().find_map(|m| if let MenuEntry::Item(i) = m { (i.label.as_str() == label).then_some(i.handler) } else { None }).flatten().unwrap_or_else(|| panic!("no font {label} in the list"))
+    });
+    s.update(|e, window, cx| handler(e, window, cx));
+}
+
+/// #36 (3): the font lists are made from the fonts installed on this system, not a fixed table of
+/// Office's names: ＭＳ ゴシック and メイリオ are not on a Mac and are not listed, Hiragino is (by its
+/// name in the system's language), the hidden `.` fonts are not; the font a list sets is saved under
+/// the listed name; a document's own font that is not installed shows in the box as it is.
+fn fix36_font_lists_from_the_system() {
+    let hiragino = |l: &[String]| l.iter().any(|n| n == "Hiragino Sans" || n == "ヒラギノ角ゴシック");
+    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+        let mut s = if kind == ibis_pptx::Kind::Presentation { Scenario::open("test/editing/pptx-plan.pptx") } else { Scenario::new_document(kind) };
+        // A presentation's font box is there while a shape is selected.
+        s.update(|e, window, cx| {
+            if kind == ibis_pptx::Kind::Presentation {
+                select_a_text_shape(e, window, cx);
+            }
+        });
+        let (_, list, _) = font_box(&mut s);
+        if cfg!(target_os = "macos") {
+            assert!(!list.is_empty(), "{kind:?}: no fonts listed");
+            for gone in ["ＭＳ ゴシック", "ＭＳ Ｐゴシック", "ＭＳ 明朝", "メイリオ", "BIZ UDPゴシック"] {
+                assert!(!list.iter().any(|n| n == gone), "{kind:?}: {gone} is listed on a Mac");
+            }
+            assert!(hiragino(&list), "{kind:?}: Hiragino is not listed");
+        }
+        assert!(!list.iter().any(|n| n.starts_with('.')), "{kind:?}: a hidden font is listed");
+        assert!(list.windows(2).all(|w| w[0].is_ascii() != w[1].is_ascii() || w[0].to_lowercase() <= w[1].to_lowercase() || !w[0].is_ascii()), "{kind:?}: not sorted");
+        let mut sorted = list.clone();
+        sorted.dedup();
+        assert_eq!(sorted.len(), list.len(), "{kind:?}: a family twice");
+        eprintln!("fix36 {kind:?}: {} families, first {:?}, Hiragino {:?}", list.len(), &list[..list.len().min(4)], list.iter().filter(|n| n.contains("Hiragino") || n.contains("ヒラギノ")).collect::<Vec<_>>());
+    }
+    // A presentation: the font of the selected text is saved under the listed name.
+    {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(select_a_text_shape);
+    let (_, list, _) = font_box(&mut s);
+    let chosen = list.iter().find(|n| *n == "Hiragino Sans" || *n == "ヒラギノ角ゴシック").cloned().unwrap_or_else(|| list[0].clone());
+    choose_font(&mut s, &chosen);
+    let (value, _, checked) = font_box(&mut s);
+    assert_eq!(value, chosen);
+    assert_eq!(checked, [chosen.clone()]);
+    }
+    // A workbook: choose Hiragino, the box shows the name it is saved under; a font the system lacks shows as it is.
+    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    s.update(|_, _, _| {});
+    let (_, list, _) = font_box(&mut s);
+    let chosen = list.iter().find(|n| *n == "Hiragino Sans" || *n == "ヒラギノ角ゴシック").cloned().unwrap_or_else(|| list[0].clone());
+    choose_font(&mut s, &chosen);
+    let (value, _, checked) = font_box(&mut s);
+    assert_eq!(value, chosen);
+    assert_eq!(checked, [chosen.clone()]);
+    // The cell's style holds the listed name (what is saved in the workbook).
+    assert_eq!(s.with(|e, _| e.current_style().font), Some(chosen.clone()));
+    s.update(|e, _, cx| e.format_cells(ibis_doc_model::StyleChange::Font(Some("メイリオ".into())), cx));
+    let (value, list, checked) = font_box(&mut s);
+    assert_eq!(value, "メイリオ");
+    assert!(checked.is_empty() && !list.iter().any(|n| n == "メイリオ"));
+    s.screenshot("fix36-xlsx-font-not-installed");
+}
+
+/// The font list of a document and of a presentation starts with its dialog item ("Fonts…" for a
+/// document, "Replace Fonts…" for a presentation), then a separator, then the fonts.
+fn fix_font_dialog_item_leads_the_list() {
+    use crate::shell::chrome::{MenuEntry, ToolItem};
+    for (kind, id) in [(ibis_pptx::Kind::Document, "docx.font.custom"), (ibis_pptx::Kind::Presentation, "pptx.replace-fonts")] {
+        let mut s = if kind == ibis_pptx::Kind::Presentation { Scenario::open("test/editing/pptx-plan.pptx") } else { Scenario::new_document(kind) };
+        s.update(|e, window, cx| {
+            if kind == ibis_pptx::Kind::Presentation {
+                select_a_text_shape(e, window, cx);
+            }
+        });
+        let (first, second, last) = s.with(|e, _| {
+            let Some(ToolItem::Select { menu, .. }) = e.toolbar_items().into_iter().find(|i| matches!(i, ToolItem::Select { id: "font", .. })) else { panic!("no font box") };
+            let name = |m: &MenuEntry| match m { MenuEntry::Item(i) => i.id.to_string(), MenuEntry::Separator => "-".into(), _ => "?".into() };
+            (name(&menu[0]), name(&menu[1]), name(menu.last().unwrap()))
+        });
+        assert_eq!((first.as_str(), second.as_str()), (id, "-"), "{kind:?}");
+        assert_ne!(last, id, "{kind:?}: the dialog item is also at the end");
+    }
 }

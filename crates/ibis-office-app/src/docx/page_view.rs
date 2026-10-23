@@ -17,11 +17,24 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
     let pagination = pages(document, res);
     let k = scale * EMU_PER_POINT as f32;
     let mut behind_pictures = Vec::new();
+    // The headers' and footers' shapes behind the text: under the body's
+    // (Word draws their layer below the document's).
+    let mut header_behind = Vec::new();
     let mut front_pictures = Vec::new();
-    for item in pagination.pages.get(index).into_iter().flat_map(|p| &p.items) {
+    // The floating shapes' order (`relativeHeight`), for drawing them in it;
+    // the others (0) under them.
+    let mut front_z: Vec<u32> = Vec::new();
+    let hide_body = res.hide_document_text;
+    let page_ref = pagination.pages.get(index);
+    let body_items_count = page_ref.map_or(0, |p| p.body_items_count);
+    for (i, item) in page_ref.into_iter().flat_map(|p| p.items.iter().enumerate()) {
+        if hide_body && i < body_items_count {
+            continue;
+        }
         match item {
             Item::Picture { media, x, y, w, h } => {
                 if let Some(image) = res.picture(*media) {
+                    front_z.push(0);
                     front_pictures.push(
                         img(image).absolute().left(px(x * k)).top(px(y * k)).w(px(w * k)).h(px(h * k)).into_any_element(),
                     );
@@ -52,19 +65,47 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                 );
                 let elem = shape_element(shape, s_frame, scale, res, None);
                 let is_behind = shape.floating.as_ref().map_or(false, |f| f.behind_doc);
-                if is_behind {
+                if is_behind && i >= body_items_count {
+                    header_behind.push(elem);
+                } else if is_behind {
                     behind_pictures.push(elem);
                 } else {
+                    front_z.push(shape.floating.as_ref().map_or(0, |f| f.relative_height));
                     front_pictures.push(elem);
                 }
+            }
+            Item::CommentBubble { x, y, size } if !res.print => {
+                front_z.push(u32::MAX);
+                front_pictures.push(
+                    div()
+                        .absolute()
+                        .left(px(x * k))
+                        .top(px(y * k))
+                        .w(px(size * k))
+                        .h(px(size * k))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            gpui_kit::component::Icon::new(crate::shell::icons::Material("comment"))
+                                .size(px(size * k))
+                                .text_color(rgb(crate::docx::flow_layout::COMMENT_BUBBLE_ICON.0)),
+                        )
+                        .into_any_element(),
+                );
             }
             _ => {}
         }
     }
+    // Drawn in that order (stable: the same order as laid out within one).
+    let mut ordered: Vec<(u32, AnyElement)> = front_z.into_iter().zip(front_pictures).collect();
+    ordered.sort_by_key(|(z, _)| *z);
+    let front_pictures: Vec<AnyElement> = ordered.into_iter().map(|(_, e)| e).collect();
     let print = res.print;
     // ページの色: on the screen only (Word for Mac prints none) unless print_backgrounds is enabled.
-    let paper = document.page_color.filter(|_| !print || res.print_backgrounds).map_or(0xffffff, |c| c.0);
-    div().absolute().left_0().top_0().w(px(w)).h(px(h)).bg(rgb(paper)).children(behind_pictures).child(
+    let dark = res.dark_page && !print;
+    let paper = if dark { DARK_PAPER } else { document.page_color.filter(|_| !print || res.print_backgrounds).map_or(0xffffff, |c| c.0) };
+    div().absolute().left_0().top_0().w(px(w)).h(px(h)).bg(rgb(paper)).children(header_behind).children(behind_pictures).child(
         canvas(
             |_, _, _| {},
             move |bounds, _, window, cx| {
@@ -81,9 +122,13 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                 }
                 let Some(page) = pagination.pages.get(index) else { return };
                 let visible = window.content_mask().bounds;
-                for item in &page.items {
+                for (i, item) in page.items.iter().enumerate() {
+                    if hide_body && i < page.body_items_count {
+                        continue;
+                    }
                     match item {
                         Item::Rect { x, y, w, h, color } => {
+                            let color = &dark_color(*color, dark);
                             // At least a device pixel, so thin rules show.
                             let min = 1.0 / window.scale_factor();
                             let r = Bounds::new(point(o.x + px(x * k), o.y + px(y * k)), size(px((w * k).max(min)), px((h * k).max(min))));
@@ -92,6 +137,7 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                             }
                         }
                         Item::Text { x, y, text, offsets, font, size: font_size, color } => {
+                            let color = &dark_color(*color, dark);
                             let size_px = font_size * k;
                             let top = o.y + px(y * k - size_px);
                             if top > visible.origin.y + visible.size.height || top + px(size_px * 2.0) < visible.origin.y {
@@ -133,6 +179,7 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                             }
                         }
                         Item::Stroke { x, y, x2, y2, w, color } => {
+                            let color = &dark_color(*color, dark);
                             let mut path = PathBuilder::stroke(px((w * k).max(1.0 / window.scale_factor())));
                             path.move_to(point(o.x + px(x * k), o.y + px(y * k)));
                             path.line_to(point(o.x + px(x2 * k), o.y + px(y2 * k)));
@@ -140,7 +187,7 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                                 window.paint_path(path, *color);
                             }
                         }
-                        Item::Picture { .. } | Item::Art { .. } | Item::Shape { .. } | Item::Line { .. } | Item::Shading { .. } => {}
+                        Item::Picture { .. } | Item::Art { .. } | Item::Shape { .. } | Item::Line { .. } | Item::Shading { .. } | Item::CommentBubble { .. } => {}
                     }
                 }
             },
@@ -149,4 +196,33 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
         .size_full(),
     )
     .children(front_pictures)
+}
+
+/// The paper of a page shown dark.
+const DARK_PAPER: u32 = 0x262626;
+
+/// A colour as it is on a dark page: black (what the text and the lines are by default) is a light grey, a lighter colour stays.
+fn dark_color(color: Hsla, dark: bool) -> Hsla {
+    if dark && color.l < 0.15 && color.a > 0.0 {
+        Hsla { h: color.h, s: 0.0, l: 0.95, a: color.a }
+    } else {
+        color
+    }
+}
+
+#[cfg(test)]
+mod dark_tests {
+    use super::dark_color;
+    use gpui_kit::hsla;
+
+    #[test]
+    fn a_dark_page_lightens_black_and_leaves_the_rest() {
+        let black = hsla(0.0, 0.0, 0.0, 1.0);
+        assert!(dark_color(black, true).l > 0.9, "black text is light on a dark page");
+        assert_eq!(dark_color(black, false), black, "the light page is as it was");
+        let red = hsla(0.0, 1.0, 0.4, 1.0);
+        assert_eq!(dark_color(red, true), red, "a colour stays");
+        let white = hsla(0.0, 0.0, 1.0, 1.0);
+        assert_eq!(dark_color(white, true), white);
+    }
 }
