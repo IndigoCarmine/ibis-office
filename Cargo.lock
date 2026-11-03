@@ -3,6 +3,19 @@
 version = 4
 
 [[package]]
+name = "acauda-embed"
+version = "0.1.0"
+source = "git+https://github.com/IndigoCarmine/acauda-embed?rev=9b78881a2d703fe97483f64f0c99cb851226df80#9b78881a2d703fe97483f64f0c99cb851226df80"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.3.4",
+ "interprocess",
+ "serde",
+ "serde_json",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "accesskit"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3321,16 +3334,11 @@ dependencies = [
 name = "ibis-embed-protocol"
 version = "0.8.0"
 dependencies = [
- "base64 0.22.1",
- "getrandom 0.3.4",
+ "acauda-embed",
  "ibis-doc-model",
  "ibis-ooxml",
  "ibis-pptx",
- "interprocess",
  "resvg 0.46.0",
- "serde",
- "serde_json",
- "toml 0.8.23",
 ]
 
 [[package]]
