@@ -14,10 +14,11 @@ Acauda Office の Windows 版（`AcaudaOffice` フォルダー）に含まれる
 | Lucide | アイコン（実行ファイルに埋め込み） | ISC |
 | Material Symbols（Google） | タイトル行・メニュー・ツールバー・サイドバーのアイコン（実行ファイルに埋め込み） | Apache-2.0 |
 
-## Rust の部品（456 件）
+## Rust の部品（457 件）
 
 | 名前 | 版 | ライセンス | 入手先 |
 |---|---|---|---|
+| acauda-embed | 0.1.0 | MIT OR Apache-2.0 | https://github.com/IndigoCarmine/acauda-embed |
 | accesskit | 0.24.1 | MIT OR Apache-2.0 | https://github.com/AccessKit/accesskit |
 | accesskit_consumer | 0.38.0 | MIT OR Apache-2.0 | https://github.com/AccessKit/accesskit |
 | accesskit_windows | 0.34.0 | MIT OR Apache-2.0 | https://github.com/AccessKit/accesskit |
@@ -721,6 +722,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 
 各部品のライセンス ファイルにある著作権表示です（ライセンス ファイルに表示がない部品は、上の一覧のライセンスと入手先に従います）。
 
+- **acauda-embed 0.1.0**：Copyright (c) 2026 IndigoCarmine
 - **adler2 2.0.1**：Copyright (C) Jonas Schievink <jonasschievink@gmail.com> / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **aes 0.8.4**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2018 Artyom Pavlov
 - **aho-corasick 1.1.5**：Copyright (c) 2015 Andrew Gallant
