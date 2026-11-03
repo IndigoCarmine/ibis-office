@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 // Boots the wasm editor. `pkg/` is produced by scripts/build-web.sh.
-import init, { run } from './pkg/ibis_office_app.js';
+import init, { run, set_embed_options } from './pkg/ibis_office_app.js';
 
 /** A file chosen by the user or loaded at startup. */
 interface PickedFile {
@@ -10,10 +10,106 @@ interface PickedFile {
   bytes: Uint8Array;
 }
 
+/**
+ * How a page that embeds the editor (a cloud service's preview) sets it up.
+ * Read before the editor starts, from `window.ibisOfficeOptions` (set by a
+ * script before main.js) over the URL's parameters. See
+ * publish/doc/web-embedding.md.
+ */
+interface EmbedOptions {
+  /** Show 閉じる at the top right (`?close=1`). Default: not shown. */
+  close?: boolean;
+  /** Show ダウンロード, left of it (`?download=1`). Default: not shown. */
+  download?: boolean;
+  /** Open in read-only viewing mode (`?view=1`). Default: false (editable). */
+  view?: boolean;
+  /** Show the menu bar (`?menuBar=1`, `?menuBar=0` hides it). Default: true (including when `view=1`). */
+  menuBar?: boolean;
+  /** Show the toolbar (`?toolBar=1`, `?toolBar=0` hides it). Default: true (including when `view=1`). */
+  toolBar?: boolean;
+  /**
+   * The origin the parent window is sent messages for (`?origin=https://app.example.com`),
+   * when the editor is in an iframe. Without it the referrer's origin is used;
+   * without that nothing is posted to the parent. `'*'` (any origin) only when
+   * given explicitly.
+   */
+  targetOrigin?: string;
+  /** Where the 'ibisoffice:close' and 'ibisoffice:download' events go (JavaScript only). Default: window. */
+  eventTarget?: EventTarget;
+}
+
 declare global {
   interface Window {
     /** Called from Rust for ファイル → 開く. */
     ibisOfficePickFile: () => Promise<PickedFile | null>;
+    /** Called from Rust when the close or the download button is pressed. */
+    ibisOfficeEmbedAction: (kind: string, name: string, bytes?: Uint8Array) => void;
+    /** Set by the embedding page before main.js. */
+    ibisOfficeOptions?: EmbedOptions;
+  }
+}
+
+/** `?name=1` / `?name=true` / `?name` is on; `0`, `false` is off; absent is `undefined`. */
+function flag(params: URLSearchParams, name: string): boolean | undefined {
+  if (!params.has(name)) {
+    return undefined;
+  }
+  const value = (params.get(name) ?? '').toLowerCase();
+  return !(value === '0' || value === 'false' || value === 'no' || value === 'off');
+}
+
+/** The embedding options: JavaScript's over the URL's, and everything off by default. */
+function embedOptions(): Required<Omit<EmbedOptions, 'eventTarget'>> & Pick<EmbedOptions, 'eventTarget'> {
+  const params = new URLSearchParams(location.search);
+  const js = window.ibisOfficeOptions ?? {};
+  const view = js.view ?? flag(params, 'view') ?? false;
+  return {
+    close: js.close ?? flag(params, 'close') ?? false,
+    download: js.download ?? flag(params, 'download') ?? false,
+    view,
+    menuBar: js.menuBar ?? flag(params, 'menuBar') ?? flag(params, 'menubar') ?? true,
+    toolBar: js.toolBar ?? flag(params, 'toolBar') ?? flag(params, 'toolbar') ?? true,
+    targetOrigin: js.targetOrigin ?? params.get('origin') ?? '',
+    eventTarget: js.eventTarget,
+  };
+}
+
+/** The origin messages to the parent window go to, or `null` for nowhere. */
+function parentOrigin(option: string): string | null {
+  if (option) {
+    return option;
+  }
+  try {
+    return document.referrer ? new URL(document.referrer).origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Called from Rust when the close or the download button is pressed: the
+ * page that embeds the editor gets a CustomEvent ('ibisoffice:close', or
+ * 'ibisoffice:download' with `{ name, bytes, blob }`) on `window` (or the
+ * `eventTarget` given), and, in an iframe, a message to the parent window
+ * (`{ source: 'ibisoffice', type: 'close' | 'download', name, bytes }`).
+ */
+function embedAction(kind: string, name: string, bytes?: Uint8Array): void {
+  const options = embedOptions();
+  const detail = kind === 'download' && bytes ? { name, bytes, blob: new Blob([bytes as BlobPart]) } : {};
+  (options.eventTarget ?? window).dispatchEvent(new CustomEvent(`ibisoffice:${kind}`, { detail }));
+  if (window.parent !== window) {
+    const origin = parentOrigin(options.targetOrigin);
+    if (origin === null) {
+      console.warn('ibisOffice: no target origin for the parent window (set ?origin=… or ibisOfficeOptions.targetOrigin); nothing was posted to it.');
+      return;
+    }
+    // The parent gets its own copy of the bytes (transferred), so the event's listeners keep theirs.
+    if (kind === 'download' && bytes) {
+      const copy = bytes.slice().buffer;
+      window.parent.postMessage({ source: 'ibisoffice', type: kind, name, bytes: copy }, origin, [copy]);
+    } else {
+      window.parent.postMessage({ source: 'ibisoffice', type: kind }, origin);
+    }
   }
 }
 
@@ -168,6 +264,7 @@ function showStatus(text: string): void {
 }
 
 window.ibisOfficePickFile = pickFile;
+window.ibisOfficeEmbedAction = embedAction;
 
 if (!('gpu' in navigator)) {
   showStatus(ja
@@ -180,6 +277,8 @@ if (!('gpu' in navigator)) {
     // may live under a path, as on GitHub Pages). The base must be absolute:
     // the icon loader fetches with reqwest, which rejects relative URLs.
     const base = new URL('.', location.href).href.replace(/\/$/, '');
+    const embed = embedOptions();
+    set_embed_options(embed.close, embed.download, embed.view, embed.menuBar, embed.toolBar);
     run(base, file?.name, file?.bytes);
     status?.remove();
   } catch (error) {

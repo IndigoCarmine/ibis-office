@@ -8,6 +8,7 @@
 //! 提供する。
 
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_calc::formula::{Expr, parse};
 use crate::render::shape_view::polygon;
 use crate::shell::editor::SlideEditor;
@@ -24,6 +25,7 @@ pub enum TraceArrowKind {
 /// ワークシート上に描画するトレース矢印。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceArrow {
+    pub sheet: ibis_doc_model::SlideId,
     /// 参照元範囲 (min_col, min_row, max_col, max_row)。
     pub from_range: (u32, u32, u32, u32),
     /// 参照先セル (col, row)。
@@ -154,6 +156,7 @@ impl SlideEditor {
                 .map(|r| {
                     let is_same_sheet = r.sheet.is_none() || r.sheet.as_deref() == Some(&current_sheet_title);
                     TraceArrow {
+                        sheet: self.current_slide,
                         from_range: (r.min_col, r.min_row, r.max_col, r.max_row),
                         to: (col, row),
                         external_sheet: if is_same_sheet { None } else { r.sheet },
@@ -168,7 +171,7 @@ impl SlideEditor {
             return;
         }
 
-        let existing = self.sheet_state().map(|s| s.trace_arrows.clone()).unwrap_or_default();
+        let existing = self.sheet_state().map(|s| s.trace_arrows.iter().filter(|a|a.sheet == self.current_slide).cloned().collect::<Vec<_>>()).unwrap_or_default();
         let all_level1_present = level1.iter().all(|a| existing.contains(a));
 
         let mut to_add = Vec::new();
@@ -244,6 +247,7 @@ impl SlideEditor {
                 });
                 if refers_to_target {
                     arrows.push(TraceArrow {
+                        sheet: self.current_slide,
                         from_range: (col, row, col, row),
                         to: (cell.column, cell.row),
                         external_sheet: None,
@@ -259,7 +263,7 @@ impl SlideEditor {
             return;
         }
 
-        let existing = self.sheet_state().map(|s| s.trace_arrows.clone()).unwrap_or_default();
+        let existing = self.sheet_state().map(|s| s.trace_arrows.iter().filter(|a|a.sheet == self.current_slide).cloned().collect::<Vec<_>>()).unwrap_or_default();
         let all_level1_present = level1.iter().all(|a| existing.contains(a));
 
         let mut new_arrows = Vec::new();
@@ -328,7 +332,7 @@ impl SlideEditor {
     /// ワークスペース上にトレース矢印を描画する。
     pub(crate) fn render_trace_arrows(&self, scale: f32) -> Option<Div> {
         let state = self.sheet_state()?;
-        if state.trace_arrows.is_empty() {
+        if !state.trace_arrows.iter().any(|a|a.sheet == self.current_slide) {
             return None;
         }
 
@@ -346,7 +350,7 @@ impl SlideEditor {
         let mut arrowheads: Vec<[Point<Pixels>; 3]> = Vec::new();
         let mut dots: Vec<[Point<Pixels>; 8]> = Vec::new();
 
-        for arrow in &state.trace_arrows {
+        for arrow in state.trace_arrows.iter().filter(|a|a.sheet == self.current_slide) {
             let (to_c, to_r) = arrow.to;
             let (tx0, tx1, ty0, ty1) = (x(to_c), x(to_c + 1), y(to_r), y(to_r + 1));
             let to_center = point(px((tx0 + tx1) / 2.0), px((ty0 + ty1) / 2.0));
@@ -366,7 +370,7 @@ impl SlideEditor {
                         .w(px(badge_w))
                         .h(px(badge_h))
                         .bg(arrow_color)
-                        .text_color(rgb(0xFFFFFF))
+                        .text_color(crate::shell::palette::doc(0xffffff))
                         .rounded(px(3.0 * scale.max(1.0)))
                         .text_xs()
                         .flex()

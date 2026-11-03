@@ -130,7 +130,7 @@ _shell.black	Black
 _shell.red	Red
 _shell.blue	Blue
 _shell.green	Green
-_shell.type-a-comment-and-press-enter	Type a comment and press Enter
+_shell.type-a-comment-and-press-enter	Type a comment (⌘Enter to post)
 _shell.reply	Reply
 _shell.resolved	(Resolved)
 pptx.comments.reopen	Reopen
@@ -293,7 +293,6 @@ _shell.picture-not-supported	Picture (not supported)
 _shell.open	Open
 _shell.new-comment-m	New Comment (⌥⌘M)
 _shell.hide-comments	Hide Comments
-_shell.hide-outline	Hide Outline
 _shell.hide-sidebar	Hide Sidebar
 _shell.undo-z	Undo (⌘Z)
 _shell.redo-z	Redo (⇧⌘Z)
@@ -551,7 +550,6 @@ _shell.freeze	Freeze
 _shell.show-gridlines	Show Gridlines
 _shell.show-formula-bar	Show Formula Bar
 _shell.print-layout	Print Layout
-_shell.show-outline	Show Outline
 _shell.zoom-in	Zoom In
 _shell.zoom-out	Zoom Out
 _shell.fit-to-window	Fit to Window
@@ -823,3 +821,76 @@ grammar.capitalization	Capitalization
 editor.csv.loading-first	Loading CSV... (100,000 rows loaded)
 editor.csv.loaded	CSV loaded ({rows} rows)
 editor.csv.loading	Loading CSV... ({rows} rows loaded)
+shell.embed.download	Download
+shell.embed.close	Close
+settings.view.scrollbars-always	Always show scroll bars
+file.save-format.docx	Word Document (.docx)
+file.save-format.dotx	Word Template (.dotx)
+file.save-format.odt	OpenDocument Text (.odt)
+file.save-format.xlsx	Excel Workbook (.xlsx)
+file.save-format.xltx	Excel Template (.xltx)
+file.save-format.xls	Excel 97-2003 Workbook (.xls)
+file.save-format.ods	OpenDocument Spreadsheet (.ods)
+file.save-format.csv	CSV UTF-8 (.csv)
+file.save-format.tsv	Text (Tab-delimited) (.tsv)
+file.save-format.pptx	PowerPoint Presentation (.pptx)
+file.save-format.ppsx	PowerPoint Show (.ppsx)
+file.save-format.potx	PowerPoint Template (.potx)
+file.save-format.odp	OpenDocument Presentation (.odp)
+file.print-opened-pdf	Opened PDF in default application
+menu.window	Window
+window.open-in-word	Open in Word
+window.open-in-excel	Open in Excel
+window.open-in-powerpoint	Open in PowerPoint
+window.open-in-office.confirm-title	Confirm
+window.open-in-office.specify-path	Please specify the path to {app}.
+
+_shell.find	Find
+
+ui.custom	Custom
+ui.caption-label	Label
+ui.merge-row	Edit recipient
+ui.add	Add
+
+ui.tab-duplicate	A tab stop already exists at this position. Choose another position.
+ui.merge-add-column	Add a column (merge field)
+ui.merge-csv	Load CSV file
+ui.merge-manual	Manual input
+ui.merge-recipient	Recipient
+
+field.browse	Browse…
+field.minutes	min
+
+autocorrect.entry-title	Edit replacement
+autocorrect.entry-required	Enter the text to replace.
+autocorrect.entry-duplicate	This replacement already exists. Edit the existing rule.
+
+hyperlink.menu	Hyperlink
+hyperlink.open	Open Link
+hyperlink.edit	Edit Link…
+hyperlink.remove	Remove Link
+
+autocorrect.tab.settings	Settings
+autocorrect.tab.dictionary	Replacement dictionary
+theme.custom-editor	Edit Custom Colors
+theme.palette-list	Color Schemes
+math.editor.title	Equation
+math.editor.hint	Enter an equation in UnicodeMath or LaTeX
+ink.panel.title	Drawing (Ink)
+ink.panel.tools	Drawing tool
+ink.panel.width	Width
+ink.panel.color	Color
+ink.panel.effects	Ink effect
+theme.custom-scheme	Custom Colors
+ink.panel.mouse	Draw with mouse
+
+shell.action.ok	OK
+
+start.recent.remove	Remove from list
+shell.row.actions	More actions
+
+color.palette.more	More Colors...
+color.dialog.title	Color Picker
+color.dialog.invalid	Enter a six-digit hexadecimal color.
+
+shell.start-window	Start Window

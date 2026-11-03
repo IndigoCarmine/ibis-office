@@ -9,7 +9,47 @@ use crate::shell::scenario::Scenario;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
+        ("shell::shared_radio_group_layouts", shared_radio_group_layouts),
         ("shell::fix72_font_dropdown_preview", fix72_font_dropdown_preview),
+        ("shell::fix75_start_window_closes_with_cmd_w", fix75_start_window_closes_with_cmd_w),
+        ("shell::issue27_close_button_asks_to_save", issue27_close_button_asks_to_save),
+        ("shell::client_close_button_click_asks_to_save", client_close_button_click_asks_to_save),
+        ("shell::client_close_button_click_saves_then_closes", client_close_button_click_saves_then_closes),
+        ("shell::issue27_save_answer_writes_then_closes", issue27_save_answer_writes_then_closes),
+        ("shell::issue27_quit_asks_to_save", issue27_quit_asks_to_save),
+        ("shell::right_pane_button_follows_the_pane", right_pane_button_follows_the_pane),
+        ("shell::fix_textbox_01_docx_second_line_selection_and_caret_alignment", fix_textbox_01_docx_second_line_selection_and_caret_alignment),
+        ("shell::fix_textbox_02_docx_second_line_large_font_third_line_alignment", fix_textbox_02_docx_second_line_large_font_third_line_alignment),
+        ("shell::fix_textbox_03_docx_arrow_up_down_vertical_navigation", fix_textbox_03_docx_arrow_up_down_vertical_navigation),
+        ("shell::fix_textbox_04_docx_shift_up_down_multiline_selection", fix_textbox_04_docx_shift_up_down_multiline_selection),
+        ("shell::fix_textbox_05_docx_left_right_home_end_navigation", fix_textbox_05_docx_left_right_home_end_navigation),
+        ("shell::fix_textbox_06_docx_word_navigation_and_selection", fix_textbox_06_docx_word_navigation_and_selection),
+        ("shell::fix_textbox_07_docx_five_lines_fixed_rectangle_size", fix_textbox_07_docx_five_lines_fixed_rectangle_size),
+        ("shell::fix_textbox_08_docx_ime_composing_visible_and_commit", fix_textbox_08_docx_ime_composing_visible_and_commit),
+        ("shell::fix_textbox_09_docx_double_click_places_caret_at_click_pos", fix_textbox_09_docx_double_click_places_caret_at_click_pos),
+        ("shell::fix_textbox_10_docx_double_and_triple_click_selects_word_and_paragraph", fix_textbox_10_docx_double_and_triple_click_selects_word_and_paragraph),
+        ("shell::fix_textbox_11_docx_mouse_drag_selects_text_range", fix_textbox_11_docx_mouse_drag_selects_text_range),
+        ("shell::fix_textbox_12_docx_partial_selection_bold_italic_underline", fix_textbox_12_docx_partial_selection_bold_italic_underline),
+        ("shell::fix_textbox_13_docx_partial_selection_font_size_and_color", fix_textbox_13_docx_partial_selection_font_size_and_color),
+        ("shell::fix_textbox_14_docx_eight_handles_resize_while_editing", fix_textbox_14_docx_eight_handles_resize_while_editing),
+        ("shell::fix_textbox_15_docx_border_drag_moves_box_while_editing", fix_textbox_15_docx_border_drag_moves_box_while_editing),
+        ("shell::fix_textbox_16_docx_undo_coalesces_typing_session", fix_textbox_16_docx_undo_coalesces_typing_session),
+        ("shell::fix_textbox_17_xlsx_insert_and_five_lines_fixed_rectangle_size", fix_textbox_17_xlsx_insert_and_five_lines_fixed_rectangle_size),
+        ("shell::fix_textbox_18_xlsx_second_line_selection_and_caret_alignment", fix_textbox_18_xlsx_second_line_selection_and_caret_alignment),
+        ("shell::fix_textbox_19_xlsx_second_line_large_font_third_line_alignment", fix_textbox_19_xlsx_second_line_large_font_third_line_alignment),
+        ("shell::fix_textbox_20_xlsx_arrow_up_down_and_shift_selection", fix_textbox_20_xlsx_arrow_up_down_and_shift_selection),
+        ("shell::fix_textbox_21_xlsx_word_nav_and_delete_shortcuts", fix_textbox_21_xlsx_word_nav_and_delete_shortcuts),
+        ("shell::fix_textbox_22_xlsx_ime_composing_visible_and_commit", fix_textbox_22_xlsx_ime_composing_visible_and_commit),
+        ("shell::fix_textbox_23_xlsx_double_click_places_caret_at_click_pos", fix_textbox_23_xlsx_double_click_places_caret_at_click_pos),
+        ("shell::fix_textbox_24_xlsx_double_triple_click_and_drag_selection", fix_textbox_24_xlsx_double_triple_click_and_drag_selection),
+        ("shell::fix_textbox_25_xlsx_partial_selection_formatting_and_toolbar_sync", fix_textbox_25_xlsx_partial_selection_formatting_and_toolbar_sync),
+        ("shell::fix_textbox_26_xlsx_eight_handles_and_border_drag_while_editing", fix_textbox_26_xlsx_eight_handles_and_border_drag_while_editing),
+        ("shell::fix_textbox_27_xlsx_empty_new_textbox_retracted_on_escape_and_undo_coalesced", fix_textbox_27_xlsx_empty_new_textbox_retracted_on_escape_and_undo_coalesced),
+        ("shell::fix_textbox_28_pptx_new_slide_inserted_textbox_edit_and_ime", fix_textbox_28_pptx_new_slide_inserted_textbox_edit_and_ime),
+        ("shell::fix_textbox_29_pptx_five_lines_fixed_rectangle_size_and_up_down", fix_textbox_29_pptx_five_lines_fixed_rectangle_size_and_up_down),
+        ("shell::fix_textbox_30_pptx_second_line_large_font_and_selection_alignment", fix_textbox_30_pptx_second_line_large_font_and_selection_alignment),
+        ("shell::fix_textbox_31_pptx_partial_selection_bold_italic_underline_and_handles", fix_textbox_31_pptx_partial_selection_bold_italic_underline_and_handles),
+        ("shell::fix_textbox_32_copy_cut_paste_and_select_all_across_docx_xlsx_pptx", fix_textbox_32_copy_cut_paste_and_select_all_across_docx_xlsx_pptx),
         ("shell::fix_pinch_to_zoom", fix_pinch_to_zoom),
         ("shell::fix_cjk_edit_font_xlsx", fix_cjk_edit_font_xlsx),
         ("shell::fix_cjk_edit_font_pptx", fix_cjk_edit_font_pptx),
@@ -20,6 +60,10 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix14_fill_handle_direction", fix14_fill_handle_direction),
         ("shell::fix13_sheet_tabs_scroll", fix13_sheet_tabs_scroll),
         ("shell::fix11_right_pane_tabs", fix11_right_pane_tabs),
+        ("shell::fix77_save_as_opendocument", fix77_save_as_opendocument),
+        ("shell::fix76_scrollbars_always", fix76_scrollbars_always),
+        ("shell::fix78_dark_chrome", fix78_dark_chrome),
+        ("shell::fix83_scenarios_keep_user_data_apart", fix83_scenarios_keep_user_data_apart),
         ("shell::fix_docx_edit014_symbols", fix_docx_edit014_symbols),
         ("shell::fix_pptx_symbols", fix_pptx_symbols),
         ("shell::fix_xlsx_symbols", fix_xlsx_symbols),
@@ -97,6 +141,33 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix_xlsx_image016_svg_insert_and_color", fix_xlsx_image016_svg_insert_and_color),
         ("shell::fix23_pptx_thumbnail_scroll_and_sections", fix23_pptx_thumbnail_scroll_and_sections),
         ("shell::fix_xlsx_file011_csv_and_tsv", fix_xlsx_file011_csv_and_tsv),
+        ("shell::fix97_menu_scrollbar_visible_and_flush_to_edges", fix97_menu_scrollbar_visible_and_flush_to_edges),
+        ("shell::fix98_searchable_dropdown_and_sheet_list", fix98_searchable_dropdown_and_sheet_list),
+        ("shell::fix99_100_101_102_docx_textbox_panel_and_inline_picture_resize", fix99_100_101_102_docx_textbox_panel_and_inline_picture_resize),
+        ("shell::fix103_menu_search_popup_sorted_filter_and_enter", fix103_menu_search_popup_sorted_filter_and_enter),
+        ("shell::fix104_textbox_border_click_exits_edit_and_keeps_handles", fix104_textbox_border_click_exits_edit_and_keeps_handles),
+        ("shell::fix105_106_107_xlsx_side_panels_layout_and_controls", fix105_106_107_xlsx_side_panels_layout_and_controls),
+        ("shell::fix108_109_110_111_window_menu_and_arrange_all", fix108_109_110_111_window_menu_and_arrange_all),
+        ("shell::fix112_docx_checklist_in_textbox_and_shape", fix112_docx_checklist_in_textbox_and_shape),
+        ("shell::fix113_unified_color_palettes_in_menus", fix113_unified_color_palettes_in_menus),
+        ("shell::fix114_115_shape_fill_and_border_color_in_toolbar", fix114_115_shape_fill_and_border_color_in_toolbar),
+        ("shell::fix116_117_clear_formatting_in_xlsx_docx_pptx", fix116_117_clear_formatting_in_xlsx_docx_pptx),
+        ("shell::fix118_multi_shape_selection_with_shift_click", fix118_multi_shape_selection_with_shift_click),
+        ("shell::fix119_pptx_picture_aspect_ratio_locked_by_default", fix119_pptx_picture_aspect_ratio_locked_by_default),
+        ("shell::fix120_toolbar_font_size_pulldown_and_direct_input", fix120_toolbar_font_size_pulldown_and_direct_input),
+        ("shell::fix121_pptx_change_shape_removed_from_toolbar_kept_in_menus", fix121_pptx_change_shape_removed_from_toolbar_kept_in_menus),
+        ("shell::fix122_xlsx_dynamic_array_spill_outline_and_ghost_formula", fix122_xlsx_dynamic_array_spill_outline_and_ghost_formula),
+        ("shell::fix123_no_quick_analysis_button_on_multi_cell_selection", fix123_no_quick_analysis_button_on_multi_cell_selection),
+        ("shell::fix124_no_mini_toolbar_on_body_text_selection", fix124_no_mini_toolbar_on_body_text_selection),
+        ("shell::fix_embed_view_mode_and_bars", fix_embed_view_mode_and_bars),
+        ("shell::fix152_156_xlsx_shape_underline_and_multi_shape_text_format", fix152_156_xlsx_shape_underline_and_multi_shape_text_format),
+        ("shell::fix135_xlsx_split_view_comprehensive", fix135_xlsx_split_view_comprehensive),
+        ("shell::fix157_xlsx_fill_border_gridline_pixel_alignment_across_zooms", fix157_xlsx_fill_border_gridline_pixel_alignment_across_zooms),
+        ("shell::fix11_xlsx_option_hover_cursor_on_border_and_fill_handle", fix11_xlsx_option_hover_cursor_on_border_and_fill_handle),
+        ("shell::fix152_156_multi_shape_text_and_paragraph_formatting", fix152_156_multi_shape_text_and_paragraph_formatting),
+        ("shell::fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys", fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys),
+        ("shell::fix136_long_submenu_scrollbar_arrows_and_click_occlusion", fix136_long_submenu_scrollbar_arrows_and_click_occlusion),
+        ("shell::fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer", fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer),
     ]
 }
 
@@ -107,27 +178,47 @@ fn open_index(s: &mut Scenario) -> Option<usize> {
 /// #12: with a menu open, the pointer on the next menu's name closes it and
 /// opens that one; a press on the open menu's name closes it.
 fn fix12_menu_bar_hover_switches_menu() {
+    use crate::shell::scenario::button_probe as buttons;
+    let _probe = buttons::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.update(|_, _, cx| cx.notify());
+    s.settle();
+    // The menu names' own positions (the logo's button before them is as wide as the menu bar's items).
+    let at = |name: &str| {
+        let b = buttons::bounds(&format!("menu-button-menu.{name}")).unwrap_or_else(|| panic!("{name}: {:?}", buttons::all()));
+        (f32::from(b.center().x), f32::from(b.center().y))
+    };
+    let (file, edit, view) = (at("file"), at("edit"), at("view"));
     assert_eq!(open_index(&mut s), None);
     // Hovering with no menu open opens nothing.
-    s.hover((133.0, 50.0));
+    s.hover(edit);
     assert_eq!(open_index(&mut s), None);
-    s.click((70.0, 50.0));
+    s.click(file);
     s.screenshot("file-open");
     assert_eq!(open_index(&mut s), Some(0));
-    s.hover((133.0, 50.0));
+    s.hover(edit);
     s.screenshot("edit-by-hover");
     assert_eq!(open_index(&mut s), Some(1));
-    s.hover((176.0, 50.0));
+    s.hover(view);
     assert_eq!(open_index(&mut s), Some(2));
     // Pressing the open menu's name closes it.
-    s.click((176.0, 50.0));
+    s.click(view);
     assert_eq!(open_index(&mut s), None);
     // Pressing another menu's name while one is open switches to it.
-    s.click((70.0, 50.0));
+    s.click(file);
     assert_eq!(open_index(&mut s), Some(0));
     s.click((900.0, 300.0));
     assert_eq!(open_index(&mut s), None);
+}
+
+/// Where the menu bar's button for menu `name` (`edit`, ...) is drawn: the logo before the names moves them, so
+/// a fixed pixel is not the menu.
+fn menu_button_at(s: &mut Scenario, name: &str) -> (f32, f32) {
+    use crate::shell::scenario::button_probe as buttons;
+    s.update(|_, _, cx| cx.notify());
+    s.settle();
+    let b = buttons::bounds(&format!("menu-button-menu.{name}")).unwrap_or_else(|| panic!("{name}: {:?}", buttons::all()));
+    (f32::from(b.center().x), f32::from(b.center().y))
 }
 
 fn menu_start(s: &mut Scenario) -> usize {
@@ -138,8 +229,10 @@ fn menu_start(s: &mut Scenario) -> usize {
 /// hovering ▼ scrolls (on as the time passes), the wheel scrolls, and ▲
 /// scrolls back; a window tall enough shows the whole menu with no rows.
 fn fix15_long_menu_scrolls() {
+    let _probe = crate::shell::scenario::button_probe::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.click((133.0, 50.0));
+    let edit = menu_button_at(&mut s, "edit");
+    s.click(edit);
     assert_eq!(open_index(&mut s), Some(1));
     assert_eq!(menu_start(&mut s), 0);
     s.screenshot("top");
@@ -168,8 +261,9 @@ fn fix15_long_menu_scrolls() {
     assert_eq!(menu_start(&mut s), 0);
     // A tall window: no rows.
     s.size(1200.0, 1500.0);
-    s.click((133.0, 50.0));
-    s.click((133.0, 50.0));
+    let edit = menu_button_at(&mut s, "edit");
+    s.click(edit);
+    s.click(edit);
     assert_eq!(menu_start(&mut s), 0);
     s.screenshot("tall");
 }
@@ -213,7 +307,6 @@ fn fix_xlsx_new_menu_and_first_right_pane() {
     s.update(|e, window, cx| e.toggle_sidebar(window, cx));
     s.settle();
     assert!(s.with(|e, _| e.sidebar_open));
-    assert_eq!(s.with(|e, _| e.sheet_state().and_then(|w| w.right_tab)), Some("fix.right-tabs.format"));
     assert!(s.with(|e, _| e.sheet_state().is_some_and(|w| w.custom_format.is_some())), "the cell-format panel is shown");
 }
 
@@ -316,52 +409,50 @@ fn fix13_sheet_tabs_scroll() {
     s.screenshot("list");
 }
 
-fn panel_state(s: &mut Scenario) -> (bool, bool, bool, Option<String>) {
-    s.with(|e, _| {
-        let st = e.sheet_state().expect("a workbook");
-        (st.custom_format.is_some(), st.chart_edit.is_some(), st.validation.is_some(), st.right_tab.map(|t| crate::shell::i18n::text(t).to_string()))
-    })
-}
-
-/// #11: with the right pane on, a workbook shows 書式設定・グラフ エディター・
-/// データの入力規則 as tabs across its top; each opens its panel; no column of
-/// buttons stands at the window's right. A presentation's and a document's
-/// right pane is as it was (no tabs).
+/// todo-fix #79: the right pane has no tabs; it shows the attributes of what is selected: the cells'
+/// format, a text box's (its size and place, fill, outline), the cells' again after a click on a cell.
+/// データの入力規則 opens from the Data menu.
 fn fix11_right_pane_tabs() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    // The right pane is closed when a workbook opens; the title row's button shows it.
     assert!(!s.with(|e, _| e.sidebar_open));
-    s.update(|e, _, cx| {
-        e.sidebar_open = true;
-        cx.notify();
+    s.update(|e, window, cx| e.toggle_sidebar(window, cx));
+    s.settle();
+    let state = |s: &mut Scenario| s.with(|e, _| {
+        let st = e.sheet_state().expect("a workbook");
+        (st.custom_format.is_some(), st.panels.frame.is_some(), st.validation.is_some())
     });
-    s.screenshot("tabs");
-    let y = 179.0;
-    let (format, chart, validation) = (933.0, 1011.0, 1110.0);
-    assert_eq!(panel_state(&mut s), (false, false, false, None));
-    s.click((format, y));
-    assert_eq!(panel_state(&mut s), (true, false, false, Some("書式設定".to_string())));
-    s.screenshot("format");
-    // No chart selected: the tab says so.
-    s.click((chart, y));
-    assert_eq!(panel_state(&mut s), (false, false, false, Some("グラフ エディター".to_string())));
-    s.screenshot("chart-none");
-    s.click((validation, y));
-    assert_eq!(panel_state(&mut s), (false, false, true, Some("データの入力規則".to_string())));
+    assert_eq!(state(&mut s), (true, false, false), "cells: the cell format");
+    s.screenshot("cells");
+    // A text box inserted and selected: its attributes.
+    s.menu("xlsx.insert-textbox");
+    s.type_text("x");
+    s.key("escape");
+    s.settle();
+    assert_eq!(state(&mut s), (false, true, false), "a text box: its attributes");
+    s.screenshot("text-box");
+    // Its fill and outline, typed in the pane, change the shape.
+    let id = s.with(|e, _| e.selected_sheet_shape()).expect("the text box is selected");
+    s.update(|e, window, cx| {
+        let p = e.sheet_state().unwrap().panels.frame.as_ref().unwrap();
+        let fill = p.attrs[0].clone();
+        fill.update(cx, |f, cx| f.set_value("FF0000", window, cx));
+        e.apply_sheet_frame_panel(window, cx);
+    });
+    let fill = s.with(move |e, _| match &e.slide().shape(id).unwrap().kind {
+        ibis_doc_model::ShapeKind::Auto(a) => match &a.fill { ibis_doc_model::Fill::Solid(c) => Some(c.rgb.0), _ => None },
+        _ => None,
+    });
+    assert_eq!(fill, Some(0xFF0000));
+    // A click on a cell: the cell format again.
+    let far = s.with(|e, _| e.cell_center(8, 20)).expect("the cell on screen");
+    s.click((f32::from(far.x), f32::from(far.y)));
+    s.settle();
+    assert_eq!(state(&mut s), (true, false, false), "back to the cells");
+    // データの入力規則 from the menu stays while the cells stay selected.
+    s.menu("xlsx.validation");
+    s.settle();
+    assert_eq!(state(&mut s), (false, false, true));
     s.screenshot("validation");
-    s.click((format, y));
-    assert_eq!(panel_state(&mut s), (true, false, false, Some("書式設定".to_string())));
-    // The pane's close button hides it (and its tabs).
-    s.click((1956.0 / 1.6667, 223.0 / 1.6667));
-    assert!(!s.with(|e, _| e.sidebar_open));
-    s.screenshot("closed");
-    drop(s);
-    // Other formats: no tabs, and the pane opens as before (a panel when one
-    // is open, nothing otherwise: no rail either).
-    use crate::shell::format::FormatEditor;
-    assert!(<crate::pptx::Presentation as FormatEditor>::sidebar_tabs().is_empty());
-    assert!(<crate::docx::Document as FormatEditor>::sidebar_tabs().is_empty());
-    assert_eq!(<crate::xlsx::Workbook as FormatEditor>::sidebar_tabs().len(), 3);
 }
 
 /// #17: ⌘P (ファイル > 印刷…) was only written beside the menu item, with no key
@@ -376,6 +467,13 @@ fn fix17_print_is_bound() {
     let mut s = Scenario::open("test/editing/docx-report.docx");
     let bound = s.update(|_, window, _| window.bindings_for_action(&crate::PrintFile).len());
     assert!(bound > 0);
+}
+
+/// Closes the modal command panel (Undo and the menus are the document's, so they come after it).
+fn close_modal_panel(s: &mut Scenario) {
+    if s.with(|e, _| e.panel_dialog_is_modal()) {
+        s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    }
 }
 
 /// DOCX-EDIT-014: 挿入 > 特殊文字… opens the panel of characters; pressing one
@@ -412,6 +510,7 @@ fn fix_docx_edit014_symbols() {
     assert_eq!(text_of(&mut s, id), format!("→{before}"));
     s.update(|e, _, cx| e.insert_symbol('€', cx));
     assert_eq!(text_of(&mut s, id), format!("→€{before}"));
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert_eq!(text_of(&mut s, id), format!("→{before}"), "one step undoes one character");
 }
@@ -664,6 +763,7 @@ fn fix_docx_contextual_spacing() {
     assert_eq!(reloaded_contextual, !initial, "contextual spacing preserved by save and reload");
 
     // Undo restores to original
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert_eq!(is_contextual(&mut s, id1), initial, "undo restores original contextual spacing");
 
@@ -789,6 +889,7 @@ fn fix_docx_widow_and_suppress_lines() {
     assert_eq!(reloaded_flags, (!initial_widow, !initial_suppress), "widow_control and suppress_line_numbers preserved by save and reload");
 
     // Undo restores original settings
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert_eq!(flags_of(&mut s), (initial_widow, initial_suppress), "undo restores original settings");
 
@@ -1010,21 +1111,26 @@ fn fix_docx_line_numbers() {
 fn fix_docx_ruler() {
     let mut s = Scenario::open("test/editing/docx-report.docx");
 
-    // 初期状態：ruler_open は true、メニュー docx.ruler はチェック付き
+    // The ruler is a setting of the right pane now (表示 > ルーラー opens it), not a toggle in the menu.
     assert!(s.with(|e, _| e.ruler_open), "ruler should be visible initially");
-    assert_eq!(s.menu_state("docx.ruler"), Some((true, true)), "docx.ruler menu item should be enabled and checked");
+    assert_eq!(s.menu_state("docx.ruler"), Some((true, false)), "docx.ruler opens the pane, so the item is enabled and has no check");
+    s.menu("docx.ruler");
+    assert!(s.with(|e, _| e.ruler_settings_open && e.sidebar_open));
     s.screenshot("docx-ruler-visible");
 
-    // メニューをクリックして非表示にする
-    s.menu("docx.ruler");
-    assert!(!s.with(|e, _| e.ruler_open), "ruler should be hidden after menu click");
-    assert_eq!(s.menu_state("docx.ruler"), Some((true, false)), "docx.ruler menu item should be enabled and unchecked");
+    docx_click_ruler_setting(&mut s, "ruler-horizontal");
+    assert!(!s.with(|e, _| e.ruler_open), "ruler should be hidden after unchecking it");
     s.screenshot("docx-ruler-hidden");
 
-    // 再度メニューをクリックして表示に戻す
-    s.menu("docx.ruler");
-    assert!(s.with(|e, _| e.ruler_open), "ruler should be visible again after second click");
-    assert_eq!(s.menu_state("docx.ruler"), Some((true, true)), "docx.ruler menu item should be enabled and checked again");
+    docx_click_ruler_setting(&mut s, "ruler-horizontal");
+    assert!(s.with(|e, _| e.ruler_open), "ruler should be visible again after checking it");
+}
+
+/// Clicks the control `id` of the ruler settings pane (the center of where it was drawn).
+fn docx_click_ruler_setting(s: &mut Scenario, id: &str) {
+    let bounds = s.with(|e, _| *e.ruler_settings_ui.borrow().get(id).unwrap_or_else(|| panic!("missing ruler UI {id}")));
+    s.click((f32::from(bounds.origin.x + bounds.size.width / 2.), f32::from(bounds.origin.y + bounds.size.height / 2.)));
+    s.settle();
 }
 
 /// XLSX-VIEW-008: ルーラーの表示条件
@@ -1199,21 +1305,18 @@ fn fix_xlsx_save_copy_and_recent() {
 fn fix_docx_gridlines() {
     let mut s = Scenario::open("test/editing/docx-report.docx");
 
-    // 初期状態：gridlines_open は false、メニュー docx.gridlines はチェックなし
+    // Grid lines are a setting of the ruler pane now (not a separate menu item).
     assert!(!s.with(|e, _| e.gridlines_open), "gridlines should be hidden initially");
-    assert_eq!(s.menu_state("docx.gridlines"), Some((true, false)), "docx.gridlines menu item should be enabled and unchecked");
+    assert!(s.menu_state("docx.gridlines").is_none(), "docx.gridlines is no longer a menu item");
+    s.menu("docx.ruler");
     s.screenshot("docx-gridlines-hidden");
 
-    // メニューをクリックして表示にする
-    s.menu("docx.gridlines");
-    assert!(s.with(|e, _| e.gridlines_open), "gridlines should be visible after menu click");
-    assert_eq!(s.menu_state("docx.gridlines"), Some((true, true)), "docx.gridlines menu item should be enabled and checked");
+    docx_click_ruler_setting(&mut s, "ruler-gridlines");
+    assert!(s.with(|e, _| e.gridlines_open), "gridlines should be visible after checking it");
     s.screenshot("docx-gridlines-visible");
 
-    // 再度メニューをクリックして非表示に戻す
-    s.menu("docx.gridlines");
-    assert!(!s.with(|e, _| e.gridlines_open), "gridlines should be hidden again after second click");
-    assert_eq!(s.menu_state("docx.gridlines"), Some((true, false)), "docx.gridlines menu item should be enabled and unchecked again");
+    docx_click_ruler_setting(&mut s, "ruler-gridlines");
+    assert!(!s.with(|e, _| e.gridlines_open), "gridlines should be hidden again after unchecking it");
 }
 
 /// XLSX-VIEW-005: 選択範囲に合わせたズーム（表示 > 選択範囲に合わせて拡大/縮小）
@@ -1515,7 +1618,8 @@ fn fix_xlsx_print_options() {
     assert!(sheet.print.black_and_white, "black_and_white should be persisted");
     assert!(sheet.print.draft, "draft should be persisted");
 
-    // 5. Undo（cmd-z）で直前の操作（draft = true）を取り消し
+    // 5. Undo（cmd-z）で直前の操作（draft = true）を取り消し（ページ設定はモーダルなので、先に閉じる）
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert!(!s.with(|e, _| e.current_print().unwrap().draft));
     assert!(s.with(|e, _| e.current_print().unwrap().black_and_white));
@@ -1539,7 +1643,8 @@ fn fix_xlsx_print_title_columns() {
     assert_eq!(s.with(|e, _| e.print_title_rows()), None);
     assert_eq!(s.with(|e, _| e.print_title_columns()), None);
 
-    // 2. セル B2 を選択し、タイトル列を設定（B列 = column 1）
+    // 2. セル B2 を選択し、タイトル列を設定（B列 = column 1）。ページ設定はモーダルなので、先に閉じる
+    close_modal_panel(&mut s);
     s.click_cell("B2");
     s.update(|e, _, cx| {
         let cols = e.selected_range().map(|r| (r.first_column, r.last_column)).or_else(|| e.current_cell().map(|(c, _)| (c, c)));
@@ -1620,7 +1725,8 @@ fn fix_xlsx_paper_sizes_and_centering() {
     });
     assert_eq!(s.with(|e, _| e.current_print().unwrap().paper), (257 * 36_000, 364 * 36_000));
 
-    // 5. Undo（cmd-z）で「はがき」に戻ることを確認
+    // 5. Undo（cmd-z）で「はがき」に戻ることを確認（ページ設定はモーダルなので、先に閉じる）
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert_eq!(s.with(|e, _| e.current_print().unwrap().paper), ibis_doc_model::SheetPrint::HAGAKI);
 
@@ -3265,6 +3371,7 @@ fn fix_xlsx_file017_doc_properties() {
     assert_eq!(wb.properties.category.as_deref(), Some("月次報告"));
 
     // 5. Undo 検証
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     s.with(|e, _| {
         let wb = e.presentation().workbook.as_deref().expect("workbook exists");
@@ -3456,6 +3563,7 @@ fn fix_xlsx_file018_custom_properties() {
     });
 
     // 6. Undo 検証（削除が元に戻り、2件に戻る）
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     s.with(|e, _| {
         let wb = e.presentation().workbook.as_deref().expect("workbook exists");
@@ -4061,7 +4169,15 @@ fn fix_xlsx_object001_insert_shape_and_textbox() {
     // テキストボックスが追加され、選択されていることを確認
     let tb_id = s.with(|e, _| e.selected_sheet_shape()).expect("textbox is selected");
     let tb_shape = s.with(|e, _| e.slide().shape(tb_id).unwrap().clone());
-    assert!(matches!(tb_shape.kind, ibis_doc_model::ShapeKind::TextBox(_)));
+    // A new text box: a pale yellow fill and a thin black outline (todo-fix #80).
+    match &tb_shape.kind {
+        ibis_doc_model::ShapeKind::Auto(a) => {
+            assert!(matches!(&a.fill, ibis_doc_model::Fill::Solid(c) if c.rgb.0 == 0xFFFFE5), "{:?}", a.fill);
+            assert_eq!(a.stroke.as_ref().map(|s| (s.color.rgb.0, s.width)), Some((0, 9_525)));
+            assert!(a.text.is_some());
+        }
+        other => panic!("a text box with a fill and an outline: {other:?}"),
+    }
     // B3 セルの位置に配置されていることを確認
     assert!(tb_shape.frame.x > 0);
     assert!(tb_shape.frame.y > 0);
@@ -4262,7 +4378,7 @@ fn fix_xlsx_object008_selection_pane_align_and_frame() {
         assert_eq!(shape.frame.width, 2_880_000, "width updated to 8 cm");
         // 45 deg = 2_700_000
         assert_eq!(shape.rotation, 2_700_000, "rotation updated to 45 deg");
-        assert!(!e.sidebar_open, "sidebar closed after apply");
+        assert!(e.sidebar_open, "the pane stays (it follows the selection)");
     });
 
     // 4. 選択ウィンドウ (Selection Pane) の検証 (XLSX-OBJECT-008)
@@ -5440,13 +5556,21 @@ fn fix23_pptx_thumbnail_scroll_and_sections() {
     s.menu("pptx.section.add");
     s.key("cmd-a");
     s.type_text("第1部");
-    s.menu("pptx.section.apply");
+    {
+        let _probe = crate::shell::scenario::button_probe::Probe::new();
+        s.update(|_, _, cx| cx.notify());
+        crate::shell::scenario::button_probe::click(&mut s, "pptx-section-apply");
+    }
 
     s.page(7);
     s.menu("pptx.section.add");
     s.key("cmd-a");
     s.type_text("第2部");
-    s.menu("pptx.section.apply");
+    {
+        let _probe = crate::shell::scenario::button_probe::Probe::new();
+        s.update(|_, _, cx| cx.notify());
+        crate::shell::scenario::button_probe::click(&mut s, "pptx-section-apply");
+    }
 
     let pres = s.with(|e, _| e.presentation().clone());
     assert_eq!(pres.sections.len(), 2);
@@ -5970,4 +6094,4143 @@ fn fix_cjk_edit_font_docx() {
     compose_and_commit(&mut s);
     s.key("enter");
     s.screenshot("committed");
+}
+
+/// todo-fix #77: a document saved as .odt, a presentation as .odp and a workbook as .ods are OpenDocument
+/// files (the mimetype first in the zip), and read again as what they are.
+fn fix77_save_as_opendocument() {
+    for (file, out, mimetype) in [
+        ("test/editing/docx-report.docx", "saved.odt", "application/vnd.oasis.opendocument.text"),
+        ("test/editing/pptx-plan.pptx", "saved.odp", "application/vnd.oasis.opendocument.presentation"),
+        ("test/editing/xlsx-sales.xlsx", "saved.ods", "application/vnd.oasis.opendocument.spreadsheet"),
+    ] {
+        let mut s = Scenario::open(file);
+        let path = s.save_as(out);
+        let bytes = std::fs::read(&path).unwrap();
+        // A stored first entry: "mimetype" then its text.
+        assert_eq!(&bytes[..4], b"PK\x03\x04", "{out}: a zip");
+        assert_eq!(&bytes[30..38], b"mimetype", "{out}: the mimetype is the first entry");
+        let head = String::from_utf8_lossy(&bytes[38..38 + 64]).to_string();
+        assert!(head.contains(mimetype), "{out}: {head:?}");
+        if let Err(e) = crate::read_file(&path) { panic!("{out} does not read again: {e}"); }
+    }
+}
+
+/// todo-fix #76: スクロール バーを常に表示 is on at first; on, every window's scrollbars are always shown, and it is kept.
+fn fix76_scrollbars_always() {
+    use gpui_kit::component::scroll::ScrollbarMode;
+    use gpui_kit::component::theme::Theme;
+    let dir = crate::shell::scenario::repo_root().join("target/scenario/shell::fix76_scrollbars_always/settings");
+    let _ = std::fs::remove_dir_all(&dir);
+    // SAFETY: the scenarios run one at a time on the main thread; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    let mode = |s: &mut Scenario| s.update(|_, _, cx| Theme::global(cx).scrollbar_mode);
+    assert!(crate::shell::settings_window::scrollbars_always(), "on by default");
+    assert_eq!(mode(&mut s), ScrollbarMode::Always);
+    s.menu("tools.settings");
+    s.screenshot("settings");
+    crate::shell::settings::set(crate::shell::settings_window::SCROLLBARS_ALWAYS_KEY, "1");
+    s.update(|_, _, cx| crate::shell::settings_window::apply_scrollbar_mode(cx));
+    assert_eq!(mode(&mut s), ScrollbarMode::Always);
+    assert!(std::fs::read_to_string(dir.join("settings.txt")).unwrap_or_default().contains("view.scrollbars-always=1"));
+    s.screenshot("always");
+    crate::shell::settings::set(crate::shell::settings_window::SCROLLBARS_ALWAYS_KEY, "0");
+    s.update(|_, _, cx| crate::shell::settings_window::apply_scrollbar_mode(cx));
+    assert_eq!(mode(&mut s), ScrollbarMode::Hover);
+    unsafe { std::env::remove_var("IBIS_SETTINGS_DIR") };
+}
+
+/// todo-fix #78: in the dark appearance the chrome is dark and the document (page, cells, slide) stays white.
+fn fix78_dark_chrome() {
+    for (file, name) in [("test/editing/docx-report.docx", "docx"), ("test/editing/xlsx-sales.xlsx", "xlsx"), ("test/editing/pptx-plan.pptx", "pptx")] {
+        let mut s = Scenario::open(file);
+        s.update(|_, _, cx| crate::shell::palette::force(true, cx));
+        assert!(crate::shell::palette::is_dark());
+        s.settle();
+        if name == "xlsx" {
+            s.update(|e, window, cx| e.toggle_sidebar(window, cx));
+            s.settle();
+        }
+        s.screenshot(&format!("{name}-dark"));
+        // A menu open.
+        s.click((78.0, 50.0));
+        s.settle();
+        s.screenshot(&format!("{name}-dark-menu"));
+        s.key("escape");
+        if name == "docx" {
+            s.menu("insert.text-box");
+            s.settle();
+            s.screenshot("docx-dark-text-box-panel");
+        }
+        if name == "xlsx" {
+            s.menu("xlsx.insert-textbox");
+            s.type_text("x");
+            s.key("escape");
+            s.settle();
+            s.screenshot("xlsx-dark-text-box-panel");
+        }
+        s.key("cmd-f");
+        s.settle();
+        s.screenshot(&format!("{name}-dark-find"));
+        s.key("escape");
+        s.update(|_, _, cx| crate::shell::palette::force(false, cx));
+        assert!(!crate::shell::palette::is_dark());
+        s.settle();
+        s.screenshot(&format!("{name}-light"));
+    }
+    // The start window and the settings window.
+    let mut s = Scenario::start_view();
+    s.update(|_, _, cx| crate::shell::palette::force(true, cx));
+    s.settle();
+    s.screenshot("start-dark");
+    s.menu("tools.settings");
+    s.settle();
+    let handle = crate::shell::settings_window::handle().expect("the settings window is open");
+    s.screenshot_of(handle.into(), "settings-dark");
+    s.update(|_, _, cx| crate::shell::palette::release(cx));
+}
+
+/// todo-fix #83: the scenarios write the recent files, the settings, AutoRecover and the backup settings under
+/// target/scenario-user-data, not into the user's own application data directory.
+fn fix83_scenarios_keep_user_data_apart() {
+    let Some(home) = std::env::var_os("HOME") else { return };
+    let real = std::path::PathBuf::from(home).join("Library/Application Support/ibisOffice");
+    let stamps = |dir: &std::path::Path| -> Vec<(String, Option<std::time::SystemTime>)> {
+        let mut v: Vec<_> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| (e.file_name().to_string_lossy().into_owned(), e.metadata().and_then(|m| m.modified()).ok())).collect();
+        v.sort();
+        v
+    };
+    let before = stamps(&real);
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    let root = crate::shell::scenario::repo_root();
+    crate::shell::recent_files::add(&root.join("test/editing/docx-report.docx"));
+    crate::shell::settings::set("fix83.probe", "1");
+    crate::shell::autorecover::save_autorecover_config(&crate::shell::autorecover::load_autorecover_config());
+    s.update(|_, _, _| ());
+    assert_eq!(stamps(&real), before, "the user's own data directory is not touched");
+    let base = crate::shell::app_data::base().expect("a data directory");
+    assert!(base.starts_with(root.join("target")), "{base:?}");
+    assert!(base.join("ibisOffice/recent-files.txt").exists(), "the scenarios' recent files are kept there");
+}
+
+/// todo-fix #75: ⌘W (and ファイル > 閉じる) closes the start window; the last window closing ends the app (on a Mac too).
+fn fix75_start_window_closes_with_cmd_w() {
+    for via_key in [true, false] {
+        let mut s = Scenario::start_view();
+        assert_eq!(s.window_count(), 1, "the start window is open");
+        // The menu bar's ファイル > 閉じる is not greyed (it is when no listener of the action is on the window's path).
+        let available = s.update(|_, window, cx| window.is_action_available(&crate::CloseFile, cx));
+        assert!(available, "ファイル > 閉じる is enabled on the start window");
+        s.quit_with_last_window();
+        assert!(!s.quit_requested());
+        if via_key {
+            s.key("cmd-w");
+        } else {
+            s.menu("file.close");
+        }
+        assert_eq!(s.window_count(), 0, "the start window is closed (by {})", if via_key { "⌘W" } else { "ファイル > 閉じる" });
+        assert!(s.quit_requested(), "the last window closing ends the app");
+    }
+}
+
+/// An edit in a new file of `kind`, as the user makes it: a cell typed in (not yet entered, as when the window is
+/// closed right after typing), text typed in a document, a text box on a slide.
+/// A new file of `kind`, as ファイル > 新規作成 makes it on the start window.
+fn issue27_new(kind: ibis_pptx::Kind) -> Scenario {
+    let mut s = Scenario::start_view();
+    s.update(|e, window, cx| e.new_file(kind, window, cx));
+    s.settle();
+    s
+}
+
+fn issue27_make_edit(s: &mut Scenario, kind: ibis_pptx::Kind) {
+    match kind {
+        ibis_pptx::Kind::Workbook => {
+            s.click_cell("A1");
+            s.type_text("a");
+        }
+        ibis_pptx::Kind::Document => {
+            let (id, _) = s.paragraph(0);
+            s.click_text(ibis_doc_model::FlowPos::new(id, 0));
+            s.type_text("a");
+            assert!(s.paragraph(0).1.contains('a'), "the document takes the typing");
+        }
+        ibis_pptx::Kind::Presentation => s.update(|e, _, cx| {
+            let slide = e.current_slide;
+            let id = e.document.ids().new_shape_id();
+            let frame = ibis_doc_model::EmuRect::new(0, 0, 914_400, 914_400);
+            e.execute(vec![ibis_doc_model::Command::InsertShape { slide, index: 0, shape: ibis_doc_model::Shape::text_box(id, frame, "a") }], cx);
+        }),
+    }
+}
+
+/// Click the actual client-drawn cross, not Scenario::press_close_button's
+/// simulated native close callback. This catches a direct remove_window bypass.
+fn click_client_close(s: &mut Scenario) {
+    let at = s.update(|_, window, _| (f32::from(window.viewport_size().width) - 23.0, 18.0));
+    s.click(at);
+}
+
+fn client_close_button_click_asks_to_save() {
+    let _controls = crate::shell::chrome::scenario_client_window_controls();
+    for compact in [false, true] {
+        for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+            let setup = |s: &mut Scenario| {
+                s.size(1280.0, 800.0);
+                s.update(|e, _, cx| {
+                    e.chrome_compact = compact;
+                    e.show_menu_bar = true;
+                    cx.notify();
+                });
+                s.quit_with_last_window();
+            };
+            let mut s = issue27_new(kind);
+            setup(&mut s);
+            click_client_close(&mut s);
+            assert_eq!(s.window_count(), 0, "{kind:?}, compact={compact}: clean cross closes immediately");
+            assert!(s.quit_requested());
+            drop(s);
+
+            let mut s = issue27_new(kind);
+            setup(&mut s);
+            issue27_make_edit(&mut s, kind);
+            assert!(s.with(|e, _| e.is_dirty()));
+            click_client_close(&mut s);
+            assert_eq!(s.window_count(), 1, "{kind:?}, compact={compact}: cross preserves unsaved work");
+            assert!(s.with(|e, _| e.save_confirm_dialog_open && e.close_window_after_confirm));
+            assert!(!s.quit_requested());
+            s.update(|e, _, cx| e.close_save_confirm_dialog(cx));
+            assert!(s.with(|e, _| e.is_dirty() && !e.save_confirm_dialog_open));
+            assert_eq!(s.window_count(), 1, "Cancel keeps the document open");
+            click_client_close(&mut s);
+            assert!(s.with(|e, _| e.save_confirm_dialog_open));
+            s.update(|e, window, cx| e.confirm_discard_and_close(window, cx));
+            assert_eq!(s.window_count(), 0, "{kind:?}, compact={compact}: Discard closes the window");
+            assert!(s.quit_requested());
+        }
+    }
+}
+
+fn client_close_button_click_saves_then_closes() {
+    let _controls = crate::shell::chrome::scenario_client_window_controls();
+    for (kind, extension) in [
+        (ibis_pptx::Kind::Document, "docx"),
+        (ibis_pptx::Kind::Workbook, "xlsx"),
+        (ibis_pptx::Kind::Presentation, "pptx"),
+    ] {
+        let mut s = issue27_new(kind);
+        s.size(1280.0, 800.0);
+        s.quit_with_last_window();
+        let path = s.save_as(&format!("client-close.{extension}"));
+        issue27_make_edit(&mut s, kind);
+        click_client_close(&mut s);
+        assert_eq!(s.window_count(), 1);
+        assert!(s.with(|e, _| e.save_confirm_dialog_open));
+        s.update(|e, window, cx| e.confirm_save_and_close(window, cx));
+        assert_eq!(s.window_count(), 0, "{kind:?}: Save finishes the requested close");
+        assert!(s.quit_requested());
+        let saved = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+        match kind {
+            ibis_pptx::Kind::Workbook => {
+                let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&saved.slides[0]).unwrap();
+                assert_eq!(sheet.cell(0, 0).map(|c| c.value.clone()), Some(ibis_doc_model::CellValue::Text("a".into())), "pending typed cell was saved");
+            }
+            ibis_pptx::Kind::Document => {
+                assert!(saved.flow.as_ref().unwrap().body.iter().any(|block| match block {
+                    ibis_doc_model::Block::Paragraph(p) => p.runs.iter().any(|r| matches!(&r.kind, ibis_doc_model::FlowRunKind::Text(text) if text.contains('a'))),
+                    _ => false,
+                }), "document typing was saved");
+            }
+            ibis_pptx::Kind::Presentation => {
+                assert!(saved.slides.iter().flat_map(|slide| &slide.shapes).any(|shape| shape.text_body().is_some_and(|body| body.paragraphs.iter().flat_map(|p| &p.runs).any(|run| run.text.contains('a')))), "inserted text was saved");
+            }
+        }
+    }
+}
+
+/// GitHub issue #27: closing a window with edits not saved (its close button, ファイル > 閉じる) asks whether to save
+/// them, in each format and for a new file; without edits it closes at once; キャンセル keeps the window and the edits;
+/// 保存しない from the close button closes the window (not only the file), and the app ends with its last window.
+fn issue27_close_button_asks_to_save() {
+    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+        // Nothing typed: the close button closes at once.
+        let mut s = issue27_new(kind);
+        s.quit_with_last_window();
+        assert!(!s.with(|e, _| e.is_dirty()), "{kind:?}: a new file without edits has nothing to save");
+        assert!(s.press_close_button(), "{kind:?}: the close button closes a window without edits");
+        assert_eq!(s.window_count(), 0, "{kind:?}");
+        assert!(s.quit_requested(), "{kind:?}: the app ends with its last window");
+        drop(s);
+
+        let mut s = issue27_new(kind);
+        s.quit_with_last_window();
+        issue27_make_edit(&mut s, kind);
+        assert!(s.with(|e, _| e.is_dirty()), "{kind:?}: an edit is not saved yet");
+        // The close button: the window stays and asks.
+        assert!(!s.press_close_button(), "{kind:?}: the close button does not close a window with edits");
+        assert_eq!(s.window_count(), 1, "{kind:?}");
+        assert!(s.with(|e, _| e.save_confirm_dialog_open && e.close_window_after_confirm), "{kind:?}: 変更を保存しますか? is asked, to close the window");
+        // Pressed again while asking: still asking.
+        assert!(!s.press_close_button(), "{kind:?}: the close button again while asking");
+        // キャンセル: the window and the edit stay.
+        s.update(|e, _, cx| e.close_save_confirm_dialog(cx));
+        assert!(s.with(|e, _| !e.save_confirm_dialog_open && !e.close_window_after_confirm && e.is_dirty()), "{kind:?}: キャンセル keeps the edit");
+        assert_eq!(s.window_count(), 1, "{kind:?}");
+        // ⌘W (ファイル > 閉じる) asks too (it did not for a presentation), to close the window once answered.
+        s.key("cmd-w");
+        assert_eq!(s.window_count(), 1, "{kind:?}: ⌘W does not close a window with edits");
+        assert!(s.with(|e, _| e.save_confirm_dialog_open && e.close_window_after_confirm), "{kind:?}: ⌘W asks");
+        s.update(|e, _, cx| e.close_save_confirm_dialog(cx));
+        // 保存しない from the close button: the window goes, and the app with it.
+        assert!(!s.press_close_button());
+        s.update(|e, window, cx| e.confirm_discard_and_close(window, cx));
+        assert_eq!(s.window_count(), 0, "{kind:?}: 保存しない closes the window");
+        assert!(s.quit_requested(), "{kind:?}: the app ends with its last window");
+    }
+    // ⌘W closes the window in every format, not showing the start view in it; the app ends with its last window.
+    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+        let mut s = issue27_new(kind);
+        s.quit_with_last_window();
+        s.key("cmd-w");
+        assert_eq!(s.window_count(), 0, "{kind:?}: ⌘W closes the window");
+        assert!(s.quit_requested(), "{kind:?}: the app ends with its last window");
+        drop(s);
+        // With an edit: 保存しない closes the window too.
+        let mut s = issue27_new(kind);
+        s.quit_with_last_window();
+        issue27_make_edit(&mut s, kind);
+        s.key("cmd-w");
+        s.update(|e, window, cx| e.confirm_discard_and_close(window, cx));
+        assert_eq!(s.window_count(), 0, "{kind:?}: ⌘W, 保存しない closes the window");
+        assert!(s.quit_requested(), "{kind:?}");
+    }
+    // The release of the click that closed a workbook still reaches the sheet's listeners of the frame: with no
+    // workbook open, nothing to do (it crashed: 「a workbook is open」).
+    let mut s = Scenario::start_view();
+    s.update(|e, _, cx| e.on_split_up(gpui_kit::point(gpui_kit::px(10.), gpui_kit::px(10.)), cx));
+}
+
+/// GitHub issue #27: 保存 from the close button writes the file (with what was being typed in the cell) and then
+/// closes the window; a file saved has nothing left to ask.
+fn issue27_save_answer_writes_then_closes() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.quit_with_last_window();
+    let path = s.save_as("issue27.xlsx");
+    assert!(!s.with(|e, _| e.is_dirty()), "just saved");
+    assert!(s.press_close_button(), "a file just saved closes at once");
+    drop(s);
+    let mut s = Scenario::open(path.to_str().unwrap());
+    s.quit_with_last_window();
+    s.click_cell("H20");
+    s.type_text("issue27");
+    assert!(!s.press_close_button(), "edits not saved: asks");
+    s.update(|e, window, cx| e.confirm_save_and_close(window, cx));
+    assert_eq!(s.window_count(), 0, "保存 closes the window once written");
+    assert!(s.quit_requested());
+    let saved = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&saved.slides[0]).unwrap();
+    assert_eq!(sheet.cell(19, 7).map(|c| c.value.clone()), Some(ibis_doc_model::CellValue::Text("issue27".into())), "the typed cell is saved");
+}
+
+/// GitHub issue #27: ibisOffice > 終了 (⌘Q) with edits not saved asks instead of ending; without edits it ends.
+fn issue27_quit_asks_to_save() {
+    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+        let mut s = issue27_new(kind);
+        s.quit_with_last_window();
+        s.key("cmd-q");
+        assert!(s.quit_requested(), "{kind:?}: nothing to save: ⌘Q ends the app");
+        drop(s);
+        let mut s = issue27_new(kind);
+        s.quit_with_last_window();
+        issue27_make_edit(&mut s, kind);
+        // The key, as the user presses it: the action comes while the window is being updated.
+        s.key("cmd-q");
+        assert!(!s.quit_requested(), "{kind:?}: edits not saved: ⌘Q does not end the app");
+        assert_eq!(s.window_count(), 1, "{kind:?}");
+        assert!(s.with(|e, _| e.save_confirm_dialog_open && e.close_window_after_confirm), "{kind:?}: ⌘Q asks whether to save");
+        // キャンセル: stays.
+        s.update(|e, _, cx| e.close_save_confirm_dialog(cx));
+        assert!(!s.quit_requested() && s.window_count() == 1, "{kind:?}: キャンセル keeps the app");
+        // ⌘Q again, 保存しない: the window goes and the app ends.
+        s.key("cmd-q");
+        s.update(|e, window, cx| e.confirm_discard_and_close(window, cx));
+        assert_eq!(s.window_count(), 0, "{kind:?}");
+        assert!(s.quit_requested(), "{kind:?}: answered: the app ends with its last window");
+    }
+}
+
+/// The title row's right-pane button (and 表示 > サイドバー) says what is on screen: on only when the pane is shown,
+/// enabled only when it can show something. A docx shows the pane only for a panel opened for it (none in a new
+/// document: the button is off and greyed); xlsx and pptx show it on request.
+fn right_pane_button_follows_the_pane() {
+    let pane = |s: &mut Scenario| s.with(|e, _| e.right_pane);
+    let menu = |s: &mut Scenario| s.with(|e, _| {
+        let entries = crate::shell::chrome_defaults::view_menu(e, e.kind());
+        entries
+            .into_iter()
+            .find_map(|entry| match entry {
+                crate::shell::chrome::MenuEntry::Item(i) if i.id == "view.sidebar" => Some((i.checked, i.enabled())),
+                _ => None,
+            })
+            .expect("表示 > サイドバー")
+    });
+    // docx: a new document has no panel open.
+    let mut s = issue27_new(ibis_pptx::Kind::Document);
+    assert_eq!(pane(&mut s), crate::shell::chrome::RightPane { available: false, shown: false }, "docx: nothing to show: off, disabled");
+    assert_eq!(menu(&mut s), (false, false), "docx: 表示 > サイドバー unchecked, disabled");
+    // A panel opened: on, and the button hides it and shows it again.
+    s.update(|e, window, cx| e.open_comments(window, cx));
+    assert_eq!(pane(&mut s), crate::shell::chrome::RightPane { available: true, shown: true }, "docx: the comments panel is shown");
+    assert_eq!(menu(&mut s), (true, true));
+    s.update(|e, window, cx| e.toggle_sidebar(window, cx));
+    assert_eq!(pane(&mut s), crate::shell::chrome::RightPane { available: true, shown: false }, "docx: hidden, can be shown again");
+    s.update(|e, window, cx| e.toggle_sidebar(window, cx));
+    assert!(pane(&mut s).shown, "docx: shown again");
+    drop(s);
+    // xlsx and pptx: the pane is there on request.
+    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+        let mut s = issue27_new(kind);
+        let before = pane(&mut s);
+        assert!(before.available, "{kind:?}: the pane can be shown");
+        s.update(|e, window, cx| e.toggle_sidebar(window, cx));
+        let after = pane(&mut s);
+        assert_ne!(before.shown, after.shown, "{kind:?}: the button switches the pane");
+        assert_eq!(menu(&mut s), (after.shown, true), "{kind:?}: 表示 > サイドバー says the same");
+    }
+}
+
+fn docx_open_box_edit(s: &mut Scenario) -> (f32, f32, f32, f32) {
+    s.menu("insert.text-box");
+    s.settle();
+    let rect = docx_box_win_rect(s);
+    s.double_click((rect.0 + rect.2 / 2.0, rect.1 + rect.3 / 2.0));
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|d| d.box_edit.is_some())), "entered docx box_edit");
+    docx_box_win_rect(s)
+}
+
+fn docx_box_win_rect(s: &mut Scenario) -> (f32, f32, f32, f32) {
+    let (page, frame) = s.with(|e, _| {
+        if let Some(edit) = e.doc_state().and_then(|d| d.box_edit.as_ref()) {
+            let f = e.floating_text_box_frame_of(edit.at).map(|(_, f, _)| f).unwrap_or(edit.frame);
+            return (edit.page, f);
+        }
+        if let Some((page, frame, _, _)) = e.selected_text_box_frame() {
+            return (page, frame);
+        }
+        let laid = crate::docx::flow_layout::pages(e.flow().unwrap(), &e.resources);
+        laid.pages
+            .iter()
+            .enumerate()
+            .find_map(|(i, pg)| {
+                pg.items.iter().find_map(|item| match item {
+                    crate::docx::flow_layout::Item::Shape { shape, x, y, w, h }
+                        if matches!(shape.kind, ibis_doc_model::ShapeKind::TextBox(_)) =>
+                    {
+                        Some((i, (*x, *y, *w, *h)))
+                    }
+                    _ => None,
+                })
+            })
+            .expect("the box is on a page")
+    });
+    let (origin, k) = s.with(|e, _| e.page_origin(page)).expect("the page is placed");
+    (f32::from(origin.x) + frame.0 * k, f32::from(origin.y) + frame.1 * k, frame.2 * k, frame.3 * k)
+}
+
+/// 1. docx: 2nd-line selection rectangle and caret align with 2nd-line painted glyphs.
+fn fix_textbox_01_docx_second_line_selection_and_caret_alignment() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("Line1");
+    s.key("enter");
+    s.type_text("Line2");
+    s.settle();
+
+    let (caret_rect, p0_y, p1_y, p1_h) = s.with(|e, _| {
+        let marks = e.caret_marks().expect("caret marks");
+        let (caret, _) = marks.rects(true).expect("rects");
+        let edit = e.doc_state().unwrap().box_edit.as_ref().unwrap();
+        let list = edit.positions.paragraphs.borrow();
+        assert_eq!(list.len(), 2, "two painted paragraphs");
+        let p0 = list[0].borrow();
+        let p1 = list[1].borrow();
+        let p0_y = p0.lines[0].top;
+        let p1_y = p1.lines[0].top;
+        let p1_h = p1.lines[0].height;
+        (caret.expect("caret at end of line 2"), p0_y, p1_y, p1_h)
+    });
+    assert!(p1_y > p0_y + 8.0, "line 2 is below line 1: p0_y={p0_y}, p1_y={p1_y}");
+    assert!((f32::from(caret_rect.origin.y) - p1_y).abs() < 1.0, "caret Y matches line 2 top: caret={caret_rect:?}, p1_y={p1_y}");
+
+    s.key("shift-left");
+    s.key("shift-left");
+    s.key("shift-left");
+    s.settle();
+    let sel_rects = s.with(|e, _| e.caret_marks().unwrap().rects(true).unwrap().1);
+    assert_eq!(sel_rects.len(), 1, "single selection rect on line 2");
+    let sr = sel_rects[0];
+    assert!((f32::from(sr.origin.y) - p1_y).abs() < 1.0, "selection Y matches line 2 top: sr={sr:?}, p1_y={p1_y}");
+    assert!((f32::from(sr.size.height) - p1_h).abs() < 1.0, "selection height matches line 2 height: sr={sr:?}, p1_h={p1_h}");
+    s.screenshot("docx-line2-selection");
+}
+
+/// 2. docx: 2nd line with 24pt font keeps 3rd-line caret and selection aligned with 3rd-line painted glyphs.
+fn fix_textbox_02_docx_second_line_large_font_third_line_alignment() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("Line1");
+    s.key("enter");
+    s.type_text("BigLine2");
+    s.key("enter");
+    s.type_text("Line3After");
+    s.settle();
+
+    // Select "BigLine2" (indices 6..14) and apply 24pt (2400).
+    s.update(|e, _, cx| {
+        if let Some(te) = e.text_editing_mut() {
+            te.anchor = 6;
+            te.caret = 14;
+        }
+        e.apply_box_edit_run_change(&ibis_doc_model::RunChange::Size(2400), cx);
+    });
+    s.settle();
+
+    // Move caret to end of Line 3 and select "After" on Line 3.
+    s.key("cmd-down");
+    s.settle();
+    let (caret_y, p1_y, p2_y, p2_h) = s.with(|e, _| {
+        let marks = e.caret_marks().unwrap();
+        let (caret, _) = marks.rects(true).unwrap();
+        let edit = e.doc_state().unwrap().box_edit.as_ref().unwrap();
+        let list = edit.positions.paragraphs.borrow();
+        assert_eq!(list.len(), 3);
+        let p1 = list[1].borrow();
+        let p2 = list[2].borrow();
+        let p1_y = p1.lines[0].top;
+        let p2_y = p2.lines[0].top;
+        let p2_h = p2.lines[0].height;
+        (f32::from(caret.unwrap().origin.y), p1_y, p2_y, p2_h)
+    });
+    assert!(p2_y > p1_y + 18.0, "line 3 is below 24pt line 2: p1_y={p1_y}, p2_y={p2_y}");
+    assert!((caret_y - p2_y).abs() < 1.0, "line 3 caret Y matches line 3 painted top: caret_y={caret_y}, p2_y={p2_y}");
+
+    s.key("shift-left");
+    s.key("shift-left");
+    s.key("shift-left");
+    s.settle();
+    let sr = s.with(|e, _| e.caret_marks().unwrap().rects(true).unwrap().1[0]);
+    assert!((f32::from(sr.origin.y) - p2_y).abs() < 1.0, "line 3 selection Y matches line 3 painted top");
+    assert!((f32::from(sr.size.height) - p2_h).abs() < 1.0, "line 3 selection height matches line 3 painted height");
+}
+
+/// 3. docx: Up and Down arrow keys move caret vertically across lines while keeping goal_x.
+fn fix_textbox_03_docx_arrow_up_down_vertical_navigation() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("123456");
+    s.key("enter");
+    s.type_text("123456");
+    s.key("enter");
+    s.type_text("123456");
+    s.settle();
+
+    // Caret is at index 20 ("123456|"). Move left 3 times -> index 17 ("123|456").
+    s.key("left");
+    s.key("left");
+    s.key("left");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 17);
+
+    // Up -> line 2 ("123|456", index 10).
+    s.key("up");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 10, "Up moves from line 3 to line 2");
+
+    // Up -> line 1 ("123|456", index 3).
+    s.key("up");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 3, "Up moves from line 2 to line 1");
+
+    // Down -> line 2 (index 10).
+    s.key("down");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 10, "Down moves from line 1 to line 2");
+
+    // Down -> line 3 (index 17).
+    s.key("down");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 17, "Down moves from line 2 to line 3");
+}
+
+/// 4. docx: Shift+Up and Shift+Down extend selection across multiple lines.
+fn fix_textbox_04_docx_shift_up_down_multiline_selection() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("aaaa");
+    s.key("enter");
+    s.type_text("aaaa");
+    s.key("enter");
+    s.type_text("aaaa");
+    s.settle();
+
+    s.key("shift-up");
+    s.settle();
+    let r1 = s.with(|e, _| e.text_editing().unwrap().range());
+    assert_eq!(r1, 9..14, "Shift+Up selects from end of line 2 to end of line 3");
+
+    s.key("shift-up");
+    s.settle();
+    let r2 = s.with(|e, _| e.text_editing().unwrap().range());
+    assert_eq!(r2, 4..14, "Second Shift+Up extends selection to line 1");
+    let rect_count = s.with(|e, _| e.caret_marks().unwrap().rects(true).unwrap().1.len());
+    assert!(rect_count >= 2, "multi-line selection produces multiple rects: {rect_count}");
+
+    s.key("shift-down");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 9..14);
+}
+
+/// 5. docx: Left, Right, Home/Cmd+Left, End/Cmd+Right, Cmd+Up, Cmd+Down navigation.
+fn fix_textbox_05_docx_left_right_home_end_navigation() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("hello");
+    s.key("enter");
+    s.type_text("world");
+    s.settle();
+
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 11);
+    s.key("home");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 6, "Home moves to start of line 2");
+    s.key("end");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 11, "End moves to end of line 2");
+    s.key("cmd-up");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 0, "Cmd+Up moves to start of text box");
+    s.key("cmd-right");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 5, "Cmd+Right moves to end of line 1");
+    s.key("right");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 6, "Right crosses newline to start of line 2");
+    s.key("left");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 5, "Left crosses newline back to end of line 1");
+    s.key("cmd-down");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 11, "Cmd+Down moves to end of text box");
+}
+
+/// 6. docx: Alt+Left / Alt+Right word navigation and Shift+Alt+Left / Right word selection.
+fn fix_textbox_06_docx_word_navigation_and_selection() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("alpha beta gamma");
+    s.settle();
+
+    s.key("alt-left");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 11, "Alt+Left jumps to start of 'gamma'");
+    s.key("alt-left");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 6, "Alt+Left jumps to start of 'beta'");
+    s.key("alt-shift-right");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 6..10, "Shift+Alt+Right selects 'beta'");
+    s.key("alt-left");
+    s.key("alt-left");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 0);
+}
+
+/// 7. docx: Typing 5+ lines never changes the user-specified text box rectangle size.
+fn fix_textbox_07_docx_five_lines_fixed_rectangle_size() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    let (w0, h0) = s.with(|e, _| {
+        let at = e.doc_state().unwrap().box_edit.as_ref().unwrap().at;
+        let info = e.text_box_near(at).unwrap();
+        (info.geometry[0].clone(), info.geometry[1].clone())
+    });
+    let frame0 = s.with(|e, _| e.doc_state().unwrap().box_edit.as_ref().unwrap().frame);
+
+    s.key("cmd-a");
+    for line in ["a", "b", "c", "d", "e", "f", "g"] {
+        s.type_text(line);
+        s.key("enter");
+    }
+    s.settle();
+
+    let frame1 = s.with(|e, _| e.doc_state().unwrap().box_edit.as_ref().unwrap().frame);
+    assert_eq!(frame1.2, frame0.2, "box_edit width unchanged after 7 lines");
+    assert_eq!(frame1.3, frame0.3, "box_edit height unchanged after 7 lines");
+    s.key("escape");
+    s.settle();
+    let (w1, h1) = s.with(|e, _| {
+        let info = e.text_box_at_caret().unwrap();
+        (info.geometry[0].clone(), info.geometry[1].clone())
+    });
+    assert_eq!((w1, h1), (w0, h0), "docx text box geometry unchanged after typing 7 lines");
+}
+
+/// 8. docx: IME composition ("あいうえお") is visible inline with underline (not white/invisible) and commits cleanly.
+fn fix_textbox_08_docx_ime_composing_visible_and_commit() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.key("backspace");
+    s.settle();
+
+    s.update(|e, _, cx| {
+        e.input_mark("あいうえお", cx);
+    });
+    s.settle();
+
+    let (marked, composing_text, underlined, color_rgb, has_caret_bounds) = s.with(|e, _| {
+        let marked = e.text_editing().unwrap().marked.clone();
+        let (_, _, comp) = e.resources.edited_box.as_ref().expect("resources.edited_box populated");
+        let body = comp.as_ref().expect("composing body present while IME active");
+        let run = &body.paragraphs[0].runs[0];
+        let color = run.style.color.unwrap_or(body.style.color);
+        (marked, body.text(), run.style.underline, color.0, e.caret_bounds().is_some())
+    });
+    assert_eq!(marked.as_deref(), Some("あいうえお"));
+    assert_eq!(composing_text, "あいうえお");
+    assert!(underlined, "IME composing run is underlined");
+    assert_ne!(color_rgb & 0xffffff, 0xffffff, "IME composing text is dark/readable, not white: {color_rgb:#x}");
+    assert!(has_caret_bounds, "IME candidate window has caret_bounds");
+    s.screenshot("docx-ime-composing");
+
+    s.update(|e, _, cx| {
+        e.input_replace(None, "あいうえお", cx);
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.text_editing().unwrap().marked.is_none()), "marked cleared on commit");
+    assert_eq!(s.with(|e, _| e.edited_text()), Some("あいうえお".to_string()));
+}
+
+/// 9. docx: Double-clicking a text box places the caret at the mouse click position (line 1 left, line 1 right, line 2).
+fn fix_textbox_09_docx_double_click_places_caret_at_click_pos() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("abcde");
+    s.key("enter");
+    s.type_text("fghij");
+    s.settle();
+    let (pt_l1_left, pt_l1_right, pt_l2) = s.with(|e, _| {
+        let edit = e.doc_state().unwrap().box_edit.as_ref().unwrap();
+        let list = edit.positions.paragraphs.borrow();
+        let p0 = list[0].borrow();
+        let p1 = list[1].borrow();
+        let last0 = p0.chars.last().unwrap();
+        (
+            (p0.lines[0].x + 2.0, p0.lines[0].top + 6.0),
+            (last0.x + last0.advance - 1.0, p0.lines[0].top + 6.0),
+            (p1.lines[0].x + 20.0, p1.lines[0].top + 6.0),
+        )
+    });
+    s.key("escape");
+    s.settle();
+
+    // Line 1 near left edge -> index 0.
+    s.double_click(pt_l1_left);
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 0, "line 1 left double-click places caret at 0");
+    s.key("escape");
+    s.settle();
+
+    // Line 1 near right edge -> near end of line 1 (index >= 4, <= 5).
+    s.double_click(pt_l1_right);
+    s.settle();
+    let c_right = s.with(|e, _| e.text_editing().unwrap().caret);
+    assert!((4..=5).contains(&c_right), "line 1 right double-click places caret near end of line 1: {c_right}");
+    s.key("escape");
+    s.settle();
+
+    // Line 2 near middle -> on line 2 (index >= 6).
+    s.double_click(pt_l2);
+    s.settle();
+    let c_line2 = s.with(|e, _| e.text_editing().unwrap().caret);
+    assert!(c_line2 >= 6, "line 2 double-click places caret on line 2: {c_line2}");
+}
+
+/// 10. docx: Double-click inside box_edit selects word; triple-click selects paragraph.
+fn fix_textbox_10_docx_double_and_triple_click_selects_word_and_paragraph() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("hello world");
+    s.key("enter");
+    s.type_text("second line");
+    s.settle();
+
+    let word_pt = s.with(|e, _| {
+        let edit = e.doc_state().unwrap().box_edit.as_ref().unwrap();
+        let list = edit.positions.paragraphs.borrow();
+        let p0 = list[0].borrow();
+        (p0.lines[0].x + 12.0, p0.lines[0].top + 6.0)
+    });
+    s.double_click(word_pt);
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 0..6, "double-click inside box_edit selects 'hello '");
+
+    s.triple_click(word_pt);
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 0..11, "triple-click inside box_edit selects paragraph 'hello world'");
+}
+
+/// 11. docx: Mouse drag inside box_edit selects character range.
+fn fix_textbox_11_docx_mouse_drag_selects_text_range() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("abcdefghij");
+    s.settle();
+
+    let (x0, x1, y) = s.with(|e, _| {
+        let edit = e.doc_state().unwrap().box_edit.as_ref().unwrap();
+        let list = edit.positions.paragraphs.borrow();
+        let p0 = list[0].borrow();
+        let x0 = p0.lines[0].x + 1.0;
+        let last = p0.chars.last().unwrap();
+        let x1 = last.x + last.advance - 1.0;
+        (x0, x1, p0.lines[0].top + 6.0)
+    });
+    s.drag((x0, y), (x1, y));
+    s.settle();
+    let r = s.with(|e, _| e.text_editing().unwrap().range());
+    assert!(r.start <= 1 && r.end >= 8, "mouse drag selects across line: {r:?}");
+}
+
+/// 12. docx: Partial selection Cmd+B / Cmd+I / Cmd+U formats only the selected range and updates current_format().
+fn fix_textbox_12_docx_partial_selection_bold_italic_underline() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("hello world");
+    s.settle();
+
+    // Select "world" (6..11).
+    for _ in 0..5 {
+        s.key("shift-left");
+    }
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 6..11);
+
+    s.key("cmd-b");
+    s.key("cmd-i");
+    s.key("cmd-u");
+    s.settle();
+
+    let (fmt_bold, fmt_italic, fmt_underline, runs) = s.with(|e, _| {
+        let (_, st) = e.current_format().expect("current_format");
+        let body = e.edited_body().unwrap();
+        let runs: Vec<_> = body.paragraphs[0].runs.iter().map(|r| (r.text.clone(), r.style.bold, r.style.italic, r.style.underline)).collect();
+        (st.bold, st.italic, st.underline, runs)
+    });
+    assert!(fmt_bold && fmt_italic && fmt_underline, "toolbar current_format reflects selected 'world'");
+    assert_eq!(runs.len(), 2, "split into 'hello ' and 'world': {runs:?}");
+    assert_eq!(runs[0].0, "hello ");
+    assert_ne!(runs[0].1, Some(true), "'hello ' is not bold");
+    assert_eq!(runs[1].0, "world");
+    assert_eq!(runs[1].1, Some(true), "'world' is bold");
+    assert_eq!(runs[1].2, Some(true), "'world' is italic");
+    assert!(runs[1].3, "'world' is underline");
+}
+
+/// 13. docx: Partial selection font size and color formatting in box_edit.
+fn fix_textbox_13_docx_partial_selection_font_size_and_color() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("small BIG");
+    s.settle();
+
+    s.key("shift-left");
+    s.key("shift-left");
+    s.key("shift-left");
+    s.update(|e, _, cx| {
+        e.apply_box_edit_run_change(&ibis_doc_model::RunChange::Size(2400), cx);
+        e.apply_box_edit_run_change(&ibis_doc_model::RunChange::Color(ibis_doc_model::Rgb(0xFF0000)), cx);
+    });
+    s.settle();
+
+    let runs = s.with(|e, _| {
+        let body = e.edited_body().unwrap();
+        body.paragraphs[0].runs.iter().map(|r| (r.text.clone(), r.style.font_size, r.style.color)).collect::<Vec<_>>()
+    });
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    assert_eq!(runs[0].0, "small ");
+    assert_ne!(runs[0].1, Some(2400));
+    assert_eq!(runs[1].0, "BIG");
+    assert_eq!(runs[1].1, Some(2400));
+    assert_eq!(runs[1].2, Some(ibis_doc_model::Rgb(0xFF0000)));
+}
+
+/// 14. docx: All 8 resize handles are active and resize the text box while remaining in box_edit mode.
+fn fix_textbox_14_docx_eight_handles_resize_while_editing() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    let (bx, by, bw, bh) = docx_open_box_edit(&mut s);
+    let (_, _, w0, h0) = s.with(|e, _| e.doc_state().unwrap().box_edit.as_ref().unwrap().frame);
+
+    // Drag the bottom-right handle (bx + bw, by + bh) by (+40, +30) px.
+    s.drag((bx + bw, by + bh), (bx + bw + 40.0, by + bh + 30.0));
+    s.settle();
+
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|d| d.box_edit.is_some())), "still in box_edit after handle resize");
+    let (_, _, w1, h1) = s.with(|e, _| e.doc_state().unwrap().box_edit.as_ref().unwrap().frame);
+    assert!(w1 > w0 + 15.0 && h1 > h0 + 10.0, "box resized by handle: ({w0}, {h0}) -> ({w1}, {h1})");
+}
+
+/// 15. docx: Border drag strips move the floating text box while remaining in box_edit mode.
+fn fix_textbox_15_docx_border_drag_moves_box_while_editing() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    let (bx, by, bw, _bh) = docx_open_box_edit(&mut s);
+    let (x0, y0, _, _) = s.with(|e, _| e.doc_state().unwrap().box_edit.as_ref().unwrap().frame);
+
+    // Drag top border midpoint (bx + bw * 0.3, by) by (+35, +25) px.
+    s.drag((bx + bw * 0.3, by), (bx + bw * 0.3 + 35.0, by + 25.0));
+    s.settle();
+
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|d| d.box_edit.is_some())), "still in box_edit after border move");
+    let (x1, y1, _, _) = s.with(|e, _| e.doc_state().unwrap().box_edit.as_ref().unwrap().frame);
+    assert!(x1 > x0 + 10.0 && y1 > y0 + 10.0, "box moved by border strip: ({x0}, {y0}) -> ({x1}, {y1})");
+}
+
+/// 16. docx: Typing multiple strings in one box_edit session is undone in a single Undo step.
+fn fix_textbox_16_docx_undo_coalesces_typing_session() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.menu("insert.text-box");
+    s.settle();
+    let before = s.document();
+    let (bx, by, bw, bh) = docx_box_win_rect(&mut s);
+    s.double_click((bx + bw / 2.0, by + bh / 2.0));
+    s.settle();
+
+    s.key("cmd-a");
+    s.type_text("one");
+    s.type_text(" two");
+    s.key("enter");
+    s.type_text("three");
+    s.key("escape");
+    s.settle();
+
+    assert_ne!(s.document(), before);
+    s.menu("edit.undo");
+    s.settle();
+    assert_eq!(s.document(), before, "entire docx box_edit typing session is undone in 1 step");
+}
+
+/// 17. xlsx: Inserting a text box enters edit mode and typing 5+ lines keeps rectangle size fixed.
+fn fix_textbox_17_xlsx_insert_and_five_lines_fixed_rectangle_size() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+    assert!(s.with(|e, _| e.editing.is_some()), "insert.text-box enters edit mode");
+    let frame0 = s.with(|e, _| e.slide().shapes.last().unwrap().frame);
+
+    for line in ["a", "b", "c", "d", "e", "f"] {
+        s.type_text(line);
+        s.key("enter");
+    }
+    s.settle();
+
+    let frame1 = s.with(|e, _| e.slide().shapes.last().unwrap().frame);
+    assert_eq!(frame1, frame0, "xlsx text box frame stays exactly at user-specified size after 6 lines");
+}
+
+/// 18. xlsx: 2nd-line selection rectangle and caret align with 2nd-line painted glyphs.
+fn fix_textbox_18_xlsx_second_line_selection_and_caret_alignment() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+    s.type_text("FirstLine");
+    s.key("enter");
+    s.type_text("SecondLineText");
+    s.settle();
+
+    let (caret_rect, p0_y, p1_y, p1_h) = s.with(|e, _| {
+        let marks = e.caret_marks().unwrap();
+        let (caret, _) = marks.rects(true).unwrap();
+        let list = e.editing.as_ref().unwrap().positions.paragraphs.borrow();
+        let p0 = list[0].borrow();
+        let p1 = list[1].borrow();
+        let p0_y = p0.lines[0].top;
+        let p1_y = p1.lines[0].top;
+        let p1_h = p1.lines[0].height;
+        (caret.unwrap(), p0_y, p1_y, p1_h)
+    });
+    assert!(p1_y > p0_y + 8.0);
+    assert!((f32::from(caret_rect.origin.y) - p1_y).abs() < 1.0, "xlsx line 2 caret Y aligns with line 2 top");
+
+    for _ in 0..4 {
+        s.key("shift-left");
+    }
+    s.settle();
+    let sr = s.with(|e, _| e.caret_marks().unwrap().rects(true).unwrap().1[0]);
+    assert!((f32::from(sr.origin.y) - p1_y).abs() < 1.0, "xlsx line 2 selection Y aligns with line 2 top");
+    assert!((f32::from(sr.size.height) - p1_h).abs() < 1.0, "xlsx line 2 selection height aligns with line 2 height");
+}
+
+/// 19. xlsx: 2nd line with 24pt font keeps 3rd-line caret and selection aligned with 3rd-line painted glyphs.
+fn fix_textbox_19_xlsx_second_line_large_font_third_line_alignment() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+    s.type_text("Row1");
+    s.key("enter");
+    s.type_text("BigRow2");
+    s.key("enter");
+    s.type_text("Row3End");
+    s.settle();
+
+    // Select "BigRow2" (5..12) and apply 24pt (2400).
+    s.update(|e, _, cx| {
+        if let Some(te) = e.text_editing_mut() {
+            te.anchor = 5;
+            te.caret = 12;
+        }
+        e.format_cells(ibis_doc_model::StyleChange::FontSize(2400), cx);
+    });
+    s.settle();
+
+    s.key("cmd-down");
+    s.settle();
+    let (caret_y, p1_y, p2_y, p2_h) = s.with(|e, _| {
+        let marks = e.caret_marks().unwrap();
+        let (caret, _) = marks.rects(true).unwrap();
+        let list = e.editing.as_ref().unwrap().positions.paragraphs.borrow();
+        let p1 = list[1].borrow();
+        let p2 = list[2].borrow();
+        let p1_y = p1.lines[0].top;
+        let p2_y = p2.lines[0].top;
+        let p2_h = p2.lines[0].height;
+        (f32::from(caret.unwrap().origin.y), p1_y, p2_y, p2_h)
+    });
+    assert!(p2_y > p1_y + 18.0, "xlsx row 3 is below 24pt row 2");
+    assert!((caret_y - p2_y).abs() < 1.0, "xlsx row 3 caret Y matches painted row 3 top");
+
+    s.key("shift-left");
+    s.key("shift-left");
+    s.key("shift-left");
+    s.settle();
+    let sr = s.with(|e, _| e.caret_marks().unwrap().rects(true).unwrap().1[0]);
+    assert!((f32::from(sr.origin.y) - p2_y).abs() < 1.0);
+    assert!((f32::from(sr.size.height) - p2_h).abs() < 1.0);
+}
+
+/// 20. xlsx: Up and Down arrow keys and Shift+Up / Shift+Down inside text box editing.
+fn fix_textbox_20_xlsx_arrow_up_down_and_shift_selection() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+    s.type_text("12345");
+    s.key("enter");
+    s.type_text("67890");
+    s.key("enter");
+    s.type_text("abcde");
+    s.settle();
+
+    s.key("left");
+    s.key("left");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 15);
+    s.key("up");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 9, "Up moves from line 3 to line 2 in xlsx");
+    s.key("up");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 3, "Up moves from line 2 to line 1 in xlsx");
+    s.key("shift-down");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 3..9, "Shift+Down selects from line 1 to line 2 in xlsx");
+}
+
+/// 21. xlsx: Word navigation (Alt+Left/Right) and word/line deletion (Alt+Backspace, Cmd+Backspace).
+fn fix_textbox_21_xlsx_word_nav_and_delete_shortcuts() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+    s.type_text("one two three");
+    s.settle();
+
+    s.key("alt-left");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 8);
+    s.key("alt-right");
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 13);
+    s.key("alt-backspace");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("one two "));
+    s.key("cmd-backspace");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some(""));
+}
+
+/// 22. xlsx: IME composition ("あいうえお") is visible inline with underline and commits cleanly.
+fn fix_textbox_22_xlsx_ime_composing_visible_and_commit() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+
+    s.update(|e, _, cx| {
+        e.input_mark("あいうえお", cx);
+    });
+    s.settle();
+
+    let (marked, comp_text, underlined, color_rgb, has_bounds) = s.with(|e, _| {
+        let shape_id = e.text_editing().unwrap().shape;
+        let comp = e.composing_body(shape_id).expect("composing_body present");
+        let run = &comp.paragraphs[0].runs[0];
+        let color = run.style.color.unwrap_or(comp.style.color);
+        (e.text_editing().unwrap().marked.clone(), comp.text(), run.style.underline, color.0, e.caret_bounds().is_some())
+    });
+    assert_eq!(marked.as_deref(), Some("あいうえお"));
+    assert_eq!(comp_text, "あいうえお");
+    assert!(underlined);
+    assert_ne!(color_rgb & 0xffffff, 0xffffff, "IME text is dark/readable, not white");
+    assert!(has_bounds);
+    s.screenshot("xlsx-ime-composing");
+
+    s.update(|e, _, cx| {
+        e.input_replace(None, "あいうえお", cx);
+    });
+    s.settle();
+    assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("あいうえお"));
+}
+
+/// 23. xlsx: Double-clicking a text box places the caret at the clicked position on line 1 or line 2.
+fn fix_textbox_23_xlsx_double_click_places_caret_at_click_pos() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+    s.type_text("abcdefghij");
+    s.key("enter");
+    s.type_text("klmnopqrst");
+    s.key("escape");
+    s.settle();
+
+    let (tb_x, tb_y, tb_w, _) = s.with(|e, _| {
+        let shape = e.slide().shapes.last().unwrap();
+        let layout = e.slide_layout().unwrap();
+        let f = shape.frame;
+        (
+            f32::from(layout.origin.x + layout.to_px(f.x)),
+            f32::from(layout.origin.y + layout.to_px(f.y)),
+            f32::from(layout.to_px(f.width)),
+            f32::from(layout.to_px(f.height)),
+        )
+    });
+
+    s.double_click((tb_x + 8.0, tb_y + 10.0));
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 0);
+    s.key("escape");
+    s.settle();
+
+    s.double_click((tb_x + tb_w - 8.0, tb_y + 10.0));
+    s.settle();
+    let c1 = s.with(|e, _| e.text_editing().unwrap().caret);
+    assert!((7..=10).contains(&c1), "line 1 right double-click: {c1}");
+    s.key("escape");
+    s.settle();
+
+    s.double_click((tb_x + 25.0, tb_y + 30.0));
+    s.settle();
+    let c2 = s.with(|e, _| e.text_editing().unwrap().caret);
+    assert!(c2 >= 11, "line 2 double-click places caret on line 2: {c2}");
+}
+
+/// 24. xlsx: Double-click selects word, triple-click selects paragraph, mouse drag selects range inside edit mode.
+fn fix_textbox_24_xlsx_double_triple_click_and_drag_selection() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+    s.type_text("hello world");
+    s.key("enter");
+    s.type_text("second line");
+    s.settle();
+
+    let (pt_word, x_end) = s.with(|e, _| {
+        let list = e.editing.as_ref().unwrap().positions.paragraphs.borrow();
+        let p0 = list[0].borrow();
+        let last = p0.chars.last().unwrap();
+        ((p0.lines[0].x + 10.0, p0.lines[0].top + 6.0), last.x + last.advance - 1.0)
+    });
+    s.double_click(pt_word);
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 0..6);
+
+    s.triple_click(pt_word);
+    s.settle();
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 0..11);
+
+    s.drag((pt_word.0 - 8.0, pt_word.1), (x_end, pt_word.1));
+    s.settle();
+    let r = s.with(|e, _| e.text_editing().unwrap().range());
+    assert!(r.start <= 1 && r.end >= 9, "drag selection in xlsx text box: {r:?}");
+}
+
+/// 25. xlsx: Partial selection formatting (Cmd+B, Cmd+I, Cmd+U, font size) and toolbar current_style() sync.
+fn fix_textbox_25_xlsx_partial_selection_formatting_and_toolbar_sync() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+    s.type_text("plain styled");
+    s.settle();
+
+    for _ in 0..6 {
+        s.key("shift-left");
+    }
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 6..12);
+
+    s.key("cmd-b");
+    s.key("cmd-i");
+    s.key("cmd-u");
+    s.update(|e, _, cx| e.format_cells(ibis_doc_model::StyleChange::FontSize(1800), cx));
+    s.settle();
+
+    let (style, runs) = s.with(|e, _| {
+        let st = e.current_style();
+        let body = e.edited_body().unwrap();
+        let runs: Vec<_> = body.paragraphs[0].runs.iter().map(|r| (r.text.clone(), r.style.bold, r.style.italic, r.style.underline, r.style.font_size)).collect();
+        (st, runs)
+    });
+    assert!(style.bold && style.italic && style.underline.enabled() && style.font_size == 1800);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].0, "plain ");
+    assert_ne!(runs[0].1, Some(true));
+    assert_eq!(runs[1].0, "styled");
+    assert_eq!(runs[1].1, Some(true));
+    assert_eq!(runs[1].2, Some(true));
+    assert!(runs[1].3);
+    assert_eq!(runs[1].4, Some(1800));
+}
+
+/// 26. xlsx: 8 resize handles and border drag strips work while editing a text box.
+fn fix_textbox_26_xlsx_eight_handles_and_border_drag_while_editing() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("insert.text-box");
+    s.settle();
+    s.type_text("Resize and move me");
+    s.settle();
+
+    let (f0, br_pt) = s.with(|e, _| {
+        let shape = e.slide().shapes.last().unwrap();
+        let layout = e.slide_layout().unwrap();
+        let f = shape.frame;
+        (f, (f32::from(layout.origin.x + layout.to_px(f.x + f.width)), f32::from(layout.origin.y + layout.to_px(f.y + f.height))))
+    });
+    s.drag(br_pt, (br_pt.0 + 50.0, br_pt.1 + 30.0));
+    s.settle();
+    let f1 = s.with(|e, _| e.slide().shapes.last().unwrap().frame);
+    assert!(f1.width > f0.width && f1.height > f0.height, "xlsx handle resized frame: {f0:?} -> {f1:?}");
+
+    // Re-enter edit mode and drag top border strip.
+    let (top_mid, _) = s.with(|e, _| {
+        let shape = e.slide().shapes.last().unwrap();
+        let layout = e.slide_layout().unwrap();
+        let f = shape.frame;
+        ((f32::from(layout.origin.x + layout.to_px(f.x + f.width / 3)), f32::from(layout.origin.y + layout.to_px(f.y))), f)
+    });
+    s.double_click((top_mid.0, top_mid.1 + 15.0));
+    s.settle();
+    assert!(s.with(|e, _| e.editing.is_some()));
+    s.drag(top_mid, (top_mid.0 + 40.0, top_mid.1 + 25.0));
+    s.settle();
+    let f2 = s.with(|e, _| e.slide().shapes.last().unwrap().frame);
+    assert!(f2.x > f1.x && f2.y > f1.y, "xlsx border drag moved frame: {f1:?} -> {f2:?}");
+}
+
+/// 27. xlsx: Escape on a newly created empty text box retracts it; typing session is undone in a single step.
+fn fix_textbox_27_xlsx_empty_new_textbox_retracted_on_escape_and_undo_coalesced() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let count0 = s.with(|e, _| e.slide().shapes.len());
+    s.update(|e, window, cx| {
+        let id = e.insert_sheet_textbox(window, cx);
+        e.editing.as_mut().unwrap().edit.is_new = true;
+        let _ = id;
+    });
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), count0 + 1);
+    s.key("escape");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), count0, "empty new text box retracted on Escape");
+
+    // Insert and type, then Escape, then double-click to edit again and undo that second session in 1 step.
+    s.menu("insert.text-box");
+    s.settle();
+    s.type_text("initial");
+    s.key("escape");
+    s.settle();
+    let after_initial = s.with(|e, _| e.slide().clone());
+
+    let center = s.with(|e, _| {
+        let shape = e.slide().shapes.last().unwrap();
+        let layout = e.slide_layout().unwrap();
+        let f = shape.frame;
+        (f32::from(layout.origin.x + layout.to_px(f.x + f.width / 2)), f32::from(layout.origin.y + layout.to_px(f.y + f.height / 2)))
+    });
+    s.double_click(center);
+    s.settle();
+    s.key("cmd-a");
+    s.type_text("changed");
+    s.type_text(" again");
+    s.key("escape");
+    s.settle();
+    assert_ne!(s.with(|e, _| e.slide().clone()), after_initial);
+    s.menu("edit.undo");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.slide().clone()), after_initial, "second edit session coalesced into 1 undo step");
+}
+
+/// 28. pptx: On a newly added slide, an inserted text box enters edit mode with visible caret, supports IME, and re-enters edit mode on double-click.
+fn fix_textbox_28_pptx_new_slide_inserted_textbox_edit_and_ime() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("pptx.new-slide");
+    s.settle();
+    s.menu("insert.text-box");
+    s.settle();
+
+    let slide_pt = s.with(|e, _| {
+        let layout = e.slide_layout().unwrap();
+        (f32::from(layout.origin.x) + 150.0, f32::from(layout.origin.y) + 150.0)
+    });
+    s.drag(slide_pt, (slide_pt.0 + 220.0, slide_pt.1 + 90.0));
+    s.settle();
+
+    assert!(s.with(|e, _| e.text_editing().is_some()), "new text box on new slide enters edit mode");
+    let has_caret = s.with(|e, _| e.caret_marks().and_then(|m| m.rects(true)).is_some_and(|(c, _)| c.is_some()));
+    assert!(has_caret, "caret is painted inside newly inserted empty text box");
+
+    // IME composition inside the newly inserted text box.
+    s.update(|e, _, cx| e.input_mark("あいうえお", cx));
+    s.settle();
+    let comp_ok = s.with(|e, _| {
+        let id = e.text_editing().unwrap().shape;
+        e.composing_body(id).is_some_and(|b| b.text() == "あいうえお")
+    });
+    assert!(comp_ok, "IME composing body visible on new pptx text box");
+    s.update(|e, _, cx| e.input_replace(None, "あいうえお", cx));
+    s.settle();
+    s.key("escape");
+    s.settle();
+    assert!(s.with(|e, _| e.text_editing().is_none()));
+
+    // Double-click the text box to re-enter edit mode.
+    s.double_click((slide_pt.0 + 30.0, slide_pt.1 + 15.0));
+    s.settle();
+    assert!(s.with(|e, _| e.text_editing().is_some()), "double-clicking inserted text box re-enters edit mode");
+    let has_caret_again = s.with(|e, _| e.caret_marks().and_then(|m| m.rects(true)).is_some_and(|(c, _)| c.is_some()));
+    assert!(has_caret_again, "caret is visible after double-clicking inserted text box");
+}
+
+/// 29. pptx: Typing 5+ lines keeps user-specified rectangle size fixed, and Up/Down navigation works.
+fn fix_textbox_29_pptx_five_lines_fixed_rectangle_size_and_up_down() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("insert.text-box");
+    s.settle();
+    let slide_pt = s.with(|e, _| {
+        let layout = e.slide_layout().unwrap();
+        (f32::from(layout.origin.x) + 120.0, f32::from(layout.origin.y) + 120.0)
+    });
+    s.drag(slide_pt, (slide_pt.0 + 200.0, slide_pt.1 + 80.0));
+    s.settle();
+
+    let frame0 = s.with(|e, _| e.slide().shapes.last().unwrap().frame);
+    for line in ["line1", "line2", "line3", "line4", "line5", "line6"] {
+        s.type_text(line);
+        s.key("enter");
+    }
+    s.settle();
+    let frame1 = s.with(|e, _| e.slide().shapes.last().unwrap().frame);
+    assert_eq!(frame1, frame0, "pptx text box frame stays fixed after 6 lines");
+
+    s.key("up");
+    s.key("up");
+    s.settle();
+    let c = s.with(|e, _| e.text_editing().unwrap().caret);
+    assert!(c < 30, "Up arrow moved caret up in pptx text box: {c}");
+}
+
+/// 30. pptx: 2nd line with 28pt font keeps 2nd and 3rd line selection rectangles aligned with painted glyphs.
+fn fix_textbox_30_pptx_second_line_large_font_and_selection_alignment() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("insert.text-box");
+    s.settle();
+    let slide_pt = s.with(|e, _| {
+        let layout = e.slide_layout().unwrap();
+        (f32::from(layout.origin.x) + 100.0, f32::from(layout.origin.y) + 100.0)
+    });
+    s.drag(slide_pt, (slide_pt.0 + 260.0, slide_pt.1 + 140.0));
+    s.settle();
+
+    s.type_text("Line1");
+    s.key("enter");
+    s.type_text("LargeLine2");
+    s.key("enter");
+    s.type_text("Line3Tail");
+    s.settle();
+
+    s.update(|e, window, cx| {
+        if let Some(te) = e.text_editing_mut() {
+            te.anchor = 6;
+            te.caret = 16;
+        }
+        e.format_characters(window, cx, ibis_doc_model::CharacterFormat { font_size: Some(2800), ..Default::default() });
+    });
+    s.settle();
+
+    s.key("cmd-down");
+    s.key("shift-left");
+    s.key("shift-left");
+    s.key("shift-left");
+    s.settle();
+
+    let (sr, p2_y, p2_h) = s.with(|e, _| {
+        let sr = e.caret_marks().unwrap().rects(true).unwrap().1[0];
+        let list = e.pptx().unwrap().positions.paragraphs.borrow();
+        let p2 = list[2].borrow();
+        let p2_y = p2.lines[0].top;
+        let p2_h = p2.lines[0].height;
+        (sr, p2_y, p2_h)
+    });
+    assert!((f32::from(sr.origin.y) - p2_y).abs() < 1.0, "pptx line 3 selection Y matches painted top");
+    assert!((f32::from(sr.size.height) - p2_h).abs() < 1.0, "pptx line 3 selection height matches painted height");
+}
+
+/// 31. pptx: Partial selection Bold/Italic/Underline and resize handles while editing text box.
+fn fix_textbox_31_pptx_partial_selection_bold_italic_underline_and_handles() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.menu("insert.text-box");
+    s.settle();
+    let slide_pt = s.with(|e, _| {
+        let layout = e.slide_layout().unwrap();
+        (f32::from(layout.origin.x) + 120.0, f32::from(layout.origin.y) + 120.0)
+    });
+    s.drag(slide_pt, (slide_pt.0 + 220.0, slide_pt.1 + 90.0));
+    s.settle();
+
+    s.type_text("normal bold");
+    for _ in 0..4 {
+        s.key("shift-left");
+    }
+    s.key("cmd-b");
+    s.key("cmd-i");
+    s.key("cmd-u");
+    s.settle();
+
+    let (style, runs) = s.with(|e, _| {
+        let st = e.selected_text_style().unwrap();
+        let body = e.edited_body().unwrap();
+        let runs: Vec<_> = body.paragraphs[0].runs.iter().map(|r| (r.text.clone(), r.style.bold, r.style.italic, r.style.underline)).collect();
+        (st, runs)
+    });
+    assert!(style.bold && style.italic);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].0, "normal ");
+    assert_ne!(runs[0].1, Some(true));
+    assert_eq!(runs[1].0, "bold");
+    assert_eq!(runs[1].1, Some(true));
+    assert_eq!(runs[1].2, Some(true));
+    assert!(runs[1].3);
+
+    // Drag bottom-right resize handle while in edit mode.
+    let (f0, br) = s.with(|e, _| {
+        let shape = e.slide().shapes.last().unwrap();
+        let layout = e.slide_layout().unwrap();
+        let f = shape.frame;
+        (f, (f32::from(layout.origin.x + layout.to_px(f.x + f.width)), f32::from(layout.origin.y + layout.to_px(f.y + f.height))))
+    });
+    s.drag(br, (br.0 + 40.0, br.1 + 30.0));
+    s.settle();
+    let f1 = s.with(|e, _| e.slide().shapes.last().unwrap().frame);
+    assert!(f1.width > f0.width && f1.height > f0.height, "pptx handle resized while editing");
+}
+
+/// 32. Unified Cut / Copy / Paste / Select-All inside text box editing across docx, xlsx, and pptx.
+fn fix_textbox_32_copy_cut_paste_and_select_all_across_docx_xlsx_pptx() {
+    // 1. docx
+    {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        docx_open_box_edit(&mut s);
+        s.key("cmd-a");
+        s.type_text("abc def");
+        for _ in 0..3 {
+            s.key("shift-left");
+        }
+        s.key("cmd-x");
+        s.settle();
+        assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("abc "));
+        s.key("home");
+        s.key("cmd-v");
+        s.settle();
+        assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("defabc "));
+        s.key("cmd-a");
+        assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 0..7);
+    }
+    // 2. xlsx
+    {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        s.menu("insert.text-box");
+        s.settle();
+        s.type_text("abc def");
+        for _ in 0..3 {
+            s.key("shift-left");
+        }
+        s.key("cmd-x");
+        s.settle();
+        assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("abc "));
+        s.key("home");
+        s.key("cmd-v");
+        s.settle();
+        assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("defabc "));
+        s.key("cmd-a");
+        assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 0..7);
+    }
+    // 3. pptx
+    {
+        let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+        s.menu("insert.text-box");
+        s.settle();
+        let slide_pt = s.with(|e, _| {
+            let layout = e.slide_layout().unwrap();
+            (f32::from(layout.origin.x) + 120.0, f32::from(layout.origin.y) + 120.0)
+        });
+        s.drag(slide_pt, (slide_pt.0 + 200.0, slide_pt.1 + 80.0));
+        s.settle();
+        s.type_text("abc def");
+        for _ in 0..3 {
+            s.key("shift-left");
+        }
+        s.key("cmd-x");
+        s.settle();
+        assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("abc "));
+        s.key("home");
+        s.key("cmd-v");
+        s.settle();
+        assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("defabc "));
+        s.key("cmd-a");
+        assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 0..7);
+    }
+}
+
+/// #97: Long menu scrollbar is visible as soon as the menu opens, and its track
+/// reaches the very top when ▲ is hidden (`start == 0`) and the very bottom when ▼ is hidden.
+fn fix97_menu_scrollbar_visible_and_flush_to_edges() {
+    let _probe = crate::shell::scenario::button_probe::Probe::new();
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let edit = menu_button_at(&mut s, "edit");
+    s.click(edit);
+    assert_eq!(open_index(&mut s), Some(1));
+    assert_eq!(menu_start(&mut s), 0, "starts at top of Edit menu");
+    s.screenshot("fix97-menu-top");
+
+    // Hover ▼ to scroll into the middle (both ▲ and ▼ shown).
+    s.hover((300.0, 648.0));
+    s.wait(400);
+    let mid_start = menu_start(&mut s);
+    assert!(mid_start > 0, "scrolled down into middle: {mid_start}");
+    s.screenshot("fix97-menu-middle");
+
+    // Scroll to the very bottom so ▼ is hidden.
+    s.update(|e, window, cx| {
+        e.scroll_menu_to(999, window, cx);
+    });
+    s.settle();
+    let bot_start = menu_start(&mut s);
+    assert!(bot_start >= mid_start, "at bottom of menu: {bot_start}");
+    s.screenshot("fix97-menu-bottom");
+}
+
+/// #98: Searchable dropdown menu component with ✕ clear button, and bottom-left
+/// sheet-list popup showing tab color swatches, checkmarks, filtering, and Enter selection.
+fn fix98_searchable_dropdown_and_sheet_list() {
+    use crate::shell::chrome::{filter_menu_items, flatten_menu_entries};
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // Set a tab color on the first sheet and add two more sheets.
+    s.update(|e, _, cx| {
+        e.set_tab_color(Some(ibis_doc_model::Rgb(0xe53935)), cx);
+    });
+    s.menu("xlsx.insert-sheet");
+    s.menu("xlsx.insert-sheet");
+    s.settle();
+
+    // Verify sheet_list_menu_entries includes the tab color swatch on the first sheet and checkmark on current.
+    let entries = s.with(|e, _| crate::xlsx::sheet_ui::sheet_list_menu_entries(e));
+    let items = flatten_menu_entries(&entries);
+    assert!(items.len() >= 5, "sheet list has all visible sheets: {}", items.len());
+    assert_eq!(items[0].swatch, Some(ibis_doc_model::Rgb(0xe53935)), "first sheet has red tab swatch");
+    assert!(items.iter().any(|it| it.checked), "current sheet is checked");
+
+    // Filter by query: partial match, no match ("みつかりません"), and empty query.
+    let first_name = items[0].label.to_string();
+    let matched = filter_menu_items(&items, &first_name);
+    assert!(!matched.is_empty() && matched[0].label == first_name);
+    let none_matched = filter_menu_items(&items, "存在しないシート名XYZ");
+    assert!(none_matched.is_empty(), "non-existent query returns empty list");
+    assert_eq!(filter_menu_items(&items, "").len(), items.len(), "cleared query restores full list");
+
+    // Pressing Enter in the sheet-list search input activates the top matched sheet.
+    let first_slide_id = s.with(|e, _| e.presentation().slides[0].id);
+    assert_ne!(s.with(|e, _| e.current_slide), first_slide_id);
+    s.update(move |e, window, cx| {
+        let input = e.ensure_toolbar_search_input("sheet-list", window, cx);
+        input.update(cx, |state, cx| state.set_value(first_name.clone(), window, cx));
+        e.activate_top_toolbar_search_match("sheet-list", window, cx);
+    });
+    s.settle();
+    assert_eq!(s.with(|e, _| e.current_slide), first_slide_id, "Enter on search query switched to matched sheet");
+}
+
+/// #99, #100, #101, #102:
+/// - #99: docx text box side panel removes duplicate vertical-alignment / B / I buttons (toolbar handles them).
+/// - #100: compact spinner & color fields in docx text box side panel update geometry and style.
+/// - #101: graphical line-style dropdown (`line_dash_open`, `hovered_dash`, `DASHES`) in docx text box side panel.
+/// - #102: docx inline picture selection shows 8 resize handles, corner drag preserves aspect ratio, and interior move drag does not move inline pictures.
+fn fix99_100_101_102_docx_textbox_panel_and_inline_picture_resize() {
+    use ibis_doc_model::{FlowPos, FlowRunKind, LineDash};
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+
+    // Insert a floating text box and verify the side panel opens (#99, #100, #101).
+    s.menu("insert.text-box");
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|d| d.text_box.is_some()) && e.sidebar_open));
+
+    // #100: Update width, height, and line width via the compact panel inputs.
+    s.update(|e, window, cx| {
+        let st = e.doc_state().unwrap().text_box.as_ref().unwrap();
+        let w_in = st.geometry[0].clone();
+        let h_in = st.geometry[1].clone();
+        let lw_in = st.line_width.clone();
+        w_in.update(cx, |i, cx| i.set_value("220", window, cx));
+        h_in.update(cx, |i, cx| i.set_value("110", window, cx));
+        lw_in.update(cx, |i, cx| i.set_value("2", window, cx));
+        e.apply_text_box(cx);
+    });
+    s.settle();
+    let (_, (_, _, w_pt, h_pt), _, _) = s.with(|e, _| e.selected_text_box_frame()).expect("selected text box");
+    assert!((w_pt - 220.0).abs() < 2.0 && (h_pt - 110.0).abs() < 2.0, "panel updated text box size: {w_pt}x{h_pt}");
+
+    // #101: Open graphical line-dash dropdown, hover DashDot, and select Dash.
+    s.update(|e, _, cx| {
+        if let Some(st) = e.doc_state_mut().and_then(|d| d.text_box.as_mut()) {
+            st.line_dash_open = true;
+            st.hovered_dash = Some(LineDash::DashDot);
+        }
+        cx.notify();
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().unwrap().text_box.as_ref().unwrap().line_dash_open));
+    s.update(|e, _, cx| {
+        if let Some(st) = e.doc_state_mut().and_then(|d| d.text_box.as_mut()) {
+            st.dash = LineDash::Dash;
+            st.line_dash_open = false;
+            st.hovered_dash = None;
+        }
+        e.apply_text_box(cx);
+    });
+    s.settle();
+    let applied_dash = s.with(|e, _| e.text_box_at_caret().unwrap().dash);
+    assert_eq!(applied_dash, LineDash::Dash, "graphical line style dropdown applied Dash");
+
+    // #99: Toolbar vertical alignment and Bold/Italic still work on the text box.
+    s.menu("docx.shape.align-text.middle");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.text_box_at_caret().unwrap().anchor),
+        ibis_doc_model::VerticalAnchor::Middle
+    );
+
+    // #102: Select the inline picture in docx-report.docx and resize it via its corner handle while preserving aspect ratio.
+    let pic_pos = s.with(|e, _| {
+        for b in &e.presentation().flow.as_ref().unwrap().body {
+            if let ibis_doc_model::Block::Paragraph(p) = b {
+                let mut offset = 0;
+                for r in &p.runs {
+                    if matches!(r.kind, FlowRunKind::Picture { .. }) {
+                        return FlowPos::new(p.id, offset);
+                    }
+                    offset += r.len();
+                }
+            }
+        }
+        panic!("expected inline picture in docx-report.docx");
+    });
+    let (is_pic, is_inline) = s.with(move |e, _| e.is_picture_at(pic_pos));
+    assert_eq!((is_pic, is_inline), (true, true), "target run is an inline picture");
+
+    let (page, (px0, py0, pw0, ph0), _) = s
+        .with(move |e, _| e.floating_text_box_frame_of(pic_pos))
+        .expect("inline picture has layout frame");
+    let orig_ratio = pw0 / ph0;
+
+    // Click inside the inline picture to select it: moving an inline picture must keep its origin unchanged.
+    s.update(move |e, _, cx| {
+        assert!(e.begin_shape_drag(page, px0 + pw0 * 0.5, py0 + ph0 * 0.5, cx));
+        if let Some(d) = e.doc_state_mut().and_then(|st| st.shape_drag.as_mut()) {
+            d.delta = (30.0, 25.0);
+            assert_eq!(d.frame_now(), (px0, py0, pw0, ph0), "inline picture Move drag does not shift x/y");
+        }
+        e.end_shape_drag(cx);
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().unwrap().shape_selected), "inline picture is selected with handles");
+
+    // Drag the bottom-right corner handle (px0 + pw0, py0 + ph0) to resize with aspect ratio locked.
+    s.update(move |e, _, cx| {
+        assert!(e.begin_shape_drag(page, px0 + pw0, py0 + ph0, cx));
+        if let Some(d) = e.doc_state_mut().and_then(|st| st.shape_drag.as_mut()) {
+            d.delta = (40.0, 10.0);
+        }
+        e.end_shape_drag(cx);
+    });
+    s.settle();
+    let (_, (_, _, pw1, ph1), _) = s
+        .with(move |e, _| e.floating_text_box_frame_of(pic_pos))
+        .expect("resized inline picture frame");
+    assert!(pw1 > pw0 + 20.0, "inline picture width grew: {pw0} -> {pw1}");
+    let new_ratio = pw1 / ph1;
+    assert!(
+        (new_ratio - orig_ratio).abs() < 0.05,
+        "corner drag preserved inline picture aspect ratio: {orig_ratio} -> {new_ratio}"
+    );
+}
+
+/// #103: Top-left toolbar `menu-search` button opens a searchable popup of all executable
+/// menu items sorted in ascending order, filters by query, and executes the top match on Enter.
+fn fix103_menu_search_popup_sorted_filter_and_enter() {
+    use crate::shell::chrome::filter_menu_items;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    let items = s.with(|e, _| e.searchable_menu_items_for("menu-search"));
+    assert!(items.len() > 20, "menu-search collects executable menu items: {}", items.len());
+    assert!(
+        items.windows(2).all(|w| w[0].label.as_ref() <= w[1].label.as_ref()),
+        "menu-search items are sorted in ascending order of display label"
+    );
+
+    // Substring filter and 0-hit case.
+    let grid_label = crate::shell::i18n::text("xlsx.gridlines").to_string();
+    let filtered = filter_menu_items(&items, &grid_label);
+    assert!(!filtered.is_empty(), "filtering by '{grid_label}' finds gridlines menu item");
+    assert!(filter_menu_items(&items, "存在しないコマンド999").is_empty());
+
+    // Execute top match via Enter (`activate_top_toolbar_search_match`).
+    let before_grid = s.with(|e, _| e.current_sheet().unwrap().1.grid_lines);
+    s.update(move |e, window, cx| {
+        let input = e.ensure_toolbar_search_input("menu-search", window, cx);
+        input.update(cx, |st, cx| st.set_value(grid_label.clone(), window, cx));
+        e.activate_top_toolbar_search_match("menu-search", window, cx);
+    });
+    s.settle();
+    let after_grid = s.with(|e, _| e.current_sheet().unwrap().1.grid_lines);
+    assert_eq!(after_grid, !before_grid, "Enter in menu-search executed the top matched item");
+}
+
+/// #104: Clicking the border or handle of a text box while editing text exits text-editing mode
+/// and transitions to object-selection mode (keeping the 8 resize handles visible) across docx, xlsx, and pptx.
+fn fix104_textbox_border_click_exits_edit_and_keeps_handles() {
+    // 1. docx
+    {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        docx_open_box_edit(&mut s);
+        assert!(s.with(|e, _| e.doc_state().unwrap().box_edit.is_some()));
+        // Simulate clicking the border without dragging (delta == 0) and releasing.
+        s.update(|e, window, cx| {
+            e.commit_box_edit(window, cx);
+        });
+        s.settle();
+        assert!(s.with(|e, _| e.doc_state().unwrap().box_edit.is_none()), "docx exited box_edit");
+        assert!(s.with(|e, _| e.doc_state().unwrap().shape_selected), "docx keeps shape_selected with 8 handles");
+    }
+    // 2. xlsx
+    {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        s.menu("insert.text-box");
+        s.settle();
+        s.type_text("xlsx border click");
+        assert!(s.with(|e, _| e.editing.is_some()));
+        let shape_id = s.with(|e, _| e.editing.as_ref().unwrap().shape);
+        // Simulate clicking the border without moving (`is_new = false`, `commit_edit`).
+        s.update(move |e, window, cx| {
+            if let Some(ed) = e.editing.as_mut() {
+                ed.edit.is_new = false;
+            }
+            e.commit_edit(window, cx);
+            e.set_selection(vec![shape_id]);
+        });
+        s.settle();
+        assert!(s.with(|e, _| e.editing.is_none()), "xlsx exited text editing");
+        assert_eq!(s.with(|e, _| e.selected_sheet_shape()), Some(shape_id), "xlsx keeps text box selected with handles");
+    }
+    // 3. pptx
+    {
+        let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+        s.menu("insert.text-box");
+        s.settle();
+        let slide_pt = s.with(|e, _| {
+            let layout = e.slide_layout().unwrap();
+            (f32::from(layout.origin.x) + 120.0, f32::from(layout.origin.y) + 120.0)
+        });
+        s.drag(slide_pt, (slide_pt.0 + 200.0, slide_pt.1 + 80.0));
+        s.settle();
+        s.type_text("pptx border click");
+        let shape_id = s.with(|e, _| e.text_editing().unwrap().shape);
+        s.update(|e, window, cx| {
+            e.end_text_edit(window, cx);
+        });
+        s.settle();
+        assert!(s.with(|e, _| e.text_editing().is_none()), "pptx exited text editing");
+        assert_eq!(s.with(|e, _| e.selected_ids()), vec![shape_id], "pptx keeps shape selected with handles");
+    }
+}
+
+/// #105, #106, #107:
+/// - #105: xlsx Custom Views (`xlsx.custom-views`) and Goto Special (`xlsx.goto-special`, no redundant Close button).
+/// - #106: xlsx Arrange Windows (`xlsx.arrange-all`, shared radio/checkbox rows, primary "実行" button, no redundant Cancel button).
+/// - #107: xlsx Paste Special (`xlsx.paste-special-dialog`) opens even before copying and has no redundant Cancel button.
+fn fix105_106_107_xlsx_side_panels_layout_and_controls() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // #107: Open Paste Special dialog from menu without copying first.
+    s.update(|e, _, _| {
+        e.wb_mut().clip = None;
+    });
+    s.menu("xlsx.paste-special-dialog");
+    s.settle();
+    assert!(
+        s.with(|e, _| e.wb().panels.paste_special_dialog.is_some() && e.sidebar_open),
+        "Paste Special panel opens from menu even when clip is None"
+    );
+    let (has_ok, has_cancel, has_link) = s.with(|e, _| {
+        let ui = e.wb().panels.paste_special_dialog.as_ref().unwrap().ui.borrow();
+        (ui.contains_key("ok"), ui.contains_key("cancel"), ui.contains_key("paste-link"))
+    });
+    assert!(has_ok && has_link && !has_cancel, "Paste Special has OK and Paste Link, and no Cancel button");
+
+    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+
+    // #105a: Custom Views panel — add, select, apply, and delete a custom view.
+    s.menu("xlsx.custom-views");
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.custom_views.is_some()));
+    s.update(|e, window, cx| {
+        e.open_add_custom_view(window, cx);
+        if let Some(cv) = e.wb_mut().panels.custom_views.as_mut() {
+            cv.name_input.update(cx, |i, cx| i.set_value("Q1View", window, cx));
+        }
+        e.apply_add_custom_view_ui(window, cx);
+    });
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.presentation().workbook.as_ref().unwrap().custom_views.len()),
+        1,
+        "custom view Q1View added"
+    );
+    s.update(|e, window, cx| {
+        if let Some(cv) = e.wb_mut().panels.custom_views.as_mut() {
+            cv.selected_index = Some(0);
+        }
+        e.show_selected_custom_view(window, cx);
+        e.delete_selected_custom_view(cx);
+    });
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.presentation().workbook.as_ref().unwrap().custom_views.len()),
+        0,
+        "custom view deleted"
+    );
+
+    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+
+    // #105b: Goto Special panel — radio rows and "選択" button without redundant "閉じる" button.
+    s.menu("xlsx.goto-special");
+    s.settle();
+    let (gs_apply, gs_close) = s.with(|e, _| {
+        let ui = e.wb().panels.goto_special.as_ref().unwrap().ui.borrow();
+        (ui.contains_key("apply"), ui.contains_key("close"))
+    });
+    assert!(gs_apply && !gs_close, "Goto Special has '選択' button and no redundant '閉じる' button");
+    s.update(|e, _, cx| e.apply_goto_special(cx));
+    s.settle();
+
+    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+
+    // #106: Arrange Windows panel — radio rows, checkbox, and "実行" button without redundant Cancel button.
+    s.menu("xlsx.arrange-all");
+    s.settle();
+    let (arr_ok, arr_cancel, arr_tiled) = s.with(|e, _| {
+        let ui = e.wb().panels.arrange_windows.as_ref().unwrap().ui.borrow();
+        (ui.contains_key("arrange-ok"), ui.contains_key("arrange-cancel"), ui.contains_key("arrange-tiled"))
+    });
+    assert!(arr_ok && arr_tiled && !arr_cancel, "Arrange Windows has radio options and '実行' button, no Cancel button");
+}
+
+/// #108, #109, #110, #111:
+/// - #108: Menu width is pre-calculated across all entries so scrolling does not shift menu width.
+/// - #109: Top-level `ウィンドウ` (`MenuId::Window`) menu in docx, xlsx, and pptx.
+/// - #110: Arrange Windows (`Tiled`, `Horizontal`, `Vertical`, `Cascade`) tiles/cascades open windows.
+/// - #111: Open editor windows are listed at the bottom of the `ウィンドウ` menu with `:1`, `:2` suffixes and active checkmark.
+fn fix108_109_110_111_window_menu_and_arrange_all() {
+    use crate::shell::chrome::{MenuEntry, MenuId, menu_width_for_entries};
+
+    for file in ["test/editing/xlsx-sales.xlsx", "test/editing/docx-report.docx", "test/editing/pptx-plan.pptx"] {
+        let mut s = Scenario::open(file);
+        let (has_window_menu, win_width, has_open_entry) = s.with(|e, _| {
+            let menus = e.menus();
+            let win_entries = menus.menus.iter().find(|(id, _)| *id == MenuId::Window).map(|(_, v)| v.clone());
+            let Some(entries) = win_entries else { return (false, 0.0, false) };
+            let w = menu_width_for_entries(&entries);
+            let has_open = entries.iter().any(|en| matches!(en, MenuEntry::Item(it) if it.id.starts_with("window.open.") && it.checked));
+            (true, w, has_open)
+        });
+        assert!(has_window_menu, "{file} has top-level Window menu");
+        assert!(win_width >= 280.0, "{file} Window menu has fixed width {win_width}");
+        assert!(has_open_entry, "{file} Window menu lists current window with checkmark");
+    }
+
+    // Open a second window on xlsx-sales.xlsx via `window.new-window` and verify `:1` and `:2` labels in Window menu (#111)
+    // as well as ArrangeKind modes (#110).
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("window.new-window");
+    s.settle();
+    let (label1, open_labels) = s.with(|e, _| {
+        let l1 = e.window_menu_label().to_string();
+        let items: Vec<(String, bool)> = e
+            .open_window_menu_items()
+            .into_iter()
+            .filter_map(|en| match en {
+                MenuEntry::Item(it) => Some((it.label.to_string(), it.checked)),
+                _ => None,
+            })
+            .collect();
+        (l1, items)
+    });
+    assert!(label1.ends_with(":1"), "first window label has :1 suffix: {label1}");
+    assert!(
+        open_labels.iter().any(|(l, _)| l.ends_with(":1")) && open_labels.iter().any(|(l, _)| l.ends_with(":2")),
+        "Window menu lists both :1 and :2 windows: {open_labels:?}"
+    );
+
+    for kind in [
+        crate::xlsx::arrange_windows::ArrangeKind::Tiled,
+        crate::xlsx::arrange_windows::ArrangeKind::Horizontal,
+        crate::xlsx::arrange_windows::ArrangeKind::Vertical,
+        crate::xlsx::arrange_windows::ArrangeKind::Cascade,
+    ] {
+        s.update(move |e, window, cx| {
+            e.set_arrange_kind(kind, cx);
+            e.apply_arrange_windows(window, cx);
+        });
+        s.settle();
+    }
+}
+
+/// #112: docx checklist button works inside a floating text box or shape (both while editing text and when the shape is selected).
+fn fix112_docx_checklist_in_textbox_and_shape() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    docx_open_box_edit(&mut s);
+    s.key("cmd-a");
+    s.type_text("Check item 1");
+    s.settle();
+
+    // Verify checklist toolbar button is enabled inside box_edit.
+    let checklist_enabled = s.with(|e, _| {
+        e.toolbar_items().into_iter().any(|it| match it {
+            crate::shell::chrome::ToolItem::Button(b) if b.id == "checklist" => !b.disabled,
+            _ => false,
+        })
+    });
+    assert!(checklist_enabled, "checklist button is enabled while editing text box");
+    assert!(!s.with(|e, _| e.shape_has_checklist()));
+
+    // Toggle checklist ON while editing text box.
+    s.update(|e, _, cx| e.toggle_checklist(cx));
+    s.settle();
+    assert!(s.with(|e, _| e.shape_has_checklist()), "checklist bullet added to text box paragraph");
+
+    // Toggle checklist OFF while editing text box.
+    s.update(|e, _, cx| e.toggle_checklist(cx));
+    s.settle();
+    assert!(!s.with(|e, _| e.shape_has_checklist()), "checklist bullet removed from text box paragraph");
+
+    // Exit box_edit so shape is selected (`shape_selected == true`), and toggle checklist ON on the whole shape.
+    s.update(|e, window, cx| e.commit_box_edit(window, cx));
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().unwrap().shape_selected));
+    s.update(|e, _, cx| e.toggle_checklist(cx));
+    s.settle();
+    assert!(s.with(|e, _| e.shape_has_checklist()), "checklist toggled ON when shape is selected");
+}
+
+/// #113: Color menus across docx, xlsx, and pptx use the unified 10×6 theme + standard color `MenuEntry::Palette`.
+fn fix113_unified_color_palettes_in_menus() {
+    use crate::shell::chrome::MenuEntry;
+
+    fn submenu_has_palette(entries: &[MenuEntry], target_id: &str) -> bool {
+        for entry in entries {
+            if let MenuEntry::Submenu(sub) = entry {
+                if sub.id == target_id {
+                    return sub.items.iter().any(|it| matches!(it, MenuEntry::Palette(_)));
+                }
+                if submenu_has_palette(&sub.items, target_id) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    // 1. docx: text color, underline color, paragraph shading/border color, cell border color, picture border color.
+    {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        let all_entries = s.with(|e, _| {
+            e.menus()
+                .menus
+                .into_iter()
+                .flat_map(|(_, v)| v)
+                .collect::<Vec<_>>()
+        });
+        for id in [
+            "docx.format.text.colors",
+            "docx.underline.colors",
+            "docx.paragraph.fill",
+            "docx.paragraph.border-color",
+            "docx.cell.border.color",
+            "docx.picture.border.color",
+        ] {
+            assert!(submenu_has_palette(&all_entries, id), "docx submenu {id} uses MenuEntry::Palette");
+        }
+    }
+
+    // 2. xlsx: sparkline series/marker colors and shape text color use MenuEntry::Palette.
+    {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        let all_entries = s.with(|e, _| {
+            e.menus()
+                .menus
+                .into_iter()
+                .flat_map(|(_, v)| v)
+                .collect::<Vec<_>>()
+        });
+        for id in [
+            "xlsx.sparkline-colors",
+            "xlsx.sparkline-marker-color-high",
+            "xlsx.sparkline-marker-color-low",
+            "xlsx.text.color",
+        ] {
+            assert!(submenu_has_palette(&all_entries, id), "xlsx submenu {id} uses MenuEntry::Palette");
+        }
+    }
+
+    // 3. pptx: text outline (`pptx.text-outline`) and table border color (`table.borders.color`) use MenuEntry::Palette.
+    {
+        let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+        let all_entries = s.with(|e, _| {
+            e.menus()
+                .menus
+                .into_iter()
+                .flat_map(|(_, v)| v)
+                .collect::<Vec<_>>()
+        });
+        for id in ["pptx.text-outline", "table.borders.color"] {
+            assert!(submenu_has_palette(&all_entries, id), "pptx submenu {id} uses MenuEntry::Palette");
+        }
+    }
+}
+
+/// #114, #115:
+/// - #114: docx toolbar shows `shape-fill-color` and `shape-line-color` buttons when a shape/text box is selected or edited.
+/// - #115: xlsx toolbar has `border-color` next to `fill`, updating cell border color or selected shape stroke color.
+fn fix114_115_shape_fill_and_border_color_in_toolbar() {
+    use crate::shell::chrome::ToolItem;
+
+    // #114: docx shape fill & line color buttons in toolbar
+    {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        let has_shape_btns = |s: &mut Scenario| {
+            s.with(|e, _| {
+                let ids: Vec<&str> = e
+                    .toolbar_items()
+                    .into_iter()
+                    .filter_map(|it| match it {
+                        ToolItem::Button(b) => Some(b.id),
+                        _ => None,
+                    })
+                    .collect();
+                (ids.contains(&"shape-fill-color"), ids.contains(&"shape-line-color"))
+            })
+        };
+        assert_eq!(has_shape_btns(&mut s), (false, false), "hidden when body text is active");
+        s.menu("insert.text-box");
+        s.settle();
+        assert_eq!(has_shape_btns(&mut s), (true, true), "shown when floating text box is selected");
+    }
+
+    // #115: xlsx border-color button in toolbar works for both cells and worksheet shapes
+    {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        let has_border_color_btn = s.with(|e, _| {
+            e.toolbar_items().into_iter().any(|it| match it {
+                ToolItem::Button(b) => b.id == "border-color",
+                _ => false,
+            })
+        });
+        assert!(has_border_color_btn, "xlsx toolbar has border-color button");
+
+        // 1) Cell selected: picking a color from toolbar_border_color_menu sets border_color and applies borders
+        s.click_cell("D4");
+        s.update(|e, window, cx| {
+            let entries = crate::xlsx::toolbar::toolbar_border_color_menu(e);
+            if let Some(crate::shell::chrome::MenuEntry::Palette(p)) = entries.first()
+                && let Some(pick) = &p.pick
+            {
+                pick(e, Some(ibis_doc_model::Rgb(0xc00000)), window, cx);
+            }
+        });
+        s.settle();
+        assert_eq!(s.with(|e, _| e.wb().border_color), ibis_doc_model::Rgb(0xc00000));
+        assert!(s.with(|e, _| e.range_edge("top").is_some()), "cell border applied on D4");
+
+        // 2) Worksheet shape selected: picking a color from toolbar_border_color_menu updates shape stroke color
+        s.update(|e, _, cx| {
+            e.insert_sheet_shape("rect", cx);
+        });
+        s.settle();
+        let shape_id = s.with(|e, _| e.selected_sheet_shape()).expect("inserted shape");
+        s.update(|e, window, cx| {
+            let entries = crate::xlsx::toolbar::toolbar_border_color_menu(e);
+            if let Some(crate::shell::chrome::MenuEntry::Palette(p)) = entries.first()
+                && let Some(pick) = &p.pick
+            {
+                pick(e, Some(ibis_doc_model::Rgb(0x008000)), window, cx);
+            }
+        });
+        s.settle();
+        let stroke_rgb = s.with(move |e, _| match &e.slide().shape(shape_id).unwrap().kind {
+            ibis_doc_model::ShapeKind::Auto(a) => a.stroke.as_ref().map(|st| st.color.rgb),
+            _ => None,
+        });
+        assert_eq!(stroke_rgb, Some(ibis_doc_model::Rgb(0x008000)), "shape stroke color updated via toolbar border-color");
+    }
+}
+
+/// #116, #117:
+/// - #116: xlsx `clear-format` toolbar button clears cell formatting or worksheet shape/textbox formatting while keeping text.
+/// - #117: `clear-format` in docx and pptx clears formatting inside text boxes / shapes (both partial selection and whole shape).
+fn fix116_117_clear_formatting_in_xlsx_docx_pptx() {
+    // 1. xlsx (#116): cell format clear + worksheet text box format clear
+    {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        s.click_cell("B2");
+        s.key("cmd-b");
+        s.update(|e, _, cx| {
+            e.format_cells(ibis_doc_model::StyleChange::Fill(Some(ibis_doc_model::Rgb(0xffff00))), cx);
+        });
+        s.settle();
+        assert!(s.with(|e, _| e.current_style().bold));
+        s.update(|e, _, cx| e.clear_cell_formats(cx));
+        s.settle();
+        assert!(!s.with(|e, _| e.current_style().bold), "xlsx cell bold cleared");
+        assert_eq!(s.with(|e, _| e.current_style().fill), None, "xlsx cell fill cleared");
+
+        // Worksheet text box: apply bold and clear formatting
+        s.menu("insert.text-box");
+        s.settle();
+        s.type_text("Hello Clear");
+        s.key("cmd-a");
+        s.key("cmd-b");
+        s.settle();
+        assert!(s.with(|e, _| e.selected_text_style().unwrap().bold));
+        s.update(|e, _, cx| e.clear_cell_formats(cx));
+        s.settle();
+        assert!(!s.with(|e, _| e.selected_text_style().unwrap().bold), "xlsx text box bold cleared");
+        assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("Hello Clear"), "text preserved");
+    }
+
+    // 2. docx (#117): floating text box format clear
+    {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        docx_open_box_edit(&mut s);
+        s.key("cmd-a");
+        s.type_text("Docx Box Text");
+        s.key("cmd-a");
+        s.key("cmd-b");
+        s.update(|e, _, cx| e.toggle_checklist(cx));
+        s.settle();
+        assert!(s.with(|e, _| e.shape_has_checklist()));
+        s.update(|e, _, cx| e.clear_formatting(cx));
+        s.settle();
+        assert!(!s.with(|e, _| e.shape_has_checklist()), "docx text box paragraph bullet cleared");
+        assert_eq!(s.with(|e, _| e.edited_text()).as_deref(), Some("Docx Box Text"), "docx text box text preserved");
+    }
+
+    // 3. pptx (#117): text box partial and whole-shape format clear
+    {
+        let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+        s.menu("insert.text-box");
+        s.settle();
+        let slide_pt = s.with(|e, _| {
+            let layout = e.slide_layout().unwrap();
+            (f32::from(layout.origin.x) + 120.0, f32::from(layout.origin.y) + 120.0)
+        });
+        s.drag(slide_pt, (slide_pt.0 + 220.0, slide_pt.1 + 90.0));
+        s.settle();
+        s.type_text(" StyledPPTX");
+        s.key("cmd-a");
+        s.key("cmd-b");
+        s.update(|e, window, cx| {
+            e.commit_edit(window, cx);
+        });
+        s.settle();
+        // Whole-shape clear_formats when selected (not editing text)
+        s.update(|e, window, cx| {
+            e.clear_formats(window, cx);
+        });
+        s.settle();
+        let (bold_after, text_after) = s.with(|e, _| {
+            let tb = e.slide().shapes.last().unwrap().text_body().unwrap();
+            let is_b = tb.paragraphs[0].runs.iter().any(|r| r.style.bold == Some(true));
+            (is_b, tb.text())
+        });
+        assert!(!bold_after, "pptx whole-shape clear_formats cleared bold");
+        assert_eq!(text_after, " StyledPPTX");
+    }
+}
+
+/// #118: Multi-shape selection with Shift+click in docx and xlsx, simultaneous style application, and batch delete.
+fn fix118_multi_shape_selection_with_shift_click() {
+    // 1. docx: insert two shapes, Shift+click to select both, and delete both at once
+    {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        let count_shapes = |s: &mut Scenario| {
+            s.with(|e, _| {
+                e.flow()
+                    .unwrap()
+                    .body
+                    .iter()
+                    .filter_map(|b| match b {
+                        ibis_doc_model::Block::Paragraph(p) => Some(
+                            p.runs
+                                .iter()
+                                .filter(|r| matches!(r.kind, ibis_doc_model::FlowRunKind::Shape(_)))
+                                .count(),
+                        ),
+                        _ => None,
+                    })
+                    .sum::<usize>()
+            })
+        };
+        let initial_count = count_shapes(&mut s);
+        s.menu("insert.text-box");
+        s.settle();
+        let at1 = s.with(|e, _| e.selected_text_box_frame().unwrap().2);
+        // Exit in-place text edit and insert a second shape
+        s.update(|e, window, cx| {
+            e.commit_box_edit(window, cx);
+            e.doc_insert_shape("rect", cx);
+        });
+        s.settle();
+        let (page2, (x2, y2, w2, h2), at2, _) = s.with(|e, _| e.selected_text_box_frame().unwrap());
+        assert_ne!(at1, at2);
+        assert_eq!(count_shapes(&mut s), initial_count + 2);
+
+        // Select first shape, then Shift+click the second shape
+        s.update(move |e, _, cx| {
+            let (page1, (x1, y1, w1, h1), _) = e.floating_text_box_frame_of(at1).unwrap();
+            assert!(e.begin_shape_drag(page1, x1 + w1 * 0.5, y1 + h1 * 0.5, cx));
+            e.end_shape_drag(cx);
+            assert!(e.shift_click_shape(page2, x2 + w2 * 0.5, y2 + h2 * 0.5, cx));
+        });
+        s.settle();
+        assert_eq!(s.with(|e, _| e.all_selected_shapes().len()), 2, "2 shapes selected in docx via Shift+click");
+
+        // Delete removes both selected shapes in one step, and Undo restores both
+        s.update(|e, _, cx| e.delete_char(false, cx));
+        s.settle();
+        assert_eq!(count_shapes(&mut s), initial_count, "Delete removed both selected shapes");
+        s.key("cmd-z");
+        s.settle();
+        assert_eq!(count_shapes(&mut s), initial_count + 2, "Undo restored both shapes");
+    }
+
+    // 2. xlsx: insert two worksheet shapes, select both, and apply fill & stroke simultaneously
+    {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        let (id1, id2) = s.update(|e, _, cx| {
+            let a = e.insert_sheet_shape("rect", cx);
+            let b = e.insert_sheet_shape("ellipse", cx);
+            e.set_selection(vec![a, b]);
+            (a, b)
+        });
+        s.settle();
+        assert_eq!(s.with(|e, _| e.selected_shapes().len()), 2, "2 shapes selected in xlsx");
+        s.update(|e, _, cx| {
+            e.fill_sheet_shape(
+                ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffc000))),
+                cx,
+            );
+            e.stroke_sheet_shape_color(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xc00000))), cx);
+            e.format_cells(ibis_doc_model::StyleChange::Font(Some("Arial".to_string())), cx);
+            e.format_cells(ibis_doc_model::StyleChange::FontSize(2000), cx);
+            e.format_cells(ibis_doc_model::StyleChange::Bold(true), cx);
+            e.format_cells(ibis_doc_model::StyleChange::Italic(true), cx);
+            e.format_cells(ibis_doc_model::StyleChange::Color(ibis_doc_model::Rgb(0x0070c0)), cx);
+            e.format_cells(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Center), cx);
+            e.step_font_size_selection(true, cx);
+        });
+        s.settle();
+        for id in [id1, id2] {
+            let (fill_ok, stroke_ok, text_ok) = s.with(move |e, _| match &e.slide().shape(id).unwrap().kind {
+                ibis_doc_model::ShapeKind::Auto(a) => {
+                    let t_ok = a.text.as_ref().is_some_and(|b| {
+                        b.style.font.as_deref() == Some("Arial")
+                            && b.style.font_size == 2400
+                            && b.style.bold
+                            && b.style.italic
+                            && b.style.color == ibis_doc_model::Rgb(0x0070c0)
+                            && b.style.align == ibis_doc_model::TextAlign::Center
+                    });
+                    (
+                        matches!(a.fill, ibis_doc_model::Fill::Solid(c) if c.rgb == ibis_doc_model::Rgb(0xffc000)),
+                        a.stroke.as_ref().is_some_and(|st| st.color.rgb == ibis_doc_model::Rgb(0xc00000)),
+                        t_ok,
+                    )
+                }
+                _ => (false, false, false),
+            });
+            assert!(fill_ok && stroke_ok && text_ok, "xlsx multi-selected shape {id:?} received fill, stroke, and text formatting (#152)");
+        }
+    }
+}
+
+/// #119: pptx pictures inserted onto a slide have aspect ratio locked (`aspect_locked`) by default.
+fn fix119_pptx_picture_aspect_ratio_locked_by_default() {
+    use ibis_doc_model::{AutoShape, EmuRect, Fill, Geometry, Shape, ShapeKind};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+
+    let (pic_id, rect_id) = s.update(|e, _, cx| {
+        let p_id = e.insert_icon("search", cx).expect("insert icon picture");
+        let r_shape_id = e.document.ids().new_shape_id();
+        let r_shape = Shape::new(
+            r_shape_id,
+            EmuRect::new(914_400, 914_400, 1_828_800, 1_371_600),
+            ShapeKind::Auto(AutoShape::new(Geometry::Rect, Fill::None, None)),
+        );
+        let r_id = e.insert_shape(r_shape, cx);
+        (p_id, r_id)
+    });
+    s.settle();
+    assert!(
+        s.with(move |e, _| e.slide().aspect_locked.contains(&pic_id)),
+        "inserted Picture has aspect ratio locked by default"
+    );
+    assert!(
+        !s.with(move |e, _| e.slide().aspect_locked.contains(&rect_id)),
+        "inserted AutoShape does not lock aspect ratio by default"
+    );
+}
+
+/// #120: Toolbar font size box acts as a pulldown + direct numeric input across docx, xlsx, and pptx.
+fn fix120_toolbar_font_size_pulldown_and_direct_input() {
+    // 1. docx
+    {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        s.key("cmd-a");
+        s.update(|e, window, cx| e.set_toolbar_font_size(24.0, window, cx));
+        s.settle();
+        assert_eq!(s.with(|e, _| e.current_format().and_then(|(f, _)| f.size)), Some(2400), "docx 24pt = 2400 hundredths of a point");
+        s.update(|e, window, cx| e.set_toolbar_font_size(10.5, window, cx));
+        s.settle();
+        assert_eq!(s.with(|e, _| e.current_format().and_then(|(f, _)| f.size)), Some(1050), "docx 10.5pt = 1050 hundredths of a point");
+    }
+    // 2. xlsx
+    {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        s.click_cell("B2");
+        s.update(|e, window, cx| e.set_toolbar_font_size(20.0, window, cx));
+        s.settle();
+        assert_eq!(s.with(|e, _| e.current_style().font_size), 2000, "xlsx 20pt = 2000 hundredths");
+    }
+    // 3. pptx
+    {
+        let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+        s.menu("insert.text-box");
+        s.settle();
+        let slide_pt = s.with(|e, _| {
+            let layout = e.slide_layout().unwrap();
+            (f32::from(layout.origin.x) + 120.0, f32::from(layout.origin.y) + 120.0)
+        });
+        s.drag(slide_pt, (slide_pt.0 + 200.0, slide_pt.1 + 80.0));
+        s.settle();
+        s.type_text("SizeTest");
+        s.key("cmd-a");
+        s.update(|e, window, cx| e.set_toolbar_font_size(28.0, window, cx));
+        s.settle();
+        assert_eq!(s.with(|e, _| e.selected_text_style().unwrap().font_size), 2800, "pptx 28pt = 2800 hundredths");
+    }
+}
+
+/// #121: pptx `change-shape` button is hidden from the toolbar (`b.hidden == true`),
+/// while remaining available in the Format menu and shape right-click context menu.
+fn fix121_pptx_change_shape_removed_from_toolbar_kept_in_menus() {
+    use crate::shell::chrome::{MenuEntry, ToolItem};
+    use ibis_doc_model::{AutoShape, EmuRect, Fill, Geometry, Shape, ShapeKind};
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let shape_id = s.update(|e, _, cx| {
+        let id = e.document.ids().new_shape_id();
+        let shape = Shape::new(
+            id,
+            EmuRect::new(914_400, 914_400, 1_828_800, 1_371_600),
+            ShapeKind::Auto(AutoShape::new(Geometry::Rect, Fill::None, None)),
+        );
+        e.insert_shape(shape, cx)
+    });
+    s.settle();
+
+    // In toolbar_items(), `change-shape` is marked `.hidden()` so `render_toolbar` excludes it.
+    let hidden_in_toolbar = s.with(|e, _| {
+        e.toolbar_items().into_iter().all(|it| match it {
+            ToolItem::Button(b) if b.id == "change-shape" => b.hidden,
+            _ => true,
+        })
+    });
+    assert!(hidden_in_toolbar, "change-shape button is hidden from pptx toolbar");
+
+    // Still present in right-click `shape_context_menu_entries()` and functional (`change-shape.ellipse`).
+    let in_context_menu = s.with(|e, _| {
+        e.shape_context_menu_entries()
+            .iter()
+            .any(|en| matches!(en, MenuEntry::Submenu(sub) if sub.id == "pptx.chrome.change-shape"))
+    });
+    assert!(in_context_menu, "change-shape remains in pptx right-click context menu");
+
+    s.toolbar_menu("change-shape", "change-shape.ellipse");
+    s.settle();
+    let geom = s.with(move |e, _| match &e.slide().shape(shape_id).unwrap().kind {
+        ibis_doc_model::ShapeKind::Auto(a) => a.geometry.clone(),
+        _ => panic!("expected auto shape"),
+    });
+    assert_eq!(Some(geom), ibis_pptx::preset_geometry("ellipse"), "change-shape via menu changed rect to ellipse");
+}
+
+/// #122 (GitHub issue #24): xlsx dynamic array spill range outline (solid blue when active,
+/// dashed blue when `#SPILL!` is selected) and gray ghost formula in the formula bar.
+fn fix122_xlsx_dynamic_array_spill_outline_and_ghost_formula() {
+    use crate::xlsx::sheet_ui::{active_spill_outlines_on, spilled_ghost_formula_on};
+    use ibis_doc_model::{CellError, CellRange, CellValue, sheet_calc::sheet_of_slide};
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("xlsx.insert-sheet");
+    s.settle();
+
+    // 1. Enter `=SEQUENCE(3,2,10,5)` in B2 (col=1, row=1) -> spills to B2:C4 (rows 1..=3, cols 1..=2).
+    s.click_cell("B2");
+    s.type_text("=SEQUENCE(3,2,10,5)");
+    s.key("enter");
+    s.settle();
+
+    let expected_spill = CellRange {
+        first_row: 1,
+        first_column: 1,
+        last_row: 3,
+        last_column: 2,
+    };
+
+    // Anchor B2 has its own formula (not a ghost formula), and selecting B2 shows unblocked outline `(expected_spill, false)`.
+    s.click_cell("B2");
+    let (ghost_b2, outlines_b2) = s.with(|e, _| {
+        let sh = sheet_of_slide(e.slide()).unwrap();
+        (
+            spilled_ghost_formula_on(sh, 1, 1),
+            active_spill_outlines_on(e.presentation(), e.current_slide, sh, e.current_cell(), &e.selected_ranges()),
+        )
+    });
+    assert_eq!(ghost_b2, None, "anchor B2 uses normal formula, not ghost formula");
+    assert_eq!(outlines_b2, vec![(expected_spill, false)], "selecting anchor B2 shows solid spill outline");
+
+    // Spilled destination cell C4 (col=2, row=3) shows ghost formula `=SEQUENCE(3,2,10,5)` and solid spill outline.
+    s.click_cell("C4");
+    let (ghost_c4, outlines_c4) = s.with(|e, _| {
+        let sh = sheet_of_slide(e.slide()).unwrap();
+        (
+            spilled_ghost_formula_on(sh, 3, 2),
+            active_spill_outlines_on(e.presentation(), e.current_slide, sh, e.current_cell(), &e.selected_ranges()),
+        )
+    });
+    assert_eq!(ghost_c4.as_deref(), Some("=SEQUENCE(3,2,10,5)"), "spilled cell C4 shows ghost formula");
+    assert_eq!(outlines_c4, vec![(expected_spill, false)], "selecting spilled cell C4 shows solid spill outline");
+    s.screenshot("fix122-spill-active");
+
+    // Selecting E5 outside the spill range hides the spill outline.
+    s.click_cell("E5");
+    let outlines_e5 = s.with(|e, _| {
+        let sh = sheet_of_slide(e.slide()).unwrap();
+        active_spill_outlines_on(e.presentation(), e.current_slide, sh, e.current_cell(), &e.selected_ranges())
+    });
+    assert!(outlines_e5.is_empty(), "selecting outside cell E5 hides spill outline");
+
+    // 2. Put blocking text in C3 (col=2, row=2) -> B2 becomes `#SPILL!`, and selecting B2 shows dashed outline `(expected_spill, true)`.
+    s.click_cell("C3");
+    s.type_text("BLOCK");
+    s.key("enter");
+    s.settle();
+    s.click_cell("B2");
+    let (b2_val, outlines_blocked) = s.with(|e, _| {
+        let sh = sheet_of_slide(e.slide()).unwrap();
+        (
+            sh.cell(1, 1).unwrap().value.clone(),
+            active_spill_outlines_on(e.presentation(), e.current_slide, sh, e.current_cell(), &e.selected_ranges()),
+        )
+    });
+    assert_eq!(b2_val, CellValue::Error(CellError::Spill), "B2 is #SPILL! when C3 blocks");
+    assert_eq!(
+        outlines_blocked,
+        vec![(expected_spill, true)],
+        "selecting #SPILL! cell B2 shows intended spill range with dashed outline (is_blocked = true)"
+    );
+    s.screenshot("fix122-spill-blocked");
+
+    // 3. Clear C3 -> spill recovers and outline returns to solid (`is_blocked = false`).
+    s.click_cell("C3");
+    s.key("backspace");
+    s.key("enter");
+    s.settle();
+    s.click_cell("B2");
+    let outlines_recovered = s.with(|e, _| {
+        let sh = sheet_of_slide(e.slide()).unwrap();
+        active_spill_outlines_on(e.presentation(), e.current_slide, sh, e.current_cell(), &e.selected_ranges())
+    });
+    assert_eq!(outlines_recovered, vec![(expected_spill, false)], "spill outline recovered after clearing blocker");
+}
+
+/// #123: Selecting multiple cells in xlsx no longer renders the floating Quick Analysis button at the bottom-right corner.
+fn fix123_no_quick_analysis_button_on_multi_cell_selection() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.click_cell("B3");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.selected_range()),
+        Some(ibis_doc_model::CellRange {
+            first_column: 1,
+            first_row: 2,
+            last_column: 2,
+            last_row: 3,
+        })
+    );
+    // Clicking the cell just below the bottom-right corner of the selection selects that cell directly
+    // (no floating Quick Analysis button intercepts the click or opens `list_popup`).
+    let d5 = s.with(|e, _| e.cell_center(3, 4)).expect("D5 on screen");
+    s.click((f32::from(d5.x), f32::from(d5.y)));
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().unwrap().list_popup.is_none()), "no quick-analysis popup opened");
+    assert_eq!(s.with(|e, _| e.current_cell()), Some((3, 4)), "click selected D5 directly");
+}
+
+/// #124: Selecting body text in docx no longer renders the floating mini-toolbar over the page.
+fn fix124_no_mini_toolbar_on_body_text_selection() {
+    use ibis_doc_model::FlowPos;
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    let first_para = s.with(|e, _| {
+        e.flow()
+            .unwrap()
+            .body
+            .iter()
+            .find_map(|b| match b {
+                ibis_doc_model::Block::Paragraph(p) => Some(p.id),
+                _ => None,
+            })
+            .unwrap()
+    });
+    s.update(move |e, _, cx| {
+        e.set_caret(FlowPos::new(first_para, 0), false, cx);
+        e.set_caret(FlowPos::new(first_para, 4), true, cx);
+    });
+    s.settle();
+    let has_sel = s.with(|e, _| e.ordered_selection().is_some_and(|(a, b)| a != b));
+    assert!(has_sel, "body text range is selected");
+    s.screenshot("fix124-docx-selection-no-mini-toolbar");
+
+    // Standard keyboard formatting (e.g. Cmd+B) works normally on the selected body text.
+    let bold_before = s.with(|e, _| e.current_format().map(|(_, st)| st.bold)).unwrap_or(false);
+    s.key("cmd-b");
+    s.settle();
+    let bold_after = s.with(|e, _| e.current_format().map(|(_, st)| st.bold)).unwrap_or(false);
+    assert_eq!(bold_after, !bold_before, "Cmd+B toggles bold on selected body text");
+}
+
+/// Web `view=1` read-only mode and `menuBar=1` / `toolBar=1` defaults and overrides.
+fn fix_embed_view_mode_and_bars() {
+    use crate::shell::web_embed::{
+        is_view_only, resolve_embed_query_options, set_embed_options, show_menu_bar, show_tool_bar,
+    };
+
+    // 1. Verify embed query option defaults: `?view=1` keeps `menuBar=true` and `toolBar=true` by default.
+    assert_eq!(
+        resolve_embed_query_options("?view=1"),
+        (false, false, true, true, true),
+        "?view=1 keeps menuBar=1 and toolBar=1 enabled by default"
+    );
+    assert_eq!(
+        resolve_embed_query_options("?view=1&menuBar=0&toolBar=0"),
+        (false, false, true, false, false),
+        "?view=1&menuBar=0&toolBar=0 explicitly hides menuBar and toolBar"
+    );
+    assert_eq!(
+        resolve_embed_query_options("?view=1&close=1&download=1"),
+        (true, true, true, true, true),
+        "?view=1&close=1&download=1 enables close/download while keeping menuBar and toolBar on"
+    );
+
+    set_embed_options(false, false, true, true, true);
+    assert!(is_view_only() && show_menu_bar() && show_tool_bar());
+    set_embed_options(false, false, false, true, true);
+
+    // Also verify `www/main.ts` matches `?? true` for both `menuBar` and `toolBar`.
+    let main_ts = std::fs::read_to_string(crate::shell::scenario::repo_root().join("www/main.ts"))
+        .expect("read www/main.ts");
+    assert!(
+        main_ts.contains("menuBar: js.menuBar ?? flag(params, 'menuBar') ?? flag(params, 'menubar') ?? true"),
+        "www/main.ts must default menuBar to true even when view=1"
+    );
+    assert!(
+        main_ts.contains("toolBar: js.toolBar ?? flag(params, 'toolBar') ?? flag(params, 'toolbar') ?? true"),
+        "www/main.ts must default toolBar to true even when view=1"
+    );
+
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    // 2. Simulate launching with `?view=1` (read_only = true, default show_menu_bar = true, show_toolbar = true).
+    s.update(|e, _, cx| {
+        let (_, _, view, menu_bar, tool_bar) = resolve_embed_query_options("?view=1");
+        e.read_only = view;
+        e.show_menu_bar = menu_bar;
+        e.show_toolbar = tool_bar;
+        e.sidebar_open = false;
+        cx.notify();
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.is_read_only() && e.show_menu_bar && e.show_toolbar && !e.sidebar_open));
+    s.screenshot("view-only-menubar-and-toolbar");
+
+    // 3. Simulate `?view=1&menuBar=0&toolBar=0` (both hidden).
+    s.update(|e, _, cx| {
+        let (_, _, view, menu_bar, tool_bar) = resolve_embed_query_options("?view=1&menuBar=0&toolBar=0");
+        e.read_only = view;
+        e.show_menu_bar = menu_bar;
+        e.show_toolbar = tool_bar;
+        cx.notify();
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.is_read_only() && !e.show_menu_bar && !e.show_toolbar && !e.sidebar_open));
+    s.screenshot("view-only-no-bars");
+
+    // 4. Simulate `?view=1&menuBar=0&toolBar=1` (toolbar shown, menu bar hidden).
+    s.update(|e, _, cx| {
+        e.show_toolbar = true;
+        cx.notify();
+    });
+    s.settle();
+    assert!(s.with(|e, _| e.is_read_only() && !e.show_menu_bar && e.show_toolbar));
+    s.screenshot("view-only-toolbar");
+}
+
+/// #135: Comprehensive test for Excel (.xlsx) Split View:
+/// - Menu (`window.split`, `xlsx.split`) and shortcut (`alt-cmd-s`) toggle ON/OFF.
+/// - Split bars (`split-bar-h`, `split-bar-v`, `split-bar-both`) drag smoothly even across frozen panes/scrollbars and double-click clears each axis or both.
+/// - All 4 split scrollbars (`ScrollHLeft`, `ScrollHRight`, `ScrollVTop`, `ScrollVBottom`) scroll their panes independently, and the bottom-right / top-right / bottom-left panes can scroll back to Row 1 / Column A (`main_lead`).
+/// - Mouse wheel scrolling and arrow-key auto-scroll work independently per pane.
+fn fix135_xlsx_split_view_comprehensive() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.click_cell("D6"); // col = 3, row = 5
+    s.settle();
+
+    // 1. Toggle ON via Window > Split (`window.split`), OFF via View > Split (`xlsx.split`), ON/OFF via `alt-cmd-s`.
+    s.menu("window.split");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.split_panes().map(|p| p.at)), Some((3, 5)), "Window > Split turns split ON at D6 (3, 5)");
+
+    s.menu("xlsx.split");
+    s.settle();
+    assert!(s.with(|e, _| e.split_panes().is_none()), "View > Split turns split OFF");
+
+    s.key("alt-cmd-s");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.split_panes().map(|p| p.at)), Some((3, 5)), "alt-cmd-s turns split ON");
+
+    s.key("alt-cmd-s");
+    s.settle();
+    assert!(s.with(|e, _| e.split_panes().is_none()), "alt-cmd-s turns split OFF");
+
+    // Turn back ON at D6 (3, 5).
+    s.menu("window.split");
+    s.settle();
+
+    let bar_win_pos = |s: &mut Scenario| -> (f32, f32, f32, f32, f32, f32) {
+        s.with(|e, _| {
+            let wb = e.workspace_bounds.expect("workspace_bounds");
+            let content = e.workspace_content().expect("workspace_content");
+            let (sx, sy) = e.frozen_split(content).unwrap_or((None, None));
+            (
+                f32::from(wb.origin.x),
+                f32::from(wb.origin.y),
+                f32::from(wb.size.width),
+                f32::from(wb.size.height),
+                sx.unwrap_or(0.0),
+                sy.unwrap_or(0.0),
+            )
+        })
+    };
+
+    // 2. Drag horizontal split bar (`split-bar-h`) downward across `frozen-rows` / pane overlays and release.
+    let (wx, wy, _, _, sx, sy) = bar_win_pos(&mut s);
+    let h_bar_start = (wx + sx + 100.0, wy + sy);
+    s.drag_through(&[
+        h_bar_start,
+        (h_bar_start.0, h_bar_start.1 + 25.0),
+        (h_bar_start.0, h_bar_start.1 + 55.0),
+    ]);
+    s.settle();
+    let (at_after_h, drag_cleared_h) = s.with(|e, _| (e.split_panes().unwrap().at, e.sheet_state().unwrap().split_drag.is_none()));
+    assert!(at_after_h.1 > 5, "horizontal split bar drag increased split row from 5 to {}", at_after_h.1);
+    assert_eq!(at_after_h.0, 3, "horizontal split bar drag kept split col at 3");
+    assert!(drag_cleared_h, "split_drag cleared on mouse up");
+
+    // Drag vertical split bar (`split-bar-v`) rightward across `frozen-columns` / pane overlays and release.
+    let (wx, wy, _, _, sx, sy) = bar_win_pos(&mut s);
+    let v_bar_start = (wx + sx, wy + sy + 80.0);
+    s.drag_through(&[
+        v_bar_start,
+        (v_bar_start.0 + 40.0, v_bar_start.1),
+        (v_bar_start.0 + 90.0, v_bar_start.1),
+    ]);
+    s.settle();
+    let (at_after_v, drag_cleared_v) = s.with(|e, _| (e.split_panes().unwrap().at, e.sheet_state().unwrap().split_drag.is_none()));
+    assert!(at_after_v.0 > 3, "vertical split bar drag increased split col from 3 to {}", at_after_v.0);
+    assert_eq!(at_after_v.1, at_after_h.1);
+    assert!(drag_cleared_v, "split_drag cleared on mouse up");
+
+    // Drag intersection (`split-bar-both`) diagonally back toward top-left.
+    let (wx, wy, _, _, sx, sy) = bar_win_pos(&mut s);
+    let both_start = (wx + sx, wy + sy);
+    s.drag_through(&[
+        both_start,
+        (both_start.0 - 60.0, both_start.1 - 20.0),
+        (both_start.0 - 120.0, both_start.1 - 45.0),
+    ]);
+    s.settle();
+    let at_after_both = s.with(|e, _| e.split_panes().unwrap().at);
+    assert!(
+        at_after_both.0 < at_after_v.0 && at_after_both.1 < at_after_v.1,
+        "intersection drag updated both col and row: {:?} -> {:?}",
+        at_after_v,
+        at_after_both
+    );
+
+    // 3. Double-click horizontal bar clears row split only; double-click vertical bar clears col split only; double-click intersection clears both.
+    let (wx, wy, _, _, sx, sy) = bar_win_pos(&mut s);
+    s.double_click((wx + sx + 80.0, wy + sy));
+    s.settle();
+    let at_after_dbl_h = s.with(|e, _| e.split_panes().unwrap().at);
+    assert_eq!(at_after_dbl_h.1, 0, "double-clicking horizontal split bar cleared row split");
+    assert!(at_after_dbl_h.0 > 0, "column split remained active");
+
+    // Reset to (3, 5) and double-click vertical bar.
+    s.menu("window.split");
+    s.click_cell("D6");
+    s.menu("window.split");
+    s.settle();
+    let (wx, wy, _, _, sx, sy) = bar_win_pos(&mut s);
+    s.double_click((wx + sx, wy + sy + 80.0));
+    s.settle();
+    let at_after_dbl_v = s.with(|e, _| e.split_panes().unwrap().at);
+    assert_eq!(at_after_dbl_v.0, 0, "double-clicking vertical split bar cleared column split");
+    assert_eq!(at_after_dbl_v.1, 5, "row split remained active");
+
+    // Reset to (3, 5) and double-click intersection.
+    s.menu("window.split");
+    s.click_cell("D6");
+    s.menu("window.split");
+    s.settle();
+    let (wx, wy, _, _, sx, sy) = bar_win_pos(&mut s);
+    s.double_click((wx + sx, wy + sy));
+    s.settle();
+    assert!(s.with(|e, _| e.split_panes().is_none()), "double-clicking intersection cleared split view completely");
+
+    // 4. Independent scrolling via the 4 split scrollbars and reaching Row 1 / Column A in bottom-right pane (`main_lead`).
+    s.click_cell("E7"); // col = 4, row = 6
+    s.menu("window.split");
+    s.settle();
+    let (wx, wy, ww, wh, sx, sy) = bar_win_pos(&mut s);
+    s.drag_through(&[
+        (wx + 20.0, wy + wh - 6.0),
+        (wx + 80.0, wy + wh - 6.0),
+    ]);
+    s.settle();
+    assert!(
+        s.with(|e, _| f32::from(e.split_panes().unwrap().shift.x) < 0.0),
+        "dragging left horizontal scrollbar scrolled left panes horizontally"
+    );
+
+    s.drag_through(&[
+        (wx + ww - 6.0, wy + 20.0),
+        (wx + ww - 6.0, wy + 70.0),
+    ]);
+    s.settle();
+    assert!(
+        s.with(|e, _| f32::from(e.split_panes().unwrap().shift.y) < 0.0),
+        "dragging top vertical scrollbar scrolled top panes vertically"
+    );
+
+    // Drag right horizontal scrollbar (`ScrollHRight`) toward its left edge so `main_lead.x > 0` (Column A visible in right panes).
+    s.drag_through(&[
+        (wx + sx + 80.0, wy + wh - 6.0),
+        (wx + sx + 5.0, wy + wh - 6.0),
+    ]);
+    s.settle();
+    assert!(
+        s.with(|e, _| f32::from(e.split_panes().unwrap().main_lead.x) > 0.0),
+        "dragging right horizontal scrollbar to left end exposed columns before split col (main_lead.x > 0)"
+    );
+
+    // Drag bottom vertical scrollbar (`ScrollVBottom`) toward its top edge so `main_lead.y > 0` (Row 1 visible in bottom panes).
+    s.drag_through(&[
+        (wx + ww - 6.0, wy + sy + 80.0),
+        (wx + ww - 6.0, wy + sy + 5.0),
+    ]);
+    s.settle();
+    assert!(
+        s.with(|e, _| f32::from(e.split_panes().unwrap().main_lead.y) > 0.0),
+        "dragging bottom vertical scrollbar to top end exposed rows before split row (main_lead.y > 0)"
+    );
+
+    // 5. Mouse wheel scrolling on individual panes and arrow-key navigation in bottom-right pane back to A1.
+    let shift_before_wheel = s.with(|e, _| e.split_panes().unwrap().shift);
+    s.wheel_xy((wx + 60.0, wy + 60.0), 0.0, -40.0);
+    s.settle();
+    let shift_after_wheel = s.with(|e, _| e.split_panes().unwrap().shift);
+    assert!(
+        f32::from(shift_after_wheel.y) < f32::from(shift_before_wheel.y),
+        "mouse wheel over top-left pane scrolled top panes vertically"
+    );
+
+    // Click inside bottom-right pane and use Left/Up arrow keys to reach A1 (0, 0) while staying in bottom-right pane.
+    s.click((wx + sx + 80.0, wy + sy + 60.0));
+    s.settle();
+    assert_eq!(s.with(|e, _| e.split_panes().unwrap().active_pane), (true, true), "clicked in bottom-right pane");
+    for _ in 0..10 {
+        s.key("left");
+        s.key("up");
+    }
+    s.settle();
+    let (cur_cell, active_pane, lead) = s.with(|e, _| {
+        let sp = e.split_panes().unwrap();
+        (e.current_cell(), sp.active_pane, sp.main_lead)
+    });
+    assert_eq!(cur_cell, Some((0, 0)), "arrow keys reached A1 (0, 0) inside bottom-right pane");
+    assert_eq!(active_pane, (true, true), "active pane remained bottom-right");
+    assert!(f32::from(lead.x) > 0.0 && f32::from(lead.y) > 0.0, "bottom-right pane auto-scrolled to show A1: main_lead={lead:?}");
+    s.screenshot("fix135-xlsx-split-view");
+}
+
+/// #157: Cell background fill, thin solid border, and gridlines snap to identical device pixels
+/// across zoom levels (100%, 130%, 150%, 175%, 200%, 400%) with no 1px gap or gridline bleed,
+/// and no 3px black corner protrusion at 400% zoom.
+fn fix157_xlsx_fill_border_gridline_pixel_alignment_across_zooms() {
+    use gpui_kit::{point, px};
+    use ibis_doc_model::{Rgb, StyleChange};
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("xlsx.insert-sheet");
+    s.settle();
+
+    // Format B2:D4 (cols 1..=3, rows 1..=3) with yellow fill (#ffff00) and thin black all-borders (#000000).
+    s.click_cell("B2");
+    s.key("shift-right");
+    s.key("shift-right");
+    s.key("shift-down");
+    s.key("shift-down");
+    s.settle();
+    s.update(|e, _, cx| {
+        e.format_cells(StyleChange::Fill(Some(Rgb(0xffff00))), cx);
+    });
+    s.toolbar_menu("borders", "xlsx.border-all");
+    s.settle();
+
+    // Move active cell away to H10 so selection border does not overlap B2:D4.
+    s.click_cell("H10");
+    s.settle();
+
+    for zoom_pct in [100.0f32, 130.0, 150.0, 175.0, 200.0, 400.0] {
+        s.update(move |e, window, cx| {
+            e.set_zoom(Some(zoom_pct / 100.0), window, cx);
+            e.workspace_scroll.set_offset(point(px(0.), px(0.)));
+        });
+        s.settle();
+
+        let (c2_center, c3_center, b2_center) = s.with(|e, _| {
+            (
+                e.cell_center(2, 1).expect("C2 on screen"),
+                e.cell_center(2, 2).expect("C3 on screen"),
+                e.cell_center(1, 1).expect("B2 on screen"),
+            )
+        });
+        let (pic_width, pic_rgba) = s.picture();
+        let k = pic_width as f32 / 1200.0;
+        let pic_height = (pic_rgba.len() as u32 / 4) / pic_width.max(1);
+        let px_at = |x: i32, y: i32| -> (u8, u8, u8) {
+            let x = x.clamp(0, pic_width as i32 - 1) as u32;
+            let y = y.clamp(0, pic_height as i32 - 1) as u32;
+            let idx = ((y * pic_width + x) * 4) as usize;
+            (pic_rgba[idx], pic_rgba[idx + 1], pic_rgba[idx + 2])
+        };
+        let is_yellow = |(r, g, b): (u8, u8, u8)| r > 230 && g > 230 && b < 30;
+        let is_black = |(r, g, b): (u8, u8, u8)| r < 40 && g < 40 && b < 40;
+
+        // Vertical scan from C2 center to C3 center across the horizontal thin border between row 1 and row 2:
+        // Every pixel must be either yellow fill (`#ffff00`) or black border (`#000000`) — never white or grey gridline!
+        let scan_x = (f32::from(c2_center.x) * k).round() as i32;
+        let y_start = (f32::from(c2_center.y) * k).round() as i32;
+        let y_end = (f32::from(c3_center.y) * k).round() as i32;
+        let mut saw_border_h = false;
+        for y in y_start..=y_end {
+            let rgb = px_at(scan_x, y);
+            if is_black(rgb) {
+                saw_border_h = true;
+            } else {
+                assert!(
+                    is_yellow(rgb),
+                    "zoom {zoom_pct}%: unexpected pixel {rgb:?} at ({scan_x}, {y}) between C2 and C3 (1px gap or gridline bleed)"
+                );
+            }
+        }
+        assert!(saw_border_h, "zoom {zoom_pct}%: horizontal thin border between C2 and C3 must be present");
+
+        // Horizontal scan from B2 center to C2 center across the vertical thin border between col 1 and col 2:
+        let scan_y = (f32::from(b2_center.y) * k).round() as i32;
+        let x_start = (f32::from(b2_center.x) * k).round() as i32;
+        let x_end = (f32::from(c2_center.x) * k).round() as i32;
+        let mut saw_border_v = false;
+        for x in x_start..=x_end {
+            let rgb = px_at(x, scan_y);
+            if is_black(rgb) {
+                saw_border_v = true;
+            } else {
+                assert!(
+                    is_yellow(rgb),
+                    "zoom {zoom_pct}%: unexpected pixel {rgb:?} at ({x}, {scan_y}) between B2 and C2 (1px gap or gridline bleed)"
+                );
+            }
+        }
+        assert!(saw_border_v, "zoom {zoom_pct}%: vertical thin border between B2 and C2 must be present");
+
+        // Also scan upward from B2 center across B2's top border into B1 (unfilled white):
+        let mut y = scan_y;
+        while y > 0 && is_yellow(px_at(x_start, y)) {
+            y -= 1;
+        }
+        assert!(
+            is_black(px_at(x_start, y)),
+            "zoom {zoom_pct}%: pixel immediately above B2 yellow fill at ({x_start}, {y}) must be black border, got {:?}",
+            px_at(x_start, y)
+        );
+        while y > 0 && is_black(px_at(x_start, y - 1)) {
+            y -= 1;
+        }
+        // And scan leftward from B2 center across B2's left border into A2:
+        let mut x = x_start;
+        while x > 0 && is_yellow(px_at(x, scan_y)) {
+            x -= 1;
+        }
+        assert!(
+            is_black(px_at(x, scan_y)),
+            "zoom {zoom_pct}%: pixel immediately left of B2 yellow fill at ({x}, {scan_y}) must be black border, got {:?}",
+            px_at(x, scan_y)
+        );
+        while x > 0 && is_black(px_at(x - 1, scan_y)) {
+            x -= 1;
+        }
+
+        // At 400%, verify the outer top-left corner of B2 (`(x, y)`) does not protrude above `y` or left of `x`.
+        if (zoom_pct - 400.0).abs() < 1e-3 {
+            assert!(
+                !is_black(px_at(x - 1, y)) && !is_black(px_at(x, y - 1)),
+                "zoom 400%: top-left border corner at ({x}, {y}) must not protrude into ({}, {y})={:?} or ({x}, {})={:?}",
+                x - 1,
+                px_at(x - 1, y),
+                y - 1,
+                px_at(x, y - 1)
+            );
+        }
+    }
+    s.update(|e, window, cx| e.set_zoom(Some(1.0), window, cx));
+    s.settle();
+}
+
+/// #11: Hovering the selection frame border or fill handle in Excel (.xlsx) and pressing/releasing
+/// Option (Alt) before dragging switches the cursor to `CursorStyle::DragCopy` (`+`) and back to
+/// `OpenHand` / `Crosshair`.
+fn fix11_xlsx_option_hover_cursor_on_border_and_fill_handle() {
+    use gpui_kit::CursorStyle;
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.click_cell("B2");
+    s.settle();
+
+    // 1. Before any drag starts (`cell_move().is_none()`), `cell_move_cursor(false)` is `OpenHand`
+    // and `cell_move_cursor(true)` (when Option/Alt is held on hover) is `DragCopy`.
+    let (no_drag, cursor_plain, cursor_alt) = s.with(|e, _| {
+        (
+            e.cell_move().is_none(),
+            e.cell_move_cursor(false),
+            e.cell_move_cursor(true),
+        )
+    });
+    assert!(no_drag, "no cell drag active initially");
+    assert_eq!(cursor_plain, CursorStyle::OpenHand, "hovering selection border without Option shows OpenHand");
+    assert_eq!(cursor_alt, CursorStyle::DragCopy, "hovering selection border with Option shows DragCopy before drag starts");
+
+    // 2. Start a cell move drag without Option: cursor is `ClosedHand`, and pressing Option mid-drag switches to `DragCopy`.
+    let b2_pt = s.with(|e, _| e.cell_center(1, 1).expect("B2 on screen"));
+    s.update(move |e, window, cx| e.begin_cell_move(b2_pt, window, cx));
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| e.cell_move_cursor(false)),
+        CursorStyle::ClosedHand,
+        "dragging selection border without Option shows ClosedHand"
+    );
+    assert_eq!(
+        s.with(|e, _| e.cell_move_cursor(true)),
+        CursorStyle::DragCopy,
+        "pressing Option during selection border drag shows DragCopy"
+    );
+    s.update(|e, _, cx| {
+        e.finish_cell_move(cx);
+    });
+    s.settle();
+
+    // 3. Fill handle state (`begin_fill()` starts fill drag).
+    s.update(|e, _, _| {
+        e.begin_fill();
+    });
+    assert!(s.with(|e, _| e.sheet_state().unwrap().fill_source.is_some()), "fill handle drag started");
+    s.update(|e, _, cx| {
+        e.finish_fill(false, cx);
+    });
+}
+
+/// #152 / #156: Selecting multiple text boxes / shapes without entering text-edit mode and applying
+/// paragraph formatting (left/center/right align, indent more/less, bullet/numbered list) and character
+/// formatting (font size direct input, font-larger/smaller `+/-`, and underline styles) applies to all
+/// selected shapes simultaneously across `.pptx`, `.docx`, and `.xlsx`.
+fn fix152_156_multi_shape_text_and_paragraph_formatting() {
+    use ibis_doc_model::{AutoShape, Command, EmuRect, Fill, Geometry, Shape, ShapeKind, TextAlign, TextBody, TextStyle, Underline};
+
+    // 1. PowerPoint (.pptx)
+    {
+        let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+        let (id1, id2) = s.update(|e, _, cx| {
+            let a_id = e.document.ids().new_shape_id();
+            let b_id = e.document.ids().new_shape_id();
+            let a = Shape::new(
+                a_id,
+                EmuRect::new(914_400, 914_400, 1_828_800, 914_400),
+                ShapeKind::TextBox(TextBody::plain("Alpha", TextStyle::default())),
+            );
+            let mut auto = AutoShape::new(Geometry::Rect, Fill::None, None);
+            auto.text = Some(TextBody::plain("Beta", TextStyle::default()));
+            let b = Shape::new(
+                b_id,
+                EmuRect::new(3_200_400, 914_400, 1_828_800, 914_400),
+                ShapeKind::Auto(auto),
+            );
+            let id1 = e.insert_shape(a, cx);
+            let id2 = e.insert_shape(b, cx);
+            e.editing = None;
+            e.set_selection(vec![id1, id2]);
+            (id1, id2)
+        });
+        s.settle();
+        assert!(s.with(|e, _| e.editing.is_none() && e.selected_shapes().len() == 2));
+
+        // Alignment: center -> right -> left
+        for (btn, expected) in [
+            ("align-center", TextAlign::Center),
+            ("align-right", TextAlign::Right),
+            ("align-left", TextAlign::Left),
+        ] {
+            s.toolbar(btn);
+            s.settle();
+            for id in [id1, id2] {
+                let align = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].align);
+                assert_eq!(align, Some(expected), "pptx multi-shape {btn} on {id:?}");
+            }
+        }
+
+        // Indent: indent-more -> indent-less
+        s.toolbar("indent-more");
+        s.settle();
+        for id in [id1, id2] {
+            let ml = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].margin_left);
+            assert!(ml > 0, "pptx multi-shape indent-more on {id:?}: margin_left={ml}");
+        }
+        s.toolbar("indent-less");
+        s.settle();
+        for id in [id1, id2] {
+            let ml = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].margin_left);
+            assert_eq!(ml, 0, "pptx multi-shape indent-less on {id:?}");
+        }
+
+        // Bullet list & Numbered list
+        s.toolbar("bullets");
+        s.settle();
+        for id in [id1, id2] {
+            let has_bullet = s.with(move |e, _| {
+                e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0]
+                    .bullet
+                    .as_ref()
+                    .is_some_and(|b| b.auto.is_none())
+            });
+            assert!(has_bullet, "pptx multi-shape bullets on {id:?}");
+        }
+        s.toolbar("numbered");
+        s.settle();
+        for id in [id1, id2] {
+            let has_number = s.with(move |e, _| {
+                e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0]
+                    .bullet
+                    .as_ref()
+                    .is_some_and(|b| b.auto.is_some())
+            });
+            assert!(has_number, "pptx multi-shape numbered on {id:?}");
+        }
+
+        // Font size direct input (24pt = 2400) and +/- (larger -> 2800, smaller -> 2400)
+        s.update(|e, window, cx| e.set_toolbar_font_size(24.0, window, cx));
+        s.settle();
+        for id in [id1, id2] {
+            let sz = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].runs[0].style.font_size);
+            assert_eq!(sz, Some(2400), "pptx multi-shape direct font size 24pt on {id:?}");
+        }
+        s.update(|e, window, cx| e.step_font_size_of_text(true, window, cx));
+        s.settle();
+        for id in [id1, id2] {
+            let sz = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].runs[0].style.font_size);
+            assert_eq!(sz, Some(2800), "pptx multi-shape font-larger on {id:?}");
+        }
+        s.update(|e, window, cx| e.step_font_size_of_text(false, window, cx));
+        s.settle();
+        for id in [id1, id2] {
+            let sz = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].runs[0].style.font_size);
+            assert_eq!(sz, Some(2400), "pptx multi-shape font-smaller on {id:?}");
+        }
+
+        // Underline styles (17-style menu: double, wavy, toggle off)
+        s.toolbar_menu("underline", "pptx.underline.dbl");
+        s.settle();
+        for id in [id1, id2] {
+            let (u, kind) = s.with(move |e, _| {
+                let st = &e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+                (st.underline, st.underline_kind)
+            });
+            assert!(u && kind == Underline::Double, "pptx multi-shape pptx.underline.dbl on {id:?}");
+        }
+        s.toolbar_menu("underline", "pptx.underline.wavy");
+        s.settle();
+        for id in [id1, id2] {
+            let (u, kind) = s.with(move |e, _| {
+                let st = &e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+                (st.underline, st.underline_kind)
+            });
+            assert!(u && kind == Underline::Wavy, "pptx multi-shape pptx.underline.wavy on {id:?}");
+        }
+        s.toolbar("underline");
+        s.settle();
+        for id in [id1, id2] {
+            let u = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].runs[0].style.underline);
+            assert!(!u, "pptx multi-shape underline toggle off on {id:?}");
+        }
+    }
+
+    // 2. Word (.docx)
+    {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        s.menu("insert.text-box");
+        s.settle();
+        let at1 = s.with(|e, _| e.selected_text_box_frame().unwrap().2);
+        s.update(|e, window, cx| {
+            e.commit_box_edit(window, cx);
+            e.doc_insert_shape("rect", cx);
+        });
+        s.settle();
+        let (page2, (x2, y2, w2, h2), at2, _) = s.with(|e, _| e.selected_text_box_frame().unwrap());
+        // Give both shapes text so both selected shapes have a TextBody with runs.
+        s.update(move |e, window, cx| {
+            e.run_flow(
+                vec![
+                    ibis_doc_model::flow_command::FlowCommand::SetShapeText {
+                        at: at1,
+                        text: "FirstBox".to_string(),
+                    },
+                    ibis_doc_model::flow_command::FlowCommand::SetShapeText {
+                        at: at2,
+                        text: "SecondBox".to_string(),
+                    },
+                ],
+                cx,
+            );
+            e.commit_box_edit(window, cx);
+            let (page1, (x1, y1, w1, h1), _) = e.floating_text_box_frame_of(at1).unwrap();
+            assert!(e.begin_shape_drag(page1, x1 + w1 * 0.5, y1 + h1 * 0.5, cx));
+            e.end_shape_drag(cx);
+            assert!(e.shift_click_shape(page2, x2 + w2 * 0.5, y2 + h2 * 0.5, cx));
+        });
+        s.settle();
+        assert_eq!(s.with(|e, _| e.all_selected_shapes().len()), 2, "docx 2 shapes selected");
+
+        // Alignment: center -> right -> left
+        for (btn, expected) in [
+            ("align-center", TextAlign::Center),
+            ("align-right", TextAlign::Right),
+            ("align-left", TextAlign::Left),
+        ] {
+            s.toolbar(btn);
+            s.settle();
+            for at in [at1, at2] {
+                let align = s.with(move |e, _| e.shape_text_body_at(at).unwrap().paragraphs[0].align);
+                assert_eq!(align, Some(expected), "docx multi-shape {btn} at {at:?}");
+            }
+        }
+
+        // Indent: indent-more -> indent-less
+        s.toolbar("indent-more");
+        s.settle();
+        for at in [at1, at2] {
+            let ml = s.with(move |e, _| e.shape_text_body_at(at).unwrap().paragraphs[0].margin_left);
+            assert!(ml > 0, "docx multi-shape indent-more increased margin_left to {ml} at {at:?}");
+        }
+        s.toolbar("indent-less");
+        s.settle();
+        for at in [at1, at2] {
+            let ml = s.with(move |e, _| e.shape_text_body_at(at).unwrap().paragraphs[0].margin_left);
+            assert_eq!(ml, 0, "docx multi-shape indent-less restored margin_left to 0 at {at:?}");
+        }
+
+        // Bullet list & Numbered list
+        s.toolbar("bullets");
+        s.settle();
+        for at in [at1, at2] {
+            let has_bullet = s.with(move |e, _| {
+                e.shape_text_body_at(at).unwrap().paragraphs[0]
+                    .bullet
+                    .as_ref()
+                    .is_some_and(|b| b.auto.is_none())
+            });
+            assert!(has_bullet, "docx multi-shape bullets at {at:?}");
+        }
+        s.toolbar("numbered");
+        s.settle();
+        for at in [at1, at2] {
+            let has_number = s.with(move |e, _| {
+                e.shape_text_body_at(at).unwrap().paragraphs[0]
+                    .bullet
+                    .as_ref()
+                    .is_some_and(|b| b.auto.is_some())
+            });
+            assert!(has_number, "docx multi-shape numbered at {at:?}");
+        }
+
+        // Font size direct input (22pt = 2200) and +/- (larger -> 2400, smaller -> 2000)
+        s.update(|e, window, cx| e.set_toolbar_font_size(22.0, window, cx));
+        s.settle();
+        for at in [at1, at2] {
+            let sz = s.with(move |e, _| {
+                let b = e.shape_text_body_at(at).unwrap();
+                b.paragraphs[0].runs[0].style.font_size.unwrap_or(b.style.font_size)
+            });
+            assert_eq!(sz, 2200, "docx multi-shape direct font size 22pt at {at:?}");
+        }
+        s.update(|e, _, cx| e.step_text_size(true, cx));
+        s.settle();
+        for at in [at1, at2] {
+            let sz = s.with(move |e, _| {
+                let b = e.shape_text_body_at(at).unwrap();
+                b.paragraphs[0].runs[0].style.font_size.unwrap_or(b.style.font_size)
+            });
+            assert_eq!(sz, 2400, "docx multi-shape font-larger at {at:?}");
+        }
+        s.update(|e, _, cx| e.step_text_size(false, cx));
+        s.settle();
+        for at in [at1, at2] {
+            let sz = s.with(move |e, _| {
+                let b = e.shape_text_body_at(at).unwrap();
+                b.paragraphs[0].runs[0].style.font_size.unwrap_or(b.style.font_size)
+            });
+            assert_eq!(sz, 2000, "docx multi-shape font-smaller at {at:?}");
+        }
+
+        // Underline styles (17-style menu: double, wavy, none)
+        s.toolbar_menu("underline", "docx.underline.double");
+        s.settle();
+        for at in [at1, at2] {
+            let (u, kind) = s.with(move |e, _| {
+                let st = &e.shape_text_body_at(at).unwrap().paragraphs[0].runs[0].style;
+                (st.underline, st.underline_kind)
+            });
+            assert!(u && kind == Underline::Double, "docx multi-shape docx.underline.double at {at:?}");
+        }
+        s.toolbar_menu("underline", "docx.underline.wave");
+        s.settle();
+        for at in [at1, at2] {
+            let (u, kind) = s.with(move |e, _| {
+                let st = &e.shape_text_body_at(at).unwrap().paragraphs[0].runs[0].style;
+                (st.underline, st.underline_kind)
+            });
+            assert!(u && kind == Underline::Wavy, "docx multi-shape docx.underline.wave at {at:?}");
+        }
+        s.toolbar_menu("underline", "docx.underline.none");
+        s.settle();
+        for at in [at1, at2] {
+            let u = s.with(move |e, _| e.shape_text_body_at(at).unwrap().paragraphs[0].runs[0].style.underline);
+            assert!(!u, "docx multi-shape docx.underline.none at {at:?}");
+        }
+    }
+
+    // 3. Excel (.xlsx)
+    {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        let (id1, id2) = s.update(|e, _, cx| {
+            let a = e.insert_sheet_shape("rect", cx);
+            let b = e.insert_sheet_shape("ellipse", cx);
+            let slide = e.current_slide;
+            for (id, txt) in [(a, "BoxOne"), (b, "BoxTwo")] {
+                if let Some(ShapeKind::Auto(mut auto)) = e.slide().shape(id).map(|sh| sh.kind.clone()) {
+                    auto.text = Some(TextBody::plain(txt, TextStyle::default()));
+                    e.run_sheet(
+                        vec![Command::SetKind {
+                            slide,
+                            shape: id,
+                            kind: Box::new(ShapeKind::Auto(auto)),
+                        }],
+                        cx,
+                    );
+                }
+            }
+            e.editing = None;
+            e.set_selection(vec![a, b]);
+            (a, b)
+        });
+        s.settle();
+        assert_eq!(s.with(|e, _| e.selected_shapes().len()), 2, "xlsx 2 shapes selected");
+
+        // Alignment: center -> right -> left
+        for (btn, expected) in [
+            ("align-center", TextAlign::Center),
+            ("align-right", TextAlign::Right),
+            ("align-left", TextAlign::Left),
+        ] {
+            s.toolbar(btn);
+            s.settle();
+            for id in [id1, id2] {
+                let align = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].align);
+                assert_eq!(align, Some(expected), "xlsx multi-shape {btn} on {id:?}");
+            }
+        }
+
+        // Indent: indent-more -> indent-less
+        s.toolbar("indent-more");
+        s.settle();
+        for id in [id1, id2] {
+            let ml = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].margin_left);
+            assert!(ml > 0, "xlsx multi-shape indent-more increased margin_left to {ml} on {id:?}");
+        }
+        s.toolbar("indent-less");
+        s.settle();
+        for id in [id1, id2] {
+            let ml = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].margin_left);
+            assert_eq!(ml, 0, "xlsx multi-shape indent-less restored margin_left to 0 on {id:?}");
+        }
+
+        // Bullet list & Numbered list
+        s.toolbar("bullets");
+        s.settle();
+        for id in [id1, id2] {
+            let has_bullet = s.with(move |e, _| {
+                e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0]
+                    .bullet
+                    .as_ref()
+                    .is_some_and(|b| b.auto.is_none())
+            });
+            assert!(has_bullet, "xlsx multi-shape bullets on {id:?}");
+        }
+        s.toolbar("numbered");
+        s.settle();
+        for id in [id1, id2] {
+            let has_number = s.with(move |e, _| {
+                e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0]
+                    .bullet
+                    .as_ref()
+                    .is_some_and(|b| b.auto.is_some())
+            });
+            assert!(has_number, "xlsx multi-shape numbered on {id:?}");
+        }
+
+        // Font size direct input (20pt = 2000) and +/- (larger -> 2400, smaller -> 2000)
+        s.update(|e, window, cx| e.set_toolbar_font_size(20.0, window, cx));
+        s.settle();
+        for id in [id1, id2] {
+            let sz = s.with(move |e, _| {
+                let b = e.slide().shape(id).unwrap().text_body().unwrap();
+                b.paragraphs[0].runs[0].style.font_size.unwrap_or(b.style.font_size)
+            });
+            assert_eq!(sz, 2000, "xlsx multi-shape direct font size 20pt on {id:?}");
+        }
+        s.update(|e, _, cx| e.step_font_size_selection(true, cx));
+        s.settle();
+        for id in [id1, id2] {
+            let sz = s.with(move |e, _| {
+                let b = e.slide().shape(id).unwrap().text_body().unwrap();
+                b.paragraphs[0].runs[0].style.font_size.unwrap_or(b.style.font_size)
+            });
+            assert_eq!(sz, 2400, "xlsx multi-shape font-larger on {id:?}");
+        }
+        s.update(|e, _, cx| e.step_font_size_selection(false, cx));
+        s.settle();
+        for id in [id1, id2] {
+            let sz = s.with(move |e, _| {
+                let b = e.slide().shape(id).unwrap().text_body().unwrap();
+                b.paragraphs[0].runs[0].style.font_size.unwrap_or(b.style.font_size)
+            });
+            assert_eq!(sz, 2000, "xlsx multi-shape font-smaller on {id:?}");
+        }
+
+        // Underline styles (17-style menu: double, wavy, toggle off)
+        s.toolbar_menu("underline", "pptx.underline.dbl");
+        s.settle();
+        for id in [id1, id2] {
+            let (u, kind) = s.with(move |e, _| {
+                let st = &e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+                (st.underline, st.underline_kind)
+            });
+            assert!(u && kind == Underline::Double, "xlsx multi-shape pptx.underline.dbl on {id:?}");
+        }
+        s.toolbar_menu("underline", "pptx.underline.wavy");
+        s.settle();
+        for id in [id1, id2] {
+            let (u, kind) = s.with(move |e, _| {
+                let st = &e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+                (st.underline, st.underline_kind)
+            });
+            assert!(u && kind == Underline::Wavy, "xlsx multi-shape pptx.underline.wavy on {id:?}");
+        }
+        s.toolbar("underline");
+        s.settle();
+        for id in [id1, id2] {
+            let u = s.with(move |e, _| e.slide().shape(id).unwrap().text_body().unwrap().paragraphs[0].runs[0].style.underline);
+            assert!(!u, "xlsx multi-shape underline toggle off on {id:?}");
+        }
+    }
+}
+
+/// #152 & #156:
+/// - #156: When a worksheet shape/textbox is selected in Excel (.xlsx), the toolbar underline dropdown
+///   excludes cell-only accounting underlines (`singleAccounting`, `doubleAccounting`) and shows the
+///   17 DrawingML underline styles (`pptx.underline.*`) with active checked state and applies the chosen
+///   underline style to all selected shapes.
+/// - #152: When multiple shapes/textboxes on a sheet are selected without entering text edit mode,
+///   changing font family, direct font size input, font size +/-, bold, italic, underline, strikethrough,
+///   text color, highlight color, horizontal alignment, vertical alignment, bullets/numbered/checklist,
+///   and indent +/- applies to all text of all selected shapes.
+fn fix152_156_xlsx_shape_underline_and_multi_shape_text_format() {
+    use crate::shell::chrome::{MenuEntry, ToolItem};
+    use ibis_doc_model::{
+        AutoShape, CellAlign, CellVerticalAlign, Color, EmuRect, Fill, ListKind, Rgb,
+        Shape, ShapeKind, Strike, StyleChange, TextAlign, TextBody, TextStyle, Underline,
+        VerticalAnchor,
+    };
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+
+    // 1. When a cell is selected (no shape selected), the underline dropdown has the 5 cell underline items
+    //    including singleAccounting and doubleAccounting.
+    let cell_underline_ids: Vec<&'static str> = s.with(|e, _| {
+        let items = crate::xlsx::toolbar::toolbar_right(e);
+        items
+            .into_iter()
+            .find_map(|item| match item {
+                ToolItem::Button(b) if b.id == "underline" => b.menu.map(|m| {
+                    m.into_iter()
+                        .filter_map(|entry| match entry {
+                            MenuEntry::Item(mi) => Some(mi.id),
+                            _ => None,
+                        })
+                        .collect()
+                }),
+                _ => None,
+            })
+            .unwrap_or_default()
+    });
+    assert!(
+        cell_underline_ids.contains(&"singleAccounting")
+            && cell_underline_ids.contains(&"doubleAccounting"),
+        "Cell selection underline dropdown includes accounting underlines: {cell_underline_ids:?}"
+    );
+
+    // 2. Insert two shapes with different initial font sizes (10pt and 14pt) and select both without entering text edit mode.
+    let (id1, id2) = s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let id1 = e.document.ids().new_shape_id();
+        let id2 = e.document.ids().new_shape_id();
+        let mut st1 = TextStyle::default();
+        st1.font_size = 1000; // 10pt
+        let body1 = TextBody::plain("Alpha", st1);
+        let auto1 = AutoShape::text_box(Fill::Solid(Color::opaque(Rgb(0xD9E1F2))), body1);
+        let sh1 = Shape::new(
+            id1,
+            EmuRect {
+                x: 400_000,
+                y: 400_000,
+                width: 1_800_000,
+                height: 700_000,
+            },
+            ShapeKind::Auto(auto1),
+        );
+
+        let mut st2 = TextStyle::default();
+        st2.font_size = 1400; // 14pt
+        let body2 = TextBody::plain("Beta", st2);
+        let auto2 = AutoShape::text_box(Fill::Solid(Color::opaque(Rgb(0xE2EFDA))), body2);
+        let sh2 = Shape::new(
+            id2,
+            EmuRect {
+                x: 2_500_000,
+                y: 400_000,
+                width: 1_800_000,
+                height: 700_000,
+            },
+            ShapeKind::Auto(auto2),
+        );
+
+        let idx = e.slide().shapes.len();
+        e.run_sheet(
+            vec![
+                ibis_doc_model::Command::InsertShape {
+                    slide,
+                    index: idx,
+                    shape: sh1,
+                },
+                ibis_doc_model::Command::InsertShape {
+                    slide,
+                    index: idx + 1,
+                    shape: sh2,
+                },
+            ],
+            cx,
+        );
+        e.select_sheet_shapes(&[id1, id2]);
+        (id1, id2)
+    });
+    s.settle();
+
+    // Verify we are NOT in text edit mode and both shapes are selected.
+    assert!(s.with(|e, _| e.editing.is_none() && e.selected_ids() == vec![id1, id2]));
+
+    // 3. #156: Check the underline dropdown while worksheet shapes are selected:
+    //    - Must NOT contain singleAccounting or doubleAccounting
+    //    - Must contain all 17 DrawingML underline styles (`pptx.underline.*`)
+    let shape_underline_ids: Vec<&'static str> = s.with(|e, _| {
+        let items = crate::xlsx::toolbar::toolbar_right(e);
+        items
+            .into_iter()
+            .find_map(|item| match item {
+                ToolItem::Button(b) if b.id == "underline" => b.menu.map(|m| {
+                    m.into_iter()
+                        .filter_map(|entry| match entry {
+                            MenuEntry::Item(mi) => Some(mi.id),
+                            _ => None,
+                        })
+                        .collect()
+                }),
+                _ => None,
+            })
+            .unwrap_or_default()
+    });
+    assert_eq!(
+        shape_underline_ids.len(),
+        17,
+        "Shape underline dropdown has exactly 17 DrawingML styles: {shape_underline_ids:?}"
+    );
+    assert!(
+        !shape_underline_ids.contains(&"singleAccounting")
+            && !shape_underline_ids.contains(&"doubleAccounting"),
+        "Shape underline dropdown excludes cell-only accounting underlines"
+    );
+    assert!(
+        shape_underline_ids.contains(&"pptx.underline.sng")
+            && shape_underline_ids.contains(&"pptx.underline.wavy")
+            && shape_underline_ids.contains(&"pptx.underline.wavyDbl"),
+        "Shape underline dropdown includes DrawingML underline kinds"
+    );
+
+    // Apply Wavy underline via set_sheet_shape_underline and verify both shapes get Underline::Wavy
+    // and the dropdown marks `pptx.underline.wavy` as checked.
+    s.update(|e, _, cx| {
+        e.set_sheet_shape_underline(Some(Underline::Wavy), cx);
+    });
+    s.settle();
+    let (u1, u2, checked_id) = s.with(|e, _| {
+        let r1 = &e.slide().shape(id1).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+        let r2 = &e.slide().shape(id2).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+        let checked = crate::xlsx::toolbar::shape_underline_kind_items(e.selected_sheet_shape_underline())
+            .into_iter()
+            .find_map(|entry| match entry {
+                MenuEntry::Item(mi) if mi.checked => Some(mi.id),
+                _ => None,
+            });
+        (
+            (r1.underline, r1.underline_kind),
+            (r2.underline, r2.underline_kind),
+            checked,
+        )
+    });
+    assert_eq!(u1, (true, Underline::Wavy));
+    assert_eq!(u2, (true, Underline::Wavy));
+    assert_eq!(checked_id, Some("pptx.underline.wavy"));
+
+    // 4. #152: Font size +/- steps each shape's runs independently (10pt -> 11pt, 14pt -> 16pt).
+    s.update(|e, _, cx| {
+        e.step_font_size_selection(true, cx);
+    });
+    s.settle();
+    let (sz1, sz2) = s.with(|e, _| {
+        let r1 = &e.slide().shape(id1).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+        let r2 = &e.slide().shape(id2).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+        (r1.font_size, r2.font_size)
+    });
+    assert_eq!((sz1, sz2), (Some(1050), Some(1600)));
+
+    // Direct font size input (e.g. 18pt) sets both shapes to 18pt (1800).
+    s.update(|e, window, cx| {
+        e.set_toolbar_font_size(18.0, window, cx);
+    });
+    s.settle();
+    let (sz1_after, sz2_after) = s.with(|e, _| {
+        let r1 = &e.slide().shape(id1).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+        let r2 = &e.slide().shape(id2).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+        (r1.font_size, r2.font_size)
+    });
+    assert_eq!((sz1_after, sz2_after), (Some(1800), Some(1800)));
+
+    // Font family, bold, italic, strikethrough, text color, highlight color across both selected shapes.
+    s.update(|e, _, cx| {
+        e.format_cells(StyleChange::Font(Some("Carlito".into())), cx);
+        e.format_cells(StyleChange::Bold(true), cx);
+        e.format_cells(StyleChange::Italic(true), cx);
+        e.format_cells(StyleChange::Strike(true), cx);
+        e.format_cells(StyleChange::Color(Rgb(0xC00000)), cx);
+        e.set_sheet_shape_highlight(Some(Rgb(0xFFFF00)), cx);
+    });
+    s.settle();
+    for sid in [id1, id2] {
+        let (font, bold, italic, strike, color, highlight) = s.with(|e, _| {
+            let r = &e.slide().shape(sid).unwrap().text_body().unwrap().paragraphs[0].runs[0].style;
+            (
+                r.font.clone(),
+                r.bold,
+                r.italic,
+                r.strike,
+                r.color,
+                r.highlight,
+            )
+        });
+        assert_eq!(font.as_deref(), Some("Carlito"));
+        assert_eq!(bold, Some(true));
+        assert_eq!(italic, Some(true));
+        assert_eq!(strike, Strike::Single);
+        assert_eq!(color, Some(Rgb(0xC00000)));
+        assert_eq!(highlight, Some(Rgb(0xFFFF00)));
+    }
+
+    // Horizontal alignment (Center), vertical alignment (Middle), bullet list, checklist, and indent +/- across both shapes.
+    s.update(|e, _, cx| {
+        e.format_cells(StyleChange::Align(CellAlign::Center), cx);
+        e.format_cells(StyleChange::Vertical(CellVerticalAlign::Center), cx);
+        e.toggle_sheet_shape_list(ListKind::Bullet, cx);
+        e.step_sheet_indent(true, cx);
+    });
+    s.settle();
+    for sid in [id1, id2] {
+        let (align, anchor, bullet, level) = s.with(|e, _| {
+            let b = e.slide().shape(sid).unwrap().text_body().unwrap();
+            let p = &b.paragraphs[0];
+            (p.align, b.anchor, ListKind::of(p.bullet.as_ref()), p.margin_left)
+        });
+        assert_eq!(align, Some(TextAlign::Center));
+        assert_eq!(anchor, VerticalAnchor::Middle);
+        assert_eq!(bullet, ListKind::Bullet);
+        assert_eq!(level, 685_800);
+    }
+
+    // Toggle checklist and decrease indent across both shapes.
+    s.update(|e, _, cx| {
+        e.toggle_sheet_shape_list(ListKind::Symbol('☐'), cx);
+        e.step_sheet_indent(false, cx);
+    });
+    s.settle();
+    for sid in [id1, id2] {
+        let (bullet, level) = s.with(|e, _| {
+            let b = e.slide().shape(sid).unwrap().text_body().unwrap();
+            let p = &b.paragraphs[0];
+            (ListKind::of(p.bullet.as_ref()), p.margin_left)
+        });
+        assert_eq!(bullet, ListKind::Symbol('☐'));
+        assert_eq!(level, 228_600);
+    }
+}
+
+/// #127 / #149: Toolbar font and font-size combo `text_field` filter, `✕` reset,
+/// and keyboard navigation (`↑`, `↓`, `PageUp`, `PageDown`, `Enter`, `Escape`).
+fn fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys() {
+    use crate::shell::chrome::{
+        FONT_SIZE_CANDIDATES, filter_menu_items, filtered_font_size_candidates,
+        set_current_toolbar_open, step_enabled_menu_index,
+    };
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.click_cell("B2");
+    s.settle();
+
+    // --- 1. Font-size combo (`font_size_menu_open`) ---
+    // Open the font-size pulldown with initial value "11" and `font_size_filtering = false`.
+    s.update(|e, window, cx| {
+        e.font_size_menu_open = true;
+        e.font_size_filtering = false;
+        e.font_size_selected = None;
+        e.toolbar_search_open = None;
+        e.font_size_input.update(cx, |input, cx| {
+            input.set_value("11", window, cx);
+        });
+        set_current_toolbar_open(true, None);
+        cx.notify();
+    });
+    s.settle();
+    s.update(|e, window, cx| {
+        e.font_size_input.update(cx, |input, cx| {
+            input.focus(window, cx);
+        });
+    });
+    s.settle();
+
+    // Initially (`filtering == false`), all `FONT_SIZE_CANDIDATES` are shown even though input holds "11".
+    let initial_candidates = s.with(|e, cx| {
+        let q = e.font_size_input.read(cx).value().to_string();
+        filtered_font_size_candidates(&q, e.font_size_filtering)
+    });
+    assert_eq!(
+        initial_candidates.len(),
+        FONT_SIZE_CANDIDATES.len(),
+        "opening font-size pulldown shows all candidates before filtering"
+    );
+
+    // Editing the input to "10" (`replace_all` emits `InputEvent::Change`) activates `font_size_filtering = true` and filters to `[10.0, 10.5]`.
+    s.update(|e, window, cx| {
+        e.font_size_input.update(cx, |input, cx| {
+            input.replace_all("10", window, cx);
+        });
+    });
+    s.settle();
+    let (q_10, filtering_on, candidates_10) = s.with(|e, cx| {
+        let q = e.font_size_input.read(cx).value().to_string();
+        (q.clone(), e.font_size_filtering, filtered_font_size_candidates(&q, e.font_size_filtering))
+    });
+    assert_eq!(q_10, "10");
+    assert!(filtering_on, "typing into font_size_input enables font_size_filtering");
+    assert_eq!(candidates_10, vec![10.0, 10.5], "filtering '10' matches 10 and 10.5");
+
+    // Clicking the `✕` clear button (`input.clean(window, cx)`) emits `InputEvent::Change` with an empty string,
+    // which resets `font_size_filtering = false` and restores all `FONT_SIZE_CANDIDATES`.
+    s.update(|e, window, cx| {
+        e.font_size_input.update(cx, |input, cx| {
+            input.clean(window, cx);
+        });
+    });
+    s.settle();
+    let (filtering_after_clear, candidates_after_clear) = s.with(|e, cx| {
+        let q = e.font_size_input.read(cx).value().to_string();
+        (e.font_size_filtering, filtered_font_size_candidates(&q, e.font_size_filtering))
+    });
+    assert!(!filtering_after_clear, "clearing font_size_input via ✕ resets font_size_filtering to false");
+    assert_eq!(
+        candidates_after_clear.len(),
+        FONT_SIZE_CANDIDATES.len(),
+        "clearing font_size_input restores all font size candidates"
+    );
+
+    // The size is typed in the toolbar's own field (`font_size_edit_input`); Enter applies it (16pt = `1600` hundredths).
+    // The pulldown (`font_size_input` is its filter) is closed first, as it is when the user goes back to the field.
+    s.update(|e, window, cx| {
+        e.font_size_menu_open = false;
+        e.font_size_filtering = false;
+        set_current_toolbar_open(false, None);
+        e.font_size_edit_input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            input.replace_all("16", window, cx);
+        });
+    });
+    s.settle();
+    s.key("enter");
+    s.settle();
+    assert_eq!(
+        s.with(|e, _| (e.font_size_menu_open, e.font_size_filtering)),
+        (false, false),
+        "Enter in font_size_edit_input leaves the pulldown closed"
+    );
+    s.click_cell("B2");
+    assert_eq!(
+        s.with(|e, _| e.current_style().font_size),
+        1600,
+        "Enter in font_size_edit_input applied 16pt (1600 hundredths) to B2"
+    );
+
+    // --- 2. Font combo (`"font"` searchable dropdown) ---
+    let font_items = s.with(|e, _| e.searchable_menu_items_for("font"));
+    assert!(
+        font_items.iter().any(|it| it.id.starts_with("font.section.") && !it.enabled()),
+        "font menu items include disabled section headers (font.section.*)"
+    );
+    assert!(
+        font_items.iter().any(|it| it.id == "xlsx.font" && it.enabled()),
+        "font menu items include enabled font entries"
+    );
+
+    // Verify `step_enabled_menu_index` skips `font.section.*` headers on `down`, `pagedown`, `up`, `pageup`.
+    let first_idx = step_enabled_menu_index(&font_items, None, 1).expect("first enabled font index");
+    assert!(
+        font_items[first_idx].enabled() && !font_items[first_idx].id.starts_with("font.section."),
+        "down from None lands on first enabled font item, skipping section header"
+    );
+    let second_idx = step_enabled_menu_index(&font_items, Some(first_idx), 1).expect("second enabled font index");
+    assert!(
+        second_idx > first_idx && font_items[second_idx].enabled() && !font_items[second_idx].id.starts_with("font.section."),
+        "down steps to next enabled font item, skipping any intermediate section header"
+    );
+    let page_down_idx = step_enabled_menu_index(&font_items, Some(first_idx), 8).expect("pagedown enabled font index");
+    assert!(
+        page_down_idx > second_idx && font_items[page_down_idx].enabled(),
+        "pagedown steps forward by page_step across enabled font items"
+    );
+    let page_up_idx = step_enabled_menu_index(&font_items, Some(page_down_idx), -8).expect("pageup enabled font index");
+    assert_eq!(page_up_idx, first_idx, "pageup steps back to first_idx");
+
+    // Open `"font"` searchable dropdown, filter by "carlito", verify `✕` clear (`clean`) restores all items,
+    // and press Enter to apply the top matched font ("Carlito") and close the dropdown.
+    s.update(|e, window, cx| {
+        let input = e.ensure_toolbar_search_input("font", window, cx);
+        e.toolbar_search_open = Some("font");
+        set_current_toolbar_open(false, Some("font"));
+        input.update(cx, |st, cx| {
+            st.set_value("", window, cx);
+        });
+        cx.notify();
+    });
+    s.settle();
+    s.update(|e, window, cx| {
+        let input = e.ensure_toolbar_search_input("font", window, cx);
+        input.update(cx, |st, cx| {
+            st.focus(window, cx);
+            st.replace_all("carlito", window, cx);
+        });
+    });
+    s.settle();
+
+    let matched_carlito = s.with(|e, cx| {
+        let q = e.toolbar_search_inputs.get("font").unwrap().read(cx).value().to_string();
+        filter_menu_items(&font_items, &q)
+    });
+    assert!(
+        !matched_carlito.is_empty()
+            && matched_carlito.iter().all(|it| !it.id.starts_with("font.section.") && it.label.to_lowercase().contains("carlito")),
+        "filtering 'carlito' returns only matching font items without section headers"
+    );
+
+    // Clearing via `✕` (`st.clean(window, cx)`) restores the full unfiltered font list.
+    s.update(|e, window, cx| {
+        let input = e.ensure_toolbar_search_input("font", window, cx);
+        input.update(cx, |st, cx| st.clean(window, cx));
+    });
+    s.settle();
+    let restored_count = s.with(|e, cx| {
+        let q = e.toolbar_search_inputs.get("font").unwrap().read(cx).value().to_string();
+        filter_menu_items(&font_items, &q).len()
+    });
+    assert_eq!(restored_count, font_items.len(), "clearing font search input via ✕ restores all items");
+
+    // Filter "carlito" again and press Enter in the `"font"` search input to apply "Carlito" and close the dropdown!
+    s.update(|e, window, cx| {
+        let input = e.ensure_toolbar_search_input("font", window, cx);
+        input.update(cx, |st, cx| {
+            st.focus(window, cx);
+            st.replace_all("carlito", window, cx);
+        });
+    });
+    s.settle();
+    s.key("enter");
+    s.settle();
+    let (search_open_after_enter, cell_font_after_enter) = s.with(|e, _| {
+        (e.toolbar_search_open, e.current_style().font.clone())
+    });
+    assert_eq!(search_open_after_enter, None, "Enter in font search input closes toolbar_search_open");
+    assert_eq!(
+        cell_font_after_enter.expect("font").to_lowercase(),
+        "carlito",
+        "Enter in font search input applies the filtered font 'Carlito'"
+    );
+}
+
+/// #136: Long submenu (`SlideEditor::submenu_room`) scrollbar / up-down scroll arrows (`▲`/`▼`)
+/// and background click-through prevention (`occlude` + `stop_propagation`).
+fn fix136_long_submenu_scrollbar_arrows_and_click_occlusion() {
+    use crate::shell::chrome::{MenuEntry, MenuId};
+    use crate::shell::menu_bar::visible;
+    use crate::shell::editor::SlideEditor;
+
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.settle();
+
+    // 1. Extract the real `ツール > 変更履歴の記録` (`docx.track`) submenu from `e.menus()`
+    // and verify that `SlideEditor::submenu_room(window)` cuts it (`cut == true`) and scrolling reaches the final item (`docx.track.change-user-name`).
+    let sub_info = s.update(|e, window, _| {
+        let menus = e.menus();
+        let (_, tools_entries) = menus
+            .menus
+            .iter()
+            .find(|(id, _)| *id == MenuId::Tools)?;
+        let track_sub = tools_entries
+            .iter()
+            .find_map(|entry| match entry {
+                MenuEntry::Submenu(sub) if sub.id == "docx.track" => Some(sub),
+                _ => None,
+            })?;
+        let room = SlideEditor::submenu_room(window);
+        let top_view = visible(&track_sub.items, 0, room);
+        let bottom_view = visible(&track_sub.items, track_sub.items.len(), room);
+        let last_entry_id = match track_sub.items.last()? {
+            MenuEntry::Item(it) => it.id,
+            _ => "",
+        };
+        Some((
+            track_sub.items.len(),
+            top_view.cut,
+            top_view.end,
+            bottom_view.cut,
+            bottom_view.start,
+            bottom_view.end,
+            last_entry_id,
+        ))
+    });
+    let (sub_len, cut_at_top, end_at_top, cut_at_bottom, start_at_bottom, end_at_bottom, last_id) =
+        sub_info.expect("docx.track submenu exists under Tools");
+    assert!(sub_len >= 20, "track-changes submenu has {sub_len} entries (>= 20)");
+    assert!(cut_at_top && end_at_top < sub_len, "submenu is cut at top in normal window height (end={end_at_top} < {sub_len})");
+    assert!(
+        cut_at_bottom && start_at_bottom > 0 && end_at_bottom == sub_len,
+        "scrolling submenu to bottom reaches final entry (start={start_at_bottom}, end={end_at_bottom})"
+    );
+    assert_eq!(last_id, "docx.track.change-user-name", "last item of track-changes submenu is docx.track.change-user-name");
+    drop(s);
+
+    // 2. Open a long menu (`編集` in xlsx at (133.0, 50.0)) and verify that:
+    //    - clicking the ▼ scroll arrow row scrolls the menu (`menu_start > 0`)
+    //    - clicking inside the open menu area or scroll arrow does NOT click through to select the worksheet cell behind it!
+    let _probe = crate::shell::scenario::button_probe::Probe::new();
+    let mut sx = Scenario::open("test/editing/xlsx-sales.xlsx");
+    sx.click_cell("F10");
+    sx.settle();
+    let cell_before = sx.with(|e, _| e.current_cell());
+    assert_eq!(cell_before, Some((5, 9)), "selected F10 (col=5, row=9) before opening menu");
+
+    let edit = menu_button_at(&mut sx, "edit");
+    sx.click(edit);
+    sx.settle();
+    assert_eq!(open_index(&mut sx), Some(1), "Edit menu is open");
+    assert_eq!(menu_start(&mut sx), 0);
+
+    // Click the ▼ scroll arrow at the bottom of the open Edit menu (x=200.0, y=648.0).
+    // If click-through occurred, (200.0, 648.0) would select a cell near row 25, col B!
+    sx.click((200.0, 648.0));
+    sx.settle();
+    assert!(menu_start(&mut sx) > 0, "clicking ▼ scroll arrow row scrolled the menu down");
+    assert_eq!(
+        sx.with(|e, _| e.current_cell()),
+        cell_before,
+        "clicking ▼ scroll arrow must be occluded and must not select the worksheet cell behind it"
+    );
+}
+
+/// #150 / #151: Right-pane `text_field` inputs, vertical alignment of input/unit columns
+/// in `doc_page_setup_panel`, and sticky bottom footer (`OK` button stays visible outside scroll).
+fn fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer() {
+    use gpui_kit::{point, px};
+
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.update(|e, window, cx| {
+        e.open_page_setup_panel(window, cx);
+    });
+    s.settle();
+
+    // 1. Verify the page setup panel is open in the right sidebar and has recorded bounds for its aligned rows and sticky footer `apply` button.
+    let (field_bounds, apply_y_before, field0_y_before) = s.with(|e, _| {
+        let p = e
+            .doc_state()
+            .and_then(|st| st.helper.page_setup.as_ref())
+            .expect("page_setup panel is open");
+        let ui = p.ui.borrow();
+        let keys = [
+            "field-0",
+            "field-1",
+            "field-2",
+            "field-3",
+            "field-4",
+            "grid-lines-input",
+            "grid-line-pitch",
+            "grid-chars",
+            "grid-char-space",
+            "start",
+            "field-7",
+            "field-8",
+            "field-5",
+            "field-6",
+        ];
+        let mut collected = Vec::new();
+        for k in keys {
+            let b = ui.get(k).copied().unwrap_or_else(|| panic!("missing UI bounds for {k}"));
+            collected.push((k, f32::from(b.origin.x), f32::from(b.size.width)));
+        }
+        let apply_b = ui.get("apply").copied().expect("sticky footer apply button bounds");
+        let f0_b = ui.get("field-0").copied().expect("field-0 bounds");
+        (collected, f32::from(apply_b.origin.y), f32::from(f0_b.origin.y))
+    });
+
+    // Every input box in `doc_page_setup_panel` must have the same width and the exact same left X coordinate (`origin.x`),
+    // ensuring vertical alignment across margins (mm), document grid (行/pt/字), start page, paper size (mm), and header/footer (mm).
+    let expected_x = field_bounds[0].1;
+    // Each row's mark covers the standard field (`FIELD_WIDTH`) with its spinner, the gap (8px) and the unit (72px).
+    let field_width = f32::from(crate::shell::chrome::FIELD_WIDTH);
+    let expected_w = field_width + 8.0 + 72.0;
+    for (k, x, w) in &field_bounds {
+        assert!(
+            (*x - expected_x).abs() <= 0.5,
+            "input {k} left edge x={x} must align with field-0 x={expected_x}"
+        );
+        assert!(
+            (*w - expected_w).abs() <= 0.5,
+            "input {k} width w={w} must be {expected_w}px (the standard field {field_width}px + the gap and the unit's 72px)"
+        );
+    }
+
+    // 2. Scroll the right-pane body down (`sidebar_scroll`) and verify that `field-0` scrolls up
+    // while the sticky footer `apply` ("OK") button stays fixed at the exact same bottom Y coordinate!
+    s.update(|e, _, cx| {
+        e.panel_dialog.scroll.set_offset(point(px(0.0), px(-120.0)));
+        cx.notify();
+    });
+    s.settle();
+
+    let (apply_y_after, field0_y_after) = s.with(|e, _| {
+        let p = e.doc_state().unwrap().helper.page_setup.as_ref().unwrap();
+        let ui = p.ui.borrow();
+        (
+            f32::from(ui.get("apply").unwrap().origin.y),
+            f32::from(ui.get("field-0").unwrap().origin.y),
+        )
+    });
+    assert!(
+        (field0_y_before - field0_y_after - 120.0).abs() <= 2.0,
+        "scrolling sidebar_scroll moves field-0 up by ~120px (before={field0_y_before}, after={field0_y_after})"
+    );
+    assert!(
+        (apply_y_after - apply_y_before).abs() <= 0.5,
+        "sticky footer OK button (`apply`) stays at fixed Y (before={apply_y_before}, after={apply_y_after})"
+    );
+
+    // 3. Edit top margin (`field-0`) to "30" mm and click the sticky footer OK (`apply`) button to apply.
+    let apply_center = s.with(|e, _| {
+        let p = e.doc_state().unwrap().helper.page_setup.as_ref().unwrap();
+        let b = *p.ui.borrow().get("apply").unwrap();
+        (
+            f32::from(b.origin.x) + f32::from(b.size.width) * 0.5,
+            f32::from(b.origin.y) + f32::from(b.size.height) * 0.5,
+        )
+    });
+    s.update(|e, window, cx| {
+        let p = e.doc_state_mut().unwrap().helper.page_setup.as_mut().unwrap();
+        p.fields[0].update(cx, |input, cx| input.set_value("30", window, cx));
+    });
+    s.settle();
+    s.click(apply_center);
+    s.settle();
+
+    let top_mm = s.with(|e, _| {
+        let top_emu = e.caret_page().expect("caret_page").top;
+        (top_emu as f64 / 36_000.0).round() as i64
+    });
+    assert_eq!(top_mm, 30, "clicking sticky footer OK button applies 30mm top margin");
+}
+
+
+/// Shared radio groups wrap between whole buttons in Flow and put one option per row in Column.
+fn shared_radio_group_layouts() {
+    let center = |b: gpui_kit::Bounds<gpui_kit::Pixels>| (
+        f32::from(b.origin.x + b.size.width / 2.),
+        f32::from(b.origin.y + b.size.height / 2.),
+    );
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.update(|e, w, cx| e.open_page_setup_panel(w, cx));
+    s.settle();
+    s.update(|e, _, cx| {
+        e.panel_dialog.bounds.as_mut().unwrap().size.width = gpui_kit::px(320.);
+        cx.notify();
+    });
+    s.settle();
+    let (across, vertical, pages) = s.with(|e, _| {
+        let p = e.doc_state().unwrap().helper.page_setup.as_ref().unwrap();
+        let ui = p.ui.borrow();
+        (ui["direction-across"], ui["direction-vertical"],
+         ["page-normal", "page-mirror", "page-book-fold", "page-reverse-book-fold", "page-two-on-one"]
+            .map(|key| ui[key]))
+    });
+    assert_eq!(across.origin.y, vertical.origin.y, "short options share a flow row");
+    assert!(vertical.origin.x >= across.origin.x + across.size.width, "flow options do not overlap");
+    assert!(pages.iter().any(|b| b.origin.y > pages[0].origin.y), "the page options wrap to another row");
+    for b in pages {
+        assert_eq!(b.size.height, across.size.height, "a radio label never wraps inside its button");
+    }
+    // Bring the direction group into the viewport, then exercise the real shared button's handler.
+    s.update(|e, _, cx| {
+        e.panel_dialog.scroll.set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-300.)));
+        cx.notify();
+    });
+    s.settle();
+    let target = s.with(|e, _| e.doc_state().unwrap().helper.page_setup.as_ref().unwrap().ui.borrow()["direction-vertical"]);
+    s.click(center(target));
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().unwrap().helper.page_setup.as_ref().unwrap().vertical));
+    s.screenshot("radio-flow");
+    drop(s);
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("xlsx.goto-special");
+    s.settle();
+    let rows = s.with(|e, _| {
+        let ui = e.wb().panels.goto_special.as_ref().unwrap().ui.borrow();
+        ["comments", "constants", "formulas", "blanks"].map(|key| ui[key])
+    });
+    for pair in rows.windows(2) {
+        assert_eq!(pair[0].origin.x, pair[1].origin.x, "column options align on the left");
+        assert!(pair[1].origin.y >= pair[0].origin.y + pair[0].size.height, "one option per row");
+    }
+    s.click(center(rows[1]));
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.goto_special.as_ref().unwrap().ui.borrow().contains_key("numbers")),
+        "clicking Constants displays its type choices");
+    s.screenshot("radio-column");
 }

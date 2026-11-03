@@ -8,6 +8,8 @@
 //! lists the editors of embedded objects registered (their manifests' folder).
 use gpui_kit::component::button::Button;
 use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::scroll::ScrollbarMode;
+use gpui_kit::component::theme::Theme;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Root, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -59,6 +61,7 @@ pub(crate) fn open_at(category: usize, parent: Option<Bounds<Pixels>>, display: 
         ..Default::default()
     };
     let opened = cx.open_window(options, |window, cx| {
+        crate::shell::palette::watch(window, cx);
         let view = cx.new(|cx| SettingsWindow { category, focus: cx.focus_handle() });
         let focus = view.read(cx).focus.clone();
         focus.focus(window, cx);
@@ -107,6 +110,26 @@ pub(crate) fn links_warning_enabled() -> bool {
     crate::shell::settings::get(LINKS_WARNING_KEY).as_deref() != Some("0")
 }
 
+/// The key of スクロール バーを常に表示: on when `1` (on by default; an explicitly saved 0 still means hover).
+pub(crate) const SCROLLBARS_ALWAYS_KEY: &str = "view.scrollbars-always";
+
+/// Whether the scrollbars of the windows are always shown.
+pub(crate) fn scrollbars_always() -> bool {
+    crate::shell::settings::get(SCROLLBARS_ALWAYS_KEY).as_deref() != Some("0")
+}
+
+/// The scrollbars' mode of every window as the setting says (at start, and when it is changed).
+pub(crate) fn apply_scrollbar_mode(cx: &mut App) {
+    apply_scrollbar_mode_only(cx);
+    cx.refresh_windows();
+}
+
+/// As `apply_scrollbar_mode`, without redrawing (the theme's change redraws).
+pub(crate) fn apply_scrollbar_mode_only(cx: &mut App) {
+    // Hidden until the view scrolls or the pointer is over one (not the system's setting, which may show them always), unless asked to stay.
+    Theme::set_scrollbar_mode(if scrollbars_always() { ScrollbarMode::Always } else { ScrollbarMode::Hover }, cx);
+}
+
 #[cfg(not(target_family = "wasm"))]
 const CATEGORIES: [&str; 5] = ["settings.general", "settings.save", "settings.trust", "settings.qat", "settings.editors"];
 #[cfg(target_family = "wasm")]
@@ -125,12 +148,16 @@ impl SettingsWindow {
             .gap_3()
             .items_center()
             .child(div().w(px(80.)).child(i18n::text("settings.language")))
-            .child(Button::new("settings-language").small().label(choice_label(current)).dropdown_menu(move |menu, _, _| {
-                choices.iter().fold(menu, |menu, &choice| {
-                    menu.item(PopupMenuItem::new(choice_label(choice)).checked(choice == current).on_click(move |_, _, cx| choose_language(choice, cx)))
-                })
-            }));
+            .child(crate::shell::chrome::Dropdown::application("settings-language",choice_label(current),
+                choices.into_iter().map(|choice|crate::shell::chrome::DropdownItem::new(choice_label(choice)).checked(choice==current)
+                    .on_app_select(move|_,cx|choose_language(choice,cx))).collect()));
         let detail = v_flex().gap_3().child(language).child(div().text_sm().text_color(theme.muted_foreground).child(i18n::text("settings.language.note")));
+        // スクロール バーを常に表示.
+        let detail = detail.child(div().mt_3().child(Checkbox::new("settings-scrollbars-always").label(i18n::text("settings.view.scrollbars-always")).checked(scrollbars_always()).on_click(cx.listener(|_, checked: &bool, _, cx| {
+            crate::shell::settings::set(SCROLLBARS_ALWAYS_KEY, if *checked { "1" } else { "0" });
+            apply_scrollbar_mode(cx);
+            cx.notify();
+        }))));
         // 起動時に更新を確かめる (no update in the browser).
         #[cfg(not(target_family = "wasm"))]
         let detail = detail
@@ -307,7 +334,7 @@ impl SettingsWindow {
         }
 
         let e_reset = entity.clone();
-        let reset_btn = Button::new("settings-qat-reset")
+        let reset_btn = crate::shell::chrome::action_button("settings-qat-reset")
             .small()
             .label(i18n::text("settings.qat.reset"))
             .on_click(move |_, _, cx| {

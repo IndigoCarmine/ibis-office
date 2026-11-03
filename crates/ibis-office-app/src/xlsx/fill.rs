@@ -233,6 +233,18 @@ fn split_number(t: &str) -> Option<(String, i64, usize, String)> {
     Some((t[..start].to_string(), value, width, t[end..].to_string()))
 }
 
+/// The selection's border dragged to move (or, with Option, copy) it (#11).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CellMove {
+    pub(crate) source: CellRange,
+    /// The cell under the pointer when pressed.
+    pub(crate) grab: (u32, u32),
+    /// Where the range would land.
+    pub(crate) target: CellRange,
+    pub(crate) copy: bool,
+    pub(crate) moved: bool,
+}
+
 /// Where dragging the fill handle has reached, as a cell on one side of
 /// `source`: the pointer is at (`x`, `y`) in the sheet (EMU), over the cell
 /// `(column, row)`, `xs` and `ys` the column and row offsets. It goes right
@@ -328,6 +340,95 @@ impl SlideEditor {
         });
         menu.read(cx).focus_handle(cx).focus(window, cx);
         self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, _dismiss: dismiss });
+        cx.notify();
+    }
+
+    /// Press on the selection's border (#11): remember the range and the
+    /// cell grabbed, to move it (or copy it with Option) when let go.
+    pub(crate) fn begin_cell_move(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_edit(window, cx);
+        self.commit_cell_edit(cx);
+        self.focus_handle.focus(window, cx);
+        let (Some(source), Some(grab)) = (self.selected_range(), self.cell_under(position)) else { return };
+        if self.selected_ranges().len() > 1 {
+            return;
+        }
+        self.wb_mut().cell_move = Some(CellMove { source, grab, target: source, copy: window.modifiers().alt, moved: false });
+        cx.notify();
+    }
+
+    /// The pointer moved while the border is dragged: where the range would land.
+    pub(crate) fn update_cell_move(&mut self, position: Point<Pixels>, alt: bool, cx: &mut Context<Self>) {
+        let Some(cell) = self.cell_under(position) else { return };
+        let Some(m) = self.sheet_state_mut().and_then(|s| s.cell_move.as_mut()) else { return };
+        let (dc, dr) = (cell.0 as i64 - m.grab.0 as i64, cell.1 as i64 - m.grab.1 as i64);
+        let shift = |a: u32, d: i64| (a as i64 + d).max(0) as u32;
+        // Kept inside the grid: the range is not squeezed, the move is held.
+        let (w, h) = (m.source.last_column - m.source.first_column, m.source.last_row - m.source.first_row);
+        let first_column = shift(m.source.first_column, dc).min(16_383 - w);
+        let first_row = shift(m.source.first_row, dr).min(1_048_575 - h);
+        let target = CellRange { first_column, first_row, last_column: first_column + w, last_row: first_row + h };
+        m.moved |= target != m.source;
+        m.target = target;
+        m.copy = alt;
+        cx.notify();
+    }
+
+    /// The border let go: the range moves (one step; formulas that refer to
+    /// it follow), or with Option a copy lands there. Without a move, nothing.
+    /// Over cells that hold something, Excel asks first (`move_overwrite`).
+    pub(crate) fn finish_cell_move(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(m) = self.sheet_state_mut().and_then(|s| s.cell_move.take()) else { return false };
+        cx.notify();
+        if !m.moved || m.target == m.source || self.protection_refuses(super::protection::Guarded::Cells, cx) {
+            return true;
+        }
+        let holds = self.current_sheet().is_some_and(|(_, sheet)| {
+            (m.target.first_row..=m.target.last_row).any(|r| {
+                (m.target.first_column..=m.target.last_column).any(|c| {
+                    let in_source = (m.source.first_row..=m.source.last_row).contains(&r) && (m.source.first_column..=m.source.last_column).contains(&c);
+                    !in_source && sheet.cell(r, c).is_some_and(|cell| cell.formula.is_some() || !cell.value.is_empty())
+                })
+            })
+        });
+        if holds {
+            self.wb_mut().move_overwrite = Some(m);
+            return true;
+        }
+        self.apply_cell_move(m, cx);
+        true
+    }
+
+    /// The question's OK (true) or キャンセル (false), when the range was let go over cells with data.
+    pub(crate) fn answer_move_overwrite(&mut self, ok: bool, cx: &mut Context<Self>) {
+        let Some(m) = self.sheet_state_mut().and_then(|s| s.move_overwrite.take()) else { return };
+        if ok {
+            self.apply_cell_move(m, cx);
+        }
+        cx.notify();
+    }
+
+    fn apply_cell_move(&mut self, m: CellMove, cx: &mut Context<Self>) {
+        let slide = self.current_slide;
+        if !m.copy {
+            self.run_sheet(vec![Command::Sheet(SheetCommand::MoveCells { slide, from: m.source, row: m.target.first_row, column: m.target.first_column })], cx);
+        } else {
+            // A copy goes through the clipboard code, the system clipboard
+            // and the internal copy put back as they were.
+            let previous = cx.read_from_clipboard();
+            let previous_clip = self.sheet_state().and_then(|s| s.clip.clone());
+            self.set_selected_ranges(&[m.source]);
+            self.copy_cells(false, cx);
+            self.set_selected_ranges(&[m.target]);
+            self.paste_cells(false, cx);
+            if let Some(item) = previous {
+                cx.write_to_clipboard(item);
+            }
+            if let Some(state) = self.sheet_state_mut() {
+                state.clip = previous_clip;
+            }
+        }
+        self.set_selected_ranges(&[m.target]);
         cx.notify();
     }
 

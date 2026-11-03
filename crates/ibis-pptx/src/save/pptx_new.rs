@@ -238,6 +238,63 @@ pub(crate) fn fill_xml(x: &Prefixes, fill: &Fill) -> Result<String, Error> {
             };
             format!("<{a}blipFill><{a}blip {r}embed=\"{rel}\">{blip_ext}</{a}blip><{a}tile tx=\"{tx}\" ty=\"{ty}\" sx=\"{sx}\" sy=\"{sy}\" flip=\"{flip_attr}\" algn=\"{algn_attr}\"/></{a}blipFill>", r = x.r)
         }
+        Fill::Blip(blip) => {
+            let media = blip.media;
+            let rel = MEDIA_RELS.with(|m| m.borrow().get(&media).cloned()).ok_or_else(|| unsupported("画像塗りつぶしの関係ID"))?;
+            let mut effects = String::new();
+            let e = &blip.effects;
+            if let Some(v) = e.opacity {
+                write!(effects, "<{a}alphaModFix amt=\"{v}\"/>").unwrap();
+            }
+            if e.grayscale {
+                write!(effects, "<{a}grayscl/>").unwrap();
+            }
+            if let Some(v) = e.bilevel {
+                write!(effects, "<{a}biLevel thresh=\"{v}\"/>").unwrap();
+            }
+            if let Some((bright, contrast)) = blip.luminance {
+                write!(effects, "<{a}lum bright=\"{bright}\" contrast=\"{contrast}\"/>").unwrap();
+            }
+            if let Some((dark, light)) = blip.duotone {
+                write!(effects, "<{a}duotone><{a}srgbClr val=\"{:06X}\"/><{a}srgbClr val=\"{:06X}\"/></{a}duotone>", dark.0, light.0).unwrap();
+            }
+            let blip_ext = if is_svg_media(media) {
+                format!("<{a}extLst><{a}ext uri=\"{{96DAC542-7B81-4868-9F9E-1EA1F31DC1F3}}\"><asvg:svgBlip xmlns:asvg=\"http://schemas.microsoft.com/office/drawing/2016/SVG/main\" {r}embed=\"{rel}\"/></{a}ext></{a}extLst>", r = x.r)
+            } else {
+                String::new()
+            };
+            let crop = &blip.crop;
+            let src = if *crop == ibis_doc_model::Crop::default() {
+                String::new()
+            } else {
+                format!("<{a}srcRect l=\"{}\" t=\"{}\" r=\"{}\" b=\"{}\"/>", crop.left, crop.top, crop.right, crop.bottom)
+            };
+            let place = match (blip.tile, blip.fill_rect) {
+                (Some(t), _) => {
+                    let flip = match t.flip {
+                        ibis_doc_model::TileFlip::None => "none",
+                        ibis_doc_model::TileFlip::X => "x",
+                        ibis_doc_model::TileFlip::Y => "y",
+                        ibis_doc_model::TileFlip::Xy => "xy",
+                    };
+                    let algn = match t.align {
+                        ibis_doc_model::TileAlign::TopLeft => "tl",
+                        ibis_doc_model::TileAlign::Top => "t",
+                        ibis_doc_model::TileAlign::TopRight => "tr",
+                        ibis_doc_model::TileAlign::Left => "l",
+                        ibis_doc_model::TileAlign::Center => "ctr",
+                        ibis_doc_model::TileAlign::Right => "r",
+                        ibis_doc_model::TileAlign::BottomLeft => "bl",
+                        ibis_doc_model::TileAlign::Bottom => "b",
+                        ibis_doc_model::TileAlign::BottomRight => "br",
+                    };
+                    format!("<{a}tile tx=\"{}\" ty=\"{}\" sx=\"{}\" sy=\"{}\" flip=\"{flip}\" algn=\"{algn}\"/>", t.tx, t.ty, t.sx, t.sy)
+                }
+                (None, Some([l, t, r, b])) => format!("<{a}stretch><{a}fillRect l=\"{l}\" t=\"{t}\" r=\"{r}\" b=\"{b}\"/></{a}stretch>"),
+                (None, None) => format!("<{a}stretch><{a}fillRect/></{a}stretch>"),
+            };
+            format!("<{a}blipFill><{a}blip {r}embed=\"{rel}\">{effects}{blip_ext}</{a}blip>{src}{place}</{a}blipFill>", r = x.r)
+        }
         Fill::Pattern { preset, foreground, background } => format!(
             "<{a}pattFill prst=\"{}\"><{a}fgClr>{}</{a}fgClr><{a}bgClr>{}</{a}bgClr></{a}pattFill>",
             escape(preset),
@@ -1289,19 +1346,6 @@ fn picture_xml(x: &Prefixes, picture: &Picture, xfrm: &str, id: u32, shape: ibis
     let (name, nv_pr, hlink) = match clip {
         Some((clip, (link, embed))) => {
             let (tag, name) = if clip.audio { ("audioFile", "Audio") } else { ("videoFile", "Movie") };
-            let vol_attr = match clip.options.volume {
-                ibis_doc_model::MediaVolume::High => " vol=\"100000\"",
-                ibis_doc_model::MediaVolume::Medium => " vol=\"66000\"",
-                ibis_doc_model::MediaVolume::Low => " vol=\"33000\"",
-                ibis_doc_model::MediaVolume::Mute => " vol=\"0\"",
-            };
-            let loop_attr = if clip.options.loop_until_stopped { " loop=\"1\"" } else { "" };
-            let rewind_attr = if clip.options.rewind { " rewind=\"1\"" } else { "" };
-            let auto_attr = if clip.options.start == ibis_doc_model::MediaStart::Automatically { " autoPlay=\"1\"" } else { "" };
-            let fs_attr = if clip.options.full_screen { " fullScreen=\"1\"" } else { "" };
-            let hide_stopped_attr = if clip.options.hide_while_not_playing { " showWhenStopped=\"0\"" } else { "" };
-            let narr_attr = if clip.options.hide_during_show { " isNarration=\"1\"" } else { "" };
-            let across_attr = if clip.options.play_across_slides { " playAcrossSlides=\"1\"" } else { "" };
             let mut children = String::new();
             if clip.options.trim_start_ms > 0 || clip.options.trim_end_ms > 0 {
                 let st_attr = if clip.options.trim_start_ms > 0 { format!(" st=\"{}\"", clip.options.trim_start_ms) } else { String::new() };
@@ -1333,9 +1377,9 @@ fn picture_xml(x: &Prefixes, picture: &Picture, xfrm: &str, id: u32, shape: ibis
                 children.push_str("</p14:captionTracks>");
             }
             let media_tag = if children.is_empty() {
-                format!("<p14:media xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" {r}embed=\"{embed}\"{vol_attr}{loop_attr}{rewind_attr}{auto_attr}{fs_attr}{hide_stopped_attr}{narr_attr}{across_attr}/>")
+                format!("<p14:media xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" {r}embed=\"{embed}\"/>")
             } else {
-                format!("<p14:media xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" {r}embed=\"{embed}\"{vol_attr}{loop_attr}{rewind_attr}{auto_attr}{fs_attr}{hide_stopped_attr}{narr_attr}{across_attr}>{children}</p14:media>")
+                format!("<p14:media xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" {r}embed=\"{embed}\">{children}</p14:media>")
             };
             // A linked file (no embedded copy): the file only.
             let nv_pr = if embed.is_empty() {

@@ -7,6 +7,7 @@
 //! these; the commands and saving know nothing of the UI.
 
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{
     AutoShape, Caps, Color, Command, EmuRect, Fill, Geometry, LayoutId, ObjectDefaults, Rgb, Shape, ShapeDefault, ShapeId, ShapeKind, SlideId, Stroke, TextAlign,
     TextBody, TextStyle, VerticalAnchor,
@@ -152,7 +153,7 @@ pub(crate) const WIDTHS: &[f32] = &[0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6
 const NUDGE: i64 = 72_000;
 const FINE_NUDGE: i64 = 12_700;
 /// A pasted copy on the same slide is moved this much down and right.
-const PASTE_OFFSET: i64 = 182_880;
+pub(crate) const PASTE_OFFSET: i64 = 182_880;
 
 
 /// アクション ボタン: each preset with the link it has when drawn (PowerPoint's
@@ -470,6 +471,44 @@ impl SlideEditor {
         }
     }
 
+    pub(crate) fn cancel_pptx_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut cancelled = false;
+        if let Some(s) = self.pptx_mut() {
+            if let Some(drag) = s.drag.take() {
+                match drag {
+                    super::slide_view::Drag::Band { before, .. } => {
+                        s.selection = before;
+                    }
+                    super::slide_view::Drag::Text { .. } => {
+                        if let Some(edit) = s.edit.as_mut() {
+                            edit.caret = edit.anchor;
+                        }
+                    }
+                    _ => {}
+                }
+                cancelled = true;
+            }
+            if let Some(pane_drag) = s.pane_drag.take() {
+                match pane_drag {
+                    super::notes::PaneDrag::List { w0, .. } => {
+                        s.pane_width = Some(w0);
+                    }
+                    super::notes::PaneDrag::Notes { h0, .. } => {
+                        s.notes_height = h0;
+                    }
+                }
+                cancelled = true;
+            }
+            if s.path_draw.take().is_some() {
+                cancelled = true;
+            }
+        }
+        if cancelled {
+            cx.notify();
+        }
+        cancelled
+    }
+
     /// The selected shapes of the current slide, back to front.
     pub(crate) fn selected_ids(&self) -> Vec<ShapeId> {
         if let Some(state) = self.pptx() {
@@ -575,8 +614,19 @@ impl SlideEditor {
         if let Err(err) = self.document.execute(commands) {
             log::warn!("edit rejected: {err}");
         }
+        if let Some(edit) = self.pptx_mut().and_then(|s| s.edit.as_mut()) {
+            edit.is_new = false;
+            edit.typing = false;
+        }
+        if let Some(edit) = self.editing.as_mut() {
+            edit.edit.is_new = false;
+            edit.edit.typing = false;
+        }
         self.end_notes_typing();
         self.sync_selection();
+        if self.is_workbook() {
+            self.sync_workbook_peers(cx);
+        }
         cx.notify();
     }
 
@@ -676,7 +726,8 @@ impl SlideEditor {
 
     /// Put a new shape on the current slide, on top, and select it.
     pub(crate) fn insert_shape(&mut self, shape: Shape, cx: &mut Context<Self>) -> ShapeId {
-        self.insert_shape_with(shape, false, cx)
+        let locked = matches!(shape.kind, ShapeKind::Picture(_));
+        self.insert_shape_with(shape, locked, cx)
     }
 
     /// Insert `shape`, keeping its proportions (縦横比を固定) if `locked`, as one step.
@@ -1268,6 +1319,7 @@ impl SlideEditor {
             }
             return self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
         }
+        self.drop_untouched_body();
         let commands = self
             .selected_shapes()
             .into_iter()
@@ -1611,6 +1663,9 @@ impl SlideEditor {
             let body = if self.text_editing().is_some_and(|e| e.shape == shape) { self.edited_body()? } else { self.slide().shape(shape)?.text_body()? };
             let mut at = 0;
             for p in &body.paragraphs {
+                if p.runs.is_empty() && start == at {
+                    return Some(is_on(&body.style, &p.end_style));
+                }
                 for r in &p.runs {
                     let n = r.text.chars().count();
                     if start < at + n || (n > 0 && start == at && at == 0) {
@@ -1620,7 +1675,7 @@ impl SlideEditor {
                 }
                 at += 1;
             }
-            None
+            body.paragraphs.last().map(|p| is_on(&body.style, &p.end_style))
         });
         let format = format(!on.unwrap_or(false));
         let commands = targets.into_iter().map(|(shape, start, end)| Command::SetCharacterFormat { slide, shape, start, end, format: format.clone() }).collect();
@@ -1992,12 +2047,39 @@ impl SlideEditor {
     /// 書式をクリア: the targeted text loses its own character formats.
     pub(crate) fn clear_formats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let slide = self.current_slide;
+        let whole_shape = self.text_editing().is_none();
         let targets = self.text_targets(window, cx);
         let commands = targets
             .into_iter()
             .filter_map(|(shape, start, end)| {
                 let body = if self.text_editing().is_some_and(|e| e.shape == shape) { self.edited_body()? } else { self.slide().shape(shape)?.text_body()? };
                 let mut body = body.clone();
+                if whole_shape {
+                    body.style = TextStyle { align: body.style.align, ..TextStyle::default() };
+                    body.warp = None;
+                    body.warp_adjust.clear();
+                } else {
+                    let base = body.style.clone();
+                    let materialize = |r: &mut ibis_doc_model::RunStyle| {
+                        r.font_size.get_or_insert(base.font_size);
+                        r.bold.get_or_insert(base.bold);
+                        r.italic.get_or_insert(base.italic);
+                        r.color.get_or_insert(base.color);
+                        if r.font.is_none() {
+                            r.font = base.font.clone();
+                        }
+                        if r.fallback_font.is_none() {
+                            r.fallback_font = base.fallback_font.clone();
+                        }
+                    };
+                    for p in &mut body.paragraphs {
+                        for run in &mut p.runs {
+                            materialize(&mut run.style);
+                        }
+                        materialize(&mut p.end_style);
+                    }
+                    body.style = TextStyle { align: body.style.align, ..TextStyle::default() };
+                }
                 body.clear_run_formats(start, end);
                 Some(Command::SetTextBody { slide, shape, body })
             })
@@ -2247,6 +2329,18 @@ impl SlideEditor {
         }).or_else(|| p.runs.iter().rev().find(|r| !r.text.is_empty()));
         let style = run.map(|r| &r.style).unwrap_or(&p.end_style);
         Some(TextStyle { align: p.align.unwrap_or(body.style.align), ..body.style.with_run(style) })
+    }
+
+    /// The active character's run style (`underline`, `strike`, etc.).
+    pub(crate) fn selected_text_run(&self) -> Option<ibis_doc_model::RunStyle> {
+        let (body, index, offset) = self.selected_text_position()?;
+        let p = &body.paragraphs[index];
+        let mut at = 0;
+        let run = p.runs.iter().find(|r| {
+            at += r.text.chars().count();
+            offset < at
+        }).or_else(|| p.runs.iter().rev().find(|r| !r.text.is_empty()));
+        Some(run.map(|r| r.style.clone()).unwrap_or_else(|| p.end_style.clone()))
     }
 
     /// The active character's proofing language (a:rPr/@lang), if set.
@@ -3457,6 +3551,7 @@ impl SlideEditor {
             self.run(commands, cx);
             return true;
         }
+        self.drop_untouched_body();
         // Preview serialization before changing any live target.
         let mut preview=self.presentation().clone();
         for command in &commands {

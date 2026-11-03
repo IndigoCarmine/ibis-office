@@ -13,6 +13,7 @@ use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{Command, EmuPoint, EmuRect, ResizeHandle, Shape, ShapeId, TextBody};
 
 use super::editing::{self, Tool};
@@ -26,7 +27,7 @@ use crate::shell::icons::Material;
 pub(crate) const CONTEXT: &str = "PresentationWorkspace";
 
 /// Side of a resize handle, in pixels.
-const HANDLE_SIZE: f32 = 8.0;
+const HANDLE_SIZE: f32 = 6.0;
 /// A press that moves less than this is a click, in pixels.
 const DRAG_THRESHOLD: f32 = 3.0;
 /// A click with the line tool draws a line this long, in EMU (2 in).
@@ -79,7 +80,7 @@ actions!(
 #[derive(Clone, Debug)]
 pub(crate) enum Drag {
     Move { start: Point<Pixels>, current: Point<Pixels>, origins: Vec<(ShapeId, EmuRect)> },
-    Resize { shape: ShapeId, handle: ResizeHandle, start: Point<Pixels>, current: Point<Pixels>, origin: EmuRect, rotation: i32 },
+    Resize { shape: ShapeId, handle: ResizeHandle, start: Point<Pixels>, current: Point<Pixels>, origin: EmuRect, rotation: i32, keep_aspect_on_corners: bool },
     Rotate { shape: ShapeId, start: Point<Pixels>, current: Point<Pixels>, origin: i32, center: Point<Pixels> },
     Band { start: Point<Pixels>, current: Point<Pixels>, before: Vec<ShapeId> },
     Place { tool: Tool, start: Point<Pixels>, current: Point<Pixels>, points: Vec<Point<Pixels>> },
@@ -156,14 +157,14 @@ impl SlideEditor {
                 }
                 (shape.frame, shape.rotation)
             }
-            Drag::Resize { shape: id, handle, start, current, origin, rotation } if *id == shape.id => {
+            Drag::Resize { shape: id, handle, start, current, origin, rotation, keep_aspect_on_corners } if *id == shape.id => {
                 let mut d_x = emu(current.x - start.x) as f64;
                 let mut d_y = emu(current.y - start.y) as f64;
                 if self.is_pptx_snap_to_grid_enabled() {
                     d_x = interaction::snap_coord(d_x as i64, interaction::GRID_INTERVAL) as f64;
                     d_y = interaction::snap_coord(d_y as i64, interaction::GRID_INTERVAL) as f64;
                 }
-                let frame = interaction::resize(*origin, *rotation, *handle, d_x, d_y, shift || self.slide().aspect_locked.contains(&shape.id));
+                let frame = interaction::resize(*origin, *rotation, *handle, d_x, d_y, shift || *keep_aspect_on_corners);
                 (frame, shape.rotation)
             }
             Drag::Rotate { shape: id, start, current, origin, center } if *id == shape.id => {
@@ -374,9 +375,15 @@ impl SlideEditor {
             .h_full()
             .overflow_hidden()
             .bg(theme.muted)
-            .when(placing, |d| d.cursor_crosshair())
+            .when(self.link_hover,|d|d.cursor_pointer()).on_mouse_move(cx.listener(|e,event:&MouseMoveEvent,_,cx|{e.update_link_hover(event,cx);e.update_clip_hover(event,cx)})).when(placing, |d| d.cursor_crosshair())
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_slide_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_slide_right_down))
+            // The pointer left the workspace: no clip has its control bar for the pointer.
+            .on_hover(cx.listener(|e, hovered: &bool, _, cx| {
+                if !*hovered && e.clear_clip_hover() {
+                    cx.notify();
+                }
+            }))
             .child(
                 div()
                     .id("workspace-scroll")
@@ -408,6 +415,7 @@ impl SlideEditor {
             .children(self.render_slide_zoom_dialog(cx))
             .children(self.render_section_zoom_dialog(cx))
             .children(self.render_summary_zoom_dialog(cx))
+            .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
             .scrollbar(&self.workspace_scroll, ScrollbarAxis::Both)
     }
 
@@ -458,6 +466,7 @@ impl SlideEditor {
         let size = self.presentation().size_of(slide);
         let positions = self.pptx().map(|s| &s.positions);
         let layout = slide.layout.and_then(|l| self.presentation().layout(l));
+        self.link_text_positions.borrow_mut().clear();
         let shapes: Vec<AnyElement> = slide
             .shown_shapes()
             .map(|shape| {
@@ -485,21 +494,32 @@ impl SlideEditor {
                 }
                 // A table cell being edited: its text with the caret's positions.
                 let cell = self.text_editing().filter(|e| e.shape == shape.id).and_then(|e| e.cell);
-                if let (Some(cell), Some(positions), ibis_doc_model::ShapeKind::Table(table)) = (cell, positions, &drawn.kind) {
+                if let ibis_doc_model::ShapeKind::Table(table) = &drawn.kind {
                     let mut table = (**table).clone();
                     if let Some(body) = self.composing_body(shape.id)
-                        && let Some(c) = table.rows.get_mut(cell.0).and_then(|r| r.cells.get_mut(cell.1))
+                        && let Some(c) = cell.and_then(|cell|table.rows.get_mut(cell.0).and_then(|r| r.cells.get_mut(cell.1)))
                     {
                         c.text = body;
                     }
+                    let mut recorded=std::collections::HashMap::new();
+                    for(r,row)in table.rows.iter().enumerate(){for(c,entry)in row.cells.iter().enumerate(){
+                        if entry.text.paragraphs.iter().any(|p|p.runs.iter().any(|r|r.style.link.is_some())){
+                            let slot=positions.filter(|_|cell==Some((r,c))).cloned().unwrap_or_default();
+                            self.link_text_positions.borrow_mut().insert((shape.id,Some((r,c))),slot.clone());recorded.insert((r,c),slot);
+                        }
+                    }}
                     let local = EmuRect { x: 0, y: 0, ..frame };
                     return place(div(), frame, scale)
-                        .child(place(div(), local, scale).child(crate::render::table_view::table_element_editing(&table, local, scale, &self.resources, Some((cell, positions)))))
+                        .child(place(div(), local, scale).child(crate::render::table_view::table_element_recording(&table, local, scale, &self.resources, cell.zip(positions),Some(&recorded))))
                         .into_any_element();
                 }
+                let linked_positions=drawn.text_body().filter(|b|b.paragraphs.iter().any(|p|p.runs.iter().any(|r|r.style.link.is_some()))).map(|_|{
+                    let slot=positions.filter(|_|editing).cloned().unwrap_or_default();
+                    self.link_text_positions.borrow_mut().insert((shape.id,None),slot.clone());slot
+                });
                 let mut shape_div = place(div(), frame, scale)
                     .when(empty_text_box || placeholder.is_some(), |d| d.border_1().border_dashed().border_color(cx.theme().border))
-                    .child(shape_element_with_positions(&drawn, EmuRect { x: 0, y: 0, ..frame }, scale, &self.resources, None, positions.filter(|_| editing)));
+                    .child(shape_element_with_positions(&drawn, EmuRect { x: 0, y: 0, ..frame }, scale, &self.resources, None, positions.filter(|_| editing).or(linked_positions.as_ref())));
 
                 if let Some(ph) = placeholder {
                     let w_px = frame.width as f32 * scale;
@@ -533,6 +553,7 @@ impl SlideEditor {
             .children(shapes)
             .children(self.render_comment_marks(scale, cx))
             .child(self.render_selection_overlay(scale, cx))
+            .children(self.render_clip_bars(cx))
     }
 
     fn render_gridlines(&self, size: ibis_doc_model::EmuSize, scale: f32) -> impl IntoElement {
@@ -575,7 +596,7 @@ impl SlideEditor {
         canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
-                let color = rgb(0xe05638);
+                let color = crate::shell::palette::doc(0xe05638);
                 let p1 = bounds.origin + point(px(mid_x), px(0.));
                 let p2 = bounds.origin + point(px(mid_x), px(h));
                 if let Some(path) = polygon(&[p1, p2], Some(px(1.0)), false) {
@@ -698,6 +719,7 @@ impl SlideEditor {
     /// The outlines of the selected shapes, the handles of a single one,
     /// the rubber band and the outline of what is being placed.
     fn render_selection_overlay(&self, scale: f32, cx: &mut Context<Self>) -> Div {
+        self.ensure_caret_blink(cx);
         let theme = cx.theme();
         let (primary, background) = (theme.primary, theme.background);
         let slide = self.slide();
@@ -831,7 +853,7 @@ impl SlideEditor {
                 let at = |p: &Point<Pixels>| bounds.origin + *p;
                 for (pts, edit) in &outlines {
                     let pts: Vec<Point<Pixels>> = pts.iter().map(at).collect();
-                    if let Some(path) = polygon(&pts, Some(px(if *edit { 1.0 } else { 1.5 })), true) {
+                    if let Some(path) = polygon(&pts, Some(px(crate::shell::selection_handles::OUTLINE_WIDTH)), true) {
                         window.paint_path(path, primary);
                     }
                 }
@@ -863,7 +885,7 @@ impl SlideEditor {
                         }
                     };
                     if let Some(path) = path {
-                        window.paint_path(path, rgb(0xe05638));
+                        window.paint_path(path, crate::shell::palette::doc(0xe05638));
                     }
                 }
             },
@@ -918,46 +940,18 @@ impl SlideEditor {
                         .into_any_element(),
                 );
             }
-        } else if let [shape] = selected.as_slice()
-            && editing != Some(shape.id)
-            && !slide.is_attached(shape.id)
-        {
+        } else {
+          for shape in &selected {
             let (frame, rotation) = self.preview(shape);
-            let is_line = matches!(shape.kind, ibis_doc_model::ShapeKind::Line(_))
-                || matches!(shape.kind, ibis_doc_model::ShapeKind::Auto(ref a) if editing::is_connector_geometry(&a.geometry));
-            for handle in ResizeHandle::ALL {
-                // A line has handles at its ends only.
-                if is_line && !line_end_handle(shape, handle) {
-                    continue;
-                }
-                let p = interaction::handle_point(frame, rotation, handle);
-                handles.push(
-                    div()
-                        .absolute()
-                        .left(px(p.x as f32 * scale - HANDLE_SIZE / 2.0))
-                        .top(px(p.y as f32 * scale - HANDLE_SIZE / 2.0))
-                        .size(px(HANDLE_SIZE))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(primary)
-                        .bg(background)
-                        .into_any_element(),
-                );
+            handles.push(crate::shell::selection_handles::border_region(format!("pptx-frame-{}",shape.id.0),Bounds::new(point(px(frame.x as f32*scale),px(frame.y as f32*scale)),size(px(frame.width as f32*scale),px(frame.height as f32*scale))),rotation,cx.listener(|e,event:&MouseDownEvent,w,cx|{if let Some(edit)=e.text_editing_mut(){edit.is_new=false;}e.end_text_edit(w,cx);let mut event=event.clone();event.click_count=1;e.on_slide_down(&event,w,cx);})).into_any_element());
+            if !slide.is_attached(shape.id) {
+                let is_line = matches!(shape.kind, ibis_doc_model::ShapeKind::Line(_))
+                    || matches!(shape.kind, ibis_doc_model::ShapeKind::Auto(ref a) if editing::is_connector_geometry(&a.geometry));
+                let points=ResizeHandle::ALL.into_iter().filter(|h|!is_line||line_end_handle(shape,*h)).map(|handle|{let p=interaction::handle_point(frame,rotation,handle);(handle,point(px(p.x as f32*scale),px(p.y as f32*scale)))});
+                let rotate=(!is_line).then(||{let p=interaction::rotation_handle_point(frame,rotation,interaction::ROTATE_HANDLE_PX as f64/scale as f64);point(px(p.x as f32*scale),px(p.y as f32*scale))});
+                handles.extend(crate::shell::selection_handles::group(format!("pptx-selection-handles-{}",shape.id.0).into(),points,rotate,crate::shell::selection_handles::Options{rotation:true,angle:rotation},primary,if editing==Some(shape.id){rgb(0x80d4ff).into()}else{background}).into_iter().map(|(_,element)|element.into_any_element()));
             }
-            if !is_line {
-                let above = interaction::ROTATE_HANDLE_PX as f64 / scale as f64;
-                let p = interaction::rotation_handle_point(frame, rotation, above);
-                handles.push(
-                    div()
-                        .absolute()
-                        .left(px(p.x as f32 * scale - HANDLE_SIZE / 2.0 - 1.0))
-                        .top(px(p.y as f32 * scale - HANDLE_SIZE / 2.0 - 1.0))
-                        .size(px(HANDLE_SIZE + 2.0))
-                        .rounded_full()
-                        .bg(primary)
-                        .into_any_element(),
-                );
-            }
+        }
         }
         // The caret (blinking is left out) and the selected text, painted
         // after the text so that they are where it was just painted.
@@ -1003,7 +997,7 @@ impl SlideEditor {
                     for q in selection {
                         paint(q, selected);
                     }
-                    if let Some(c) = caret {
+                    if let Some(c) = caret.filter(|_| crate::pptx::text_edit::caret_blink_visible()) {
                         paint(c, caret_color);
                     }
                     // 赤い波線: under each word (a word on two lines has a line under each part).
@@ -1029,7 +1023,7 @@ impl SlideEditor {
                                 let mut ribbon: Vec<Point<Pixels>> = (0..=steps).map(|i| wave(i, 1.0)).collect();
                                 ribbon.extend((0..=steps).rev().map(|i| wave(i, 0.0)));
                                 if let Some(p) = polygon(&ribbon, None, true) {
-                                    window.paint_path(p, rgb(0xd93025));
+                                    window.paint_path(p, crate::shell::palette::doc(0xd93025));
                                 }
                             }
                         }
@@ -1121,6 +1115,11 @@ impl SlideEditor {
     }
 
     fn on_slide_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.panel_dialog_is_modal() { cx.stop_propagation(); return; }
+        // The control bar of a video or audio clip (動画・音声): its own press.
+        if self.clip_bar_down(event, window, cx) {
+            return;
+        }
         let Some(layout) = self.slide_layout() else { return };
         let position = event.position;
         let tool = self.pptx_tool();
@@ -1162,7 +1161,7 @@ impl SlideEditor {
         let p = P::of(layout.to_emu(position));
         let slop = interaction::LINE_SLOP_PX as f64 / layout.scale as f64;
         // ⌘ and a click on a link follows it (as PowerPoint's Ctrl+click).
-        if event.modifiers.secondary()
+        if event.click_count==1 && !event.modifiers.shift
             && let Some(link) = self.slide_link_at(layout.to_emu(position))
         {
             self.end_text_edit(window, cx);
@@ -1191,6 +1190,38 @@ impl SlideEditor {
                 state.pending_click = Some(position);
             }
             return cx.notify();
+        }
+        if let Some((shape, handle)) = self.handle_under(position) {
+            if self.text_editing().is_none_or(|e| e.shape != shape || handle.is_none()) {
+                self.end_text_edit(window, cx);
+                self.focus_handle.focus(window, cx);
+            }
+            let Some(s) = self.slide().shape(shape) else { return };
+            let keep_aspect_on_corners = matches!(s.kind, ibis_doc_model::ShapeKind::Picture(_)) || self.slide().aspect_locked.contains(&shape);
+            let drag = match handle {
+                Some(handle) => Drag::Resize { shape, handle, start: position, current: position, origin: s.frame, rotation: s.rotation, keep_aspect_on_corners },
+                None => {
+                    let c = P::new(s.frame.x as f64 + s.frame.width as f64 / 2.0, s.frame.y as f64 + s.frame.height as f64 / 2.0);
+                    let center = layout.origin + point(px(c.x as f32 * layout.scale), px(c.y as f32 * layout.scale));
+                    Drag::Rotate { shape, start: position, current: position, origin: s.rotation, center }
+                }
+            };
+            self.set_drag(Some(drag));
+            return cx.notify();
+        }
+        if let Some(edit) = self.text_editing().map(|e| e.shape)
+            && let Some(s) = self.slide().shape(edit)
+        {
+            let f = s.frame;
+            let band = (6.0 / layout.scale).max(1.0) as i64;
+            let px_emu = p.x as i64;
+            let py_emu = p.y as i64;
+            let in_outer = px_emu >= f.x - band && px_emu <= f.right() + band && py_emu >= f.y - band && py_emu <= f.bottom() + band;
+            let in_inner = px_emu > f.x + band && px_emu < f.right() - band && py_emu > f.y + band && py_emu < f.bottom() - band;
+            if in_outer && !in_inner {
+                self.set_drag(Some(Drag::Move { start: position, current: position, origins: vec![(edit, f)] }));
+                return cx.notify();
+            }
         }
         if let Some(edit) = self.text_editing().map(|e| e.shape)
             && self.slide().shape(edit).is_some_and(|s| interaction::hits(s, p, slop))
@@ -1222,21 +1253,8 @@ impl SlideEditor {
             self.set_drag(Some(Drag::TableBorder { shape, column, row, start: position, current: position }));
             return cx.notify();
         }
-        if let Some((shape, handle)) = self.handle_under(position) {
-            let Some(s) = self.slide().shape(shape) else { return };
-            let drag = match handle {
-                Some(handle) => Drag::Resize { shape, handle, start: position, current: position, origin: s.frame, rotation: s.rotation },
-                None => {
-                    let c = P::new(s.frame.x as f64 + s.frame.width as f64 / 2.0, s.frame.y as f64 + s.frame.height as f64 / 2.0);
-                    let center = layout.origin + point(px(c.x as f32 * layout.scale), px(c.y as f32 * layout.scale));
-                    Drag::Rotate { shape, start: position, current: position, origin: s.rotation, center }
-                }
-            };
-            self.set_drag(Some(drag));
-            return cx.notify();
-        }
         let hit = interaction::hit_test(self.slide(), p, slop);
-        let shift = event.modifiers.shift;
+        let shift = crate::shell::selection_handles::additive(event.modifiers);
         match hit {
             Some(id) => {
                 // Two clicks on a table: its cell's text (セルの文字の編集).
@@ -1294,7 +1312,7 @@ impl SlideEditor {
                     self.set_selection(selection);
                     return cx.notify();
                 }
-                let already_selected = target_ids.iter().all(|x| selection.contains(x)) && selection.len() == target_ids.len();
+                let already_selected = target_ids.iter().all(|x| selection.contains(x));
                 if !already_selected {
                     self.set_selection(target_ids.clone());
                     selection = target_ids;
@@ -1318,6 +1336,9 @@ impl SlideEditor {
     }
 
     pub(crate) fn on_drag_move(&mut self, position: Point<Pixels>, shift: bool, cx: &mut Context<Self>) {
+        if self.clip_seek_move(position, cx) {
+            return;
+        }
         if self.pptx_ink_move(position, cx) {
             return;
         }
@@ -1340,12 +1361,29 @@ impl SlideEditor {
             }
             cx.notify();
         }
+        // Keep the preview selection in sync during a rubber-band drag, using
+        // the original selection so shrinking the band also removes targets.
+        let band = match (self.pptx_drag(), self.slide_layout()) {
+            (Some(Drag::Band { start, current, before }), Some(layout)) if moved(*start, *current) => {
+                Some((EmuRect::from_corners(layout.to_emu(*start), layout.to_emu(*current)), before.clone()))
+            }
+            _ => None,
+        };
+        if let Some((band, mut selection)) = band {
+            for id in interaction::in_band(self.slide(), band) {
+                if !selection.contains(&id) { selection.push(id); }
+            }
+            self.set_selection(selection);
+        }
         if text && let Some(i) = self.text_index_at(position) {
             self.shape_move_caret(i, true, cx);
         }
     }
 
     pub(crate) fn on_drag_end(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.clip_seek_end() {
+            return cx.notify();
+        }
         if self.pptx_ink_release(cx) {
             return;
         }
@@ -1392,6 +1430,34 @@ impl SlideEditor {
                     }
                     self.set_drag(None);
                     self.run(commands, cx);
+                } else {
+                    self.set_drag(None);
+                    let at=layout.to_emu(current);
+                    let clicked=interaction::hit_test(self.slide(),P::new(at.x as f64,at.y as f64),0.);
+                    // A click on a member of a group selects the whole group (not its text), as the press does.
+                    let members = clicked.map(|id| {
+                        let mut leaves = vec![id];
+                        for g in &self.slide().groups {
+                            let mut all = Vec::new();
+                            Self::collect_group_leaves(g, &mut all);
+                            if all.contains(&id) {
+                                leaves = all;
+                                break;
+                            }
+                        }
+                        leaves
+                    });
+                    if let Some((id, members)) = clicked.zip(members) {
+                        let in_group = members.len() > 1;
+                        self.set_selection(members);
+                        let point=layout.to_emu(start);
+                        let border=self.slide().shape(id).is_some_and(|s|crate::shell::selection_handles::on_border((s.frame.x as f32,s.frame.y as f32,s.frame.width as f32,s.frame.height as f32),s.rotation,(point.x as f32,point.y as f32),3./layout.scale));
+                        if !border && !in_group && self.slide().shape(id).is_some_and(|s|matches!(s.kind,ibis_doc_model::ShapeKind::TextBox(_)|ibis_doc_model::ShapeKind::Auto(_))){
+                            self.begin_text_edit(id,false,false,window,cx);
+                            if let Some(state)=self.pptx_mut(){state.pending_click=Some(current);}
+                        }
+                    }
+
                 }
             }
             Drag::Resize { shape, .. } => {
@@ -1415,6 +1481,12 @@ impl SlideEditor {
                         commands.push(Command::SetConnectorFrame { slide, shape: cid, frame, flip_h, flip_v });
                     }
                     self.run(commands, cx);
+                } else if !moved(start, current) && self.text_editing().is_some_and(|e| e.shape == *shape) {
+                    if let Some(e) = self.text_editing_mut() {
+                        e.is_new = false;
+                    }
+                    self.end_text_edit(window, cx);
+                    self.focus_handle.focus(window, cx);
                 }
             }
             Drag::Rotate { shape, .. } => {
@@ -1538,7 +1610,7 @@ impl SlideEditor {
     /// Keys while a text is edited: the caret, selection, deleting,
     /// Enter, and the format shortcuts. Characters come through the text
     /// input (`text_edit.rs`), not here.
-    fn on_text_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn on_text_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_drawing_path() {
             match event.keystroke.key.as_str() {
                 "enter" => {
@@ -1650,11 +1722,23 @@ impl SlideEditor {
             }
             "b" | "i" | "u" if command => {
                 cx.stop_propagation();
-                use ibis_doc_model::CharacterFormat;
-                match key {
-                    "b" => self.toggle_characters(window, cx, |b, r| b.with_run(r).bold, |on| CharacterFormat { bold: Some(on), ..Default::default() }),
-                    "i" => self.toggle_characters(window, cx, |b, r| b.with_run(r).italic, |on| CharacterFormat { italic: Some(on), ..Default::default() }),
-                    _ => self.toggle_characters(window, cx, |_, r| r.underline, |on| CharacterFormat { underline: Some(on), ..Default::default() }),
+                if self.is_document() {
+                    let change = match key {
+                        "b" => ibis_doc_model::RunChange::Bold(true),
+                        "i" => ibis_doc_model::RunChange::Italic(true),
+                        _ => {
+                            let cur_u = self.box_edit_current_format().and_then(|(f, _)| f.underline).unwrap_or(false);
+                            ibis_doc_model::RunChange::Underline(!cur_u)
+                        }
+                    };
+                    self.apply_box_edit_run_change(&change, cx);
+                } else {
+                    use ibis_doc_model::CharacterFormat;
+                    match key {
+                        "b" => self.toggle_characters(window, cx, |b, r| b.with_run(r).bold, |on| CharacterFormat { bold: Some(on), ..Default::default() }),
+                        "i" => self.toggle_characters(window, cx, |b, r| b.with_run(r).italic, |on| CharacterFormat { italic: Some(on), ..Default::default() }),
+                        _ => self.toggle_characters(window, cx, |_, r| r.underline, |on| CharacterFormat { underline: Some(on), ..Default::default() }),
+                    }
                 }
             }
             _ => {
@@ -1768,7 +1852,7 @@ impl SlideEditor {
 }
 
 /// A shortcut as the menus write it (`⌥⇧⌘↑`): its modifiers (bits: ⌘ 1, ⌃ 2, ⌥ 4, ⇧ 8) and key.
-fn parse_shortcut(label: &str) -> Option<(u8, String)> {
+pub(crate) fn parse_shortcut(label: &str) -> Option<(u8, String)> {
     let mut bits = 0u8;
     let mut key = String::new();
     for c in label.chars() {
@@ -1784,7 +1868,7 @@ fn parse_shortcut(label: &str) -> Option<(u8, String)> {
 }
 
 /// The key pressed in the same form as [`parse_shortcut`].
-fn shortcut_of(k: &Keystroke) -> Option<(u8, String)> {
+pub(crate) fn shortcut_of(k: &Keystroke) -> Option<(u8, String)> {
     let m = &k.modifiers;
     let bits = u8::from(m.platform) | u8::from(m.control) << 1 | u8::from(m.alt) << 2 | u8::from(m.shift) << 3;
     let key = match k.key.as_str() {

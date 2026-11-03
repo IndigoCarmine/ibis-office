@@ -54,6 +54,7 @@ pub(crate) mod drawing_table_style;
 #[path = "../../../test/fixtures.rs"]
 mod fixtures;
 pub mod geometry;
+pub mod shape_clipboard;
 pub mod math_xml;
 mod new_file;
 mod package;
@@ -92,7 +93,10 @@ pub mod master_page;
 pub mod handout_master;
 pub mod notes_page;
 mod xls_formula;
+pub mod font_digit;
+pub mod locale_paper;
 mod xlsx;
+pub use xlsx::{EXCEL_METRICS, ExcelMetrics};
 mod xlsx_external;
 mod xlsx_pivot;
 mod xlsx_slicer;
@@ -158,7 +162,7 @@ pub use geometry::text_warp as text_warp_geometry;
 pub use new_file::new_presentation;
 pub use save::{CsvProgressiveChunk, ForeignSlide, NewChartKind, Opened, SaveOptions, Source, open, open_progressive};
 pub use reader::script_pieces;
-pub use save::pptx_chart_data::{ChartData, SeriesRefs, bubble_refs_for_range, chart_from_data, sheet_chart_from_data, format_ref, grown_refs, parse_ref, quote_sheet, refs_for_range, refs_range, scatter_refs_for_range, sheet_of, stock_refs_for_range};
+pub use save::pptx_chart_data::{ChartData, SeriesRefs, bubble_refs_for_range, chart_from_data, sheet_chart_from_data, format_ref, grown_refs, parse_ref, quote_sheet, refs_for_range, preferred_series_columns, refs_range, scatter_refs_for_range, sheet_of, stock_refs_for_range};
 pub use svg_convert::convert_svg_to_shapes;
 
 /// Why a file could not be read. The message is for the user.
@@ -204,6 +208,9 @@ pub fn read(data: &[u8]) -> Result<Presentation, Error> {
     } else if odp::is_odp(data) {
         converted = odp::to_pptx(data)?;
         converted.as_slice()
+    } else if docx_convert::is_odt(data) {
+        converted = docx_convert::import_odt_to_docx_bytes(data)?;
+        converted.as_slice()
     } else {
         data
     };
@@ -232,7 +239,7 @@ impl Kind {
         match extension.to_ascii_lowercase().as_str() {
             "pptx" | "pptm" | "ppsx" | "ppsm" | "potx" | "potm" | "ppt" | "pps" | "pot" | "odp" | "otp" => Some(Kind::Presentation),
             "xlsx" | "xlsm" | "xlsb" | "xls" | "ods" | "ots" | "csv" | "tsv" | "tab" | "xltx" | "xltm" | "xlk" => Some(Kind::Workbook),
-            "docx" | "docm" | "dotx" | "dotm" => Some(Kind::Document),
+            "docx" | "docm" | "dotx" | "dotm" | "odt" | "ott" => Some(Kind::Document),
             _ => None,
         }
     }

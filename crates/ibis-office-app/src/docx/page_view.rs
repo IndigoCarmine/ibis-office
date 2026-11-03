@@ -9,7 +9,7 @@ use gpui_kit::*;
 use ibis_doc_model::{EMU_PER_POINT, EmuRect, FlowDocument};
 
 use crate::docx::flow_layout::{Item, pages};
-use crate::render::shape_view::{Resources, shape_element};
+use crate::render::shape_view::Resources;
 
 /// Page `index` of `document`, filling `frame` (frame-relative).
 pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: EmuRect, scale: f32, res: &Resources) -> Div {
@@ -33,10 +33,10 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
         }
         match item {
             Item::Picture { media, x, y, w, h } => {
-                if let Some(image) = res.picture(*media) {
+                if let Some(image) = res.picture_at_size(*media, w * k, h * k) {
                     front_z.push(0);
                     front_pictures.push(
-                        img(image).absolute().left(px(x * k)).top(px(y * k)).w(px(w * k)).h(px(h * k)).into_any_element(),
+                        img(image).absolute().left(px(x * k)).top(px(y * k)).w(px(w * k)).h(px(h * k)).object_fit(ObjectFit::Fill).into_any_element(),
                     );
                 }
             }
@@ -63,7 +63,11 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                     (w * EMU_PER_POINT as f32).round() as i64,
                     (h * EMU_PER_POINT as f32).round() as i64,
                 );
-                let elem = shape_element(shape, s_frame, scale, res, None);
+                let positions = res
+                    .edited_box
+                    .as_ref()
+                    .and_then(|(id, pos, _)| (*id == shape.id).then(|| pos.clone()));
+                let elem = crate::render::shape_view::shape_element_with_positions(shape, s_frame, scale, res, None, positions.as_ref());
                 let is_behind = shape.floating.as_ref().map_or(false, |f| f.behind_doc);
                 if is_behind && i >= body_items_count {
                     header_behind.push(elem);
@@ -150,13 +154,38 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                                 }
                                 let run = TextRun { len: s.len(), font: font.clone(), color: *color, background_color: None, underline: None, strikethrough: None };
                                 let shaped = window.text_system().shape_line(SharedString::from(s.to_string()), px(size_px), &[run], None);
+                                if font.features.tag_value_list().iter().any(|(tag,value)|tag=="vert" && *value==1)
+                                    && let Some(run)=shaped.runs.first()
+                                    && crate::render::vertical_text::paint_glyph(window,point(o.x+px((x+dx)*k),o.y+px(y*k)),run.font_id,c,size_px,*color)
+                                {
+                                    continue;
+                                }
+                                if matches!(c, '☐' | '☑' | '☒') && f32::from(shaped.width) < size_px * 0.85 {
+                                    let box_run = TextRun { len: "□".len(), font: font.clone(), color: *color, background_color: None, underline: None, strikethrough: None };
+                                    let box_shaped = window.text_system().shape_line(SharedString::from("□"), px(size_px), &[box_run], None);
+                                    if f32::from(box_shaped.width) >= size_px * 0.9 {
+                                        let ascent = f32::from(box_shaped.ascent);
+                                        let origin = point(o.x + px((x + dx) * k), o.y + px(y * k - ascent));
+                                        box_shaped.paint(origin, box_shaped.ascent + box_shaped.descent, TextAlign::Left, None, window, cx).ok();
+                                        if c != '☐' {
+                                            let mark_str = if c == '☑' { "✓" } else { "×" };
+                                            let mark_run = TextRun { len: mark_str.len(), font: font.clone(), color: *color, background_color: None, underline: None, strikethrough: None };
+                                            let mark_size = size_px * 0.75;
+                                            let mark_shaped = window.text_system().shape_line(SharedString::from(mark_str), px(mark_size), &[mark_run], None);
+                                            let mx = o.x + px((x + dx) * k + (size_px - f32::from(mark_shaped.width)) * 0.5);
+                                            let my = o.y + px(y * k - f32::from(mark_shaped.ascent) - size_px * 0.08);
+                                            mark_shaped.paint(point(mx, my), mark_shaped.ascent + mark_shaped.descent, TextAlign::Left, None, window, cx).ok();
+                                        }
+                                        continue;
+                                    }
+                                }
                                 // The line box's top: the baseline less the ascent.
                                 let ascent = f32::from(shaped.ascent);
                                 let origin = point(o.x + px((x + dx) * k), o.y + px(y * k - ascent));
                                 shaped.paint(origin, shaped.ascent + shaped.descent, TextAlign::Left, None, window, cx).ok();
                             }
                         }
-                        Item::Turned { x, y, text, font, size: font_size, color, turns } => {
+                        Item::Turned { x, y, text, font, size: font_size, color, turns, xscale } => {
                             // Each glyph moved where turning the line about its
                             // start takes it, and turned about itself there.
                             let run = TextRun { len: text.len(), font: font.clone(), color: *color, background_color: None, underline: None, strikethrough: None };
@@ -173,8 +202,28 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                                     let transformation = TransformationMatrix::unit()
                                         .translate(pivot)
                                         .rotate(Radians(angle))
+                                        .scale(size(*xscale, 1.0))
                                         .translate(point(ScaledPixels(-pivot.x.0), ScaledPixels(-pivot.y.0)));
                                     let _ = window.paint_glyph_transformed(turned, r.font_id, glyph.id, px(font_size * k), *color, transformation);
+                                }
+                            }
+                        }
+                        Item::Scaled { x, y, text, font, size: font_size, color, xscale } => {
+                            // The glyph squeezed about where it starts.
+                            let color = &dark_color(*color, dark);
+                            let run = TextRun { len: text.len(), font: font.clone(), color: *color, background_color: None, underline: None, strikethrough: None };
+                            let shaped = window.text_system().shape_line(text.clone(), px(font_size * k), &[run], None);
+                            let start = point(o.x + px(x * k), o.y + px(y * k));
+                            let scale = window.scale_factor();
+                            let pivot = point(ScaledPixels(f32::from(start.x) * scale), ScaledPixels(f32::from(start.y) * scale));
+                            for r in &shaped.runs {
+                                for glyph in &r.glyphs {
+                                    let at = point(start.x + glyph.position.x, start.y + glyph.position.y);
+                                    let transformation = TransformationMatrix::unit()
+                                        .translate(pivot)
+                                        .scale(size(*xscale, 1.0))
+                                        .translate(point(ScaledPixels(-pivot.x.0), ScaledPixels(-pivot.y.0)));
+                                    let _ = window.paint_glyph_transformed(at, r.font_id, glyph.id, px(font_size * k), *color, transformation);
                                 }
                             }
                         }

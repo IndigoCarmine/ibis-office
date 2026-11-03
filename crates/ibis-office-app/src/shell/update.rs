@@ -206,7 +206,7 @@ fn clear_attempts_if_updated() {
 /// The installed copy to replace: the `.app` (macOS), the folder of `AcaudaOffice.exe` (Windows) or the AppImage (Linux), or why it cannot be.
 fn installed_copy() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-    let exe = exe.canonicalize().unwrap_or(exe);
+    let exe = crate::shell::plain_path::canonical(&exe).unwrap_or(exe);
     let text = exe.to_string_lossy().replace('\\', "/");
     if text.contains("/target/release/") || text.contains("/target/debug/") || text.contains("/target/dist/") {
         return Err("a build run from the source tree".into());

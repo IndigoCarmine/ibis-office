@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::flow_command::{self, Container};
 use ibis_doc_model::{
     Block, CaseConversion, Command, DocumentProtection, FlowAlign, FlowCommand, FlowDocument, FlowParagraph, FlowPos, FlowRun, FlowRunKind, FlowRunStyle, FormFieldData, FormFieldKind, InsertFormat, LineHeight, ParaChange, Rgb,
@@ -173,6 +174,13 @@ actions!(
         ApplyHeading2,
         ApplyHeading3,
         ApplyNormalStyle,
+        /// Double underline and underline words only (⌘⇧D・⌘⇧W, Ctrl+Shift+D・W), a footnote and an endnote (⌘⌥F・⌘⌥E, Alt+Ctrl+F・E),
+        /// and the bullet list (⌘⇧L, Ctrl+Shift+L).
+        ToggleDoubleUnderline,
+        ToggleWordUnderline,
+        InsertFootnote,
+        InsertEndnote,
+        ToggleBulletList,
     ]
 );
 
@@ -196,6 +204,11 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(&(if cfg!(target_os = "macos") { "alt-cmd-2" } else { "alt-ctrl-2" }), ApplyHeading2, c),
         KeyBinding::new(&(if cfg!(target_os = "macos") { "alt-cmd-3" } else { "alt-ctrl-3" }), ApplyHeading3, c),
         KeyBinding::new(&m("shift-n"), ApplyNormalStyle, c),
+        KeyBinding::new(&m("shift-d"), ToggleDoubleUnderline, c),
+        KeyBinding::new(&m("shift-w"), ToggleWordUnderline, c),
+        KeyBinding::new(&(if cfg!(target_os = "macos") { "alt-cmd-f" } else { "alt-ctrl-f" }), InsertFootnote, c),
+        KeyBinding::new(&(if cfg!(target_os = "macos") { "alt-cmd-e" } else { "alt-ctrl-e" }), InsertEndnote, c),
+        KeyBinding::new(&m("shift-l"), ToggleBulletList, c),
         KeyBinding::new(&outline("left"), OutlinePromote, c),
         KeyBinding::new(&outline("right"), OutlineDemote, c),
         KeyBinding::new(&outline("up"), OutlineMoveUp, c),
@@ -297,7 +310,7 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-shift-f11", UnlockField, c),
         KeyBinding::new("ctrl-shift-h", ToggleHidden, c),
         KeyBinding::new(&m("shift-x"), ToggleHidden, c),
-        KeyBinding::new(if cfg!(target_os = "macos") { "alt-cmd-s" } else { "alt-ctrl-s" }, ToggleSplit, c),
+        KeyBinding::new(if cfg!(target_os = "macos") { "alt-cmd-s" } else { "alt-ctrl-s" }, ToggleSplit, None),
     ]
 }
 
@@ -546,6 +559,8 @@ impl SlideEditor {
         }
         state.caret = Some(pos);
         state.pending = None;
+        state.shape_selected = false;
+        state.selected_shapes.clear();
         if state.anchor == state.caret {
             state.anchor = None;
         }
@@ -643,13 +658,21 @@ impl SlideEditor {
         let lines = self.flow_lines();
         let on_page: Vec<&LineGeom> = lines.iter().filter(|l| l.page == page).collect();
 
-        // Horizontal line: if Y is within line height and X is beyond the rightmost character, return the end of line.
+        // Horizontal line: if Y is within line height and X is beyond the rightmost character, return the end of line
+        // unless another line in the same vertical band covers X or starts between this line and X (e.g. table cells / columns).
         let right_space_line = on_page.iter().filter(|l| {
             if l.vertical {
                 false
             } else {
                 let right = l.x + l.stops.last().map_or(0.0, |s| s.1);
-                y >= l.y && y <= l.y + l.h && x > right
+                y >= l.y && y <= l.y + l.h && x > right && !on_page.iter().any(|o| {
+                    if o.vertical || y < o.y || y > o.y + o.h {
+                        false
+                    } else {
+                        let o_right = o.x + o.stops.last().map_or(0.0, |s| s.1);
+                        (o.x <= x && x <= o_right) || (o.x > l.x && o.x <= x)
+                    }
+                })
             }
         }).min_by(|a, b| {
             let right_a = a.x + a.stops.last().map_or(0.0, |s| s.1);
@@ -666,7 +689,14 @@ impl SlideEditor {
         let bottom_space_line = on_page.iter().filter(|l| {
             if l.vertical {
                 let bottom = l.y + l.stops.last().map_or(0.0, |s| s.1);
-                x >= l.x && x <= l.x + l.h && y > bottom
+                x >= l.x && x <= l.x + l.h && y > bottom && !on_page.iter().any(|o| {
+                    if !o.vertical || x < o.x || x > o.x + o.h {
+                        false
+                    } else {
+                        let o_bottom = o.y + o.stops.last().map_or(0.0, |s| s.1);
+                        (o.y <= y && y <= o_bottom) || (o.y > l.y && o.y <= y)
+                    }
+                })
             } else {
                 false
             }
@@ -1226,6 +1256,7 @@ impl SlideEditor {
 
     /// ツール > オートコレクトのオプション…: the panel shared with the workbook's (its settings are the same).
     pub(crate) fn open_doc_autocorrect_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let panel = crate::shell::autocorrect::AutoCorrectPanel::new(window, cx);
         if let Some(state) = self.doc_state_mut() {
             state.find = None;
@@ -1270,12 +1301,14 @@ impl SlideEditor {
 
     /// ツール > 自動回復の設定… (DOCX-FILE-014).
     pub(crate) fn open_doc_autorecover_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.close_doc_panels();
         self.open_autorecover_settings(window, cx);
     }
 
     /// ファイル > 未保存のファイルの回復… (DOCX-FILE-015).
     pub(crate) fn open_doc_recover_unsaved(&mut self, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.close_doc_panels();
         self.open_recover_unsaved(cx);
     }
@@ -1475,6 +1508,18 @@ impl SlideEditor {
     }
 
     pub(crate) fn type_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.doc_state().is_some_and(|s| s.shape_selected && s.box_edit.is_none())
+            && self.text_box_at_caret().is_some_and(|i| i.has_text)
+        {
+            self.mutate_active_shape_text(
+                |body, _| {
+                    let at = body.text().chars().count();
+                    body.splice(at, 0, text);
+                },
+                cx,
+            );
+            return;
+        }
         if text == " " && self.toggle_checkbox_around_caret(cx) {
             return;
         }
@@ -1830,8 +1875,60 @@ impl SlideEditor {
         self.set_caret(FlowPos::new(start.para, start.offset + 2), false, cx);
     }
 
+    /// Whether the active shape or text box (`box_edit` or `shape_selected`) has a checklist bullet on its current paragraph(s).
+    pub(crate) fn shape_has_checklist(&self) -> bool {
+        let Some((at, range, _)) = self.active_shape_text_target() else { return false };
+        let Some(body) = self.shape_text_body_at(at) else { return false };
+        let (s, e) = range.unwrap_or_else(|| {
+            let c = self.doc_state().and_then(|st| st.box_edit.as_ref()).map_or(0, |b| b.edit.caret);
+            (c, c)
+        });
+        let touched = body.paragraphs_in(s, e);
+        !touched.is_empty()
+            && touched.clone().all(|i| {
+                body.paragraphs[i]
+                    .bullet
+                    .as_ref()
+                    .is_some_and(|b| matches!(b.text.as_str(), "\u{2610}" | "\u{2611}"))
+            })
+    }
+
     /// Toggle checklist / checkbox on current paragraph or insert one:
     pub(crate) fn toggle_checklist(&mut self, cx: &mut Context<Self>) {
+        if self.active_shape_text_target().is_some() {
+            let caret_off = self.doc_state().and_then(|s| s.box_edit.as_ref()).map(|b| b.edit.caret);
+            self.mutate_active_shape_text(
+                move |body, range| {
+                    let (s, e) = range.unwrap_or_else(|| {
+                        let c = caret_off.unwrap_or(0);
+                        (c, if caret_off.is_some() { c } else { body.text().chars().count() })
+                    });
+                    let touched = body.paragraphs_in(s, e);
+                    let all_checked = !touched.is_empty()
+                        && touched.clone().all(|i| {
+                            body.paragraphs[i]
+                                .bullet
+                                .as_ref()
+                                .is_some_and(|b| matches!(b.text.as_str(), "\u{2610}" | "\u{2611}"))
+                        });
+                    let list = if all_checked {
+                        ibis_doc_model::ListKind::None
+                    } else {
+                        ibis_doc_model::ListKind::Symbol('\u{2610}')
+                    };
+                    body.format_paragraphs(
+                        s,
+                        e,
+                        &ibis_doc_model::ParagraphFormat {
+                            list: Some(list),
+                            ..Default::default()
+                        },
+                    );
+                },
+                cx,
+            );
+            return;
+        }
         let Some((start, _)) = self.ordered_selection() else { return };
         let Some(doc) = self.flow() else { return };
         let Some(p) = flow_command::paragraph(doc, start.para) else { return };
@@ -2674,6 +2771,31 @@ impl SlideEditor {
     /// 箇条書き・番号付きリスト: the paragraphs become items of a list of
     /// bullets (or numbers), or stop being list items if they are already.
     pub(crate) fn toggle_list(&mut self, bullet: bool, cx: &mut Context<Self>) {
+        if self.active_shape_text_target().is_some() {
+            let want = if bullet { ibis_doc_model::ListKind::Bullet } else { ibis_doc_model::ListKind::Numbered };
+            self.mutate_active_shape_text(
+                move |body, range| {
+                    let (s, e) = range.unwrap_or_else(|| (0, body.text().chars().count()));
+                    let pr = body.paragraphs_in(s, e);
+                    let cur_is_same = body
+                        .paragraphs
+                        .get(*pr.start())
+                        .and_then(|p| p.bullet.as_ref())
+                        .is_some_and(|b| b.auto.is_none() == bullet);
+                    let next = if cur_is_same { ibis_doc_model::ListKind::None } else { want };
+                    body.format_paragraphs(
+                        s,
+                        e,
+                        &ibis_doc_model::ParagraphFormat {
+                            list: Some(next),
+                            ..Default::default()
+                        },
+                    );
+                },
+                cx,
+            );
+            return;
+        }
         let Some((start, _)) = self.ordered_selection() else { return };
         let Some(doc) = self.flow().cloned() else { return };
         let numbering = &doc.styles.numbering;
@@ -2736,6 +2858,29 @@ impl SlideEditor {
 
     /// Backspace (`forward` false) or Delete.
     pub(crate) fn delete_char(&mut self, forward: bool, cx: &mut Context<Self>) {
+        if self.doc_state().is_some_and(|s| s.shape_selected && s.box_edit.is_none() && s.selected_shapes.len() > 1) {
+            let mut shapes: Vec<FlowPos> = self.all_selected_shapes().into_iter().map(|(_, _, at, _)| at).collect();
+            if let Some(doc) = self.flow() {
+                shapes.sort_by_key(|pos| {
+                    let p_idx = doc.body.iter().position(|b| matches!(b, Block::Paragraph(p) if p.id == pos.para)).unwrap_or(0);
+                    (p_idx, pos.offset)
+                });
+            }
+            shapes.dedup();
+            let first = shapes.first().copied();
+            let commands: Vec<FlowCommand> = shapes
+                .into_iter()
+                .rev()
+                .map(|at| FlowCommand::Delete {
+                    from: at,
+                    to: FlowPos::new(at.para, at.offset + 1),
+                })
+                .collect();
+            if !commands.is_empty() && self.run_flow(commands, cx) && let Some(first) = first {
+                self.set_caret(first, false, cx);
+            }
+            return;
+        }
         // Backspace at a list item's start takes its number away first.
         if !forward && self.list_item_at_start().is_some() {
             self.apply_para_change(ParaChange::List(None), cx);
@@ -2817,6 +2962,9 @@ impl SlideEditor {
 
     /// The direct formatting at the selection's start (or what typing would take).
     pub(crate) fn current_format(&self) -> Option<(RunFormat, ibis_doc_model::FlowRunStyle)> {
+        if let Some(fmt) = self.box_edit_current_format() {
+            return Some(fmt);
+        }
         let (start, end) = self.ordered_selection()?;
         let p = self.paragraph_of(start.para)?;
         if let Some(pending) = self.doc_state().and_then(|s| s.pending.clone()) {
@@ -2835,6 +2983,9 @@ impl SlideEditor {
 
     /// Apply a character format to the selection, or to what is typed next.
     pub(crate) fn apply_run_change(&mut self, change: RunChange, cx: &mut Context<Self>) {
+        if self.apply_box_edit_run_change(&change, cx) {
+            return;
+        }
         // A selection of several ranges: all of them, as one step.
         if self.has_extra_selections() && self.flow().is_some_and(|d| !d.track_changes && (super::flow_layout::showing_markup() || !order(d).iter().filter_map(|&id| flow_command::paragraph(d, id)).any(|p| p.runs.iter().any(|r| r.revision.is_some())))) {
             let ranges = self.selection_ranges();
@@ -2895,6 +3046,12 @@ impl SlideEditor {
     pub(crate) fn toggle_underline(&mut self, cx: &mut Context<Self>) {
         let on = self.current_format().is_some_and(|(_, s)| s.underline);
         self.apply_run_change(RunChange::Underline(!on), cx);
+    }
+
+    /// ⌘⇧D (double) and ⌘⇧W (words only): that kind of underline, or none when the text has it already.
+    pub(crate) fn toggle_underline_kind(&mut self, kind: ibis_doc_model::UnderlineStyle, cx: &mut Context<Self>) {
+        let on = self.current_format().is_some_and(|(_, s)| s.underline && s.underline_style == kind);
+        self.set_underline_style(if on { None } else { Some(kind) }, cx);
     }
 
     pub(crate) fn toggle_strike(&mut self, cx: &mut Context<Self>) {
@@ -3013,7 +3170,186 @@ impl SlideEditor {
         self.apply_run_change(RunChange::Position(if on { ibis_doc_model::VerticalPosition::Baseline } else { position }), cx);
     }
 
+    /// Returns `(font_name, size_hundredths_pt)` for every visible run in the current selection (or active shape text).
+    fn target_run_fonts_and_sizes(&self) -> Vec<(String, u32)> {
+        if let Some((at, range, is_box_edit)) = self.active_shape_text_target() {
+            let targets = if is_box_edit || range.is_some() {
+                vec![at]
+            } else {
+                let mut t = self.selected_shape_positions();
+                if !t.contains(&at) {
+                    t.insert(0, at);
+                }
+                t
+            };
+            let mut out = Vec::new();
+            for target_at in targets {
+                let Some(p) = self.paragraph_of(target_at.para) else { continue };
+                let mut offset = 0;
+                for run in &p.runs {
+                    if offset == target_at.offset
+                        && let FlowRunKind::Shape(shape) = &run.kind
+                    {
+                        let body = match &shape.kind {
+                            ibis_doc_model::ShapeKind::Auto(a) => a.text.as_ref(),
+                            ibis_doc_model::ShapeKind::TextBox(b) => Some(b),
+                            _ => None,
+                        };
+                        if let Some(body) = body {
+                            let default_font = body.style.font.clone().unwrap_or_else(|| "游明朝".to_string()); // i18n-ok（フォント名（既定の字形。ファイルに保存される））
+                            let default_size = body.style.font_size;
+                            let mut shape_out = Vec::new();
+                            let mut pos = 0usize;
+                            for para in &body.paragraphs {
+                                for r in &para.runs {
+                                    let n = r.text.chars().count();
+                                    let in_range = match range {
+                                        Some((from, to)) => pos < to && pos + n > from && n > 0,
+                                        None => n > 0,
+                                    };
+                                    if in_range {
+                                        let f = r.style.font.clone().or_else(|| r.style.fallback_font.clone()).unwrap_or_else(|| default_font.clone());
+                                        let sz = r.style.font_size.unwrap_or(default_size);
+                                        shape_out.push((f, sz));
+                                    }
+                                    pos += n;
+                                }
+                                pos += 1;
+                            }
+                            if shape_out.is_empty() {
+                                shape_out.push((default_font, default_size));
+                            }
+                            out.extend(shape_out);
+                        }
+                    }
+                    offset += run.len();
+                }
+            }
+            if !out.is_empty() {
+                return out;
+            }
+        }
+        let Some((start, end)) = self.ordered_selection() else { return Vec::new() };
+        if start == end {
+            return self
+                .current_format()
+                .map(|(_, s)| {
+                    let f = s.east_asian_font.or(s.font).unwrap_or_else(|| "游明朝".to_string()); // i18n-ok（フォント名（既定の字形。ファイルに保存される））
+                    vec![(f, s.size)]
+                })
+                .unwrap_or_default();
+        }
+        let Some(doc) = self.flow() else { return Vec::new() };
+        let order = order(doc);
+        let (Some(i), Some(j)) = (order.iter().position(|&p| p == start.para), order.iter().position(|&p| p == end.para)) else {
+            return Vec::new();
+        };
+        let (min_i, max_i) = (i.min(j), i.max(j));
+        let mut out = Vec::new();
+        for &pid in &order[min_i..=max_i] {
+            let Some(p) = flow_command::paragraph(doc, pid) else { continue };
+            let from_off = if pid == start.para { start.offset } else { 0 };
+            let to_off = if pid == end.para { end.offset } else { p.len() };
+            let mut off = 0usize;
+            for run in &p.runs {
+                let len = run.len();
+                if off < to_off && off + len > from_off && len > 0 && matches!(run.kind, FlowRunKind::Text(_)) {
+                    let style = &run.style;
+                    let f = style.east_asian_font.clone().or_else(|| style.font.clone()).unwrap_or_else(|| "游明朝".to_string()); // i18n-ok（フォント名（既定の字形。ファイルに保存される））
+                    out.push((f, style.size));
+                }
+                off += len;
+            }
+        }
+        out
+    }
+
+    /// Toolbar font selector label: empty string when selection spans multiple distinct fonts.
+    pub(crate) fn selection_font_label(&self) -> String {
+        let items = self.target_run_fonts_and_sizes();
+        let Some((first_font, _)) = items.first() else {
+            return self
+                .current_format()
+                .and_then(|(_, s)| s.east_asian_font.or(s.font))
+                .unwrap_or_else(|| "游明朝".to_string()); // i18n-ok（フォント名（既定の字形。ファイルに保存される））
+        };
+        if items.iter().all(|(f, _)| f == first_font) {
+            first_font.clone()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Toolbar font size display: `"{min}+"` when selection spans multiple distinct font sizes.
+    pub(crate) fn selection_font_size_label(&self) -> Option<gpui_kit::SharedString> {
+        let items = self.target_run_fonts_and_sizes();
+        let first = items.first().map(|(_, sz)| *sz).or_else(|| self.current_format().map(|(_, s)| s.size))?;
+        let min_sz = items.iter().map(|(_, sz)| *sz).min().unwrap_or(first);
+        let max_sz = items.iter().map(|(_, sz)| *sz).max().unwrap_or(first);
+        let pt = min_sz as f32 / 100.0;
+        if min_sz != max_sz {
+            Some(format!("{pt}+").into())
+        } else {
+            Some(format!("{pt}").into())
+        }
+    }
+
     pub(crate) fn step_text_size(&mut self, grow: bool, cx: &mut Context<Self>) {
+        if self.active_shape_text_target().is_some() {
+            self.mutate_active_shape_text(
+                move |body, range| {
+                    let default_sz = body.style.font_size;
+                    if let Some((from, to)) = range {
+                        body.split_runs_at(from);
+                        body.split_runs_at(to);
+                        let mut pos = 0usize;
+                        for para in &mut body.paragraphs {
+                            for run in &mut para.runs {
+                                let n = run.text.chars().count();
+                                if pos >= from && pos + n <= to && n > 0 {
+                                    let cur = run.style.font_size.unwrap_or(default_sz);
+                                    run.style.font_size = Some(ibis_doc_model::step_font_size(cur, grow));
+                                }
+                                pos += n;
+                            }
+                            pos += 1;
+                        }
+                    } else {
+                        body.style.font_size = ibis_doc_model::step_font_size(default_sz, grow);
+                        for para in &mut body.paragraphs {
+                            for run in &mut para.runs {
+                                let cur = run.style.font_size.unwrap_or(default_sz);
+                                run.style.font_size = Some(ibis_doc_model::step_font_size(cur, grow));
+                            }
+                            let cur_end = para.end_style.font_size.unwrap_or(default_sz);
+                            para.end_style.font_size = Some(ibis_doc_model::step_font_size(cur_end, grow));
+                        }
+                    }
+                },
+                cx,
+            );
+            return;
+        }
+        let items = self.target_run_fonts_and_sizes();
+        let has_mixed_sizes = items.first().is_some_and(|(_, first_sz)| items.iter().any(|(_, sz)| *sz != *first_sz));
+        if has_mixed_sizes
+            && let Some((start, end)) = self.ordered_selection()
+            && start != end
+        {
+            let anchor = self.text_selection();
+            self.apply_selected_text_format(
+                |format| {
+                    let next = ibis_doc_model::step_font_size(format.style().size, grow);
+                    RunChange::Size(next).apply(format);
+                },
+                cx,
+            );
+            if let (Some((a, c)), Some(state)) = (anchor, self.doc_state_mut()) {
+                state.anchor = Some(a);
+                state.caret = Some(c);
+            }
+            return;
+        }
         let size = self.current_format().map_or(1050, |(_, s)| s.size);
         self.apply_run_change(RunChange::Size(ibis_doc_model::step_font_size(size, grow)), cx);
     }
@@ -3126,6 +3462,55 @@ impl SlideEditor {
     }
 
     pub(crate) fn apply_para_change(&mut self, change: ParaChange, cx: &mut Context<Self>) {
+        if self.active_shape_text_target().is_some() {
+            let mut pf = ibis_doc_model::ParagraphFormat::default();
+            match &change {
+                ParaChange::Align(a) => {
+                    pf.align = Some(match a {
+                        FlowAlign::Left => ibis_doc_model::TextAlign::Left,
+                        FlowAlign::Center => ibis_doc_model::TextAlign::Center,
+                        FlowAlign::Right => ibis_doc_model::TextAlign::Right,
+                        FlowAlign::Justify => ibis_doc_model::TextAlign::Justify,
+                        FlowAlign::Distribute => ibis_doc_model::TextAlign::Distributed,
+                    });
+                }
+                ParaChange::Line(LineHeight::Auto(twips)) => {
+                    let pct = ((*twips as f64 / 240.0) * 100_000.0).round().max(0.0) as u32;
+                    pf.line_spacing = Some(Some(ibis_doc_model::LineSpacing::Percent(pct)));
+                }
+                ParaChange::Line(LineHeight::Exact(emu) | LineHeight::AtLeast(emu)) => {
+                    let hundredths_pt = (*emu as f64 / 127.0).round().max(0.0) as u32;
+                    pf.line_spacing = Some(Some(ibis_doc_model::LineSpacing::Points(hundredths_pt)));
+                }
+                ParaChange::SpaceBefore(emu) => {
+                    let hundredths_pt = (*emu as f64 / 127.0).round().max(0.0) as u32;
+                    pf.space_before = Some(hundredths_pt);
+                }
+                ParaChange::SpaceAfter(emu) => {
+                    let hundredths_pt = (*emu as f64 / 127.0).round().max(0.0) as u32;
+                    pf.space_after = Some(hundredths_pt);
+                }
+                ParaChange::Left(emu) => {
+                    pf.margin_left = Some(*emu);
+                }
+                _ => return,
+            }
+            self.mutate_active_shape_text(
+                move |body, range| {
+                    if let Some((from, to)) = range {
+                        body.format_paragraphs(from, to, &pf);
+                    } else {
+                        if let Some(a) = pf.align {
+                            body.style.align = a;
+                        }
+                        let end = body.text().chars().count();
+                        body.format_paragraphs(0, end, &pf);
+                    }
+                },
+                cx,
+            );
+            return;
+        }
         let keep = self.text_selection();
         let extras = self.doc_state().map(|s| (s.extra_selections.clone(), s.anchor, s.caret));
         let commands = self.selected_paragraph_format_commands(change);
@@ -3155,6 +3540,24 @@ impl SlideEditor {
     /// the default font), not below 0. If current paragraph is a list item,
     /// adjust the list level (0..=8) instead, as Word does.
     pub(crate) fn step_indent(&mut self, increase: bool, cx: &mut Context<Self>) {
+        if self.active_shape_text_target().is_some() {
+            let delta = if increase { 420 * 635 } else { -420 * 635 };
+            self.mutate_active_shape_text(
+                move |body, range| {
+                    let (s, e) = range.unwrap_or_else(|| (0, body.text().chars().count()));
+                    body.format_paragraphs(
+                        s,
+                        e,
+                        &ibis_doc_model::ParagraphFormat {
+                            indent_by: Some(delta),
+                            ..Default::default()
+                        },
+                    );
+                },
+                cx,
+            );
+            return;
+        }
         let Some((start, _)) = self.ordered_selection() else { return };
         if let Some(list) = self.paragraph_of(start.para).and_then(|p| p.list) {
             let new_level = if increase {
@@ -3329,22 +3732,45 @@ impl SlideEditor {
         self.text_box_at_caret().map(|i| i.anchor)
     }
 
-    /// キャレット位置の図形・テキスト ボックスの垂直配置を設定。
+    /// キャレット位置（および複数選択中のすべて）の図形・テキスト ボックスの垂直配置を設定。
     pub(crate) fn set_shape_anchor(&mut self, anchor: ibis_doc_model::VerticalAnchor, cx: &mut Context<Self>) {
-        let Some(info) = self.text_box_at_caret() else { return };
-        if info.anchor == anchor {
+        let mut targets = self.selected_shape_positions();
+        if targets.is_empty()
+            && let Some(info) = self.text_box_at_caret()
+        {
+            targets.push(info.at);
+        }
+        let commands: Vec<ibis_doc_model::FlowCommand> = targets
+            .into_iter()
+            .filter_map(|at| {
+                let info = self.text_box_near(at)?;
+                (info.anchor != anchor).then_some(ibis_doc_model::FlowCommand::SetShapeAnchor { at: info.at, anchor })
+            })
+            .collect();
+        if commands.is_empty() {
             return;
         }
         let keep = self.text_selection();
-        if self.run_flow(vec![ibis_doc_model::FlowCommand::SetShapeAnchor { at: info.at, anchor }], cx) {
+        let keep_multi = self.doc_state().map(|s| s.selected_shapes.clone()).unwrap_or_default();
+        let was_selected = self.doc_state().is_some_and(|s| s.shape_selected);
+        let box_edit_backup = self.doc_state_mut().and_then(|s| s.box_edit.take());
+        if self.run_flow(commands, cx) {
             if let (Some((a, c)), Some(state)) = (keep, self.doc_state_mut()) {
                 state.anchor = Some(a);
                 state.caret = Some(c);
+                state.shape_selected = was_selected;
+                state.selected_shapes = keep_multi;
             }
             if let Some(state) = self.doc_state_mut().and_then(|s| s.text_box.as_mut()) {
                 state.anchor = anchor;
                 state.initial.anchor = anchor;
             }
+        }
+        if let Some(edit) = box_edit_backup {
+            if let Some(state) = self.doc_state_mut() {
+                state.box_edit = Some(edit);
+            }
+            self.sync_docx_edited_box_resource();
         }
         cx.notify();
     }
@@ -3407,6 +3833,10 @@ impl SlideEditor {
     }
 
     pub(crate) fn copy_text(&mut self, cx: &mut Context<Self>) {
+        if self.doc_state().is_some_and(|s|s.shape_selected && s.box_edit.is_none()){
+            let shapes:Vec<_>=self.all_selected_shapes().into_iter().filter_map(|(_,_,at,_)|self.shape_at(at).cloned()).collect();
+            if self.copy_office_shapes(&shapes,cx){return;}
+        }
         let text = self.selected_text();
         // Several ranges: their text, one range to a line (no formatting).
         if self.has_extra_selections() {
@@ -3668,6 +4098,7 @@ impl SlideEditor {
         if self.default_paste_mode != crate::shell::editor::DefaultPasteMode::KeepTextOnly && self.paste_embedded(cx) {
             return;
         }
+        if self.paste_office_shapes(cx) { return; }
         if self.paste_clipboard_image(cx) {
             return;
         }
@@ -4731,6 +5162,8 @@ impl SlideEditor {
 
     /// テーマの色とフォントのカスタマイズ パネルを開く（DOCX-STYLE-012, DOCX-STYLE-013）。
     pub(crate) fn open_docx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_colors_ui.editing=false;
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         use gpui_kit::component::input::InputState;
         let p = self.presentation();
         let have = p.theme_colors.clone();
@@ -4832,61 +5265,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn docx_theme_panel(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
-        use gpui_kit::component::button::{Button, ButtonVariants as _};
-        use gpui_kit::component::input::Input;
-        use gpui_kit::component::{Sizable as _, h_flex, v_flex};
-        let panel = self.doc_state()?.theme_panel.as_ref()?;
-        let t = crate::shell::i18n::text;
-        let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
-        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.));
-
-        let mut theme_row = h_flex().gap_1().flex_wrap();
-        for theme in &DOCX_DOCUMENT_THEME_PRESETS {
-            let tid = theme.id;
-            let active = self.is_docx_theme_active(tid);
-            let btn = Button::new(format!("docx-theme-preset-{tid}")).small().ghost().label(t(theme.label_key));
-            let btn = if active { btn.border_1() } else { btn };
-            theme_row = theme_row.child(btn.on_click(cx.listener(move |e, _, w, cx| {
-                e.apply_docx_theme(tid, cx);
-                e.open_docx_theme_panel(w, cx);
-            })));
-        }
-        body = body.child(label(&t("docx.design.themes"))).child(theme_row);
-
-        let mut palette_row = h_flex().gap_1().flex_wrap();
-        for preset in &DOCX_THEME_COLORS_PRESETS {
-            let pid = preset.id;
-            let active = self.is_docx_theme_colors_active(pid);
-            let btn = Button::new(format!("docx-color-preset-{pid}")).small().ghost().label(t(preset.label_key));
-            let btn = if active { btn.border_1() } else { btn };
-            palette_row = palette_row.child(btn.on_click(cx.listener(move |e, _, w, cx| {
-                e.apply_docx_theme_colors(pid, cx);
-                e.open_docx_theme_panel(w, cx);
-            })));
-        }
-        body = body.child(label(&t("docx.design.theme-colors"))).child(palette_row);
-
-        for (_, name, input) in &panel.colors {
-            body = body.child(label(&t(name))).child(Input::new(input).small());
-        }
-        for (name, input) in [
-            ("pptx.theme-panel.heading-font-latin", &panel.fonts[0]),
-            ("pptx.theme-panel.heading-font-east-asian", &panel.fonts[1]),
-            ("pptx.theme-panel.body-font-latin", &panel.fonts[2]),
-            ("pptx.theme-panel.body-font-east-asian", &panel.fonts[3]),
-        ] {
-            body = body.child(label(&t(name))).child(Input::new(input).small());
-        }
-        if let Some(error) = &panel.error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error.clone()));
-        }
-        let body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("docx-theme-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_docx_theme_panel(w, cx))))
-                .child(Button::new("docx-theme-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_docx_theme_panel(w, cx)))),
-        );
-        Some(crate::shell::chrome::SidebarPanel { title: t("docx.design.theme-colors.customize"), body: body.into_any_element() })
+        self.shared_theme_colors_panel(cx)
     }
 
     /// ドキュメントのテーマ フォントのプリセットID.
@@ -5021,9 +5400,10 @@ impl SlideEditor {
             if !colors.is_empty() {
                 let fonts = self.presentation().theme_fonts.clone();
                 let _ = self.document.execute(vec![ibis_doc_model::Command::SetTheme { colors, fonts }]);
-                self.sync_document_peers(cx);
             }
         }
+        self.document.reset_history();
+        self.sync_document_peers(cx);
         cx.notify();
     }
 }
@@ -6793,7 +7173,7 @@ impl SlideEditor {
         for run in &p.runs {
             let len = run.len();
             if pos.offset >= at && pos.offset < at + len.max(1) {
-                return matches!(&run.link, Some(ibis_doc_model::Link::Anchor(name)) if find_bookmark(doc, name).is_some());
+                return match &run.link {Some(ibis_doc_model::Link::Url(url))=>!url.is_empty(),Some(ibis_doc_model::Link::Anchor(name))=>find_bookmark(doc,name).is_some(),None=>false};
             }
             at += len;
         }
@@ -6813,6 +7193,7 @@ impl SlideEditor {
             }
             at += len;
         }
+        if let Some(ibis_doc_model::Link::Url(url))=&link {crate::shell::links::open_external_url(url,cx);return true;}
         let Some(ibis_doc_model::Link::Anchor(name)) = link else { return false };
         let Some(target) = find_bookmark(doc, &name) else { return false };
         self.jump_to(target, cx);
@@ -7170,518 +7551,177 @@ impl SlideEditor {
     /// Word 標準の情報バー（編集制限 / 最終版 / 読み取り専用の推奨 / 閲覧モード）。
     pub(crate) fn render_docx_infobar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.is_protection_read_only() {
-            Some(
-                div()
-                    .id("docx-infobar-protected-readonly")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("docx.infobar.protect.readonly.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("docx.infobar.protect.readonly.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-stop-protection")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("docx.infobar.protect.stop"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.stop_protection(cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
+            Some(Self::docx_infobar_banner(
+                "docx-infobar-protected-readonly",
+                crate::shell::i18n::text("docx.infobar.protect.readonly.title"),
+                "docx.infobar.protect.readonly.message",
+                "infobar-btn-stop-protection",
+                "docx.infobar.protect.stop",
+                |this, _, cx| this.stop_protection(cx),
+                cx,
+            ))
         } else if self.is_protection_comments() {
-            Some(
-                div()
-                    .id("docx-infobar-protected-comments")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("docx.infobar.protect.comments.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("docx.infobar.protect.comments.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-stop-protection")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("docx.infobar.protect.stop"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.stop_protection(cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
+            Some(Self::docx_infobar_banner(
+                "docx-infobar-protected-comments",
+                crate::shell::i18n::text("docx.infobar.protect.comments.title"),
+                "docx.infobar.protect.comments.message",
+                "infobar-btn-stop-protection",
+                "docx.infobar.protect.stop",
+                |this, _, cx| this.stop_protection(cx),
+                cx,
+            ))
         } else if self.is_protection_forms() {
-            Some(
-                div()
-                    .id("docx-infobar-protected-forms")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("docx.infobar.protect.forms.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("docx.infobar.protect.forms.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-stop-protection")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("docx.infobar.protect.stop"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.stop_protection(cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
+            Some(Self::docx_infobar_banner(
+                "docx-infobar-protected-forms",
+                crate::shell::i18n::text("docx.infobar.protect.forms.title"),
+                "docx.infobar.protect.forms.message",
+                "infobar-btn-stop-protection",
+                "docx.infobar.protect.stop",
+                |this, _, cx| this.stop_protection(cx),
+                cx,
+            ))
         } else if self.is_formatting_protected() {
-            Some(
-                div()
-                    .id("docx-infobar-protected-formatting")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("docx.infobar.protect.formatting.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("docx.infobar.protect.formatting.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-stop-protection")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("docx.infobar.protect.stop"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.stop_protection(cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
+            Some(Self::docx_infobar_banner(
+                "docx-infobar-protected-formatting",
+                crate::shell::i18n::text("docx.infobar.protect.formatting.title"),
+                "docx.infobar.protect.formatting.message",
+                "infobar-btn-stop-protection",
+                "docx.infobar.protect.stop",
+                |this, _, cx| this.stop_protection(cx),
+                cx,
+            ))
         } else if self.is_mark_as_final() {
-            Some(
-                div()
-                    .id("docx-infobar-final")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("docx.infobar.final.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("docx.infobar.final.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-edit-anyway")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("docx.infobar.final.edit-anyway"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.edit_anyway(cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
+            Some(Self::docx_infobar_banner(
+                "docx-infobar-final",
+                crate::shell::i18n::text("docx.infobar.final.title"),
+                "docx.infobar.final.message",
+                "infobar-btn-edit-anyway",
+                "docx.infobar.final.edit-anyway",
+                |this, _, cx| this.edit_anyway(cx),
+                cx,
+            ))
         } else if self.is_read_only_recommended() && !self.is_read_only_dismissed() {
-            Some(
-                div()
-                    .id("docx-infobar-readonly")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("docx.infobar.readonly.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("docx.infobar.readonly.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-enable-editing")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("docx.infobar.readonly.enable-editing"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.dismiss_read_only(cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
+            Some(Self::docx_infobar_banner(
+                "docx-infobar-readonly",
+                crate::shell::i18n::text("docx.infobar.readonly.title"),
+                "docx.infobar.readonly.message",
+                "infobar-btn-enable-editing",
+                "docx.infobar.readonly.enable-editing",
+                |this, _, cx| this.dismiss_read_only(cx),
+                cx,
+            ))
         } else if self.is_read_mode() {
-            Some(
-                div()
-                    .id("docx-infobar-readmode")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("docx.infobar.readmode.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("docx.infobar.readmode.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-exit-readmode")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("docx.infobar.readmode.exit"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.set_read_mode(false, window, cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
+            Some(Self::docx_infobar_banner(
+                "docx-infobar-readmode",
+                crate::shell::i18n::text("docx.infobar.readmode.title"),
+                "docx.infobar.readmode.message",
+                "infobar-btn-exit-readmode",
+                "docx.infobar.readmode.exit",
+                |this, window, cx| this.set_read_mode(false, window, cx),
+                cx,
+            ))
         } else if self.is_viewing_mode() {
-            Some(
-                div()
-                    .id("docx-infobar-viewing")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("docx.infobar.viewing.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("docx.infobar.viewing.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-switch-to-editing")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("docx.infobar.viewing.edit"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.set_interaction_mode(ibis_doc_model::DocumentInteractionMode::Editing, window, cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
+            Some(Self::docx_infobar_banner(
+                "docx-infobar-viewing",
+                crate::shell::i18n::text("docx.infobar.viewing.title"),
+                "docx.infobar.viewing.message",
+                "infobar-btn-switch-to-editing",
+                "docx.infobar.viewing.edit",
+                |this, window, cx| this.set_interaction_mode(ibis_doc_model::DocumentInteractionMode::Editing, window, cx),
+                cx,
+            ))
         } else if self.is_docx_compatibility_mode() {
             let mode_name = self.docx_compatibility_mode_name();
-            let title_text = format!("{} ({})", crate::shell::i18n::text("docx.infobar.compat.title"), mode_name);
-            Some(
-                div()
-                    .id("docx-infobar-compat")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(title_text),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("docx.infobar.compat.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-convert-compat")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("docx.infobar.compat.convert"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.convert_docx_to_current_format(cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
+            let title_text: SharedString = format!("{} ({})", crate::shell::i18n::text("docx.infobar.compat.title"), mode_name).into();
+            Some(Self::docx_infobar_banner(
+                "docx-infobar-compat",
+                title_text,
+                "docx.infobar.compat.message",
+                "infobar-btn-convert-compat",
+                "docx.infobar.compat.convert",
+                |this, _, cx| this.convert_docx_to_current_format(cx),
+                cx,
+            ))
         } else {
             None
         }
     }
 
+    #[inline(never)]
+    fn docx_infobar_banner(
+        bar_id: &'static str,
+        title: SharedString,
+        msg_key: &'static str,
+        btn_id: &'static str,
+        btn_key: &'static str,
+        on_click: fn(&mut Self, &mut Window, &mut Context<Self>),
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .id(bar_id)
+            .w_full()
+            .bg(rgb(0xfff4ce))
+            .border_b_1()
+            .border_color(rgb(0xedebe9))
+            .px(px(16.))
+            .py(px(6.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(rgb(0x323130)).child(title))
+                    .child(div().text_size(px(12.)).text_color(rgb(0x605e5c)).child(crate::shell::i18n::text(msg_key))),
+            )
+            .child(
+                div()
+                    .id(btn_id)
+                    .px(px(12.))
+                    .py(px(4.))
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(0x8a8886))
+                    .bg(rgb(0xffffff))
+                    .text_size(px(12.))
+                    .text_color(rgb(0x323130))
+                    .cursor_pointer()
+                    .hover(|h| h.bg(rgb(0xf3f2f1)))
+                    .child(crate::shell::i18n::text(btn_key))
+                    .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx))),
+            )
+            .into_any_element()
+    }
+
     /// Escape キー押下時の処理 (Immersive Reader 解除 > Focus Mode 解除 > Read Mode / Viewing Mode 解除 > 書式のコピー/貼り付け解除)。
     pub(crate) fn handle_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.doc_state().is_some_and(|s| s.shape_drag.is_some() || s.draw_box.is_some() || s.dragging) {
+            if let Some(state) = self.doc_state_mut() {
+                state.shape_drag = None;
+                state.draw_box = None;
+                state.dragging = false;
+            }
+            cx.notify();
+            return;
+        }
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            self.commit_box_edit(window, cx);
+            return;
+        }
+        if self.doc_state().is_some_and(|s| s.shape_selected) {
+            if let Some(state) = self.doc_state_mut() {
+                state.shape_selected = false;
+                state.selected_shapes.clear();
+            }
+            cx.notify();
+            return;
+        }
         if self.is_immersive_reader_enabled() {
             self.close_immersive_reader(window, cx);
             return;
@@ -8139,6 +8179,7 @@ impl SlideEditor {
 
     /// マスター文書（サブ文書管理）サイドバーパネルを開く (DOCX-TOC-016).
     pub(crate) fn open_master_doc_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         use gpui_kit::component::input::InputState;
         let default_target = self
             .subdocument_at_caret()
@@ -8171,7 +8212,6 @@ impl SlideEditor {
     /// マスター文書サイドバーパネルを描画 (DOCX-TOC-016).
     pub(crate) fn master_doc_panel(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
         use gpui_kit::component::button::{Button, ButtonVariants as _};
-        use gpui_kit::component::input::Input;
         use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
         let panel = self.doc_state()?.master_doc_panel.as_ref()?;
         let target_input = panel.target_input.clone();
@@ -8183,15 +8223,14 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_sm().child(t("docx.master-doc.target-label")))
-            .child(Input::new(&target_input).small())
+            .p_0().child(div().text_sm().child(t("docx.master-doc.target-label")))
+            .child(crate::shell::chrome::text_field(&target_input).full_width())
             .child(
                 h_flex()
                     .gap_1()
                     .flex_wrap()
                     .child(
-                        Button::new("master-doc-insert")
-                            .primary()
+                        crate::shell::chrome::primary_button("master-doc-insert")
                             .small()
                             .label(t("docx.master-doc.insert"))
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -8200,7 +8239,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-create-heading")
+                        crate::shell::chrome::action_button("master-doc-create-heading")
                             .small()
                             .label(t("docx.master-doc.create-from-heading"))
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -8213,7 +8252,7 @@ impl SlideEditor {
                     .gap_1()
                     .flex_wrap()
                     .child(
-                        Button::new("master-doc-toggle-expand")
+                        crate::shell::chrome::action_button("master-doc-toggle-expand")
                             .small()
                             .label(t("docx.master-doc.toggle-expand"))
                             .disabled(subs.is_empty())
@@ -8222,7 +8261,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-lock")
+                        crate::shell::chrome::action_button("master-doc-lock")
                             .small()
                             .label(t("docx.master-doc.lock"))
                             .disabled(caret_sub.is_none())
@@ -8232,7 +8271,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-unlink")
+                        crate::shell::chrome::destructive_button("master-doc-unlink",cx)
                             .small()
                             .label(t("docx.master-doc.unlink"))
                             .disabled(caret_sub.is_none())
@@ -8241,7 +8280,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-merge")
+                        crate::shell::chrome::action_button("master-doc-merge")
                             .small()
                             .label(t("docx.master-doc.merge"))
                             .disabled(subs.len() < 2)
@@ -8250,7 +8289,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-split")
+                        crate::shell::chrome::action_button("master-doc-split")
                             .small()
                             .label(t("docx.master-doc.split"))
                             .disabled(caret_sub.is_none())
@@ -8261,7 +8300,7 @@ impl SlideEditor {
             );
 
         if subs.is_empty() {
-            body = body.child(div().text_xs().text_color(rgb(0x5f6368)).child(t("docx.master-doc.empty")));
+            body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(t("docx.master-doc.empty")));
         } else {
             for (idx, (para_id, sub)) in subs.into_iter().enumerate() {
                 let locked = sub.locked;
@@ -8279,7 +8318,7 @@ impl SlideEditor {
                             div()
                                 .id(("subdoc-title", idx))
                                 .flex_1()
-                                .text_xs()
+                                .text_sm()
                                 .cursor_pointer()
                                 .child(format!(
                                     "{} ({}){}{}",
@@ -8293,7 +8332,7 @@ impl SlideEditor {
                                 })),
                         )
                         .child(
-                            Button::new(("subdoc-lock-btn", idx))
+                            crate::shell::chrome::action_button(("subdoc-lock-btn", idx))
                                 .small()
                                 .label(if locked { "🔒" } else { "🔓" })
                                 .selected(locked)

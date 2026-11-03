@@ -27,7 +27,7 @@ const STYLES: &[(&str, &str, &str)] = &[
 ];
 
 /// Text colours offered (Word's standard colours).
-const COLORS: &[(&str, &str, u32)] = &[
+pub(super) const COLORS: &[(&str, &str, u32)] = &[
     ("docx.color.black", "docx.toolbar.automatic-black", 0x000000),
     ("docx.color.dark-red", "_shell.dark-red", 0xc00000),
     ("docx.color.red", "_shell.red", 0xff0000),
@@ -39,6 +39,20 @@ const COLORS: &[(&str, &str, u32)] = &[
     ("docx.color.blue", "_shell.blue", 0x0070c0),
     ("docx.color.dark-blue", "_shell.dark-blue", 0x002060),
     ("docx.color.purple", "_shell.purple", 0x7030a0),
+];
+
+/// Office theme base 10 colors (background 1, text 1, background 2, text 2, accents 1–6).
+pub(super) const THEME_10: [Rgb; 10] = [
+    Rgb(0xffffff),
+    Rgb(0x000000),
+    Rgb(0xe7e6e6),
+    Rgb(0x44546a),
+    Rgb(0x4472c4),
+    Rgb(0xed7d31),
+    Rgb(0xa5a5a5),
+    Rgb(0xffc000),
+    Rgb(0x5b9bd5),
+    Rgb(0x70ad47),
 ];
 
 /// Office theme colors: (id, label, RGB, theme_color_name, theme_tint, theme_shade).
@@ -320,9 +334,41 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
     let style = current.as_ref().map(|(_, s)| s.clone());
     let doc = editor.flow().cloned();
     let caret_paragraph = editor.ordered_selection().and_then(|(s, _)| doc.as_deref().and_then(|d| ibis_doc_model::flow_command::paragraph(d, s.para)));
-    let align = caret_paragraph.map(|p| p.align);
+    let (shape_align, shape_list_kind) = editor
+        .active_shape_text_target()
+        .and_then(|(at, range, _)| {
+            let p = editor.paragraph_of(at.para)?;
+            let mut offset = 0;
+            for run in &p.runs {
+                if offset == at.offset
+                    && let ibis_doc_model::FlowRunKind::Shape(shape) = &run.kind
+                {
+                    let body = match &shape.kind {
+                        ibis_doc_model::ShapeKind::Auto(a) => a.text.as_ref(),
+                        ibis_doc_model::ShapeKind::TextBox(b) => Some(b),
+                        _ => None,
+                    }?;
+                    let idx = range.map(|(from, _)| *body.paragraphs_in(from, from).start()).unwrap_or(0);
+                    let para = body.paragraphs.get(idx);
+                    let ta = para.and_then(|pr| pr.align).unwrap_or(body.style.align);
+                    let fa = match ta {
+                        ibis_doc_model::TextAlign::Left => FlowAlign::Left,
+                        ibis_doc_model::TextAlign::Center => FlowAlign::Center,
+                        ibis_doc_model::TextAlign::Right => FlowAlign::Right,
+                        ibis_doc_model::TextAlign::Justify => FlowAlign::Justify,
+                        ibis_doc_model::TextAlign::Distributed => FlowAlign::Distribute,
+                    };
+                    let lk = para.and_then(|pr| pr.bullet.as_ref()).map(|b| b.auto.is_none());
+                    return Some((Some(fa), lk));
+                }
+                offset += run.len();
+            }
+            None
+        })
+        .unwrap_or((None, None));
+    let align = shape_align.or_else(|| caret_paragraph.map(|p| p.align));
     let contextual_spacing = caret_paragraph.map_or(false, |p| p.contextual_spacing);
-    let list_kind = caret_paragraph.and_then(|p| p.list).and_then(|l| doc.as_deref()?.styles.numbering.level(l.num_id, 0).map(|x| x.format == "bullet"));
+    let list_kind = shape_list_kind.or_else(|| caret_paragraph.and_then(|p| p.list).and_then(|l| doc.as_deref()?.styles.numbering.level(l.num_id, 0).map(|x| x.format == "bullet")));
 
     let style_menu: Vec<MenuEntry> = STYLES
         .iter()
@@ -367,14 +413,14 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             MenuItem::tr("docx.style.new").disabled(!editing).on(|this, window, cx| this.open_new_style_panel(window, cx)).into(),
         ])
         .collect();
-    let font = style.as_ref().and_then(|s| s.east_asian_font.clone().or_else(|| s.font.clone())).unwrap_or_else(|| "游明朝".into()); // i18n-ok（フォント名（既定の字形。ファイルに保存される））
+    let font = editor.selection_font_label();
     let leading = vec![
         MenuItem::tr("docx.font.custom").on(|this, window, cx| this.open_font_edit(window, cx)).into(),
     ];
     let font_menu = crate::shell::font_list::build_font_menu_entries(
         "docx.font",
         leading,
-        Some(&font),
+        (!font.is_empty()).then_some(font.as_str()),
         |f, this, _, cx| {
             // A Japanese font is set for both scripts, as Word does;
             // a Latin one for Latin text only.
@@ -428,7 +474,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         let standard: Vec<Swatch> = COLORS[1..].iter().map(|&(item_id, name, c)| Swatch::with_id(item_id, Rgb(c), crate::shell::i18n::text(name), current == Some(Rgb(c)), &pick)).collect();
         let none = MenuItem::new("docx.color.black", crate::shell::i18n::text("docx.toolbar.automatic-black")).icon("format_color_reset").checked(current == Some(Rgb(0))).on(|this, _, cx| this.set_text_color(Rgb(0), cx));
         let more = MenuItem::tr("docx.color.custom").on(|this, window, cx| this.open_color_edit(false, window, cx));
-        vec![MenuEntry::Palette(Palette { none: Some(none), theme, standard, pick: Some(pick), more: Some(more), button: None })]
+        vec![MenuEntry::Palette(Palette { none: Some(none), theme, standard, pick: Some(pick), more: Some(more), button: None, current:None })]
     };
     // 蛍光ペンの色: Word's sixteen, and "色なし".
     let highlight_menu: Vec<MenuEntry> = {
@@ -443,12 +489,72 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
     };
     let spacing = |id: &'static str, label: &'static str, m: f32| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).on(move |this, _, cx| this.set_line_spacing(m, cx)).into() };
     let _color = style.as_ref().map_or(0, |s| s.color.0);
-    let align_icon = match align {
-        Some(FlowAlign::Center) => "format_align_center",
-        Some(FlowAlign::Right) => "format_align_right",
-        Some(FlowAlign::Justify | FlowAlign::Distribute) => "format_align_justify",
-        _ => "format_align_left",
+    let current_text_align = align.map(|a| match a {
+        FlowAlign::Left => ibis_doc_model::TextAlign::Left,
+        FlowAlign::Center => ibis_doc_model::TextAlign::Center,
+        FlowAlign::Right => ibis_doc_model::TextAlign::Right,
+        FlowAlign::Justify => ibis_doc_model::TextAlign::Justify,
+        FlowAlign::Distribute => ibis_doc_model::TextAlign::Distributed,
+    });
+    let [align_l, align_c, align_r, align_drop] = crate::shell::chrome::align_h_toolbar_items(
+        current_text_align,
+        editing,
+        handler(|this, _, cx| this.set_alignment(FlowAlign::Left, cx)),
+        handler(|this, _, cx| this.set_alignment(FlowAlign::Center, cx)),
+        handler(|this, _, cx| this.set_alignment(FlowAlign::Right, cx)),
+        vec![
+            align_item("align.left", "format_align_left", "docx.toolbar.align-left-l", FlowAlign::Left),
+            align_item("align.center", "format_align_center", "docx.toolbar.center-e", FlowAlign::Center),
+            align_item("align.right", "format_align_right", "docx.toolbar.align-right-r", FlowAlign::Right),
+            align_item("align.justify", "format_align_justify", "docx.toolbar.justify-j", FlowAlign::Justify),
+            align_item("align.distribute", "format_align_justify", "_docx.distribute-j", FlowAlign::Distribute),
+        ],
+    );
+    let shape_anchor = editor.caret_shape_anchor();
+    let current_valign = shape_anchor.or_else(|| {
+        in_table.then(|| match editor.caret_cell_anchor().unwrap_or(ibis_doc_model::CellAnchor::Top) {
+            ibis_doc_model::CellAnchor::Top => ibis_doc_model::VerticalAnchor::Top,
+            ibis_doc_model::CellAnchor::Center => ibis_doc_model::VerticalAnchor::Middle,
+            ibis_doc_model::CellAnchor::Bottom => ibis_doc_model::VerticalAnchor::Bottom,
+        })
+    });
+    let valign_enabled = editing && (shape_anchor.is_some() || in_table);
+    let set_valign = |a: ibis_doc_model::VerticalAnchor| {
+        move |this: &mut SlideEditor, _: &mut gpui_kit::Window, cx: &mut gpui_kit::Context<SlideEditor>| {
+            if this.caret_shape_anchor().is_some() {
+                this.set_shape_anchor(a, cx);
+            } else if this.table_at_caret().is_some() {
+                let cell_anchor = match a {
+                    ibis_doc_model::VerticalAnchor::Top => ibis_doc_model::CellAnchor::Top,
+                    ibis_doc_model::VerticalAnchor::Middle => ibis_doc_model::CellAnchor::Center,
+                    ibis_doc_model::VerticalAnchor::Bottom => ibis_doc_model::CellAnchor::Bottom,
+                };
+                if this.caret_cell_anchor() == Some(cell_anchor) {
+                    return;
+                }
+                this.edit_table(move |r, c, _| ibis_doc_model::TableEdit::Anchor { cells: vec![(r, c)], anchor: cell_anchor }, cx);
+            }
+        }
     };
+    let valign_item = |id: &'static str, icon: &'static str, label: &'static str, a: ibis_doc_model::VerticalAnchor| -> MenuEntry {
+        MenuItem::new(id, crate::shell::i18n::text(label))
+            .icon(icon)
+            .checked(current_valign == Some(a))
+            .on(set_valign(a))
+            .into()
+    };
+    let [valign_t, valign_m, valign_b, valign_drop] = crate::shell::chrome::align_v_toolbar_items(
+        current_valign,
+        valign_enabled,
+        handler(set_valign(ibis_doc_model::VerticalAnchor::Top)),
+        handler(set_valign(ibis_doc_model::VerticalAnchor::Middle)),
+        handler(set_valign(ibis_doc_model::VerticalAnchor::Bottom)),
+        vec![
+            valign_item("valign.top", "vertical_align_top", "docx.cell.valign-top", ibis_doc_model::VerticalAnchor::Top),
+            valign_item("valign.middle", "vertical_align_center", "docx.cell.valign-center", ibis_doc_model::VerticalAnchor::Middle),
+            valign_item("valign.bottom", "vertical_align_bottom", "docx.cell.valign-bottom", ibis_doc_model::VerticalAnchor::Bottom),
+        ],
+    );
     // Bullets and numbering are split buttons as Word's: the left half toggles the list in the bullet (the number format)
     // last chosen, the ▼ has the library. `bullet-types` is the same menu for the Format menu (not drawn).
     let bullets = ToolButton::new("bullets", "format_list_bulleted", crate::shell::i18n::text("_shell.bullets"))
@@ -485,7 +591,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolItem::Select { id: "font", value: font.into(), width: 128.0, tooltip: crate::shell::i18n::text("_shell.font"), menu: font_menu, disabled: !editing },
         sep(),
         ToolItem::FontSize {
-            value: style.as_ref().map(|s| format!("{}", s.size as f32 / 100.0).into()),
+            value: editor.selection_font_size_label(),
             smaller: editing.then(|| handler(|this, _, cx| this.step_text_size(false, cx))),
             larger: editing.then(|| handler(|this, _, cx| this.step_text_size(true, cx))),
         },
@@ -505,22 +611,24 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("image", "image", crate::shell::i18n::text("_shell.insert-picture")).disabled(!editing).click(|this, window, cx| this.doc_pick_picture(window, cx)).into(),
         ToolButton::new("equation", "functions", crate::shell::i18n::text("insert.equation")).disabled(!editing).click(|this, window, cx| this.open_docx_math_panel(window, cx)).into(),
         sep(),
-        ToolButton::new("align", align_icon, crate::shell::i18n::text("_shell.arrange"))
-            .disabled(!editing)
-            .menu(vec![
-                align_item("align.left", "format_align_left", "docx.toolbar.align-left-l", FlowAlign::Left),
-                align_item("align.center", "format_align_center", "docx.toolbar.center-e", FlowAlign::Center),
-                align_item("align.right", "format_align_right", "docx.toolbar.align-right-r", FlowAlign::Right),
-                align_item("align.justify", "format_align_justify", "docx.toolbar.justify-j", FlowAlign::Justify),
-                align_item("align.distribute", "format_align_justify", "_docx.distribute-j", FlowAlign::Distribute),
-            ])
-            .into(),
+        align_l,
+        align_c,
+        align_r,
+        align_drop,
+        valign_t,
+        valign_m,
+        valign_b,
+        valign_drop,
         ToolButton::new("line-spacing", "format_line_spacing", crate::shell::i18n::text("_shell.line-paragraph-spacing")).disabled(!editing).menu(vec![spacing("docx.spacing.1", "1", 1.0), spacing("docx.spacing.1.15", "1.15", 1.15), spacing("docx.spacing.1.5", "1.5", 1.5), spacing("docx.spacing.2", "2", 2.0), MenuEntry::Separator,
             MenuItem::tr("docx.paragraph.details").on(|this, window, cx| this.open_paragraph_edit(None, window, cx)).into(),
             MenuItem::tr("docx.spacing.before-add").on(|this, _, cx| this.apply_para_change(ibis_doc_model::ParaChange::SpaceBefore(12 * 12_700), cx)).into(),
             MenuItem::tr("docx.spacing.after-remove").on(|this, _, cx| this.apply_para_change(ibis_doc_model::ParaChange::SpaceAfter(0), cx)).into(),
             MenuItem::new("docx.spacing.contextual", crate::shell::i18n::text("fix.toolbar.don-t-add-space-between")).checked(contextual_spacing).on(move |this, _, cx| this.apply_para_change(ibis_doc_model::ParaChange::ContextualSpacing(!contextual_spacing), cx)).into()]).into(),
-        ToolButton::new("checklist", "checklist", crate::shell::i18n::text("docx.toolbar.checklist")).disabled(!editing).click(|this, _, cx| this.toggle_checklist(cx)).into(),
+        ToolButton::new("checklist", "checklist", crate::shell::i18n::text("docx.toolbar.checklist"))
+            .on(editor.shape_has_checklist())
+            .disabled(!editing && editor.active_shape_text_target().is_none())
+            .click(|this, _, cx| this.toggle_checklist(cx))
+            .into(),
         bullets.into(),
         bullet_types.into(),
         numbered.into(),
@@ -528,6 +636,60 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("indent-more", "format_indent_increase", crate::shell::i18n::text("_shell.increase-indent")).disabled(!editing).click(|this, _, cx| this.step_indent(true, cx)).into(),
         ToolButton::new("clear-format", "format_clear", crate::shell::i18n::text("pptx.chrome.clear-all-formatting")).disabled(!editing).click(|this, _, cx| this.clear_formatting(cx)).into(),
         ToolButton::text("formatting-marks", "¶", crate::shell::i18n::text("docx.toolbar.show-formatting-marks-8")).on(editor.formatting_marks_open).click(|this, _, cx| this.toggle_formatting_marks(cx)).into(),
+    ]
+    .into_iter()
+    .chain({
+        let shape_active = editor.doc_state().is_some_and(|s| s.shape_selected || s.box_edit.is_some());
+        shape_active.then(|| editor.text_box_at_caret()).flatten().map(|info| {
+            let is_line = info.is_line;
+            let cur_fill = (info.fill.len() == 6).then(|| u32::from_str_radix(&info.fill, 16).ok()).flatten().map(Rgb);
+            let cur_line = (info.line.len() == 6).then(|| u32::from_str_radix(&info.line, 16).ok()).flatten().map(Rgb);
+            let std_colors: Vec<(SharedString, Rgb, &'static str)> = COLORS[1..]
+                .iter()
+                .map(|&(id, name, c)| (crate::shell::i18n::text(name), Rgb(c), id))
+                .collect();
+            let fill_pick: crate::shell::color_palette::PickColor = std::rc::Rc::new(move |this, chosen, window, cx| {
+                if let Some(c) = chosen {
+                    this.note_recent_color(c);
+                }
+                this.apply_selected_shapes_fill(chosen, window, cx);
+            });
+            let fill_none = MenuItem::new("shape.fill.none", "_shell.no-fill")
+                .checked(cur_fill.is_none())
+                .on(move |this, window, cx| {
+                    this.apply_selected_shapes_fill(None, window, cx);
+                });
+            let fill_menu = crate::shell::color_palette::simple_palette(Some(fill_none), Some(&THEME_10), &std_colors, cur_fill, fill_pick);
+
+            let line_pick: crate::shell::color_palette::PickColor = std::rc::Rc::new(move |this, chosen, window, cx| {
+                if let Some(c) = chosen {
+                    this.note_recent_color(c);
+                }
+                this.apply_selected_shapes_line_color(chosen, window, cx);
+            });
+            let line_none = MenuItem::new("shape.line.none", "_shell.no-outline")
+                .checked(cur_line.is_none())
+                .on(move |this, window, cx| {
+                    this.apply_selected_shapes_line_color(None, window, cx);
+                });
+            let line_menu = crate::shell::color_palette::simple_palette(Some(line_none), Some(&THEME_10), &std_colors, cur_line, line_pick);
+            let mut items = vec![sep()];
+            if !is_line {
+                items.push(
+                    ToolButton::new("shape-fill-color", "format_color_fill", crate::shell::i18n::text("docx.text-box-panel.fill-color"))
+                        .palette(editor, "shape-fill-color", cur_fill.map_or(0x4472c4, |c| c.0), fill_menu)
+                        .into(),
+                );
+            }
+            items.push(
+                ToolButton::new("shape-line-color", "border_color", crate::shell::i18n::text("docx.text-box-panel.outline-color"))
+                    .palette(editor, "shape-line-color", cur_line.map_or(0x2f528f, |c| c.0), line_menu)
+                    .into(),
+            );
+            items
+        }).into_iter().flatten()
+    })
+    .chain([
         sep(),
         {
             let mode = editor.interaction_mode();
@@ -556,16 +718,21 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             ];
             ToolButton::new("interaction-mode", icon, crate::shell::i18n::text(label)).menu(items).into()
         },
-    ]
-    .into_iter()
+    ])
     .chain(in_table.then(|| {
         // In a table (the mock's ⑤-3): the cell's fill and vertical alignment.
-        let mut fills: Vec<MenuEntry> = FILLS
+        let fill_pick: crate::shell::color_palette::PickColor = std::rc::Rc::new(|this, chosen, _, cx| {
+            this.edit_table(move |r, c2, _| ibis_doc_model::TableEdit::Shading { cells: vec![(r, c2)], color: chosen }, cx);
+        });
+        let fill_swatches: Vec<(SharedString, Rgb, &'static str)> = FILLS
             .iter()
-            .map(|&(id, name, c)| MenuItem::new(id, crate::shell::i18n::text(name)).on(move |this, _, cx| this.edit_table(|r, c2, _| ibis_doc_model::TableEdit::Shading { cells: vec![(r, c2)], color: Some(Rgb(c)) }, cx)).into())
+            .chain(COLORS[1..].iter())
+            .map(|&(id, name, c)| (crate::shell::i18n::text(name), Rgb(c), id))
             .collect();
-        fills.push(MenuEntry::Separator);
-        fills.push(MenuItem::tr("docx.fill.none").on(|this, _, cx| this.edit_table(|r, c, _| ibis_doc_model::TableEdit::Shading { cells: vec![(r, c)], color: None }, cx)).into());
+        let fill_none = MenuItem::tr("docx.fill.none")
+            .icon("format_color_reset")
+            .on(|this, _, cx| this.edit_table(|r, c, _| ibis_doc_model::TableEdit::Shading { cells: vec![(r, c)], color: None }, cx));
+        let fills = crate::shell::color_palette::simple_palette(Some(fill_none), Some(&THEME_10), &fill_swatches, None, fill_pick);
         let anchor = editor.caret_cell_anchor().unwrap_or(ibis_doc_model::CellAnchor::Top);
         let valigns = vec![
             MenuItem::tr("docx.cell.valign-top")
@@ -759,7 +926,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             ToolButton::new("table-wrap", "wrap_text", crate::shell::i18n::text("docx.toolbar.text-wrapping-table")).menu(table_wrap_items).into(),
             ToolButton::new("table-sort", "sort", crate::shell::i18n::text("_xlsx.sort-2")).menu(sort_items).into(),
             // A split button as Word's shading: the left half shades in the fill last chosen.
-            ToolButton::new("cell-fill", "format_color_fill", crate::shell::i18n::text("docx.toolbar.shading-cell")).menu(fills).last_used(editor, "cell-fill", |i| i.id.starts_with("docx.fill."), |i| i.id != "docx.fill.none", false).into(),
+            ToolButton::new("cell-fill", "format_color_fill", crate::shell::i18n::text("docx.toolbar.shading-cell")).palette(editor, "cell-fill", 0xdeeaf6, fills).into(),
             ToolButton::new("cell-valign", "vertical_align_center", crate::shell::i18n::text("_shell.vertical-alignment")).menu(valigns).into(),
             ToolButton::new("cell-direction", "text_rotation_none", crate::shell::i18n::text("docx.chrome.text-direction")).menu(directions).into(),
             ToolButton::new("cell-margins", "crop_square", crate::shell::i18n::text("docx.toolbar.cell-margins")).menu(margin_items).into(),
@@ -910,7 +1077,9 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                 "bold" | "italic" | "underline" => editor.is_docx_toolbar_group_visible(DocxToolbarGroup::Font),
                 "text-color" | "highlight" => editor.is_docx_toolbar_group_visible(DocxToolbarGroup::Color),
                 "link" | "image" | "equation" => editor.is_docx_toolbar_group_visible(DocxToolbarGroup::Insert),
-                "align" | "line-spacing" | "checklist" | "bullets" | "bullet-types" | "numbered"
+                "align-left" | "align-center" | "align-right" | "align"
+                | "valign-top" | "valign-center" | "valign-bottom" | "vertical-align"
+                | "line-spacing" | "checklist" | "bullets" | "bullet-types" | "numbered"
                 | "indent-less" | "indent-more" | "clear-format" | "formatting-marks" => {
                     editor.is_docx_toolbar_group_visible(DocxToolbarGroup::Paragraph)
                 }
@@ -1434,15 +1603,27 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             .on(|this, window, cx| this.open_docx_template_panel(window, cx))
             .into(),
     );
-    file.insert(
-        print_at + 7,
-        MenuItem::tr("docx.file.convert-format")
-            .icon("swap_horiz")
-            .on(|this, window, cx| this.open_docx_convert_panel(window, cx))
-            .into(),
-    );
+
+
+    // Format conversion is a File > Export choice, not a separate settings screen.
+    for (id, key, format) in [
+        ("docx.file.export.doc", "docx.convert.format.doc", ibis_pptx::docx_convert::DocxConvertFormat::Doc),
+        ("docx.file.export.rtf", "docx.convert.format.rtf", ibis_pptx::docx_convert::DocxConvertFormat::Rtf),
+        ("docx.file.export.txt", "docx.convert.format.txt", ibis_pptx::docx_convert::DocxConvertFormat::Txt),
+        ("docx.file.export.html", "docx.convert.format.html", ibis_pptx::docx_convert::DocxConvertFormat::Html),
+        ("docx.file.export.odt", "docx.convert.format.odt", ibis_pptx::docx_convert::DocxConvertFormat::Odt),
+    ] {
+        let entry = MenuItem::new(id, crate::shell::i18n::text(key)).icon("description")
+            .on(move |editor, window, cx| editor.export_docx_format_dialog(format, window, cx)).into();
+        let _ = push_into(menus.items_mut(MenuId::File), "file.export", entry);
+    }
 
     menus.connect("tools.word-count", |this, window, cx| this.open_word_count_panel(window, cx));
+    // The shell's items that every format shows: Word's Page Setup (the panel of 書式 > ページ設定), the dictionary (the thesaurus) and the
+    // accessibility check were greyed in the menus.
+    menus.connect("file.page-setup", |this, window, cx| this.open_page_setup_panel(window, cx));
+    menus.connect("tools.dictionary", |this, window, cx| this.open_thesaurus_panel(window, cx));
+    menus.connect("tools.accessibility", |this, _, cx| this.open_accessibility_panel(cx));
     menus.connect("docx.tabs", |this, window, cx| this.open_tab_edit(window, cx));
     for (i, &(id, _, _, _)) in super::list_formats::BULLET_LIBRARY.iter().enumerate() {
         menus.connect(id, move |this, _, cx| this.apply_bullet_format(i, cx));
@@ -1654,10 +1835,6 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         this.outline_open = !this.outline_open;
         cx.notify();
     });
-    menus.connect("docx.show-outline", |this, _, cx| {
-        this.outline_open = !this.outline_open;
-        cx.notify();
-    });
     menus.connect("docx.master-doc.panel", |this, window, cx| this.open_master_doc_panel(window, cx));
     menus.connect("docx.master-doc.create-from-heading", |this, _, cx| { this.create_subdocument_from_heading(cx); });
     menus.connect("docx.master-doc.toggle-expand", |this, _, cx| { this.toggle_expand_subdocuments(cx); });
@@ -1665,13 +1842,15 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.master-doc.unlink", |this, _, cx| { this.unlink_subdocument_at_caret(cx); });
     menus.connect("docx.master-doc.merge", |this, _, cx| { this.merge_adjacent_subdocuments(cx); });
     menus.connect("docx.master-doc.split", |this, _, cx| { this.split_subdocument_at_caret(cx); });
-    menus.items_mut(MenuId::View).push(MenuItem::tr("docx.navigation-pane")
-        .icon("toc")
-        .checked(_editor.outline_open)
-        .on(|this, _, cx| {
-            this.outline_open = !this.outline_open;
-            cx.notify();
-        }).into());
+    if menus.find_mut("docx.navigation-pane").is_none() {
+        menus.items_mut(MenuId::View).push(MenuItem::tr("docx.navigation-pane")
+            .icon("toc")
+            .checked(_editor.outline_open)
+            .on(|this, _, cx| {
+                this.outline_open = !this.outline_open;
+                cx.notify();
+            }).into());
+    }
     menus.items_mut(MenuId::View).push(MenuItem::tr("docx.selection-pane")
         .icon("layers")
         .on(|this, _, cx| this.open_selection_pane(cx)).into());
@@ -1820,21 +1999,51 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             .on(move |this, _, cx| this.set_picture_border_width(w, cx))
             .into()
     }).collect();
-    let color_items: Vec<MenuEntry> = super::picture_panel::PICTURE_BORDER_COLORS.iter().map(|&(_label, c)| {
-        let menu_id = match c {
-            0x000000 => "docx.picture.border.color.black",
-            0x757575 => "docx.picture.border.color.gray",
-            0xD32F2F => "docx.picture.border.color.red",
-            0x1B65D4 => "docx.picture.border.color.blue",
-            0x2E7D32 => "docx.picture.border.color.green",
-            _ => "docx.picture.border.color.orange",
-        };
-        MenuItem::tr(menu_id)
-            .disabled(!has_pic)
-            .checked(has_pic && pic_stroke.as_ref().is_some_and(|s| s.color.rgb.0 == c))
-            .on(move |this, _, cx| this.set_picture_border_color(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(c)), cx))
-            .into()
-    }).collect();
+    let color_items: Vec<MenuEntry> = {
+        use crate::shell::color_palette::{Palette, PickColor, Swatch, theme_rows};
+        let pick: PickColor = std::rc::Rc::new(|this, c, _, cx| {
+            if let Some(rgb) = c {
+                this.set_picture_border_color(ibis_doc_model::Color::opaque(rgb), cx);
+            } else {
+                this.clear_picture_border(cx);
+            }
+        });
+        let current = pic_stroke.as_ref().map(|s| s.color.rgb);
+        let mut theme = theme_rows(&THEME_10, &pick, current);
+        if !has_pic {
+            for s in theme.iter_mut().flatten() {
+                s.item = s.item.clone().disabled(true);
+            }
+        }
+        let standard: Vec<Swatch> = super::picture_panel::PICTURE_BORDER_COLORS
+            .iter()
+            .map(|&(label, c)| {
+                let menu_id = match c {
+                    0x000000 => "docx.picture.border.color.black",
+                    0x757575 => "docx.picture.border.color.gray",
+                    0xD32F2F => "docx.picture.border.color.red",
+                    0x1B65D4 => "docx.picture.border.color.blue",
+                    0x2E7D32 => "docx.picture.border.color.green",
+                    _ => "docx.picture.border.color.orange",
+                };
+                Swatch {
+                    rgb: Rgb(c),
+                    item: MenuItem::new(menu_id, crate::shell::i18n::text(label))
+                        .disabled(!has_pic)
+                        .checked(has_pic && pic_stroke.as_ref().is_some_and(|s| s.color.rgb.0 == c))
+                        .on(move |this, _, cx| this.set_picture_border_color(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(c)), cx)),
+                }
+            })
+            .collect();
+        vec![MenuEntry::Palette(Palette {
+            none: None,
+            theme,
+            standard,
+            pick: Some(pick),
+            more: None,
+            button: None, current:None,
+        })]
+    };
     let dash_items: Vec<MenuEntry> = super::picture_panel::PICTURE_BORDER_DASHES.iter().map(|&(_label, d)| {
         let menu_id = match d {
             ibis_doc_model::LineDash::Solid => "docx.picture.border.dash.solid",
@@ -2131,46 +2340,128 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         if let MenuEntry::Submenu(sub) = entry && sub.id == "format.text" {
             let types = underline_type_items(text_style.as_ref().map(|s| (s.underline, s.underline_style)), editing);
             sub.items.push(crate::shell::chrome::Submenu::tr("docx.underline.types", "format_underlined", types).into());
-            let mut colors: Vec<MenuEntry> = [("docx.underline.black", "_shell.black", 0), ("docx.underline.red", "_shell.red", 0xff0000),
-                ("docx.underline.blue", "_shell.blue", 0x0000ff), ("docx.underline.green", "_shell.green", 0x008000)]
-                .into_iter().map(|(id, label, value)| MenuItem::new(id, crate::shell::i18n::text(label)).disabled(!editing)
-                    .checked(text_style.as_ref().is_some_and(|s| s.underline_color == Some(Rgb(value))))
-                    .on(move |this, _, cx| this.set_underline_color(Some(Rgb(value)), cx)).into()).collect();
-            colors.push(MenuItem::tr("docx.underline.auto").disabled(!editing)
-                .checked(text_style.as_ref().is_some_and(|s| s.underline_color.is_none())).on(|this, _, cx| this.set_underline_color(None, cx)).into());
-            colors.push(MenuItem::tr("docx.underline.custom").disabled(!editing).on(|this, window, cx| this.open_color_edit(true, window, cx)).into());
+            let colors: Vec<MenuEntry> = {
+                use crate::shell::color_palette::{Palette, PickColor, Swatch, theme_rows};
+                let pick: PickColor = std::rc::Rc::new(|this, c, _, cx| this.set_underline_color(c, cx));
+                let cur_u = text_style.as_ref().and_then(|s| s.underline_color);
+                let mut theme = theme_rows(&THEME_10, &pick, cur_u);
+                if !editing {
+                    for s in theme.iter_mut().flatten() {
+                        s.item = s.item.clone().disabled(true);
+                    }
+                }
+                let standard: Vec<Swatch> = [
+                    ("docx.underline.black", "_shell.black", 0u32),
+                    ("docx.underline.red", "_shell.red", 0xff0000),
+                    ("docx.underline.blue", "_shell.blue", 0x0000ff),
+                    ("docx.underline.green", "_shell.green", 0x008000),
+                ]
+                .into_iter()
+                .map(|(id, label, value)| Swatch {
+                    rgb: Rgb(value),
+                    item: MenuItem::new(id, crate::shell::i18n::text(label))
+                        .disabled(!editing)
+                        .checked(text_style.as_ref().is_some_and(|s| s.underline_color == Some(Rgb(value))))
+                        .on(move |this, _, cx| this.set_underline_color(Some(Rgb(value)), cx)),
+                })
+                .collect();
+                let none = MenuItem::tr("docx.underline.auto")
+                    .disabled(!editing)
+                    .checked(text_style.as_ref().is_some_and(|s| s.underline_color.is_none()))
+                    .on(|this, _, cx| this.set_underline_color(None, cx));
+                let more = MenuItem::tr("docx.underline.custom")
+                    .disabled(!editing)
+                    .on(|this, window, cx| this.open_color_edit(true, window, cx));
+                vec![MenuEntry::Palette(Palette {
+                    none: Some(none),
+                    theme,
+                    standard,
+                    pick: Some(pick),
+                    more: Some(more),
+                    button: None, current:None,
+                })]
+            };
             sub.items.push(crate::shell::chrome::Submenu::tr("docx.underline.colors", "format_color_text", colors).into());
-            let mut text_colors: Vec<MenuEntry> = vec![
-                MenuItem::new("docx.format.text.color.black", crate::shell::i18n::text("docx.toolbar.automatic-black"))
-                    .checked(text_style.as_ref().is_some_and(|s| s.color == Rgb(0)) && text_format.as_ref().and_then(|f| f.theme_color.as_ref()).is_none())
+            let text_colors: Vec<MenuEntry> = {
+                use crate::shell::color_palette::{Palette, PickColor, Swatch, THEME_TINTS};
+                let pick: PickColor = std::rc::Rc::new(|this, c, _, cx| this.set_text_color(c.unwrap_or(Rgb(0)), cx));
+                let cur_theme_color = text_format.as_ref().and_then(|f| f.theme_color.clone());
+                let current = text_style.as_ref().map(|s| s.color).filter(|_| cur_theme_color.is_none());
+                let order = [
+                    "docx.theme-color.bg1",
+                    "docx.theme-color.text1",
+                    "docx.theme-color.bg2",
+                    "docx.theme-color.text2",
+                    "docx.theme-color.accent1",
+                    "docx.theme-color.accent2",
+                    "docx.theme-color.accent3",
+                    "docx.theme-color.accent4",
+                    "docx.theme-color.accent5",
+                    "docx.theme-color.accent6",
+                ];
+                let base: Vec<&(&str, &str, u32, &str, Option<&str>, Option<&str>)> =
+                    order.iter().filter_map(|id| THEME_COLORS.iter().find(|t| t.0 == *id)).collect();
+                let mut theme: Vec<Vec<Swatch>> = Vec::new();
+                theme.push(
+                    base.iter()
+                        .map(|&&(item_id, label, rgb_val, theme_name, tint, shade)| {
+                            let checked = cur_theme_color
+                                .as_ref()
+                                .is_some_and(|tc| tc.name == theme_name && tc.tint.as_deref() == tint && tc.shade.as_deref() == shade);
+                            let tc = ibis_doc_model::FlowThemeColor::new(theme_name, tint, shade);
+                            Swatch {
+                                rgb: Rgb(rgb_val),
+                                item: MenuItem::new(item_id, crate::shell::i18n::text(label))
+                                    .disabled(!editing)
+                                    .checked(checked)
+                                    .on(move |this, _, cx| this.set_theme_color(Rgb(rgb_val), tc.clone(), cx)),
+                            }
+                        })
+                        .collect(),
+                );
+                if base.len() == 10 {
+                    for row in 1..6 {
+                        theme.push(
+                            (0..10)
+                                .map(|i| {
+                                    let rgb = ibis_pptx::tinted(Rgb(base[i].2), THEME_TINTS[i][row]);
+                                    let mut sw = Swatch::new(rgb, format!("#{:06X}", rgb.0), current == Some(rgb), &pick);
+                                    sw.item = sw.item.disabled(!editing);
+                                    sw
+                                })
+                                .collect(),
+                        );
+                    }
+                }
+                let standard: Vec<Swatch> = COLORS[1..]
+                    .iter()
+                    .map(|&(id, label, val)| {
+                        let is_checked = text_style.as_ref().is_some_and(|s| s.color == Rgb(val)) && cur_theme_color.is_none();
+                        Swatch {
+                            rgb: Rgb(val),
+                            item: MenuItem::new(id, crate::shell::i18n::text(label))
+                                .checked(is_checked)
+                                .disabled(!editing)
+                                .on(move |this, _, cx| this.set_text_color(Rgb(val), cx)),
+                        }
+                    })
+                    .collect();
+                let none = MenuItem::new("docx.format.text.color.black", crate::shell::i18n::text("docx.toolbar.automatic-black"))
+                    .checked(text_style.as_ref().is_some_and(|s| s.color == Rgb(0)) && cur_theme_color.is_none())
                     .disabled(!editing)
-                    .on(|this, _, cx| this.set_text_color(Rgb(0), cx))
-                    .into(),
-            ];
-            let cur_theme_color = text_format.as_ref().and_then(|f| f.theme_color.clone());
-            let theme_subitems: Vec<MenuEntry> = THEME_COLORS.iter().map(|&(id, label, val, theme_name, tint, shade)| {
-                let is_checked = cur_theme_color.as_ref().is_some_and(|tc| {
-                    tc.name == theme_name && tc.tint.as_deref() == tint && tc.shade.as_deref() == shade
-                });
-                let tc = ibis_doc_model::FlowThemeColor::new(theme_name, tint, shade);
-                MenuItem::new(id, crate::shell::i18n::text(label))
-                    .checked(is_checked)
+                    .on(|this, _, cx| this.set_text_color(Rgb(0), cx));
+                let more = MenuItem::tr("docx.format.text.color.custom")
                     .disabled(!editing)
-                    .on(move |this, _, cx| this.set_theme_color(Rgb(val), tc.clone(), cx))
-                    .into()
-            }).collect();
-            text_colors.push(crate::shell::chrome::Submenu::new("docx.format.text.theme-colors", "palette", crate::shell::i18n::text("docx.toolbar.theme-colors"), theme_subitems).into());
-            text_colors.push(MenuEntry::Separator);
-            for &(id, label, val) in &COLORS[1..] {
-                let is_checked = text_style.as_ref().is_some_and(|s| s.color == Rgb(val)) && cur_theme_color.is_none();
-                text_colors.push(MenuItem::new(id, crate::shell::i18n::text(label))
-                    .checked(is_checked)
-                    .disabled(!editing)
-                    .on(move |this, _, cx| this.set_text_color(Rgb(val), cx))
-                    .into());
-            }
-            text_colors.push(MenuEntry::Separator);
-            text_colors.push(MenuItem::tr("docx.format.text.color.custom").disabled(!editing).on(|this, window, cx| this.open_color_edit(false, window, cx)).into());
+                    .on(|this, window, cx| this.open_color_edit(false, window, cx));
+                vec![MenuEntry::Palette(Palette {
+                    none: Some(none),
+                    theme,
+                    standard,
+                    pick: Some(pick),
+                    more: Some(more),
+                    button: None, current:None,
+                })]
+            };
             sub.items.push(crate::shell::chrome::Submenu::new("docx.format.text.colors", "format_color_text", crate::shell::i18n::text("docx.toolbar.automatic"), text_colors).into());
             sub.items.push(MenuItem::tr("docx.text.strike").checked(text_style.as_ref().is_some_and(|s| s.strike)).disabled(!editing)
                 .on(|this, _, cx| this.toggle_strike(cx)).into());
@@ -2200,6 +2491,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             sub.items.push(MenuItem::tr("docx.text.baseline").checked(text_style.as_ref().is_some_and(|s| s.position == ibis_doc_model::VerticalPosition::Baseline)).disabled(!editing)
                 .on(|this, _, cx| this.apply_run_change(ibis_doc_model::RunChange::Position(ibis_doc_model::VerticalPosition::Baseline), cx)).into());
             sub.items.push(MenuItem::new("docx.text.ruby", crate::shell::i18n::text("docx.toolbar.phonetic-guide")).disabled(!editing).on(|this, window, cx| this.open_ruby(window, cx)).into());
+            sub.items.push(MenuItem::new("docx.text.fit-text", crate::shell::i18n::text("docx.fit-text.title")).disabled(!editing).on(|e,w,cx|e.open_fit_text(w,cx)).into());
             // 文字の囲み線 (Word's ホーム > 文字の囲み線).
             sub.items.push(
                 MenuItem::tr("docx.text.border")
@@ -2566,8 +2858,8 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         let has_endnotes = _editor.flow().is_some_and(|d| !d.endnotes.is_empty());
         let entries = menus.items_mut(MenuId::Insert);
         let at = entries.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "docx.fields.unlock")).map_or(entries.len(), |i| i + 1);
-        entries.insert(at, MenuItem::tr("docx.footnote").on(|this, _, cx| this.insert_note(false, cx)).into());
-        entries.insert(at + 1, MenuItem::tr("docx.endnote").on(|this, _, cx| this.insert_note(true, cx)).into());
+        entries.insert(at, MenuItem::tr("docx.footnote").icon("notes").shortcut("⌥⌘F").on(|this, _, cx| this.insert_note(false, cx)).into());
+        entries.insert(at + 1, MenuItem::tr("docx.endnote").shortcut("⌥⌘E").on(|this, _, cx| this.insert_note(true, cx)).into());
         entries.insert(at + 2, MenuItem::tr("docx.footnote.next").on(|this, _, cx| this.go_to_note(false, true, cx)).into());
         entries.insert(at + 3, MenuItem::tr("docx.footnote.previous").on(|this, _, cx| this.go_to_note(false, false, cx)).into());
         entries.insert(at + 4, MenuItem::tr("docx.notes.show").on(|this, _, cx| this.show_note(cx)).into());
@@ -2828,9 +3120,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.options.user-info").icon("person").on(|this, window, cx| this.open_user_info_panel(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.file.repair").icon("cleaning_services").disabled(super::repair::damaged_document().is_none()).on(|this, window, cx| this.open_docx_repair_damaged(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.template.attach").icon("extension").on(|this, window, cx| this.open_docx_template_panel(window, cx)).into());
-        menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.file.convert-format").icon("swap_horiz").on(|this, window, cx| this.open_docx_convert_panel(window, cx)).into());
     }
-    menus.connect("docx.file.convert-format", |this, window, cx| this.open_docx_convert_panel(window, cx));
     menus.connect("docx.protect.formatting", |this, _, cx| {
         let next = !this.is_formatting_protected();
         this.set_formatting_protection(next, cx);
@@ -2913,6 +3203,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.compare.footnotes", |this, _, cx| this.toggle_compare_option(5, cx));
     menus.connect("docx.compare.comments", |this, _, cx| this.toggle_compare_option(6, cx));
     menus.connect("docx.compare.fields", |this, _, cx| this.toggle_compare_option(7, cx));
+    menus.connect("docx.ruler", |this, _, cx| this.open_ruler_panel(cx));
     menus.connect("docx.vertical-ruler", |this, _, cx| this.toggle_vertical_ruler(cx));
     menus.connect("docx.ruler-unit.cm", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Centimeters, cx));
     menus.connect("docx.ruler-unit.mm", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Millimeters, cx));
@@ -2937,6 +3228,43 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.view.outline", |this, window, cx| this.set_document_view_mode(ibis_doc_model::DocumentViewMode::Outline, window, cx));
     menus.connect("docx.view.draft", |this, window, cx| this.set_document_view_mode(ibis_doc_model::DocumentViewMode::Draft, window, cx));
     menus.connect("docx.view.focus", |this, window, cx| this.toggle_focus_mode(window, cx));
+    {
+        const VIEW_MODE_IDS: [&str; 6] = [
+            "docx.view.read-mode",
+            "docx.print-layout",
+            "docx.view.web-layout",
+            "docx.view.outline",
+            "docx.view.draft",
+            "docx.view.focus",
+        ];
+        let view_items = menus.items_mut(MenuId::View);
+        let already_grouped = view_items.iter().any(|e| {
+            matches!(e, MenuEntry::Submenu(sub) if sub.items.iter().any(|i| matches!(i, MenuEntry::Item(it) if VIEW_MODE_IDS.contains(&it.id))))
+        });
+        if !already_grouped {
+            let mut mode_items = Vec::new();
+            let mut insert_idx = None;
+            let mut idx = 0;
+            while idx < view_items.len() {
+                let is_mode_item = matches!(&view_items[idx], MenuEntry::Item(it) if VIEW_MODE_IDS.contains(&it.id));
+                if is_mode_item {
+                    if insert_idx.is_none() {
+                        insert_idx = Some(idx);
+                    }
+                    mode_items.push(view_items.remove(idx));
+                } else {
+                    idx += 1;
+                }
+            }
+            if !mode_items.is_empty() {
+                let pos = insert_idx.unwrap_or(0).min(view_items.len());
+                view_items.insert(
+                    pos,
+                    crate::shell::chrome::Submenu::tr("docx.view.view-mode", "chrome_reader_mode", mode_items).into(),
+                );
+            }
+        }
+    }
     menus.connect("docx.view.immersive-reader", |this, window, cx| this.toggle_immersive_reader(window, cx));
     menus.connect("docx.view.mini-toolbar", |this, _, cx| this.toggle_mini_toolbar(cx));
     menus.connect("docx.view.screentips.show-descriptions", |this, _, cx| this.set_screentip_style(crate::docx::screentip::ScreenTipStyle::ShowFeatureDescriptions, cx));
@@ -2946,6 +3274,25 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.view.multiple-pages", |this, window, cx| this.zoom_multiple_pages(window, cx));
     menus.connect("docx.view.page-width", |this, window, cx| this.zoom_page_width(window, cx));
     menus.connect("docx.view.zoom-100", |this, window, cx| this.zoom_100_percent(window, cx));
+    {
+        let win_items = menus.items_mut(MenuId::Window);
+        let has_id = |items: &[MenuEntry], id: &str| items.iter().any(|e| matches!(e, MenuEntry::Item(it) if it.id == id));
+        if has_id(win_items, "docx.new-window") {
+            win_items.retain(|e| !matches!(e, MenuEntry::Item(it) if it.id == "window.new-window"));
+        } else if let Some(MenuEntry::Item(it)) = win_items.iter_mut().find(|e| matches!(e, MenuEntry::Item(it) if it.id == "window.new-window")) {
+            it.id = "docx.new-window";
+        }
+        if has_id(win_items, "docx.arrange-all") {
+            win_items.retain(|e| !matches!(e, MenuEntry::Item(it) if it.id == "window.arrange-all"));
+        } else if let Some(MenuEntry::Item(it)) = win_items.iter_mut().find(|e| matches!(e, MenuEntry::Item(it) if it.id == "window.arrange-all")) {
+            it.id = "docx.arrange-all";
+        }
+        if has_id(win_items, "docx.split") || has_id(win_items, "docx.remove-split") {
+            win_items.retain(|e| !matches!(e, MenuEntry::Item(it) if it.id == "window.split"));
+        } else if let Some(MenuEntry::Item(it)) = win_items.iter_mut().find(|e| matches!(e, MenuEntry::Item(it) if it.id == "window.split")) {
+            it.id = if _editor.is_document_split() { "docx.remove-split" } else { "docx.split" };
+        }
+    }
     menus.connect("docx.new-window", |this, _window, cx| this.new_window(cx));
     menus.connect("docx.arrange-all", |_this, window, cx| SlideEditor::arrange_all_windows(Some(window), cx));
     menus.connect("docx.split", |this, _, cx| this.toggle_document_split(cx));

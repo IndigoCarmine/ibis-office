@@ -36,9 +36,10 @@
 //!
 //! Documents (docx): `docx.page-break`, `docx.column-break`, `docx.header-footer`,
 //! `docx.page-number`, `docx.toc`, `docx.footnote`, `docx.columns`,
-//! `docx.word-count`, `docx.show-outline`, `docx.print-layout`.
+//! `docx.word-count`, `docx.navigation-pane`, `docx.print-layout`.
 
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::TextAlign;
 use ibis_pptx::Kind;
 
@@ -67,9 +68,9 @@ const SEP: MenuEntry = MenuEntry::Separator;
 pub(crate) fn menus(editor: &SlideEditor) -> Menus {
     let kind = editor.kind();
     let order: &[MenuId] = match kind {
-        Kind::Document => &[MenuId::File, MenuId::Edit, MenuId::View, MenuId::Insert, MenuId::Format, MenuId::Tools, MenuId::Help],
-        Kind::Workbook => &[MenuId::File, MenuId::Edit, MenuId::View, MenuId::Insert, MenuId::Format, MenuId::Data, MenuId::Tools, MenuId::Help],
-        Kind::Presentation => &[MenuId::File, MenuId::Edit, MenuId::View, MenuId::Insert, MenuId::Format, MenuId::Slide, MenuId::Arrange, MenuId::Tools, MenuId::Help],
+        Kind::Document => &[MenuId::File, MenuId::Edit, MenuId::View, MenuId::Insert, MenuId::Format, MenuId::Tools, MenuId::Window, MenuId::Help],
+        Kind::Workbook => &[MenuId::File, MenuId::Edit, MenuId::View, MenuId::Insert, MenuId::Format, MenuId::Data, MenuId::Tools, MenuId::Window, MenuId::Help],
+        Kind::Presentation => &[MenuId::File, MenuId::Edit, MenuId::View, MenuId::Insert, MenuId::Format, MenuId::Slide, MenuId::Arrange, MenuId::Tools, MenuId::Window, MenuId::Help],
     };
     let mut menus = Menus::default();
     for &id in order {
@@ -90,9 +91,10 @@ pub(crate) fn menus(editor: &SlideEditor) -> Menus {
                 item("tools.accessibility", "accessibility_new").into(),
                 item("tools.settings", "settings").shortcut("⌘,").on(|_, window, cx| crate::shell::settings_window::open_over(Some(window.bounds()), window.display(cx).map(|d| d.id()), cx)).into(),
             ],
+            MenuId::Window => window_menu(editor, kind),
             MenuId::Help => {
                 let mut entries: Vec<MenuEntry> = vec![
-                    item("help.search", "search").shortcut("⌥/").into(),
+                    item("help.search", "search").shortcut("⌥/").on(|this, window, cx| this.open_toolbar_menu_search(window, cx)).into(),
                     item("help.help", "help").into(),
                     item("help.shortcuts", "keyboard").shortcut("⌘/").into(),
                     SEP,
@@ -213,20 +215,24 @@ fn edit_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
     if kind == Kind::Workbook {
         entries.extend([
             SEP,
-            item("xlsx.delete-row", "delete").into(),
-            item("xlsx.delete-column", "delete").into(),
-            item("xlsx.delete-cells", "delete").into(),
+            sub("xlsx.delete-menu", "delete", vec![
+                item("xlsx.delete-row", "delete").into(),
+                item("xlsx.delete-column", "delete").into(),
+                item("xlsx.delete-cells", "delete").into(),
+            ]),
             SEP,
-            item("xlsx.rename-sheet", "edit").into(),
-            item("xlsx.duplicate-sheet", "content_copy").into(),
-            item("xlsx.hide-sheet", "visibility_off").into(),
-            item("xlsx.delete-sheet", "delete").into(),
+            sub("xlsx.sheet-menu", "table_chart", vec![
+                item("xlsx.rename-sheet", "edit").into(),
+                item("xlsx.duplicate-sheet", "content_copy").into(),
+                item("xlsx.hide-sheet", "visibility_off").into(),
+                item("xlsx.delete-sheet", "delete").into(),
+            ]),
         ]);
     }
     entries
 }
 
-fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
+pub(crate) fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
     let mut entries = Vec::new();
     match kind {
         Kind::Presentation => entries.extend([
@@ -389,60 +395,21 @@ fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
                 .shortcut("⌘`")
                 .into(),
             item("xlsx.show-zeros", "exposure_zero").into(),
-            item("xlsx.normal-view", "grid_view").into(),
-            item("xlsx.page-break-preview", "pageview").into(),
-            item("xlsx.page-layout", "description").into(),
-            item("xlsx.zoom-selection", "aspect_ratio").on(|this, window, cx| {
-                this.zoom_to_selection(window, cx);
-            })
-            .into(),
+            sub("xlsx.view-mode", "grid_view", vec![
+                item("xlsx.normal-view", "grid_view").into(),
+                item("xlsx.page-break-preview", "insert_page_break").into(),
+                item("xlsx.page-layout", "description").into(),
+            ]),
+            item("xlsx.zoom-selection", "aspect_ratio")
+                .disabled(editor.selection.is_some() || !editor.selected_ids().is_empty() || editor.selected_range().is_none())
+                .on(|this, window, cx| {
+                    this.zoom_to_selection(window, cx);
+                })
+                .into(),
             item("xlsx.custom-views", "view_quilt")
                 .disabled(editor.presentation().has_tables())
                 .on(|this, window, cx| {
                     this.toggle_custom_views_panel(window, cx);
-                })
-                .into(),
-            SEP,
-            item("xlsx.new-window", "open_in_new")
-                .shortcut("⌘⇧N")
-                .on(|this, _, cx| {
-                    this.new_window(cx);
-                })
-                .into(),
-            item("xlsx.arrange-all", "dashboard")
-                .on(|this, window, cx| {
-                    this.toggle_arrange_windows_panel(window, cx);
-                })
-                .into(),
-            item("xlsx.view-side-by-side", "splitscreen")
-                .checked(editor.side_by_side)
-                .on(|this, window, cx| {
-                    this.toggle_view_side_by_side(window, cx);
-                })
-                .into(),
-            item("xlsx.sync-scrolling", "sync")
-                .checked(editor.sync_scrolling)
-                .disabled(!editor.side_by_side)
-                .on(|this, _window, cx| {
-                    this.toggle_sync_scrolling(cx);
-                })
-                .into(),
-            item("xlsx.reset-window-position", "restart_alt")
-                .disabled(!editor.side_by_side)
-                .on(|this, window, cx| {
-                    this.reset_side_by_side_positions(window, cx);
-                })
-                .into(),
-            item("xlsx.hide-window", "visibility_off")
-                .disabled(editor.presentation().is_workbook_window_hidden() || editor.presentation().is_workbook_windows_locked())
-                .on(|this, _window, cx| {
-                    this.hide_workbook_window(cx);
-                })
-                .into(),
-            item("xlsx.unhide-window", "visibility")
-                .disabled(!editor.presentation().is_workbook_window_hidden() || editor.presentation().is_workbook_windows_locked())
-                .on(|this, window, cx| {
-                    this.toggle_unhide_window_panel(window, cx);
                 })
                 .into(),
             SEP,
@@ -507,37 +474,7 @@ fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
                 })
                 .into(),
             SEP,
-            item("docx.ruler", "rule").checked(editor.ruler_open).on(|this, _, cx| {
-                this.ruler_open = !this.ruler_open;
-                cx.notify();
-            })
-            .into(),
-            item("docx.vertical-ruler", "straighten").checked(editor.vertical_ruler_open).disabled(!editor.ruler_open).on(|this, _, cx| {
-                this.toggle_vertical_ruler(cx);
-            })
-            .into(),
-            sub("docx.ruler-unit", "straighten", vec![
-                item("docx.ruler-unit.cm", "").checked(editor.ruler_unit == RulerUnit::Centimeters).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Centimeters, cx);
-                }).into(),
-                item("docx.ruler-unit.mm", "").checked(editor.ruler_unit == RulerUnit::Millimeters).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Millimeters, cx);
-                }).into(),
-                item("docx.ruler-unit.inch", "").checked(editor.ruler_unit == RulerUnit::Inches).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Inches, cx);
-                }).into(),
-                item("docx.ruler-unit.point", "").checked(editor.ruler_unit == RulerUnit::Points).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Points, cx);
-                }).into(),
-                item("docx.ruler-unit.pica", "").checked(editor.ruler_unit == RulerUnit::Picas).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Picas, cx);
-                }).into(),
-            ]),
-            item("docx.gridlines", "grid_on").checked(editor.gridlines_open).on(|this, _, cx| {
-                this.gridlines_open = !this.gridlines_open;
-                cx.notify();
-            })
-            .into(),
+            item("docx.ruler", "rule").on(|this, _, cx| this.open_ruler_panel(cx)).into(),
             item("docx.formatting-marks", "notes").checked(editor.formatting_marks_open).on(|this, _, cx| {
                 this.toggle_formatting_marks(cx);
             })
@@ -547,11 +484,6 @@ fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
             })
             .into(),
             item("docx.navigation-pane", "toc").checked(editor.outline_open).on(|this, _, cx| {
-                this.outline_open = !this.outline_open;
-                cx.notify();
-            })
-            .into(),
-            item("docx.show-outline", "toc").checked(editor.outline_open).on(|this, _, cx| {
                 this.outline_open = !this.outline_open;
                 cx.notify();
             })
@@ -588,6 +520,135 @@ fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
                 this.zoom_100_percent(window, cx);
             })
             .into(),
+            SEP,
+        ]),
+    }
+    entries.extend([
+        MenuItem::tr("view.sidebar")
+            .checked(editor.right_pane.shown)
+            .disabled(!editor.right_pane.available)
+            .on(|this, window, cx| {
+                this.toggle_sidebar(window, cx);
+            })
+            .into(),
+        MenuItem::tr("view.menus")
+            .shortcut("⌃⇧F")
+            .on(|this, _, cx| {
+                this.chrome_compact = !this.chrome_compact;
+                if !this.chrome_compact {
+                    this.show_menu_bar = true;
+                }
+                cx.notify();
+            })
+            .into(),
+        SEP,
+        sub("view.zoom", "zoom_in", vec![
+            item("view.zoom-in", "zoom_in").shortcut("⌘+").on(|this, window, cx| this.step_zoom(true, window, cx)).into(),
+            item("view.zoom-out", "zoom_out").shortcut("⌘-").on(|this, window, cx| this.step_zoom(false, window, cx)).into(),
+            SEP,
+            item("view.zoom-400", "").checked(zoom_approx(editor.current_zoom(), 4.0)).on(|this, window, cx| this.set_zoom(Some(4.0), window, cx)).into(),
+            item("view.zoom-200", "").checked(zoom_approx(editor.current_zoom(), 2.0)).on(|this, window, cx| this.set_zoom(Some(2.0), window, cx)).into(),
+            MenuItem::tr("view.zoom-100").shortcut("⌘0").checked(editor.zoom.is_some() && zoom_approx(editor.current_zoom(), 1.0)).on(|this, window, cx| this.set_zoom(Some(1.0), window, cx)).into(),
+            item("view.zoom-66", "").checked(zoom_approx(editor.current_zoom(), 0.66)).on(|this, window, cx| this.set_zoom(Some(0.66), window, cx)).into(),
+            item("view.zoom-50", "").checked(zoom_approx(editor.current_zoom(), 0.50)).on(|this, window, cx| this.set_zoom(Some(0.50), window, cx)).into(),
+            item("view.zoom-33", "").checked(zoom_approx(editor.current_zoom(), 0.33)).on(|this, window, cx| this.set_zoom(Some(0.33), window, cx)).into(),
+            SEP,
+            item("view.zoom-fit", "fit_screen").shortcut("⌥⌘0").disabled(kind == Kind::Workbook).checked(editor.zoom.is_none()).on(|this, window, cx| this.set_zoom(None, window, cx)).into(),
+            SEP,
+            item("view.zoom-dialog", "").on(|this, window, cx| this.open_zoom_dialog(window, cx)).into(),
+        ]),
+        item("view.fullscreen", "fullscreen").shortcut("⌃⌘F").on(|_, window, _| window.toggle_fullscreen()).into(),
+    ]);
+    entries
+}
+
+fn window_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
+    let mut entries: Vec<MenuEntry> = Vec::new();
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let label_key = match kind {
+            Kind::Document => "window.open-in-word",
+            Kind::Workbook => "window.open-in-excel",
+            Kind::Presentation => "window.open-in-powerpoint",
+        };
+        let can_open_in_office = editor.has_file_on_disk();
+        entries.push(
+            MenuItem::new("window.open-in-office", label_key)
+                .disabled(!can_open_in_office)
+                .on(|this, window, cx| this.open_in_office_action(window, cx))
+                .into(),
+        );
+        entries.push(SEP);
+    }
+    entries.extend([
+        item("window.new-window", "open_in_new").shortcut("⌘⇧N").on(|this, _, cx| this.new_window(cx)).into(),
+        item("window.arrange-all", "grid_view").on(|this, window, cx| {
+            if this.is_workbook() {
+                this.toggle_arrange_windows_panel(window, cx);
+            } else {
+                SlideEditor::arrange_all_windows(Some(window), cx);
+            }
+        }).into(),
+        item("window.split", "splitscreen")
+            .shortcut("⌥⌘S")
+            .checked(if editor.is_workbook() { editor.split_panes().is_some() } else { editor.is_document_split() })
+            .on(|this, _, cx| {
+                if this.is_workbook() {
+                    this.toggle_split(cx);
+                } else if this.is_document() {
+                    this.toggle_document_split(cx);
+                }
+            })
+            .into(),
+        item("window.cascade", "filter_none").on(|_, window, cx| SlideEditor::cascade_windows(Some(window), cx)).into(),
+    ]);
+    match kind {
+        Kind::Workbook => entries.extend([
+            SEP,
+            item("xlsx.new-window", "open_in_new")
+                .shortcut("⌘⇧N")
+                .on(|this, _, cx| {
+                    this.new_window(cx);
+                })
+                .into(),
+            item("xlsx.arrange-all", "dashboard")
+                .on(|this, window, cx| {
+                    this.toggle_arrange_windows_panel(window, cx);
+                })
+                .into(),
+            item("xlsx.view-side-by-side", "splitscreen")
+                .checked(editor.side_by_side)
+                .on(|this, window, cx| {
+                    this.toggle_view_side_by_side(window, cx);
+                })
+                .into(),
+            item("xlsx.sync-scrolling", "sync")
+                .checked(editor.sync_scrolling)
+                .disabled(!editor.side_by_side)
+                .on(|this, _window, cx| {
+                    this.toggle_sync_scrolling(cx);
+                })
+                .into(),
+            item("xlsx.reset-window-position", "restart_alt")
+                .disabled(!editor.side_by_side)
+                .on(|this, window, cx| {
+                    this.reset_side_by_side_positions(window, cx);
+                })
+                .into(),
+            item("xlsx.hide-window", "visibility_off")
+                .disabled(editor.presentation().is_workbook_window_hidden() || editor.presentation().is_workbook_windows_locked())
+                .on(|this, _window, cx| {
+                    this.hide_workbook_window(cx);
+                })
+                .into(),
+            item("xlsx.unhide-window", "visibility")
+                .disabled(!editor.presentation().is_workbook_window_hidden() || editor.presentation().is_workbook_windows_locked())
+                .on(|this, window, cx| {
+                    this.toggle_unhide_window_panel(window, cx);
+                })
+                .into(),
+        ]),
+        Kind::Document => entries.extend([
             SEP,
             item("docx.new-window", "open_in_new")
                 .shortcut("⌘⇧N")
@@ -626,61 +687,14 @@ fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
                     this.reset_side_by_side_positions(window, cx);
                 })
                 .into(),
-            SEP,
         ]),
+        Kind::Presentation => {}
     }
-    entries.extend([
-        MenuItem::tr("view.sidebar")
-            .checked(editor.sidebar_open)
-            .on(|this, window, cx| {
-                this.toggle_sidebar(window, cx);
-            })
-            .into(),
-        MenuItem::tr("view.menus")
-            .shortcut("⌃⇧F")
-            .on(|this, _, cx| {
-                this.chrome_compact = !this.chrome_compact;
-                cx.notify();
-            })
-            .into(),
-        SEP,
-        sub("view.zoom", "zoom_in", vec![
-            item("view.zoom-in", "zoom_in").shortcut("⌘+").on(|this, window, cx| this.step_zoom(true, window, cx)).into(),
-            item("view.zoom-out", "zoom_out").shortcut("⌘-").on(|this, window, cx| this.step_zoom(false, window, cx)).into(),
-            SEP,
-            item("view.zoom-400", "").checked(zoom_approx(editor.current_zoom(), 4.0)).on(|this, window, cx| this.set_zoom(Some(4.0), window, cx)).into(),
-            item("view.zoom-200", "").checked(zoom_approx(editor.current_zoom(), 2.0)).on(|this, window, cx| this.set_zoom(Some(2.0), window, cx)).into(),
-            MenuItem::tr("view.zoom-100").shortcut("⌘0").checked(editor.zoom.is_some() && zoom_approx(editor.current_zoom(), 1.0)).on(|this, window, cx| this.set_zoom(Some(1.0), window, cx)).into(),
-            item("view.zoom-66", "").checked(zoom_approx(editor.current_zoom(), 0.66)).on(|this, window, cx| this.set_zoom(Some(0.66), window, cx)).into(),
-            item("view.zoom-50", "").checked(zoom_approx(editor.current_zoom(), 0.50)).on(|this, window, cx| this.set_zoom(Some(0.50), window, cx)).into(),
-            item("view.zoom-33", "").checked(zoom_approx(editor.current_zoom(), 0.33)).on(|this, window, cx| this.set_zoom(Some(0.33), window, cx)).into(),
-            SEP,
-            item("view.zoom-fit", "fit_screen").shortcut("⌥⌘0").disabled(kind == Kind::Workbook).checked(editor.zoom.is_none()).on(|this, window, cx| this.set_zoom(None, window, cx)).into(),
-            SEP,
-            item("view.zoom-dialog", "").on(|this, window, cx| this.open_zoom_dialog(window, cx)).into(),
-        ]),
-        sub("view.window", "dock_to_right", vec![
-            item("window.new-window", "open_in_new").shortcut("⌘⇧N").on(|this, _, cx| this.new_window(cx)).into(),
-            item("window.arrange-all", "grid_view").on(|this, window, cx| {
-                if this.is_workbook() {
-                    this.toggle_arrange_windows_panel(window, cx);
-                } else {
-                    SlideEditor::arrange_all_windows(Some(window), cx);
-                }
-            }).into(),
-            item("window.split", "splitscreen")
-                .shortcut("⌥⌘S")
-                .checked(editor.is_document_split())
-                .on(|this, _, cx| {
-                    if this.is_document() {
-                        this.toggle_document_split(cx);
-                    }
-                })
-                .into(),
-            item("window.cascade", "filter_none").on(|_, window, cx| SlideEditor::cascade_windows(Some(window), cx)).into(),
-        ]),
-        item("view.fullscreen", "fullscreen").shortcut("⌃⌘F").into(),
-    ]);
+    let open_windows = editor.open_window_menu_items();
+    if !open_windows.is_empty() {
+        entries.push(SEP);
+        entries.extend(open_windows);
+    }
     entries
 }
 
@@ -690,11 +704,13 @@ fn insert_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
     let mut entries = Vec::new();
     if kind == Kind::Workbook {
         entries.extend([
-            item("xlsx.insert-row-above", "add").into(),
-            item("xlsx.insert-row-below", "add").into(),
-            item("xlsx.insert-column-left", "add").into(),
-            item("xlsx.insert-column-right", "add").into(),
-            item("xlsx.insert-cells", "add").into(),
+            sub("xlsx.insert-cells-menu", "add", vec![
+                item("xlsx.insert-row-above", "add").into(),
+                item("xlsx.insert-row-below", "add").into(),
+                item("xlsx.insert-column-left", "add").into(),
+                item("xlsx.insert-column-right", "add").into(),
+                item("xlsx.insert-cells", "add").into(),
+            ]),
             SEP,
             item("xlsx.insert-sheet", "note_add").shortcut("⇧F11").into(),
             SEP,
@@ -709,7 +725,6 @@ fn insert_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
             item("docx.header-footer", "view_quilt").into(),
             item("docx.page-number", "tag").into(),
             item("docx.toc", "toc").into(),
-            item("docx.footnote", "notes").shortcut("⌥⌘F").into(),
             SEP,
         ]);
     }
@@ -884,7 +899,7 @@ fn arrange_menu() -> Vec<MenuEntry> {
 
 /// The toolbar's left part every format has: メニューを検索 and the format painter.
 pub(crate) fn toolbar_left(editor: &SlideEditor) -> Vec<ToolItem> {
-    let mut items: Vec<ToolItem> = vec![ToolButton::new("menu-search", "search", crate::shell::i18n::text("_shell.search-menus")).into()];
+    let mut items: Vec<ToolItem> = vec![ToolButton::new("menu-search", "search", crate::shell::i18n::text("_shell.search-menus")).searchable().into()];
     match editor.kind() {
         Kind::Presentation => items.push(
             // A split button as PowerPoint's: the left half adds a slide in the layout of the current one, the ▼ has the
@@ -940,7 +955,7 @@ fn text_format(editor: &SlideEditor, font_default: &'static str) -> Vec<ToolItem
         ToolButton::new("bold", "format_bold", "_shell.bold-b").on(style.as_ref().is_some_and(|s| s.bold)).disabled(!on).click(|this, window, cx| this.update_style(window, cx, |s| s.bold = !s.bold)).into(),
         ToolButton::new("italic", "format_italic", "_shell.italic-i").on(style.as_ref().is_some_and(|s| s.italic)).disabled(!on).click(|this, window, cx| this.update_style(window, cx, |s| s.italic = !s.italic)).into(),
         ToolButton::new("underline", "format_underlined", "_shell.underline-u").into(),
-        ToolButton::new("text-color", "format_color_text", "_shell.font-color").color(rgb(0x000000).into()).into(),
+        ToolButton::new("text-color", "format_color_text", "_shell.font-color").color(crate::shell::palette::doc(0x000000).into()).into(),
         sep(),
         ToolButton::new("align", "format_align_left", "_shell.arrange")
             .disabled(!on)
@@ -1000,9 +1015,9 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             ToolButton::new("bold", "format_bold", "_shell.bold-b").into(),
             ToolButton::new("italic", "format_italic", "_shell.italic-i").into(),
             ToolButton::new("underline", "format_underlined", "_shell.underline-u").into(),
-            ToolButton::new("text-color", "format_color_text", "_shell.font-color").color(rgb(0x000000).into()).into(),
+            ToolButton::new("text-color", "format_color_text", "_shell.font-color").color(crate::shell::palette::doc(0x000000).into()).into(),
             sep(),
-            ToolButton::new("fill", "format_color_fill", "_shell.fill-color").color(rgb(0xffffff).into()).into(),
+            ToolButton::new("fill", "format_color_fill", "_shell.fill-color").color(crate::shell::palette::doc(0xffffff).into()).into(),
             ToolButton::new("borders", "border_all", "_shell.line").menu(Vec::new()).into(),
             ToolButton::new("merge", "cell_merge", "_shell.merge-cells").menu(Vec::new()).into(),
             sep(),

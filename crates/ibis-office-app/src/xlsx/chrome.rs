@@ -8,6 +8,7 @@
 //! line, a picture, several shapes, or the slide when nothing is selected).
 
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{CharacterFormat, Color, Fill, GradientPath, LineSpacing, ListKind, ParagraphFormat, Rgb, ShapeKind, Stroke, TextAlign, step_font_size};
 
 use super::editing::{Align, ArrowKind, COLORS, LineKind, Order, SHAPES, SelectionKind, Tool, WIDTHS};
@@ -374,7 +375,7 @@ fn color_menu(editor: &SlideEditor, _id: &'static str, none: Option<&'static str
         .filter(|&&(_, rgb, _)| !matches!(rgb, 0x000000 | 0x404040 | 0x7f7f7f | 0xd9d9d9 | 0xffffff | 0x4472c4))
         .map(|&(label, rgb, id)| Swatch::with_id(id, Rgb(rgb), label, false, &pick))
         .collect();
-    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None })]
+    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None, current:None })]
 }
 
 fn fill_presets(background: bool) -> Vec<MenuEntry> {
@@ -776,7 +777,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
     fill_items.push(MenuEntry::Separator);
     fill_items.extend(fill_presets(false));
     let fill = ToolButton::new("fill", "format_color_fill", "pptx.common.fill")
-        .color(fill_color.unwrap_or(rgb(0xffffff).into()))
+        .color(fill_color.unwrap_or(crate::shell::palette::doc(0xffffff).into()))
         .menu(fill_items);
     let options = ToolButton::text("format-options", "_shell.format-options", "pptx.chrome.format-options-sidebar").click(|this, _, cx| {
         this.sidebar_open = true;
@@ -863,7 +864,7 @@ pub(crate) fn sidebar(editor: &mut SlideEditor) -> Option<SidebarPanel> {
     let cm = |emu: i64| format!("{:.2} cm", emu as f64 / 360_000.0);
     let shapes = editor.selected_shapes();
     if let Some(shape) = shapes.first() {
-        let mut body = div().px(px(18.)).py(px(8.));
+        let mut body = div().px(px(18.)).py(px(8.)).p_0();
         if shapes.len() > 1 {
             body = body.child(div().text_size(px(13.)).text_color(text_secondary()).child(crate::shell::i18n::format("_xlsx.count-shapes-selected", &[("count", &shapes.len())])));
         }
@@ -872,7 +873,7 @@ pub(crate) fn sidebar(editor: &mut SlideEditor) -> Option<SidebarPanel> {
                 Fill::None => crate::shell::i18n::text("_shell.none").to_string(),
                 Fill::Solid(c) => format!("#{:06X}", c.rgb.0),
                 Fill::Linear { .. } | Fill::TileLinear { .. } | Fill::Path { .. } => crate::shell::i18n::text("pptx.chrome.gradient").to_string(),
-                Fill::Image(_) | Fill::TileImage { .. } => crate::shell::i18n::text("pptx.chrome.picture").to_string(),
+                Fill::Image(_) | Fill::TileImage { .. } | Fill::Blip(_) => crate::shell::i18n::text("pptx.chrome.picture").to_string(),
                 Fill::Pattern { preset, .. } => crate::shell::i18n::format("pptx.chrome.pattern-preset", &[("preset", preset)]),
             };
             let line = auto.stroke.as_ref().map_or(crate::shell::i18n::text("_shell.none").to_string(), |s| {
@@ -898,7 +899,7 @@ pub(crate) fn sidebar(editor: &mut SlideEditor) -> Option<SidebarPanel> {
         Fill::None => crate::shell::i18n::text("_shell.none").to_string(),
         Fill::Solid(c) => format!("#{:06X}", c.rgb.0),
         Fill::Linear { .. } | Fill::TileLinear { .. } | Fill::Path { .. } => crate::shell::i18n::text("pptx.chrome.gradient").to_string(),
-        Fill::Image(_) | Fill::TileImage { .. } => crate::shell::i18n::text("pptx.chrome.picture").to_string(),
+        Fill::Image(_) | Fill::TileImage { .. } | Fill::Blip(_) => crate::shell::i18n::text("pptx.chrome.picture").to_string(),
         Fill::Pattern { preset, .. } => crate::shell::i18n::format("pptx.chrome.pattern-preset", &[("preset", preset)]),
     };
     let size = editor.presentation().slide_size;
@@ -907,7 +908,7 @@ pub(crate) fn sidebar(editor: &mut SlideEditor) -> Option<SidebarPanel> {
     let body = div()
         .px(px(18.))
         .py(px(8.))
-        .child(heading(crate::shell::i18n::format("pptx.chrome.slide-index", &[("index", &index)])))
+        .p_0().child(heading(crate::shell::i18n::format("pptx.chrome.slide-index", &[("index", &index)])))
         .child(field("_shell.background", background))
         .child(field("_shell.layout", layout))
         .child(field("_shell.transitions", transition_name(editor.slide().transition.as_ref())))

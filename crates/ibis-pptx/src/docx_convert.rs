@@ -138,7 +138,7 @@ fn run_visible_text(run: &FlowRun) -> String {
     }
     match &run.kind {
         FlowRunKind::Text(t) => t.clone(),
-        FlowRunKind::Tab => "\t".to_string(),
+        FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => "\t".to_string(),
         FlowRunKind::LineBreak => "\n".to_string(),
         FlowRunKind::PageRef { shown, .. }
         | FlowRunKind::Field { shown, .. } => shown.clone(),
@@ -942,7 +942,7 @@ fn doc_flow_to_conv_blocks(doc: &FlowDocument) -> Vec<ConvBlock> {
                 continue;
             }
             match &r.kind {
-                FlowRunKind::Tab => runs.push(ConvRun {
+                FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => runs.push(ConvRun {
                     is_tab: true,
                     ..Default::default()
                 }),
@@ -1248,7 +1248,7 @@ pub fn export_html(doc: &FlowDocument) -> String {
                     out.push_str("<br>");
                     continue;
                 }
-                FlowRunKind::Tab => {
+                FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => {
                     out.push_str("&#9;");
                     continue;
                 }
@@ -1980,6 +1980,15 @@ pub fn import_odt_to_docx_bytes(data: &[u8]) -> Result<Vec<u8>, Error> {
     }
 
     build_docx_from_blocks(&blocks, doc_title.as_deref())
+}
+
+/// Whether `data` is an OpenDocument text document or template (a zip whose `mimetype` says so).
+pub fn is_odt(data: &[u8]) -> bool {
+    if !data.starts_with(b"PK") {
+        return false;
+    }
+    let Ok(archive) = crate::zip::Archive::new(data) else { return false };
+    archive.read("mimetype").ok().flatten().is_some_and(|m| m.starts_with(b"application/vnd.oasis.opendocument.text"))
 }
 
 /// Open OpenDocument Text (`.odt`) bytes as an editable Word document (`Opened`).

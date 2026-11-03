@@ -4,7 +4,10 @@
 //! How Excel for Mac orders and compares text: by the system's Japanese
 //! collation (CoreFoundation, locale `ja`), without regard to case and
 //! width, kana kinds together (あ = ア = ｱ), kanji in the order of JIS X 0208
-//! (by reading). Where the system has none, by the characters' codes.
+//! (by reading). On Windows by the system's `ja-JP` order (`CompareStringEx`, case, width and
+//! kana kinds ignored; kanji in the order of JIS X 0208, which is by reading for the first
+//! level and may differ from macOS's for the second level and for characters read in another
+//! way than the JIS order has them). Elsewhere by the characters' codes.
 
 use std::cmp::Ordering;
 
@@ -18,9 +21,40 @@ pub(crate) fn compare(a: &str, b: &str) -> Ordering {
     {
         return mac::compare(a, b);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        return win::compare(a, b);
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         a.to_lowercase().cmp(&b.to_lowercase())
+    }
+}
+
+#[cfg(windows)]
+mod win {
+    use std::cmp::Ordering;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn CompareStringEx(locale: *const u16, flags: u32, a: *const u16, a_len: i32, b: *const u16, b_len: i32, version: *const core::ffi::c_void, reserved: *const core::ffi::c_void, param: isize) -> i32;
+    }
+
+    const NORM_IGNORECASE: u32 = 0x1;
+    const NORM_IGNOREKANATYPE: u32 = 0x1_0000;
+    const NORM_IGNOREWIDTH: u32 = 0x2_0000;
+
+    pub(super) fn compare(a: &str, b: &str) -> Ordering {
+        let locale: Vec<u16> = "ja-JP".encode_utf16().chain(std::iter::once(0)).collect();
+        let (x, y): (Vec<u16>, Vec<u16>) = (a.encode_utf16().collect(), b.encode_utf16().collect());
+        // CSTR_LESS_THAN 1, CSTR_EQUAL 2, CSTR_GREATER_THAN 3; 0 is a failure.
+        let result = unsafe { CompareStringEx(locale.as_ptr(), NORM_IGNORECASE | NORM_IGNOREKANATYPE | NORM_IGNOREWIDTH, x.as_ptr(), x.len() as i32, y.as_ptr(), y.len() as i32, std::ptr::null(), std::ptr::null(), 0) };
+        match result {
+            1 => Ordering::Less,
+            2 => Ordering::Equal,
+            3 => Ordering::Greater,
+            _ => a.to_lowercase().cmp(&b.to_lowercase()),
+        }
     }
 }
 
@@ -80,6 +114,26 @@ mod mac {
             CFRelease(y);
             result.cmp(&0)
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::compare;
+    use std::cmp::Ordering::{Equal, Greater, Less};
+
+    #[test]
+    fn text_is_ordered_by_the_japanese_collation() {
+        // Kanji of the first level by reading: かんさい, かんとう, きゅうしゅう.
+        let mut regions = vec!["九州", "関東", "関西"];
+        regions.sort_by(|a, b| compare(a, b));
+        assert_eq!(regions, ["関西", "関東", "九州"]);
+        assert_eq!(compare("A", "a"), Equal);
+        assert_eq!(compare("Ａ", "A"), Equal);
+        assert_eq!(compare("あ", "ア"), Equal);
+        assert_eq!(compare("ｱ", "ア"), Equal);
+        assert_eq!(compare("a", "あ"), Less);
+        assert_eq!(compare("東京", "大阪"), Greater);
     }
 }
 

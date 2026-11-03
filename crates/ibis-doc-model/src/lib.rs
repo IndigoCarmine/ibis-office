@@ -62,7 +62,7 @@ pub use command::{Command, Document, EditError};
 pub use flow_command::{CaptionNumberFormat, CaseConversion, Container, CrossReferenceKind, CrossReferenceTarget, CrossReferenceType, FlowCommand, FlowPos, FlowTableCellResolver, missing_header_footer_style, InsertFormat, ParaChange, RunChange, TableEdit, TocInstruction, all_paragraphs, caption_description_text, caption_labels, comment_at_pos, comment_marks, comment_range, cross_reference_targets, edit_field_at, entire_caption_text, find_table_cell_for_paragraph, flow_cell_text, get_field_at, get_table_cell_at, insert_caption_detailed, insert_cross_reference_target, insert_field_at_range, missing_table_of_figures_style, missing_toc_styles_for_levels, parse_cell_number, parse_listnum, parse_toc_instruction, relative_paragraph_position, table_of_figures_entries, toc_caption_label, toc_entries_with_instruction, updated_fields_in_range};
 pub use sheet_command::{calculate_missing_values, ReportCell, CellEdit, CellInput, CellSlot, ChartMoveTarget, Edge, PutCell, SheetCommand, SheetPatch, SortBy, StyleChange};
 pub use drawing::{
-    Bevel, BevelPreset, Color, EndSize, Fill, Geometry, GradientPath, GradientStop, LineAlignment, LineCap, LineCompound, LineDash, LineEnd, LineJoin, Reflection, Rgb, Shadow, Stroke, TileAlign, TileFlip, pattern_tile,
+    Bevel, BevelPreset, BlipFill, Color, EndSize, Fill, Geometry, GradientPath, GradientStop, LineAlignment, LineCap, LineCompound, LineDash, LineEnd, LineJoin, Reflection, Rgb, Shadow, Stroke, TileAlign, TileFlip, pattern_tile, spreadsheet_pattern_of_preset, spreadsheet_pattern_tile,
 };
 pub use flow::{
     SubdocumentInfo,
@@ -96,15 +96,15 @@ pub use form_control::{ControlHit, ControlKind, FormControl};
 pub use shape_geometry::{FormulaGeometry, GeometryDef, GeometryPath, Guide, Outline, PathFill, PathOp, Subpath};
 pub use sheet::{
     cell_name, CellImage, ExternalBook, ExternalSheet, CalculationCompatibilityVersion, CalcMode, Border, BorderLine, CellUnderline, CellAlign, CellError, CellGradient, CellKind, CellRange, CellStyle, CellValue, CellVerticalAlign, CustomCellStyle, DefinedName, Sheet,
-    SheetCell, CellRun, DataTable, ConsolidateFunction, DataConsolidate, SubtotalParams, ScenarioInputCell, SheetScenario, SheetScenarios, SheetComment, ThemeColor, SheetHeaderFooter, SheetPrint, SheetProtection, ProtectedRange, WorkbookProtection, PasswordHash, ProtectionAllowed, SheetState, Workbook, WorkbookSheet, SheetFloat, ConditionalFormat, CfRule, CfKind, CfValue, CfStyle, CfIcon, DataBarAxisPosition, DataBarDirection, Validation, Hyperlink, AutoFilter, ColumnFilter, DateGroup, SheetTable, TableStyleInfo, TableTotal, ThreadPost, ThreadedComment, Sparkline, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind,
+    SheetCell, CellRun, DataTable, ConsolidateFunction, DataConsolidate, SubtotalParams, ScenarioInputCell, SheetScenario, SheetScenarios, SheetComment, ThemeColor, Unsaved, SheetHeaderFooter, SheetPrint, SheetProtection, ProtectedRange, WorkbookProtection, PasswordHash, ProtectionAllowed, SheetState, Workbook, WorkbookSheet, SheetFloat, ConditionalFormat, CfRule, CfKind, CfValue, CfStyle, CfIcon, DataBarAxisPosition, DataBarDirection, Validation, Hyperlink, AutoFilter, ColumnFilter, DateGroup, SheetTable, TableStyleInfo, TableTotal, ThreadPost, ThreadedComment, Sparkline, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind,
     CustomWorkbookView, CustomSheetView,
     PhoneticType, PhoneticAlignment, PhoneticProperties,
 };
 pub use pivot::{DateGroupBy, PivotAxis, PivotDataField, PivotDetails, PivotField, PivotFieldGrouping, PivotFilter, PivotItem, PivotLine, PivotPageField, PivotSort, PivotSource, PivotStyleInfo, PivotTable, chart_from_pivot, update_chart_from_pivot};
 pub use sheet_calc::{BookView, ensure_calc_index, warmup_calc_index_ahead};
 pub use table::{CellBorders, Table, TableCell, TableRow, TableStyleOptions};
-pub use text::{NumberScheme, AutoNumber, 
-    Bullet, FONT_SIZE_STEPS, FontAlign, FontSet, CharacterFormat, ListKind, ParagraphFormat, ThemeFonts, is_east_asian, Insets, LineSpacing, Paragraph, Run, RunStyle, TextAlign, TextAutofit, TextBody,
-    SlideLink, TextField, TextStyle, VerticalAnchor, step_font_size, Strike, Caps, Underline, VerticalKind,
+pub use text::{KernMin, NumberScheme, AutoNumber, 
+    Bullet, SymbolBullet, FONT_SIZE_STEPS, FontAlign, FontSet, CharacterFormat, ListKind, ParagraphFormat, ThemeFonts, is_east_asian, Insets, LineSpacing, Paragraph, Run, RunStyle, TextAlign, TextAutofit, TextBody,
+    SlideLink, TextField, TextStyle, VerticalAnchor, step_font_size, autofit_font_size_pt, Strike, Caps, Underline, VerticalKind,
     TextTabAlign, TextTabStop,
 };

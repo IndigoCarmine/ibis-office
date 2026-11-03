@@ -190,18 +190,7 @@ fn opposite(h: ResizeHandle) -> ResizeHandle {
 pub(crate) fn resize(origin: EmuRect, rotation: i32, h: ResizeHandle, dx: f64, dy: f64, keep_aspect: bool) -> EmuRect {
     // The drag in the shape's own axes.
     let d = rotate(P::new(dx, dy), P::new(0.0, 0.0), -rotation);
-    let (mut ldx, mut ldy) = (d.x, d.y);
-    let corner = matches!(h, ResizeHandle::TopLeft | ResizeHandle::TopRight | ResizeHandle::BottomLeft | ResizeHandle::BottomRight);
-    if keep_aspect && corner && origin.width > 0 && origin.height > 0 {
-        let sx = if h.moves_left() { -1.0 } else { 1.0 };
-        let sy = if h.moves_top() { -1.0 } else { 1.0 };
-        let w = origin.width as f64 + sx * ldx;
-        let hgt = origin.height as f64 + sy * ldy;
-        let k = (w / origin.width as f64).max(hgt / origin.height as f64);
-        ldx = sx * (origin.width as f64 * k - origin.width as f64);
-        ldy = sy * (origin.height as f64 * k - origin.height as f64);
-    }
-    let resized = origin.resized(h, ldx.round() as i64, ldy.round() as i64, MIN_SIDE);
+    let resized = origin.resized_with_aspect(h, d.x.round() as i64, d.y.round() as i64, MIN_SIDE, keep_aspect);
     if rotation == 0 {
         return resized;
     }

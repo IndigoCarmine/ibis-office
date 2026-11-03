@@ -17,13 +17,7 @@ fn store_path() -> Option<PathBuf> {
     if cfg!(feature = "scenarios") {
         return None;
     }
-    let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
-    #[cfg(target_os = "macos")]
-    let base = env("HOME").map(|home| home.join("Library/Application Support"));
-    #[cfg(target_os = "windows")]
-    let base = env("APPDATA");
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
+    let base = crate::shell::app_data::base();
     Some(base?.join("AcaudaOffice").join("docx-backup.tsv"))
 }
 

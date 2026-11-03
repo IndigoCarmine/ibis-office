@@ -45,9 +45,12 @@ fn main() {
         println!("cargo::rustc-cfg=headless_export");
     }
 
-    // Built for Windows with MSVC: the icon resource goes to its linker.
+    // Built for Windows with MSVC: the icon resource goes to its linker, and
+    // the main-thread stack is 8 MB to match macOS/Linux defaults (Windows
+    // defaults to 1 MB, which unoptimised debug frames overflow).
     #[cfg(windows)]
     if os == "windows" && target("CARGO_CFG_TARGET_ENV") == "msvc" {
+        println!("cargo:rustc-link-arg=/STACK:8388608");
         windows_icon();
     }
 }

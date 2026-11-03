@@ -1010,6 +1010,9 @@ pub struct Document {
     presentation: Presentation,
     undo: Vec<Step>,
     redo: Vec<Step>,
+    /// Last successful worksheet edit, before undo inversion, for Repeat (F4).
+    repeat_sheet: Vec<crate::sheet_command::SheetCommand>,
+    repeat_sheet_group: bool,
     /// The last state number given to a step.
     last_state: u64,
     /// The state the presentation was in when it was last saved (or opened).
@@ -1029,7 +1032,34 @@ struct Step {
 
 impl Document {
     pub fn new(presentation: Presentation) -> Self {
-        Self { presentation, undo: Vec::new(), redo: Vec::new(), last_state: 0, saved_state: 0, file: None }
+        Self { presentation, undo: Vec::new(), redo: Vec::new(), repeat_sheet: Vec::new(), repeat_sheet_group: false, last_state: 0, saved_state: 0, file: None }
+    }
+
+    /// Mark the current state of the document as saved (clean): the same as
+    /// [`Document::mark_saved`].
+    pub fn mark_clean(&mut self) {
+        self.mark_saved();
+    }
+
+    /// Clear all undo/redo history and mark the document as clean.
+    /// Used when initializing a newly created document or template instance.
+    pub fn reset_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.repeat_sheet.clear();
+        self.repeat_sheet_group = false;
+        self.saved_state = self.state();
+    }
+
+    /// Mark the document as having unsaved changes (until it is saved again).
+    pub fn mark_dirty(&mut self) {
+        self.lose_saved_state();
+    }
+
+    /// Whether the document has unsaved changes since it was opened or last
+    /// saved: the same as [`Document::is_modified`].
+    pub fn is_dirty(&self) -> bool {
+        self.is_modified()
     }
 
     /// Tell the document which file it is (`None`: not saved yet).
@@ -1052,6 +1082,11 @@ impl Document {
 
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
+    }
+
+    /// How many undo steps there are (a mark to tell whether the document was edited since).
+    pub fn undo_len(&self) -> usize {
+        self.undo.len()
     }
 
     pub fn can_redo(&self) -> bool {
@@ -1094,14 +1129,27 @@ impl Document {
     /// Apply `commands` as one undo step. If any command fails, the ones
     /// before it are rolled back and the document is unchanged.
     pub fn execute(&mut self, commands: Vec<Command>) -> Result<(), EditError> {
+        let repeat:Vec<_> = commands.iter().filter_map(|command|match command {
+            Command::Sheet(edit @ (crate::SheetCommand::SetFormat{..}|crate::SheetCommand::Insert{..}|crate::SheetCommand::Delete{..}|crate::SheetCommand::ClearFormats{..}|crate::SheetCommand::ShiftCells{..})) => Some(edit.clone()),
+            _ => None,
+        }).collect();
         let inverses = self.apply_all(commands)?;
         if !inverses.is_empty() {
             let state = self.new_state();
             self.undo.push(Step { state, commands: inverses });
             self.redo.clear();
+            let same_target = self.repeat_sheet_group && !repeat.is_empty() && !self.repeat_sheet.is_empty() && repeat.iter().chain(&self.repeat_sheet).all(|edit|match (repeat.first(),edit) {
+                (Some(crate::SheetCommand::SetFormat{slide:a,ranges:x,..}),crate::SheetCommand::SetFormat{slide:b,ranges:y,..}) => a==b && x==y,
+                _ => false,
+            });
+            if same_target {self.repeat_sheet.extend(repeat);} else {self.repeat_sheet = repeat;}
         }
         Ok(())
     }
+
+    pub fn repeat_sheet_commands(&self) -> &[crate::SheetCommand] { &self.repeat_sheet }
+    pub fn begin_repeat_sheet_group(&mut self) { self.repeat_sheet.clear(); self.repeat_sheet_group=true; }
+    pub fn end_repeat_sheet_group(&mut self) { self.repeat_sheet_group=false; }
 
     /// Apply `commands` as part of the most recent undo step, so that for
     /// example inserting a text box and typing its first text undo together.

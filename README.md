@@ -37,6 +37,7 @@ Builds are on the [Releases](https://github.com/IndigoCarmine/ibis-office/releas
 - **Windows**: unzip `AcaudaOffice-<version>-Windows.zip` and run `AcaudaOffice.exe` in the `AcaudaOffice` folder, or install with `AcaudaOffice-<version>-Windows-Setup.exe` (for your user only; no administrator rights needed).
 - **macOS**: unzip `AcaudaOffice-<version>-macOS.zip` and move `AcaudaOffice.app` to your Applications folder.
 - **Linux**: download `AcaudaOffice-<version>-Linux.AppImage`, allow it to run (`chmod +x`), and double-click.
+- **Embedding the browser version**: optional Close and Download buttons that hand the embedding page an event, see [Embedding](docs/web-embedding.md).
 
 Acauda Office keeps its settings apart from ibisOffice's (in `AcaudaOffice` folders), so both can be installed side by side. Its automatic update looks only at this repository's releases.
 
@@ -51,10 +52,10 @@ cargo build --release
 ```
 
 - Requires the latest stable Rust.
-- On macOS, `scripts/bundle-macos.sh` builds the app at `target/release/AcaudaOffice.app`.
+- On macOS, `scripts/bundle-macos.sh --release` builds the app at `target/release/AcaudaOffice.app` (without `--release`, a debug build at `target/debug/AcaudaOffice.app`).
 - On Windows, `pwsh scripts/bundle-windows.ps1` builds the release zip and the installer in `target/dist` (the installer needs [Inno Setup 6](https://jrsoftware.org/isdl.php)).
-- On Linux, `scripts/bundle-linux.sh` builds the AppImage in `target/dist`.
-- For the browser edition, build with `scripts/build-web.sh --release` and serve `www/` (browsers with WebGPU).
+- On Linux, `scripts/bundle-linux.sh --release` builds the AppImage in `target/dist`.
+- For the browser edition, build with `scripts/build-web.sh --release` and serve `www/` (browsers with WebGPU: Chrome, Edge, Safari 26 or later).
 
 ## License
 

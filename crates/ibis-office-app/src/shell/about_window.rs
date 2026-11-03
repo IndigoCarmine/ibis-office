@@ -44,6 +44,7 @@ pub(crate) fn open_over(parent: Option<Bounds<Pixels>>, display: Option<DisplayI
         ..Default::default()
     };
     let opened = cx.open_window(options, |window, cx| {
+        crate::shell::palette::watch(window, cx);
         let view = cx.new(|cx| AboutWindow { focus: cx.focus_handle() });
         let focus = view.read(cx).focus.clone();
         focus.focus(window, cx);

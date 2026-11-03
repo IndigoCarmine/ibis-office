@@ -296,8 +296,10 @@ impl Writer {
     /// Add an entry, compressing `data` with deflate (or storing it when it is empty).
     pub fn add(&mut self, name: &str, meta: EntryMeta, data: &[u8]) -> Result<(), Error> {
         let crc = crc32(data);
-        if data.is_empty() {
-            return self.add_raw(name, meta, STORED, crc, 0, data);
+        // An empty entry, and the `mimetype` of an OpenDocument package (which the specification wants stored, so that the kind of
+        // file can be told from its first bytes), are stored as they are.
+        if data.is_empty() || name == "mimetype" {
+            return self.add_raw(name, meta, STORED, crc, data.len(), data);
         }
         // A big part (a sheet of tens of thousands of cells) is compressed fast: saving it took seconds at level 6, for a few percent more size.
         let compressed = miniz_oxide::deflate::compress_to_vec(data, if data.len() > 2_000_000 { 1 } else { 6 });

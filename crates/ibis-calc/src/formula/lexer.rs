@@ -112,7 +112,7 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
         // A space between the end of one operand and the start of another
         // is the intersection operator.
         if had_space && ends_operand(out.last().map(|s| &s.token)) && starts_operand(c) {
-            out.push(Spanned { token: Token::Op(Op::Intersect), start: pos(i) - 1, end: pos(i) });
+            out.push(Spanned { token: Token::Op(Op::Intersect), start: pos(i - 1), end: pos(i) });
         }
         match c {
             '"' => {
@@ -178,7 +178,7 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
             '#' => {
                 // An error value, or the spill operator after a reference.
                 let rest = &text[start..];
-                if let Some(e) = CellError::ALL.iter().copied().filter(|e| rest.len() >= e.as_str().len() && rest[..e.as_str().len()].eq_ignore_ascii_case(e.as_str())).max_by_key(|e| e.as_str().len()) {
+                if let Some(e) = CellError::ALL.iter().copied().filter(|e| rest.as_bytes().get(..e.as_str().len()).is_some_and(|p| p.eq_ignore_ascii_case(e.as_str().as_bytes()))).max_by_key(|e| e.as_str().len()) {
                     let n = e.as_str().chars().count();
                     push(&mut out, Token::Error(e), i + n);
                     i += n;
@@ -493,6 +493,13 @@ fn starts_operand(c: char) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn error_value_next_to_multibyte_text_does_not_panic() {
+        assert!(tokenize("#REF!=\"いいえ\"").is_ok());
+        assert!(tokenize("#N/A&\"あいうえお\"").is_ok());
+        assert!(tokenize("A1\u{3000}B1").is_ok());
+    }
+
     fn kinds(text: &str) -> Vec<Token> {
         tokenize(text).unwrap().into_iter().map(|s| s.token).collect()
     }
@@ -538,5 +545,13 @@ mod tests {
         assert_eq!(kinds("Table1[[#This Row],[Price]]")[1], Token::Brackets("[[#This Row],[Price]]".into()));
         assert_eq!(kinds("1E+3")[0], Token::Number(1000.0));
         assert_eq!(kinds(".5")[0], Token::Number(0.5));
+    }
+
+    /// Issue #21: multi-byte characters within 13 bytes after `#` (conditional formats of sheets with Japanese names).
+    #[test]
+    fn a_hash_before_multibyte_text_does_not_panic() {
+        assert_eq!(kinds("#REF!+'売上'!$B$2>0")[0], Token::Error(CellError::Ref));
+        assert_eq!(kinds("$A1#&\"円\"=\"x\"")[1], Token::Spill);
+        assert!(tokenize("ISERROR(#あいう)").is_err());
     }
 }

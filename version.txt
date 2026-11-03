@@ -1,4 +1,4 @@
-Windows	0.8.3
-macOS	0.8.3
-wasm	0.8.3
-Linux	0.8.3
+Windows	0.8.5
+macOS	0.8.5
+wasm	0.8.5
+Linux	0.8.5

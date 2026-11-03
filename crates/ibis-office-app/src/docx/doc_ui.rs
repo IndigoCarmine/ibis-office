@@ -12,6 +12,7 @@ use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{Block, EMU_PER_POINT, EmuRect, EmuSize, FlowAlign, FlowDocument, FlowRunKind, ShapeKind};
 
 use crate::docx::editing::{self as ed, Move};
@@ -295,6 +296,7 @@ impl SlideEditor {
     /// The workspace of a document: the pages near the view (the others
     /// are not built, so a long document scrolls fast), each with a shadow.
     pub(crate) fn render_document_workspace(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_docx_edited_box_resource();
         let entity = cx.entity();
         let content = self.workspace_content();
         let muted = cx.theme().muted;
@@ -349,6 +351,7 @@ impl SlideEditor {
                                     )
                                 }),
                         )
+                        .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
                         .scrollbar(&self.doc_split_scroll, ScrollbarAxis::Both),
                 )
                 .child(
@@ -400,6 +403,7 @@ impl SlideEditor {
                                     )
                                 }),
                         )
+                        .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
                         .scrollbar(&self.workspace_scroll, ScrollbarAxis::Both),
                 )
         } else {
@@ -430,13 +434,15 @@ impl SlideEditor {
                             )
                         }),
                 )
+                .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
                 .scrollbar(&self.workspace_scroll, ScrollbarAxis::Both)
         };
 
         div()
             .id("workspace")
-            .key_context(ed::TEXT_CONTEXT)
+            .when(!self.doc_state().is_some_and(|s| s.box_edit.is_some()), |d| d.key_context(ed::TEXT_CONTEXT))
             .track_focus(&self.focus_handle)
+            .capture_key_down(cx.listener(Self::on_text_key))
             .map(|d| Self::text_actions(d, &mut *cx))
 
             // The wheel scrolls the pages; it turns none.
@@ -615,25 +621,25 @@ impl SlideEditor {
                     .top(px(page_top))
                     .w(px(w))
                     .h(px(h))
-                    .bg(rgb(if self.resources.dark_page { 0x262626 } else { 0xffffff }))
+                    .bg(crate::shell::palette::doc(if self.resources.dark_page { 0x262626 } else { 0xffffff }))
                     .when(show_white_space, |d| d.shadow_md())
-                    .when(!show_white_space, |d| d.border_1().border_color(rgb(0xd0d0d0)))
+                    .when(!show_white_space, |d| d.border_1().border_color(crate::shell::palette::doc(0xd0d0d0)))
                     .children(shapes)
                     .children(gridlines_element)
                     .children(formatting_marks_element)
                     .children(self.selection_rects(&lines, index, selection, k))
-                    .children(self.render_mini_toolbar(index, k, cx))
-                    .children(self.text_box_overlay(index, k))
+                    .children(self.fit_text_indicator(&lines,index,k))
+                    .children(self.text_box_overlay(index, k, cx))
                     .children(self.doc_state().map(|s| s.extra_selections.clone()).unwrap_or_default().into_iter().flat_map(|r| self.selection_rects(&lines, index, Some(r), k)).collect::<Vec<_>>())
-                    .children(caret.and_then(|c| {
+                    .children(caret.filter(|_| !self.doc_state().is_some_and(|s| s.box_edit.is_some() || s.shape_selected)).and_then(|c| {
                         let line = Self::line_of(&lines, c)?;
                         let b = self.caret_box(&lines, c)?;
                         Some((line.vertical, b))
                     }).filter(|(_, b)| b.0 == index).map(|(vertical, (_, x, y, h))| {
                         let caret = if vertical {
-                            div().absolute().left(px(x * k)).top(px(y * k - 0.5)).w(px(h * k)).h(px(1.5)).bg(rgb(0x000000))
+                            div().absolute().left(px(x * k)).top(px(y * k - 0.5)).w(px(h * k)).h(px(1.5)).bg(crate::shell::palette::doc(0x000000))
                         } else {
-                            div().absolute().left(px(x * k - 0.5)).top(px(y * k)).w(px(1.5)).h(px(h * k)).bg(rgb(0x000000))
+                            div().absolute().left(px(x * k - 0.5)).top(px(y * k)).w(px(1.5)).h(px(h * k)).bg(crate::shell::palette::doc(0x000000))
                         };
                         match &marked {
                             // Text being composed, underlined at the caret.
@@ -644,26 +650,40 @@ impl SlideEditor {
                                 .h(px(h * k))
                                 .flex()
                                 .items_end()
-                                .bg(rgb(0xffffff))
+                                .text_color(crate::shell::palette::doc(0x000000))
+                                .when(vertical,|d|d.flex_col().items_center().h_auto().w(px(h*k)))
+                                .bg(crate::shell::palette::doc(0xffffff))
                                 .border_b_1()
-                                .border_color(rgb(0x000000))
+                                .border_color(crate::shell::palette::doc(0x000000))
                                 .map(|d| match &marked_font {
-                                    Some((font, size)) => d.font_family(font.family.clone()).font_weight(font.weight).when(font.style == FontStyle::Italic, |d| d.italic()).text_size(px((size * k).max(8.0))),
+                                    Some((font, size)) => d.font_family(font.family.clone()).font_weight(font.weight).when(vertical,|d|d.font_features(crate::render::vertical_text::font(font).features)).when(font.style == FontStyle::Italic, |d| d.italic()).text_size(px((size * k).max(8.0))),
                                     None => d.text_size(px((h * k * 0.7).max(8.0))),
                                 })
-                                .child(text.clone())
+                                .children(if vertical{vec![crate::render::vertical_text::marked(text.clone(),marked_font.as_ref().map(|(font,_)|font.clone()).unwrap_or_else(||gpui_kit::font("sans-serif")),marked_font.as_ref().map_or(h,|(_,size)|*size)*k)]}else{vec![div().child(text.clone()).into_any_element()]})
                                 .into_any_element(),
-                            None => caret.into_any_element(),
+                            None => crate::shell::caret::element(caret,format!("doc:{index}:{x}:{y}:{h}"),self.focus_handle.clone()).into_any_element(),
+                        }
+                    }))
+                    .when(self.link_hover,|d|d.cursor_pointer())
+                    .on_mouse_down(MouseButton::Right,cx.listener(move|e,event:&MouseDownEvent,w,cx|{
+                        if let Some(pos)=e.page_point_pane(index,event.position,is_top).and_then(|(x,y)|e.doc_link_position_at_point(index,x,y)){
+                            if let Some((a,b,_))=e.doc_link_range(pos){e.set_caret(a,false,cx);e.set_caret(b,true,cx);let entries=e.doc_hyperlink_menu();e.open_hyperlink_context(event.position,entries,w,cx);cx.stop_propagation();}
                         }
                     }))
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, window, cx| this.on_page_down(index, event, window, is_top, cx)))
                     .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| this.on_page_move(index, event, is_top, cx)))
-                    .on_mouse_up(MouseButton::Left, cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                    .on_mouse_up(MouseButton::Left, cx.listener(|this, _: &MouseUpEvent, window, cx| {
                         if let Some(state) = this.doc_state_mut() {
                             state.dragging = false;
                         }
                         this.end_docx_ink(cx);
+                        let clicked=this.doc_state().and_then(|s|s.shape_drag).filter(|d|d.delta.0.abs()<2.&&d.delta.1.abs()<2. && !crate::shell::selection_handles::on_border(d.frame,0,d.start,3.)).map(|d|d.at);
+                        // A plain click on the border of the box being edited ends the edit (a drag moves the box, text still in edit).
+                        let border_click_exit=this.doc_state().and_then(|s|s.shape_drag.filter(|d|d.mode==crate::docx::text_box_panel::DragMode::Move&&d.delta.0.abs()<2.&&d.delta.1.abs()<2.&&s.box_edit.as_ref().is_some_and(|b|b.at==d.at))).is_some();
                         this.end_shape_drag(cx);
+                        if border_click_exit {this.commit_box_edit(window,cx);}
+                        if let Some(at)=clicked {this.start_box_edit_at(at,window,cx);}
+                        this.sync_text_box_panel(window, cx);
                         this.end_draw_table(cx);
                         this.finish_doc_format_brush(cx);
                     }))
@@ -779,7 +799,7 @@ impl SlideEditor {
     }
 
     /// Where on page `index` a window point is, in points.
-    fn page_point_pane(&self, index: usize, position: Point<Pixels>, is_top: bool) -> Option<(f32, f32)> {
+    pub(crate) fn page_point_pane(&self, index: usize, position: Point<Pixels>, is_top: bool) -> Option<(f32, f32)> {
         let (origin, k) = self.page_origin_pane(index, is_top)?;
         Some((f32::from(position.x - origin.x) / k, f32::from(position.y - origin.y) / k))
     }
@@ -791,10 +811,10 @@ impl SlideEditor {
 
     /// A click or drag of the mouse; with ⌘ it adds a range to the selection (Word's
     /// 離れた範囲の選択) instead of replacing it.
-    fn on_page_down(&mut self, index: usize, event: &MouseDownEvent, window: &mut Window, is_top: bool, cx: &mut Context<Self>) {
+    pub(super) fn on_page_down(&mut self, index: usize, event: &MouseDownEvent, window: &mut Window, is_top: bool, cx: &mut Context<Self>) {
         let adding = event.modifiers.platform && !event.modifiers.shift;
         let kept = if adding { self.selection_ranges() } else { Vec::new() };
-        let following = adding && event.click_count == 1 && self.page_point_pane(index, event.position, is_top).and_then(|(x, y)| self.position_at(index, x, y)).is_some_and(|pos| self.link_at_position(pos));
+        let following = event.click_count == 1 && self.page_point_pane(index, event.position, is_top).and_then(|(x, y)| self.doc_link_position_at_point(index, x, y)).is_some();
         self.on_page_down_one(index, event, window, is_top, cx);
         if adding && !following && !kept.is_empty() {
             if let Some(state) = self.doc_state_mut() {
@@ -806,6 +826,9 @@ impl SlideEditor {
     fn on_page_down_one(&mut self, index: usize, event: &MouseDownEvent, window: &mut Window, is_top: bool, cx: &mut Context<Self>) {
         cx.stop_propagation();
         self.doc_split_active = is_top;
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            self.commit_box_edit(window, cx);
+        }
         self.focus_handle.focus(window, cx);
         let Some((x, y)) = self.page_point_pane(index, event.position, is_top) else { return };
         if event.click_count == 1 {
@@ -821,14 +844,32 @@ impl SlideEditor {
         if event.click_count == 1 && self.begin_draw_table(index, x, y, cx) {
             return;
         }
-        // A press on a floating text box selects it and moves it with the mouse.
-        if event.click_count == 1 && !event.modifiers.platform && !event.modifiers.shift && self.begin_shape_drag(index, x, y, cx) {
+        // A double click on a floating text box edits its text in place.
+        if event.click_count == 2 && !event.modifiers.platform && !event.modifiers.shift && self.begin_box_edit_or_handle(index, x, y, window, cx) {
+            self.sync_text_box_panel(window, cx);
             return;
+        }
+        // Shift-click on a shape adds/toggles it in the multi-shape selection.
+        if event.click_count == 1 && crate::shell::selection_handles::additive(event.modifiers) && self.shift_click_shape(index, x, y, cx) {
+            self.sync_text_box_panel(window, cx);
+            return;
+        }
+        // A press on a floating text box selects it and moves it with the mouse.
+        if event.click_count == 1 && !event.modifiers.platform && !event.modifiers.control && !event.modifiers.shift && self.begin_shape_drag(index, x, y, cx) {
+            self.sync_text_box_panel(window, cx);
+            return;
+        }
+        if let Some(state) = self.doc_state_mut() {
+            if state.shape_selected || !state.selected_shapes.is_empty() {
+                state.shape_selected = false;
+                state.selected_shapes.clear();
+                cx.notify();
+            }
         }
         let Some(pos) = self.position_at(index, x, y) else { return };
         // ⌘-click follows a link to its bookmark (a table of contents' entry).
-        if event.modifiers.platform && self.follow_link(pos, cx) {
-            return;
+        if event.click_count==1 && !event.modifiers.shift {
+            if let Some(link_pos)=self.doc_link_position_at_point(index,x,y){if self.follow_link(link_pos,cx){return;}}
         }
         if event.click_count == 1 {
             if self.toggle_checkbox_at(pos, cx) || self.cycle_dropdown_item_at(pos, cx) || self.step_date_picker_at(pos, 1, cx) {
@@ -887,6 +928,7 @@ impl SlideEditor {
     }
 
     fn on_page_move(&mut self, index: usize, event: &MouseMoveEvent, is_top: bool, cx: &mut Context<Self>) {
+        self.update_link_hover(event,cx);
         if self.doc_state().and_then(|s| s.docx_ink.as_ref()).is_some_and(|i| i.active_stroke.is_some() || i.lasso_rect.is_some()) {
             if event.pressed_button == Some(MouseButton::Left) {
                 if let Some((x, y)) = self.page_point_pane(index, event.position, is_top) {
@@ -1046,6 +1088,11 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &ed::ToggleBold, _, cx| this.toggle_bold(cx)))
             .on_action(cx.listener(|this, _: &ed::ToggleItalic, _, cx| this.toggle_italic(cx)))
             .on_action(cx.listener(|this, _: &ed::ToggleUnderline, _, cx| this.toggle_underline(cx)))
+            .on_action(cx.listener(|this, _: &ed::ToggleDoubleUnderline, _, cx| this.toggle_underline_kind(ibis_doc_model::UnderlineStyle::Double, cx)))
+            .on_action(cx.listener(|this, _: &ed::ToggleWordUnderline, _, cx| this.toggle_underline_kind(ibis_doc_model::UnderlineStyle::Words, cx)))
+            .on_action(cx.listener(|this, _: &ed::InsertFootnote, _, cx| this.insert_note(false, cx)))
+            .on_action(cx.listener(|this, _: &ed::InsertEndnote, _, cx| this.insert_note(true, cx)))
+            .on_action(cx.listener(|this, _: &ed::ToggleBulletList, _, cx| this.toggle_list(true, cx)))
             .on_action(cx.listener(|this, _: &ed::ToggleStrike, _, cx| this.toggle_strike(cx)))
             .on_action(cx.listener(|this, _: &ed::ToggleCaps, _, cx| this.toggle_caps(cx)))
             .on_action(cx.listener(|this, _: &ed::ToggleSmallCaps, _, cx| this.toggle_small_caps(cx)))

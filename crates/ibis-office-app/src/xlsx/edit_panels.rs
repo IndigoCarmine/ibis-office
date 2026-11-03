@@ -40,6 +40,12 @@ pub(crate) struct EditPanels {
     pub(crate) data_table: Option<super::data_table::DataTablePanel>,
     /// データ > What-If 分析 > ゴールシーク.
     pub(crate) goal_seek: Option<super::goal_seek::GoalSeekPanel>,
+    /// 関数の挿入・関数の引数 (fx).
+    pub(crate) function: Option<super::function_dialog::FunctionPanel>,
+    /// ツール > 文字カウント.
+    pub(crate) word_count: Option<super::word_count::WordCountPanel>,
+    /// ツール > 辞書 / 校閲 > 類義語辞典.
+    pub(crate) thesaurus: Option<super::thesaurus_panel::SheetThesaurusPanel>,
     /// 編集 > 条件を選択してジャンプ.
     pub(crate) goto_special: Option<super::goto_special::GotoSpecialPanel>,
     /// 挿入 > ピボットテーブル, and a pivot table's fields.
@@ -143,6 +149,8 @@ pub(crate) struct EditPanels {
     pub(crate) phonetic: Option<super::phonetic::PhoneticPanel>,
     /// 行の高さ・列の幅 (XLSX-FORMAT-001/002).
     pub(crate) row_col_size: Option<super::row_col_size::RowColSizePanel>,
+    /// 挿入 > グラフ > おすすめグラフ (#128).
+    pub(crate) recommended_charts: Option<super::chart_insert::RecommendedChartsPanel>,
 }
 
 impl EditPanels {
@@ -163,6 +171,9 @@ impl EditPanels {
         self.allow_edit_ranges = None;
         self.series = None;
         self.goal_seek = None;
+        self.function = None;
+        self.word_count = None;
+        self.thesaurus = None;
         self.data_table = None;
         self.pivot = None;
         self.table_design = None;
@@ -206,6 +217,7 @@ impl EditPanels {
         self.repair = None;
         self.phonetic = None;
         self.row_col_size = None;
+        self.recommended_charts = None;
         self.xml_source = None;
         self.xml_map_properties = None;
     }
@@ -214,66 +226,70 @@ impl EditPanels {
 impl crate::shell::editor::SlideEditor {
     /// The editing basics' panel open, for the sidebar.
     pub(crate) fn edit_panel(&mut self, cx: &mut gpui_kit::Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
-        self.dedupe_panel(cx)
-            .or_else(|| self.text_columns_panel(cx))
-            .or_else(|| self.import_text_panel(cx))
-            .or_else(|| self.queries_panel(cx))
-            .or_else(|| self.cells_dialog_panel(cx))
-            .or_else(|| self.external_links_panel(cx))
-            .or_else(|| self.goto_special_panel(cx))
+        self.dedupe_panel(cx).map(|panel| panel.modal_named("dedupe_panel"))
+            .or_else(|| self.recommended_charts_panel(cx).map(|panel| panel.modal_named("recommended_charts_panel")))
+            .or_else(|| self.text_columns_panel(cx).map(|panel| panel.modal_named("text_columns_panel")))
+            .or_else(|| self.import_text_panel(cx).map(|panel| panel.modal_named("import_text_panel")))
+            .or_else(|| self.queries_panel(cx).map(|panel| panel.modal_named("queries_panel")))
+            .or_else(|| self.cells_dialog_panel(cx).map(|panel| panel.modal_named("cells_dialog_panel")))
+            .or_else(|| self.external_links_panel(cx).map(|panel| panel.modal_named("external_links_panel")))
+            .or_else(|| self.goto_special_panel(cx).map(|panel| panel.modal_named("goto_special_panel")))
             .or_else(|| self.note_panel(cx))
             .or_else(|| self.threaded_comment_panel(cx))
-            .or_else(|| self.protect_panel(cx))
-            .or_else(|| self.protect_workbook_panel(cx))
-            .or_else(|| self.allow_edit_ranges_panel(cx))
-            .or_else(|| self.series_panel(cx))
-            .or_else(|| self.goal_seek_panel(cx))
-            .or_else(|| self.data_table_panel(cx))
-            .or_else(|| self.scenario_manager_panel(cx))
-            .or_else(|| self.sparkline_panel(cx))
-            .or_else(|| self.subtotal_panel(cx))
-            .or_else(|| self.pivot_group_panel(cx))
-            .or_else(|| self.pivot_options_panel(cx))
-            .or_else(|| self.pivot_calc_field_panel(cx))
-            .or_else(|| self.pivot_calc_item_panel(cx))
-            .or_else(|| self.pivot_panel(cx))
+            .or_else(|| self.protect_panel(cx).map(|panel| panel.modal_named("protect_panel")))
+            .or_else(|| self.protect_workbook_panel(cx).map(|panel| panel.modal_named("protect_workbook_panel")))
+            .or_else(|| self.allow_edit_ranges_panel(cx).map(|panel| panel.modal_named("allow_edit_ranges_panel")))
+            .or_else(|| self.series_panel(cx).map(|panel| panel.modal_named("series_panel")))
+            .or_else(|| self.goal_seek_panel(cx).map(|panel| panel.modal_named("goal_seek_panel")))
+            .or_else(|| self.function_panel(cx).map(|panel| panel.modeless_named("function_panel")))
+            .or_else(|| self.sheet_word_count_panel(cx).map(|panel| panel.modal_named("sheet_word_count_panel")))
+            .or_else(|| self.sheet_thesaurus_panel(cx))
+            .or_else(|| self.data_table_panel(cx).map(|panel| panel.modal_named("data_table_panel")))
+            .or_else(|| self.scenario_manager_panel(cx).map(|panel| panel.modal_named("scenario_manager_panel")))
+            .or_else(|| self.sparkline_panel(cx).map(|panel| panel.modal_named("sparkline_panel")))
+            .or_else(|| self.subtotal_panel(cx).map(|panel| panel.modal_named("subtotal_panel")))
+            .or_else(|| self.pivot_group_panel(cx).map(|panel| panel.modal_named("pivot_group_panel")))
+            .or_else(|| self.pivot_options_panel(cx).map(|panel| panel.modal_named("pivot_options_panel")))
+            .or_else(|| self.pivot_calc_field_panel(cx).map(|panel| panel.modal_named("pivot_calc_field_panel")))
+            .or_else(|| self.pivot_calc_item_panel(cx).map(|panel| panel.modal_named("pivot_calc_item_panel")))
+            .or_else(|| self.pivot_panel(cx).map(|panel| panel.modal_named("pivot_panel")))
             .or_else(|| self.table_design_panel(cx))
-            .or_else(|| self.advanced_filter_panel(cx))
-            .or_else(|| self.consolidate_panel(cx))
-            .or_else(|| self.analysis_panel(cx))
-            .or_else(|| self.solver_panel(cx))
+            .or_else(|| self.advanced_filter_panel(cx).map(|panel| panel.modal_named("advanced_filter_panel")))
+            .or_else(|| self.consolidate_panel(cx).map(|panel| panel.modal_named("consolidate_panel")))
+            .or_else(|| self.analysis_panel(cx).map(|panel| panel.modal_named("analysis_panel")))
+            .or_else(|| self.solver_panel(cx).map(|panel| panel.modal_named(if self.wb().panels.solver.as_ref().is_some_and(|p|p.editor.is_some()){"solver_constraint_editor"}else{"solver_panel"})))
             .or_else(|| self.ink_panel(cx))
-            .or_else(|| self.slicer_insert_panel(cx))
-            .or_else(|| self.timeline_insert_panel(cx))
-            .or_else(|| self.control_properties_panel(cx))
-            .or_else(|| self.slicer_settings_panel(cx))
-            .or_else(|| self.error_options_panel(cx))
-            .or_else(|| self.autocorrect_panel(cx))
-            .or_else(|| self.forecast_panel(cx))
-            .or_else(|| self.new_cell_style_panel(cx))
-            .or_else(|| self.new_table_style_panel(cx))
+            .or_else(|| self.slicer_insert_panel(cx).map(|panel| panel.modal_named("slicer_insert_panel")))
+            .or_else(|| self.timeline_insert_panel(cx).map(|panel| panel.modal_named("timeline_insert_panel")))
+            .or_else(|| self.control_properties_panel(cx).map(|panel| panel.modal_named("control_properties_panel")))
+            .or_else(|| self.slicer_settings_panel(cx).map(|panel| panel.modal_named("slicer_settings_panel")))
+            .or_else(|| self.error_options_panel(cx).map(|panel| panel.modal_named("error_options_panel")))
+            .or_else(|| self.autocorrect_panel(cx).map(|panel| panel.modal_named("autocorrect_panel")))
+            .or_else(|| self.forecast_panel(cx).map(|panel| panel.modal_named("forecast_panel")))
+            .or_else(|| self.new_cell_style_panel(cx).map(|panel| panel.modal_named("new_cell_style_panel")))
+            .or_else(|| self.new_table_style_panel(cx).map(|panel| panel.modal_named("new_table_style_panel")))
             .or_else(|| self.xml_source_panel(cx))
-            .or_else(|| self.xml_map_properties_panel(cx))
-            .or_else(|| self.evaluate_formula_panel(cx))
+            .or_else(|| self.xml_map_properties_panel(cx).map(|panel| panel.modal_named("xml_map_properties_panel")))
+            .or_else(|| self.evaluate_formula_panel(cx).map(|panel| panel.modeless_named("evaluate_formula_panel")))
             .or_else(|| self.watch_window_panel(cx))
-            .or_else(|| self.sheet_doc_properties_panel(cx))
-            .or_else(|| self.sheet_alt_text_panel(cx))
+            .or_else(|| self.sheet_doc_properties_panel(cx).map(|panel| panel.modal_named("sheet_doc_properties_panel")))
+            .or_else(|| self.sheet_alt_text_panel(cx).map(|panel|panel.modal_named("sheet_alt_text_panel")))
             .or_else(|| self.xlsx_accessibility_panel(cx))
-            .or_else(|| self.xlsx_compatibility_panel(cx))
+            .or_else(|| self.xlsx_compatibility_panel(cx).map(|panel| panel.modal_named("xlsx_compatibility_panel")))
             .or_else(|| self.xlsx_selection_pane_panel(cx))
             .or_else(|| self.sheet_frame_panel(cx))
-            .or_else(|| self.xlsx_theme_panel(cx))
-            .or_else(|| self.custom_views_panel(cx))
-            .or_else(|| self.unhide_window_panel(cx))
-            .or_else(|| self.move_chart_panel(cx))
-            .or_else(|| self.chart_template_panel(cx))
-            .or_else(|| self.arrange_windows_panel(cx))
-            .or_else(|| self.xlsx_backup_save_settings_panel(cx))
-            .or_else(|| self.autorecover_settings_panel(cx))
-            .or_else(|| self.recover_unsaved_panel(cx))
-            .or_else(|| self.xlsx_repair_panel(cx))
-            .or_else(|| self.phonetic_panel(cx))
-            .or_else(|| self.row_col_size_panel(cx))
-            .or_else(|| self.paste_special_panel(cx))
+            .or_else(|| self.xlsx_theme_panel(cx).map(|panel| panel.modal_named("xlsx_theme_panel")))
+            .or_else(|| self.custom_views_panel(cx).map(|panel| panel.modal_named("custom_views_panel")))
+            .or_else(|| self.unhide_window_panel(cx).map(|panel| panel.modal_named("unhide_window_panel")))
+            .or_else(|| self.move_chart_panel(cx).map(|panel| panel.modal_named("move_chart_panel")))
+            .or_else(|| self.chart_template_panel(cx).map(|panel| panel.modal_named("chart_template_panel")))
+            .or_else(|| self.arrange_windows_panel(cx).map(|panel| panel.modal_named("arrange_windows_panel")))
+            .or_else(|| self.xlsx_backup_save_settings_panel(cx).map(|panel| panel.modal_named("xlsx_backup_save_settings_panel")))
+            .or_else(|| self.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel")))
+            .or_else(|| self.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel")))
+            .or_else(|| self.xlsx_repair_panel(cx).map(|panel| panel.modal_named("xlsx_repair_panel")))
+            .or_else(|| self.phonetic_panel(cx).map(|panel| panel.modal_named("phonetic_panel")))
+            .or_else(|| self.row_col_size_panel(cx).map(|panel| panel.modal_named("row_col_size_panel")))
+            .or_else(|| self.paste_special_panel(cx).map(|panel| panel.modal_named("paste_special_panel")))
     }
 }

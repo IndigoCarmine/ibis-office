@@ -6,10 +6,11 @@
 //! removed.
 
 use gpui::{ElementId, FontWeight, MouseButton};
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::ButtonVariants as _;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::flow_command::{self, CommentAuthor};
 use ibis_doc_model::{Block, FlowDocument, FlowPos};
 
@@ -105,6 +106,7 @@ pub(crate) fn comment_anchor_position(editor: &SlideEditor, doc: &FlowDocument, 
 impl SlideEditor {
     /// 挿入 > コメント: the panel, its field for a comment on the selection.
     pub(crate) fn open_comments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let target = self.ordered_selection().filter(|(a, b)| a != b).map(|(from, to)| CommentTarget::New { from, to });
         if self.doc_state().is_some_and(|s| s.comments.is_none()) {
             let input = cx.new(|cx| {
@@ -113,8 +115,8 @@ impl SlideEditor {
                     .placeholder(crate::shell::i18n::text("_shell.type-a-comment-and-press-enter"))
             });
             let subscription = cx.subscribe_in(&input, window, |this, input, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { secondary, shift } = event {
-                    if *secondary || *shift {
+                if let InputEvent::PressEnter { secondary, .. } = event {
+                    if *secondary {
                         let text = input.read(cx).value().to_string();
                         this.send_comment(&text, window, cx);
                     }
@@ -252,7 +254,7 @@ impl SlideEditor {
             let id = flow_command::comment_at_pos(&doc, caret)?;
             Some(doc.comments.iter().find(|c| c.id == id).and_then(|c| c.parent).unwrap_or(id))
         });
-        let mut body = v_flex().gap_2().px(px(14.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(14.)).py(px(8.)).p_0();
 
         let post_tooltip = if cfg!(target_os = "macos") {
             format!("{} (⌘Enter)", crate::shell::i18n::text("docx.comments.post"))
@@ -272,7 +274,7 @@ impl SlideEditor {
                         .px(px(4.))
                         .py(px(2.))
                         .cursor_pointer()
-                        .text_size(px(13.))
+                        .text_sm()
                         .text_color(rgb(0x888888))
                         .hover(|h| h.text_color(rgb(0x000000)))
                         .child("✕")
@@ -292,7 +294,7 @@ impl SlideEditor {
                     h_flex()
                         .justify_end()
                         .child(
-                            Button::new("comment-send")
+                            crate::shell::chrome::primary_button("comment-send")
                                 .small()
                                 .icon(crate::shell::icons::Material("send"))
                                 .tooltip(post_tooltip.clone())
@@ -304,7 +306,7 @@ impl SlideEditor {
                 );
             body = body.child(input_box);
         } else if target.is_none() {
-            body = body.child(div().text_xs().text_color(rgb(0x888888)).child(crate::shell::i18n::text("docx.comments.select-text-then-insert-comment")));
+            body = body.child(div().text_sm().text_color(rgb(0x888888)).child(crate::shell::i18n::text("docx.comments.select-text-then-insert-comment")));
         }
 
         // コメント一覧をアンカーの Y 昇順にソート
@@ -353,7 +355,7 @@ impl SlideEditor {
                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                     this.focus_comment(id, cx);
                 }))
-                .child(div().text_xs().text_color(rgb(0x5f6368)).child(format!("{}　{}{}", c.author, date_str, resolved_tag))) // i18n-ok（文書の中の名前・全角の区切り・記号）
+                .child(div().text_sm().text_color(rgb(0x5f6368)).child(format!("{}　{}{}", c.author, date_str, resolved_tag))) // i18n-ok（文書の中の名前・全角の区切り・記号）
                 .child(div().text_sm().child(comment_text(&c.blocks)));
             if is_active {
                 card = card.border_l(px(3.5));
@@ -362,7 +364,7 @@ impl SlideEditor {
             // 2つ目以降のコメント（返信）：＜氏名＞＜日時＞をグレーで描画して、次の行にコメント本文
             for r in doc.comments.iter().filter(|r| r.parent == Some(id)) {
                 let r_date = format_comment_date(&r.date);
-                let r_header = div().text_xs().text_color(rgb(0x5f6368)).child(format!("{}　{}", r.author, r_date)); // i18n-ok（文書の中の名前・全角の区切り・記号）
+                let r_header = div().text_sm().text_color(rgb(0x5f6368)).child(format!("{}　{}", r.author, r_date)); // i18n-ok（文書の中の名前・全角の区切り・記号）
                 let r_body = div().text_sm().child(comment_text(&r.blocks));
                 card = card.child(v_flex().pl(px(8.)).pt(px(2.)).gap_0p5().child(r_header).child(r_body));
             }
@@ -374,7 +376,7 @@ impl SlideEditor {
                 .py(px(2.))
                 .rounded_sm()
                 .cursor_pointer()
-                .text_size(px(12.))
+                .text_sm()
                 .text_color(rgb(0x1a73e8))
                 .hover(|h| h.bg(rgb(0xe8f0fe)).underline())
                 .child(crate::shell::i18n::text("_shell.reply"))
@@ -386,24 +388,15 @@ impl SlideEditor {
                 .py(px(2.))
                 .rounded_sm()
                 .cursor_pointer()
-                .text_size(px(12.))
+                .text_sm()
                 .text_color(rgb(0x1a73e8))
                 .hover(|h| h.bg(rgb(0xe8f0fe)).underline())
                 .child(crate::shell::i18n::text(if done { "pptx.comments.reopen" } else { "_shell.resolve" }))
                 .on_click(cx.listener(move |this, _, _, cx| this.resolve(id, !done, cx)));
 
-            let delete_btn = div()
-                .id(ElementId::NamedInteger("comment-delete".into(), id as u64))
-                .px(px(4.))
-                .py(px(2.))
-                .rounded_sm()
-                .cursor_pointer()
-                .text_size(px(12.))
-                .text_color(rgb(0x1a73e8))
-                .hover(|h| h.bg(rgb(0xe8f0fe)).underline())
-                .child(crate::shell::i18n::text("_shell.delete"))
+            let delete_btn = crate::shell::chrome::destructive_button(("comment-delete", id),cx)
+                .small().label(crate::shell::i18n::text("_shell.delete"))
                 .on_click(cx.listener(move |this, _, _, cx| this.confirm_delete_comment(id, cx)));
-
             card = card.child(
                 h_flex()
                     .gap_2()
@@ -418,14 +411,14 @@ impl SlideEditor {
                 let reply_header = h_flex()
                     .justify_between()
                     .items_center()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(rgb(0x444444)).child(crate::shell::i18n::text("_shell.reply")))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(rgb(0x444444)).child(crate::shell::i18n::text("_shell.reply")))
                     .child(
                         div()
                             .id("docx-comment-cancel-reply")
                             .px(px(4.))
                             .py(px(2.))
                             .cursor_pointer()
-                            .text_size(px(12.))
+                            .text_sm()
                             .text_color(rgb(0x888888))
                             .hover(|h| h.text_color(rgb(0x000000)))
                             .child("✕")
@@ -447,7 +440,7 @@ impl SlideEditor {
                         h_flex()
                             .justify_end()
                             .child(
-                                Button::new(("comment-reply-send", id))
+                                crate::shell::chrome::primary_button(("comment-reply-send", id))
                                     .small()
                                     .icon(crate::shell::icons::Material("send"))
                                     .tooltip(post_tooltip.clone())

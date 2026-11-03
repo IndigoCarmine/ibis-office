@@ -604,6 +604,28 @@ pub fn docx_with_page_count_footer(data: &[u8]) -> Vec<u8> {
     package.save(ibis_ooxml::SaveOptions::default()).unwrap()
 }
 
+/// `data` (a .docx) whose headers hold five paragraphs of exactly 18 pt
+/// lines (90 pt) under a top margin of 45 pt and a header distance of
+/// 42.5 pt (GitHub issue #10): the header ends below the margin.
+pub fn docx_with_tall_header(data: &[u8]) -> Vec<u8> {
+    let mut package = ibis_ooxml::Package::open(data.to_vec()).unwrap();
+    let mut xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
+    while let Some(at) = xml.find("<w:pgMar") {
+        let end = at + xml[at..].find("/>").unwrap() + 2;
+        xml.replace_range(at..end, r#"<w:PGMAR w:top="900" w:right="1440" w:bottom="1440" w:left="1440" w:header="850" w:footer="720" w:gutter="0"/>"#);
+    }
+    let xml = xml.replace("<w:PGMAR", "<w:pgMar");
+    package.set_bytes("word/document.xml", xml.into_bytes());
+    let paragraph = r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="360" w:lineRule="exact"/></w:pPr><w:r><w:t>ヘッダーの行</w:t></w:r></w:p>"#.repeat(5);
+    let names: Vec<String> = package.names().filter(|n| n.starts_with("word/header") && n.ends_with(".xml")).map(str::to_string).collect();
+    for name in names {
+        let xml = String::from_utf8(package.read(&name).unwrap()).unwrap();
+        let at = xml.rfind("</w:hdr>").unwrap();
+        package.set_bytes(&name, format!("{}{}{}", &xml[..at], paragraph, &xml[at..]).into_bytes());
+    }
+    package.save(ibis_ooxml::SaveOptions::default()).unwrap()
+}
+
 /// `data` (a .docx) with its last section in two columns with a line
 /// between (`w:cols w:num="2" w:sep="1"`), and 80 numbered paragraphs at
 /// its end (more than a column holds).

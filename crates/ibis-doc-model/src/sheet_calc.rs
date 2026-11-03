@@ -43,6 +43,11 @@ pub fn sheet_of_slide(slide: &crate::model::Slide) -> Option<&std::sync::Arc<She
     })
 }
 
+/// Defined names of `presentation`'s workbook.
+pub(crate) fn collect_defined_names(presentation: &Presentation) -> Vec<DefinedName> {
+    presentation.workbook.as_deref().map(|wb| wb.names.clone()).unwrap_or_default()
+}
+
 impl<'a> BookView<'a> {
     pub fn new(presentation: &'a Presentation) -> Self {
         let mut sheets = Vec::new();

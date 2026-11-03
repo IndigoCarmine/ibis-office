@@ -874,13 +874,14 @@ pub fn formula_text(instruction: &str) -> Option<String> {
     formula_text_with_resolver(instruction, None)
 }
 
-/// 囲い文字's parts in an `EQ \o` field's code (`eq \o\ac(○,字)`): the
-/// enclosure and the character (any `\s\up n( )` and the like around them
-/// taken off).
-pub fn enclosed(instruction: &str) -> Option<(String, String)> {
+/// The arguments of an `EQ \o` field's code (`eq \o\ac(a,b)`) and the
+/// switch that follows `\o` (`\ac`, `\ad`, `\al`, `\ar`), each argument as its
+/// raw text (any `\s\up n(` around the text still in it).
+fn overstrike_arguments(instruction: &str) -> Option<(String, Vec<String>)> {
     let t = instruction.trim();
     let rest = t.strip_prefix("eq").or_else(|| t.strip_prefix("EQ")).or_else(|| t.strip_prefix("Eq"))?;
     let at = rest.find("\\o")?;
+    let switch: String = rest[at + 2..].trim_start().strip_prefix('\\').map(|a| format!("\\{}", a.chars().take(2).collect::<String>())).unwrap_or_default();
     let open = at + rest[at..].find('(')?;
     // The arguments up to the matching parenthesis, split at the top level.
     let mut depth = 0;
@@ -900,19 +901,74 @@ pub fn enclosed(instruction: &str) -> Option<(String, String)> {
             _ => parts.last_mut()?.push(c),
         }
     }
-    // The text of an argument: inside its innermost parentheses, without
-    // switches.
-    let text = |s: &str| -> String {
-        let inner = match (s.rfind('('), s.find(')')) {
-            (Some(a), Some(b)) if a < b => &s[a + 1..b],
-            _ => s,
-        };
-        inner.split_whitespace().filter(|w| !w.starts_with('\\')).collect::<Vec<_>>().join("")
+    Some((switch, parts))
+}
+
+/// The text of an argument: inside its innermost parentheses, without
+/// switches.
+fn overstrike_text(s: &str) -> String {
+    let inner = match (s.rfind('('), s.find(')')) {
+        (Some(a), Some(b)) if a < b => &s[a + 1..b],
+        _ => s,
     };
+    // Only ASCII blanks separate the words: an ideographic space is text (the
+    // width a `\o\ad` spreads its characters over).
+    inner.split(|c: char| c.is_ascii_whitespace()).filter(|w| !w.starts_with('\\')).collect::<Vec<_>>().join("")
+}
+
+/// 囲い文字's parts in an `EQ \o\ac` field's code (`eq \o\ac(○,字)`): the
+/// enclosure and the character (any `\s\up n( )` and the like around them
+/// taken off). The other overstrikes (`\o\ad`, `\o\al`) are
+/// [`overstrike`]'s.
+pub fn enclosed(instruction: &str) -> Option<(String, String)> {
+    let (switch, parts) = overstrike_arguments(instruction)?;
+    if switch != "\\ac" {
+        return None;
+    }
     match parts.as_slice() {
-        [a, b, ..] => Some((text(a), text(b))),
+        [a, b, ..] => Some((overstrike_text(a), overstrike_text(b))),
         _ => None,
     }
+}
+
+/// How an `EQ \o` field lays its arguments over each other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverstrikeAlign {
+    /// `\ad`: the first argument spread evenly over the width of the second.
+    Distribute,
+    /// `\al`: every argument from the left.
+    Left,
+    /// `\ar`: every argument against the right.
+    Right,
+}
+
+/// An `EQ \o\ad`, `\o\al` or `\o\ar` field's arguments: the text of each and
+/// how far it is raised (points; negative: lowered, by `\s\up n` and `\s\do n`).
+pub fn overstrike(instruction: &str) -> Option<(OverstrikeAlign, Vec<(String, f32)>)> {
+    let (switch, parts) = overstrike_arguments(instruction)?;
+    let align = match switch.as_str() {
+        "\\ad" => OverstrikeAlign::Distribute,
+        "\\al" => OverstrikeAlign::Left,
+        "\\ar" => OverstrikeAlign::Right,
+        _ => return None,
+    };
+    let args = parts
+        .iter()
+        .map(|part| {
+            let compact = part.replace(' ', "");
+            let mut raise = 0.0f32;
+            for (key, sign) in [("\\up", 1.0f32), ("\\do", -1.0f32)] {
+                if let Some(i) = compact.find(key) {
+                    let digits: String = compact[i + key.len()..].chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
+                    if let Ok(n) = digits.parse::<f32>() {
+                        raise = sign * n;
+                    }
+                }
+            }
+            (overstrike_text(part), raise)
+        })
+        .collect();
+    Some((align, args))
 }
 
 /// Compare two values according to Word's field comparison rules (ECMA-376 Part 1 §17.16.5.28).
@@ -1069,6 +1125,18 @@ mod tests {
         assert_eq!(super::enclosed("eq \\o\\ac(○,字)"), Some(("○".into(), "字".into())));
         assert_eq!(super::enclosed(" EQ \\o\\ac(□,\\s\\up 1(秘)) "), Some(("□".into(), "秘".into())));
         assert_eq!(super::enclosed("PAGE"), None);
+        // The other overstrikes are not enclosures.
+        assert_eq!(super::enclosed("eq \\o\\ad(あいう,　　　)"), None);
+        assert_eq!(super::enclosed("eq \\o\\al(\\s\\up 6(上),\\s\\up-6(下))"), None);
+    }
+
+    #[test]
+    fn overstrike_arguments_of_eq() {
+        use super::OverstrikeAlign::*;
+        assert_eq!(super::overstrike("eq \\o\\ad(あいう,　　　)"), Some((Distribute, vec![("あいう".into(), 0.0), ("　　　".into(), 0.0)])));
+        assert_eq!(super::overstrike("eq \\o \\al(\\s \\up 6(上),\\s \\up-6(下))"), Some((Left, vec![("上".into(), 6.0), ("下".into(), -6.0)])));
+        assert_eq!(super::overstrike("eq \\o\\al(\\s \\up 6(上),\\s \\up-6(下))"), Some((Left, vec![("上".into(), 6.0), ("下".into(), -6.0)])));
+        assert_eq!(super::overstrike("eq \\o\\ac(○,字)"), None);
     }
 
     use super::*;

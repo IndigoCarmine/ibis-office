@@ -115,6 +115,23 @@ fn hex(value: &str) -> Option<Rgb> {
     u32::from_str_radix(value, 16).ok().map(Rgb)
 }
 
+/// A font name as the file spells it, or what it was meant to be when a Shift_JIS name was saved as Windows-1252 text (`‚l‚r –¾’©`
+/// for ＭＳ 明朝: Word reads those files with the Japanese code page).
+fn font_name(name: &str) -> String {
+    if name.is_ascii() || !name.chars().all(|c| (c as u32) < 0x100 || matches!(c as u32, 0x152 | 0x153 | 0x160 | 0x161 | 0x178 | 0x17d | 0x17e | 0x192 | 0x2c6 | 0x2dc | 0x2013..=0x2014 | 0x2018..=0x201e | 0x2020..=0x2022 | 0x2026 | 0x2030 | 0x2039 | 0x203a | 0x20ac | 0x2122)) {
+        return name.to_string();
+    }
+    let (bytes, _, bad) = encoding_rs::WINDOWS_1252.encode(name);
+    if bad {
+        return name.to_string();
+    }
+    let (text, _, bad) = encoding_rs::SHIFT_JIS.decode(&bytes);
+    if bad || !text.chars().any(|c| c as u32 >= 0x3000) {
+        return name.to_string();
+    }
+    text.into_owned()
+}
+
 /// Run properties, each unset until some level sets it.
 /// Whether a node under `holder` is in a text box's content in it (`wps:txbx`,
 /// `w:txbxContent`, VML `v:textbox`): a picture there is the box's text's, not the drawing's.
@@ -149,12 +166,14 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
                 }
                 return theme.typeface(if t.starts_with("major") { "+mj-lt" } else { "+mn-lt" });
             }
-            wattr(fonts, plain).map(str::to_string)
+            wattr(fonts, plain).map(font_name)
         };
         f.font = pick("ascii", "asciiTheme");
         f.east_asian_font = pick("eastAsia", "eastAsiaTheme");
-        f.east_asian_hint = wattr(fonts, "hint").map(|h| h == "eastAsia");
         f.cs_font = pick("cs", "cstheme").or_else(|| pick("cs", "csTheme"));
+        if let Some(h) = wattr(fonts, "hint") {
+            f.east_asia_hint = Some(h == "eastAsia");
+        }
     }
     if let Some(l) = child(rpr, "lang") {
         f.lang = wattr(l, "val").map(str::to_string);
@@ -242,6 +261,11 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
     });
     f.spacing = child(rpr, "spacing").and_then(|s| twips(s, "val"));
     f.scale = wval(rpr, "w").and_then(|v| v.parse::<u32>().ok());
+    f.fit_text = child(rpr, "fitText").and_then(|e| {
+        let width = wattr(e, "val").and_then(|v| v.parse::<u32>().ok())?;
+        let id = wattr(e, "id").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+        Some(Some((width, id)))
+    });
     f.hidden = toggle(rpr, "vanish");
     f.border = child(rpr, "bdr").map(|b| border(b, Some(theme)));
     f.kern = wval(rpr, "kern").and_then(|v| v.parse::<u32>().ok());
@@ -305,13 +329,15 @@ fn para_format(ppr: Node, theme: &Theme) -> ParaFormat {
             .and_then(|v| v.parse::<f64>().ok())
             .map(|sz| sz * 10.0)
             .unwrap_or(210.0);
+        // A count of 0 characters sets nothing: Word keeps the indent the style or the numbering gives.
         let char_units = |name: &str| -> Option<i64> {
             wattr(ind, name)
                 .and_then(|v| v.parse::<f64>().ok())
+                .filter(|v| *v != 0.0)
                 .map(|v| (v / 100.0 * char_twips * EMU_PER_TWIP as f64).round() as i64)
         };
         let chars_val = |name: &str| -> Option<i32> {
-            wattr(ind, name).and_then(|v| v.parse::<i32>().ok())
+            wattr(ind, name).and_then(|v| v.parse::<i32>().ok()).filter(|v| *v != 0)
         };
         f.left_chars = chars_val("leftChars").or_else(|| chars_val("startChars"));
         f.right_chars = chars_val("rightChars").or_else(|| chars_val("endChars"));
@@ -320,7 +346,8 @@ fn para_format(ppr: Node, theme: &Theme) -> ParaFormat {
             .or_else(|| chars_val("firstLineChars"));
         f.left = twips(ind, "left")
             .or_else(|| twips(ind, "start"))
-            .or_else(|| char_units("leftChars"))
+            // With `hangingChars`, `leftChars` is where the first line starts: the text's left is that and the hanging.
+            .or_else(|| char_units("leftChars").map(|l| l + char_units("hangingChars").unwrap_or(0)))
             .or_else(|| char_units("startChars"));
         f.right = twips(ind, "right")
             .or_else(|| twips(ind, "end"))
@@ -334,6 +361,16 @@ fn para_format(ppr: Node, theme: &Theme) -> ParaFormat {
     if let Some(sp) = child(ppr, "spacing") {
         f.before = twips(sp, "before");
         f.after = twips(sp, "after");
+        // Word's automatic space is 14 pt.
+        let auto = |name: &str| matches!(wattr(sp, name), Some("1" | "true" | "on"));
+        if auto("beforeAutospacing") {
+            f.before = Some(280 * EMU_PER_TWIP);
+            f.auto_before = Some(true);
+        }
+        if auto("afterAutospacing") {
+            f.after = Some(280 * EMU_PER_TWIP);
+            f.auto_after = Some(true);
+        }
         if let Some(line) = wattr(sp, "line").and_then(|v| v.parse::<i64>().ok()) {
             f.line = Some(match wattr(sp, "lineRule") {
                 Some("exact") => LineHeight::Exact(line * EMU_PER_TWIP),
@@ -358,6 +395,14 @@ fn para_format(ppr: Node, theme: &Theme) -> ParaFormat {
     f.keep_next = toggle(ppr, "keepNext");
     f.keep_lines = toggle(ppr, "keepLines");
     if let Some(frame) = child(ppr, "framePr") {
+        // A frame placed by `xAlign` (a page number in a footer): the paragraph is aligned so in the text area.
+        if f.align.is_none() {
+            f.align = match wattr(frame, "xAlign") {
+                Some("center") => Some(FlowAlign::Center),
+                Some("right") => Some(FlowAlign::Right),
+                _ => None,
+            };
+        }
         let location = match wattr(frame, "dropCap") {
             Some("drop" | "dropped") => DropCapLocation::Drop,
             Some("margin") => DropCapLocation::Margin,
@@ -367,6 +412,8 @@ fn para_format(ppr: Node, theme: &Theme) -> ParaFormat {
             let lines = wattr(frame, "lines").and_then(|s| s.parse::<u32>().ok()).unwrap_or(3).clamp(1, 10);
             let space = twips(frame, "hSpace").or_else(|| twips(frame, "space")).unwrap_or(0);
             f.drop_cap = Some(Some(DropCap { location, lines, space }));
+        } else {
+            f.framed = Some(true);
         }
     }
     if let Some(tabs) = child(ppr, "tabs") {
@@ -442,7 +489,11 @@ fn shading_detail(shd: Node, theme: &Theme) -> (Option<Rgb>, Option<ShadingPatte
             .or_else(|| wattr(shd, "fill").and_then(hex)),
         None => wattr(shd, "fill").and_then(hex),
     };
+    // `themeColor="none"` makes the pattern colour automatic (black), whatever `w:color` is (DCMB-01791: a solid
+    // shading with `w:color="808080"` and `themeColor="none"` is black in Word's PDF; ECMA-376 §17.18.78 ST_Shd:
+    // solid is all of `w:color`). The sRGB value is only the fallback of a theme colour Word knows.
     let color = match wattr(shd, "themeColor") {
+        Some("none") => None,
         Some(t) => theme_color(theme, t, wattr(shd, "themeTint"), wattr(shd, "themeShade"))
             .or_else(|| wattr(shd, "color").and_then(hex)),
         None => wattr(shd, "color").and_then(hex),
@@ -481,34 +532,49 @@ fn shading(shd: Node, theme: &Theme) -> Option<Rgb> {
     Some(Rgb(mix(16) | mix(8) | mix(0)))
 }
 
-/// A bullet of a symbol font as the Unicode character it shows.
-fn bullet_char(c: char, font: Option<&str>) -> char {
+/// A glyph of a symbol font (`Symbol`, `Wingdings`) as the Unicode character it shows.
+fn symbol_char(c: char, font: Option<&str>) -> Option<char> {
     let code = c as u32;
     let code = if (0xf000..=0xf0ff).contains(&code) { code - 0xf000 } else { code };
-    match font.unwrap_or("") {
-        "Symbol" => match code {
+    match font? {
+        "Symbol" => Some(match code {
             0xb7 => '•',
             0xa8 => '♦',
             0xd8 => '¬',
             _ if c > '\u{ff}' => c,
-            _ => char::from_u32(code).unwrap_or(c),
-        },
+            _ => char::from_u32(code)?,
+        }),
         "Wingdings" => match code {
-            0x6c => '●',
-            0x6e => '■',
-            0x71 => '❑',
-            0x75 => '◆',
-            0x76 => '❖',
-            0xa7 => '▪',
-            0xa8 => '◻',
-            0xd8 => '➢',
-            0xfc => '✓',
-            0xfe => '☑',
-            _ if c > '\u{ff}' => c,
-            _ => '●',
+            0x6c => Some('●'),
+            0x6e => Some('■'),
+            0x6f => Some('□'),
+            0x71 => Some('❑'),
+            0x75 => Some('◆'),
+            0x76 => Some('❖'),
+            0x9f => Some('•'),
+            0xa7 => Some('▪'),
+            0xa8 => Some('◻'),
+            0xd8 => Some('➢'),
+            0xfb => Some('✗'),
+            0xfc => Some('✓'),
+            0xfd => Some('☒'),
+            0xfe => Some('☑'),
+            _ if c > '\u{ff}' => Some(c),
+            _ => None,
         },
-        _ if (0xf000..=0xf0ff).contains(&(c as u32)) => '●',
-        _ => c,
+        _ => None,
+    }
+}
+
+/// A bullet of a symbol font as the Unicode character it shows.
+fn bullet_char(c: char, font: Option<&str>) -> char {
+    if let Some(mapped) = symbol_char(c, font) {
+        return mapped;
+    }
+    if matches!(font, Some("Wingdings")) || (0xf000..=0xf0ff).contains(&(c as u32)) {
+        '●'
+    } else {
+        c
     }
 }
 
@@ -705,13 +771,15 @@ fn page_setup(sect: Node) -> PageSetup {
             Some("lines") => ibis_doc_model::DocGridType::Lines,
             Some("linesAndChars") => ibis_doc_model::DocGridType::LinesAndChars,
             Some("snapToChars") => ibis_doc_model::DocGridType::SnapToChars,
-            // No w:type is "default": no grid, even with a linePitch (Word keeps one there).
+            Some("default") => ibis_doc_model::DocGridType::Default,
+            // Without a type the grid is the default one (none): Word does not line paragraphs up on its pitch.
             _ => ibis_doc_model::DocGridType::Default,
         };
         page.doc_grid_type = grid_type;
         if grid_type != ibis_doc_model::DocGridType::Default {
             page.line_pitch = twips(grid, "linePitch");
-            page.char_space = twips(grid, "charSpace");
+            // In 1/4096 pt.
+            page.char_space = wattr(grid, "charSpace").and_then(|v| v.parse::<i64>().ok()).map(|v| v * 12_700 / 4096);
         }
     }
     if let Some(start) = child(sect, "pgNumType").and_then(|n| wattr(n, "start")).and_then(|v| v.parse().ok()) {
@@ -1001,7 +1069,9 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             ..FlowParagraph::default()
         };
         paragraph.resolve(self.styles);
-        debug_assert_eq!(read.atoms.len(), paragraph.len());
+        // One atom for each position the save tells apart (`save::docx::atoms`): a content control that shows text is one, whatever its text's length
+        // (`FlowParagraph::len` counts its characters).
+        debug_assert_eq!(read.atoms.len(), crate::save::docx::atom_count(&paragraph));
         self.sources.paragraphs.insert(id, ParaSource { part: self.part.clone(), path: path.to_vec(), atoms: read.atoms });
         paragraph
     }
@@ -1051,7 +1121,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 }
                 "smartTag" | "customXml" | "fldSimple" | "bdo" | "dir" => {
                     let is_fld_simple = node.tag_name().name() == "fldSimple";
-                    let simple = is_fld_simple.then(|| wattr(node, "instr").unwrap_or("").trim().to_string());
+                    let simple = is_fld_simple.then(|| upcase_field_name(wattr(node, "instr").unwrap_or("").trim()));
                     let simple_locked = is_fld_simple && wattr(node, "fldLock").map_or(false, |v| v == "1" || v == "true");
                     let page = simple.as_deref().is_some_and(|i| i.split_whitespace().next() == Some("PAGE") && !computed_field(i));
                     // Word writes a simple field's result again in the
@@ -1538,6 +1608,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                             }
                             continue;
                         }
+                        // Word does not tell the field names' cases apart (`page`, `Page`).
+                        frame.instruction = upcase_field_name(&frame.instruction);
                         let mut words = frame.instruction.split_whitespace();
                         let computed = computed_field(&frame.instruction);
                         let locked = frame.locked;
@@ -1546,6 +1618,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                                 frame.atom = Some(read.atoms.len());
                                 read.atoms.push(AtomSource::Field { nodes: Vec::new() });
                                 let mut run = make(FlowRunKind::Field { instruction: frame.instruction.trim().to_string(), shown: String::new() });
+                                run.format.enclosure_sizes = enclosure_sizes(&frame.instruction, &frame.instr_sizes);
+                                run.style.enclosure_sizes = run.format.enclosure_sizes;
                                 if run.link.is_none() {
                                     run.link = ibis_doc_model::field_format::parse_hyperlink_field(&frame.instruction).and_then(|info| {
                                         if !info.target.is_empty() {
@@ -1629,7 +1703,20 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                                 read.atoms[i] = AtomSource::Field { nodes: runs };
                             } else if !frame.showing
                                 && field.frames.iter().all(|f| f.showing)
-                                && (enclosed_field(&frame.instruction).is_some() || ["XE ", "TC ", "TA "].iter().any(|f| frame.instruction.trim_start().starts_with(f)))
+                                && upcase_field_name(&frame.instruction).split_whitespace().next() == Some("PAGE")
+                                && !computed_field(&frame.instruction)
+                            {
+                                // A PAGE field with no w:fldCharType="separate" still displays the page number.
+                                let mut runs = frame.runs;
+                                runs.push(relative_path(r, read.p));
+                                runs.dedup();
+                                read.atoms.push(AtomSource::Field { nodes: runs });
+                                let mut run = make(FlowRunKind::PageNumber);
+                                run.field_locked = frame.locked;
+                                out.push(run);
+                            } else if !frame.showing
+                                && field.frames.iter().all(|f| f.showing)
+                                && (enclosed_field(&frame.instruction).is_some() || ibis_doc_model::field_format::overstrike(&frame.instruction).is_some() || ["XE ", "TC ", "TA "].iter().any(|f| frame.instruction.trim_start().starts_with(f)))
                             {
                                 // 囲い文字 (EQ \o): a field without a result,
                                 // one position.
@@ -1637,7 +1724,11 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                                 runs.push(relative_path(r, read.p));
                                 runs.dedup();
                                 read.atoms.push(AtomSource::Field { nodes: runs });
-                                out.push(make(FlowRunKind::Field { instruction: frame.instruction.trim().to_string(), shown: String::new() }));
+                                let mut run = make(FlowRunKind::Field { instruction: frame.instruction.trim().to_string(), shown: String::new() });
+                                // 囲い文字: the sizes the runs of its code give the enclosure and the character.
+                                run.format.enclosure_sizes = enclosure_sizes(&frame.instruction, &frame.instr_sizes);
+                                run.style.enclosure_sizes = run.format.enclosure_sizes;
+                                out.push(run);
                             }
                             if frame.toc {
                                 read.field_end = true;
@@ -1649,6 +1740,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 "instrText" => {
                     if let Some(frame) = field.frames.last_mut() {
                         frame.instruction.push_str(node.text().unwrap_or(""));
+                        frame.instr_sizes.push((node.text().unwrap_or("").to_string(), style.size));
                         if frame.form_field.is_none() {
                             let trimmed = frame.instruction.trim_start();
                             if trimmed.starts_with("FORMCHECKBOX") {
@@ -1708,13 +1800,37 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 // the field itself, is not shown.
                 _ if field.frames.iter().any(|f| !f.showing || f.replaced) => {}
                 "t" | "delText" => {
-                    let text = node.text().unwrap_or("");
-                    read.in_run(r, node, text.chars().count());
-                    push_text(out, text);
+                    let raw = node.text().unwrap_or("");
+                    let font = style.font.as_deref();
+                    let mapped: String = raw
+                        .chars()
+                        .map(|c| {
+                            if (0xf000..=0xf0ff).contains(&(c as u32)) {
+                                symbol_char(c, font).unwrap_or_else(|| {
+                                    if (0xf020..=0xf0ff).contains(&(c as u32)) { char::from_u32(c as u32 - 0xf000).unwrap_or(c) } else { c }
+                                })
+                            } else {
+                                c
+                            }
+                        })
+                        .collect();
+                    read.in_run(r, node, mapped.chars().count());
+                    push_text(out, &mapped);
                 }
                 "tab" => {
                     read.in_run(r, node, 1);
                     out.push(make(FlowRunKind::Tab));
+                }
+                "ptab" => {
+                    let align = match wattr(node, "alignment") {
+                        Some("right") => TabAlign::Right,
+                        Some("center") => TabAlign::Center,
+                        _ => TabAlign::Left,
+                    };
+                    let relative_to_margin = wattr(node, "relativeTo") != Some("indent");
+                    let leader = wattr(node, "leader").is_some_and(|v| v != "none");
+                    read.in_run(r, node, 1);
+                    out.push(make(FlowRunKind::PositionalTab { align, relative_to_margin, leader }));
                 }
                 "br" => {
                     let kind = if wattr(node, "type") == Some("column") { FlowRunKind::ColumnBreak } else if wattr(node, "type") == Some("page") { FlowRunKind::PageBreak } else { FlowRunKind::LineBreak };
@@ -1748,7 +1864,9 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 "sym" => {
                     if let Some(c) = wattr(node, "char").and_then(|c| u32::from_str_radix(c, 16).ok()).and_then(char::from_u32) {
                         // Symbol fonts map their glyphs into the private use area.
-                        let c = if (0xf020..=0xf0ff).contains(&(c as u32)) { char::from_u32(c as u32 - 0xf000).unwrap_or(c) } else { c };
+                        let c = symbol_char(c, wattr(node, "font")).unwrap_or_else(|| {
+                            if (0xf020..=0xf0ff).contains(&(c as u32)) { char::from_u32(c as u32 - 0xf000).unwrap_or(c) } else { c }
+                        });
                         read.in_run(r, node, 1);
                         push_text(out, &c.to_string());
                     }
@@ -2196,7 +2314,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let colors = crate::theme::Colors::new(self.theme, None, &[]);
         // As Excel draws a chart of the old defaults (its thin grey border, its
         // 10 pt text): Word draws them so (DCHT).
-        let chart = crate::chart::read(doc.root_element(), &colors)?;
+        let mut chart = crate::chart::read(doc.root_element(), &colors)?;
+        chart.word_layout = true;
         let extent = child(holder, "extent");
         let cx = extent.and_then(|e| e.attribute("cx")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
         let cy = extent.and_then(|e| e.attribute("cy")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
@@ -2400,7 +2519,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 look.crop = ibis_doc_model::Crop { left: side("l"), top: side("t"), right: side("r"), bottom: side("b") };
             }
             if let Some(ln) = sp_pr.and_then(|p| child(p, "ln")) {
-                look.stroke = self.shape_stroke(ln, None, colors);
+                look.stroke = self.shape_stroke(Some(ln), None, colors);
             }
             let blip = child(pic, "blipFill").and_then(|b| child(b, "blip"));
             look.luminance = blip.and_then(|b| child(b, "lum")).and_then(|l| {
@@ -2468,7 +2587,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         let geometry = crate::geometry::geometry(geometry_node);
 
         let fill = sp_pr.and_then(|p| self.shape_fill(p, style, &colors, rels));
-        let stroke = sp_pr.and_then(|p| child(p, "ln")).and_then(|ln| self.shape_stroke(ln, style, &colors));
+        let stroke = self.shape_stroke(sp_pr.and_then(|p| child(p, "ln")), style, &colors);
 
         let text = self.shape_text(wsp, &colors);
 
@@ -2549,6 +2668,17 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
     fn vml_shape(&mut self, pict: Node, rels: &Rels) -> Option<FlowRunKind> {
         let vml = elements(pict).find(|n| matches!(n.tag_name().name(), "rect" | "roundrect" | "oval" | "line" | "polyline" | "shape"))?;
         let name = vml.tag_name().name();
+        let type_id = vml.attribute("type").map(|t| t.trim_start_matches('#')).filter(|t| !t.is_empty());
+        let shapetype = type_id.and_then(|id| {
+            elements(pict)
+                .find(|n| n.tag_name().name() == "shapetype" && n.attribute("id") == Some(id))
+                .or_else(|| {
+                    pict.document()
+                        .descendants()
+                        .find(|n| n.is_element() && n.tag_name().name() == "shapetype" && n.attribute("id") == Some(id))
+                })
+        });
+        let vml_attr = |key: &str| vml.attribute(key).or_else(|| shapetype.and_then(|st| st.attribute(key)));
         let style = vml_style(vml.attribute("style").unwrap_or(""));
         let length = |key: &str| style.get(key).and_then(|v| vml_length(v));
         if let Some(image) = child(vml, "imagedata") {
@@ -2560,9 +2690,11 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         };
         let (width, height);
         let (mut flip_h, mut flip_v) = (false, false);
+        let mut line_origin = (0i64, 0i64);
         let mut polyline: Option<(Vec<(i64, i64)>, (i64, i64))> = None;
         if name == "line" {
             let (from, to) = (point(vml.attribute("from"))?, point(vml.attribute("to"))?);
+            line_origin = (from.0.min(to.0), from.1.min(to.1));
             (width, height) = ((to.0 - from.0).abs(), (to.1 - from.1).abs());
             (flip_h, flip_v) = (to.0 < from.0, to.1 < from.1);
         } else if name == "polyline" {
@@ -2578,10 +2710,10 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             height = length("height")?;
         }
         let off = |v: &str| matches!(v, "f" | "false" | "0" | "no");
-        let color = |key: &str, default: Option<u32>| vml.attribute(key).and_then(vml_color).or(default.map(ibis_doc_model::Rgb));
+        let color = |key: &str, default: Option<u32>| vml_attr(key).and_then(vml_color).or(default.map(ibis_doc_model::Rgb));
         // The fill (white unless it is said otherwise) and the outline (black, 0.75 pt).
-        let fill_el = child(vml, "fill");
-        let filled = !vml.attribute("filled").is_some_and(off) && !fill_el.and_then(|f| f.attribute("on")).is_some_and(off);
+        let fill_el = child(vml, "fill").or_else(|| shapetype.and_then(|st| child(st, "fill")));
+        let filled = !vml_attr("filled").is_some_and(off) && !fill_el.and_then(|f| f.attribute("on")).is_some_and(off);
         let fill = if name == "line" || !filled {
             Fill::None
         } else {
@@ -2605,11 +2737,11 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 _ => Fill::Solid(with(first)),
             }
         };
-        let stroke_el = child(vml, "stroke");
-        let stroked = !vml.attribute("stroked").is_some_and(off) && !stroke_el.and_then(|s| s.attribute("on")).is_some_and(off);
+        let stroke_el = child(vml, "stroke").or_else(|| shapetype.and_then(|st| child(st, "stroke")));
+        let stroked = !vml_attr("stroked").is_some_and(off) && !stroke_el.and_then(|s| s.attribute("on")).is_some_and(off);
         let stroke = stroked.then(|| {
             let stroke_color = color("strokecolor", Some(0x000000)).unwrap_or(ibis_doc_model::Rgb(0));
-            let weight = vml.attribute("strokeweight").and_then(vml_length).or_else(|| stroke_el.and_then(|s| s.attribute("weight")).and_then(vml_length)).unwrap_or(9525);
+            let weight = vml_attr("strokeweight").and_then(vml_length).or_else(|| stroke_el.and_then(|s| s.attribute("weight")).and_then(vml_length)).unwrap_or(9525);
             let dash = stroke_el.and_then(|s| s.attribute("dashstyle")).map_or(LineDash::Solid, |d| match d {
                 "dot" => LineDash::SysDot,
                 "dash" => LineDash::SysDash,
@@ -2675,9 +2807,33 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 vml_custom_geometry(width, height, &path, filled)
             }
             "shape" => {
-                let (cw, ch) = vml.attribute("coordsize").and_then(|c| c.split_once(',')).and_then(|(a, b)| Some((a.trim().parse::<i64>().ok()?, b.trim().parse::<i64>().ok()?))).unwrap_or((21_600, 21_600));
-                let path = vml_path(vml.attribute("path")?);
-                vml_custom_geometry(cw, ch, &path, filled)
+                let spt = attr(vml, "spt")
+                    .or_else(|| shapetype.and_then(|st| attr(st, "spt")))
+                    .and_then(|v| v.trim().parse::<u32>().ok())
+                    .or_else(|| type_id.and_then(|id| id.strip_prefix("_x0000_t")).and_then(|v| v.parse::<u32>().ok()));
+                let coordsize = || {
+                    vml_attr("coordsize")
+                        .and_then(|c| c.split_once(','))
+                        .and_then(|(a, b)| Some((a.trim().parse::<i64>().ok()?, b.trim().parse::<i64>().ok()?)))
+                        .unwrap_or((21_600, 21_600))
+                };
+                if let Some(p) = vml.attribute("path").filter(|p| !p.contains('@')) {
+                    let (cw, ch) = coordsize();
+                    let path = vml_path(p);
+                    vml_custom_geometry(cw, ch, &path, filled)
+                } else if let Some(preset_name) = spt.and_then(vml_spt_preset)
+                    && let Some(geom) = crate::geometry::preset(preset_name)
+                {
+                    geom
+                } else if let Some(p) = shapetype.and_then(|st| st.attribute("path")).filter(|p| !p.contains('@')) {
+                    let (cw, ch) = coordsize();
+                    let path = vml_path(p);
+                    vml_custom_geometry(cw, ch, &path, filled)
+                } else if child(vml, "textbox").is_some() {
+                    ibis_doc_model::Geometry::Rect
+                } else {
+                    return None;
+                }
             }
             "roundrect" => {
                 let arc = vml.attribute("arcsize").map(|a| a.trim().trim_end_matches('f').parse::<f64>().map(|v| if a.trim().ends_with('f') { v / 65536.0 } else { v }).unwrap_or(0.2)).unwrap_or(0.2);
@@ -2727,10 +2883,13 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         }
         // Where it is: in the text, or at a place on the page (`position:absolute`).
         let floating = (style.get("position").map(String::as_str) == Some("absolute")).then(|| ibis_doc_model::FloatingAnchor {
-            offset_x: length("margin-left").unwrap_or(0),
-            offset_y: length("margin-top").unwrap_or(0),
+            offset_x: length("margin-left").unwrap_or(0) + line_origin.0,
+            offset_y: length("margin-top").unwrap_or(0) + line_origin.1,
             relative_h: style.get("mso-position-horizontal-relative").cloned().unwrap_or_else(|| "margin".to_string()),
-            relative_v: style.get("mso-position-vertical-relative").cloned().unwrap_or_else(|| "paragraph".to_string()),
+            relative_v: match style.get("mso-position-vertical-relative").map(String::as_str) {
+                Some("text") | None => "paragraph".to_string(),
+                Some(v) => v.to_string(),
+            },
             wrap: "none".to_string(),
             behind_doc: style.get("z-index").and_then(|z| z.trim().parse::<i64>().ok()).is_some_and(|z| z < 0),
             ..Default::default()
@@ -2822,13 +2981,15 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         None
     }
 
-    fn shape_stroke(&self, ln: Node, style: Option<Node>, colors: &crate::theme::Colors) -> Option<Stroke> {
+    /// A shape's outline: its `a:ln` over the style's line (`wps:style/a:lnRef`),
+    /// which alone draws a shape that has no `a:ln` (with the theme's line width).
+    fn shape_stroke(&self, ln: Option<Node>, style: Option<Node>, colors: &crate::theme::Colors) -> Option<Stroke> {
         let reference = style.and_then(|s| child(s, "lnRef"));
         let ref_color = reference.and_then(|r| colors.in_parent(r, None));
         let ref_idx = reference.and_then(|r| crate::xml::attr_i64(r, "idx")).unwrap_or(0);
 
         let mut stroke_fill = None;
-        let color = if let Some(fill) = elements(ln).find(|n| matches!(n.tag_name().name(), "noFill" | "solidFill" | "gradFill")) {
+        let color = if let Some(fill) = ln.and_then(|ln| elements(ln).find(|n| matches!(n.tag_name().name(), "noFill" | "solidFill" | "gradFill"))) {
             match fill.tag_name().name() {
                 "noFill" => return None,
                 "solidFill" => colors.in_parent(fill, ref_color),
@@ -2861,23 +3022,24 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             None
         };
         let color = color?;
-        let width = crate::xml::attr_i64(ln, "w").unwrap_or(Stroke::DEFAULT_WIDTH);
+        let width = ln.and_then(|ln| crate::xml::attr_i64(ln, "w")).or_else(|| self.theme.line_width(ref_idx)).unwrap_or(Stroke::DEFAULT_WIDTH);
         let end = |name: &str| {
-            let e = child(ln, name);
+            let e = ln.and_then(|ln| child(ln, name));
             ibis_doc_model::LineEnd::parse(e.and_then(|e| attr(e, "type")), e.and_then(|e| attr(e, "w")), e.and_then(|e| attr(e, "len")))
         };
-        let dash = child(ln, "prstDash")
+        let dash = ln
+            .and_then(|ln| child(ln, "prstDash"))
             .and_then(|d| attr(d, "val"))
             .and_then(LineDash::parse)
             .unwrap_or(LineDash::Solid);
-        let cap = match attr(ln, "cap") {
+        let cap = match ln.and_then(|ln| attr(ln, "cap")) {
             Some("rnd") => LineCap::Round,
             Some("sq") => LineCap::Square,
             _ => LineCap::Flat,
         };
-        let join = if child(ln, "round").is_some() {
+        let join = if ln.is_some_and(|ln| child(ln, "round").is_some()) {
             ibis_doc_model::LineJoin::Round
-        } else if child(ln, "bevel").is_some() {
+        } else if ln.is_some_and(|ln| child(ln, "bevel").is_some()) {
             ibis_doc_model::LineJoin::Bevel
         } else {
             ibis_doc_model::LineJoin::Miter
@@ -2891,10 +3053,198 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             dash,
             cap,
             join,
-            compound: ibis_doc_model::LineCompound::Single,
+            compound: ln.and_then(|ln| attr(ln, "cmpd")).and_then(ibis_doc_model::LineCompound::parse).unwrap_or_default(),
             alignment: ibis_doc_model::LineAlignment::Center,
             fill: stroke_fill,
         })
+    }
+
+    /// The paragraphs of a text box's content (`w:txbxContent`): each
+    /// paragraph as Word resolves it, its runs (also inside hyperlinks,
+    /// fields and content controls), a line break starting a paragraph that
+    /// continues the line before, an empty paragraph kept at its mark's size,
+    /// and a table as one line of text for each row.
+    fn txbx_paragraphs(&self, container: Node, out: &mut Vec<Paragraph>) {
+        for block in elements(container) {
+            match block.tag_name().name() {
+                "p" => self.txbx_paragraph(block, out),
+                "tbl" => {
+                    for row in elements(block).filter(|n| n.tag_name().name() == "tr") {
+                        let mut cells: Vec<Vec<Paragraph>> = Vec::new();
+                        for cell in elements(row).filter(|n| n.tag_name().name() == "tc") {
+                            let mut inside = Vec::new();
+                            self.txbx_paragraphs(cell, &mut inside);
+                            cells.push(inside);
+                        }
+                        // The row on one line: its cells' text side by side.
+                        let mut line = Paragraph::default();
+                        for (i, cell) in cells.into_iter().enumerate() {
+                            if i > 0 {
+                                let mut gap = line.runs.last().map(|r| r.style.clone()).unwrap_or_default();
+                                gap.underline = false;
+                                line.runs.push(Run { text: "  ".to_string(), style: gap });
+                            }
+                            for (j, para) in cell.into_iter().enumerate() {
+                                if i == 0 && j == 0 {
+                                    line.align = para.align;
+                                    line.end_style = para.end_style.clone();
+                                    line.space_before = para.space_before;
+                                    line.space_after = para.space_after;
+                                    line.line_spacing = para.line_spacing;
+                                    line.no_snap_to_grid = para.no_snap_to_grid;
+                                }
+                                line.runs.extend(para.runs);
+                            }
+                        }
+                        out.push(line);
+                    }
+                }
+                "sdt" => {
+                    if let Some(content) = child(block, "sdtContent") {
+                        self.txbx_paragraphs(content, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn txbx_paragraph(&self, p: Node, out: &mut Vec<Paragraph>) {
+        let ppr = child(p, "pPr");
+        // The paragraph as Word resolves it: the document's defaults, its style, then its own
+        // properties (the spacing between paragraphs, the line spacing, the typeface).
+        let (mut para, base_run) = self.styles.paragraph_base(ppr.and_then(|pr| wval(pr, "pStyle")), None);
+        if let Some(pr) = ppr {
+            para.overlay(&para_format(pr, self.theme));
+        }
+        let align = Some(match para.align {
+            Some(FlowAlign::Center) => TextAlign::Center,
+            Some(FlowAlign::Right) => TextAlign::Right,
+            Some(FlowAlign::Justify) => TextAlign::Justify,
+            _ => TextAlign::Left,
+        });
+        let hundredths = |emu: Option<i64>| emu.map_or(0, |e| (e.max(0) / 127) as u32);
+        // A paragraph of pictures (drawn over the box: `text_box_pictures`)
+        // keeps a line of their height.
+        let picture_height = text_box_pictures_of(p)
+            .iter()
+            .filter_map(|d| d.descendants().find(|n| n.is_element() && n.tag_name().name() == "extent").and_then(|e| crate::xml::attr_i64(e, "cy")))
+            .max();
+        let line_spacing = match para.line {
+            _ if picture_height.is_some() => Some(ibis_doc_model::LineSpacing::Points(hundredths(picture_height))),
+            Some(ibis_doc_model::LineHeight::Auto(n)) if n != 240 => Some(ibis_doc_model::LineSpacing::Percent(n * 100_000 / 240)),
+            Some(ibis_doc_model::LineHeight::Exact(e)) => Some(ibis_doc_model::LineSpacing::Points(hundredths(Some(e)))),
+            _ => None,
+        };
+        // A run's format as Word resolves it: the paragraph's, the run's character style, then its own.
+        let format_of = |rpr: Option<Node>| -> RunFormat {
+            let direct = rpr.map(|pr| run_format(pr, self.theme)).unwrap_or_default();
+            self.styles.run_format(&base_run, rpr.and_then(|pr| wval(pr, "rStyle")), &direct)
+        };
+        let style_of = |f: &RunFormat, c: char| -> RunStyle {
+            // Each character in the typeface the body would draw it in
+            // (`FlowRunStyle::font_for`: CJK and, with w:hint="eastAsia", the
+            // shared symbols in the East Asian one), with no fallback_font that
+            // would override East Asian font substitution.
+            let font = f.style().font_for(c).map(str::to_string);
+            let fallback_font = None;
+            let underline = f.underline.unwrap_or(false);
+            let underline_kind = f.underline_style.unwrap_or_default().to_drawing_underline();
+            RunStyle {
+                font_size: Some(f.size.unwrap_or(1050)),
+                bold: Some(f.bold.unwrap_or(false)),
+                italic: Some(f.italic.unwrap_or(false)),
+                underline,
+                underline_kind,
+                highlight: f.highlight.flatten(),
+                // As PowerPoint's: a third of the size up, a quarter down.
+                baseline: match f.position {
+                    Some(ibis_doc_model::VerticalPosition::Superscript) => 30_000,
+                    Some(ibis_doc_model::VerticalPosition::Subscript) => -25_000,
+                    _ => 0,
+                },
+                color: f.color,
+                font,
+                fallback_font,
+                border: f.border.flatten(),
+                // `w:kern` is in half points and kerns text of that size and larger; the renderer's `kern` is in hundredths of a point and
+                // kerns text above it (PowerPoint's rule), so one hundredth less makes a run of exactly that size kerned as Word does.
+                kern: ibis_doc_model::KernMin(f.kern.filter(|k| *k > 0).map(|k| k * 50 - 1)),
+                ..Default::default()
+            }
+        };
+        // The paragraph mark's own size, for an empty paragraph's line (its Latin typeface's).
+        let end_style = style_of(&format_of(ppr.and_then(|pr| child(pr, "rPr"))), 'a');
+        // Its list mark: a bullet's character (numbered lists are not counted here).
+        let level = para.num_id.filter(|id| *id != 0).and_then(|id| self.styles.numbering.level(id, para.level.unwrap_or(0)));
+        let bullet = level.filter(|l| l.format == "bullet" && !l.text.is_empty()).map(|l| ibis_doc_model::Bullet { text: l.text.clone(), picture: None, size: 100_000, color: None, auto: None, symbol: None });
+        let margin_left = para.left.or_else(|| level.and_then(|l| l.para.left)).unwrap_or(0);
+        let indent = para.first_line.or_else(|| level.and_then(|l| l.para.first_line)).unwrap_or(0);
+        let new_paragraph = |line_break: bool| Paragraph {
+            align,
+            margin_left,
+            indent,
+            // The mark of a paragraph that continues the line before (a line break) is not drawn again.
+            bullet: if line_break { None } else { bullet.clone() },
+            space_before: hundredths(para.before),
+            space_before_exact: true,
+            space_after: hundredths(para.after),
+            line_spacing,
+            end_style: end_style.clone(),
+            line_break,
+            no_snap_to_grid: para.snap == Some(false),
+            ..Default::default()
+        };
+        let mut current = new_paragraph(false);
+        let mut done: Vec<Paragraph> = Vec::new();
+        // Runs in the order they come, inside hyperlinks, fields and content controls too.
+        fn runs_of<'a>(node: Node<'a, 'a>, out: &mut Vec<Node<'a, 'a>>) {
+            for c in elements(node) {
+                match c.tag_name().name() {
+                    "r" => out.push(c),
+                    "hyperlink" | "fldSimple" | "sdt" | "sdtContent" | "ins" | "smartTag" | "customXml" | "moveTo" => runs_of(c, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut runs = Vec::new();
+        runs_of(p, &mut runs);
+        for r in runs {
+            let f = format_of(child(r, "rPr"));
+            let mut text = String::new();
+            let flush = |text: &mut String, current: &mut Paragraph| {
+                for c in std::mem::take(text).chars() {
+                    let style = style_of(&f, c);
+                    match current.runs.last_mut() {
+                        Some(last) if last.style == style => last.text.push(c),
+                        _ => current.runs.push(Run { text: c.to_string(), style }),
+                    }
+                }
+            };
+            for c in elements(r) {
+                match c.tag_name().name() {
+                    "t" => text.push_str(c.text().unwrap_or("")),
+                    "sym" => {
+                        if let Some(ch) = wattr(c, "char").and_then(|v| u32::from_str_radix(v, 16).ok()).and_then(char::from_u32) {
+                            let ch = symbol_char(ch, wattr(c, "font")).unwrap_or_else(|| {
+                                if (0xf020..=0xf0ff).contains(&(ch as u32)) { char::from_u32(ch as u32 - 0xf000).unwrap_or(ch) } else { ch }
+                            });
+                            text.push(ch);
+                        }
+                    }
+                    "tab" => text.push('\t'),
+                    "noBreakHyphen" => text.push('-'),
+                    "br" if attr(c, "type").is_none_or(|t| t == "textWrapping") => {
+                        flush(&mut text, &mut current);
+                        done.push(std::mem::replace(&mut current, new_paragraph(true)));
+                    }
+                    _ => {}
+                }
+            }
+            flush(&mut text, &mut current);
+        }
+        done.push(current);
+        out.extend(done);
     }
 
     fn shape_text(&self, wsp: Node, colors: &crate::theme::Colors) -> Option<TextBody> {
@@ -2906,101 +3256,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
 
         if let Some(tb) = txbx {
             let container = child(tb, "txbxContent").unwrap_or(tb);
-            for p in elements(container).filter(|n| n.tag_name().name() == "p") {
-                let ppr = child(p, "pPr");
-                // The paragraph as Word resolves it: the document's defaults, its style, then its own
-                // properties (the spacing between paragraphs, the line spacing, the typeface).
-                let (mut para, base_run) = self.styles.paragraph_base(ppr.and_then(|pr| wval(pr, "pStyle")), None);
-                if let Some(pr) = ppr {
-                    para.overlay(&para_format(pr, self.theme));
-                }
-                let align = Some(match para.align {
-                    Some(FlowAlign::Center) => TextAlign::Center,
-                    Some(FlowAlign::Right) => TextAlign::Right,
-                    Some(FlowAlign::Justify) => TextAlign::Justify,
-                    _ => TextAlign::Left,
-                });
-                let hundredths = |emu: Option<i64>| emu.map_or(0, |e| (e.max(0) / 127) as u32);
-                // A paragraph of pictures (drawn over the box: `text_box_pictures`)
-                // keeps a line of their height.
-                let picture_height = text_box_pictures_of(p)
-                    .iter()
-                    .filter_map(|d| d.descendants().find(|n| n.is_element() && n.tag_name().name() == "extent").and_then(|e| crate::xml::attr_i64(e, "cy")))
-                    .max();
-                let line_spacing = match para.line {
-                    _ if picture_height.is_some() => Some(ibis_doc_model::LineSpacing::Points(hundredths(picture_height))),
-                    Some(ibis_doc_model::LineHeight::Auto(n)) if n != 240 => Some(ibis_doc_model::LineSpacing::Percent(n * 100_000 / 240)),
-                    Some(ibis_doc_model::LineHeight::Exact(e)) => Some(ibis_doc_model::LineSpacing::Points(hundredths(Some(e)))),
-                    _ => None,
-                };
-                let style_of = |f: &RunFormat, c: char| {
-                    // Each character in the typeface the body would draw it in
-                    // (CJK in the East Asian one), falling back to the other.
-                    let font = f.style().font_for(c).map(str::to_string);
-                    let fallback_font = if font == f.font { f.east_asian_font.clone() } else { f.font.clone() };
-                    RunStyle {
-                        font_size: Some(f.size.unwrap_or(1050)),
-                        bold: Some(f.bold.unwrap_or(false)),
-                        italic: Some(f.italic.unwrap_or(false)),
-                        underline: f.underline.unwrap_or(false),
-                        highlight: f.highlight.flatten(),
-                        // As PowerPoint's: a third of the size up, a quarter down.
-                        baseline: match f.position {
-                            Some(ibis_doc_model::VerticalPosition::Superscript) => 30_000,
-                            Some(ibis_doc_model::VerticalPosition::Subscript) => -25_000,
-                            _ => 0,
-                        },
-                        color: f.color,
-                        font,
-                        fallback_font,
-                        ..Default::default()
-                    }
-                };
-                let mut runs: Vec<Run> = Vec::new();
-                // The runs, also inside hyperlinks, content controls and insertions.
-                for r in p.descendants().filter(|n| n.is_element() && n.tag_name().name() == "r" && !n.ancestors().skip(1).any(|a| matches!(a.tag_name().name(), "del" | "moveFrom"))) {
-                    let rpr = child(r, "rPr");
-                    let direct = rpr.map(|pr| run_format(pr, self.theme)).unwrap_or_default();
-                    let f = self.styles.run_format(&base_run, rpr.and_then(|pr| wval(pr, "rStyle")), &direct);
-                    let mut text = String::new();
-                    for t in elements(r) {
-                        match t.tag_name().name() {
-                            "t" => text.push_str(t.text().unwrap_or("")),
-                            "tab" => text.push('\t'),
-                            _ => {}
-                        }
-                    }
-                    for c in text.chars() {
-                        let style = style_of(&f, c);
-                        match runs.last_mut() {
-                            Some(last) if last.style == style => last.text.push(c),
-                            _ => runs.push(Run { text: c.to_string(), style }),
-                        }
-                    }
-                }
-                // Its list mark: a bullet's character (numbered lists are not counted here).
-                let level = para.num_id.filter(|id| *id != 0).and_then(|id| self.styles.numbering.level(id, para.level.unwrap_or(0)));
-                let bullet = level.filter(|l| l.format == "bullet" && !l.text.is_empty()).map(|l| ibis_doc_model::Bullet { text: l.text.clone(), picture: None, size: 100_000, color: None, auto: None });
-                let left = para.left.or_else(|| level.and_then(|l| l.para.left)).unwrap_or(0);
-                let first_line = para.first_line.or_else(|| level.and_then(|l| l.para.first_line)).unwrap_or(0);
-                // The paragraph mark's format: the height of an empty paragraph.
-                let mut mark = base_run.clone();
-                if let Some(rpr) = ppr.and_then(|pr| child(pr, "rPr")) {
-                    mark.overlay(&run_format(rpr, self.theme));
-                }
-                paragraphs.push(Paragraph {
-                    runs,
-                    align,
-                    margin_left: left,
-                    indent: first_line,
-                    bullet,
-                    space_before: hundredths(para.before),
-                    space_after: hundredths(para.after),
-                    line_spacing,
-                    end_style: style_of(&mark, 'a'),
-                    ..Default::default()
-                });
-            }
+            self.txbx_paragraphs(container, &mut paragraphs);
         } else if let Some(tb) = tx_body {
             for p in elements(tb).filter(|n| n.tag_name().name() == "p") {
                 let ppr = child(p, "pPr");
@@ -3097,6 +3353,9 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             }
             if let Some(upright) = attr(pr, "upright") {
                 body.upright = upright == "1" || upright == "true";
+            }
+            if child(pr, "spAutoFit").is_some() {
+                body.autofit = ibis_doc_model::TextAutofit::ResizeShape;
             }
             if let Some(cols) = crate::xml::attr_i64(pr, "numCol") {
                 body.columns = (cols as u32).clamp(1, 16);
@@ -3318,7 +3577,8 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 distance: [tw("leftFromText"), tw("rightFromText"), tw("topFromText"), tw("bottomFromText")],
             }
         });
-        let mut table = FlowTable { id, borders, columns, indent, align, rows, autofit, style, floating, cell_spacing };
+        let fit_to_page = !fixed && matches!(width, PreferredWidth::Auto);
+        let mut table = FlowTable { id, borders, columns, indent, align, rows, autofit, style, floating, cell_spacing, fit_to_page };
         table.apply_style(self.styles);
         table.resolve_borders();
         Some(table)
@@ -3380,7 +3640,7 @@ fn fits_content(columns: &[i64], width: PreferredWidth, rows: &[FlowRow], prefer
             let span = cell.span as usize;
             let spanned: i64 = columns.iter().skip(at).take(span).sum();
             match *w {
-                PreferredWidth::Fixed(w) if (w - spanned).abs() <= POINT => {}
+                PreferredWidth::Fixed(w) if w >= spanned - POINT => {}
                 // A cell merged down keeps the width of its start.
                 _ if cell.merge == VerticalMerge::Continue => {}
                 _ => return true,
@@ -3504,10 +3764,28 @@ pub fn enclosed_field(instruction: &str) -> Option<(String, String)> {
     ibis_doc_model::field_format::enclosed(instruction)
 }
 
+/// 囲い文字 (`EQ \o\ac`): the sizes (hundredths of a point) the runs of the field's code give
+/// the enclosure and the character in it, from the code's runs' text and sizes.
+fn enclosure_sizes(instruction: &str, runs: &[(String, u32)]) -> Option<(u32, u32)> {
+    let (enclosure, inner) = enclosed_field(instruction)?;
+    let size_of = |text: &str| text.chars().find(|c| !c.is_whitespace()).and_then(|c| runs.iter().find(|(t, _)| t.contains(c)).map(|(_, s)| *s));
+    Some((size_of(&enclosure)?, size_of(&inner)?))
+}
+
 /// Whether a field is one the layout computes (keeping the result saved
 /// as what it shows until then): the page counts, the section, captions'
 /// numbers and references, dates, formulas, and `PAGE` with a format
 /// switch (plain `PAGE` is a page number of its own).
+/// A field's code with its name (the first word) in capitals.
+fn upcase_field_name(instruction: &str) -> String {
+    let t = instruction.trim_start();
+    let end = t.find(char::is_whitespace).unwrap_or(t.len());
+    if !t[..end].chars().all(|c| c.is_ascii_alphabetic()) {
+        return instruction.to_string();
+    }
+    format!("{}{}", t[..end].to_ascii_uppercase(), &t[end..])
+}
+
 fn computed_field(instruction: &str) -> bool {
     let trimmed = instruction.trim_start();
     if trimmed.starts_with('=') || enclosed_field(trimmed).is_some() {
@@ -3528,6 +3806,8 @@ fn computed_field(instruction: &str) -> bool {
 #[derive(Default)]
 struct Frame {
     instruction: String,
+    /// The text of each run of the field's code and the size of the run (hundredths of a point).
+    instr_sizes: Vec<(String, u32)>,
     /// Between `separate` and `end`: the field's result.
     showing: bool,
     /// The result is replaced by what the field computes (a page number).
@@ -3981,6 +4261,26 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
     let (no_line_start, no_line_end) = (kinsoku_list("noLineBreaksBefore"), kinsoku_list("noLineBreaksAfter"));
     // 禁則処理の方式 (Word options / w:strictFirstAndLastChars, DOCX-JA-010, ECMA-376 Part 1 §17.15.1.84).
     let strict_first_and_last_chars = settings_on("strictFirstAndLastChars");
+    let balance_single_double_byte_width = settings_on("balanceSingleByteDoubleByteWidth");
+    let adjust_line_height_in_table = settings_on("adjustLineHeightInTable");
+    let do_not_use_html_paragraph_auto_spacing = settings_on("doNotUseHTMLParagraphAutoSpacing");
+    let compat_mode = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
+        let at = xml.find("compatibilityMode")?;
+        let rest = &xml[at..];
+        let v = rest.find("w:val=\"")? + 7;
+        rest[v..].split('"').next()?.parse::<u32>().ok()
+    });
+    // The font table's typefaces and their families (`w:font/w:family`).
+    let font_families: std::collections::BTreeMap<String, String> = part_of("/fontTable").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
+        let doc = roxmltree::Document::parse(&xml).ok()?;
+        Some(doc.descendants().filter(|n| n.is_element() && n.tag_name().name() == "font").filter_map(|f| {
+            let name = f.attributes().find(|a| a.name() == "name")?.value().to_string();
+            let family = f.children().find(|c| c.is_element() && c.tag_name().name() == "family").and_then(|c| c.attributes().find(|a| a.name() == "val").map(|a| a.value().to_string())).unwrap_or_default();
+            Some((name, family))
+        }).collect())
+    }).unwrap_or_default();
+    // A document with no settings is read as Word does: with the punctuation squeezed.
+    let compress_punctuation = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).is_none_or(|xml| xml.contains("characterSpacingControl w:val=\"compressPunctuation"));
     // 文書の既定テーマフォント言語 (w:themeFontLang, DOCX-JA-019, ECMA-376 Part 1 §17.15.1.88).
     let theme_font_lang = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
         let doc = roxmltree::Document::parse(&xml).ok()?;
@@ -4146,6 +4446,12 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         no_line_start,
         no_line_end,
         strict_first_and_last_chars,
+        compress_punctuation,
+        font_families,
+        balance_single_double_byte_width,
+        adjust_line_height_in_table,
+        do_not_use_html_paragraph_auto_spacing,
+        compat_mode,
         theme_font_lang,
         update_fields,
         note_separators,
@@ -4719,6 +5025,89 @@ mod grid_tests {
 
 
 
+
+/// The preset shape name (`ST_ShapeType`) of a VML shape type number (`o:spt`, MS-ODRAW).
+fn vml_spt_preset(spt: u32) -> Option<&'static str> {
+    Some(match spt {
+        1 | 75 | 202 => "rect",
+        2 => "roundRect",
+        3 => "ellipse",
+        4 => "diamond",
+        5 => "triangle",
+        6 => "rtTriangle",
+        7 => "parallelogram",
+        8 => "trapezoid",
+        9 => "hexagon",
+        10 => "octagon",
+        11 => "plus",
+        12 => "star5",
+        13 => "rightArrow",
+        15 => "homePlate",
+        16 => "cube",
+        19 => "arc",
+        20 | 32 => "line",
+        21 => "plaque",
+        22 => "can",
+        23 => "donut",
+        33 => "bentConnector2",
+        34 => "bentConnector3",
+        35 => "bentConnector4",
+        36 => "bentConnector5",
+        37 => "curvedConnector2",
+        38 => "curvedConnector3",
+        39 => "curvedConnector4",
+        40 => "curvedConnector5",
+        55 => "chevron",
+        56 => "pentagon",
+        57 => "noSmoking",
+        58 => "star8",
+        59 => "star16",
+        60 => "star32",
+        61 => "wedgeRectCallout",
+        62 => "wedgeRoundRectCallout",
+        63 => "wedgeEllipseCallout",
+        64 => "wave",
+        65 => "foldedCorner",
+        66 => "leftArrow",
+        67 => "downArrow",
+        68 => "upArrow",
+        69 => "leftRightArrow",
+        70 => "upDownArrow",
+        73 => "lightningBolt",
+        74 => "heart",
+        76 => "quadArrow",
+        84 => "bevel",
+        85 => "leftBracket",
+        86 => "rightBracket",
+        87 => "leftBrace",
+        88 => "rightBrace",
+        95 => "blockArc",
+        96 => "smileyFace",
+        97 => "verticalScroll",
+        98 => "horizontalScroll",
+        99 => "circularArrow",
+        109 => "flowChartProcess",
+        110 => "flowChartDecision",
+        111 => "flowChartInputOutput",
+        112 => "flowChartPredefinedProcess",
+        113 => "flowChartInternalStorage",
+        114 => "flowChartDocument",
+        115 => "flowChartMultidocument",
+        116 => "flowChartTerminator",
+        117 => "flowChartPreparation",
+        118 => "flowChartManualInput",
+        119 => "flowChartManualOperation",
+        120 => "flowChartConnector",
+        176 => "flowChartAlternateProcess",
+        183 => "sun",
+        184 => "moon",
+        185 => "bracketPair",
+        186 => "bracePair",
+        187 => "star4",
+        188 => "doubleWave",
+        _ => return None,
+    })
+}
 
 /// A VML `style` attribute's properties (`width:54pt;height:30pt`), the names as they are written.
 pub(crate) fn vml_style(value: &str) -> std::collections::HashMap<String, String> {

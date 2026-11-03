@@ -103,19 +103,27 @@ fn empty_as_zero(v: Value) -> Value {
 
 fn if_(c: &mut Ctx, a: &[Expr]) -> Value {
     let cond = c.eval_scalar_or_array(&a[0]);
-    let branch = |c: &mut Ctx, i: usize| -> Value {
+    let branch = |c: &mut Ctx, i: usize, keep_ref: bool| -> Value {
         match a.get(i) {
             // IF(FALSE, 1) is FALSE; IF(FALSE, 1,) is 0.
             None => Value::Bool(i == 1),
             Some(Expr::Missing) => Value::Number(0.0),
-            Some(e) => empty_as_zero(c.eval_scalar_or_array(e)),
+            Some(e) => {
+                if keep_ref && !c.in_array_context {
+                    match c.eval(e) {
+                        Value::Ref(r) => return Value::Ref(r),
+                        _ => {}
+                    }
+                }
+                empty_as_zero(c.eval_scalar_or_array(e))
+            }
         }
     };
     match cond {
         Value::Array(arr) => {
             // Both branches, chosen element by element.
-            let yes = branch(c, 1);
-            let no = branch(c, 2);
+            let yes = branch(c, 1, false);
+            let no = branch(c, 2, false);
             let values = vec![Value::Array(arr), yes, no];
             c.map_values(values, &mut |_, v| match to_bool(&v[0]) {
                 Ok(true) => v[1].clone(),
@@ -124,8 +132,8 @@ fn if_(c: &mut Ctx, a: &[Expr]) -> Value {
             })
         }
         v => match to_bool(&v) {
-            Ok(true) => branch(c, 1),
-            Ok(false) => branch(c, 2),
+            Ok(true) => branch(c, 1, true),
+            Ok(false) => branch(c, 2, true),
             Err(e) => err(e),
         },
     }
@@ -191,17 +199,28 @@ fn let_(c: &mut Ctx, a: &[Expr]) -> Value {
 fn lambda(c: &mut Ctx, a: &[Expr]) -> Value {
     let (params, body) = a.split_at(a.len() - 1);
     let mut names = Vec::new();
+    let mut optional = 0;
     for p in params {
+        if let Expr::Structured { table, spec } = p
+            && table.is_empty()
+            && let Some(name) = spec.strip_prefix('[').and_then(|s|s.strip_suffix(']'))
+            && matches!(crate::formula::parse(name), Ok(Expr::Name { sheet:None, .. }))
+        {
+            names.push(name.to_string());
+            optional += 1;
+            continue;
+        }
+        if optional > 0 { return err(CellError::Value); }
         match name_of(p) {
             Some(n) => names.push(n),
             None => return err(CellError::Value),
         }
     }
-    Value::Lambda(Rc::new(Lambda { params: names, body: body[0].clone(), captured: c.locals.clone(), eta: None }))
+    Value::Lambda(Rc::new(Lambda { params: names, optional, body: body[0].clone(), captured: c.locals.clone(), eta: None }))
 }
 
 fn wrong_lambda_arity(f: &Value, count: usize) -> bool {
-    matches!(f, Value::Lambda(l) if l.eta.is_none() && l.params.len() != count)
+    matches!(f, Value::Lambda(l) if l.eta.is_none() && (count > l.params.len() || count < l.params.len() - l.optional))
 }
 
 fn map(c: &mut Ctx, a: &[Expr]) -> Value {

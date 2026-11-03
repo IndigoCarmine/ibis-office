@@ -129,19 +129,95 @@ pub(super) fn menu(editor:&SlideEditor)->Vec<MenuEntry> {
     let borders:Vec<_>=paragraphs.iter().flat_map(|p| match edge {Some(i)=>vec![p.borders[i]],None=>p.borders.to_vec()}).collect();
     let scopes:Vec<MenuEntry>=[("docx.paragraph.border-edge.all","docx.cell-borders.all-borders",None),("docx.paragraph.border-edge.top","_shell.top",Some(0)),("docx.paragraph.border-edge.right","_shell.right",Some(1)),("docx.paragraph.border-edge.bottom","_shell.bottom",Some(2)),("docx.paragraph.border-edge.left","_shell.left",Some(3))].into_iter()
         .map(|(id,label,value)|MenuItem::new(id,crate::shell::i18n::text(label)).disabled(!enabled).checked(edge==value).on(move|this,_,cx|this.choose_paragraph_border_edge(value,cx)).into()).collect();
-    let mut fills:Vec<MenuEntry>=[("docx.paragraph.fill.blue","_shell.light-blue",0xdeeaf6),("docx.paragraph.fill.green","_shell.light-green",0xe2efd9),("docx.paragraph.fill.yellow","_shell.light-yellow",0xfff2cc),("docx.paragraph.fill.red","docx.paragraph-decorations.light-red",0xfbe4d5),("docx.paragraph.fill.gray","_shell.gray",0xd9d9d9)]
-        .into_iter().map(|(id,label,c)|MenuItem::new(id,crate::shell::i18n::text(label)).checked(enabled && paragraphs.iter().all(|p|p.shading==Some(Rgb(c)))).disabled(!enabled)
-        .on(move|this,_,cx|this.set_paragraph_shading(Some(Rgb(c)),cx)).into()).collect();
-    fills.push(MenuItem::tr("docx.paragraph.fill.none").disabled(!enabled).checked(enabled && paragraphs.iter().all(|p|p.shading.is_none())).on(|this,_,cx|this.set_paragraph_shading(None,cx)).into());
+    let fills: Vec<MenuEntry> = {
+        use crate::shell::color_palette::{Palette, PickColor, Swatch, theme_rows};
+        let pick: PickColor = std::rc::Rc::new(|this, c, _, cx| this.set_paragraph_shading(c, cx));
+        let cur = (enabled && !paragraphs.is_empty()).then(|| {
+            let first = paragraphs[0].shading?;
+            paragraphs.iter().all(|p| p.shading == Some(first)).then_some(first)
+        }).flatten();
+        let mut theme = theme_rows(&super::toolbar::THEME_10, &pick, cur);
+        if !enabled {
+            for s in theme.iter_mut().flatten() {
+                s.item = s.item.clone().disabled(true);
+            }
+        }
+        let standard: Vec<Swatch> = [
+            ("docx.paragraph.fill.blue", "_shell.light-blue", 0xdeeaf6),
+            ("docx.paragraph.fill.green", "_shell.light-green", 0xe2efd9),
+            ("docx.paragraph.fill.yellow", "_shell.light-yellow", 0xfff2cc),
+            ("docx.paragraph.fill.red", "docx.paragraph-decorations.light-red", 0xfbe4d5),
+            ("docx.paragraph.fill.gray", "_shell.gray", 0xd9d9d9),
+        ]
+        .into_iter()
+        .map(|(id, label, c)| Swatch {
+            rgb: Rgb(c),
+            item: MenuItem::new(id, crate::shell::i18n::text(label))
+                .checked(enabled && paragraphs.iter().all(|p| p.shading == Some(Rgb(c))))
+                .disabled(!enabled)
+                .on(move |this, _, cx| this.set_paragraph_shading(Some(Rgb(c)), cx)),
+        })
+        .collect();
+        let none = MenuItem::tr("docx.paragraph.fill.none")
+            .disabled(!enabled)
+            .checked(enabled && paragraphs.iter().all(|p| p.shading.is_none()))
+            .on(|this, _, cx| this.set_paragraph_shading(None, cx));
+        vec![MenuEntry::Palette(Palette {
+            none: Some(none),
+            theme,
+            standard,
+            pick: Some(pick),
+            more: None,
+            button: None, current:None,
+        })]
+    };
     let mut types:Vec<MenuEntry>=BORDERS.iter().zip(BORDER_IDS).map(|(&(_,style),&id)|MenuItem::new(id,crate::shell::i18n::text(border_label(style))).disabled(!enabled)
         .checked(!borders.is_empty() && borders.iter().all(|b|b.is_some_and(|b|b.style==style))).on(move|this,_,cx|this.set_paragraph_border_style(Some(style),cx)).into()).collect();
     types.push(MenuItem::tr("docx.paragraph.border.none").disabled(!enabled).checked(!borders.is_empty() && borders.iter().all(Option::is_none)).on(|this,_,cx|this.set_paragraph_border_style(None,cx)).into());
     let widths:Vec<MenuEntry>=[("docx.paragraph.border-width.half","0.5 pt",6350),("docx.paragraph.border-width.one","1 pt",12700),("docx.paragraph.border-width.one-half","1.5 pt",19050),("docx.paragraph.border-width.three","3 pt",38100)].into_iter()
         .map(|(id,label,w)|MenuItem::new(id,crate::shell::i18n::text(label)).disabled(!enabled).checked(!borders.is_empty() && borders.iter().all(|b|b.is_some_and(|b|b.width==w)))
         .on(move|this,_,cx|this.set_paragraph_border_width(w,cx)).into()).collect();
-    let colors:Vec<MenuEntry>=[("docx.paragraph.border-color.black","_shell.black",0),("docx.paragraph.border-color.red","_shell.red",0xff0000),("docx.paragraph.border-color.blue","_shell.blue",0x0000ff),("docx.paragraph.border-color.green","_shell.green",0x008000)].into_iter()
-        .map(|(id,label,c)|MenuItem::new(id,crate::shell::i18n::text(label)).disabled(!enabled).checked(!borders.is_empty() && borders.iter().all(|b|b.is_some_and(|b|b.color==Rgb(c))))
-        .on(move|this,_,cx|this.set_paragraph_border_color(Rgb(c),cx)).into()).collect();
+    let colors: Vec<MenuEntry> = {
+        use crate::shell::color_palette::{Palette, PickColor, Swatch, theme_rows};
+        let pick: PickColor = std::rc::Rc::new(|this, c, _, cx| {
+            if let Some(rgb) = c {
+                this.set_paragraph_border_color(rgb, cx);
+            }
+        });
+        let cur = (!borders.is_empty()).then(|| {
+            let first = borders[0]?.color;
+            borders.iter().all(|b| b.is_some_and(|b| b.color == first)).then_some(first)
+        }).flatten();
+        let mut theme = theme_rows(&super::toolbar::THEME_10, &pick, cur);
+        if !enabled {
+            for s in theme.iter_mut().flatten() {
+                s.item = s.item.clone().disabled(true);
+            }
+        }
+        let standard: Vec<Swatch> = [
+            ("docx.paragraph.border-color.black", "_shell.black", 0),
+            ("docx.paragraph.border-color.red", "_shell.red", 0xff0000),
+            ("docx.paragraph.border-color.blue", "_shell.blue", 0x0000ff),
+            ("docx.paragraph.border-color.green", "_shell.green", 0x008000),
+        ]
+        .into_iter()
+        .map(|(id, label, c)| Swatch {
+            rgb: Rgb(c),
+            item: MenuItem::new(id, crate::shell::i18n::text(label))
+                .disabled(!enabled)
+                .checked(!borders.is_empty() && borders.iter().all(|b| b.is_some_and(|b| b.color == Rgb(c))))
+                .on(move |this, _, cx| this.set_paragraph_border_color(Rgb(c), cx)),
+        })
+        .collect();
+        vec![MenuEntry::Palette(Palette {
+            none: None,
+            theme,
+            standard,
+            pick: Some(pick),
+            more: None,
+            button: None, current:None,
+        })]
+    };
     vec![Submenu::tr("docx.paragraph.border-edge", "border_style",scopes).into(),
         Submenu::tr("docx.paragraph.fill", "format_color_fill",fills).into(),
         Submenu::tr("docx.paragraph.border", "border_style",types).into(),
