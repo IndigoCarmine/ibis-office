@@ -45,6 +45,13 @@ fn main() {
         println!("cargo::rustc-cfg=headless_export");
     }
 
+    // The main thread's stack: 8 MiB, as on macOS and Linux and in the web build (scripts/build-web.sh). Windows
+    // gives 1 MiB unless told otherwise, and the panels' frames are larger than that in a debug build (docx
+    // `picture_panel`: 2.9 MB), reserved on entry even when the panel is not shown. See tests/main_stack.rs.
+    if os == "windows" && target("CARGO_CFG_TARGET_ENV") == "msvc" {
+        println!("cargo:rustc-link-arg-bin=AcaudaOffice=/STACK:{}", 8 * 1024 * 1024);
+    }
+
     // Built for Windows with MSVC: the icon resource goes to its linker.
     #[cfg(windows)]
     if os == "windows" && target("CARGO_CFG_TARGET_ENV") == "msvc" {
