@@ -98,12 +98,16 @@ pub enum RunChange {
     Spacing(Option<Emu>),
     /// Character horizontal scale in percent (`w:w`), or `None` to reset to standard.
     Scale(Option<u32>),
+    /// Fit a contiguous group of characters to (twips, group id).
+    FitText(Option<(u32,u32)>),
     /// 傍点 (`w:em`).
     Emphasis(crate::flow::EmphasisMark),
     /// 組み文字 (`w:eastAsianLayout w:combine`), or none.
     Combine(Option<crate::flow::Combine>),
     /// 縦中横 (`w:eastAsianLayout w:vert`).
     TateChuYoko(bool),
+    /// 縦中横の「行の幅に合わせる」.
+    TateChuYokoFit(bool),
     /// 文字の囲み線 (`w:bdr`).
     Border(Option<crate::flow::FlowBorder>),
     /// カーニング (`w:kern`, half-points; Some(0) turns off, None clears direct override).
@@ -199,9 +203,11 @@ impl RunChange {
             RunChange::Position(v) => f.position = Some(*v),
             RunChange::Spacing(v) => f.spacing = *v,
             RunChange::Scale(v) => f.scale = *v,
+            RunChange::FitText(v) => f.fit_text = Some(*v),
             RunChange::Emphasis(v) => f.emphasis = Some(*v),
             RunChange::Combine(v) => f.combine = Some(*v),
             RunChange::TateChuYoko(v) => f.tate_chu_yoko = Some(*v),
+            RunChange::TateChuYokoFit(v) => f.tate_chu_yoko_fit = Some(*v),
             RunChange::Border(v) => f.border = Some(*v),
             RunChange::Kern(v) => f.kern = *v,
             RunChange::Hidden(v) => f.hidden = Some(*v),
@@ -650,6 +656,9 @@ pub enum FlowCommand {
     /// The text of the text box (or any shape with text) at `at`; the
     /// first paragraph's and run's formatting stays.
     SetShapeText { at: FlowPos, text: String },
+    /// Splice the plain text of the shape at `at`: replace `start..start+remove`
+    /// (char indices) with `insert`, preserving per-run formatting.
+    SpliceShapeText { at: FlowPos, start: usize, remove: usize, insert: String },
     /// Where the text sits vertically in the shape at `at` (DOCX-IMAGE-011, ribbon line 254: テキストの配置).
     SetShapeAnchor { at: FlowPos, anchor: crate::text::VerticalAnchor },
     /// The size and (for a floating shape) the offset from where it is anchored of the
@@ -665,6 +674,8 @@ pub enum FlowCommand {
     SetShapeRangeFormat { at: FlowPos, from: usize, to: usize, bold: Option<bool>, italic: Option<bool>, size: Option<u32>, color: Option<crate::drawing::Rgb> },
     /// The text formatting of the shape at `at`, all of its text; `None` leaves it as it is.
     SetShapeTextFormat { at: FlowPos, bold: Option<bool>, italic: Option<bool>, size: Option<u32>, color: Option<crate::drawing::Rgb> },
+    /// Apply `format` to characters `range` (`Some((from, to))`) or to the whole text (`None`) of the shape at `at`.
+    FormatShapeText { at: FlowPos, range: Option<(usize, usize)>, format: crate::text::CharacterFormat },
     /// The paper size and margins (of the document's last section).
     SetPage { page: crate::flow::PageSetup },
     /// A header (or footer) for a document without one: an empty paragraph
@@ -937,10 +948,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         FlowCommand::SetNumbering { numbering } => {
             let styles = Arc::make_mut(&mut doc.styles);
             let old = std::mem::replace(&mut styles.numbering, numbering);
-            let styles = doc.styles.clone();
-            for list in [&mut doc.body, &mut doc.header, &mut doc.footer] {
-                resolve_all(list, &styles);
-            }
+            resolve_document(doc);
             Ok(FlowCommand::SetNumbering { numbering: old })
         }
         FlowCommand::SetStyle { id, style } => {
@@ -949,10 +957,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 Some(s) => styles.styles.insert(id.clone(), s),
                 None => styles.styles.remove(&id),
             };
-            let styles = doc.styles.clone();
-            for list in [&mut doc.body, &mut doc.header, &mut doc.footer, &mut doc.header_first, &mut doc.footer_first, &mut doc.header_even, &mut doc.footer_even] {
-                resolve_all(list, &styles);
-            }
+            resolve_document(doc);
             Ok(FlowCommand::SetStyle { id, style: old })
         }
         FlowCommand::SetDocumentParagraphSpacing { preset, styles } => {
@@ -979,10 +984,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                     s.defaults_para.line = Some(line);
                 }
             }
-            let styles = doc.styles.clone();
-            for list in [&mut doc.body, &mut doc.header, &mut doc.footer, &mut doc.header_first, &mut doc.footer_first, &mut doc.header_even, &mut doc.footer_even] {
-                resolve_all(list, &styles);
-            }
+            resolve_document(doc);
             Ok(FlowCommand::SetDocumentParagraphSpacing {
                 preset: old_preset,
                 styles: Some(old_styles),
@@ -998,10 +1000,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 let s = std::sync::Arc::make_mut(&mut doc.styles);
                 preset.apply(s);
             }
-            let styles = doc.styles.clone();
-            for list in [&mut doc.body, &mut doc.header, &mut doc.footer, &mut doc.header_first, &mut doc.footer_first, &mut doc.header_even, &mut doc.footer_even] {
-                resolve_all(list, &styles);
-            }
+            resolve_document(doc);
             Ok(FlowCommand::SetDocumentStyleSet {
                 preset: old_preset,
                 styles: Some(old_styles),
@@ -1049,7 +1048,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 row_band: 1,
                 col_band: 1,
             });
-            let mut table = FlowTable { id: id(), borders: [Some(Some(line)); 6], columns: vec![width / columns as Emu / 635 * 635; columns], style, ..FlowTable::default() };
+            let mut table = FlowTable { id: id(), borders: [Some(Some(line)); 6], columns: vec![width / columns as Emu / 635 * 635; columns], style, fit_to_page: true, ..FlowTable::default() };
             for _ in 0..rows {
                 let mut row = FlowRow { id: id(), ..FlowRow::default() };
                 for _ in 0..columns {
@@ -1059,6 +1058,13 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 }
                 table.rows.push(row);
             }
+            // As a reader finds it in the saved file (`w:tblW` auto, each cell's `w:tcW` its column's width, the grid agreeing): a table laid out by the grid.
+            let column_width = table.columns[0];
+            table.autofit = Some(crate::flow::AutoFit {
+                width: crate::flow::PreferredWidth::Auto,
+                cells: table.rows.iter().map(|r| r.cells.iter().map(|_| crate::flow::PreferredWidth::Fixed(column_width)).collect()).collect(),
+                grid_trusted: true,
+            });
             table.resolve_borders();
             let len = p.len();
             let in_cell = matches!(container, Container::Cell { .. });
@@ -1176,6 +1182,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         pic.name = look.name;
                         pic.effects = look.effects;
                         pic.soft_edge = look.soft_edge;
+                        pic.shadow = look.shadow;
+                        pic.reflection = look.reflection;
+                        pic.clear = look.clear;
                         pic.geometry = look.geometry;
                     }
                 }
@@ -1227,6 +1236,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         FlowCommand::InsertTextBox { at, size, text } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let shape_id = doc.new_shape_id();
+            let relative_height = next_floating_relative_height(doc);
+            // Centred across the text column, as the box of Insert > Text Box (not stuck at its left edge: GitHub issue #14).
+            let centred = ((doc.page.size.width - doc.page.left - doc.page.right - size.width) / 2).max(0);
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let (format, char_style, style) = old.format_at(at.offset);
@@ -1252,7 +1264,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                     reflection: None,
                     bevel: None,
                 }),
-                floating: Some(crate::model::FloatingAnchor::default()),
+                floating: Some(crate::model::FloatingAnchor { offset_x: centred, relative_height, ..Default::default() }),
             };
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
             p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
@@ -1265,6 +1277,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         FlowCommand::InsertShape { at, size, geometry, fill, line } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let shape_id = doc.new_shape_id();
+            let relative_height = next_floating_relative_height(doc);
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let (format, char_style, style) = old.format_at(at.offset);
@@ -1278,7 +1291,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                     geometry,
                     fill: fill.map_or(crate::drawing::Fill::None, |c| crate::drawing::Fill::Solid(crate::drawing::Color::opaque(c))),
                     stroke: line.map(|(c, w)| crate::drawing::Stroke::solid(crate::drawing::Color::opaque(c), w)),
-                    text: None,
+                    text: Some(centred_shape_text_body(style.size)),
                     tilt: None,
                     shadow: None,
                     glow: None,
@@ -1287,7 +1300,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                     reflection: None,
                     bevel: None,
                 }),
-                floating: Some(crate::model::FloatingAnchor { wrap: "square".into(), ..Default::default() }),
+                floating: Some(crate::model::FloatingAnchor { wrap: "square".into(), relative_height, ..Default::default() }),
             };
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
             p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
@@ -1300,6 +1313,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         FlowCommand::InsertLine { at, size, stroke } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let shape_id = doc.new_shape_id();
+            let relative_height = next_floating_relative_height(doc);
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let (format, char_style, style) = old.format_at(at.offset);
@@ -1310,7 +1324,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 flip_h: false,
                 flip_v: false,
                 kind: crate::model::ShapeKind::Line(stroke),
-                floating: Some(crate::model::FloatingAnchor { wrap: "none".into(), ..Default::default() }),
+                floating: Some(crate::model::FloatingAnchor { wrap: "none".into(), relative_height, ..Default::default() }),
             };
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
             p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
@@ -1323,6 +1337,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         FlowCommand::InsertConnector { at, size, stroke, geometry, flip_h, flip_v, glue } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let shape_id = doc.new_shape_id();
+            let relative_height = next_floating_relative_height(doc);
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
             let (format, char_style, style) = old.format_at(at.offset);
@@ -1349,7 +1364,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 flip_h,
                 flip_v,
                 kind,
-                floating: Some(crate::model::FloatingAnchor { wrap: "none".into(), glue, ..Default::default() }),
+                floating: Some(crate::model::FloatingAnchor { wrap: "none".into(), glue, relative_height, ..Default::default() }),
             };
             let mut p = FlowParagraph { runs: old.runs_before(at.offset), ..old.clone() };
             p.runs.push(FlowRun { kind: FlowRunKind::Shape(Box::new(shape)), style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None });
@@ -1457,11 +1472,41 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let i = p.boundary(at.offset);
             let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
             let FlowRunKind::Shape(shape) = &mut run.kind else { return Err(EditError::IndexOutOfRange) };
-            match &mut shape.kind {
-                crate::model::ShapeKind::Auto(a) => a.text.get_or_insert_with(Default::default).set_text(&text),
-                crate::model::ShapeKind::TextBox(body) => body.set_text(&text),
+            let body = match &mut shape.kind {
+                crate::model::ShapeKind::Auto(a) => a.text.get_or_insert_with(Default::default),
+                crate::model::ShapeKind::TextBox(body) => body,
                 _ => return Err(EditError::IndexOutOfRange),
+            };
+            if body.is_empty() || text.is_empty() {
+                body.set_text(&text);
+            } else {
+                let old_text = body.text();
+                if old_text != text {
+                    let (a, b): (Vec<char>, Vec<char>) = (old_text.chars().collect(), text.chars().collect());
+                    let prefix = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+                    let rest = a.len().min(b.len()) - prefix;
+                    let suffix = a.iter().rev().zip(b.iter().rev()).take(rest).take_while(|(x, y)| x == y).count();
+                    let insert: String = b[prefix..b.len() - suffix].iter().collect();
+                    body.splice(prefix, a.len() - prefix - suffix, &insert);
+                }
             }
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::SpliceShapeText { at, start, remove, insert } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
+            let FlowRunKind::Shape(shape) = &mut run.kind else { return Err(EditError::IndexOutOfRange) };
+            let body = match &mut shape.kind {
+                crate::model::ShapeKind::Auto(a) => a.text.get_or_insert_with(Default::default),
+                crate::model::ShapeKind::TextBox(body) => body,
+                _ => return Err(EditError::IndexOutOfRange),
+            };
+            body.splice(start, remove, &insert);
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
@@ -1616,6 +1661,44 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
+        FlowCommand::FormatShapeText { at, range, format } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
+            let FlowRunKind::Shape(shape) = &mut run.kind else { return Err(EditError::IndexOutOfRange) };
+            let body = match &mut shape.kind {
+                crate::model::ShapeKind::Auto(a) => a.text.as_mut(),
+                crate::model::ShapeKind::TextBox(body) => Some(body),
+                _ => None,
+            }
+            .ok_or(EditError::IndexOutOfRange)?;
+            if let Some((from, to)) = range {
+                body.format_runs(from, to, &format);
+            } else {
+                if let Some(v) = format.bold {
+                    body.style.bold = v;
+                }
+                if let Some(v) = format.italic {
+                    body.style.italic = v;
+                }
+                if let Some(v) = format.font_size {
+                    body.style.font_size = v.clamp(crate::text::TextStyle::MIN_FONT_SIZE, crate::text::TextStyle::MAX_FONT_SIZE);
+                }
+                if let Some(v) = format.color {
+                    body.style.color = v;
+                }
+                if let Some(ref f) = format.font {
+                    body.style.font = f.clone();
+                }
+                let total = body.text().chars().count();
+                body.format_runs(0, total, &format);
+            }
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
         FlowCommand::SetPictureWrap { at, wrap } => {
             use crate::model::PictureWrapType;
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1718,6 +1801,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             ole: pic.ole,
                             linked_file: None,
                             soft_edge: pic.soft_edge,
+                            shadow: pic.shadow,
+                            reflection: pic.reflection.clone(),
+                            clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
                         };
@@ -1773,6 +1859,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             ole: pic.ole,
                             linked_file: None,
                             soft_edge: pic.soft_edge,
+                            shadow: pic.shadow,
+                            reflection: pic.reflection.clone(),
+                            clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
                         };
@@ -1963,7 +2052,12 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
-            let (mut format, char_style, style) = old.format_at(at.offset);
+            let (mut format, mut char_style, style) = old.format_at(at.offset);
+            // Range markers are paragraph-level XML nodes, outside w:r; they
+            // cannot carry inherited run properties such as w:rFonts/@w:hint.
+            if matches!(kind,FlowRunKind::CommentStart(_)|FlowRunKind::CommentEnd(_)) {
+                format=RunFormat::default();char_style=None;
+            }
             // A text content control's prompt is grey.
             if matches!(kind, FlowRunKind::RichText { placeholder: true, .. } | FlowRunKind::PlainText { placeholder: true, .. } | FlowRunKind::BuildingBlockGallery { placeholder: true, .. } | FlowRunKind::Group { placeholder: true, .. })
                 || matches!(&kind, FlowRunKind::RepeatingSection { items, selected, .. } if items.get(*selected).is_some_and(|s| s == crate::flow::DEFAULT_REPEATING_SECTION_ITEM_PROMPT)) {
@@ -3169,6 +3263,69 @@ pub fn clear_all_headers_footers(doc: &FlowDocument) -> Option<FlowCommand> {
     Some(FlowCommand::SetSections { state: Box::new(state) })
 }
 
+/// Build a [`FlowCommand::ReplaceBlocks`] that mutates the [`crate::text::TextBody`] of the shape at `at`.
+pub fn mutate_shape_text_body<F>(doc: &FlowDocument, at: FlowPos, f: F) -> Option<FlowCommand>
+where
+    F: FnOnce(&mut crate::text::TextBody),
+{
+    let (container, index, _, at, _) = ordered(doc, at, at).ok()?;
+    let list = blocks(doc, container)?;
+    let Block::Paragraph(mut p) = list.get(index)?.clone() else { return None };
+    let i = p.boundary(at.offset);
+    let run = p.runs.get_mut(i)?;
+    let FlowRunKind::Shape(shape) = &mut run.kind else { return None };
+    let body = match &mut shape.kind {
+        crate::model::ShapeKind::Auto(a) => a.text.as_mut()?,
+        crate::model::ShapeKind::TextBox(body) => body,
+        _ => return None,
+    };
+    f(body);
+    Some(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(p)] })
+}
+
+/// Build [`FlowCommand::ReplaceBlocks`] commands that mutate the [`crate::text::TextBody`] of all shapes at `positions`.
+/// Shapes anchored in the same paragraph are updated together in a single `ReplaceBlocks` so earlier edits are not overwritten.
+pub fn mutate_shapes_text_bodies<F>(doc: &FlowDocument, positions: &[FlowPos], mut f: F) -> Vec<FlowCommand>
+where
+    F: FnMut(&mut crate::text::TextBody),
+{
+    let mut groups: Vec<(Container, usize, Vec<FlowPos>)> = Vec::new();
+    for &pos in positions {
+        let Ok((container, index, _, at, _)) = ordered(doc, pos, pos) else { continue };
+        if let Some((_, _, list)) = groups.iter_mut().find(|(c, idx, _)| *c == container && *idx == index) {
+            if !list.contains(&at) {
+                list.push(at);
+            }
+        } else {
+            groups.push((container, index, vec![at]));
+        }
+    }
+    let mut commands = Vec::new();
+    for (container, index, ats) in groups {
+        let Some(list) = blocks(doc, container) else { continue };
+        let Some(Block::Paragraph(mut p)) = list.get(index).cloned() else { continue };
+        let mut any = false;
+        for at in ats {
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { continue };
+            let FlowRunKind::Shape(shape) = &mut run.kind else { continue };
+            let body = match &mut shape.kind {
+                crate::model::ShapeKind::Auto(a) => a.text.as_mut(),
+                crate::model::ShapeKind::TextBox(body) => Some(body),
+                _ => None,
+            };
+            if let Some(body) = body {
+                f(body);
+                any = true;
+            }
+        }
+        if any {
+            commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(p)] });
+        }
+    }
+    commands
+}
+
 /// `state` with paragraph `id` ending a section of `kind` (or none). A new
 /// section takes the setup of the section it is cut from and its own
 /// headers and footers (that section's become the same as the new one's,
@@ -3584,6 +3741,15 @@ pub fn reply_comment(doc: &FlowDocument, parent: u32, who: &CommentAuthor, text:
     Some(commands)
 }
 
+/// The command giving comment `id` a new text (編集): its body is one paragraph of `text`; its author, date and marks
+/// stay.
+pub fn edit_comment(doc: &FlowDocument, id: u32, text: &str) -> Option<FlowCommand> {
+    let mut comments = doc.comments.clone();
+    let c = comments.iter_mut().find(|c| c.id == id)?;
+    c.blocks = vec![Block::Paragraph(comment_paragraph(doc, doc.new_id(), text))];
+    Some(FlowCommand::SetComments(comments))
+}
+
 /// The command resolving a comment (and its replies), or opening it again.
 pub fn resolve_comment(doc: &FlowDocument, id: u32, done: bool) -> FlowCommand {
     let mut comments = doc.comments.clone();
@@ -3695,7 +3861,7 @@ pub fn resolve_revisions_filter(
     doc: &FlowDocument,
     range: Option<(FlowPos, FlowPos)>,
     accept: bool,
-    author_filter: Option<&std::collections::HashSet<String>>,
+    author_filter: Option<&std::collections::BTreeSet<String>>,
 ) -> Vec<FlowCommand> {
     if doc.lock_tracking {
         return Vec::new();
@@ -4212,6 +4378,7 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
             t.autofit = Some(crate::flow::AutoFit {
                 width: crate::flow::PreferredWidth::Auto,
                 cells: t.rows.iter().map(|r| r.cells.iter().map(|_| crate::flow::PreferredWidth::Auto).collect()).collect(),
+                grid_trusted: false,
             });
         }
         TableEdit::AutoFitWindow(available) => {
@@ -4244,6 +4411,7 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
             t.autofit = Some(crate::flow::AutoFit {
                 width: crate::flow::PreferredWidth::Percent(5000),
                 cells: t.rows.iter().map(|r| r.cells.iter().map(|_| crate::flow::PreferredWidth::Auto).collect()).collect(),
+                grid_trusted: false,
             });
         }
         TableEdit::FixedColumns => {
@@ -4428,6 +4596,36 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
     t.apply_style(styles);
     t.resolve_borders();
     Ok(Some(t))
+}
+
+/// Resolve every paragraph of the document again against its styles: the body, the headers and footers (the document's and the
+/// sections' own), the footnotes, the endnotes and the comments. A change of styles or numbering ends here, so that no
+/// container is left with the formatting of the styles it had before (review 0.8.5, B1: the notes were left out).
+fn resolve_document(doc: &mut FlowDocument) {
+    let styles = doc.styles.clone();
+    let FlowDocument { body, header, footer, header_first, footer_first, header_even, footer_even, footnotes, endnotes, comments, .. } = doc;
+    for list in [&mut *header, footer, header_first, footer_first, header_even, footer_even] {
+        resolve_all(list, &styles);
+    }
+    for note in footnotes.iter_mut().chain(endnotes.iter_mut()) {
+        resolve_all(&mut note.blocks, &styles);
+    }
+    for comment in comments.iter_mut() {
+        resolve_all(&mut comment.blocks, &styles);
+    }
+    // The sections' own headers and footers sit in the section-break paragraphs of the body.
+    for block in body.iter_mut() {
+        if let Block::Paragraph(p) = block {
+            if let Some(section) = p.section.as_mut() {
+                if section.parts.iter().flatten().next().is_some() {
+                    for part in Arc::make_mut(section).parts.iter_mut().flatten() {
+                        resolve_all(part, &styles);
+                    }
+                }
+            }
+        }
+    }
+    resolve_all(body, &styles);
 }
 
 /// Resolve every paragraph of `blocks` again (after the definitions changed).
@@ -4646,18 +4844,15 @@ impl FlowParagraph {
         for run in &self.runs {
             match &run.kind {
                 FlowRunKind::Text(t) => s.push_str(t),
-                FlowRunKind::Tab => s.push('\t'),
+                FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => s.push('\t'),
                 FlowRunKind::LineBreak => s.push('\u{b}'),
                 FlowRunKind::PageBreak => s.push('\u{c}'),
                 FlowRunKind::ColumnBreak => s.push('\u{e}'),
                 FlowRunKind::CheckBox { checked, checked_char, unchecked_char } => {
                     s.push(if *checked { *checked_char } else { *unchecked_char });
                 }
-                FlowRunKind::DropDownList { items, selected, .. } => {
-                    if let Some((display, _)) = items.get(*selected) {
-                        s.push_str(display);
-                    }
-                }
+                // One position: an object character stands for the drop-down.
+                FlowRunKind::DropDownList { .. } => s.push('\u{fffc}'),
                 FlowRunKind::DatePicker { text, .. } => {
                     s.push_str(text);
                 }
@@ -6039,6 +6234,26 @@ mod tests {
         }
     }
 
+    /// B1 (review 0.8.5): changing a style reaches the paragraphs of the footnotes, endnotes and comments, as it does the body's.
+    #[test]
+    fn style_change_reaches_notes_and_comments() {
+        let style = |size: u32| FlowStyle { kind: StyleKind::Paragraph, name: "Note".into(), run: crate::flow::RunFormat { size: Some(size), ..Default::default() }, ..FlowStyle::default() };
+        let para = |id: u32| FlowParagraph { id, style: Some("Note".into()), runs: vec![FlowRun::new(FlowRunKind::Text("x".into()), FlowRunStyle::default())], ..FlowParagraph::default() };
+        let mut d = FlowDocument::default();
+        Arc::make_mut(&mut d.styles).styles.insert("Note".into(), style(900));
+        d.body.push(Block::Paragraph(para(1)));
+        d.footnotes.push(crate::flow::Note { id: 1, blocks: vec![Block::Paragraph(para(2))] });
+        d.endnotes.push(crate::flow::Note { id: 2, blocks: vec![Block::Paragraph(para(3))] });
+        d.comments.push(crate::flow::Comment { id: 3, author: String::new(), initials: String::new(), date: String::new(), blocks: vec![Block::Paragraph(para(4))], parent: None, done: false, para_id: None });
+        resolve_document(&mut d);
+        apply_to(&mut d, FlowCommand::SetStyle { id: "Note".into(), style: Some(style(1400)) }).unwrap();
+        let sizes: Vec<u32> = [&d.body, &d.footnotes[0].blocks, &d.endnotes[0].blocks, &d.comments[0].blocks]
+            .iter()
+            .map(|list| match &list[0] { Block::Paragraph(p) => p.runs[0].style.size, _ => 0 })
+            .collect();
+        assert_eq!(sizes, [1400, 1400, 1400, 1400], "body, footnote, endnote, comment");
+    }
+
     fn text_para(id: u32, text: &str) -> Block {
         Block::Paragraph(FlowParagraph { id, runs: vec![FlowRun::new(FlowRunKind::Text(text.into()), FlowRunStyle::default())], ..FlowParagraph::default() })
     }
@@ -6113,7 +6328,7 @@ mod tests {
             let Block::Paragraph(p) = b else { panic!() };
             assert_eq!(p.align, FlowAlign::Center);
         }
-        let stop = crate::flow::TabStop { position: 72 * 12_700, align: crate::flow::TabAlign::Right, leader: true };
+        let stop = crate::flow::TabStop { position: 72 * 12_700, align: crate::flow::TabAlign::Right, leader: crate::flow::TabLeader::Dot };
         run(&mut d, FlowCommand::SetParagraphFormat { first: 1, last: 1, change: ParaChange::Tabs(vec![crate::flow::TabChange { position: stop.position, stop: Some(stop) }]) });
         let Block::Paragraph(p) = &d.body[0] else { panic!() };
         assert_eq!(p.tabs, vec![stop]);
@@ -6953,6 +7168,7 @@ pub fn heading_numbering(doc: &FlowDocument) -> Option<Vec<FlowCommand>> {
             para: crate::flow::ParaFormat::default(),
             run: RunFormat::default(),
             pic_bullet: None,
+            symbol: None,
         })
         .collect();
     numbering.abstracts.insert(abstract_id, AbstractList { levels, num_style_link: None });
@@ -7029,7 +7245,7 @@ fn reference_text(p: &FlowParagraph, numbers: &std::collections::HashMap<(u32, u
     for (i, run) in p.runs.iter().enumerate() {
         match &run.kind {
             FlowRunKind::Text(t) => out.push_str(t),
-            FlowRunKind::Tab => out.push('\t'),
+            FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => out.push('\t'),
             FlowRunKind::Field { instruction, shown } if field_words(instruction).first() == Some(&"SEQ") => {
                 out.push_str(numbers.get(&(p.id, i)).unwrap_or(shown));
                 return out;
@@ -7049,7 +7265,7 @@ pub fn caption_description_text(p: &FlowParagraph) -> String {
         if found_seq {
             match &run.kind {
                 FlowRunKind::Text(t) => out.push_str(t),
-                FlowRunKind::Tab => out.push('\t'),
+                FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => out.push('\t'),
                 FlowRunKind::Field { shown, .. } | FlowRunKind::PageRef { shown, .. } => out.push_str(shown),
                 _ => {}
             }
@@ -7067,7 +7283,7 @@ pub fn entire_caption_text(p: &FlowParagraph) -> String {
     for run in &p.runs {
         match &run.kind {
             FlowRunKind::Text(t) => out.push_str(t),
-            FlowRunKind::Tab => out.push('\t'),
+            FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => out.push('\t'),
             FlowRunKind::Field { shown, .. } | FlowRunKind::PageRef { shown, .. } => out.push_str(shown),
             _ => {}
         }
@@ -7314,6 +7530,7 @@ pub fn updated_fields_in_range_with(doc: &FlowDocument, range: Option<(FlowPos, 
                 "TEMPLATE" => Some(doc.template_text(eff_instruction)),
                 "ADVANCE" => Some(doc.advance_text(eff_instruction)),
                 "INFO" => doc.info_text(eff_instruction),
+                "KEYWORDS" | "LASTSAVEDBY" | "NUMCHARS" | "NUMWORDS" | "REVNUM" => doc.bare_info_text(eff_instruction),
                 "ASK" => Some(String::new()),
                 "FILLIN" | "FILL-IN" => Some(doc.fillin_text(eff_instruction)),
                 "AUTOTEXT" => Some(crate::field_format::format_autotext(eff_instruction)),
@@ -8284,7 +8501,7 @@ pub fn missing_header_footer_style(styles: &crate::flow::FlowStyles, footer: boo
     }
     let normal = styles.default_paragraph.clone();
     let (center, right) = if normal.as_deref() == Some("a") { (4252, 8504) } else { (4513, 9026) };
-    let stop = |twips: i64, align| TabChange { position: twips * 635, stop: Some(TabStop { position: twips * 635, align, leader: false }) };
+    let stop = |twips: i64, align| TabChange { position: twips * 635, stop: Some(TabStop { position: twips * 635, align, leader: crate::flow::TabLeader::None }) };
     let mut id = if footer { "Footer".to_string() } else { "Header".to_string() };
     while styles.styles.contains_key(&id) {
         id.push('_');
@@ -8405,7 +8622,7 @@ pub fn toc_entries_with_instruction(
         } else {
             None
         };
-        let mut direct = crate::flow::ParaFormat { tabs: vec![TabChange { position: width, stop: Some(TabStop { position: width, align: TabAlign::Right, leader: true }) }], ..Default::default() };
+        let mut direct = crate::flow::ParaFormat { tabs: vec![TabChange { position: width, stop: Some(TabStop { position: width, align: TabAlign::Right, leader: crate::flow::TabLeader::Dot }) }], ..Default::default() };
         if style.is_none() {
             direct.left = Some((level as i64 - 1) * 210 * 635);
         }
@@ -8442,7 +8659,7 @@ pub fn manual_toc_entries(doc: &FlowDocument, first_id: u32, width: crate::geome
     let mut entries = Vec::new();
     for (i, (level, text, page)) in [(1u32, "章のタイトル（レベル 1）", "1"), (2, "章のタイトル（レベル 2）", "2"), (3, "章のタイトル（レベル 3）", "3")].into_iter().enumerate() {
         let style = styles.paragraph_style_named(&format!("toc {level}")).map(str::to_string);
-        let mut direct = crate::flow::ParaFormat { tabs: vec![TabChange { position: width, stop: Some(TabStop { position: width, align: TabAlign::Right, leader: true }) }], ..Default::default() };
+        let mut direct = crate::flow::ParaFormat { tabs: vec![TabChange { position: width, stop: Some(TabStop { position: width, align: TabAlign::Right, leader: crate::flow::TabLeader::Dot }) }], ..Default::default() };
         if style.is_none() {
             direct.left = Some((level as i64 - 1) * 210 * 635);
         }
@@ -8560,7 +8777,7 @@ pub fn table_of_figures_entries(
         let direct = crate::flow::ParaFormat {
             tabs: vec![TabChange {
                 position: width,
-                stop: Some(TabStop { position: width, align: TabAlign::Right, leader: true }),
+                stop: Some(TabStop { position: width, align: TabAlign::Right, leader: crate::flow::TabLeader::Dot }),
             }],
             ..Default::default()
         };
@@ -8670,6 +8887,8 @@ fn field_static_text(kind: &FlowRunKind, file_name: Option<&str>, now: Option<&c
                 Some(shown.clone())
             } else if let Some((enclosure, text)) = crate::field_format::enclosed(instruction) {
                 Some(format!("{enclosure}{text}"))
+            } else if let Some((_, args)) = crate::field_format::overstrike(instruction) {
+                Some(args.iter().map(|(t, _)| t.as_str()).collect())
             } else {
                 Some(instruction.clone())
             }
@@ -8959,6 +9178,7 @@ pub fn evaluate_field_instruction(instruction: &str, doc: &FlowDocument, _pos: F
         "TEMPLATE" => doc.template_text(instruction),
         "ADVANCE" => doc.advance_text(instruction),
         "INFO" => doc.info_text(instruction).unwrap_or_default(),
+        "KEYWORDS" | "LASTSAVEDBY" | "NUMCHARS" | "NUMWORDS" | "REVNUM" => doc.bare_info_text(instruction).unwrap_or_default(),
         "ASK" => String::new(),
         "FILLIN" | "FILL-IN" => doc.fillin_text(instruction),
         "AUTOTEXT" => crate::field_format::format_autotext(instruction),
@@ -9151,7 +9371,7 @@ pub fn flow_cell_text(cell: &FlowCell) -> String {
                     match &run.kind {
                         FlowRunKind::Text(t) => out.push_str(t),
                         FlowRunKind::Field { shown, .. } => out.push_str(shown),
-                        FlowRunKind::Tab => out.push('\t'),
+                        FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => out.push('\t'),
                         _ => {}
                     }
                 }
@@ -9349,6 +9569,110 @@ impl<'a> crate::field_format::TableCellResolver for FlowTableCellResolver<'a> {
         }
     }
 }
+
+/// The next `relative_height` (`wp:anchor/@relativeHeight`) for a newly inserted floating shape/text box,
+/// strictly higher than all existing floating shapes across all stories of `doc` (at least `1`).
+fn next_floating_relative_height(doc: &FlowDocument) -> u32 {
+    let mut max_rh = 0u32;
+    for p in all_paragraphs_everywhere(doc) {
+        for r in &p.runs {
+            if let FlowRunKind::Shape(shape) = &r.kind
+                && let Some(floating) = &shape.floating
+            {
+                max_rh = max_rh.max(floating.relative_height);
+            }
+        }
+    }
+    max_rh.saturating_add(1).max(1)
+}
+
+/// An empty centred text body for a newly inserted preset shape (`InsertShape`), ready for in-place text editing.
+fn centred_shape_text_body(font_size: u32) -> crate::text::TextBody {
+    let style = crate::text::TextStyle {
+        font_size: font_size.max(100),
+        color: Rgb::WHITE,
+        align: crate::text::TextAlign::Center,
+        ..Default::default()
+    };
+    let mut body = crate::text::TextBody {
+        anchor: crate::text::VerticalAnchor::Middle,
+        insets: crate::text::Insets::default(),
+        wrap: true,
+        clip: true,
+        ..crate::text::TextBody::plain("", style)
+    };
+    if let Some(p) = body.paragraphs.first_mut() {
+        p.align = Some(crate::text::TextAlign::Center);
+    }
+    body
+}
+
+#[cfg(test)]
+mod floating_zorder_and_shape_text_tests {
+    use super::*;
+    use crate::geometry::EmuSize;
+
+    #[test]
+    fn inserted_floating_shapes_have_strictly_increasing_relative_height() {
+        let mut doc = FlowDocument::default();
+        if doc.body.is_empty() {
+            doc.body.push(Block::Paragraph(FlowParagraph::default()));
+        }
+        let para_id = match doc.body.first() {
+            Some(Block::Paragraph(p)) => p.id,
+            _ => panic!("expected default paragraph"),
+        };
+        apply_to(
+            &mut doc,
+            FlowCommand::InsertTextBox {
+                at: FlowPos::new(para_id, 0),
+                size: EmuSize::new(1_000_000, 500_000),
+                text: "First".to_string(),
+            },
+        )
+        .unwrap();
+        apply_to(
+            &mut doc,
+            FlowCommand::InsertShape {
+                at: FlowPos::new(para_id, 1),
+                size: EmuSize::new(1_000_000, 500_000),
+                geometry: crate::drawing::Geometry::Rect,
+                fill: Some(Rgb(0x4472C4)),
+                line: Some((Rgb(0x2F528F), 12_700)),
+            },
+        )
+        .unwrap();
+        apply_to(
+            &mut doc,
+            FlowCommand::InsertTextBox {
+                at: FlowPos::new(para_id, 2),
+                size: EmuSize::new(1_000_000, 500_000),
+                text: "Third".to_string(),
+            },
+        )
+        .unwrap();
+
+        let Block::Paragraph(p) = &doc.body[0] else { panic!("expected paragraph") };
+        let heights: Vec<u32> = p
+            .runs
+            .iter()
+            .filter_map(|r| match &r.kind {
+                FlowRunKind::Shape(s) => s.floating.as_ref().map(|f| f.relative_height),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(heights.len(), 3);
+        assert!(heights[0] < heights[1], "second shape must have higher relative_height than first: {:?}", heights);
+        assert!(heights[1] < heights[2], "third shape must have higher relative_height than second: {:?}", heights);
+
+        // Verify that InsertShape created a centred TextBody ready for in-place editing.
+        let FlowRunKind::Shape(second_shape) = &p.runs[1].kind else { panic!("expected shape") };
+        let body = second_shape.text_body().expect("InsertShape should attach a TextBody");
+        assert_eq!(body.anchor, crate::text::VerticalAnchor::Middle);
+        assert_eq!(body.style.align, crate::text::TextAlign::Center);
+    }
+}
+
 
 
 

@@ -1,4 +1,4 @@
-<p align="center"><b>English</b> | <a href="README-ja.md">日本語</a></p>
+<p align="center"><b>English</b> | <a href="README-ja.md">日本語</a> | <a href="README-zh-CN.md">简体中文</a></p>
 
 <p align="center">
   <img src="asset/AcaudaOffice_logo.svg" alt="Acauda Office" width="480">
@@ -51,9 +51,9 @@ cargo build --release
 ```
 
 - Requires the latest stable Rust.
-- On macOS, `scripts/bundle-macos.sh` builds the app at `target/release/AcaudaOffice.app`.
+- On macOS, `scripts/bundle-macos.sh --release` builds the app at `target/release/AcaudaOffice.app`.
 - On Windows, `pwsh scripts/bundle-windows.ps1` builds the release zip and the installer in `target/dist` (the installer needs [Inno Setup 6](https://jrsoftware.org/isdl.php)).
-- On Linux, `scripts/bundle-linux.sh` builds the AppImage in `target/dist`.
+- On Linux, `scripts/bundle-linux.sh --release` builds the AppImage in `target/dist`.
 - For the browser edition, build with `scripts/build-web.sh --release` and serve `www/` (browsers with WebGPU).
 
 ## License

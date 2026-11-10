@@ -2,15 +2,20 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Pptx text search and replacement, including table cells and run boundaries.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{Command, Presentation, ShapeId, ShapeKind, SlideId, TextBody};
 use crate::pptx::SlidePopup;
 use crate::shell::chrome::{MenuEntry, MenuItem, SidebarPanel};
 use crate::shell::editor::SlideEditor;
+
+/// Key context of the find panel (the keys work with its fields focused).
+pub(crate) const FIND_PANEL_CONTEXT: &str = "PresentationFindPanel";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Match {
@@ -22,6 +27,7 @@ pub(crate) struct Match {
 }
 
 pub(crate) struct FindState {
+    pub(crate) replace_mode: bool,
     pub(crate) query: Entity<InputState>,
     pub(crate) replacement: Entity<InputState>,
     pub(crate) current: Option<usize>,
@@ -88,21 +94,68 @@ pub(crate) fn replacement(hit: Match, text: &str) -> Command {
 
 impl SlideEditor {
     pub(crate) fn open_pptx_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_pptx_find_with(true, window, cx);
+    }
+
+    /// ⌘G / ⇧⌘G: the next / previous match. With the panel closed it opens, with the text last typed there.
+    pub(crate) fn pptx_find_shortcut(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pptx().is_some_and(|s| s.find.is_none()) {
+            let query = self.last_find_query.clone();
+            self.open_pptx_find_with(false, window, cx);
+            if query.is_empty() { return; }
+            if let Some(input) = self.pptx().and_then(|s| s.find.as_ref()).map(|f| f.query.clone()) {
+                input.update(cx, |q, cx| q.set_value(query, window, cx));
+            }
+        }
+        self.pptx_find_next(forward, window, cx);
+    }
+
+    /// The text selected in the text being edited (one line), for the find field.
+    fn pptx_selected_line(&self) -> Option<String> {
+        let edit = self.text_editing()?;
+        let (a, b) = (edit.anchor.min(edit.caret), edit.anchor.max(edit.caret));
+        if a == b { return None; }
+        let body = self.edited_body()?;
+        let text = body.paragraphs.iter().map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>()).collect::<Vec<_>>().join("\n");
+        let picked: String = text.chars().skip(a).take(b - a).collect();
+        (!picked.is_empty() && !picked.contains('\n')).then_some(picked)
+    }
+
+    /// `selection_to_query`: the selected text goes into the field, as in PowerPoint's ⌘F.
+    fn open_pptx_find_with(&mut self, selection_to_query: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let prefill = if selection_to_query { self.pptx_selected_line() } else { None };
         self.end_text_edit(window, cx);
-        if let Some(state) = self.pptx_mut() { state.section_panel=None;state.gradient_panel = None; state.shadow_panel = None; state.glow_panel = None; state.paragraph_panel = None; state.timing_panel = None; state.crop_panel = None; state.size_panel = None; state.frame_panel = None; state.comments = None; state.chart_panel = None; state.header_footer = None; state.insets_panel = None; state.replace_fonts = None; }
+        if let Some(state) = self.pptx_mut() { state.section_panel=None;state.gradient_panel = None; state.shadow_panel = None; state.glow_panel = None; state.paragraph_panel = None; state.timing_panel = None; state.crop_panel = None; state.size_panel = None; state.frame_panel = None; state.comments = None; state.chart_panel = None; state.header_footer = None; state.insets_panel = None; }
         if self.pptx().is_some_and(|s| s.find.is_none()) {
             let query = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_shell.find-what")));
             let replacement = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_shell.replace-with")));
-            let subscription = cx.subscribe_in(&query, window, |this, _, event: &InputEvent, window, cx| match event {
-                InputEvent::Change => { if let Some(f) = this.pptx_mut().and_then(|s| s.find.as_mut()) { f.current = None; } cx.notify(); }
-                InputEvent::PressEnter { .. } => this.pptx_find_next(true, window, cx),
+            let subscription = cx.subscribe_in(&query, window, |this, input, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => {
+                    // The field also says "changed" when it takes the keys back after a match was shown: the same text.
+                    let text = input.read(cx).value().to_string();
+                    if text == this.last_find_query { return; }
+                    this.last_find_query = text;
+                    if let Some(f) = this.pptx_mut().and_then(|s| s.find.as_mut()) { f.current = None; }
+                    cx.notify();
+                }
+                // Enter is the Next button, Shift+Enter the Previous one.
+                InputEvent::PressEnter { shift, .. } => {
+                    this.pptx_find_next(!*shift, window, cx);
+                    // Showing the match edits its text; the field keeps the keys for the next Enter.
+                    input.update(cx, |q, cx| q.focus(window, cx));
+                }
                 _ => {}
             });
-            if let Some(s) = self.pptx_mut() { s.find = Some(FindState { query, replacement, current: None, match_case: true, whole_word: false, _subscription: subscription }); }
+            if let Some(s) = self.pptx_mut() { s.find = Some(FindState { replace_mode: false, query, replacement, current: None, match_case: true, whole_word: false, _subscription: subscription }); }
         }
         self.sidebar_open = true;
         if let Some(query) = self.pptx().and_then(|s| s.find.as_ref()).map(|f| f.query.clone()) {
-            query.update(cx, |q, cx| q.focus(window, cx));
+            if let Some(text) = prefill {
+                query.update(cx, |q, cx| q.set_value(text.clone(), window, cx));
+                self.last_find_query = text;
+                if let Some(f) = self.pptx_mut().and_then(|s| s.find.as_mut()) { f.current = None; }
+            }
+            query.update(cx, |q, cx| { q.focus(window, cx); q.select_all(window, cx); });
         }
         cx.notify();
     }
@@ -262,6 +315,7 @@ impl SlideEditor {
         let f = self.pptx()?.find.as_ref()?;
         let (query, text, current) = (f.query.clone(), f.replacement.clone(), f.current);
         let (match_case, whole_word) = (f.match_case, f.whole_word);
+        let replace_mode = f.replace_mode;
         let hits = self.pptx_find_matches(cx);
         let n = hits.len();
         let status = current.filter(|&i| i < n).map_or_else(|| crate::shell::i18n::format("docx.find.n-results", &[("n", &n)]), |i| crate::shell::i18n::format("_pptx.n-of-total", &[("n", &(i + 1)), ("total", &n)]));
@@ -305,7 +359,7 @@ impl SlideEditor {
                     }),
                 )
                 .child(div().text_size(px(10.)).font_weight(FontWeight::BOLD).text_color(theme.muted_foreground).child(SharedString::from(format!("#{slide_num}"))))
-                .child(div().flex_1().text_size(px(11.)).text_color(theme.foreground).truncate().child(SharedString::from(snippet)));
+                .child(div().flex_1().text_sm().text_color(theme.foreground).truncate().child(SharedString::from(snippet)));
             match_list = match_list.child(row);
         }
         let body = v_flex()
@@ -319,19 +373,27 @@ impl SlideEditor {
                     e.open_find_panel_context_menu(None, event.position, w, cx);
                 }),
             )
-            .child(Input::new(&query).small())
-            .child(Button::new("pptx-find-case").small().ghost().label(if match_case { crate::shell::i18n::text("pptx.find.match-case") } else { crate::shell::i18n::text("_shell.match-case") }).on_click(cx.listener(|e, _, _, cx| e.toggle_pptx_find_option(true, cx))))
-            .child(Button::new("pptx-find-word").small().ghost().label(if whole_word { crate::shell::i18n::text("pptx.find.whole-words") } else { crate::shell::i18n::text("pptx.chrome.find-whole-words-only") }).on_click(cx.listener(|e, _, _, cx| e.toggle_pptx_find_option(false, cx))))
-            .child(h_flex().gap_1()
-                .child(Button::new("pptx-find-previous").small().ghost().label(crate::shell::i18n::text("_shell.previous")).on_click(cx.listener(|e, _, w, cx| e.pptx_find_next(false, w, cx))))
-                .child(Button::new("pptx-find-next").small().ghost().label(crate::shell::i18n::text("_shell.next")).on_click(cx.listener(|e, _, w, cx| e.pptx_find_next(true, w, cx))))
-                .child(div().text_size(px(12.)).child(status)))
-            .children((!hits.is_empty()).then_some(match_list))
-            .child(Input::new(&text).small())
-            .child(h_flex().gap_1()
-                .child(Button::new("pptx-replace-one").small().label(crate::shell::i18n::text("_shell.replace")).on_click(cx.listener(|e, _, w, cx| e.pptx_replace(false, w, cx))))
-                .child(Button::new("pptx-replace-all").small().label(crate::shell::i18n::text("_shell.replace-all")).on_click(cx.listener(|e, _, w, cx| e.pptx_replace(true, w, cx)))))
-            .child(Button::new("pptx-find-close").small().ghost().label(crate::shell::i18n::text("_shell.close")).on_click(cx.listener(|e, _, _, cx| { if let Some(s) = e.pptx_mut() { s.find = None; } cx.notify(); })));
-        Some(SidebarPanel { title: crate::shell::i18n::text("_shell.find-and-replace"), body: body.into_any_element() })
+            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+                .child(crate::shell::chrome::radio_button("pptx-find-mode-search", !replace_mode, false, crate::shell::i18n::text("_shell.find"), cx.listener(|this, _, _, cx| { if let Some(f) = this.pptx_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = false; } cx.notify(); })))
+                .child(crate::shell::chrome::radio_button("pptx-find-mode-replace", replace_mode, false, crate::shell::i18n::text("_shell.replace"), cx.listener(|this, _, _, cx| { if let Some(f) = this.pptx_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = true; } cx.notify(); }))))
+            .child(crate::shell::chrome::text_field(&query).full_width().select_on_focus())
+            .child(crate::shell::chrome::checkbox_button("pptx-find-case", crate::shell::i18n::text("_shell.match-case"), match_case, false, cx.listener(|e, _, _, cx| e.toggle_pptx_find_option(true, cx))))
+            .child(crate::shell::chrome::checkbox_button("pptx-find-word", crate::shell::i18n::text("pptx.chrome.find-whole-words-only"), whole_word, false, cx.listener(|e, _, _, cx| e.toggle_pptx_find_option(false, cx))))
+            .when(replace_mode, |d| d.child(crate::shell::chrome::text_field(&text).full_width().select_on_focus()))
+            .child(h_flex().gap_1().flex_wrap()
+                .child(crate::shell::chrome::action_button("pptx-find-previous").small().label(crate::shell::i18n::text("_shell.previous")).on_click(cx.listener(|e, _, w, cx| e.pptx_find_next(false, w, cx))))
+                .child(crate::shell::chrome::action_button("pptx-find-next").small().label(crate::shell::i18n::text("_shell.next")).on_click(cx.listener(|e, _, w, cx| e.pptx_find_next(true, w, cx))))
+                .when(replace_mode, |d| d
+                    .child(crate::shell::chrome::action_button("pptx-replace-one").small().label(crate::shell::i18n::text("_shell.replace")).on_click(cx.listener(|e, _, w, cx| e.pptx_replace(false, w, cx))))
+                    .child(crate::shell::chrome::action_button("pptx-replace-all").small().label(crate::shell::i18n::text("_shell.replace-all")).on_click(cx.listener(|e, _, w, cx| e.pptx_replace(true, w, cx))))))
+            .child(div().text_sm().child(status))
+            .children((!hits.is_empty()).then_some(match_list));
+        // The keys of the presentation's find also work with the focus in the panel's fields.
+        let body = body
+            .key_context(FIND_PANEL_CONTEXT)
+            .on_action(cx.listener(|this, _: &super::slide_view::OpenFind, window, cx| this.open_pptx_find(window, cx)))
+            .on_action(cx.listener(|this, _: &super::slide_view::FindNext, window, cx| this.pptx_find_shortcut(true, window, cx)))
+            .on_action(cx.listener(|this, _: &super::slide_view::FindPrevious, window, cx| this.pptx_find_shortcut(false, window, cx)));
+        Some(SidebarPanel { title: crate::shell::i18n::text("_shell.find-and-replace").into(), body: body.into_any_element() })
     }
 }

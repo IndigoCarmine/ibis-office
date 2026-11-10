@@ -140,8 +140,8 @@ pub(crate) fn write_slide(
     // Relationships for shape and table cell image fills.
     for shape in &slide.shapes {
         match &shape.kind {
-            ShapeKind::Auto(a) => match a.fill {
-                Fill::Image(m) | Fill::TileImage { media: m, .. } => {
+            ShapeKind::Auto(a) => match a.fill.media() {
+                Some(m) => {
                     if !slide_media_rels.contains_key(&m) {
                         let part = media_part(package, current, m, media)?;
                         let rel = package.add_relationship(&target.part, REL_IMAGE, &relative(&target.part, &part), false)?;
@@ -152,8 +152,8 @@ pub(crate) fn write_slide(
             },
             ShapeKind::Table(t) => {
                 for cell in t.rows.iter().flat_map(|r| &r.cells) {
-                    match cell.fill {
-                        Fill::Image(m) | Fill::TileImage { media: m, .. } => {
+                    match cell.fill.media() {
+                        Some(m) => {
                             if !slide_media_rels.contains_key(&m) {
                                 let part = media_part(package, current, m, media)?;
                                 let rel = package.add_relationship(&target.part, REL_IMAGE, &relative(&target.part, &part), false)?;
@@ -176,7 +176,7 @@ pub(crate) fn write_slide(
                 }
             }
             ShapeKind::Auto(a) => {
-                if let Fill::Image(m) | Fill::TileImage { media: m, .. } = a.fill {
+                if let Some(m) = a.fill.media() {
                     if current.media(m).is_some_and(|m| m.format == MediaFormat::Svg) {
                         svg_media_ids.insert(m);
                     }
@@ -184,7 +184,7 @@ pub(crate) fn write_slide(
             }
             ShapeKind::Table(t) => {
                 for cell in t.rows.iter().flat_map(|r| &r.cells) {
-                    if let Fill::Image(m) | Fill::TileImage { media: m, .. } = cell.fill {
+                    if let Some(m) = cell.fill.media() {
                         if current.media(m).is_some_and(|m| m.format == MediaFormat::Svg) {
                             svg_media_ids.insert(m);
                         }
@@ -314,7 +314,18 @@ pub(crate) fn write_slide(
     }
     // Placeholders that now keep their own place (their new layout has none).
     for shape in &slide.shapes {
-        let (Some(ph), Some(&node), Some(source)) = (slide.placeholders.get(&shape.id), nodes.get(&shape.id), sources.get(&shape.id)) else { continue };
+        let (Some(&node), Some(source)) = (nodes.get(&shape.id), sources.get(&shape.id)) else { continue };
+        let Some(ph) = slide.placeholders.get(&shape.id) else {
+            // A layout can turn an entered placeholder into an ordinary shape.
+            // Remove its XML placeholder too, and preserve its inherited frame.
+            let placeholder = ["nvSpPr", "nvPicPr", "nvGraphicFramePr", "nvCxnSpPr"].into_iter()
+                .find_map(|nv|doc.path(node,&[nv,"nvPr","ph"]));
+            if let Some(ph) = placeholder {
+                doc.detach(ph);
+                pin_frame(doc,node,&untwisted(shape,&source.turns),source.group)?;
+            }
+            continue;
+        };
         if ph.own_frame {
             pin_frame(doc, node, &untwisted(shape, &source.turns), source.group)?;
         } else if let Some(props) = doc.child(node, "spPr") {
@@ -1258,47 +1269,10 @@ fn write_picture_clip(doc: &mut XmlDocument, node: NodeId, clip: Option<ibis_doc
     let Some(nv_pr) = doc.path(node, &["nvPicPr", "nvPr"]) else { return Ok(()) };
     let media_node = doc.descendants(nv_pr).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "media");
     if let Some(m) = media_node {
-        let vol = match clip.options.volume {
-            ibis_doc_model::MediaVolume::High => "100000",
-            ibis_doc_model::MediaVolume::Medium => "66000",
-            ibis_doc_model::MediaVolume::Low => "33000",
-            ibis_doc_model::MediaVolume::Mute => "0",
-        };
-        doc.set_attr(m, "vol", vol);
-        if clip.options.loop_until_stopped {
-            doc.set_attr(m, "loop", "1");
-        } else {
-            doc.remove_attr(m, "loop");
-        }
-        if clip.options.rewind {
-            doc.set_attr(m, "rewind", "1");
-        } else {
-            doc.remove_attr(m, "rewind");
-        }
-        if clip.options.start == ibis_doc_model::MediaStart::Automatically {
-            doc.set_attr(m, "autoPlay", "1");
-        } else {
-            doc.remove_attr(m, "autoPlay");
-        }
-        if clip.options.full_screen {
-            doc.set_attr(m, "fullScreen", "1");
-        } else {
-            doc.remove_attr(m, "fullScreen");
-        }
-        if clip.options.hide_while_not_playing {
-            doc.set_attr(m, "showWhenStopped", "0");
-        } else {
-            doc.remove_attr(m, "showWhenStopped");
-        }
-        if clip.options.hide_during_show {
-            doc.set_attr(m, "isNarration", "1");
-        } else {
-            doc.remove_attr(m, "isNarration");
-        }
-        if clip.options.play_across_slides {
-            doc.set_attr(m, "playAcrossSlides", "1");
-        } else {
-            doc.remove_attr(m, "playAcrossSlides");
+        // The playing options are those of the timing (`p:cMediaNode`), not attributes of
+        // `p14:media`: the ones an earlier version wrote there are taken away.
+        for stale in ["vol", "loop", "rewind", "autoPlay", "fullScreen", "showWhenStopped", "isNarration", "playAcrossSlides"] {
+            doc.remove_attr(m, stale);
         }
         let existing_trim = doc.elements(m).find(|&n| doc.local_name(n) == "trim");
         if clip.options.trim_start_ms > 0 || clip.options.trim_end_ms > 0 {
@@ -1401,15 +1375,20 @@ fn write_picture_clip(doc: &mut XmlDocument, node: NodeId, clip: Option<ibis_doc
 }
 
 /// A frame in slide coordinates, in the coordinates of the shape's groups.
-fn to_group(frame: EmuRect, group: Option<[f64; 4]>) -> EmuRect {
+/// A shape turned about a quarter (`rotation`) takes the vertical scale on its width and the horizontal one on
+/// its height (see the reader's `turned_sideways`).
+fn to_group(frame: EmuRect, group: Option<[f64; 4]>, rotation: i32) -> EmuRect {
     let Some([sx, sy, tx, ty]) = group else { return frame };
     let div = |v: f64, s: f64| if s == 0.0 { v } else { v / s };
-    EmuRect::new(
-        div(frame.x as f64 - tx, sx).round() as i64,
-        div(frame.y as f64 - ty, sy).round() as i64,
-        div(frame.width as f64, sx).round() as i64,
-        div(frame.height as f64, sy).round() as i64,
-    )
+    let (w_scale, h_scale) = if crate::reader::turned_sideways(rotation) { (sy, sx) } else { (sx, sy) };
+    let (cx, cy) = (frame.x as f64 + frame.width as f64 / 2.0, frame.y as f64 + frame.height as f64 / 2.0);
+    let (w, h) = (div(frame.width as f64, w_scale), div(frame.height as f64, h_scale));
+    if w_scale == sx && h_scale == sy {
+        return EmuRect::new(div(frame.x as f64 - tx, sx).round() as i64, div(frame.y as f64 - ty, sy).round() as i64, w.round() as i64, h.round() as i64);
+    }
+    // The centre goes through the group's scale, the size through the swapped one.
+    let (cx, cy) = (div(cx - tx, sx), div(cy - ty, sy));
+    EmuRect::new((cx - w / 2.0).round() as i64, (cy - h / 2.0).round() as i64, w.round() as i64, h.round() as i64)
 }
 
 /// Whether two texts have the same paragraphs and runs (texts), whatever their formats.
@@ -1439,7 +1418,7 @@ fn xfrm_of(doc: &mut XmlDocument, node: NodeId, shape: &Shape, group: Option<[f6
     }
     let x = Prefixes::at(doc, sp_pr);
     let mut local = shape.clone();
-    local.frame = to_group(shape.frame, group);
+    local.frame = to_group(shape.frame, group, shape.rotation);
     let xfrm = x.import(doc, &new::xfrm_xml(&x, &format!("{}xfrm", x.a), &local))?;
     doc.insert(sp_pr, 0, xfrm);
     Ok((xfrm, true))
@@ -1481,7 +1460,7 @@ fn write_xfrm(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &S
     if made {
         return Ok(());
     }
-    let b = to_group(new.frame, source.group);
+    let b = to_group(new.frame, source.group, new.rotation);
     let a_prefix = Prefixes::at(doc, xfrm).a;
     let sub = |doc: &mut XmlDocument, local: &str, index: usize| -> NodeId {
         match doc.child(xfrm, local) {
@@ -1524,7 +1503,45 @@ fn write_xfrm(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &S
             }
         }
     }
+    mirror_zoom_frame(doc, node, b);
     Ok(())
+}
+
+/// A ズーム object is a frame in `mc:Choice` (what PowerPoint draws) and a picture in `mc:Fallback` (what the reader reads and older
+/// versions draw): a picture moved or resized in the fallback moves the frame of the choice too, with the object's own size
+/// (`zmPr/spPr/xfrm`) in it. A summary's cards are one frame; its pictures are not moved by themselves.
+fn mirror_zoom_frame(doc: &mut XmlDocument, node: NodeId, frame: ibis_doc_model::EmuRect) {
+    if doc.local_name(node) != "pic" {
+        return;
+    }
+    let Some(fallback) = doc.parent(node).filter(|&p| doc.local_name(p) == "Fallback") else { return };
+    let Some(alternate) = doc.parent(fallback).filter(|&p| doc.local_name(p) == "AlternateContent") else { return };
+    let Some(choice) = doc.child(alternate, "Choice") else { return };
+    let Some(frame_node) = doc.child(choice, "graphicFrame") else { return };
+    let zoom = doc.descendants(frame_node).into_iter().any(|n| matches!(doc.local_name(n), "sldZmObj" | "sectionZmObj"));
+    if !zoom {
+        return;
+    }
+    let mut set = |doc: &mut XmlDocument, xfrm: NodeId, off: Option<(i64, i64)>, ext: (i64, i64)| {
+        if let (Some(o), Some(at)) = (off, doc.child(xfrm, "off")) {
+            doc.set_attr(at, "x", &o.0.to_string());
+            doc.set_attr(at, "y", &o.1.to_string());
+        }
+        if let Some(at) = doc.child(xfrm, "ext") {
+            doc.set_attr(at, "cx", &ext.0.to_string());
+            doc.set_attr(at, "cy", &ext.1.to_string());
+        }
+    };
+    if let Some(xfrm) = doc.child(frame_node, "xfrm") {
+        set(doc, xfrm, Some((frame.x, frame.y)), (frame.width, frame.height));
+    }
+    // The object's own picture and outline, drawn in the frame from its corner.
+    let sp_prs: Vec<NodeId> = doc.descendants(frame_node).into_iter().filter(|&n| doc.local_name(n) == "spPr").collect();
+    for sp_pr in sp_prs {
+        if let Some(xfrm) = doc.child(sp_pr, "xfrm") {
+            set(doc, xfrm, None, (frame.width, frame.height));
+        }
+    }
 }
 
 const FILLS: [&str; 6] = ["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"];

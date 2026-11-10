@@ -4,7 +4,8 @@
 //! 動画・音声の再生: a clip played by the system's player (AVFoundation's
 //! `AVPlayer` on macOS). A video's frames are taken one by one from an
 //! `AVPlayerItemVideoOutput` as the CoreVideo buffers GPUI draws as a
-//! surface. Other platforms play nothing yet (`Player::open` is `None`).
+//! surface. Windows uses MediaPlayer with D3D11 frame-server surfaces.
+//! Other platforms play nothing yet (`Player::open` is `None`).
 
 #[cfg(target_os = "macos")]
 pub(crate) use mac::{Frame, Player, video_aspect};
@@ -12,8 +13,13 @@ pub(crate) use mac::{Frame, Player, video_aspect};
 #[cfg(all(target_os = "macos", feature = "scenarios"))]
 pub(crate) use mac::run_loop;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos",windows)))]
 pub(crate) use other::{Frame, Player, video_aspect};
+#[cfg(windows)]
+#[path="media_windows.rs"]
+mod windows_player;
+#[cfg(windows)]
+pub(crate) use windows_player::{Frame,Player,video_aspect};
 
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
@@ -179,7 +185,9 @@ mod mac {
         pub(crate) fn seek_to_ms(&self, ms: u32) {
             unsafe {
                 let time = CMTime { value: ms as i64, timescale: 1000, flags: VALID, epoch: 0 };
-                let _: () = msg_send![self.player, seekToTime: time];
+                // Exactly there: the default snaps to a key frame (a clip with one goes back to its start).
+                let zero = CMTime { value: 0, timescale: 1, flags: VALID, epoch: 0 };
+                let _: () = msg_send![self.player, seekToTime: time toleranceBefore: zero toleranceAfter: zero];
             }
         }
 
@@ -191,6 +199,22 @@ mod mac {
                     return 0;
                 }
                 let secs = CMTimeGetSeconds(now);
+                if secs.is_finite() && secs > 0.0 {
+                    (secs * 1000.0) as u32
+                } else {
+                    0
+                }
+            }
+        }
+
+        /// Whole length in milliseconds (0 until the system knows it).
+        pub(crate) fn duration_ms(&self) -> u32 {
+            unsafe {
+                let total: CMTime = msg_send![self.item, duration];
+                if total.flags & VALID == 0 {
+                    return 0;
+                }
+                let secs = CMTimeGetSeconds(total);
                 if secs.is_finite() && secs > 0.0 {
                     (secs * 1000.0) as u32
                 } else {
@@ -262,7 +286,7 @@ mod mac {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos",windows)))]
 mod other {
     use std::path::Path;
 
@@ -288,6 +312,9 @@ mod other {
             0
         }
         pub(crate) fn set_volume(&self, _volume: f32) {}
+        pub(crate) fn duration_ms(&self) -> u32 {
+            0
+        }
         pub(crate) fn is_playing(&self) -> bool {
             false
         }
@@ -300,5 +327,36 @@ mod other {
         pub(crate) fn frame(&self) -> Option<Frame> {
             None
         }
+    }
+}
+
+/// The rows of a `DXGI_FORMAT_B8G8R8A8_UNORM` texture mapped with `pitch` bytes
+/// per row, as `width` x `height` pixels in the bytes order GPUI draws images
+/// in (blue, green, red, alpha: `RenderImage` is BGRA, so the bytes are kept
+/// as they are, not swapped to RGBA), made opaque (a video frame has no alpha).
+#[cfg(any(windows, test))]
+pub(crate) fn opaque_bgra_rows(src: &[u8], width: usize, height: usize, pitch: usize) -> Vec<u8> {
+    let mut out = vec![0; width * height * 4];
+    for y in 0..height {
+        let row = &src[y * pitch..y * pitch + width * 4];
+        for (x, pixel) in row.chunks_exact(4).enumerate() {
+            let at = (y * width + x) * 4;
+            out[at..at + 4].copy_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod bgra_tests {
+    use super::opaque_bgra_rows;
+
+    /// A texture whose pixel is blue-first (B8G8R8A8) keeps that order, skips the row padding and is made opaque.
+    #[test]
+    fn video_frame_keeps_gpui_bgra_order() {
+        // 2 x 2, 12 bytes a row (4 of padding); pure red = (b 0, g 0, r 255), pure blue = (255, 0, 0).
+        let src = [0, 0, 255, 0, 255, 0, 0, 0, 9, 9, 9, 9, /**/ 0, 255, 0, 0, 10, 20, 30, 0, 9, 9, 9, 9];
+        let out = opaque_bgra_rows(&src, 2, 2, 12);
+        assert_eq!(out, [0, 0, 255, 255, 255, 0, 0, 255, 0, 255, 0, 255, 10, 20, 30, 255]);
     }
 }

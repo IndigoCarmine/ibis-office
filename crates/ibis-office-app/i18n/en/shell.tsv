@@ -64,6 +64,7 @@ edit.select-all	Select All
 edit.delete	Delete
 edit.duplicate	Duplicate
 edit.find-replace	Find and Replace…
+edit.replace-fonts	Replace Fonts…
 view.slideshow	Slide Show
 view.zoom-in	Zoom In
 view.zoom-out	Zoom Out
@@ -130,7 +131,6 @@ _shell.black	Black
 _shell.red	Red
 _shell.blue	Blue
 _shell.green	Green
-_shell.type-a-comment-and-press-enter	Type a comment and press Enter
 _shell.reply	Reply
 _shell.resolved	(Resolved)
 pptx.comments.reopen	Reopen
@@ -293,7 +293,6 @@ _shell.picture-not-supported	Picture (not supported)
 _shell.open	Open
 _shell.new-comment-m	New Comment (⌥⌘M)
 _shell.hide-comments	Hide Comments
-_shell.hide-outline	Hide Outline
 _shell.hide-sidebar	Hide Sidebar
 _shell.undo-z	Undo (⌘Z)
 _shell.redo-z	Redo (⇧⌘Z)
@@ -430,6 +429,7 @@ _shell.copy-paragraph-format	Copy Paragraph Format
 _shell.paste-paragraph-format	Paste Paragraph Format
 _shell.copy-text-format	Copy Text Format
 _shell.paste-text-format	Paste Text Format
+_shell.crop-mode	Crop
 _shell.crop-settings	Crop Settings…
 _shell.upload-from-computer	Upload from Computer
 _shell.line-2	Line
@@ -551,7 +551,6 @@ _shell.freeze	Freeze
 _shell.show-gridlines	Show Gridlines
 _shell.show-formula-bar	Show Formula Bar
 _shell.print-layout	Print Layout
-_shell.show-outline	Show Outline
 _shell.zoom-in	Zoom In
 _shell.zoom-out	Zoom Out
 _shell.fit-to-window	Fit to Window
@@ -667,6 +666,7 @@ file.print-exit	Couldn't print with Preview (exit code {status})
 file.pick-failed	Couldn't choose a file: {error}
 file.opening	Opening {name}…
 file.open-failed	Couldn't open {name}: {error}
+file.read-crashed	This file's contents could not be read (internal error)
 align.left	Align Left
 align.center	Align Center
 align.right	Align Right
@@ -815,6 +815,8 @@ shell.linux-desktop.no	Don't Add
 _shell.comma-style	Comma Style
 _shell.font-recent	Recent Fonts
 _shell.font-system	System Fonts
+_shell.font-used	Used in this file
+_shell.font-all	All
 grammar.repeated-word	Repeated word
 grammar.repeated-punctuation	Repeated punctuation
 grammar.missing-space	Missing space
@@ -823,3 +825,114 @@ grammar.capitalization	Capitalization
 editor.csv.loading-first	Loading CSV... (100,000 rows loaded)
 editor.csv.loaded	CSV loaded ({rows} rows)
 editor.csv.loading	Loading CSV... ({rows} rows loaded)
+shell.embed.download	Download
+shell.embed.close	Close
+settings.view.scrollbars-always	Always show scroll bars
+file.save-format.docx	Word Document (.docx)
+file.save-format.dotx	Word Template (.dotx)
+file.save-format.odt	OpenDocument Text (.odt)
+file.save-format.xlsx	Excel Workbook (.xlsx)
+file.save-format.xltx	Excel Template (.xltx)
+file.save-format.xls	Excel 97-2003 Workbook (.xls)
+file.save-format.ods	OpenDocument Spreadsheet (.ods)
+file.save-format.csv	CSV UTF-8 (.csv)
+file.save-format.tsv	Text (Tab-delimited) (.tsv)
+file.save-format.pptx	PowerPoint Presentation (.pptx)
+file.save-format.ppsx	PowerPoint Show (.ppsx)
+file.save-format.potx	PowerPoint Template (.potx)
+file.save-format.odp	OpenDocument Presentation (.odp)
+file.print-opened-pdf	Opened PDF in default application
+menu.window	Window
+window.open-in-word	Open in Word
+window.open-in-excel	Open in Excel
+window.open-in-powerpoint	Open in PowerPoint
+window.open-in-office.confirm-title	Confirm
+window.open-in-office.specify-path	Please specify the path to {app}.
+
+_shell.find	Find
+
+ui.custom	Custom
+ui.caption-label	Label
+ui.merge-row	Edit recipient
+ui.add	Add
+
+ui.tab-duplicate	A tab stop already exists at this position. Choose another position.
+ui.merge-add-column	Add a column (merge field)
+ui.merge-csv	Load CSV file
+ui.merge-manual	Manual input
+ui.merge-recipient	Recipient
+
+field.browse	Browse…
+field.minutes	min
+
+autocorrect.entry-title	Edit replacement
+autocorrect.entry-required	Enter the text to replace.
+autocorrect.entry-duplicate	This replacement already exists. Edit the existing rule.
+
+hyperlink.menu	Hyperlink
+hyperlink.open	Open Link
+hyperlink.edit	Edit Link…
+hyperlink.remove	Remove Link
+
+autocorrect.tab.settings	Settings
+autocorrect.tab.dictionary	Replacement dictionary
+theme.custom-editor	Edit Custom Colors
+theme.palette-list	Color Schemes
+math.editor.title	Equation
+math.editor.hint	Enter an equation in UnicodeMath or LaTeX
+ink.panel.title	Drawing (Ink)
+ink.panel.tools	Drawing tool
+ink.panel.width	Width
+ink.panel.color	Color
+ink.panel.effects	Ink effect
+theme.custom-scheme	Custom Colors
+ink.panel.mouse	Draw with mouse
+
+shell.action.ok	OK
+
+start.recent.remove	Remove from list
+shell.row.actions	More actions
+
+color.palette.more	More Colors...
+color.dialog.title	Color Picker
+color.dialog.invalid	Enter a six-digit hexadecimal color.
+
+shell.start-window	Start Window
+shell.file-changed.message	The file was changed by another app. Do you want to reload it?
+shell.file-changed.yes	Yes
+shell.file-changed.no	No
+shell.file-changed.discard	Discard My Changes and Reload
+shell.file-changed.save-as	Save As and Open
+shell.save-failed.title	Could not save
+shell.comments.post	Post
+shell.comments.post-tip-mac	Post (⌘Enter)
+shell.comments.post-tip-other	Post (Ctrl+Enter)
+shell.comments.save-tip-mac	Save (⌘Enter)
+shell.comments.save-tip-other	Save (Ctrl+Enter)
+shell.comments.cancel	Cancel
+shell.comments.reply	Reply
+shell.comments.edit	Edit
+shell.comments.resolve	Resolve
+shell.comments.reopen	Reopen
+shell.comments.delete	Delete
+shell.comments.resolved	Resolved
+shell.comments.reply-prompt	Reply
+shell.comments.edit-prompt	Edit comment
+shell.comments.empty	There are no comments
+shell.comments.delete-title	Delete comment
+shell.comments.delete-message	Delete this comment? All replies are deleted too.
+shell.comments.new-cell	Comment on cell {cell}
+shell.comments.new-selection	Comment on the selection
+shell.comments.new-shape	Comment on the selected shape
+shell.comments.new-slide	Comment on the slide
+shell.comments.hint-select-text	Select text, then Insert > Comment
+shell.comments.hint-insert	Insert > Comment adds a new comment
+shell.comments.no-selection	Nothing is selected. Select a word or sentence first, then add the comment.
+shell.comments.title	Comment
+shell.comments.placeholder	Enter a comment
+shell.comments.save-hint-mac	+Enter to save
+shell.comments.save-hint-other	Ctrl+Enter to save
+shell.menu-search.history	History
+shell.menu-search.commands	Commands
+file.modify-locked-no-overwrite	This file needs its password to modify, so it cannot be overwritten. Use Save As
+start.update	Update ibisOffice

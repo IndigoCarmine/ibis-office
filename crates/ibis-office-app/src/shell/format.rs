@@ -172,6 +172,13 @@ pub(crate) trait FormatEditor {
         None
     }
 
+    /// Whether the text at the caret runs top to bottom: the input method
+    /// then lays its candidates out vertically, beside the column. Asked
+    /// every frame, so it must be cheap.
+    fn text_vertical(_editor: &mut SlideEditor, _window: &mut Window, _cx: &mut Context<SlideEditor>) -> bool {
+        false
+    }
+
     fn character_index_for_point(_editor: &mut SlideEditor, _point: Point<Pixels>, _window: &mut Window, _cx: &mut Context<SlideEditor>) -> Option<usize> {
         None
     }
@@ -235,6 +242,13 @@ pub(crate) trait FormatEditor {
     /// side (a workbook's 書式設定・グラフ エディター・データの入力規則).
     fn sidebar_tabs() -> Vec<crate::shell::chrome::SidebarTab> {
         Vec::new()
+    }
+
+    /// Whether the right pane has something to show when it is opened with no panel chosen (a workbook: what is
+    /// selected; a presentation: the slide's or the shape's size and position). A document's shows only a panel opened
+    /// for it (書式・コメント・検索…), so its title-row button cannot open the pane by itself.
+    fn sidebar_on_request() -> bool {
+        false
     }
 }
 

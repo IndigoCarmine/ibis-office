@@ -94,8 +94,47 @@ pub(super) fn menu(editor:&SlideEditor)->Vec<MenuEntry> {
     styles.push(MenuItem::tr("docx.cell.border.none").disabled(!enabled).checked(!edges.is_empty() && edges.iter().all(Option::is_none)).on(|this,_,cx|this.set_cell_border_style(None,cx)).into());
     let widths:Vec<MenuEntry>=[("docx.cell.border-width.half","0.5 pt",6350),("docx.cell.border-width.one","1 pt",12700),("docx.cell.border-width.one-half","1.5 pt",19050),("docx.cell.border-width.three","3 pt",38100)].into_iter()
         .map(|(id,label,w)|MenuItem::new(id,crate::shell::i18n::text(label)).disabled(!enabled).checked(!edges.is_empty() && edges.iter().all(|b|b.is_some_and(|b|b.width==w))).on(move|this,_,cx|this.set_cell_border_width(w,cx)).into()).collect();
-    let colors:Vec<MenuEntry>=[("docx.cell.border-color.black","_shell.black",0),("docx.cell.border-color.red","_shell.red",0xff0000),("docx.cell.border-color.blue","_shell.blue",0x0000ff),("docx.cell.border-color.green","_shell.green",0x008000)].into_iter()
-        .map(|(id,label,c)|MenuItem::new(id,crate::shell::i18n::text(label)).disabled(!enabled).checked(!edges.is_empty() && edges.iter().all(|b|b.is_some_and(|b|b.color==Rgb(c)))).on(move|this,_,cx|this.set_cell_border_color(Rgb(c),cx)).into()).collect();
+    let colors: Vec<MenuEntry> = {
+        use crate::shell::color_palette::{Palette, PickColor, Swatch, theme_rows};
+        let pick: PickColor = std::rc::Rc::new(|this, c, _, cx| {
+            if let Some(rgb) = c {
+                this.set_cell_border_color(rgb, cx);
+            }
+        });
+        let cur = (!edges.is_empty()).then(|| {
+            let first = edges[0]?.color;
+            edges.iter().all(|b| b.is_some_and(|b| b.color == first)).then_some(first)
+        }).flatten();
+        let mut theme = theme_rows(&super::toolbar::THEME_10, &pick, cur);
+        if !enabled {
+            for s in theme.iter_mut().flatten() {
+                s.item = s.item.clone().disabled(true);
+            }
+        }
+        let standard: Vec<Swatch> = [
+            ("docx.cell.border-color.black", "_shell.black", 0),
+            ("docx.cell.border-color.red", "_shell.red", 0xff0000),
+            ("docx.cell.border-color.blue", "_shell.blue", 0x0000ff),
+            ("docx.cell.border-color.green", "_shell.green", 0x008000),
+        ]
+        .into_iter()
+        .map(|(id, label, c)| Swatch {
+            rgb: Rgb(c),
+            item: MenuItem::new(id, crate::shell::i18n::text(label))
+                .disabled(!enabled)
+                .checked(!edges.is_empty() && edges.iter().all(|b| b.is_some_and(|b| b.color == Rgb(c))))
+                .on(move |this, _, cx| this.set_cell_border_color(Rgb(c), cx)),
+        })
+        .collect();
+        vec![MenuEntry::Palette(Palette {
+            none: None,
+            theme,
+            standard,
+            pick: Some(pick),
+            more: None,
+            button: None, current:None,
+        })]
+    };
     vec![Submenu::tr("docx.cell.border-edge", "border_style",scopes).into(),
         Submenu::tr("docx.cell.border.types", "border_style",styles).into(),
         Submenu::tr("docx.cell.border.width", "line_weight",widths).into(),

@@ -5,16 +5,17 @@
 //! typed as numbers (cm, % and degrees), as PowerPoint's 図形の書式設定 >
 //! サイズとプロパティ. The place is the frame's top-left corner from the
 //! slide's, before rotation, as PowerPoint shows it.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{Command, EmuRect, ShapeId, SlideId};
 
 use crate::pptx::SlidePopup;
-use crate::shell::chrome::SidebarPanel;
+use crate::shell::chrome::{Shown, SidebarPanel};
 use crate::shell::editor::SlideEditor;
 
 /// The fields, in the panel's internal order:
@@ -34,6 +35,9 @@ pub(crate) struct FramePanel {
     locked: bool,
     /// What the fields said when the panel opened (to tell what was typed).
     initial: Vec<String>,
+    /// Fields 0 to 4 (height, width, rotation, horizontal and vertical place) showed "mixed": the selected shapes differ in
+    /// them, the field was empty, and while it is still empty nothing is written for it (each shape keeps its own value).
+    mixed: [bool; 5],
 }
 
 impl FramePanel {
@@ -68,7 +72,7 @@ fn scale(value: &str) -> Option<f64> {
     (s.is_finite() && s > 0.0 && s <= 10_000.0).then_some(s)
 }
 
-fn cm(emu: i64) -> String {
+pub(super) fn cm(emu: i64) -> String {
     let v = format!("{:.2}", emu as f64 / 360_000.);
     v.trim_end_matches('0').trim_end_matches('.').to_string()
 }
@@ -79,17 +83,22 @@ impl SlideEditor {
         let slide = self.current_slide;
         let shapes: Vec<_> = self.selected_shapes().into_iter().map(|s| (s.id, s.frame, s.rotation)).collect();
         let locked = !shapes.is_empty() && shapes.iter().all(|(id, ..)| self.slide().aspect_locked.contains(id));
-        let Some(&(_, frame, rotation)) = shapes.first() else { return };
-        let degrees = format!("{:.1}", rotation as f64 / 60_000.);
-        let values = [
-            cm(frame.height),
-            cm(frame.width),
-            degrees.trim_end_matches('0').trim_end_matches('.').to_string(),
-            cm(frame.x),
-            cm(frame.y),
-            "100".to_string(),
-            "100".to_string(),
+        if shapes.is_empty() { return; }
+        let degrees = |rotation: i32| {
+            let text = format!("{:.1}", rotation as f64 / 60_000.);
+            text.trim_end_matches('0').trim_end_matches('.').to_string()
+        };
+        // The common value of the selected shapes, or an empty field when they differ.
+        let shown = [
+            Shown::of(&shapes, |s| s.1.height).map(cm),
+            Shown::of(&shapes, |s| s.1.width).map(cm),
+            Shown::of(&shapes, |s| s.2).map(degrees),
+            Shown::of(&shapes, |s| s.1.x).map(cm),
+            Shown::of(&shapes, |s| s.1.y).map(cm),
         ];
+        let mixed = shown.each_ref().map(Shown::is_mixed);
+        let [height, width, rotation, x, y] = shown.map(|v| v.one().cloned().unwrap_or_default());
+        let values = [height, width, rotation, x, y, "100".to_string(), "100".to_string()];
         let initial = values.to_vec();
         let fields: Vec<_> = values.into_iter().map(|v| cx.new(|cx| InputState::new(window, cx).default_value(v))).collect();
         let first = fields[0].clone();
@@ -102,6 +111,7 @@ impl SlideEditor {
                 error: None,
                 locked,
                 initial,
+                mixed,
             });
         }
         self.sidebar_open = true;
@@ -112,11 +122,18 @@ impl SlideEditor {
     pub(crate) fn apply_frame_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = self.pptx().and_then(|s| s.frame_panel.as_ref()) else { return };
         let text: Vec<String> = panel.fields.iter().map(|f| f.read(cx).value().to_string()).collect();
-        let h_cm = length(&text[0], false);
-        let w_cm = length(&text[1], false);
-        let rot = angle(&text[2]);
-        let x_cm = length(&text[3], true);
-        let y_cm = length(&text[4], true);
+        // A field that showed "mixed" and is still empty is not written: each shape keeps its own value.
+        let untouched = |i: usize| panel.mixed[i] && text[i].trim().is_empty();
+        let mut h_set = !untouched(0);
+        let mut w_set = !untouched(1);
+        let rot_set = !untouched(2);
+        let x_set = !untouched(3);
+        let y_set = !untouched(4);
+        let h_cm = if h_set { length(&text[0], false) } else { Some(0) };
+        let w_cm = if w_set { length(&text[1], false) } else { Some(0) };
+        let rot = if rot_set { angle(&text[2]) } else { Some(0) };
+        let x_cm = if x_set { length(&text[3], true) } else { Some(0) };
+        let y_cm = if y_set { length(&text[4], true) } else { Some(0) };
         let scale_h = match text.get(5) {
             Some(s) => scale(s),
             None => Some(100.0),
@@ -147,9 +164,11 @@ impl SlideEditor {
         // 倍率（%）が入力された場合、優先して基準サイズに対するスケーリングを適用
         if typed_sh && !typed_h {
             height = ((first_base.1 as f64) * sh_pct / 100.0).round().clamp(1.0, LIMIT) as i64;
+            h_set = true;
         }
         if typed_sw && !typed_w {
             width = ((first_base.0 as f64) * sw_pct / 100.0).round().clamp(1.0, LIMIT) as i64;
+            w_set = true;
         }
 
         // 縦横比固定の処理
@@ -160,12 +179,14 @@ impl SlideEditor {
                 } else {
                     width = (height as f64 * first_base.0 as f64 / first_base.1 as f64).round().clamp(1.0, LIMIT) as i64;
                 }
+                w_set = true;
             } else if (typed_sw || (typed_w && !typed_h)) && !typed_sh {
                 if typed_sw {
                     height = ((first_base.1 as f64) * sw_pct / 100.0).round().clamp(1.0, LIMIT) as i64;
                 } else {
                     height = (width as f64 * first_base.1 as f64 / first_base.0 as f64).round().clamp(1.0, LIMIT) as i64;
                 }
+                h_set = true;
             }
         }
 
@@ -179,9 +200,9 @@ impl SlideEditor {
                 let h = ((base.1 as f64) * effective_sh / 100.0).round().clamp(1.0, LIMIT) as i64;
                 (w, h)
             } else {
-                (width, height)
+                (if w_set { width } else { target.frame.width }, if h_set { height } else { target.frame.height })
             };
-            let frame = EmuRect::new(x, y, target_w, target_h);
+            let frame = EmuRect::new(if x_set { x } else { target.frame.x }, if y_set { y } else { target.frame.y }, target_w, target_h);
 
             if self.presentation().slide(slide).is_some_and(|s| s.aspect_locked.contains(&shape) != locked) {
                 commands.push(Command::SetAspectLocked { slide, shape, locked });
@@ -189,6 +210,7 @@ impl SlideEditor {
             if target.frame != frame {
                 commands.push(Command::SetFrame { slide, shape, frame });
             }
+            let rotation = if rot_set { rotation } else { target.rotation };
             if target.rotation != rotation {
                 commands.push(Command::SetTransform { slide, shape, rotation, flip_h: target.flip_h, flip_v: target.flip_v });
             }
@@ -387,28 +409,30 @@ impl SlideEditor {
         ];
         for (label, idx) in labels {
             if let Some(field) = fields.get(idx) {
-                body = body.child(div().text_size(px(13.)).child(crate::shell::i18n::text(label))).child(Input::new(field).small());
+                // Size and position (cm), scale (%), rotation (degrees); applied with 適用, so ▲▼ only change the field.
+                use crate::shell::chrome::SpinnerSpec;
+                let spec = match idx {
+                    0 | 1 => SpinnerSpec::new(0.1).min(0.0),
+                    5 | 6 => SpinnerSpec::new(1.0).min(1.0),
+                    2 => SpinnerSpec::new(1.0).range(-360.0, 360.0),
+                    _ => SpinnerSpec::new(0.1),
+                };
+                let unit = match idx { 2 => "°", 5 | 6 => "%", _ => "cm" };
+                body = body.child(crate::shell::chrome::text_field_row(crate::shell::i18n::text(label), crate::shell::chrome::text_field(field).unit(unit, px(24.)).spinner(format!("pptx-frame-field-{idx}"), spec, cx, |_, _, _, _| {})));
             }
         }
         body = body.child(
-            Button::new("pptx-frame-lock")
-                .small()
-                .when(!locked, |b| b.ghost())
-                .label(format!("{} {}", if locked { "☑" } else { "☐" }, crate::shell::i18n::text("pptx.frame-panel.lock-aspect-ratio")))
-                .on_click(cx.listener(|e, _, _, cx| {
+            crate::shell::chrome::checkbox_button("pptx-frame-lock", crate::shell::i18n::text("pptx.frame-panel.lock-aspect-ratio"), locked, false, cx.listener(|e, _, _, cx| {
                     e.toggle_frame_panel_lock(cx);
                 })),
         );
         if let Some(error) = error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error));
+            body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));
         }
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("pptx-frame-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_frame_panel(w, cx))))
-                .child(Button::new("pptx-frame-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_frame_panel(w, cx)))),
-        );
-        Some(SidebarPanel { title: crate::shell::i18n::text("pptx.frame-panel.size-position"), body: body.into_any_element() })
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-frame-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_frame_panel(w, cx))))
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-frame-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_frame_panel(w, cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.frame-panel.size-position"), body.into_any_element(), panel_actions))
     }
 }
 

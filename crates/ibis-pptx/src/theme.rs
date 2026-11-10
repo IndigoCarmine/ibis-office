@@ -30,6 +30,8 @@ pub(crate) struct Theme {
     major_complex: Option<String>,
     minor_complex: Option<String>,
     pub(crate) fmt_scheme_name: Option<String>,
+    /// The widths (EMU) of the lines of `a:lnStyleLst`, for `lnRef idx`.
+    line_widths: Vec<Option<i64>>,
 }
 
 impl Theme {
@@ -69,13 +71,25 @@ impl Theme {
     pub(crate) fn read(theme: Node) -> Self {
         let mut out = Self::default();
         let Some(elements) = child(theme, "themeElements") else { return out };
+        out.apply_elements(elements);
+        out
+    }
+
+    /// A copy of this theme with the schemes of an `a:themeOverride` part applied.
+    pub(crate) fn with_override(&self, override_root: Node) -> Self {
+        let mut out = self.clone();
+        out.apply_elements(override_root);
+        out
+    }
+
+    fn apply_elements(&mut self, elements: Node) {
         if let Some(scheme) = child(elements, "clrScheme") {
             for entry in scheme.children().filter(Node::is_element) {
                 // Theme colours are srgbClr or sysClr, without modifiers.
                 let Some(value) = entry.children().find(Node::is_element) else { continue };
                 let hex = if value.has_tag_name("sysClr") { attr(value, "lastClr") } else { attr(value, "val") };
                 if let Some(rgb) = hex.and_then(parse_hex) {
-                    out.colors.insert(entry.tag_name().name().to_string(), rgb);
+                    self.colors.insert(entry.tag_name().name().to_string(), rgb);
                 }
             }
         }
@@ -87,10 +101,10 @@ impl Theme {
                     .filter(|t| !t.is_empty())
                     .map(str::to_string)
             };
-            out.major_latin = typeface("majorFont", "latin");
-            out.major_east_asian = typeface("majorFont", "ea");
-            out.minor_latin = typeface("minorFont", "latin");
-            out.minor_east_asian = typeface("minorFont", "ea");
+            self.major_latin = typeface("majorFont", "latin");
+            self.major_east_asian = typeface("majorFont", "ea");
+            self.minor_latin = typeface("minorFont", "latin");
+            self.minor_east_asian = typeface("minorFont", "ea");
             let japanese = |group: &str| {
                 child(fonts, group)
                     .and_then(|g| children(g, "font").find(|f| attr(*f, "script") == Some("Jpan")))
@@ -98,28 +112,35 @@ impl Theme {
                     .filter(|t| !t.is_empty())
                     .map(str::to_string)
             };
-            out.major_japanese = japanese("majorFont");
-            out.minor_japanese = japanese("minorFont");
-            out.major_complex = typeface("majorFont", "cs");
-            out.minor_complex = typeface("minorFont", "cs");
+            self.major_japanese = japanese("majorFont");
+            self.minor_japanese = japanese("minorFont");
+            self.major_complex = typeface("majorFont", "cs");
+            self.minor_complex = typeface("minorFont", "cs");
         }
         if let Some(fmt) = child(elements, "fmtScheme") {
-            out.fmt_scheme_name = attr(fmt, "name").map(str::to_string);
+            self.fmt_scheme_name = attr(fmt, "name").map(str::to_string);
+            if let Some(list) = child(fmt, "lnStyleLst") {
+                self.line_widths = children(list, "ln").map(|ln| attr(ln, "w").and_then(|w| w.parse().ok())).collect();
+            }
         }
-        out
     }
 
     /// The theme's fonts, for the model.
     pub(crate) fn fonts(&self) -> ibis_doc_model::ThemeFonts {
-        let set = |latin: &Option<String>, east_asian: &Option<String>, complex: &Option<String>| ibis_doc_model::FontSet {
+        let set = |latin: &Option<String>, east_asian: &Option<String>, japanese: &Option<String>, complex: &Option<String>| ibis_doc_model::FontSet {
             latin: latin.clone(),
-            east_asian: east_asian.clone(),
+            east_asian: east_asian.clone().or_else(|| japanese.clone()),
             complex: complex.clone(),
         };
         ibis_doc_model::ThemeFonts {
-            major: set(&self.major_latin, &self.major_east_asian, &self.major_complex),
-            minor: set(&self.minor_latin, &self.minor_east_asian, &self.minor_complex),
+            major: set(&self.major_latin, &self.major_east_asian, &self.major_japanese, &self.major_complex),
+            minor: set(&self.minor_latin, &self.minor_east_asian, &self.minor_japanese, &self.minor_complex),
         }
+    }
+
+    /// The width of the theme's line `idx` (`lnRef idx`, 1-based), in EMU.
+    pub(crate) fn line_width(&self, idx: i64) -> Option<i64> {
+        self.line_widths.get(usize::try_from(idx.checked_sub(1)?).ok()?).copied().flatten()
     }
 
     /// A scheme colour by its own name (`dk1`, `accent1`, …).
@@ -208,6 +229,10 @@ impl<'t> Colors<'t> {
 
     pub(crate) fn theme(&self) -> &Theme {
         self.theme
+    }
+
+    pub(crate) fn with_theme<'u>(&self, theme: &'u Theme) -> Colors<'u> {
+        Colors { theme, map: self.map.clone() }
     }
 
     /// A theme colour by name (`accent1`, `tx1`, …), through the colour map.
@@ -460,7 +485,10 @@ fn apply_modifiers(mut color: Color, node: Node) -> Color {
             "satMod" => {
                 let (h, mut s, l) = rgb_to_hsl(r, g, b);
                 s *= val;
-                hsl_to_rgb_f32(h, s.clamp(0.0, 1.0), l)
+                // Do not clamp `s` to 1.0 before converting back to RGB: when a prior `tint`
+                // raised `l` toward 1.0, `s > 1.0` scales the remaining chroma `2 * s * (1 - l)`
+                // before `hsl_to_rgb_f32` clamps each RGB channel to 0.0..=1.0 (pptx-C020-b3).
+                hsl_to_rgb_f32(h, s.max(0.0), l)
             }
             "satOff" => {
                 let (h, mut s, l) = rgb_to_hsl(r, g, b);
@@ -602,12 +630,11 @@ pub(crate) fn fill_style<'a, 'i>(theme: Node<'a, 'i>, idx: usize) -> Option<Node
     elements(child(scheme, list)?).nth(index)
 }
 
-/// The background fill style `idx` refers to: 1–999 index `a:bgFillStyleLst`,
-/// 1001 and up `a:fillStyleLst`.
+/// The background fill style `p:bgRef idx` refers to (ECMA-376 20.1.4.2.1):
+/// 1–999 index `a:fillStyleLst`, 1001 and up `a:bgFillStyleLst`, the same
+/// numbering as `fill_style`.
 pub(crate) fn bg_fill_style<'a, 'i>(theme: Node<'a, 'i>, idx: usize) -> Option<Node<'a, 'i>> {
-    let scheme = child(child(theme, "themeElements")?, "fmtScheme")?;
-    let (list, index) = if idx > 1000 { ("fillStyleLst", idx - 1001) } else { ("bgFillStyleLst", idx.checked_sub(1)?) };
-    elements(child(scheme, list)?).nth(index)
+    fill_style(theme, idx)
 }
 
 /// The effect style `idx` refers to: 1-based index in `a:effectStyleLst`.

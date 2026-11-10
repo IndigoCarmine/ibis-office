@@ -55,9 +55,8 @@ pub(crate) struct RotatedPicture {
 }
 
 /// Wrap a picture drawn in `frame`, rotated clockwise by `rotation`
-/// (60 000ths of a degree) about the frame's centre and flipped as given,
-/// with the colour effects of `look`.
-#[allow(clippy::too_many_arguments)]
+/// (60 000ths of a degree) about the frame's centre, flipped as given,
+/// cut to `subpaths` when given, and given the colour effects of `look`.
 pub(crate) fn rotated_picture(
     data: &[u8],
     encoding: Encoding,
@@ -66,6 +65,7 @@ pub(crate) fn rotated_picture(
     flip_h: bool,
     flip_v: bool,
     crop: Crop,
+    subpaths: Option<&[Vec<(f64, f64)>]>,
     look: &Look,
 ) -> RotatedPicture {
     let degrees = rotation as f64 / 60_000.0;
@@ -94,41 +94,55 @@ pub(crate) fn rotated_picture(
     let (fw, fh, bw, bh) = (fw_emu * k, fh_emu * k, bw_emu * k, bh_emu * k);
 
     // The whole picture, placed so the cropped part fills the frame.
-    let (ix, iy) = (-frac(crop.left) / visible_w * fw, -frac(crop.top) / visible_h * fh);
-    let (iw, ih) = (fw / visible_w, fh / visible_h);
+    // (The picture's own area: the frame less the fill rectangle's insets, which may be negative.)
+    let [fl, ft, fr, fb] = look.fill_rect.map_or([0.0; 4], |r| r.map(|v| v as f64 / 100_000.0));
+    let (rx, ry, rw, rh) = (fw * fl, fh * ft, fw * (1.0 - fl - fr), fh * (1.0 - ft - fb));
+    let (ix, iy) = (rx - frac(crop.left) / visible_w * rw, ry - frac(crop.top) / visible_h * rh);
+    let (iw, ih) = (rw / visible_w, rh / visible_h);
     let (sx, sy) = (if flip_h { -1.0 } else { 1.0 }, if flip_v { -1.0 } else { 1.0 });
+    let clip_shape = match subpaths {
+        Some(subpaths) => {
+            let mut d = String::new();
+            for points in subpaths {
+                for (i, (x, y)) in points.iter().enumerate() {
+                    d.push_str(&format!("{}{:.2} {:.2} ", if i == 0 { 'M' } else { 'L' }, x * k, y * k));
+                }
+                d.push_str("Z ");
+            }
+            format!(r#"<path d="{d}"/>"#)
+        }
+        None => format!(r#"<rect x="0" y="0" width="{fw:.3}" height="{fh:.3}"/>"#),
+    };
     let primitives = filter_primitives(look);
-    let (filter, filter_attr) = if primitives.is_empty() {
-        (String::new(), "")
+    let filter = if primitives.is_empty() { String::new() } else { format!(r#"<filter id="fx" color-interpolation-filters="sRGB" x="0" y="0" width="1" height="1">{primitives}</filter>"#) };
+    let filter_attr = if filter.is_empty() { "" } else { r#" filter="url(#fx)""# };
+    // Flip, then rotate, about the frame's centre (OOXML's order).
+    let turn = format!("translate({cx:.3} {cy:.3}) rotate({deg}) scale({sx} {sy}) translate({ncx:.3} {ncy:.3})", cx = fw / 2.0, cy = fh / 2.0, deg = degrees, sx = sx, sy = sy, ncx = -fw / 2.0, ncy = -fh / 2.0);
+    // The picture turns with the outline, or stays upright under the turned outline (`rotWithShape` 0: the outline carries the turn).
+    let (clip_shape, open, close) = if look.upright {
+        let turned = clip_shape.replacen("<path ", &format!("<path transform=\"{turn}\" "), 1).replacen("<rect ", &format!("<rect transform=\"{turn}\" "), 1);
+        (turned, String::new(), "")
     } else {
-        (format!(r#"<filter id="fx" color-interpolation-filters="sRGB" x="0" y="0" width="1" height="1">{primitives}</filter>"#), r#" filter="url(#fx)""#)
+        (clip_shape, format!(r#"<g transform="{turn}">"#), "</g>")
     };
     let svg = format!(
         concat!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" "#,
             r#"width="{w}" height="{h}" viewBox="{vx:.3} {vy:.3} {bw:.3} {bh:.3}">"#,
-            r#"<defs><clipPath id="frame"><rect x="0" y="0" width="{fw:.3}" height="{fh:.3}"/></clipPath>{filter}</defs>"#,
-            // Flip, then rotate, about the frame's centre (OOXML's order).
-            r#"<g transform="translate({cx:.3} {cy:.3}) rotate({deg}) scale({sx} {sy}) translate({ncx:.3} {ncy:.3})">"#,
+            r#"<defs><clipPath id="frame">{clip_shape}</clipPath>{filter}</defs>"#,
+            r#"{open}"#,
             r#"<g clip-path="url(#frame)"><image{filter_attr} x="{ix:.3}" y="{iy:.3}" width="{iw:.3}" height="{ih:.3}" preserveAspectRatio="none" xlink:href="data:{mime};base64,"#,
         ),
-        filter = filter,
-        filter_attr = filter_attr,
         w = stated(bw.round().max(1.0)),
         h = stated(bh.round().max(1.0)),
         vx = fw / 2.0 - bw / 2.0,
         vy = fh / 2.0 - bh / 2.0,
         bw = bw,
         bh = bh,
-        fw = fw,
-        fh = fh,
-        cx = fw / 2.0,
-        cy = fh / 2.0,
-        deg = degrees,
-        sx = sx,
-        sy = sy,
-        ncx = -fw / 2.0,
-        ncy = -fh / 2.0,
+        clip_shape = clip_shape,
+        filter = filter,
+        filter_attr = filter_attr,
+        open = open,
         ix = ix,
         iy = iy,
         iw = iw,
@@ -137,7 +151,9 @@ pub(crate) fn rotated_picture(
     );
     let mut out = svg.into_bytes();
     base64(data, &mut out);
-    out.extend_from_slice(br#""/></g></g></svg>"#);
+    out.extend_from_slice(br#""/></g>"#);
+    out.extend_from_slice(close.as_bytes());
+    out.extend_from_slice(b"</svg>");
     RotatedPicture { svg: out, bounds }
 }
 
@@ -363,7 +379,7 @@ mod tests {
     #[test]
     fn quarter_turn_swaps_the_bounds() {
         let png = [0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0, 200, 0, 0, 0, 100];
-        let p = rotated_picture(&png, Encoding::Png, EmuRect::new(0, 0, 2000, 1000), 5_400_000, false, false, Crop::default(), &Look::default());
+        let p = rotated_picture(&png, Encoding::Png, EmuRect::new(0, 0, 2000, 1000), 5_400_000, false, false, Crop::default(), None, &Look::default());
         assert_eq!(p.bounds, EmuRect::new(500, -500, 1000, 2000));
         let svg = String::from_utf8(p.svg).unwrap();
         // Rasterized at the picture's width across the frame: 200 px for
@@ -383,6 +399,8 @@ mod tests {
 /// What a styled picture shows beyond its pixels: [`styled_picture`]'s look.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Look {
+    /// A colour made transparent (`a:clrChange` to alpha 0).
+    pub clear: Option<(u8, u8, u8)>,
     /// Brightness and contrast (`a:lum`), 100 000ths.
     pub luminance: Option<(i32, i32)>,
     /// Dark and light colours (`a:duotone`).
@@ -390,6 +408,10 @@ pub(crate) struct Look {
     pub effects: ibis_doc_model::BlipEffects,
     pub soft_edge: Option<i64>,
     pub artistic_effect: Option<ibis_doc_model::ArtisticEffect>,
+    /// The area the picture covers, as insets from the frame in 100 000ths (`a:stretch/a:fillRect`); a turned picture's.
+    pub fill_rect: Option<[i32; 4]>,
+    /// The picture stays upright while the outline that cuts it turns (`rotWithShape` 0).
+    pub upright: bool,
 }
 
 fn rgb_text(c: ibis_doc_model::Rgb) -> String {
@@ -404,6 +426,21 @@ fn filter_primitives(look: &Look) -> String {
     const GRAY: &str = r#"<feColorMatrix type="matrix" values="0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0 0 0 1 0"/>"#;
     let linear = |slope: f64, intercept: f64| format!(r#"<feComponentTransfer><feFuncR type="linear" slope="{slope:.5}" intercept="{intercept:.5}"/><feFuncG type="linear" slope="{slope:.5}" intercept="{intercept:.5}"/><feFuncB type="linear" slope="{slope:.5}" intercept="{intercept:.5}"/></feComponentTransfer>"#);
     let mut f = String::new();
+    if let Some(clear) = look.clear {
+        let k = 85.0;
+        let term = |c: u8| if c >= 128 { (-k, k * c as f64 / 255.0) } else { (k, -k * c as f64 / 255.0) };
+        let (r, g, b) = (term(clear.0), term(clear.1), term(clear.2));
+        f.push_str(&format!(
+            concat!(
+                r#"<feColorMatrix in="SourceGraphic" type="matrix" result="clear_mask" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 {rk} {gk} {bk} 0 {c}"/>"#,
+                r#"<feComposite in="SourceGraphic" in2="clear_mask" operator="in"/>"#,
+            ),
+            rk = r.0,
+            gk = g.0,
+            bk = b.0,
+            c = r.1 + g.1 + b.1,
+        ));
+    }
     if let Some((from, to)) = look.effects.change {
         // The mask: a pixel's opacity falls with how near its colour is to `from`, summed over the channels
         // (a table per channel gives each one's distance, up to four levels).
@@ -516,7 +553,13 @@ pub(crate) struct TileLayout {
 /// EMU) when given, and given the colour effects of `look`. The SVG covers the frame.
 pub(crate) fn styled_picture(data: &[u8], encoding: Encoding, width: i64, height: i64, subpaths: Option<&[Vec<(f64, f64)>]>, crop: Crop, fill_rect: Option<[i32; 4]>, tile: Option<TileLayout>, look: &Look) -> Vec<u8> {
     let (fw_emu, fh_emu) = (width.max(1) as f64, height.max(1) as f64);
-    let frame_px = pixel_size(data, encoding).map(|(w, _)| w as f64).unwrap_or(FALLBACK_WIDTH).max(16.0);
+    // A tiled picture repeats across the frame, so each tile keeps the picture's own pixels; at least two
+    // pixels a point (the export resolution) so upscaling does not sample adjacent atlas tiles at the edges.
+    let natural_px = pixel_size(data, encoding).map(|(w, _)| match tile {
+        Some(t) if t.width > 0.0 => w as f64 * (fw_emu / t.width).max(1.0),
+        _ => w as f64,
+    });
+    let frame_px = natural_px.unwrap_or(FALLBACK_WIDTH).max(fw_emu / 6_350.0).max(16.0);
     let mut k = frame_px / fw_emu;
     let pixels = fw_emu * k * fh_emu * k;
     if pixels > MAX_PIXELS {

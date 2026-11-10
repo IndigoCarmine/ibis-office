@@ -10,8 +10,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -54,7 +54,7 @@ impl SlideEditor {
         };
 
         self.commit_cell_edit(cx);
-        self.wb_mut().panels.close();
+        self.wb_mut().close_settings();
 
         // Default new sheet name (e.g. "Chart1", "Chart2", ...)
         let mut n = 1;
@@ -150,11 +150,13 @@ impl SlideEditor {
                 );
 
                 self.wb_mut().panels.move_chart = None;
-                self.sidebar_open = false;
+                self.sidebar_open = true;
                 if self.presentation().slide(new_slide_id).is_some() {
                     self.select_slide(new_slide_id, window, cx);
                     self.selection = Some(chart_shape);
-                }
+                    self.open_sheet_chart_panel(window,cx);
+                }else{self.wb_mut().chart_edit=None;}
+                self.focus_handle.focus(window, cx);
                 cx.notify();
             }
             MoveChartMode::ExistingSheet => {
@@ -169,7 +171,7 @@ impl SlideEditor {
                 if dest_slide == current_slide {
                     // Moving within the same sheet is a no-op
                     self.wb_mut().panels.move_chart = None;
-                    self.sidebar_open = false;
+                    self.sidebar_open = true;
                     cx.notify();
                     return;
                 }
@@ -184,11 +186,13 @@ impl SlideEditor {
                 );
 
                 self.wb_mut().panels.move_chart = None;
-                self.sidebar_open = false;
+                self.sidebar_open = true;
                 if self.presentation().slide(dest_slide).is_some() {
                     self.select_slide(dest_slide, window, cx);
                     self.selection = Some(chart_shape);
-                }
+                    self.open_sheet_chart_panel(window,cx);
+                }else{self.wb_mut().chart_edit=None;}
+                self.focus_handle.focus(window, cx);
                 cx.notify();
             }
         }
@@ -219,15 +223,16 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let id = id.to_string();
+            let ui = p.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                        ui.borrow_mut().insert(id.clone(), bounds);
+                    })
+        };
 
-        let mut body = v_flex().gap_3().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_3();
 
-        body = body.child(
-            div()
-                .text_size(px(12.))
-                .text_color(cx.theme().muted)
-                .child(text("_xlsx.choose-where-you-want-the-chart-to-be-placed")),
-        );
 
         if let Some(err) = error {
             body = body.child(
@@ -237,111 +242,62 @@ impl SlideEditor {
                     .bg(cx.theme().danger.opacity(0.1))
                     .border_1()
                     .border_color(cx.theme().danger)
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(cx.theme().danger)
                     .child(err),
             );
         }
 
-        // Section 1: New Sheet
+        // 一番上のセグメント：選択で下のコントロールを切り替える。
+        let seg_item = |id: &'static str, label: &'static str, on: bool, mode: MoveChartMode, disabled: bool, cx: &mut Context<Self>| {
+            let ui = p.ui.clone();
+            crate::shell::chrome::segment_control::SegmentItem::label(id, text(label), on)
+                .disabled(disabled)
+                .on_bounds(move |b| {
+                    ui.borrow_mut().insert(id.to_string(), b);
+                })
+                .on_click(cx.listener(move |this, _, _, cx| this.set_move_chart_mode(mode, cx)))
+        };
         let new_sheet_active = mode == MoveChartMode::NewSheet;
-        let new_sheet_btn = Button::new("move-chart-mode-new-btn")
-            .small()
-            .when(new_sheet_active, |b| b.primary())
-            .label(text("_xlsx.new-sheet"))
-            .disabled(is_locked)
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.set_move_chart_mode(MoveChartMode::NewSheet, cx);
-            }));
-
-        let new_sheet_input = Input::new(&p.new_sheet_name).disabled(is_locked || !new_sheet_active);
-
-        let new_sheet_sec = v_flex()
-            .gap_1()
-            .p(px(8.))
-            .rounded_md()
-            .border_1()
-            .border_color(if new_sheet_active { cx.theme().accent } else { cx.theme().border })
-            .child(h_flex().items_center().gap_2().child(mark("move-chart-mode-new", new_sheet_btn.into_any_element())))
-            .child(mark("move-chart-new-name-input", new_sheet_input.into_any_element()));
-
-        body = body.child(new_sheet_sec);
-
-        // Section 2: Object in existing sheet
         let existing_sheet_active = mode == MoveChartMode::ExistingSheet;
-        let existing_btn = Button::new("move-chart-mode-existing-btn")
-            .small()
-            .when(existing_sheet_active, |b| b.primary())
-            .label(text("_xlsx.object-in"))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.set_move_chart_mode(MoveChartMode::ExistingSheet, cx);
-            }));
+        body = body.child(
+            crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+                .child(seg_item("move-chart-mode-new", "_xlsx.new-sheet", new_sheet_active, MoveChartMode::NewSheet, is_locked, cx))
+                .child(seg_item("move-chart-mode-existing", "_xlsx.object-in", existing_sheet_active, MoveChartMode::ExistingSheet, false, cx)),
+        );
 
-        let mut sheets_list = v_flex().gap_1();
-        if let Some(wb) = self.presentation().workbook.as_deref() {
-            for (i, sheet) in wb.sheets.iter().enumerate() {
-                let Some(slide_id) = sheet.slide else { continue };
-                let is_current = slide_id == self.current_slide;
-                let is_selected = target_slide == Some(slide_id);
-                let sheet_label = if is_current {
-                    crate::shell::i18n::format("_xlsx.sheet-current", &[("sheet", &sheet.name)])
-                } else {
-                    sheet.name.clone()
-                };
-
-                let item_btn = Button::new(("move-chart-sheet-item", i))
-                    .small()
-                    .when(is_selected && existing_sheet_active, |b| b.primary())
-                    .label(SharedString::from(sheet_label))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_move_chart_target_slide(slide_id, cx);
-                    }));
-
-                sheets_list = sheets_list.child(mark(&format!("move-chart-sheet-item-{i}"), item_btn.into_any_element()));
-            }
+        if new_sheet_active {
+            let new_sheet_input = crate::shell::chrome::text_field(&p.new_sheet_name).full_width().disabled(is_locked);
+            body = body.child(mark("move-chart-new-name-input", new_sheet_input.into_any_element()));
+        } else {
+            let choices=self.presentation().workbook.as_deref().map(|wb|wb.sheets.iter().filter_map(|sheet|sheet.slide.map(|slide|(slide,sheet.name.clone()))).collect::<Vec<_>>()).unwrap_or_default();
+            let current=choices.iter().find(|(id,_)|Some(*id)==target_slide).map(|(_,name)|name.clone()).unwrap_or_default();
+            let entries=choices.into_iter().map(|(id,name)|crate::shell::chrome::MenuItem::new("move-chart-sheet",name).checked(Some(id)==target_slide).on(move|e,_,cx|e.set_move_chart_target_slide(id,cx)).into()).collect();
+            let sheets_list=crate::shell::chrome::Dropdown::with_button("move-chart-sheets",crate::shell::chrome::dropdown_button("move-chart-sheets-button",current).disabled(is_locked),entries,true,0,&cx.weak_entity());
+            body = body.child(sheets_list);
         }
 
-        let existing_sec = v_flex()
-            .gap_2()
-            .p(px(8.))
-            .rounded_md()
-            .border_1()
-            .border_color(if existing_sheet_active { cx.theme().accent } else { cx.theme().border })
-            .child(h_flex().items_center().gap_2().child(mark("move-chart-mode-existing", existing_btn.into_any_element())))
-            .child(sheets_list);
-
-        body = body.child(existing_sec);
-
         // Section 3: Action Buttons
-        let ok_btn = Button::new("move-chart-ok-btn")
-            .primary()
-            .small()
+        let ok_btn = crate::shell::chrome::ActionDefinition::new("move-chart-ok-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
             .label(text("OK"))
             .on_click(cx.listener(|this, _, window, cx| {
                 this.apply_move_chart(window, cx);
             }));
 
-        let cancel_btn = Button::new("move-chart-cancel-btn")
-            .small()
+        let cancel_btn = crate::shell::chrome::ActionDefinition::new("move-chart-cancel-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
             .label(text("_shell.cancel"))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.wb_mut().panels.move_chart = None;
-                this.sidebar_open = false;
+                this.sidebar_open = true;
                 cx.notify();
             }));
 
-        let buttons_row = h_flex()
-            .justify_end()
-            .gap_2()
-            .mt(px(4.))
-            .child(mark("move-chart-ok", ok_btn.into_any_element()))
-            .child(mark("move-chart-cancel", cancel_btn.into_any_element()));
+        let buttons_row = crate::shell::chrome::action_bar()
+            .action(mark_action("move-chart-ok", ok_btn))
+            .action(mark_action("move-chart-cancel", cancel_btn));
 
-        body = body.child(buttons_row);
 
-        Some(SidebarPanel {
-            title: text("_xlsx.move-chart").into(),
-            body: body.into_any_element(),
-        })
+
+        Some(SidebarPanel::with_footer(text("_xlsx.move-chart"), body.into_any_element(), buttons_row))
     }
 }

@@ -12,6 +12,7 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 
 use crate::OpenFile;
 use crate::shell::editor::SlideEditor;
@@ -163,7 +164,40 @@ impl SlideEditor {
                     .map(|d| self.recent_files_list(d, cx))
                     .when_some(self.status.clone(), |d, status| d.child(div().mt_3().text_sm().text_color(muted).child(status))),
             )
-            .child(request_panel(muted))
+            .child(v_flex().w(px(REQUEST_WIDTH)).min_w(px(REQUEST_MIN_WIDTH)).flex_shrink(1.).mr(px(COLUMN_PADDING)).mt(px(BOTTOM_MARGIN)).gap_4()
+                .children(Self::update_button())
+                .child(crate::shell::chrome::brand_logo("start-app-logo",REQUEST_WIDTH / crate::shell::chrome::LOGO_ASPECT,true))
+                .child(request_panel(muted).w_full().mt_0().mr_0()))
+    }
+
+    /// 「ibisOffice を更新する」 over the logo, right-aligned, when a newer version is known (never in the browser, which has no
+    /// updater): a pill, white with a blue border and label whatever the theme. A click asks the update question, as the About
+    /// window's button does.
+    #[cfg(not(target_family = "wasm"))]
+    fn update_button() -> Option<impl IntoElement> {
+        crate::shell::update::available_version()?;
+        Some(
+            div().w_full().flex().justify_end().child(
+                div()
+                    .id("start-update")
+                    .px_4()
+                    .py_1()
+                    .rounded(px(999.))
+                    .border_1()
+                    // White with a blue frame and label in the dark theme too (the request's colours, not theme tokens: `rgb` would invert them).
+                    .border_color(crate::shell::palette::doc(LINK_COLOR))
+                    .bg(crate::shell::palette::doc(0xffffff))
+                    .text_color(crate::shell::palette::doc(LINK_COLOR))
+                    .text_sm()
+                    .cursor_pointer()
+                    .child(crate::shell::i18n::text("start.update"))
+                    .on_click(|_, _, cx| crate::shell::update::offer_again(cx)),
+            ),
+        )
+    }
+    #[cfg(target_family = "wasm")]
+    fn update_button() -> Option<Div> {
+        None
     }
 
     /// One kind of 新規作成: a blank page with the format's badge on its
@@ -184,7 +218,7 @@ impl SlideEditor {
             .py(px(1.))
             .rounded(px(3.))
             .bg(rgb(color))
-            .text_color(rgb(0xffffff))
+            .text_color(crate::shell::palette::doc(0xffffff))
             .text_size(px(12.))
             .font_weight(FontWeight::BOLD)
             .child(label);
@@ -197,6 +231,13 @@ impl SlideEditor {
             .child(div().relative().child(page).child(badge))
             .on_click(cx.listener(move |this, _, window, cx| this.new_file(kind, window, cx)))
             .into_any_element()
+    }
+
+    #[cfg(not(target_family="wasm"))]
+    pub(crate) fn recent_file_actions(&self,path:std::path::PathBuf)->Vec<crate::shell::chrome::MenuEntry>{
+        vec![crate::shell::chrome::MenuItem::tr("start.recent.remove").icon("delete").on(move|e,_,cx|{
+            e.recent_files=crate::shell::recent_files::remove(&path);cx.notify();
+        }).into()]
     }
 
     /// 最近開いたファイル and the list of them; a file that is gone is greyed.
@@ -218,24 +259,30 @@ impl SlideEditor {
                 let dir: SharedString = path.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default().into();
                 let exists = path.is_file();
                 let path = path.clone();
+                let entries=self.recent_file_actions(path.clone());
+                let context_entries=entries.clone();
                 div()
                     .id(("recent-file", index))
                     .flex_shrink_0()
                     .h(px(RECENT_ROW_HEIGHT))
                     .px_3()
                     .flex()
-                    .flex_col()
-                    .justify_center()
+                    .group("row-actions")
+                    .items_center()
+                    .gap_2()
                     .border_b_1()
                     .border_color(border)
                     .text_color(if exists { foreground } else { muted })
+                    .on_mouse_down(MouseButton::Right,cx.listener(move|e,event:&MouseDownEvent,w,cx|{
+                        cx.stop_propagation();e.open_hyperlink_context(event.position,context_entries.clone(),w,cx);
+                    }))
                     .when(exists, |d| {
                         d.cursor_pointer()
                             .hover(move |s| s.bg(hover))
-                            .on_click(cx.listener(move |this, _, window, cx| this.open_path(path.clone(), None, window, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| this.open_path_or_raise(path.clone(), window, cx)))
                     })
-                    .child(div().text_sm().truncate().child(name))
-                    .child(div().text_xs().text_color(muted).truncate().child(dir))
+                    .child(div().flex_1().min_w_0().child(div().text_sm().truncate().child(name)).child(div().text_xs().text_color(muted).truncate().child(dir)))
+                    .child(crate::shell::chrome::hover_row_actions(index,entries,&cx.weak_entity()))
                     .into_any_element()
             })
             .collect();

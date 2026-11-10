@@ -241,6 +241,10 @@ pub enum Fill {
         flip: TileFlip,
         align: TileAlign,
     },
+    /// A picture with the adjustments `a:blipFill` can carry: a range of the picture (`a:srcRect`),
+    /// the place it fills (`a:fillRect`), colour effects, or tiling. A plain stretched or tiled
+    /// picture is [`Fill::Image`] or [`Fill::TileImage`].
+    Blip(Box<BlipFill>),
     /// A two-colour pattern (`a:pattFill`): `preset` is its name
     /// (`ST_PresetPatternVal`, such as `"pct5"`), drawn as an 8 × 8 tile of
     /// 1 pt cells (see [`pattern_tile`]) anchored at the slide's corner.
@@ -249,6 +253,49 @@ pub enum Fill {
     /// `focus` (`a:fillToRect`: its left, top, right and bottom insets from
     /// the shape's box, 0 to 100 000), the last at the edge of `path`.
     Path { path: GradientPath, focus: [i32; 4], stops: Vec<GradientStop> },
+}
+
+impl Fill {
+    /// The picture this fill shows, if it is a picture fill.
+    pub fn media(&self) -> Option<MediaId> {
+        match self {
+            Fill::Image(media) | Fill::TileImage { media, .. } => Some(*media),
+            Fill::Blip(blip) => Some(blip.media),
+            _ => None,
+        }
+    }
+}
+
+/// A picture fill with its adjustments (`a:blipFill`): see [`Fill::Blip`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlipFill {
+    pub media: MediaId,
+    /// The part of the picture shown (`a:srcRect`).
+    pub crop: crate::Crop,
+    /// The area the picture covers, as insets from the frame in 100 000ths (`a:stretch/a:fillRect`; negative runs outside).
+    pub fill_rect: Option<[i32; 4]>,
+    /// Tiling (`a:tile`) instead of stretching.
+    pub tile: Option<crate::PictureTile>,
+    /// Dark and light colours of a duotone (`a:duotone`).
+    pub duotone: Option<(crate::Rgb, crate::Rgb)>,
+    /// Brightness and contrast (`a:lum`), 100 000ths.
+    pub luminance: Option<(i32, i32)>,
+    /// Grey, black and white, one colour, opacity (`a:blip`'s other children).
+    pub effects: crate::BlipEffects,
+    /// Whether the picture turns with the shape (`a:blipFill rotWithShape`; `false`: it stays upright and the turned outline cuts it).
+    pub rot_with_shape: bool,
+}
+
+impl BlipFill {
+    /// A fill that shows the picture as is.
+    pub fn new(media: MediaId) -> Self {
+        Self { media, crop: crate::Crop::default(), fill_rect: None, tile: None, duotone: None, luminance: None, effects: crate::BlipEffects::default(), rot_with_shape: true }
+    }
+
+    /// Whether it is just the picture stretched or tiled (so a [`Fill::Image`] or [`Fill::TileImage`] says it all).
+    pub fn is_plain(&self) -> bool {
+        self.rot_with_shape && self.crop == crate::Crop::default() && self.fill_rect.is_none() && self.duotone.is_none() && self.luminance.is_none() && self.effects.is_none()
+    }
 }
 
 /// How a tiled picture flips on alternating tiles (`ST_TileFlipMode`).
@@ -409,6 +456,60 @@ pub fn pattern_tile(preset: &str) -> Option<[u8; 8]> {
         _ => return None,
     };
     Some(rows)
+}
+
+/// The 8 × 8 tile of a spreadsheet cell's pattern (`x:patternFill/@patternType`, such as `darkVertical`), as Excel prints
+/// it: a row per byte, top to bottom, the high bit the leftmost cell; a set bit is the foreground colour. Excel's tiles are
+/// not PowerPoint's (`darkGray` is not 75 % there, `lightTrellis` is not `diagCross`).
+///
+/// Read off the patterns Excel draws (its PDF of the coverage suite XFIL, 1 pt per cell, the tile anchored at the paper's
+/// corner), one cell at a time. `None` for a name that is not one of the 17 patterns.
+pub fn spreadsheet_pattern_tile(pattern_type: &str) -> Option<[u8; 8]> {
+    Some(match pattern_type {
+        "gray0625" => [0x80, 0, 0x08, 0, 0x80, 0, 0x08, 0],
+        "gray125" => [0x88, 0, 0x22, 0, 0x88, 0, 0x22, 0],
+        "lightGray" => [0x88, 0x22, 0x88, 0x22, 0x88, 0x22, 0x88, 0x22],
+        "mediumGray" => [0xaa, 0x55, 0xaa, 0x55, 0xaa, 0x55, 0xaa, 0x55],
+        "darkGray" => [0xee, 0xbb, 0xee, 0xbb, 0xee, 0xbb, 0xee, 0xbb],
+        "lightHorizontal" => [0xff, 0, 0, 0, 0xff, 0, 0, 0],
+        "darkHorizontal" => [0xff, 0xff, 0, 0, 0xff, 0xff, 0, 0],
+        "lightVertical" => [0x88; 8],
+        "darkVertical" => [0xcc; 8],
+        "lightDown" => [0x88, 0x44, 0x22, 0x11, 0x88, 0x44, 0x22, 0x11],
+        "darkDown" => [0xcc, 0x66, 0x33, 0x99, 0xcc, 0x66, 0x33, 0x99],
+        "lightUp" => [0x11, 0x22, 0x44, 0x88, 0x11, 0x22, 0x44, 0x88],
+        "darkUp" => [0x33, 0x66, 0xcc, 0x99, 0x33, 0x66, 0xcc, 0x99],
+        "lightGrid" => [0xff, 0x88, 0x88, 0x88, 0xff, 0x88, 0x88, 0x88],
+        "darkGrid" => [0x99, 0x66, 0x66, 0x99, 0x99, 0x66, 0x66, 0x99],
+        "lightTrellis" => [0x88, 0x55, 0x22, 0x55, 0x88, 0x55, 0x22, 0x55],
+        "darkTrellis" => [0xff, 0x66, 0xff, 0x99, 0xff, 0x66, 0xff, 0x99],
+        _ => return None,
+    })
+}
+
+/// The spreadsheet pattern (`x:patternFill/@patternType`) a cell's pattern preset stands for (the reader maps the 17 of a
+/// workbook to presets, see `spreadsheet_pattern_tile`).
+pub fn spreadsheet_pattern_of_preset(preset: &str) -> Option<&'static str> {
+    Some(match preset {
+        "pct5" => "gray0625",
+        "pct10" => "gray125",
+        "pct25" => "lightGray",
+        "pct50" => "mediumGray",
+        "pct75" => "darkGray",
+        "ltHorz" => "lightHorizontal",
+        "dkHorz" => "darkHorizontal",
+        "ltVert" => "lightVertical",
+        "dkVert" => "darkVertical",
+        "ltDnDiag" => "lightDown",
+        "dkDnDiag" => "darkDown",
+        "ltUpDiag" => "lightUp",
+        "dkUpDiag" => "darkUp",
+        "smGrid" => "lightGrid",
+        "cross" => "darkGrid",
+        "diagCross" => "lightTrellis",
+        "trellis" => "darkTrellis",
+        _ => return None,
+    })
 }
 
 impl Fill {

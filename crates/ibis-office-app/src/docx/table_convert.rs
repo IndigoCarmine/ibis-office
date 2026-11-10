@@ -73,7 +73,7 @@ impl SlideEditor {
             next - 1
         };
         let line = FlowBorder { width: 12_700 / 2, color: Rgb::BLACK, style: ibis_doc_model::BorderStyle::Single, space: 0, art: None };
-        let mut table = FlowTable { id: id(), borders: [Some(Some(line)); 6], columns: vec![width / columns as i64 / 635 * 635; columns], ..FlowTable::default() };
+        let mut table = FlowTable { id: id(), borders: [Some(Some(line)); 6], columns: vec![width / columns as i64 / 635 * 635; columns], fit_to_page: true, ..FlowTable::default() };
         for (cells, p) in rows.into_iter().zip(&paragraphs) {
             let mut row = FlowRow { id: id(), ..FlowRow::default() };
             for i in 0..columns {

@@ -64,6 +64,7 @@ edit.select-all	すべて選択
 edit.delete	削除
 edit.duplicate	複製
 edit.find-replace	検索と置換…
+edit.replace-fonts	フォントの置換…
 view.slideshow	スライドショー
 view.zoom-in	拡大
 view.zoom-out	縮小
@@ -147,6 +148,7 @@ file.print-exit	プレビューで印刷できませんでした（終了コー�
 file.pick-failed	ファイルを選べませんでした: {error}
 file.opening	{name} を開いています…
 file.open-failed	{name} を開けませんでした: {error}
+file.read-crashed	このファイルの内容を読み込めませんでした（内部エラー）
 align.left	左揃え
 align.center	中央揃え
 align.right	右揃え
@@ -172,7 +174,6 @@ _shell.black	黒
 _shell.red	赤
 _shell.blue	青
 _shell.green	緑
-_shell.type-a-comment-and-press-enter	コメントを入力して Enter
 _shell.reply	返信
 _shell.resolved	（解決済み）
 _shell.resolve	解決
@@ -334,7 +335,6 @@ _shell.picture-not-supported	画像（未対応）
 _shell.open	開く
 _shell.new-comment-m	コメントを追加（⌥⌘M）
 _shell.hide-comments	コメントを非表示
-_shell.hide-outline	概要を非表示
 _shell.hide-sidebar	サイドバーを非表示
 _shell.undo-z	元に戻す（⌘Z）
 _shell.redo-z	やり直し（⇧⌘Z）
@@ -471,6 +471,7 @@ _shell.copy-paragraph-format	段落書式をコピー
 _shell.paste-paragraph-format	段落書式を貼り付け
 _shell.copy-text-format	文字書式をコピー
 _shell.paste-text-format	文字書式を貼り付け
+_shell.crop-mode	トリミング
 _shell.crop-settings	トリミングの設定…
 _shell.upload-from-computer	パソコンからアップロード
 _shell.line-2	線
@@ -592,7 +593,6 @@ _shell.freeze	固定
 _shell.show-gridlines	グリッド線を表示
 _shell.show-formula-bar	数式バーを表示
 _shell.print-layout	印刷レイアウト
-_shell.show-outline	概要を表示
 _shell.zoom-in	拡大
 _shell.zoom-out	縮小
 _shell.fit-to-window	画面に合わせる
@@ -744,7 +744,7 @@ settings.editors.open-folder	フォルダーを開く
 settings.editors.reload	読み込み直す
 shell.autorecover.settings-title	自動回復の設定
 shell.autorecover.enable	自動回復用データを定期的に保存する
-shell.autorecover.minutes	保存の間隔（分、1〜120）
+shell.autorecover.minutes	保存の間隔
 shell.autorecover.keep	保存しないで閉じたとき、最後の自動回復を残す
 shell.autorecover.location	自動回復の保存先
 shell.autorecover.reset-location	既定の場所に戻す
@@ -813,6 +813,8 @@ shell.linux-desktop.no	登録しない
 _shell.comma-style	桁区切りスタイル
 _shell.font-recent	履歴
 _shell.font-system	システム フォント
+_shell.font-used	このファイルで使用
+_shell.font-all	すべて
 grammar.repeated-word	重複語
 grammar.repeated-punctuation	句読点の重複
 grammar.missing-space	空白の欠落
@@ -821,3 +823,114 @@ grammar.capitalization	文頭の大文字化
 editor.csv.loading-first	CSV を読み込み中... (100,000 行読み込み済み)
 editor.csv.loaded	CSV 読み込み完了 ({rows} 行)
 editor.csv.loading	CSV を読み込み中... ({rows} 行読み込み済み)
+shell.embed.download	ダウンロード
+shell.embed.close	閉じる
+settings.view.scrollbars-always	スクロール バーを常に表示する
+file.save-format.docx	Word 文書 (.docx)
+file.save-format.dotx	Word テンプレート (.dotx)
+file.save-format.odt	OpenDocument テキスト (.odt)
+file.save-format.xlsx	Excel ブック (.xlsx)
+file.save-format.xltx	Excel テンプレート (.xltx)
+file.save-format.xls	Excel 97-2003 ブック (.xls)
+file.save-format.ods	OpenDocument スプレッドシート (.ods)
+file.save-format.csv	CSV UTF-8 (.csv)
+file.save-format.tsv	テキスト（タブ区切り）(.tsv)
+file.save-format.pptx	PowerPoint プレゼンテーション (.pptx)
+file.save-format.ppsx	PowerPoint スライド ショー (.ppsx)
+file.save-format.potx	PowerPoint テンプレート (.potx)
+file.save-format.odp	OpenDocument プレゼンテーション (.odp)
+file.print-opened-pdf	PDF を既定のアプリで開きました
+menu.window	ウィンドウ
+window.open-in-word	Wordで開く
+window.open-in-excel	Excelで開く
+window.open-in-powerpoint	PowerPointで開く
+window.open-in-office.confirm-title	確認
+window.open-in-office.specify-path	{app}のパスを指定してください。
+
+_shell.find	検索
+
+ui.custom	カスタム
+ui.caption-label	ラベル
+ui.merge-row	宛先の編集
+ui.add	追加
+
+ui.tab-duplicate	同じタブ位置が登録されています。別の位置を指定してください。
+ui.merge-add-column	列（差し込みフィールド）を追加
+ui.merge-csv	CSVファイル読み込み
+ui.merge-manual	手動入力
+ui.merge-recipient	宛先
+
+field.browse	参照…
+field.minutes	分
+
+autocorrect.entry-title	置換ルールの編集
+autocorrect.entry-required	修正前を入力してください。
+autocorrect.entry-duplicate	同じ修正前のルールがあります。既存のルールを編集してください。
+
+hyperlink.menu	ハイパーリンク
+hyperlink.open	リンクを開く
+hyperlink.edit	リンクを編集…
+hyperlink.remove	リンクを削除
+
+autocorrect.tab.settings	設定
+autocorrect.tab.dictionary	補正辞書
+theme.custom-editor	カスタム配色の編集
+theme.palette-list	配色
+math.editor.title	数式
+math.editor.hint	数式（UnicodeMath または LaTeX）を入力
+ink.panel.title	描画（インク）
+ink.panel.tools	描画ツール
+ink.panel.width	太さ
+ink.panel.color	色
+ink.panel.effects	インク効果
+theme.custom-scheme	カスタム配色
+ink.panel.mouse	マウスで描画する
+
+shell.action.ok	OK
+
+start.recent.remove	解除
+shell.row.actions	その他の操作
+
+color.palette.more	その他の色...
+color.dialog.title	色選択
+color.dialog.invalid	色は6桁の16進数で指定してください
+
+shell.start-window	スタートウィンドウ
+shell.file-changed.message	他のアプリからファイルが更新されました。読み込み直しますか？
+shell.file-changed.yes	はい
+shell.file-changed.no	いいえ
+shell.file-changed.discard	今の変更を破棄して読み込み直す
+shell.file-changed.save-as	名前をつけて保存して開く
+shell.save-failed.title	保存できませんでした
+shell.comments.post	投稿
+shell.comments.post-tip-mac	投稿 (⌘Enter)
+shell.comments.post-tip-other	投稿 (Ctrl+Enter)
+shell.comments.save-tip-mac	保存 (⌘Enter)
+shell.comments.save-tip-other	保存 (Ctrl+Enter)
+shell.comments.cancel	キャンセル
+shell.comments.reply	返信
+shell.comments.edit	編集
+shell.comments.resolve	解決
+shell.comments.reopen	再開
+shell.comments.delete	削除
+shell.comments.resolved	解決済み
+shell.comments.reply-prompt	返信
+shell.comments.edit-prompt	コメントを編集
+shell.comments.empty	コメントはありません
+shell.comments.delete-title	コメントの削除
+shell.comments.delete-message	コメントを削除しますか？（返信もすべて削除されます）
+shell.comments.new-cell	セル {cell} へのコメント
+shell.comments.new-selection	選択した箇所へのコメント
+shell.comments.new-shape	選択した図形へのコメント
+shell.comments.new-slide	スライドへのコメント
+shell.comments.hint-select-text	文字を選択してから 挿入 > コメント
+shell.comments.hint-insert	挿入 > コメントで新しいコメント
+shell.comments.no-selection	選択範囲がありません。先に単語や文を選択してから追加してください。
+shell.comments.title	コメント
+shell.comments.placeholder	コメントを入力
+shell.comments.save-hint-mac	+Enterで保存
+shell.comments.save-hint-other	Ctrl+Enterで保存
+shell.menu-search.history	履歴
+shell.menu-search.commands	コマンド
+file.modify-locked-no-overwrite	書き込みパスワードが必要なため、このファイルには上書きできません。名前を付けて保存してください
+start.update	ibisOffice を更新する

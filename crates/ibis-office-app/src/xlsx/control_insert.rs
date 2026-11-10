@@ -11,9 +11,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{Command, ControlKind, EmuRect, FormControl, Shape, ShapeId, ShapeKind, SheetCommand};
 
 use crate::shell::chrome::{MenuEntry, MenuItem, SidebarPanel};
@@ -184,7 +185,7 @@ impl SlideEditor {
             ui: Default::default(),
         };
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.control_properties = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -263,7 +264,14 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                        ui.borrow_mut().insert(id.clone(), bounds);
+                    })
+        };
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
 
         // 表示テキスト・文字の書式 (Button, CheckBox, Radio, GroupBox, Label)
         if matches!(
@@ -275,49 +283,26 @@ impl SlideEditor {
                 | ControlKind::Label
         ) {
             body = body
-                .child(div().text_size(px(12.)).child(text("xlsx.control-properties.text")))
-                .child(mark("text", Input::new(&p.text).small().into_any_element()))
-                .child(div().text_size(px(12.)).child(text("xlsx.control-properties.font")))
-                .child(mark("font", Input::new(&p.font).small().into_any_element()))
-                .child(div().text_size(px(12.)).child(text("xlsx.control-properties.font-size")))
-                .child(mark("font_size", Input::new(&p.font_size).small().into_any_element()))
-                .child(div().text_size(px(12.)).child(text("xlsx.control-properties.text-color")))
-                .child(mark("text_color", Input::new(&p.text_color).small().into_any_element()))
-                .child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(mark(
-                            "bold",
-                            {
-                                let btn = Button::new("control-prop-bold")
-                                    .small()
-                                    .label(text("xlsx.text.bold"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(p) = this.wb_mut().panels.control_properties.as_mut() {
-                                            p.bold = !p.bold;
-                                        }
-                                        cx.notify();
-                                    }));
-                                if bold { btn.primary() } else { btn }.into_any_element()
-                            },
-                        ))
-                        .child(mark(
-                            "italic",
-                            {
-                                let btn = Button::new("control-prop-italic")
-                                    .small()
-                                    .label(text("xlsx.text.italic"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(p) = this.wb_mut().panels.control_properties.as_mut() {
-                                            p.italic = !p.italic;
-                                        }
-                                        cx.notify();
-                                    }));
-                                if italic { btn.primary() } else { btn }.into_any_element()
-                            },
-                        )),
-                );
+                .child(div().text_sm().child(text("xlsx.control-properties.text")))
+                .child(mark("text", crate::shell::chrome::text_field(&p.text).full_width().into_any_element()))
+                .child(div().text_sm().child(text("xlsx.control-properties.font")))
+                .child(mark("font", crate::shell::chrome::panel_font_dropdown("panel-font-xlsx-control-insert-1",&p.font,cx).into_any_element()))
+                .child(mark("font_size", crate::shell::chrome::text_field_row(text("xlsx.control-properties.font-size"),
+                    crate::shell::chrome::text_field(&p.font_size).unit("pt", px(20.)).spinner("control-prop-font-size", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 409.0), cx, |_, _, _, _| {})).into_any_element()))
+                .child(crate::shell::chrome::color_row(text("xlsx.control-properties.text-color"),
+                    mark("text_color", crate::shell::chrome::panel_color_field("panel-color-xlsx-control-insert-2",&p.text_color,cx))))
+                .child(mark("style", crate::shell::chrome::toolbar_row(text("_shell.style"), [
+                    crate::shell::chrome::ToolbarItem::icon("control-prop-bold", "format_bold").on(bold).tooltip(text("xlsx.text.bold"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(p) = this.wb_mut().panels.control_properties.as_mut() { p.bold = !p.bold; }
+                            cx.notify();
+                        })),
+                    crate::shell::chrome::ToolbarItem::icon("control-prop-italic", "format_italic").on(italic).tooltip(text("xlsx.text.italic"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(p) = this.wb_mut().panels.control_properties.as_mut() { p.italic = !p.italic; }
+                            cx.notify();
+                        })),
+                ]).into_any_element()));
         }
 
         // リンクするセル (CheckBox, Radio, Scroll, Spin, Drop, List)
@@ -331,30 +316,30 @@ impl SlideEditor {
                 | ControlKind::List
         ) {
             body = body
-                .child(div().text_size(px(12.)).child(text("xlsx.control-properties.link")))
-                .child(mark("link", Input::new(&p.link).small().into_any_element()));
+                .child(div().text_sm().child(text("xlsx.control-properties.link")))
+                .child(mark("link", super::range_field::local_range_field(&p.link,"control_insert-p-link",true,cx).into_any_element()));
         }
 
         // 入力範囲 (Drop, List)
         if matches!(kind, ControlKind::Drop | ControlKind::List) {
             body = body
-                .child(div().text_size(px(12.)).child(text("xlsx.control-properties.range")))
-                .child(mark("range", Input::new(&p.range).small().into_any_element()));
+                .child(div().text_sm().child(text("xlsx.control-properties.range")))
+                .child(mark("range", super::range_field::local_range_field(&p.range,"control_insert-p-range",false,cx).into_any_element()));
         }
 
         // 最小値・最大値・増分・ページ変化量 (Scroll, Spin)
         if matches!(kind, ControlKind::Scroll | ControlKind::Spin) {
             body = body
-                .child(div().text_size(px(12.)).child(text("xlsx.control-properties.min")))
-                .child(mark("min", Input::new(&p.min).small().into_any_element()))
-                .child(div().text_size(px(12.)).child(text("xlsx.control-properties.max")))
-                .child(mark("max", Input::new(&p.max).small().into_any_element()))
-                .child(div().text_size(px(12.)).child(text("xlsx.control-properties.step")))
-                .child(mark("step", Input::new(&p.step).small().into_any_element()));
+                .child(div().text_sm().child(text("xlsx.control-properties.min")))
+                .child(mark("min", control_spin(&p.min, "control-prop-min", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 30000.0).integer_only(), cx).into_any_element()))
+                .child(div().text_sm().child(text("xlsx.control-properties.max")))
+                .child(mark("max", control_spin(&p.max, "control-prop-max", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 30000.0).integer_only(), cx).into_any_element()))
+                .child(div().text_sm().child(text("xlsx.control-properties.step")))
+                .child(mark("step", control_spin(&p.step, "control-prop-step", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 30000.0).integer_only(), cx).into_any_element()));
             if kind == ControlKind::Scroll {
                 body = body
-                    .child(div().text_size(px(12.)).child(text("xlsx.control-properties.page")))
-                    .child(mark("page", Input::new(&p.page).small().into_any_element()));
+                    .child(div().text_sm().child(text("xlsx.control-properties.page")))
+                    .child(mark("page", control_spin(&p.page, "control-prop-page", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 30000.0).integer_only(), cx).into_any_element()));
             }
         }
 
@@ -370,7 +355,7 @@ impl SlideEditor {
             body = body.child(mark(
                 "three_d",
                 {
-                    let btn = Button::new("control-prop-three-d")
+                    let btn = crate::shell::chrome::action_button("control-prop-three-d")
                         .small()
                         .label(text("xlsx.control-properties.three-d"))
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -385,33 +370,13 @@ impl SlideEditor {
         }
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xD9534F)).child(SharedString::from(p.message.clone())));
+            body = body.child(div().text_sm().text_color(rgb(0xD9534F)).child(SharedString::from(p.message.clone())));
         }
-
-        body = body.child(mark(
-            "apply",
-            Button::new("control-properties-ok")
-                .primary()
-                .small()
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("control-properties-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .label(text("OK"))
-                .on_click(cx.listener(|this, _, _, cx| this.apply_control_properties_panel(cx)))
-                .into_any_element(),
-        ));
-        body = body.child(mark(
-            "close",
-            Button::new("control-properties-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.control_properties = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        Some(SidebarPanel {
-            title: text("xlsx.control-properties.title"),
-            body: body.into_any_element(),
-        })
+                .on_click(cx.listener(|this, _, _, cx| this.apply_control_properties_panel(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("xlsx.control-properties.title"), body.into_any_element(), panel_terminal_actions))
     }
 
     pub(crate) fn is_design_mode_active(&self) -> bool {
@@ -518,4 +483,10 @@ mod tests {
             }
         }
     }
+}
+
+/// A number box of the control's properties with ▲▼ (Excel's limits: 0–30000 for the values, 1–30000 for the steps).
+/// The panel applies from its OK button, not on Enter, so a step only changes the box.
+fn control_spin(input: &Entity<InputState>, id: &'static str, spec: crate::shell::chrome::SpinnerSpec, cx: &Context<SlideEditor>) -> crate::shell::chrome::TextField {
+    crate::shell::chrome::text_field(input).full_width().spinner(id, spec, cx, |_, _, _, _| {})
 }

@@ -6,7 +6,8 @@
 
 use std::sync::Arc;
 
-use gpui_kit::{Context, TextSystem, rgb};
+use gpui_kit::{Context, TextSystem};
+use crate::shell::palette::rgb;
 use ibis_doc_model::{CellStyle, Command, EMU_PER_POINT, Presentation, Shape, ShapeId, ShapeKind, Sheet, SheetCommand, SlideId};
 
 use crate::render::shape_view::Resources;
@@ -46,13 +47,20 @@ pub(crate) fn fit_built_pivots(presentation: &mut Presentation, res: &Resources,
             }
             let widths = fitted(sheet, default_size, res, ts);
             let sheet = Arc::make_mut(sheet);
-            for (column, width) in widths {
-                if let Some(w) = sheet.columns.get_mut(column as usize)
-                    && *w > 0
-                {
-                    *w = width;
-                }
-            }
+            set_fitted_widths(sheet, widths);
+        }
+    }
+}
+
+/// Puts the widths a pivot table was fitted to in the sheet. They are written to the file (Excel saves them, with `customWidth`),
+/// so the sheet marks them as the file's own and a drawing anchored to a cell stays where it was.
+fn set_fitted_widths(sheet: &mut Sheet, widths: Vec<(u32, ibis_doc_model::Emu)>) {
+    for (column, width) in widths {
+        if let Some(w) = sheet.columns.get_mut(column as usize)
+            && *w > 0
+        {
+            *w = width;
+            sheet.custom_columns.insert(column);
         }
     }
 }
@@ -203,13 +211,8 @@ impl SlideEditor {
             if before.is_some_and(|old| covers_others(&old, &sheet, index)) {
                 return self.refuse_overlap(cx);
             }
-            for (column, width) in fitted_for(&sheet, &[index], default_size, &self.resources, &ts) {
-                if let Some(w) = sheet.columns.get_mut(column as usize)
-                    && *w > 0
-                {
-                    *w = width;
-                }
-            }
+            let fitted_widths = fitted_for(&sheet, &[index], default_size, &self.resources, &ts);
+        set_fitted_widths(&mut sheet, fitted_widths);
             if let Some(s) = work.slide_mut(slide)
                 && let Some(ShapeKind::Sheet(target)) = s.shapes.iter_mut().map(|sh| &mut sh.kind).find(|k| matches!(k, ShapeKind::Sheet(_)))
             {
@@ -299,15 +302,13 @@ pub(crate) fn menu_items() -> Vec<MenuEntry> {
         ]).into(),
         MenuItem::tr("xlsx.pivot-change-data-source").on(|this, window, cx| this.open_pivot_change_source(window, cx)).into(),
         MenuItem::tr("xlsx.pivot-drill-buttons").on(|this, _, cx| this.toggle_pivot_drill_buttons(cx)).into(),
-        MenuItem::tr("xlsx.pivot-clear").on(|this, _, cx| this.clear_pivot_fields(cx)).into(),
-        MenuItem::tr("xlsx.pivot-select").on(|this, _, cx| this.select_entire_pivot(cx)).into(),
+        MenuItem::tr("xlsx.pivot-expand-field").on(|this, _, cx| this.set_pivot_selected_field_collapsed(false, cx)).into(),
+        MenuItem::tr("xlsx.pivot-collapse-field").on(|this, _, cx| this.set_pivot_selected_field_collapsed(true, cx)).into(),
         MenuItem::tr("xlsx.pivot-move").on(|this, window, cx| this.open_pivot_move(window, cx)).into(),
-        MenuItem::tr("xlsx.pivot-blank-rows").on(|this, _, cx| this.toggle_pivot_blank_rows(cx)).into(),
         MenuItem::tr("xlsx.pivot-row-headers").on(|this, _, cx| this.toggle_pivot_row_headers(cx)).into(),
         MenuItem::tr("xlsx.pivot-col-headers").on(|this, _, cx| this.toggle_pivot_col_headers(cx)).into(),
         MenuItem::new("xlsx.pivot-banded-rows", text("_xlsx.banded-rows")).on(|this, _, cx| this.toggle_pivot_banded_rows(cx)).into(),
         MenuItem::new("xlsx.pivot-banded-columns", text("_xlsx.banded-columns")).on(|this, _, cx| this.toggle_pivot_banded_columns(cx)).into(),
-        MenuItem::tr("xlsx.pivot-styles").on(|this, _, cx| this.set_pivot_style("PivotStyleLight16", cx)).into(),
         Submenu::new("xlsx.pivot-styles-menu", "palette", text("xlsx.pivot-styles"), pivot_style_items()).into(),
         Submenu::new("xlsx.pivot-report-layout", "table_rows", text("_xlsx.pivot-layout-updated"), vec![
             MenuItem::new("xlsx.pivot-layout-compact", text("_xlsx.pivot-compact-layout")).on(|this, _, cx| this.set_pivot_report_layout(PivotReportLayout::Compact, cx)).into(),
@@ -371,9 +372,9 @@ pub(crate) fn pivot_style_items() -> Vec<MenuEntry> {
 
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::{AppContext as _, Entity, FontWeight, IntoElement as _, ParentElement as _, SharedString, Styled as _, Window, div, px};
 use ibis_doc_model::{PivotAxis, PivotSource, PivotTable};
@@ -396,9 +397,8 @@ pub(crate) struct PivotPanel {
     /// Selected row/col field for field settings (subtotals, layout).
     pub(crate) field_selected: Option<(PivotAxis, usize)>,
     pub(crate) message: String,
-    /// 空白セルに表示する値 and エラー値に表示する値.
-    pub(crate) missing: Option<Entity<InputState>>,
-    pub(crate) error: Option<Entity<InputState>>,
+    /// What the fields pane keeps (the two tables, the search, the dialogs' drafts); `None` for the other panels.
+    pub(crate) ui: Option<super::pivot_fields::FieldsUi>,
 }
 
 pub(crate) struct CreatePivot {
@@ -434,7 +434,7 @@ impl SlideEditor {
         self.presentation().slides.iter().find(|s| s.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(name))).map(|s| s.id)
     }
 
-    fn show_pivot_panel(&mut self, panel: PivotPanel, cx: &mut Context<Self>) {
+    pub(crate) fn show_pivot_panel(&mut self, panel: PivotPanel, cx: &mut Context<Self>) {
         let s = self.wb_mut();
         s.custom_format = None;
         s.page_setup = false;
@@ -444,7 +444,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.pivot = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -464,7 +464,7 @@ impl SlideEditor {
         };
         let at = self.current_cell().map(|(c, r)| format!("{}!{}", quote_sheet(&sheet), ibis_doc_model::cell_name(c, r))).unwrap_or_default();
         let create = CreatePivot { source: input(source, window, cx), new_sheet: true, at: input(at, window, cx) };
-        self.show_pivot_panel(PivotPanel { create: Some(create), change_source: None, move_pivot: None, target: None, value: None, value_name: None, field_selected: None, message: String::new(), missing: None, error: None }, cx);
+        self.show_pivot_panel(PivotPanel { create: Some(create), change_source: None, move_pivot: None, target: None, value: None, value_name: None, field_selected: None, message: String::new(), ui: None }, cx);
     }
 
     /// データ > ピボットテーブルのフィールド: the panel of the table the
@@ -476,19 +476,12 @@ impl SlideEditor {
             return cx.notify();
         };
         let target = Some((self.current_slide, index));
-        let pivot = self.presentation().slide(self.current_slide).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { s.pivots.get(index).cloned() } else { None }));
-        let input = |t: String, window: &mut Window, cx: &mut Context<Self>| {
-            let state = cx.new(|cx| InputState::new(window, cx));
-            state.update(cx, |i, cx| i.set_value(t, window, cx));
-            state
-        };
-        let missing = input(pivot.as_ref().and_then(|p| p.missing_caption.clone()).unwrap_or_default(), window, cx);
-        let error = input(pivot.as_ref().and_then(|p| p.error_caption.clone()).unwrap_or_default(), window, cx);
-        self.show_pivot_panel(PivotPanel { create: None, change_source: None, move_pivot: None, target, value: None, value_name: None, field_selected: None, message: String::new(), missing: Some(missing), error: Some(error) }, cx);
+        let ui = super::pivot_fields::FieldsUi::new(window, cx);
+        self.show_pivot_panel(PivotPanel { create: None, change_source: None, move_pivot: None, target, value: None, value_name: None, field_selected: None, message: String::new(), ui: Some(ui) }, cx);
     }
 
-    /// データ > 値フィールドの設定…: the panel of the table the selected cell is in,
-    /// focused on the value field.
+    /// データ > 値フィールドの設定…: the fields pane of the table the selected cell is in, with the value field's
+    /// dialog over it.
     pub(crate) fn open_pivot_value_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let Some(index) = self.pivot_at_selection() else {
@@ -516,26 +509,9 @@ impl SlideEditor {
         } else {
             0
         };
-        let input = |t: String, window: &mut Window, cx: &mut Context<Self>| {
-            let state = cx.new(|cx| InputState::new(window, cx));
-            state.update(cx, |i, cx| i.set_value(t, window, cx));
-            state
-        };
-        let missing = input(pivot.missing_caption.clone().unwrap_or_default(), window, cx);
-        let error = input(pivot.error_caption.clone().unwrap_or_default(), window, cx);
-        let val_name = input(pivot.data_fields.get(val_pos).map(|d| d.name.clone()).unwrap_or_default(), window, cx);
-        self.show_pivot_panel(PivotPanel {
-            create: None,
-            change_source: None,
-            move_pivot: None,
-            target: Some(target),
-            value: Some(val_pos),
-            value_name: Some(val_name),
-            field_selected: None,
-            message: String::new(),
-            missing: Some(missing),
-            error: Some(error),
-        }, cx);
+        let ui = super::pivot_fields::FieldsUi::new(window, cx);
+        self.show_pivot_panel(PivotPanel { create: None, change_source: None, move_pivot: None, target: Some(target), value: None, value_name: None, field_selected: None, message: String::new(), ui: Some(ui) }, cx);
+        self.open_pivot_value_dialog(val_pos, window, cx);
     }
 
     /// データ > データ ソースの変更… (xlsx.pivot-change-data-source):
@@ -574,8 +550,7 @@ impl SlideEditor {
             value_name: None,
             field_selected: None,
             message: String::new(),
-            missing: None,
-            error: None,
+            ui: None,
         }, cx);
     }
 
@@ -657,11 +632,8 @@ impl SlideEditor {
         };
         let default_size = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref()).map_or(11.0, |s| s.font_size as f32 / 100.0);
         let ts = cx.text_system().clone();
-        for (column, width) in fitted_for(&sheet, &[index], default_size, &self.resources, &ts) {
-            if let Some(w) = sheet.columns.get_mut(column as usize) && *w > 0 {
-                *w = width;
-            }
-        }
+        let fitted_widths = fitted_for(&sheet, &[index], default_size, &self.resources, &ts);
+        set_fitted_widths(&mut sheet, fitted_widths);
         let mut commands = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet.clone()) })];
         if let Some(p) = sheet.pivots.get(index) {
             commands.extend(self.sync_pivot_charts_commands(slide, &sheet, p));
@@ -1010,11 +982,6 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// おすすめピボットテーブル (`xlsx.recommended-pivot-tables`)
-    pub(crate) fn open_recommended_pivot_tables(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_create_pivot(window, cx);
-    }
-
     /// 行の見出しの表示/非表示を切り替え (`xlsx.pivot-row-headers`)
     pub(crate) fn toggle_pivot_row_headers(&mut self, cx: &mut Context<Self>) {
         let Some(index) = self.pivot_at_selection() else {
@@ -1105,46 +1072,6 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// ピボットテーブルのフィールドを一括クリア (`xlsx.pivot-clear`)
-    pub(crate) fn clear_pivot_fields(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.pivot_at_selection() else {
-            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
-            return cx.notify();
-        };
-        let target = (self.current_slide, index);
-        self.change_pivot(target, |pivot| {
-            pivot.row_fields.clear();
-            pivot.col_fields.clear();
-            pivot.page_fields.clear();
-            pivot.data_fields.clear();
-            for f in &mut pivot.fields {
-                f.axis = None;
-                f.items.clear();
-            }
-        }, cx);
-        self.status = Some(text("_xlsx.pivot-fields-cleared").into());
-        cx.notify();
-    }
-
-    /// ピボットテーブル全体を選択 (`xlsx.pivot-select`)
-    pub(crate) fn select_entire_pivot(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.pivot_at_selection() else {
-            self.status = Some(text("_xlsx.select-a-cell-in-a-pivottable").into());
-            return cx.notify();
-        };
-        let loc = {
-            let Some((_, sheet)) = self.current_sheet() else { return };
-            let Some(pivot) = sheet.pivots.get(index) else { return };
-            pivot.location
-        };
-        let slide = self.current_slide;
-        let s = self.wb_mut();
-        s.cells.insert(slide, (loc.first_column, loc.first_row));
-        s.cell_ends.insert(slide, (loc.last_column, loc.last_row));
-        self.status = Some(text("_xlsx.pivot-table-selected").into());
-        cx.notify();
-    }
-
     /// ピボットテーブルの移動パネルを開く (`xlsx.pivot-move`)
     pub(crate) fn open_pivot_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
@@ -1168,8 +1095,7 @@ impl SlideEditor {
             value_name: None,
             field_selected: None,
             message: String::new(),
-            missing: None,
-            error: None,
+            ui: None,
         }, cx);
     }
 
@@ -1333,9 +1259,10 @@ impl SlideEditor {
         let name = format!("{}{}", text("_xlsx.pivottable"), count + 1);
         let source = PivotSource { sheet: Some(source_sheet), range: Some(range), name: source_name };
         let (slide, row, column) = if new_sheet {
-            // A new sheet before the current one, the table at A3, as Excel puts it.
+            // A new sheet after the current one, the table at A3.
             let Some(wb) = self.presentation().workbook.clone() else { return };
-            let index = wb.sheets.iter().position(|s| s.slide == Some(self.current_slide)).unwrap_or(0);
+            // Right of the current sheet (the user's decision, 2026-11-03).
+            let index = wb.sheets.iter().position(|s| s.slide == Some(self.current_slide)).map_or(0, |i| i + 1);
             let mut n = wb.sheets.len() + 1;
             let sheet_name = loop {
                 let name = format!("Sheet{n}");
@@ -1370,6 +1297,7 @@ impl SlideEditor {
         if slide != self.current_slide {
             self.select_slide(slide, window, cx);
         }
+        let ui = super::pivot_fields::FieldsUi::new(window, cx);
         let s = self.wb_mut();
         s.cells.insert(slide, (column, row));
         s.cell_ends.remove(&slide);
@@ -1377,7 +1305,11 @@ impl SlideEditor {
             p.create = None;
             p.target = Some((slide, index));
             p.message = String::new();
+            p.ui = Some(ui);
         }
+        // The fields are the cell's own pane from here: put away when the cell leaves the table (pivot_pane.rs).
+        s.pivot_pane.auto = Some(super::pivot_pane::Auto { slide, saved: None });
+        s.pivot_pane.dismissed = None;
         cx.notify();
     }
 
@@ -1468,11 +1400,8 @@ impl SlideEditor {
 
         let default_size = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref()).map_or(11.0, |s| s.font_size as f32 / 100.0);
         let ts = cx.text_system().clone();
-        for (column, width) in fitted_for(&sheet, &[pivot_index], default_size, &self.resources, &ts) {
-            if let Some(w) = sheet.columns.get_mut(column as usize) && *w > 0 {
-                *w = width;
-            }
-        }
+        let fitted_widths = fitted_for(&sheet, &[pivot_index], default_size, &self.resources, &ts);
+        set_fitted_widths(&mut sheet, fitted_widths);
 
         let command = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet) })];
         if let Err(err) = self.document.amend_last(command) {
@@ -1502,13 +1431,8 @@ impl SlideEditor {
         if sheet.pivots.get(index).is_none_or(|p| p.auto_fit_columns) {
             let default_size = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref()).map_or(11.0, |s| s.font_size as f32 / 100.0);
             let ts = cx.text_system().clone();
-            for (column, width) in fitted_for(&sheet, &[index], default_size, &self.resources, &ts) {
-                if let Some(w) = sheet.columns.get_mut(column as usize)
-                    && *w > 0
-                {
-                    *w = width;
-                }
-            }
+            let fitted_widths = fitted_for(&sheet, &[index], default_size, &self.resources, &ts);
+        set_fitted_widths(&mut sheet, fitted_widths);
         }
         let mut commands = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet.clone()) })];
         if let Some(p) = sheet.pivots.get(index) {
@@ -1524,11 +1448,16 @@ impl SlideEditor {
 
     /// Build `SetKind` commands to update all PivotCharts in the workbook linked to `pivot` on `pivot_slide`.
     fn sync_pivot_charts_commands(&self, pivot_slide: SlideId, sheet: &Sheet, pivot: &PivotTable) -> Vec<Command> {
+        let pivot_sheet_name = self.sheet_name_of(pivot_slide);
+        // Most tables have no PivotChart: building the table again only for the charts would be for nothing.
+        let linked = |c: &ibis_doc_model::Chart| ibis_doc_model::pivot::pivot_source_matches(c.pivot_source.as_deref(), pivot_sheet_name.as_deref(), &pivot.name);
+        if !self.presentation().slides.iter().flat_map(|s| &s.shapes).any(|sh| matches!(&sh.kind, ShapeKind::Chart(c) if linked(c))) {
+            return Vec::new();
+        }
         let Some(data) = ibis_pptx::pivot_source(self.presentation(), sheet, pivot) else {
             return Vec::new();
         };
         let built = pivot.build(&data);
-        let pivot_sheet_name = self.sheet_name_of(pivot_slide);
         let mut commands = Vec::new();
         for s in &self.presentation().slides {
             for sh in &s.shapes {
@@ -1622,12 +1551,23 @@ impl SlideEditor {
     }
 
     pub(crate) fn pivot_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        let fields = {
+            let p = self.sheet_state()?.panels.pivot.as_ref()?;
+            p.create.is_none() && p.change_source.is_none() && p.move_pivot.is_none()
+        };
+        let panel = self.render_pivot_panel(cx)?;
+        // The fields are a right pane (and their dialogs name themselves); the other three are dialogs.
+        Some(if fields { panel } else { panel.modal_named("pivot_panel") })
+    }
+
+    #[inline(never)]
+    fn render_pivot_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.sheet_state()?.panels.pivot.as_ref()?;
         let message = p.message.clone();
         if let Some(c) = &p.create {
             let new_sheet = c.new_sheet;
             let radio = |id: &'static str, on: bool, label: &str, value: bool| {
-                Button::new(id).small().label(format!("{} {}", if on { "◉" } else { "○" }, text(label))).on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::radio_button(id, on, false, text(label), cx.listener(move |this, _, _, cx| {
                     if let Some(c) = this.wb_mut().panels.pivot.as_mut().and_then(|p| p.create.as_mut()) {
                         c.new_sheet = value;
                     }
@@ -1638,346 +1578,46 @@ impl SlideEditor {
                 .gap_1()
                 .px(px(18.))
                 .py(px(8.))
-                .child(text("_xlsx.table-or-range"))
-                .child(Input::new(&c.source).small())
+                .p_0().child(text("_xlsx.table-or-range"))
+                .child(super::range_field::local_range_field(&c.source,"pivot-c-source",false,cx))
                 .child(text("_xlsx.where-to-place-the-pivottable"))
                 .child(radio("pivot-new-sheet", new_sheet, "_xlsx.new-worksheet", true))
                 .child(radio("pivot-existing", !new_sheet, "_xlsx.existing-worksheet", false))
-                .child(Input::new(&c.at).small())
-                .child(div().text_size(px(12.)).child(SharedString::from(message)))
-                .child(Button::new("pivot-create").primary().small().label(text("_xlsx.create")).on_click(cx.listener(|this, _, window, cx| this.create_pivot(window, cx))));
-            return Some(SidebarPanel { title: "_xlsx.create-pivottable".into(), body: body.into_any_element() });
+                .child(super::range_field::local_range_field(&c.at,"pivot-c-at",true,cx))
+                .child(div().text_sm().child(SharedString::from(message)))
+;
+            let footer=crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("pivot-create", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("_xlsx.create")).on_click(cx.listener(|e,_,w,cx|e.create_pivot(w,cx)))).action(crate::shell::chrome::dialog_cancel_definition(cx));
+            return Some(SidebarPanel::with_footer("_xlsx.create-pivottable",body.into_any_element(),footer));
         }
         if let Some(cs) = &p.change_source {
-            let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
-            let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+            let label = |s: &str| div().text_sm().child(s.to_string());
+            let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
             body = body.child(label(&crate::shell::i18n::text("xlsx.pivot-source-range")));
-            body = body.child(Input::new(&cs.source).small());
+            body = body.child(super::range_field::local_range_field(&cs.source,"pivot-change-source",false,cx));
             if !message.is_empty() {
-                body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(message));
+                body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(message));
             }
-            body = body.child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("xlsx-pivot-change-src-ok").primary().small().label("OK").on_click(cx.listener(|this, _, _, cx| this.apply_change_pivot_source(cx))))
-                    .child(Button::new("xlsx-pivot-change-src-cancel").small().ghost().label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_panel(cx))))
-            );
-            return Some(SidebarPanel { title: crate::shell::i18n::text("xlsx.pivot-change-data-source"), body: body.into_any_element() });
+            let footer = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("xlsx-pivot-change-src-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|this, _, _, cx| this.apply_change_pivot_source(cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("xlsx-pivot-change-src-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_panel(cx))))
+            ;
+            return Some(SidebarPanel::with_footer(crate::shell::i18n::text("xlsx.pivot-change-data-source"), body.into_any_element(), footer));
         }
         if let Some(mv) = &p.move_pivot {
-            let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
-            let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+            let label = |s: &str| div().text_sm().child(s.to_string());
+            let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
             body = body.child(label(&text("_xlsx.where-to-place-the-pivottable")));
-            body = body.child(Input::new(&mv.destination).small());
+            body = body.child(super::range_field::local_range_field(&mv.destination,"pivot-mv-destination",true,cx));
             if !message.is_empty() {
-                body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(message));
+                body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(message));
             }
-            body = body.child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("xlsx-pivot-move-ok").primary().small().label("OK").on_click(cx.listener(|this, _, window, cx| this.apply_move_pivot(window, cx))))
-                    .child(Button::new("xlsx-pivot-move-cancel").small().ghost().label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_panel(cx))))
-            );
-            return Some(SidebarPanel { title: crate::shell::i18n::text("xlsx.pivot-move"), body: body.into_any_element() });
+            let footer = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("xlsx-pivot-move-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|this, _, window, cx| this.apply_move_pivot(window, cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("xlsx-pivot-move-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_panel(cx))))
+            ;
+            return Some(SidebarPanel::with_footer(crate::shell::i18n::text("xlsx.pivot-move"), body.into_any_element(), footer));
         }
-        let target = p.target?;
-        let selected_value = p.value;
-        let selected_field = p.field_selected;
-        let pivot = self.presentation().slide(target.0).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { s.pivots.get(target.1).cloned() } else { None }))?;
-        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.)).child(text("_xlsx.choose-fields-to-add-to-the-report"));
-        for (i, f) in pivot.fields.iter().enumerate() {
-            let on = pivot.place_of(i).is_some();
-            body = body.child(
-                Button::new(SharedString::from(format!("pivot-field-{i}")))
-                    .small()
-                    .label(format!("{} {}", if on { "☑" } else { "☐" }, f.name))
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_pivot_field(target, i, cx))),
-            );
-        }
-        for (area, label) in AREAS {
-            body = body.child(div().pt(px(6.)).child(text(label)));
-            let entries: Vec<(usize, String)> = match area {
-                PivotAxis::Row => pivot.row_fields.iter().filter(|&&f| f >= 0).map(|&f| (f as usize, pivot.fields[f as usize].name.clone())).collect(),
-                PivotAxis::Column => pivot.col_fields.iter().map(|&f| if f < 0 { (usize::MAX, text("_xlsx.values-2").to_string()) } else { (f as usize, pivot.fields[f as usize].name.clone()) }).collect(),
-                PivotAxis::Page => pivot.page_fields.iter().map(|p| (p.field as usize, pivot.fields[p.field as usize].name.clone())).collect(),
-                PivotAxis::Values => pivot.data_fields.iter().map(|d| (d.field as usize, d.name.clone())).collect(),
-            };
-            for (pos, (f, name)) in entries.into_iter().enumerate() {
-                if f == usize::MAX {
-                    body = body.child(div().pl(px(8.)).text_size(px(12.)).child(SharedString::from(name)));
-                    continue;
-                }
-                let id = |s: &str| SharedString::from(format!("pivot-{label}-{pos}-{s}"));
-                let mut row = h_flex().gap_1().flex_wrap().pl(px(8.)).child(div().text_size(px(12.)).child(SharedString::from(name)));
-                if area == PivotAxis::Values {
-                    row = row.child(Button::new(id("fn")).small().label(text("fix.pivot.settings")).on_click(cx.listener(move |this, _, window, cx| {
-                        let current_name = if let Some(target) = this.sheet_state().and_then(|s| s.panels.pivot.as_ref()).and_then(|p| p.target) {
-                            this.presentation().slide(target.0).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { s.pivots.get(target.1).and_then(|p| p.data_fields.get(pos)).map(|d| d.name.clone()) } else { None })).unwrap_or_default()
-                        } else {
-                            String::new()
-                        };
-                        if let Some(p) = this.wb_mut().panels.pivot.as_mut() {
-                            if p.value == Some(pos) {
-                                p.value = None;
-                                p.value_name = None;
-                            } else {
-                                p.value = Some(pos);
-                                p.field_selected = None;
-                                let state = cx.new(|cx| InputState::new(window, cx));
-                                state.update(cx, |i, cx| i.set_value(current_name, window, cx));
-                                p.value_name = Some(state);
-                            }
-                        }
-                        cx.notify();
-                    })));
-                } else if area == PivotAxis::Row || area == PivotAxis::Column {
-                    row = row.child(Button::new(id("field-fn")).small().label(text("fix.pivot.settings")).on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().panels.pivot.as_mut() {
-                            p.value = None;
-                            p.value_name = None;
-                            p.field_selected = if p.field_selected == Some((area, pos)) { None } else { Some((area, pos)) };
-                        }
-                        cx.notify();
-                    })));
-                }
-                row = row
-                    .child(Button::new(id("up")).small().label("▲").on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, |p| p.place(f, Some(area), pos.saturating_sub(1)), cx))))
-                    .child(Button::new(id("down")).small().label("▼").on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, |p| p.place(f, Some(area), pos + 1), cx))));
-                for (other, other_label) in AREAS {
-                    if other == area || (area == PivotAxis::Values) != (other == PivotAxis::Values) && area == PivotAxis::Values {
-                        continue;
-                    }
-                    row = row.child(Button::new(id(other_label)).small().label(format!("→{}", text(other_label))).on_click(cx.listener(move |this, _, _, cx| {
-                        this.change_pivot(target, |p| {
-                            if area == PivotAxis::Values {
-                                p.place(f, None, 0);
-                            }
-                            p.place(f, Some(other), usize::MAX)
-                        }, cx)
-                    })));
-                }
-                row = row.child(Button::new(id("remove")).small().label("✕").on_click(cx.listener(move |this, _, _, cx| {
-                    this.change_pivot(target, |p| {
-                        if area == PivotAxis::Values {
-                            p.data_fields.retain(|d| d.field != f as u32);
-                            p.place(f, p.place_of(f).map(|(a, _)| a), usize::MAX);
-                        } else {
-                            p.place(f, None, 0);
-                        }
-                    }, cx)
-                })));
-                body = body.child(row);
-                if area == PivotAxis::Values && selected_value == Some(pos) {
-                    let current_df = pivot.data_fields.get(pos);
-                    let current_fn = current_df.map(|d| d.function.as_str()).unwrap_or("sum");
-                    let current_fmt = current_df.and_then(|d| d.number_format.as_deref()).unwrap_or("General");
-                    let current_show = current_df.and_then(|d| d.show_as.as_deref()).unwrap_or("normal");
-
-                    let mut settings = v_flex().gap_1().pl(px(16.)).pr(px(8.)).py(px(4.));
-
-                    // 1. 名前 (指定した名前)
-                    settings = settings.child(div().text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.name-custom-name")));
-                    if let Some(input_state) = self.sheet_state().and_then(|s| s.panels.pivot.as_ref()).and_then(|p| p.value_name.as_ref()) {
-                        let name_row = h_flex().gap_1().child(Input::new(input_state).small()).child(
-                            Button::new(id("apply-name")).small().label(text("_shell.apply")).on_click(cx.listener(move |this, _, _, cx| {
-                                let name = this.sheet_state().and_then(|s| s.panels.pivot.as_ref()).and_then(|p| p.value_name.as_ref()).map(|st| st.read(cx).value().to_string()).unwrap_or_default();
-                                this.change_pivot(target, |p| p.set_data_field_name(pos, &name), cx);
-                            }))
-                        );
-                        settings = settings.child(name_row);
-                    }
-
-                    // 2. 計算の種類 (集計方法)
-                    settings = settings.child(div().pt(px(2.)).text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.summarize-values-by")));
-                    let mut fn_choices = h_flex().gap_1().flex_wrap();
-                    for (function, label) in ibis_doc_model::pivot::FUNCTIONS {
-                        let is_active = current_fn == function;
-                        fn_choices = fn_choices.child(
-                            Button::new(id(function))
-                                .small()
-                                .label(format!("{} {}", if is_active { "◉" } else { "○" }, text(label)))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.change_pivot(target, |p| p.set_function(pos, function), cx);
-                                    let new_name = this.presentation().slide(target.0)
-                                        .and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { s.pivots.get(target.1) } else { None }))
-                                        .and_then(|p| p.data_fields.get(pos).map(|df| df.name.clone()));
-                                    if let Some(name) = new_name {
-                                        if let Some(inp) = this.wb_mut().panels.pivot.as_mut().and_then(|p| p.value_name.as_ref()) {
-                                            inp.update(cx, |i, cx| i.set_value(name, window, cx));
-                                        }
-                                    }
-                                }))
-                        );
-                    }
-                    settings = settings.child(fn_choices);
-
-                    // 3. 表示形式
-                    settings = settings.child(div().pt(px(2.)).text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.show-values-as")));
-                    const PIVOT_NUM_FORMATS: &[(&str, Option<&str>)] = &[
-                        ("_xlsx.general", None),
-                        ("_xlsx.number", Some("#,##0")),
-                        ("_xlsx.number-2-decimals", Some("#,##0.00")),
-                        ("_xlsx.currency", Some("\"¥\"#,##0;\"¥\"\\-#,##0")),
-                        ("_xlsx.percentage", Some("0.0%")),
-                        ("_xlsx.percentage-2-decimals", Some("0.00%")),
-                    ];
-                    let mut fmt_choices = h_flex().gap_1().flex_wrap();
-                    for (label, fmt_code) in PIVOT_NUM_FORMATS {
-                        let is_active = match fmt_code {
-                            None => current_fmt == "General" || current_df.and_then(|d| d.number_format.as_deref()).is_none(),
-                            Some(c) => current_fmt == *c,
-                        };
-                        let code_owned = fmt_code.map(str::to_string);
-                        fmt_choices = fmt_choices.child(
-                            Button::new(id(&format!("fmt-{}", label)))
-                                .small()
-                                .label(format!("{} {}", if is_active { "◉" } else { "○" }, text(label)))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let code = code_owned.clone();
-                                    this.change_pivot(target, |p| p.set_number_format(pos, code), cx);
-                                }))
-                        );
-                    }
-                    settings = settings.child(fmt_choices);
-
-                    // 4. 計算の種類 (値の表示方法 / 比率)
-                    settings = settings.child(div().pt(px(2.)).text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.calculation-type-show-values-as")));
-                    const SHOW_AS_OPTIONS: &[(&str, Option<&str>)] = &[
-                        ("_xlsx.no-calculation", None),
-                        ("_xlsx.of-grand-total", Some("percentOfTotal")),
-                        ("_xlsx.of-column-total", Some("percentOfCol")),
-                        ("_xlsx.of-row-total", Some("percentOfRow")),
-                    ];
-                    let mut show_choices = h_flex().gap_1().flex_wrap();
-                    for (label, show_mode) in SHOW_AS_OPTIONS {
-                        let is_active = match show_mode {
-                            None => current_show == "normal" || current_df.and_then(|d| d.show_as.as_deref()).is_none(),
-                            Some(m) => current_show == *m,
-                        };
-                        let mode_owned = show_mode.map(str::to_string);
-                        show_choices = show_choices.child(
-                            Button::new(id(&format!("show-{}", label)))
-                                .small()
-                                .label(format!("{} {}", if is_active { "◉" } else { "○" }, text(label)))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let mode = mode_owned.clone();
-                                    this.change_pivot(target, |p| p.set_show_as(pos, mode), cx);
-                                }))
-                        );
-                    }
-                    settings = settings.child(show_choices);
-
-                    body = body.child(settings);
-                }
-                if (area == PivotAxis::Row || area == PivotAxis::Column) && selected_field == Some((area, pos)) {
-                    if let Some(target_field) = pivot.fields.get(f) {
-                        let mut field_settings = v_flex().gap_1().pl(px(16.)).pr(px(8.)).py(px(4.));
-
-                        // 1. 小計設定
-                        field_settings = field_settings.child(div().text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.subtotals")));
-                        let subtotal_on = target_field.default_subtotal;
-                        let subtotal_top = target_field.subtotal_top;
-                        field_settings = field_settings.child(
-                            Button::new(id("toggle-subtotal"))
-                                .small()
-                                .label(format!("{} {}", if subtotal_on { "☑" } else { "☐" }, text("_xlsx.show-subtotals")))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.change_pivot(target, |p| {
-                                        if let Some(fld) = p.fields.get_mut(f) {
-                                            fld.default_subtotal = !fld.default_subtotal;
-                                        }
-                                    }, cx);
-                                }))
-                        );
-                        if subtotal_on {
-                            field_settings = field_settings.child(
-                                Button::new(id("toggle-subtotal-top"))
-                                    .small()
-                                    .label(format!("{} {}", if subtotal_top { "☑" } else { "☐" }, text("_xlsx.show-subtotals-at-top-of-group")))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.change_pivot(target, |p| {
-                                            if let Some(fld) = p.fields.get_mut(f) {
-                                                fld.subtotal_top = !fld.subtotal_top;
-                                            }
-                                        }, cx);
-                                    }))
-                            );
-                        }
-
-                        // 2. レイアウト形式
-                        field_settings = field_settings.child(div().pt(px(2.)).text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.layout")));
-                        let is_compact = target_field.compact;
-                        let is_outline = target_field.outline;
-                        let layout_kind = if is_compact {
-                            ReportLayout::Compact
-                        } else if is_outline {
-                            ReportLayout::Outline
-                        } else {
-                            ReportLayout::Tabular
-                        };
-
-                        let mut layout_choices = h_flex().gap_1().flex_wrap();
-                        for (lid, llabel, lkind) in [
-                            ("compact", "_xlsx.compact-form", ReportLayout::Compact),
-                            ("outline", "_xlsx.outline-form", ReportLayout::Outline),
-                            ("tabular", "_xlsx.tabular-form", ReportLayout::Tabular),
-                        ] {
-                            let active = layout_kind == lkind;
-                            layout_choices = layout_choices.child(
-                                Button::new(id(lid))
-                                    .small()
-                                    .label(format!("{} {}", if active { "◉" } else { "○" }, text(llabel)))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.change_pivot(target, |p| {
-                                            if let Some(fld) = p.fields.get_mut(f) {
-                                                fld.compact = lkind == ReportLayout::Compact;
-                                                fld.outline = lkind != ReportLayout::Tabular;
-                                            }
-                                        }, cx);
-                                    }))
-                            );
-                        }
-                        field_settings = field_settings.child(layout_choices);
-                        let repeat_labels = target_field.fill_down_labels.unwrap_or(pivot.fill_down_labels);
-                        field_settings = field_settings.child(
-                            Button::new(id("toggle-repeat-labels"))
-                                .small()
-                                .label(format!("{} {}", if repeat_labels { "☑" } else { "☐" }, text("_xlsx.repeat-item-labels")))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.change_pivot(target, |p| {
-                                        let table_default = p.fill_down_labels;
-                                        if let Some(fld) = p.fields.get_mut(f) {
-                                            let next = !fld.fill_down_labels.unwrap_or(table_default);
-                                            fld.fill_down_labels = Some(next);
-                                        }
-                                    }, cx);
-                                }))
-                        );
-                        let blank_row = target_field.insert_blank_row;
-                        field_settings = field_settings.child(
-                            Button::new(id("toggle-blank-row"))
-                                .small()
-                                .label(format!("{} {}", if blank_row { "☑" } else { "☐" }, text("xlsx.pivot-blank-rows")))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.change_pivot(target, |p| {
-                                        if let Some(fld) = p.fields.get_mut(f) {
-                                            fld.insert_blank_row = !fld.insert_blank_row;
-                                        }
-                                    }, cx);
-                                }))
-                        );
-
-                        body = body.child(field_settings);
-                    }
-                }
-            }
-        }
-        body = body.child(self.pivot_design_section(&pivot, target, cx));
-        body = body.child(div().text_size(px(12.)).child(SharedString::from(message))).child(Button::new("pivot-close").small().label(text("_shell.close")).on_click(cx.listener(|this, _, _, cx| {
-            this.wb_mut().panels.pivot = None;
-            cx.notify();
-        })));
-        Some(SidebarPanel { title: "xlsx.pivot-fields".into(), body: body.into_any_element() })
+        self.pivot_fields_dispatch(cx)
     }
 }
 
@@ -2015,142 +1655,6 @@ fn subtotals_of(p: &PivotTable) -> Subtotals {
         Some(f) if !f.default_subtotal => Subtotals::Off,
         Some(f) if f.subtotal_top => Subtotals::Top,
         _ => Subtotals::Bottom,
-    }
-}
-
-impl SlideEditor {
-    /// デザイン: レポートのレイアウト, 小計, 総計, 項目ラベルの繰り返し, 空行の挿入, スタイル オプション, スタイル, and the captions of empty and error values.
-    fn pivot_design_section(&mut self, pivot: &PivotTable, target: (SlideId, usize), cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let mark = |on: bool| if on { "◉" } else { "○" };
-        let check = |on: bool| if on { "☑" } else { "☐" };
-        let layout = layout_of(pivot);
-        let subtotals = subtotals_of(pivot);
-        let blank_rows = pivot.fields.iter().filter(|f| f.axis == Some(PivotAxis::Row)).any(|f| f.insert_blank_row);
-        let mut body = v_flex().gap_1().pt(px(8.)).child(div().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(text("_shell.layout")));
-        let mut layouts = h_flex().gap_1().flex_wrap();
-        for (id, label, kind) in [("pivot-layout-compact", "_xlsx.show-in-compact-form", ReportLayout::Compact), ("pivot-layout-outline", "_xlsx.show-in-outline-form", ReportLayout::Outline), ("pivot-layout-tabular", "_xlsx.show-in-tabular-form", ReportLayout::Tabular)] {
-            layouts = layouts.child(Button::new(id).small().label(format!("{} {}", mark(layout == kind), text(label))).on_click(cx.listener(move |this, _, _, cx| {
-                this.change_pivot(target, |p| {
-                    p.compact = kind == ReportLayout::Compact;
-                    p.outline = kind != ReportLayout::Tabular;
-                    for f in &mut p.fields {
-                        f.compact = p.compact;
-                        f.outline = p.outline;
-                    }
-                }, cx)
-            })));
-        }
-        body = body.child(layouts);
-        let mut subs = h_flex().gap_1().flex_wrap();
-        for (id, label, kind) in [("pivot-subtotal-off", "_xlsx.do-not-show-subtotals", Subtotals::Off), ("pivot-subtotal-bottom", "_xlsx.show-all-subtotals-at-bottom-of-group", Subtotals::Bottom), ("pivot-subtotal-top", "_xlsx.show-all-subtotals-at-top-of-group", Subtotals::Top)] {
-            subs = subs.child(Button::new(id).small().label(format!("{} {}", mark(subtotals == kind), text(label))).on_click(cx.listener(move |this, _, _, cx| {
-                this.change_pivot(target, |p| {
-                    for f in &mut p.fields {
-                        f.default_subtotal = kind != Subtotals::Off;
-                        f.subtotal_top = kind == Subtotals::Top;
-                    }
-                }, cx)
-            })));
-        }
-        body = body.child(subs);
-        body = body
-            .child(Button::new("pivot-grand-rows").small().label(format!("{} {}", check(pivot.row_grand_totals), text("_xlsx.show-grand-total-row"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, |p| p.row_grand_totals = !p.row_grand_totals, cx))))
-            .child(Button::new("pivot-grand-cols").small().label(format!("{} {}", check(pivot.col_grand_totals), text("_xlsx.show-grand-total-column"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, |p| p.col_grand_totals = !p.col_grand_totals, cx))))
-            .child(Button::new("pivot-fill-down").small().label(format!("{} {}", check(pivot.fill_down_labels), text("_xlsx.repeat-all-item-labels"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, |p| {
-                p.fill_down_labels = !p.fill_down_labels;
-                for f in &mut p.fields {
-                    f.fill_down_labels = None;
-                }
-            }, cx))))
-            .child(Button::new("pivot-blank-rows").small().label(format!("{} {}", check(blank_rows), text("xlsx.pivot-blank-rows"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
-                for f in &mut p.fields {
-                    if f.axis == Some(PivotAxis::Row) {
-                        f.insert_blank_row = !blank_rows;
-                    }
-                }
-            }, cx))));
-        let (row_headers, col_headers, banded_rows, banded_cols, cur_style) = match pivot.style.as_ref() {
-            Some(st) => (st.row_headers, st.col_headers, st.row_stripes, st.col_stripes, st.name.as_str()),
-            None => (true, true, false, false, ""),
-        };
-        let mut style_opts = h_flex().gap_1().flex_wrap();
-        style_opts = style_opts
-            .child(Button::new("pivot-row-headers").small().label(format!("{} {}", check(row_headers), text("xlsx.pivot-row-headers"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
-                let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: "PivotStyleLight16".into(), row_headers: true, col_headers: true, ..Default::default() });
-                st.row_headers = !row_headers;
-            }, cx))))
-            .child(Button::new("pivot-col-headers").small().label(format!("{} {}", check(col_headers), text("xlsx.pivot-col-headers"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
-                let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: "PivotStyleLight16".into(), row_headers: true, col_headers: true, ..Default::default() });
-                st.col_headers = !col_headers;
-            }, cx))))
-            .child(Button::new("pivot-banded-rows").small().label(format!("{} {}", check(banded_rows), text("_xlsx.banded-rows"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
-                let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: "PivotStyleLight16".into(), row_headers: true, col_headers: true, ..Default::default() });
-                st.row_stripes = !banded_rows;
-            }, cx))))
-            .child(Button::new("pivot-banded-columns").small().label(format!("{} {}", check(banded_cols), text("_xlsx.banded-columns"))).on_click(cx.listener(move |this, _, _, cx| this.change_pivot(target, move |p| {
-                let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: "PivotStyleLight16".into(), row_headers: true, col_headers: true, ..Default::default() });
-                st.col_stripes = !banded_cols;
-            }, cx))));
-        body = body
-            .child(div().pt(px(2.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child(text("_xlsx.table-style-options")))
-            .child(style_opts);
-        let mut style_buttons = h_flex().gap_1().flex_wrap();
-        for &(id, style_name, group_label) in &PIVOT_STYLES {
-            let btn_id = SharedString::from(id.replace("xlsx.pivot-style.", "pivot-style-"));
-            let label = if style_name.is_empty() {
-                text(group_label)
-            } else {
-                let num = style_name.trim_start_matches(|c: char| !c.is_ascii_digit());
-                SharedString::from(format!("{} {num}", text(group_label)))
-            };
-            let active = cur_style == style_name;
-            style_buttons = style_buttons.child(Button::new(btn_id).small().label(format!("{} {}", mark(active), label)).on_click(cx.listener(move |this, _, _, cx| {
-                this.change_pivot(target, move |p| {
-                    if style_name.is_empty() {
-                        p.style = None;
-                    } else {
-                        let st = p.style.get_or_insert_with(|| ibis_doc_model::pivot::PivotStyleInfo { name: style_name.to_string(), row_headers: true, col_headers: true, ..Default::default() });
-                        st.name = style_name.to_string();
-                    }
-                }, cx);
-            })));
-        }
-        body = body
-            .child(div().pt(px(2.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child(text("xlsx.pivot-styles")))
-            .child(style_buttons);
-        let inputs = self.sheet_state().and_then(|s| s.panels.pivot.as_ref()).map(|p| (p.missing.clone(), p.error.clone()));
-        if let Some((Some(missing), Some(error))) = inputs {
-            body = body
-                .child(text("_xlsx.for-empty-cells-show"))
-                .child(Input::new(&missing).small())
-                .child(text("_xlsx.for-error-values-show"))
-                .child(Input::new(&error).small())
-                .child(Button::new("pivot-captions").small().label(text("_xlsx.apply-captions")).on_click(cx.listener(move |this, _, _, cx| {
-                    let read = |this: &Self, pick: fn(&PivotPanel) -> Option<Entity<InputState>>, cx: &Context<Self>| this.sheet_state().and_then(|s| s.panels.pivot.as_ref()).and_then(pick).map(|e| e.read(cx).value().to_string()).unwrap_or_default();
-                    let (m, e) = (read(this, |p| p.missing.clone(), cx), read(this, |p| p.error.clone(), cx));
-                    this.change_pivot(target, move |p| {
-                        p.missing_caption = (!m.is_empty()).then_some(m);
-                        p.error_caption = (!e.is_empty()).then_some(e);
-                    }, cx)
-                })));
-        }
-        let show_drill = pivot.show_drill;
-        let mut actions = h_flex().gap_1().flex_wrap().pt(px(4.));
-        actions = actions
-            .child(Button::new("pivot-panel-drill-buttons").small().label(format!("{} {}", check(show_drill), text("xlsx.pivot-drill-buttons"))).on_click(cx.listener(move |this, _, _, cx| {
-                this.change_pivot(target, move |p| p.show_drill = !show_drill, cx);
-            })))
-            .child(Button::new("pivot-panel-change-source").small().label(text("xlsx.pivot-change-data-source")).on_click(cx.listener(|this, _, window, cx| this.open_pivot_change_source(window, cx))))
-            .child(Button::new("pivot-panel-move").small().label(text("xlsx.pivot-move")).on_click(cx.listener(|this, _, window, cx| this.open_pivot_move(window, cx))))
-            .child(Button::new("pivot-panel-clear-filters").small().label(text("xlsx.pivot-clear-filters")).on_click(cx.listener(|this, _, _, cx| this.clear_pivot_filters(cx))))
-            .child(Button::new("pivot-panel-clear-all").small().label(text("xlsx.pivot-clear-all")).on_click(cx.listener(|this, _, _, cx| this.clear_pivot_all(cx))))
-            .child(Button::new("pivot-panel-insert-chart").small().label(text("xlsx.pivot-chart-insert")).on_click(cx.listener(move |this, _, _, cx| {
-                this.insert_pivot_chart(target, cx);
-            })))
-            .child(Button::new("pivot-panel-insert-slicer").small().label(text("xlsx.slicer-insert")).on_click(cx.listener(|this, _, window, cx| this.open_slicer_insert_panel(window, cx))))
-            .child(Button::new("pivot-panel-insert-timeline").small().label(text("xlsx.timeline-insert")).on_click(cx.listener(|this, _, window, cx| this.open_timeline_insert_panel(window, cx))));
-        body = body.child(actions);
-        body.into_any_element()
     }
 }
 
@@ -2563,27 +2067,33 @@ impl SlideEditor {
         let top = d.kind == "count";
         let mut body = v_flex().gap_2().child(div().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(SharedString::from(format!("{} ({name})", text(title)))));
         if !d.label && p.data_fields.len() > 1 {
-            let mut choose = h_flex().gap_1().flex_wrap();
+            let mut choose = crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
             for (i, df) in p.data_fields.iter().enumerate() {
-                choose = choose.child(Button::new(SharedString::from(format!("pivot-dialog-measure-{i}"))).small().label(format!("{} {}", if d.measure == i { "◉" } else { "○" }, df.name)).on_click(cx.listener(move |this, _, _, cx| this.with_pivot_dialog(cx, |d| d.measure = i))));
+                choose = choose.child(crate::shell::chrome::radio_button(SharedString::from(format!("pivot-dialog-measure-{i}")), d.measure == i, false, df.name.clone(), cx.listener(move |this, _, _, cx| this.with_pivot_dialog(cx, |d| d.measure = i))));
             }
             body = body.child(div().child(text("_xlsx.values"))).child(choose);
         }
         if top {
             let kinds: [(&'static str, &str); 3] = [("count", "pptx.pivot.category"), ("percent", "_xlsx.percent-2"), ("sum", "_xlsx.sum")];
-            let mut unit = h_flex().gap_1();
+            let mut unit = crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
             for (kind, label) in kinds {
-                unit = unit.child(Button::new(SharedString::from(format!("pivot-dialog-{kind}"))).small().label(format!("{} {}", if d.top_kind == kind { "◉" } else { "○" }, text(label))).on_click(cx.listener(move |this, _, _, cx| this.with_pivot_dialog(cx, |d| d.top_kind = kind))));
+                unit = unit.child(crate::shell::chrome::radio_button(SharedString::from(format!("pivot-dialog-{kind}")), d.top_kind == kind, false, text(label), cx.listener(move |this, _, _, cx| this.with_pivot_dialog(cx, |d| d.top_kind = kind))));
             }
             body = body
-                .child(h_flex().gap_1().child(Button::new("pivot-dialog-top").small().label(format!("{} {}", if d.top { "◉" } else { "○" }, text("_xlsx.top"))).on_click(cx.listener(|this, _, _, cx| this.with_pivot_dialog(cx, |d| d.top = true)))).child(Button::new("pivot-dialog-bottom").small().label(format!("{} {}", if d.top { "○" } else { "◉" }, text("_xlsx.bottom"))).on_click(cx.listener(|this, _, _, cx| this.with_pivot_dialog(cx, |d| d.top = false)))))
-                .child(Input::new(&d.values[0]).small())
+                .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow).child(crate::shell::chrome::radio_button("pivot-dialog-top", d.top, false, text("_xlsx.top"), cx.listener(|this, _, _, cx| this.with_pivot_dialog(cx, |d| d.top = true)))).child(crate::shell::chrome::radio_button("pivot-dialog-bottom", !(d.top), false, text("_xlsx.bottom"), cx.listener(|this, _, _, cx| this.with_pivot_dialog(cx, |d| d.top = false)))))
+                .child(match d.top_kind {
+                    // トップテン: how many items (1–500) or what percent (1–100) to show, read when OK is pressed. A sum is any value.
+                    "count" | "percent" => crate::shell::chrome::text_field(&d.values[0])
+                        .full_width()
+                        .spinner("pivot-dialog-top-value", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, if d.top_kind == "count" { 500.0 } else { 100.0 }).integer_only(), cx, |_, _, _, _| {}),
+                    _ => crate::shell::chrome::text_field(&d.values[0]).full_width(),
+                })
                 .child(unit);
         } else {
             let label = LABEL_FILTERS.iter().chain(VALUE_FILTERS).find(|(_, k)| *k == d.kind).map_or("", |(l, _)| l.trim_end_matches('…'));
-            body = body.child(div().child(text(label))).child(Input::new(&d.values[0]).small());
+            body = body.child(div().child(text(label))).child(crate::shell::chrome::text_field(&d.values[0]).full_width());
             if d.kind.ends_with("Between") {
-                body = body.child(div().child(text("_xlsx.and"))).child(Input::new(&d.values[1]).small());
+                body = body.child(div().child(text("_xlsx.and"))).child(crate::shell::chrome::text_field(&d.values[1]).full_width());
             }
             if d.label {
                 body = body.child(div().text_color(theme.muted_foreground).child(text("_xlsx.use-to-represent-any-single-character-use-to-rep")));
@@ -2591,12 +2101,9 @@ impl SlideEditor {
         }
         body.when_some(d.error.clone(), |b, e| b.child(div().text_color(theme.danger).child(e)))
             .child(
-                h_flex()
-                    .gap_2()
-                    .justify_end()
-                    .pt_1()
-                    .child(Button::new("pivot-dialog-ok").primary().small().label("OK").on_click(cx.listener(|this, _, _, cx| this.pivot_popup_dialog_ok(cx))))
-                    .child(Button::new("pivot-dialog-cancel").small().label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_dialog(cx)))),
+                crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("pivot-dialog-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|this, _, _, cx| this.pivot_popup_dialog_ok(cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("pivot-dialog-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_dialog(cx)))))),
             )
             .into_any_element()
     }
@@ -2604,7 +2111,7 @@ impl SlideEditor {
     /// The open pivot button's panel.
     pub(crate) fn render_pivot_popup(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
         use gpui_kit::component::ActiveTheme as _;
-        use gpui_kit::component::checkbox::Checkbox;
+        use crate::shell::chrome::Checkbox;
         use gpui_kit::{InteractiveElement as _, StatefulInteractiveElement as _, anchored, deferred};
         let popup = self.sheet_state()?.panels.pivot_popup.as_ref()?;
         let p = self.pivot_def(popup.target)?;
@@ -2615,15 +2122,15 @@ impl SlideEditor {
             let mut choose = h_flex().gap_1().flex_wrap().child(text("_xlsx.select-field"));
             for &f in &popup.fields {
                 let on = f == popup.field;
-                choose = choose.child(Button::new(SharedString::from(format!("pivot-popup-field-{f}"))).small().label(format!("{} {}", if on { "◉" } else { "○" }, p.fields[f].name)).on_click(cx.listener(move |this, _, _, cx| this.pivot_popup_field(f, cx))));
+                choose = choose.child(crate::shell::chrome::radio_button(SharedString::from(format!("pivot-popup-field-{f}")), on, false, p.fields[f].name.clone(), cx.listener(move |this, _, _, cx| this.pivot_popup_field(f, cx))));
             }
             body = body.child(choose);
         }
         if let Some(_) = popup.page {
             let chosen = popup.chosen;
-            body = body.child(Button::new("pivot-popup-all").small().label(format!("{} {}", if chosen.is_none() { "◉" } else { "○" }, text("_xlsx.all-2"))).on_click(cx.listener(|this, _, _, cx| this.pivot_popup_choose(None, cx))));
+            body = body.child(crate::shell::chrome::radio_button("pivot-popup-all", chosen.is_none(), false, text("_xlsx.all-2"), cx.listener(|this, _, _, cx| this.pivot_popup_choose(None, cx))));
             for (i, label) in items {
-                body = body.child(Button::new(SharedString::from(format!("pivot-popup-item-{i}"))).small().label(format!("{} {}", if chosen == Some(i) { "◉" } else { "○" }, label)).on_click(cx.listener(move |this, _, _, cx| this.pivot_popup_choose(Some(i), cx))));
+                body = body.child(crate::shell::chrome::radio_button(SharedString::from(format!("pivot-popup-item-{i}")), chosen == Some(i), false, label, cx.listener(move |this, _, _, cx| this.pivot_popup_choose(Some(i), cx))));
             }
         } else if popup.dialog.is_none() {
             // As the オートフィルター's panel: sorting, clearing, the label and value filters, the search box and the items.
@@ -2679,19 +2186,16 @@ impl SlideEditor {
             body = body
                 .child(menu)
                 .child(div().h(px(1.)).my_1().bg(theme.border))
-                .child(Input::new(&popup.search).small())
+                .child(crate::shell::chrome::text_field(&popup.search).full_width())
                 .child(div().id("pivot-popup-items").h(px(200.)).overflow_y_scroll().border_1().border_color(theme.border).rounded_sm().child(list));
         }
         if let Some(d) = popup.dialog.as_ref() {
             body = body.child(self.render_pivot_filter_dialog(&p, popup.field, d, cx));
         } else {
             body = body.child(
-                h_flex()
-                    .gap_2()
-                    .justify_end()
-                    .pt_1()
-                    .child(Button::new("pivot-popup-ok").primary().small().label("OK").on_click(cx.listener(|this, _, _, cx| this.pivot_popup_ok(cx))))
-                    .child(Button::new("pivot-popup-cancel").small().label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_popup(cx)))),
+                crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("pivot-popup-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|this, _, _, cx| this.pivot_popup_ok(cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("pivot-popup-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_pivot_popup(cx)))))),
             );
         }
         let panel = v_flex()
@@ -2707,7 +2211,7 @@ impl SlideEditor {
             .shadow_lg()
             .text_size(px(12.))
             .occlude()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_pivot_popup(cx)))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {gpui_kit::component::popup_guard::note_outside_dismiss();this.close_pivot_popup(cx)}))
             .child(body);
         Some(deferred(anchored().position(popup.position).snap_to_window_with_margin(px(8.)).child(panel)).with_priority(2).into_any_element())
     }

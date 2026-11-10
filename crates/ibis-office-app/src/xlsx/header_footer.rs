@@ -185,14 +185,15 @@ pub(crate) fn layout(sections: &[Vec<HfRun>; 3], header: bool, print: &SheetPrin
     let font_of = |run: &HfRun| {
         res.font(&TextStyle { font: run.font.clone(), font_size: (run.size * 100.0) as u32, bold: run.bold, italic: run.italic, ..TextStyle::default() })
     };
-    // Each section's runs and their widths; the line's ascent and descent.
-    let mut placed: Vec<(usize, Vec<(HfRun, gpui_kit::Font, f32, f32)>)> = Vec::new();
+    // Each section's lines of runs (a line break in the text starts a new
+    // line) and their widths; the lines' ascent and descent.
+    let mut placed: Vec<(usize, Vec<Vec<(HfRun, gpui_kit::Font, f32, f32)>>)> = Vec::new();
     let (mut ascent, mut descent) = (0f32, 0f32);
     for (s, runs) in sections.iter().enumerate() {
         if runs.is_empty() {
             continue;
         }
-        let mut items = Vec::new();
+        let mut lines: Vec<Vec<(HfRun, gpui_kit::Font, f32, f32)>> = vec![Vec::new()];
         for run in runs {
             let font = font_of(run);
             let (size, shift) = run_size(run, k);
@@ -203,33 +204,50 @@ pub(crate) fn layout(sections: &[Vec<HfRun>; 3], header: bool, print: &SheetPrin
             let (a, d, gap) = res.line_metrics(&font);
             ascent = ascent.max((a + gap / 3.0) * size - shift);
             descent = descent.max((d + gap / 3.0) * size + shift);
-            let width = res.text_width(&run.text, &font, size);
-            items.push((run.clone(), font, width, shift));
+            let text = run.text.replace('\r', "");
+            for (n, part) in text.split('\n').enumerate() {
+                if n > 0 {
+                    lines.push(Vec::new());
+                }
+                if part.is_empty() {
+                    continue;
+                }
+                let part_run = HfRun { text: part.to_string(), ..run.clone() };
+                let width = res.text_width(part, &font, size);
+                lines.last_mut().expect("a line").push((part_run, font.clone(), width, shift));
+            }
         }
-        placed.push((s, items));
+        placed.push((s, lines));
     }
     let baseline = if header {
         (print.header_margin as f32 / PT + ascent - 1e-3).ceil()
     } else {
         (page_h - print.footer_margin as f32 / PT - descent + 1e-3).floor()
     };
+    // The distance between the lines of a section.
+    let pitch = (ascent + descent).ceil();
     let mut out = Vec::new();
-    for (s, items) in placed {
-        // Each run starts on a whole point.
-        let mut width = 0.0;
-        for (i, (_, _, w, _)) in items.iter().enumerate() {
-            width = if i + 1 == items.len() { width + w } else { (width + w - 1e-3).ceil() };
-        }
-        let mut x = match s {
-            0 => (left_edge - 1e-3).ceil(),
-            1 => ((page_w - width) / 2.0 - 0.5).ceil(),
-            _ => (right_edge - width + 1e-3).floor(),
-        };
-        for (run, font, w, shift) in items {
-            let mut run = run;
-            run.size = run_size(&run, k).0;
-            out.push(PageMark { x, baseline: baseline + shift, run, font });
-            x = (x + w - 1e-3).ceil();
+    for (s, lines) in placed {
+        let count = lines.len();
+        for (row, items) in lines.into_iter().enumerate() {
+            // A header's lines go down from its first, a footer's up from its last.
+            let line_baseline = if header { baseline + row as f32 * pitch } else { baseline - (count - 1 - row) as f32 * pitch };
+            // Each run starts on a whole point.
+            let mut width = 0.0;
+            for (i, (_, _, w, _)) in items.iter().enumerate() {
+                width = if i + 1 == items.len() { width + w } else { (width + w - 1e-3).ceil() };
+            }
+            let mut x = match s {
+                0 => (left_edge - 1e-3).ceil(),
+                1 => ((page_w - width) / 2.0 - 0.5).ceil(),
+                _ => (right_edge - width + 1e-3).floor(),
+            };
+            for (run, font, w, shift) in items {
+                let mut run = run;
+                run.size = run_size(&run, k).0;
+                out.push(PageMark { x, baseline: line_baseline + shift, run, font });
+                x = (x + w - 1e-3).ceil();
+            }
         }
     }
     out

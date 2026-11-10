@@ -14,6 +14,7 @@
 
 use gpui_kit::component::h_flex;
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::Rgb;
 
 use crate::shell::editor::SlideEditor;
@@ -59,6 +60,7 @@ impl SlideEditor {
     }
 
     /// ミニツールバーの要素をレンダリング（選択範囲がある場合のみオーバーレイ表示）
+    #[allow(dead_code)]
     pub(crate) fn render_mini_toolbar(&self, page_index: usize, k: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.is_mini_toolbar_enabled() {
             return None;
@@ -116,7 +118,7 @@ impl SlideEditor {
                 .text_size(px(11.))
                 .cursor_pointer();
             if active {
-                b = b.bg(rgb(0x0078d4)).text_color(rgb(0xffffff)).font_weight(FontWeight::BOLD);
+                b = b.bg(rgb(0x0078d4)).text_color(crate::shell::palette::doc(0xffffff)).font_weight(FontWeight::BOLD);
             } else {
                 b = b.hover(|h| h.bg(rgb(0xf0f0f0))).text_color(rgb(0x333333));
             }

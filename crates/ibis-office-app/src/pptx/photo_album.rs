@@ -3,9 +3,10 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 
 use std::sync::Arc;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{
     AutoShape, Color, Command, EmuRect, Fill, Geometry, LineCompound,
     MediaFormat, PhotoAlbum, PhotoAlbumFrame, PhotoAlbumLayout, Picture, Rgb, Shadow,
@@ -33,6 +34,15 @@ pub(crate) struct PhotoAlbumState {
     pub(crate) show_captions: bool,
     pub(crate) message: Option<SharedString>,
 }
+
+/// The album layout and frame dropdowns are 1.5 times the usual width, and the frame list's items 1.5 times the usual height (2026-11-04 user).
+const ALBUM_DROPDOWN_SCALE: f32 = 1.5;
+const ALBUM_FRAME_ROW_SCALE: f32 = 1.5;
+/// The label column fits 「アルバムのレイアウト」 (10 full-width characters) on one line.
+const ALBUM_LABEL_SCALE: f32 = 1.5;
+/// A frame's picture leaves 2 px above and below it in its button and list item (2026-11-04 user).
+const FRAME_PREVIEW_PADDING: f32 = 2.;
+const FRAME_PREVIEW_HEIGHT: f32 = 24.;
 
 impl SlideEditor {
     #[allow(dead_code)]
@@ -394,7 +404,7 @@ impl SlideEditor {
         let cur_captions = state.show_captions;
         let message = state.message.clone();
 
-        let mut body = v_flex().gap_2().p_3();
+        let mut body = v_flex().gap_2().p_3().p_0();
 
         if let Some(msg) = message {
             body = body.child(
@@ -402,7 +412,7 @@ impl SlideEditor {
                     .p_2()
                     .rounded_md()
                     .bg(rgb(0xe6f4ea))
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(rgb(0x137333))
                     .child(msg),
             );
@@ -411,9 +421,9 @@ impl SlideEditor {
         // 写真枚数
         body = body.child(
             h_flex().justify_between().child(
-                div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(rgb(0x3c4043)).child(crate::shell::i18n::text("pptx.photo-album.pictures-in-album")),
+                div().text_sm().font_weight(FontWeight::BOLD).text_color(rgb(0x3c4043)).child(crate::shell::i18n::text("pptx.photo-album.pictures-in-album")),
             ).child(
-                div().text_size(px(12.)).text_color(rgb(0x70757a)).child(format!("{pic_count}")),
+                div().text_sm().text_color(rgb(0x70757a)).child(format!("{pic_count}")),
             ),
         );
 
@@ -422,7 +432,7 @@ impl SlideEditor {
             let mut list = v_flex().id("pptx-photo-album-list").gap_1().max_h(px(120.)).overflow_y_scroll().border_1().border_color(rgb(0xdadce0)).rounded_md().p_1();
             for (idx, pic) in state.pictures.iter().enumerate() {
                 let is_sel = state.selected_picture == Some(idx);
-                let mut item_btn = Button::new(ElementId::Name(format!("pptx-photo-item-{idx}").into()))
+                let mut item_btn = crate::shell::chrome::action_button(ElementId::Name(format!("pptx-photo-item-{idx}").into()))
                     .small()
                     .label(format!("{}. {}", idx + 1, pic.caption))
                     .on_click(cx.listener(move |e, _, _, cx| {
@@ -453,9 +463,9 @@ impl SlideEditor {
                 h_flex()
                     .gap_1()
                     .child(
-                        Button::new("pptx-photo-move-up")
+                        crate::shell::chrome::action_button("pptx-photo-move-up")
                             .small()
-                            .ghost()
+
                             .label(crate::shell::i18n::text("pptx.photo-album.move-up"))
                             .on_click(cx.listener(|e, _, _, cx| {
                                 if let Some(sel) = e.pptx().and_then(|p| p.photo_album.as_ref()).and_then(|s| s.selected_picture) {
@@ -464,9 +474,9 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("pptx-photo-move-down")
+                        crate::shell::chrome::action_button("pptx-photo-move-down")
                             .small()
-                            .ghost()
+
                             .label(crate::shell::i18n::text("pptx.photo-album.move-down"))
                             .on_click(cx.listener(|e, _, _, cx| {
                                 if let Some(sel) = e.pptx().and_then(|p| p.photo_album.as_ref()).and_then(|s| s.selected_picture) {
@@ -475,9 +485,8 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("pptx-photo-remove")
+                        crate::shell::chrome::destructive_button("pptx-photo-remove",cx)
                             .small()
-                            .ghost()
                             .label(crate::shell::i18n::text("pptx.photo-album.remove"))
                             .on_click(cx.listener(|e, _, _, cx| {
                                 if let Some(sel) = e.pptx().and_then(|p| p.photo_album.as_ref()).and_then(|s| s.selected_picture) {
@@ -489,46 +498,18 @@ impl SlideEditor {
         }
 
         // オプション（白黒、キャプション）
-        body = body.child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(rgb(0x3c4043)).child(crate::shell::i18n::text("pptx.photo-album.picture-options")));
-        body = body.child(
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new("pptx-photo-bw")
-                        .small()
-                        .ghost()
-                        .label(if cur_bw {
-                            crate::shell::i18n::text("pptx.photo-album.bw-on")
-                        } else {
-                            crate::shell::i18n::text("pptx.photo-album.bw-off")
-                        })
-                        .on_click(cx.listener(|e, _, _, cx| {
-                            if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) {
-                                s.bw = !s.bw;
-                            }
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("pptx-photo-captions")
-                        .small()
-                        .ghost()
-                        .label(if cur_captions {
-                            crate::shell::i18n::text("pptx.photo-album.captions-on")
-                        } else {
-                            crate::shell::i18n::text("pptx.photo-album.captions-off")
-                        })
-                        .on_click(cx.listener(|e, _, _, cx| {
-                            if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) {
-                                s.show_captions = !s.show_captions;
-                            }
-                            cx.notify();
-                        })),
-                ),
-        );
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).text_color(rgb(0x3c4043)).child(crate::shell::i18n::text("pptx.photo-album.picture-options")));
+        body = body
+            .child(crate::shell::chrome::checkbox_button("pptx-photo-bw", crate::shell::i18n::text("pptx.photo-album.bw-off"), cur_bw, false, cx.listener(|e, _, _, cx| {
+                if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) { s.bw = !s.bw; }
+                cx.notify();
+            })))
+            .child(crate::shell::chrome::checkbox_button("pptx-photo-captions", crate::shell::i18n::text("pptx.photo-album.captions-off"), cur_captions, false, cx.listener(|e, _, _, cx| {
+                if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) { s.show_captions = !s.show_captions; }
+                cx.notify();
+            })));
 
         // レイアウト選択
-        body = body.child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(rgb(0x3c4043)).child(crate::shell::i18n::text("pptx.photo-album.album-layout")));
         let layouts = [
             (PhotoAlbumLayout::FitToSlide, "pptx.photo-album.layout.fit-to-slide"),
             (PhotoAlbumLayout::OnePic, "pptx.photo-album.layout.1pic"),
@@ -538,28 +519,16 @@ impl SlideEditor {
             (PhotoAlbumLayout::TwoPicTitle, "pptx.photo-album.layout.2pic-title"),
             (PhotoAlbumLayout::FourPicTitle, "pptx.photo-album.layout.4pic-title"),
         ];
-        let mut layout_chips = h_flex().gap_1().flex_wrap();
-        for (layout_enum, label_key) in layouts {
-            let is_sel = cur_layout == layout_enum;
-            let mut btn = Button::new(ElementId::Name(format!("pptx-album-layout-{}", layout_enum.as_str()).into()))
-                .small()
-                .label(crate::shell::i18n::text(label_key));
-            if is_sel {
-                btn = btn.primary();
-            } else {
-                btn = btn.ghost();
-            }
-            layout_chips = layout_chips.child(btn.on_click(cx.listener(move |e, _, _, cx| {
-                if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) {
-                    s.layout = layout_enum;
-                }
-                cx.notify();
-            })));
-        }
-        body = body.child(layout_chips);
+        let label = layouts.iter().find(|(value, _)| *value == cur_layout).map(|(_, key)| crate::shell::i18n::text(key)).unwrap_or_default();
+        let entries = layouts.into_iter().map(|(value, key)| crate::shell::chrome::MenuItem::new("pptx.photo-album.layout-choice", crate::shell::i18n::text(key)).checked(cur_layout == value).on(move |e, _, cx| {
+            if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) { s.layout = value; }
+            cx.notify();
+        }).into()).collect();
+        let width = crate::shell::chrome::FIELD_WIDTH * ALBUM_DROPDOWN_SCALE;
+        body = body.child(crate::shell::chrome::control_row::dropdown_row(crate::shell::i18n::text("pptx.photo-album.album-layout"),
+            crate::shell::chrome::Dropdown::from_entries("pptx-album-layout",label,entries,true,0,&cx.weak_entity()).button_width(width)).label_scale(ALBUM_LABEL_SCALE));
 
         // 枠の形状選択
-        body = body.child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(rgb(0x3c4043)).child(crate::shell::i18n::text("pptx.photo-album.frame-shape")));
         let frames = [
             (PhotoAlbumFrame::FrameStyle1, "pptx.photo-album.frame.rect"),
             (PhotoAlbumFrame::FrameStyle2, "pptx.photo-album.frame.round-rect"),
@@ -569,35 +538,35 @@ impl SlideEditor {
             (PhotoAlbumFrame::FrameStyle6, "pptx.photo-album.frame.center-shadow"),
             (PhotoAlbumFrame::FrameStyle7, "pptx.photo-album.frame.soft-edge"),
         ];
-        let mut frame_chips = h_flex().gap_1().flex_wrap();
-        for (frame_enum, label_key) in frames {
-            let is_sel = cur_frame == frame_enum;
-            let mut btn = Button::new(ElementId::Name(format!("pptx-album-frame-{}", frame_enum.as_str()).into()))
-                .small()
-                .label(crate::shell::i18n::text(label_key));
-            if is_sel {
-                btn = btn.primary();
-            } else {
-                btn = btn.ghost();
-            }
-            frame_chips = frame_chips.child(btn.on_click(cx.listener(move |e, _, _, cx| {
-                if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) {
-                    s.frame = frame_enum;
-                }
+        let selected = frames.iter().position(|(value, _)| *value == cur_frame).unwrap_or(0);
+        let choices = frames.into_iter().map(|(value, key)| crate::shell::chrome::preview_dropdown::PreviewChoice {
+            label: crate::shell::i18n::text(key),
+            content: std::rc::Rc::new(move || {
+                let mut frame = div().w(px(68.)).h(px(FRAME_PREVIEW_HEIGHT)).flex().items_center().justify_center().bg(rgb(0x8ab4d8));
+                frame = match value {
+                    PhotoAlbumFrame::FrameStyle1 => frame.border_1().border_color(rgb(0x5f6368)),
+                    PhotoAlbumFrame::FrameStyle2 => frame.rounded(px(8.)).border_1().border_color(rgb(0x5f6368)),
+                    PhotoAlbumFrame::FrameStyle3 => frame.border_4().border_color(rgb(0xffffff)),
+                    PhotoAlbumFrame::FrameStyle4 => frame.border_4().border_color(rgb(0x202124)),
+                    PhotoAlbumFrame::FrameStyle5 => frame.border_4().border_color(rgb(0x202124)).child(div().absolute().inset(px(5.)).border_1().border_color(rgb(0xffffff))),
+                    PhotoAlbumFrame::FrameStyle6 => frame.shadow_md(),
+                    PhotoAlbumFrame::FrameStyle7 => frame.rounded(px(6.)).border_4().border_color(rgb(0xc9dce9)),
+                };
+                div().relative().py(px(FRAME_PREVIEW_PADDING)).w_full().flex().items_center().justify_center().child(frame.child(crate::shell::chrome::icon("landscape", 20., rgb(0xffffff).into()))).into_any_element()
+            }),
+            choose: std::rc::Rc::new(move |e, _, cx| {
+                if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) { s.frame = value; }
                 cx.notify();
-            })));
-        }
-        body = body.child(frame_chips);
+            }),
+        }).collect();
+        let size = crate::shell::chrome::preview_dropdown::PreviewSize { row_height: crate::shell::chrome::BUTTON_HEIGHT * ALBUM_FRAME_ROW_SCALE, ..Default::default() }.width(width);
+        body = body.child(crate::shell::chrome::control_row::dropdown_row(crate::shell::i18n::text("pptx.photo-album.frame-shape"),
+            crate::shell::chrome::preview_dropdown::preview_dropdown_sized("pptx-album-frame", choices, selected, size, cx)).label_scale(ALBUM_LABEL_SCALE));
 
         // アクションボタン（作成・閉じる）
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .child(
-                    Button::new("pptx-photo-album-create")
-                        .primary()
-                        .small()
-                        .label(crate::shell::i18n::text("pptx.photo-album.create"))
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(
+                    crate::shell::chrome::ActionDefinition::new("pptx-photo-album-create", crate::shell::i18n::text("pptx.photo-album.create"), crate::shell::chrome::ActionButtonKind::Primary)
                         .on_click(cx.listener(|e, _, _, cx| {
                             let (pics, options) = if let Some(s) = e.pptx().and_then(|p| p.photo_album.as_ref()) {
                                 (
@@ -620,19 +589,9 @@ impl SlideEditor {
                             }
                         })),
                 )
-                .child(
-                    Button::new("pptx-photo-album-close")
-                        .small()
-                        .ghost()
-                        .label(crate::shell::i18n::text("_shell.close"))
-                        .on_click(cx.listener(|e, _, _, cx| e.close_photo_album_panel(cx))),
-                ),
-        );
 
-        Some(SidebarPanel {
-            title: crate::shell::i18n::text("pptx.photo-album.title"),
-            body: body.into_any_element(),
-        })
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.photo-album.title"), body.into_any_element(), panel_actions))
     }
 }
 

@@ -53,11 +53,15 @@ AcaudaOffice [--timing] [--quit-after-first-frame] [<FILE>]
 |---|---|---|
 | `FILE` | `<path>` | Path to the `.docx`, `.xlsx`, or `.pptx` document to open. |
 | `--slide` | `<number>` | Open the presentation directly at the specified slide number (1-based index). |
+| `--read-only` | (none) | Open the file for viewing only: editing is turned off and the side panel stays closed. |
 
 **Example:**
 ```bash
 # Open presentation directly jumping to slide 5
 AcaudaOffice --slide 5 presentation.pptx
+
+# Open a document for viewing only
+AcaudaOffice --read-only report.docx
 ```
 
 ---

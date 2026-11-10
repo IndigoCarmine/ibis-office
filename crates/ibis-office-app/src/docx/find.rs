@@ -14,16 +14,21 @@
 //! `^s` a non-breaking space, `^-` an optional hyphen, `^~` a non-breaking hyphen,
 //! `^+` an em dash, `^=` an en dash, `^^` a caret.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
+use crate::shell::chrome::Checkbox;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::flow_command::{self, ParaChange, RunChange};
 use ibis_doc_model::{Block, FlowAlign, FlowCommand, FlowDocument, FlowPos, InsertFormat, Rgb};
 
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
+
+/// Key context of the find panel (the keys work with its fields focused).
+pub(crate) const FIND_PANEL_CONTEXT: &str = "DocumentFindPanel";
 
 /// 検索の方向 (Word: 検索オプション > 検索の方向 / Search Direction: All, Down, Up).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -236,20 +241,21 @@ pub(crate) struct FindState {
     pub(crate) find_format: FindFormatting,
     pub(crate) replace_format: ReplaceFormatting,
     pub(crate) format_section_open: bool,
+    pub(crate) replace_mode: bool,
     _subscription: Subscription,
 }
 
 /// The paragraphs searched, in order: the body (with its tables), the
 /// section-owned/default/first/even headers and footers, notes, and comments.
-pub(super) fn paragraphs(doc: &FlowDocument, scope: SearchScope) -> Vec<(u32, Vec<(usize, char)>)> {
-    fn walk(blocks: &[Block], out: &mut Vec<(u32, Vec<(usize, char)>)>) {
+pub(super) fn paragraphs(view: &crate::docx::flow_layout::MarkupView, doc: &FlowDocument, scope: SearchScope) -> Vec<(u32, Vec<(usize, char)>)> {
+    fn walk(view: &crate::docx::flow_layout::MarkupView, blocks: &[Block], out: &mut Vec<(u32, Vec<(usize, char)>)>) {
         for b in blocks {
             match b {
-                Block::Paragraph(p) => out.push((p.id, super::editing::visible_chars(p))),
+                Block::Paragraph(p) => out.push((p.id, super::editing::visible_chars(view, p))),
                 Block::Table(t) => {
                     for row in &t.rows {
                         for cell in &row.cells {
-                            walk(&cell.blocks, out);
+                            walk(view, &cell.blocks, out);
                         }
                     }
                 }
@@ -259,43 +265,43 @@ pub(super) fn paragraphs(doc: &FlowDocument, scope: SearchScope) -> Vec<(u32, Ve
     let mut out = Vec::new();
     match scope {
         SearchScope::All | SearchScope::Selection => {
-            walk(&doc.body, &mut out);
+            walk(view, &doc.body, &mut out);
             for block in &doc.body {
                 if let Block::Paragraph(p) = block && let Some(section) = &p.section {
-                    for blocks in section.parts.iter().flatten() { walk(blocks, &mut out); }
+                    for blocks in section.parts.iter().flatten() { walk(view, blocks, &mut out); }
                 }
             }
             for blocks in [&doc.header, &doc.footer, &doc.header_first, &doc.footer_first, &doc.header_even, &doc.footer_even] {
-                walk(blocks, &mut out);
+                walk(view, blocks, &mut out);
             }
             for notes in [&doc.footnotes, &doc.endnotes] {
-                for note in notes { walk(&note.blocks, &mut out); }
+                for note in notes { walk(view, &note.blocks, &mut out); }
             }
             for comment in &doc.comments {
-                walk(&comment.blocks, &mut out);
+                walk(view, &comment.blocks, &mut out);
             }
         }
         SearchScope::Main => {
-            walk(&doc.body, &mut out);
+            walk(view, &doc.body, &mut out);
         }
         SearchScope::HeaderFooter => {
             for block in &doc.body {
                 if let Block::Paragraph(p) = block && let Some(section) = &p.section {
-                    for blocks in section.parts.iter().flatten() { walk(blocks, &mut out); }
+                    for blocks in section.parts.iter().flatten() { walk(view, blocks, &mut out); }
                 }
             }
             for blocks in [&doc.header, &doc.footer, &doc.header_first, &doc.footer_first, &doc.header_even, &doc.footer_even] {
-                walk(blocks, &mut out);
+                walk(view, blocks, &mut out);
             }
         }
         SearchScope::Notes => {
             for notes in [&doc.footnotes, &doc.endnotes] {
-                for note in notes { walk(&note.blocks, &mut out); }
+                for note in notes { walk(view, &note.blocks, &mut out); }
             }
         }
         SearchScope::Comments => {
             for comment in &doc.comments {
-                walk(&comment.blocks, &mut out);
+                walk(view, &comment.blocks, &mut out);
             }
         }
     }
@@ -317,8 +323,8 @@ pub(crate) fn pos_cmp(paras_order: &[u32], a: FlowPos, b: FlowPos) -> std::cmp::
 }
 
 /// Every match of `query` (ignoring case), in order.
-pub(crate) fn find_all(doc: &FlowDocument, query: &str) -> Vec<(FlowPos, FlowPos)> {
-    find_all_with_options(doc, query, false, false, false, SearchScope::All, None, None)
+pub(crate) fn find_all(view: &crate::docx::flow_layout::MarkupView, doc: &FlowDocument, query: &str) -> Vec<(FlowPos, FlowPos)> {
+    find_all_with_options(view, doc, query, false, false, false, SearchScope::All, None, None)
 }
 
 /// `text` with Word's special characters made the characters they stand
@@ -393,6 +399,7 @@ fn next_in_list(doc: &FlowDocument, id: u32) -> Option<u32> {
 }
 
 pub(crate) fn find_all_with_options(
+    view: &crate::docx::flow_layout::MarkupView,
     doc: &FlowDocument,
     query: &str,
     case_sensitive: bool,
@@ -410,7 +417,7 @@ pub(crate) fn find_all_with_options(
     if scope == SearchScope::Selection && selection_range.is_none() {
         return Vec::new();
     }
-    let paras = paragraphs(doc, scope);
+    let paras = paragraphs(view, doc, scope);
     let mut out = Vec::new();
 
     if query.is_empty() {
@@ -422,7 +429,7 @@ pub(crate) fn find_all_with_options(
                 let mut start: Option<usize> = None;
                 let mut prev_offset = 0;
                 for &(offset, _) in &text {
-                    let (_, _, style) = super::editing::visible_format_at(p, offset + 1);
+                    let (_, _, style) = super::editing::visible_format_at(view, p, offset + 1);
                     if fmt.matches_run_style(&style) {
                         if start.is_none() {
                             start = Some(offset);
@@ -535,7 +542,7 @@ pub(crate) fn find_all_with_options(
             if !fmt.matches_para(doc, p) { return false; }
             if fmt.has_character_formatting() {
                 for off in from.offset..to.offset {
-                    let (_, _, style) = super::editing::visible_format_at(p, off + 1);
+                    let (_, _, style) = super::editing::visible_format_at(view, p, off + 1);
                     if !fmt.matches_run_style(&style) {
                         return false;
                     }
@@ -547,7 +554,7 @@ pub(crate) fn find_all_with_options(
 
     if scope == SearchScope::Selection {
         if let Some((a, b)) = selection_range {
-            let paras_order: Vec<u32> = paragraphs(doc, SearchScope::All).into_iter().map(|(id, _)| id).collect();
+            let paras_order: Vec<u32> = paragraphs(view, doc, SearchScope::All).into_iter().map(|(id, _)| id).collect();
             let (sel_start, sel_end) = if pos_cmp(&paras_order, a, b) == std::cmp::Ordering::Greater { (b, a) } else { (a, b) };
             out.retain(|&(from, to)| {
                 pos_cmp(&paras_order, from, sel_start) != std::cmp::Ordering::Less
@@ -563,6 +570,7 @@ pub(crate) fn find_all_with_options(
 
 /// ワイルドカード置換において、該当マッチに対する置換文字列（`\1`, `\2`, `^&` 等）を展開する。
 pub(crate) fn expand_replacement_for_match(
+    view: &crate::docx::flow_layout::MarkupView,
     doc: &FlowDocument,
     a: FlowPos,
     b: FlowPos,
@@ -573,7 +581,7 @@ pub(crate) fn expand_replacement_for_match(
     let Some(p) = flow_command::paragraph(doc, a.para) else {
         return special_characters(replacement_template);
     };
-    let chars_with_pos = super::editing::visible_chars(p);
+    let chars_with_pos = super::editing::visible_chars(view, p);
     let text_chars: Vec<char> = chars_with_pos.iter().map(|(_, c)| *c).collect();
     let Ok(pattern) = super::wildcard::parse_wildcard(query) else {
         return special_characters(replacement_template);
@@ -595,10 +603,10 @@ pub(crate) fn expand_replacement_for_match(
 }
 
 /// マッチ範囲の一致テキストを取得する。
-fn matched_text(doc: &FlowDocument, a: FlowPos, b: FlowPos) -> String {
+fn matched_text(view: &crate::docx::flow_layout::MarkupView, doc: &FlowDocument, a: FlowPos, b: FlowPos) -> String {
     if a.para == b.para {
         if let Some(p) = flow_command::paragraph(doc, a.para) {
-            let chars = super::editing::visible_chars(p);
+            let chars = super::editing::visible_chars(view, p);
             return chars
                 .iter()
                 .filter(|(off, _)| *off >= a.offset && *off < b.offset)
@@ -606,7 +614,7 @@ fn matched_text(doc: &FlowDocument, a: FlowPos, b: FlowPos) -> String {
                 .collect();
         }
     } else if let Some(p) = flow_command::paragraph(doc, a.para) {
-        let chars = super::editing::visible_chars(p);
+        let chars = super::editing::visible_chars(view, p);
         let mut out: String = chars.into_iter().filter(|(off, _)| *off >= a.offset).map(|(_, c)| c).collect();
         out.push('\n');
         return out;
@@ -631,7 +639,7 @@ impl SlideEditor {
                 }
             }
         }
-        let matches = find_all_with_options(&doc, query, case_sensitive, whole_words, wildcards, scope, selection_range, Some(&find_format));
+        let matches = find_all_with_options(&self.resources.markup_view, &doc, query, case_sensitive, whole_words, wildcards, scope, selection_range, Some(&find_format));
         if doc.track_changes && matches.iter().any(|(a, b)| a.para != b.para) {
             self.status = Some(crate::shell::i18n::text("docx.find.replacing-across-multiple").into());
             cx.notify();
@@ -736,7 +744,7 @@ impl SlideEditor {
             None => {
                 let caret = self.doc_state().and_then(|s| s.caret);
                 if let Some(caret) = caret && let Some(doc) = self.flow() {
-                    let paras_order: Vec<u32> = paragraphs(doc, SearchScope::All).into_iter().map(|(id, _)| id).collect();
+                    let paras_order: Vec<u32> = paragraphs(&self.resources.markup_view, doc, SearchScope::All).into_iter().map(|(id, _)| id).collect();
                     if forward {
                         state
                             .matches
@@ -769,6 +777,7 @@ impl SlideEditor {
     /// The commands replacing the match `a`..`b` with `text`, in its first
     /// character's formatting (or applying `replace_format` if specified).
     pub(super) fn replacement_commands(
+        view: &crate::docx::flow_layout::MarkupView,
         doc: &FlowDocument,
         a: FlowPos,
         b: FlowPos,
@@ -777,7 +786,7 @@ impl SlideEditor {
     ) -> (Vec<FlowCommand>, FlowPos) {
         let paragraph = flow_command::paragraph(doc, a.para);
         let mut format = paragraph.map(|p| {
-            let (format, char_style, _) = super::editing::visible_format_at(p, a.offset + 1);
+            let (format, char_style, _) = super::editing::visible_format_at(view, p, a.offset + 1);
             InsertFormat { format, char_style }
         });
         if let Some(fmt) = replace_format {
@@ -843,10 +852,10 @@ impl SlideEditor {
                     revision: Some(ibis_doc_model::Revision { kind: ibis_doc_model::RevisionKind::Insert, author: who.author, date: who.date }) });
             }
         } else {
-            if super::flow_layout::showing_markup() {
+            if view.showing_markup() {
                 commands.push(FlowCommand::Delete { from: a, to: b });
             } else if let Some(p) = paragraph {
-                commands.extend(super::editing::visible_delete_commands(p, a.offset, b.offset));
+                commands.extend(super::editing::visible_delete_commands(view, p, a.offset, b.offset));
             }
             if !text.is_empty() { commands.push(FlowCommand::InsertText { at: insert, text: text.to_string(), format }); }
         }
@@ -907,18 +916,18 @@ impl SlideEditor {
         let find_format = state.find_format.clone();
         let replace_format = state.replace_format.clone();
         let Some(doc) = self.flow().cloned() else { return };
-        if !find_all_with_options(&doc, &query, case_sensitive, whole_words, wildcards, scope, selection_range, Some(&find_format)).contains(&(a, b)) {
+        if !find_all_with_options(&self.resources.markup_view, &doc, &query, case_sensitive, whole_words, wildcards, scope, selection_range, Some(&find_format)).contains(&(a, b)) {
             self.find_text(&query, cx);
             self.status = Some(crate::shell::i18n::text("docx.find.search-results-have-changed-check").into());
             cx.notify();
             return;
         }
         let effective_text = if wildcards {
-            expand_replacement_for_match(&doc, a, b, &query, text, case_sensitive)
+            expand_replacement_for_match(&self.resources.markup_view, &doc, a, b, &query, text, case_sensitive)
         } else {
             let raw = special_characters(text);
             if raw.contains("^&") {
-                let match_str = matched_text(&doc, a, b);
+                let match_str = matched_text(&self.resources.markup_view, &doc, a, b);
                 raw.replace("^&", &match_str)
             } else {
                 raw
@@ -929,7 +938,7 @@ impl SlideEditor {
             cx.notify();
             return;
         }
-        let (commands, at) = Self::replacement_commands(&doc, a, b, &effective_text, Some(&replace_format));
+        let (commands, at) = Self::replacement_commands(&self.resources.markup_view, &doc, a, b, &effective_text, Some(&replace_format));
         let match_char_count = if a.para == b.para { b.offset.saturating_sub(a.offset) } else { 0 };
         let rep_char_count = if effective_text.is_empty() && !replace_format.is_empty() {
             match_char_count
@@ -960,17 +969,17 @@ impl SlideEditor {
             .and_then(|s| s.find.as_ref())
             .map(|s| (s.wildcards, s.case_sensitive, s.whole_words, s.scope, s.selection_range, s.find_format.clone(), s.replace_format.clone()))
             .unwrap_or((false, false, false, SearchScope::All, None, FindFormatting::default(), ReplaceFormatting::default()));
-        let matches = find_all_with_options(&doc, query, case_sensitive, whole_words, wildcards, scope, selection_range, Some(&find_format));
+        let matches = find_all_with_options(&self.resources.markup_view, &doc, query, case_sensitive, whole_words, wildcards, scope, selection_range, Some(&find_format));
         if matches.is_empty() { return 0; }
 
         let mut replacements: Vec<(FlowPos, FlowPos, String)> = Vec::with_capacity(matches.len());
         for &(a, b) in &matches {
             let rep = if wildcards {
-                expand_replacement_for_match(&doc, a, b, query, text, case_sensitive)
+                expand_replacement_for_match(&self.resources.markup_view, &doc, a, b, query, text, case_sensitive)
             } else {
                 let raw = special_characters(text);
                 if raw.contains("^&") {
-                    let match_str = matched_text(&doc, a, b);
+                    let match_str = matched_text(&self.resources.markup_view, &doc, a, b);
                     raw.replace("^&", &match_str)
                 } else {
                     raw
@@ -987,7 +996,7 @@ impl SlideEditor {
         // From the last, so the earlier positions stay where they are.
         let mut commands = Vec::new();
         for (a, b, rep) in replacements.into_iter().rev() {
-            commands.extend(Self::replacement_commands(&doc, a, b, &rep, Some(&replace_format)).0);
+            commands.extend(Self::replacement_commands(&self.resources.markup_view, &doc, a, b, &rep, Some(&replace_format)).0);
         }
         let count = matches.len();
         if count > 0 && !self.run_flow(commands, cx) { return 0; }
@@ -1157,17 +1166,47 @@ impl SlideEditor {
 
     /// 編集 > 検索と置換…: the panel in the sidebar, its field focused.
     pub(crate) fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_find_with(true, window, cx);
+    }
+
+    /// ⌘G / F3 and ⇧⌘G / ⇧F3: the next / previous match. With the panel closed they open it
+    /// and search for the text last typed there.
+    pub(crate) fn find_shortcut(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.doc_state().is_some_and(|s| s.find.is_none()) {
+            let query = self.last_find_query.clone();
+            self.open_find_with(false, window, cx);
+            if query.is_empty() {
+                return;
+            }
+            if let Some(input) = self.doc_state().and_then(|s| s.find.as_ref()).map(|f| f.query.clone()) {
+                input.update(cx, |q, cx| q.set_value(query.clone(), window, cx));
+            }
+            self.find_text(&query, cx);
+        }
+        if forward {
+            self.find_next_in_direction(cx);
+        } else {
+            self.find_next(false, cx);
+        }
+    }
+
+    /// `selection_to_query`: the selected text (one line) goes into the field, as in Word's ⌘F.
+    fn open_find_with(&mut self, selection_to_query: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
+        let prefill = Some(self.selected_text()).filter(|t| selection_to_query && !t.is_empty() && !t.contains('\n'));
         if self.doc_state().is_some_and(|s| s.find.is_none()) {
             let query = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_shell.find-what")));
             let replacement = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_shell.replace-with")));
             let subscription = cx.subscribe_in(&query, window, |this, input, event: &InputEvent, _, cx| match event {
                 InputEvent::Change => {
                     let q = input.read(cx).value().to_string();
+                    this.last_find_query = q.clone();
                     this.find_text(&q, cx);
                 }
-                InputEvent::PressEnter { .. } => {
+                // Enter is the Next button, Shift+Enter the Previous one (Up searches the other way round).
+                InputEvent::PressEnter { shift, .. } => {
                     let forward = this.doc_state().and_then(|s| s.find.as_ref()).map_or(true, |f| f.direction != SearchDirection::Up);
-                    this.find_next(forward, cx);
+                    this.find_next(forward != *shift, cx);
                 }
                 _ => {}
             });
@@ -1189,6 +1228,7 @@ impl SlideEditor {
                     find_format: FindFormatting::default(),
                     replace_format: ReplaceFormatting::default(),
                     format_section_open: false,
+                    replace_mode: false,
                     _subscription: subscription,
                 });
             }
@@ -1210,13 +1250,24 @@ impl SlideEditor {
         }
         self.sidebar_open = true;
         if let Some(query) = self.doc_state().and_then(|s| s.find.as_ref()).map(|f| f.query.clone()) {
-            query.update(cx, |q, cx| q.focus(window, cx));
+            if let Some(text) = prefill {
+                query.update(cx, |q, cx| q.set_value(text.clone(), window, cx));
+                self.last_find_query = text.clone();
+                self.find_text(&text, cx);
+            }
+            query.update(cx, |q, cx| { q.focus(window, cx); q.select_all(window, cx); });
         }
         cx.notify();
     }
 
     /// The panel's body.
     pub(crate) fn find_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        self.doc_state()?.find.as_ref()?;
+        self.render_find_panel(cx)
+    }
+
+    #[inline(never)]
+    fn render_find_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let state = self.doc_state()?.find.as_ref()?;
         let (query, replacement) = (state.query.clone(), state.replacement.clone());
         let case_sensitive = state.case_sensitive;
@@ -1227,6 +1278,7 @@ impl SlideEditor {
         let find_fmt = state.find_format.clone();
         let rep_fmt = state.replace_format.clone();
         let fmt_open = state.format_section_open;
+        let replace_mode = state.replace_mode;
         let has_selection = state.selection_range.is_some_and(|(a, b)| a != b);
         let status: SharedString = match (state.matches.len(), state.current) {
             (0, _) if query.read(cx).value().is_empty() && find_fmt.is_empty() => "".into(),
@@ -1236,33 +1288,21 @@ impl SlideEditor {
             (n, None) => crate::shell::i18n::format("docx.find.n-results", &[("n", &n)]).into(),
         };
         let next_forward = direction != SearchDirection::Up;
-        let dir_button = |dir: SearchDirection, label_key: &'static str| {
-            let is_selected = direction == dir;
-            let id = SharedString::from(format!("find-dir-{dir:?}").to_lowercase());
-            let btn = Button::new(id)
-                .small()
-                .label(crate::shell::i18n::text(label_key))
-                .on_click(cx.listener(move |this, _, _, cx| this.set_find_direction(dir, cx)));
-            if is_selected { btn.primary() } else { btn.ghost() }
+        let dir_button = |dir:SearchDirection,label_key:&'static str| {
+            crate::shell::chrome::segment_control::SegmentItem::label(SharedString::from(format!("find-dir-{dir:?}")),crate::shell::i18n::text(label_key),direction==dir)
+                .on_click(cx.listener(move |e,_,_,cx|e.set_find_direction(dir,cx)))
         };
-        let scope_button = |sc: SearchScope, label_key: &'static str| {
-            let is_selected = scope == sc;
-            let id = SharedString::from(format!("find-scope-{sc:?}").to_lowercase());
-            let btn = Button::new(id)
-                .small()
-                .label(crate::shell::i18n::text(label_key))
-                .on_click(cx.listener(move |this, _, _, cx| this.set_find_scope(sc, cx)));
-            if is_selected { btn.primary() } else { btn.ghost() }
+        let scope_button = |scope_value:SearchScope,label_key:&'static str| {
+            crate::shell::chrome::radio_button(SharedString::from(format!("find-scope-{scope_value:?}")),scope==scope_value,false,crate::shell::i18n::text(label_key),cx.listener(move |e,_,_,cx|e.set_find_scope(scope_value,cx)))
         };
-
-        let mut query_section = v_flex().gap_1().child(Input::new(&query).small());
+        let mut query_section = v_flex().gap_1().child(crate::shell::chrome::text_field(&query).full_width().select_on_focus());
         if !find_fmt.is_empty() {
             let desc: SharedString = find_fmt.description().into();
             query_section = query_section.child(
                 h_flex()
                     .gap_1()
                     .items_center()
-                    .text_size(px(11.))
+                    .text_sm()
                     .child(
                         div()
                             .text_color(rgb(0x5f6368))
@@ -1272,23 +1312,22 @@ impl SlideEditor {
                             ])),
                     )
                     .child(
-                        Button::new("clear-find-format")
+                        crate::shell::chrome::destructive_button("clear-find-format",cx)
                             .small()
-                            .ghost()
                             .label(crate::shell::i18n::text("docx.find.format.clear"))
                             .on_click(cx.listener(|this, _, _, cx| this.clear_find_format(cx))),
                     ),
             );
         }
 
-        let mut rep_section = v_flex().gap_1().child(Input::new(&replacement).small());
+        let mut rep_section = v_flex().gap_1().child(crate::shell::chrome::text_field(&replacement).full_width().select_on_focus());
         if !rep_fmt.is_empty() {
             let desc: SharedString = rep_fmt.description().into();
             rep_section = rep_section.child(
                 h_flex()
                     .gap_1()
                     .items_center()
-                    .text_size(px(11.))
+                    .text_sm()
                     .child(
                         div()
                             .text_color(rgb(0x5f6368))
@@ -1298,55 +1337,41 @@ impl SlideEditor {
                             ])),
                     )
                     .child(
-                        Button::new("clear-replace-format")
+                        crate::shell::chrome::destructive_button("clear-replace-format",cx)
                             .small()
-                            .ghost()
                             .label(crate::shell::i18n::text("docx.find.format.clear"))
                             .on_click(cx.listener(|this, _, _, cx| this.clear_replace_format(cx))),
                     ),
             );
         }
 
-        let fmt_toggle_btn = {
-            let btn = Button::new("find-toggle-format")
-                .small()
-                .label(crate::shell::i18n::text("docx.find.format.toggle"))
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_find_format_section(cx)));
-            if fmt_open { btn.primary() } else { btn.ghost() }
-        };
-
+        let common_options=v_flex().gap_1()
+            .child(crate::shell::chrome::checkbox_button("find-case-sensitive",crate::shell::i18n::text("_shell.match-case"),case_sensitive,false,cx.listener(move |e,_,_,cx|e.set_find_case_sensitive(!case_sensitive,cx))))
+            .child(crate::shell::chrome::checkbox_button("find-whole-words",crate::shell::i18n::text("docx.find.find-whole-words-only"),whole_words,false,cx.listener(move |e,_,_,cx|e.set_find_whole_words(!whole_words,cx))))
+            .child(crate::shell::chrome::checkbox_button("find-wildcards",crate::shell::i18n::text("docx.find.use-wildcards"),wildcards,false,cx.listener(move |e,_,_,cx|e.set_find_wildcards(!wildcards,cx))));
         let mut body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
+            .p_0().child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+                .child(crate::shell::chrome::radio_button("find-mode-search", !replace_mode, false, crate::shell::i18n::text("_shell.find"), cx.listener(|this, _, _, cx| {
+                    if let Some(f) = this.doc_state_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = false; } cx.notify();
+                })))
+                .child(crate::shell::chrome::radio_button("find-mode-replace", replace_mode, false, crate::shell::i18n::text("_shell.replace"), cx.listener(|this, _, _, cx| {
+                    if let Some(f) = this.doc_state_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = true; } cx.notify();
+                }))))
             .child(query_section)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("find-previous").small().ghost().label(crate::shell::i18n::text("_shell.previous")).on_click(cx.listener(|this, _, _, cx| this.find_next(false, cx))))
-                    .child(Button::new("find-next").small().ghost().label(crate::shell::i18n::text("_shell.next")).on_click(cx.listener(move |this, _, _, cx| this.find_next(next_forward, cx))))
-                    .child(div().text_size(px(12.)).child(status)),
+            .when(replace_mode, |d| d.child(rep_section)).child(common_options)
+            .child(h_flex().gap_1().flex_wrap()
+                .child(crate::shell::chrome::action_button("find-previous").small().label(crate::shell::i18n::text("_shell.previous")).on_click(cx.listener(|this, _, _, cx| this.find_next(false, cx))))
+                .child(crate::shell::chrome::action_button("find-next").label(crate::shell::i18n::text("_shell.next")).tooltip(crate::shell::i18n::text(if replace_mode{"docx.find.replace-next"}else{"_shell.next"})).on_click(cx.listener(move |e,_,_,cx|{
+                    if replace_mode {let value=e.doc_state().and_then(|s|s.find.as_ref()).map(|f|f.replacement.read(cx).value().to_string()).unwrap_or_default();e.replace_current(&value,cx);}
+                    e.find_next(next_forward,cx);
+                })))
+                .when(replace_mode,|d|d.child(crate::shell::chrome::action_button("replace-all").label(crate::shell::i18n::text("docx.find.dir.all")).on_click(cx.listener(|e,_,_,cx|{let Some(f)=e.doc_state().and_then(|s|s.find.as_ref())else{return;};let(q,t)=(f.query.read(cx).value().to_string(),f.replacement.read(cx).value().to_string());e.replace_all(&q,&t,cx);}))))
             )
-            .child(rep_section)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("replace-one").small().label(crate::shell::i18n::text("_shell.replace")).on_click(cx.listener(|this, _, _, cx| {
-                        let text = this.doc_state().and_then(|s| s.find.as_ref()).map(|f| f.replacement.read(cx).value().to_string()).unwrap_or_default();
-                        this.replace_current(&text, cx);
-                    })))
-                    .child(Button::new("replace-all").small().label(crate::shell::i18n::text("_shell.replace-all")).on_click(cx.listener(|this, _, _, cx| {
-                        let Some(f) = this.doc_state().and_then(|s| s.find.as_ref()) else { return };
-                        let (q, text) = (f.query.read(cx).value().to_string(), f.replacement.read(cx).value().to_string());
-                        this.replace_all(&q, &text, cx);
-                    }))),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(fmt_toggle_btn),
-            );
+            .child(div().text_sm().child(status))
+            ;
 
         if fmt_open {
             let fmt_btn = |id: &'static str, label_key: &'static str, state_opt: Option<bool>, on_click: Box<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>) + Send + Sync>| {
@@ -1355,7 +1380,7 @@ impl SlideEditor {
                     Some(false) => SharedString::from(crate::shell::i18n::format("_docx.label-clear", &[("label", &crate::shell::i18n::text(label_key).to_string())])),
                     None => crate::shell::i18n::text(label_key),
                 };
-                let btn = Button::new(id).small().label(label_text).on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)));
+                let btn = crate::shell::chrome::action_button(id).small().label(label_text).on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)));
                 if state_opt == Some(true) {
                     btn.primary()
                 } else {
@@ -1365,7 +1390,7 @@ impl SlideEditor {
 
             let find_fmt_controls = v_flex()
                 .gap_1()
-                .child(div().text_size(px(11.)).child(crate::shell::i18n::text("docx.find.format.find-label")))
+                .child(div().text_sm().child(crate::shell::i18n::text("docx.find.format.find-label")))
                 .child(
                     h_flex()
                         .gap_1()
@@ -1375,9 +1400,8 @@ impl SlideEditor {
                         .child(fmt_btn("find-fmt-underline", "docx.find.format.underline", find_fmt.underline, Box::new(|this, cx| this.toggle_find_format_underline(cx))))
                         .child(fmt_btn("find-fmt-strike", "docx.find.format.strike", find_fmt.strike, Box::new(|this, cx| this.toggle_find_format_strike(cx))))
                         .child(
-                            Button::new("find-fmt-clear")
+                            crate::shell::chrome::destructive_button("find-fmt-clear",cx)
                                 .small()
-                                .ghost()
                                 .label(crate::shell::i18n::text("docx.find.format.clear"))
                                 .on_click(cx.listener(|this, _, _, cx| this.clear_find_format(cx))),
                         ),
@@ -1385,7 +1409,7 @@ impl SlideEditor {
 
             let rep_fmt_controls = v_flex()
                 .gap_1()
-                .child(div().text_size(px(11.)).child(crate::shell::i18n::text("docx.find.format.replace-label")))
+                .child(div().text_sm().child(crate::shell::i18n::text("docx.find.format.replace-label")))
                 .child(
                     h_flex()
                         .gap_1()
@@ -1395,9 +1419,8 @@ impl SlideEditor {
                         .child(fmt_btn("rep-fmt-underline", "docx.find.format.underline", rep_fmt.underline, Box::new(|this, cx| this.toggle_replace_format_underline(cx))))
                         .child(fmt_btn("rep-fmt-strike", "docx.find.format.strike", rep_fmt.strike, Box::new(|this, cx| this.toggle_replace_format_strike(cx))))
                         .child(
-                            Button::new("rep-fmt-clear")
+                            crate::shell::chrome::destructive_button("rep-fmt-clear",cx)
                                 .small()
-                                .ghost()
                                 .label(crate::shell::i18n::text("docx.find.format.clear"))
                                 .on_click(cx.listener(|this, _, _, cx| this.clear_replace_format(cx))),
                         ),
@@ -1405,15 +1428,13 @@ impl SlideEditor {
 
             body = body
                 .child(find_fmt_controls)
-                .child(rep_fmt_controls);
+                .when(replace_mode, |d| d.child(rep_fmt_controls));
         }
 
         body = body
             .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(div().text_size(px(11.)).child(crate::shell::i18n::text("docx.find.direction")))
+                crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+                    .label(crate::shell::i18n::text("docx.find.direction"))
                     .child(dir_button(SearchDirection::All, "docx.find.dir.all"))
                     .child(dir_button(SearchDirection::Down, "docx.find.dir.down"))
                     .child(dir_button(SearchDirection::Up, "docx.find.dir.up")),
@@ -1421,7 +1442,7 @@ impl SlideEditor {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(11.)).child(crate::shell::i18n::text("docx.find.scope")))
+                    .child(div().text_sm().child(crate::shell::i18n::text("docx.find.scope")))
                     .child(
                         h_flex()
                             .gap_1()
@@ -1434,9 +1455,13 @@ impl SlideEditor {
                             .child(scope_button(SearchScope::Selection, "docx.find.scope.selection")),
                     ),
             )
-            .child(Checkbox::new("find-case-sensitive").label(crate::shell::i18n::text("_shell.match-case")).checked(case_sensitive).on_click(cx.listener(|this, checked: &bool, _, cx| this.set_find_case_sensitive(*checked, cx))))
-            .child(Checkbox::new("find-whole-words").label(crate::shell::i18n::text("docx.find.find-whole-words-only")).checked(whole_words).on_click(cx.listener(|this, checked: &bool, _, cx| this.set_find_whole_words(*checked, cx))))
-            .child(Checkbox::new("find-wildcards").label(crate::shell::i18n::text("docx.find.use-wildcards")).checked(wildcards).on_click(cx.listener(|this, checked: &bool, _, cx| this.set_find_wildcards(*checked, cx))));
+;
+        // The keys of the document's find also work with the focus in the panel's fields.
+        let body = body
+            .key_context(FIND_PANEL_CONTEXT)
+            .on_action(cx.listener(|this, _: &super::editing::OpenFind, window, cx| this.open_find(window, cx)))
+            .on_action(cx.listener(|this, _: &super::editing::FindNext, window, cx| this.find_shortcut(true, window, cx)))
+            .on_action(cx.listener(|this, _: &super::editing::FindPrevious, window, cx| this.find_shortcut(false, window, cx)));
         Some(SidebarPanel { title: crate::shell::i18n::text("_shell.find-and-replace"), body: body.into_any_element() })
     }
 }

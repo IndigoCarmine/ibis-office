@@ -9,10 +9,12 @@
 //! 2. 「ウォッチ ウィンドウ」(Watch Window): ワークブック内の重要セル（シート、名前、セル、値、数式）を
 //!    一覧登録・常時監視し、クリックでのセルジャンプ、再計算時の自動同期を提供する。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::Disableable as _;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_calc::eval::Book;
 use ibis_calc::eval::step::{EvaluateSession, StepInfo};
 use ibis_doc_model::{BookView, SlideId};
@@ -47,6 +49,9 @@ pub struct WatchEntry {
 pub(crate) struct WatchWindowPanel {
     pub(crate) selected_id: Option<u64>,
     pub(crate) next_id: u64,
+    pub(crate) editor: Option<Entity<InputState>>,
+    table:crate::shell::chrome::virtual_table::TableState,
+    message:String,
 }
 
 impl Default for WatchWindowPanel {
@@ -54,6 +59,9 @@ impl Default for WatchWindowPanel {
         Self {
             selected_id: None,
             next_id: 1,
+            editor:None,
+            table:Default::default(),
+            message:String::new(),
         }
     }
 }
@@ -142,7 +150,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.evaluate_formula = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -216,7 +224,7 @@ impl SlideEditor {
                 h_flex()
                     .flex_wrap()
                     .font_family(".AppleSystemUIFontMonospaced")
-                    .text_size(px(13.))
+                    .text_sm()
                     .child(SharedString::from(before.to_string()))
                     .child(
                         div()
@@ -229,26 +237,26 @@ impl SlideEditor {
                     )
                     .child(SharedString::from(after.to_string()))
             } else {
-                h_flex().font_family(".AppleSystemUIFontMonospaced").text_size(px(13.)).child(SharedString::from(formula_str.clone()))
+                h_flex().font_family(".AppleSystemUIFontMonospaced").text_sm().child(SharedString::from(formula_str.clone()))
             }
         } else {
-            h_flex().font_family(".AppleSystemUIFontMonospaced").text_size(px(13.)).child(SharedString::from(formula_str.clone()))
+            h_flex().font_family(".AppleSystemUIFontMonospaced").text_sm().child(SharedString::from(formula_str.clone()))
         };
 
         let mut body = v_flex()
             .gap_3()
             .px(px(16.))
             .py(px(12.))
-            .child(
+            .p_0().child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).text_color(rgb(0x666666)).child(text("_xlsx.evaluation-cell")))
+                    .child(div().text_sm().text_color(rgb(0x666666)).child(text("_xlsx.evaluation-cell")))
                     .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(SharedString::from(cell_label))),
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).text_color(rgb(0x666666)).child(text("_xlsx.formula-and-step-evaluation")))
+                    .child(div().text_sm().text_color(rgb(0x666666)).child(text("_xlsx.formula-and-step-evaluation")))
                     .child(
                         div()
                             .p(px(8.))
@@ -264,7 +272,7 @@ impl SlideEditor {
             if info.can_step_in {
                 body = body.child(
                     div()
-                        .text_size(px(12.))
+                        .text_sm()
                         .text_color(rgb(0x1a73e8))
                         .child(format!("{} {} ({})", text("_xlsx.reference"), target, text("_xlsx.step-in-available"))),
                 );
@@ -274,7 +282,7 @@ impl SlideEditor {
         if let Some(msg) = message {
             body = body.child(
                 div()
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(rgb(0xd93025))
                     .child(SharedString::from(msg)),
             );
@@ -285,43 +293,42 @@ impl SlideEditor {
             let can_step_in = info.can_step_in;
             let depth = info.depth;
 
-            let mut btn_row = h_flex().gap_2();
+            let mut btn_row = crate::shell::chrome::action_bar();
 
             // 「検証」ボタン
-            let mut eval_btn = Button::new("eval-step").small().label(text("_xlsx.evaluate"));
+            let mut eval_btn = crate::shell::chrome::ActionDefinition::new("eval-step", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_xlsx.evaluate"));
             if is_finished {
                 eval_btn = eval_btn.disabled(true);
             }
-            btn_row = btn_row.child(eval_btn.on_click(cx.listener(|this, _, _, cx| {
+            btn_row = btn_row.action(eval_btn.on_click(cx.listener(|this, _, _, cx| {
                 this.evaluate_step();
                 cx.notify();
             })));
 
             // 「ステップ イン」ボタン
-            let mut step_in_btn = Button::new("eval-step-in").small().label(text("_xlsx.step-in"));
+            let mut step_in_btn = crate::shell::chrome::ActionDefinition::new("eval-step-in", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_xlsx.step-in"));
             if !can_step_in {
                 step_in_btn = step_in_btn.disabled(true);
             }
-            btn_row = btn_row.child(step_in_btn.on_click(cx.listener(|this, _, _, cx| {
+            btn_row = btn_row.action(step_in_btn.on_click(cx.listener(|this, _, _, cx| {
                 this.evaluate_step_in();
                 cx.notify();
             })));
 
             // 「ステップ アウト」ボタン
-            let mut step_out_btn = Button::new("eval-step-out").small().label(text("_xlsx.step-out"));
+            let mut step_out_btn = crate::shell::chrome::ActionDefinition::new("eval-step-out", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_xlsx.step-out"));
             if depth == 0 {
                 step_out_btn = step_out_btn.disabled(true);
             }
-            btn_row = btn_row.child(step_out_btn.on_click(cx.listener(|this, _, _, cx| {
+            btn_row = btn_row.action(step_out_btn.on_click(cx.listener(|this, _, _, cx| {
                 this.evaluate_step_out();
                 cx.notify();
             })));
 
             // 「やり直し」ボタン
-            btn_row = btn_row.child(
-                Button::new("eval-restart")
-                    .small()
-                    .ghost()
+            btn_row = btn_row.action(
+                crate::shell::chrome::ActionDefinition::new("eval-restart", "", crate::shell::chrome::ActionButtonKind::Normal)
+
                     .label(text("xlsx.eval.restart"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.evaluate_restart();
@@ -332,11 +339,8 @@ impl SlideEditor {
             body = body.child(btn_row);
         }
 
-        body = body.child(
-            h_flex().child(
-                Button::new("eval-close")
-                    .small()
-                    .ghost()
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(
+                crate::shell::chrome::ActionDefinition::new("eval-close", "", crate::shell::chrome::ActionButtonKind::Normal)
                     .label(text("_shell.close"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(s) = this.sheet_state_mut() {
@@ -345,13 +349,8 @@ impl SlideEditor {
                         this.sidebar_open = false;
                         cx.notify();
                     })),
-            ),
-        );
-
-        Some(SidebarPanel {
-            title: text("_xlsx.evaluate-formula").to_string().into(),
-            body: body.into_any_element(),
-        })
+            );
+        Some(SidebarPanel::with_footer(text("_xlsx.evaluate-formula").to_string(), body.into_any_element(), panel_terminal_actions))
     }
 
     // =========================================================================
@@ -373,7 +372,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.watch_window = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -546,123 +545,57 @@ impl SlideEditor {
         }
     }
 
-    /// ウォッチ ウィンドウ パネル（サイドバー描画用）。
-    pub(crate) fn watch_window_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let selected_id = self.sheet_state()?.panels.watch_window.as_ref()?.selected_id;
-        let watches = self.sheet_state()?.panels.watches.clone();
-
-        let mut rows = v_flex().gap_1();
-
-        // テーブルヘッダー
-        rows = rows.child(
-            h_flex()
-                .gap_2()
-                .py(px(4.))
-                .border_b_1()
-                .border_color(rgb(0xe0e0e0))
-                .text_size(px(11.))
-                .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0x666666))
-                .child(div().w(px(55.)).child(text("_xlsx.sheet")))
-                .child(div().w(px(50.)).child(text("_shell.name")))
-                .child(div().w(px(45.)).child(text("fix.phonetic.cell")))
-                .child(div().w(px(55.)).child(text("_xlsx.values")))
-                .child(div().flex_1().child(text("_xlsx.equation"))),
-        );
-
-        // データ行
-        for item in &watches {
-            let id = item.id;
-            let is_sel = selected_id == Some(id);
-            let name_str = item.name.as_deref().unwrap_or("-");
-            let formula_str = item.formula_text.as_deref().unwrap_or("-");
-
-            let mut row_el = h_flex()
-                .gap_2()
-                .py(px(4.))
-                .px(px(2.))
-                .rounded(px(4.))
-                .text_size(px(12.))
-                .child(div().w(px(55.)).truncate().child(SharedString::from(item.sheet_name.clone())))
-                .child(div().w(px(50.)).truncate().child(SharedString::from(name_str.to_string())))
-                .child(div().w(px(45.)).font_family(".AppleSystemUIFontMonospaced").child(SharedString::from(item.cell_ref.clone())))
-                .child(div().w(px(55.)).truncate().child(SharedString::from(item.value_text.clone())))
-                .child(div().flex_1().font_family(".AppleSystemUIFontMonospaced").truncate().child(SharedString::from(formula_str.to_string())));
-
-            if is_sel {
-                row_el = row_el.bg(rgba(0x1a73e818));
-            } else {
-                row_el = row_el.hover(|h| h.bg(rgba(0x00000008)));
-            }
-
-            rows = rows.child(
-                div()
-                    .cursor_pointer()
-                    .child(row_el)
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = this.sheet_state_mut().and_then(|s| s.panels.watch_window.as_mut()) {
-                            p.selected_id = Some(id);
-                        }
-                        this.jump_to_watch(id);
-                        cx.notify();
-                    })),
-            );
+    pub(crate) fn edit_watch(&mut self,id:u64,w:&mut Window,cx:&mut Context<Self>){
+        let Some(entry)=self.sheet_state().and_then(|s|s.panels.watches.iter().find(|e|e.id==id)).cloned()else{return;};
+        let field=cx.new(|cx|InputState::new(w,cx));
+        let reference=format!("{}!{}",ibis_calc::formula::quote_sheet(&entry.sheet_name),entry.cell_ref);
+        field.update(cx,|i,cx|i.set_value(reference,w,cx));
+        if let Some(p)=self.wb_mut().panels.watch_window.as_mut(){p.selected_id=Some(id);p.editor=Some(field);p.message.clear();}
+        self.dialog.bounds=None;cx.notify();
+    }
+    fn apply_watch_edit(&mut self,cx:&mut Context<Self>){
+        let Some((id,value))=self.sheet_state().and_then(|s|s.panels.watch_window.as_ref()).and_then(|p|Some((p.selected_id?,p.editor.as_ref()?.read(cx).value().to_string())))else{return;};
+        let target=super::sheet_ui::parse_reference(&value).and_then(|r|self.resolve_reference(&r));
+        let Some((slide,r))=target else{if let Some(p)=self.wb_mut().panels.watch_window.as_mut(){p.message=text("xlsx.watch.invalid-cell").to_string();}return cx.notify();};
+        if let Some(entry)=self.wb_mut().panels.watches.iter_mut().find(|e|e.id==id){entry.slide_id=slide;entry.col=r.first_column;entry.row=r.first_row;entry.cell_ref=ibis_doc_model::cell_name(entry.col,entry.row);}
+        if let Some(p)=self.wb_mut().panels.watch_window.as_mut(){p.editor=None;p.message.clear();}
+        self.refresh_watches();self.dialog.bounds=None;cx.notify();
+    }
+    /// Watched cells use the shared table, with editing in a separate dialog.
+    pub(crate) fn watch_window_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel>{
+        let p=self.sheet_state()?.panels.watch_window.as_ref()?;
+        if let Some(input)=&p.editor {
+            let body=crate::shell::chrome::panel_form().p_0().child(crate::shell::chrome::text_field_row(text("fix.phonetic.cell"),super::range_field::local_range_field(input,"watch-cell-reference",true,cx))).children(crate::shell::chrome::panel_message(&p.message));
+            let footer=crate::shell::chrome::action_bar()
+                .action(crate::shell::chrome::ActionDefinition::new("watch-edit-ok",text("OK"),crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,_,cx|e.apply_watch_edit(cx))))
+                .action(crate::shell::chrome::ActionDefinition::new("watch-edit-cancel",text("_shell.cancel"),crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,_,cx|{if let Some(p)=e.wb_mut().panels.watch_window.as_mut(){p.editor=None;p.message.clear();}e.dialog.bounds=None;cx.notify();})));
+            return Some(SidebarPanel::with_footer(text("_xlsx.add-watch"),body.into_any_element(),footer).modal_named("watch_editor"));
         }
-
-        if watches.is_empty() {
-            rows = rows.child(
-                div()
-                    .py(px(16.))
-                    .text_size(px(12.))
-                    .text_color(rgb(0x999999))
-                    .child(text("_xlsx.no-watch-cells-yet-click-add-watch-to-add")),
-            );
-        }
-
-        let body = v_flex()
-            .gap_3()
-            .px(px(16.))
-            .py(px(12.))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("watch-add")
-                            .small()
-                            .label(text("_xlsx.add-watch"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.add_watch_cell();
-                                cx.notify();
-                            })),
-                    )
-                    .child({
-                        let mut del_btn = Button::new("watch-delete").small().label(text("_shell.delete"));
-                        if selected_id.is_none() {
-                            del_btn = del_btn.disabled(true);
-                        }
-                        del_btn.on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(id) = selected_id {
-                                this.delete_watch(id);
-                                cx.notify();
-                            }
-                        }))
-                    })
-                    .child(
-                        Button::new("watch-clear-all")
-                            .small()
-                            .ghost()
-                            .label(text("_xlsx.delete-all"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.clear_all_watches();
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(rows);
-
-        Some(SidebarPanel {
-            title: text("_xlsx.watch-window").to_string().into(),
-            body: body.into_any_element(),
-        })
+        let selected=p.selected_id;let table_state=p.table.clone();
+        use crate::shell::chrome::virtual_table::{TableColumn,TableRow};
+        let header:Vec<AnyElement>=["_xlsx.sheet","_shell.name","fix.phonetic.cell","_xlsx.values","_xlsx.equation"].into_iter().map(|key|text(key).into_any_element()).chain(std::iter::once(div().into_any_element())).collect();
+        let watches=self.sheet_state()?.panels.watches.clone();
+        let row_count=watches.len();
+        let editor_weak=cx.entity().downgrade();
+        let build=move|range:std::ops::Range<usize>,_:&mut Window,_:&mut App|->Vec<TableRow>{
+            range.filter_map(|i|watches.get(i).map(|r|(i,r))).map(|(_,item)|{
+                let id=item.id;
+                let (edit_editor,delete_editor)=(editor_weak.clone(),editor_weak.clone());
+                let actions=h_flex().gap_1()
+                    .child(crate::shell::chrome::action_button(("watch-edit",id as usize)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("edit")).on_click(move|_,w,cx|{let _=edit_editor.update(cx,|e,cx|e.edit_watch(id,w,cx));}))
+                    .child(crate::shell::chrome::action_button(("watch-delete",id as usize)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("delete")).on_click(move|_,_,cx|{let _=delete_editor.update(cx,|e,cx|{e.delete_watch(id);cx.notify();});}));
+                let mut cells:Vec<AnyElement>=[item.sheet_name.clone(),item.name.clone().unwrap_or_default(),item.cell_ref.clone(),item.value_text.clone(),item.formula_text.clone().unwrap_or_default()].into_iter().map(|v|div().truncate().child(v).into_any_element()).collect();
+                cells.push(actions.into_any_element());
+                TableRow::new(cells).selected(selected==Some(id))
+            }).collect()
+        };
+        let columns=vec![TableColumn::resizable("sheet",50.,80.,200.),TableColumn::resizable("name",50.,80.,200.),TableColumn::resizable("cell",40.,60.,120.),TableColumn::resizable("value",50.,80.,240.),TableColumn::flex("formula"),TableColumn::fixed("actions",64.)];
+        let empty=div().p_3().text_color(rgb(0x999999)).child(text("_xlsx.no-watch-cells-yet-click-add-watch-to-add"));
+        let table=crate::shell::chrome::data_table::DataTable::virtualized("watch-cells",columns,header,table_state,row_count,build,cx).empty(empty.into_any_element());
+        let body=crate::shell::chrome::panel_form().p_0()
+            .child(h_flex().w_full().justify_end().child(crate::shell::chrome::action_button("watch-add").label(text("_xlsx.add-watch")).on_click(cx.listener(|e,_,_,cx|{e.add_watch_cell();cx.notify();}))))
+            .child(div().w_full().h(px(320.)).child(table));
+        let footer=crate::shell::chrome::action_bar().action(crate::shell::chrome::dialog_close_definition(cx));
+        Some(SidebarPanel::with_footer(text("_xlsx.watch-window"),body.into_any_element(),footer).modeless_named("watch_window_panel"))
     }
 }

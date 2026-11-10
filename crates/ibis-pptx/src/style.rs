@@ -44,8 +44,15 @@ pub(crate) struct RunProps {
     pub(crate) japanese: Option<String>,
     /// `lang`.
     pub(crate) lang: Option<String>,
+    /// `kern`, in hundredths of a point.
+    pub(crate) kern: Option<u32>,
     pub(crate) shadow: Option<Option<ibis_doc_model::Shadow>>,
+    /// `a:effectLst/a:glow` (`Some(None)`: an effect list without one).
+    pub(crate) glow: Option<Option<(ibis_doc_model::Color, i64)>>,
 }
+
+/// Added to a bullet size given in points (see `buSzPts`), to tell it from a percentage.
+pub(crate) const BULLET_POINTS: u32 = 10_000_000;
 
 impl RunProps {
     /// Override with the properties stated on `a:rPr`, `a:defRPr` or `a:endParaRPr`.
@@ -70,6 +77,9 @@ impl RunProps {
         }
         if let Some(lang) = attr(node, "lang") {
             self.lang = Some(lang.to_string());
+        }
+        if let Some(k) = attr_i64(node, "kern") {
+            self.kern = Some(k.max(0) as u32);
         }
         if let Some(s) = attr_i64(node, "spc") {
             self.spacing = Some(s.clamp(-400_000, 400_000) as i32);
@@ -164,6 +174,8 @@ impl RunProps {
                     }
                 }
                 "effectLst" => {
+                    // An effect list replaces the inherited one: without a shadow in it, there is none.
+                    self.glow = Some(child(n, "glow").and_then(|g| Some((colors.in_parent(g, None)?, attr_i64(g, "rad").unwrap_or(0)))).filter(|(_, rad)| *rad > 0));
                     if let Some(s) = child(n, "outerShdw") {
                         let blur = attr_i64(s, "blurRad").unwrap_or(0);
                         let distance = attr_i64(s, "dist").unwrap_or(0);
@@ -188,6 +200,27 @@ impl RunProps {
                                 rot_with_shape,
                             }));
                         }
+                    } else if let Some(s) = child(n, "innerShdw") {
+                        let blur = attr_i64(s, "blurRad").unwrap_or(0);
+                        let distance = attr_i64(s, "dist").unwrap_or(0);
+                        let direction = attr_i64(s, "dir").unwrap_or(0) as i32;
+                        if let Some(color) = colors.in_parent(s, None) {
+                            // `sx = 0` marks an inner shadow (`a:innerShdw`, which has no `sx` attribute in OOXML).
+                            self.shadow = Some(Some(ibis_doc_model::Shadow {
+                                color,
+                                blur,
+                                distance,
+                                direction,
+                                sx: 0,
+                                sy: 100_000,
+                                kx: 0,
+                                ky: 0,
+                                align: ibis_doc_model::TileAlign::Bottom,
+                                rot_with_shape: true,
+                            }));
+                        }
+                    } else {
+                        self.shadow = Some(None);
                     }
                 }
                 _ => {}
@@ -258,7 +291,7 @@ pub(crate) enum Spacing {
 
 /// Whether PowerPoint draws `c` with the East Asian font.
 pub(crate) fn is_east_asian(c: char) -> bool {
-    c as u32 >= 0x2e80
+    ibis_doc_model::is_east_asian(c)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -279,6 +312,10 @@ pub(crate) struct ParaProps {
     /// `a:buSzPct`, in 100 000ths; `None` follows the text (`a:buSzTx`).
     pub(crate) bullet_size: Option<Option<u32>>,
     pub(crate) tabs: Option<Vec<ibis_doc_model::TextTabStop>>,
+    pub(crate) default_tab: Option<Emu>,
+    /// `hangingPunct` and `latinLnBrk`.
+    pub(crate) hanging_punct: Option<bool>,
+    pub(crate) latin_line_break: Option<bool>,
     pub(crate) run: RunProps,
 }
 
@@ -309,6 +346,16 @@ impl ParaProps {
         if let Some(v) = attr_i64(node, "indent") {
             self.indent = Some(v);
         }
+        if let Some(v) = attr_i64(node, "defTabSz") {
+            self.default_tab = Some(v.max(0));
+        }
+        let flag = |name: &str| attr(node, name).map(|v| matches!(v, "1" | "true" | "on"));
+        if let Some(v) = flag("hangingPunct") {
+            self.hanging_punct = Some(v);
+        }
+        if let Some(v) = flag("latinLnBrk") {
+            self.latin_line_break = Some(v);
+        }
         for n in elements(node) {
             match n.tag_name().name() {
                 "lnSpc" => {
@@ -337,6 +384,9 @@ impl ParaProps {
                 "buFont" => self.bullet_font = attr(n, "typeface").map(str::to_string),
                 "buFontTx" => self.bullet_font = None,
                 "buSzPct" => self.bullet_size = Some(attr_i64(n, "val").map(|v| v.clamp(25_000, 400_000) as u32)),
+                // A size in points (hundredths) is kept as `BULLET_POINTS + value`: it becomes a percentage once the
+                // text's size is known.
+                "buSzPts" => self.bullet_size = Some(attr_i64(n, "val").map(|v| BULLET_POINTS + v.clamp(100, 400_000) as u32)),
                 "buSzTx" => self.bullet_size = Some(None),
                 "buClr" => self.bullet_color = Some(colors.in_parent(n, None)),
                 "buClrTx" => self.bullet_color = Some(None),
@@ -412,8 +462,13 @@ impl ListStyle {
 /// characters standing in for Wingdings and Symbol glyphs are larger in
 /// ordinary fonts than the glyphs they replace (measured against
 /// PowerPoint's PDF output: Wingdings' circle is about 0.6 of the text size).
+/// Whether `font` is a symbol typeface (its codes draw signs, not letters).
+pub(crate) fn is_symbol_font(font: &str) -> bool {
+    font.contains("Wingdings") || font.contains("Symbol")
+}
+
 pub(crate) fn bullet_scale(font: Option<&str>) -> f32 {
-    if font.is_some_and(|f| f.contains("Wingdings") || f.contains("Symbol")) { 0.75 } else { 1.0 }
+    if font.is_some_and(is_symbol_font) { 0.75 } else { 1.0 }
 }
 
 pub(crate) fn bullet_glyph(text: &str, font: Option<&str>) -> String {
@@ -421,13 +476,23 @@ pub(crate) fn bullet_glyph(text: &str, font: Option<&str>) -> String {
     if !symbol_font {
         return text.to_string();
     }
-    match text {
+    // A symbol font's code points are also written in the private use range U+F020..=U+F0FF (U+F000 plus the code):
+    // PowerPoint saves a bullet drawn with Wingdings as U+F0FC for the code 0xFC (ü).
+    let code = {
+        let mut chars = text.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) if ('\u{f020}'..='\u{f0ff}').contains(&c) => char::from(u32::from(c) as u8).to_string(),
+            _ => text.to_string(),
+        }
+    };
+    match code.as_str() {
         "l" | "Ÿ" | "·" => "●",
         "§" | "n" => "■",
-        "q" => "❑",
+        "p" | "q" => "❑",
         "v" => "❖",
         "Ø" => "➢",
-        "ü" => "✔",
+        // Text presentation (U+FE0E): without it Windows draws the heavy check mark as a colour emoji, which ignores the bullet's colour.
+        "ü" => "✔\u{fe0e}",
         "ð" | "è" => "➔",
         _ => "•",
     }
@@ -611,5 +676,15 @@ mod tests {
     fn wingdings_bullets_map_to_unicode() {
         assert_eq!(bullet_glyph("§", Some("Wingdings")), "■");
         assert_eq!(bullet_glyph("•", Some("Arial")), "•");
+    }
+
+    /// PowerPoint writes a Wingdings bullet's code in the private use range (U+F000 + the code): U+F0FC is ü, the check
+    /// mark, as U+F0A7 is §, the square.
+    #[test]
+    fn wingdings_bullets_in_the_private_use_range_map_like_their_codes() {
+        assert_eq!(bullet_glyph("\u{f0fc}", Some("Wingdings")), "✔\u{fe0e}");
+        assert_eq!(bullet_glyph("\u{f0a7}", Some("Wingdings")), "■");
+        assert_eq!(bullet_glyph("\u{f06c}", Some("Wingdings")), "●");
+        assert_eq!(bullet_glyph("\u{f0fc}", Some("Arial")), "\u{f0fc}");
     }
 }

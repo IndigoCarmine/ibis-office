@@ -81,18 +81,79 @@ pub struct Table {
 }
 
 impl Table {
+    /// Minimum height (in EMU) needed to fit the wrapped text and vertical
+    /// insets of the non-merged, non-row-spanning cells in `row`.
+    pub fn row_text_height(&self, row: &TableRow) -> Emu {
+        const EMU_PER_POINT: f64 = crate::geometry::EMU_PER_POINT as f64;
+        let mut max_h: Emu = 0;
+        for (c, cell) in row.cells.iter().enumerate() {
+            if cell.merged || cell.row_span > 1 {
+                continue;
+            }
+            let span = cell.column_span.max(1) as usize;
+            let col_w: i64 = self.columns[c.min(self.columns.len())..(c + span).min(self.columns.len())].iter().sum();
+            let text_w = (col_w - cell.text.insets.left - cell.text.insets.right).max(1) as f64;
+            let font_scale = cell.text.font_scale as f64 / 100_000.0;
+            let mut text_h = (cell.text.insets.top + cell.text.insets.bottom) as f64;
+            let para_count = cell.text.paragraphs.len();
+            for (i, para) in cell.text.paragraphs.iter().enumerate() {
+                let sz_pt = para
+                    .runs
+                    .iter()
+                    .filter_map(|r| r.style.font_size)
+                    .max()
+                    .or(para.end_style.font_size)
+                    .unwrap_or(cell.text.style.font_size) as f64
+                    / 100.0
+                    * font_scale;
+                let sz_emu = sz_pt * EMU_PER_POINT;
+                let line_emu = match para.line_spacing {
+                    Some(crate::text::LineSpacing::Percent(p)) => 1.2 * sz_emu * (p as f64 / 100_000.0),
+                    Some(crate::text::LineSpacing::Points(p)) => (p as f64 / 100.0) * EMU_PER_POINT,
+                    None => 1.2 * sz_emu,
+                };
+                let avail_w = (text_w - para.margin_left as f64).max(1.0);
+                let line_w: f64 = para
+                    .runs
+                    .iter()
+                    .flat_map(|r| r.text.chars())
+                    .map(|ch| if (ch as u32) >= 0x2e80 { sz_emu } else { 0.55 * sz_emu })
+                    .sum();
+                let lines = if cell.text.wrap && line_w > avail_w {
+                    (line_w / avail_w).ceil().max(1.0)
+                } else {
+                    1.0
+                };
+                if i > 0 {
+                    text_h += (para.space_before as f64 / 100.0) * EMU_PER_POINT;
+                }
+                text_h += lines * line_emu;
+                if i + 1 < para_count {
+                    text_h += (para.space_after as f64 / 100.0) * EMU_PER_POINT;
+                }
+            }
+            max_h = max_h.max(text_h.round() as Emu);
+        }
+        max_h
+    }
+
     /// Row heights scaled so that together they fill `height` (the frame),
     /// which is how tall PowerPoint drew the rows after growing them.
     pub fn row_heights(&self, height: Emu) -> Vec<Emu> {
-        let stated: Emu = self.rows.iter().map(|r| r.height).sum();
+        let base: Vec<Emu> = self
+            .rows
+            .iter()
+            .map(|r| if r.height > 0 { r.height } else { self.row_text_height(r) })
+            .collect();
+        let stated: Emu = base.iter().sum();
         if stated <= 0 {
             let n = self.rows.len().max(1) as Emu;
             return self.rows.iter().map(|_| height / n).collect();
         }
         if stated >= height {
-            return self.rows.iter().map(|r| r.height).collect();
+            return base;
         }
-        let mut out: Vec<Emu> = self.rows.iter().map(|r| r.height * height / stated).collect();
+        let mut out: Vec<Emu> = base.iter().map(|&h| h * height / stated).collect();
         // Give rounding leftovers to the last row so the total is exact.
         let total: Emu = out.iter().sum();
         if let Some(last) = out.last_mut() {

@@ -1,4 +1,4 @@
-<p align="center"><a href="README.md">English</a> | <b>日本語</b></p>
+<p align="center"><a href="README.md">English</a> | <b>日本語</b> | <a href="README-zh-CN.md">简体中文</a></p>
 
 <p align="center">
   <img src="asset/AcaudaOffice_logo.svg" alt="Acauda Office" width="480">
@@ -51,9 +51,9 @@ cargo build --release
 ```
 
 - 最新の安定版の Rust が必要です。
-- macOS では、`scripts/bundle-macos.sh` で `target/release/AcaudaOffice.app` を作ります。
+- macOS では、`scripts/bundle-macos.sh --release` で `target/release/AcaudaOffice.app` を作ります。
 - Windows では、`pwsh scripts/bundle-windows.ps1` で、配布用の zip とインストーラーを `target/dist` に作ります（インストーラーには [Inno Setup 6](https://jrsoftware.org/isdl.php) が要ります）。
-- Linux では、`scripts/bundle-linux.sh` で AppImage を `target/dist` に作ります。
+- Linux では、`scripts/bundle-linux.sh --release` で AppImage を `target/dist` に作ります。
 - Web 版は、`scripts/build-web.sh --release` でビルドし、`www/` を配信します（WebGPU に対応したブラウザ）。
 
 ## ライセンス

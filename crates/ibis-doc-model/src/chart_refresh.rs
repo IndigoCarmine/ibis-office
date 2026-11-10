@@ -176,6 +176,36 @@ pub fn refresh_charts(presentation: &mut Presentation) {
     }
 }
 
+/// The charts of a sheet that a file wrote without the data they draw (no `c:numCache` or `c:strCache`, as some programs
+/// leave them out), read from the cells they name; the other charts are left as the file has them.
+pub fn fill_charts_without_data(presentation: &mut Presentation) {
+    if presentation.workbook.is_none() {
+        return;
+    }
+    let empty = |c: &Chart| {
+        c.cell_refs.iter().zip(c.groups.iter().flat_map(|g| &g.series)).any(|(r, s)| (r.values.is_some() && s.values.iter().all(Option::is_none)) || (r.categories.is_some() && s.categories.is_empty() && s.x_values.is_empty()))
+    };
+    let wanted = presentation.slides.iter().flat_map(|s| &s.shapes).any(|sh| matches!(&sh.kind, ShapeKind::Chart(c) if empty(c)));
+    if !wanted {
+        return;
+    }
+    let sheets = sheets_of(presentation);
+    let mut changes: Vec<(usize, usize, Chart)> = Vec::new();
+    for (si, slide) in presentation.slides.iter().enumerate() {
+        for (hi, shape) in slide.shapes.iter().enumerate() {
+            if let ShapeKind::Chart(chart) = &shape.kind
+                && empty(chart)
+                && let Some(new) = refreshed(chart, &sheets)
+            {
+                changes.push((si, hi, new));
+            }
+        }
+    }
+    for (si, hi, chart) in changes {
+        presentation.slides[si].shapes[hi].kind = ShapeKind::Chart(Box::new(chart));
+    }
+}
+
 /// Rewrite all chart cell references (`cell_refs` and `ex_source`) in `presentation` using `f`.
 pub fn rewrite_chart_references(presentation: &mut Presentation, f: &dyn Fn(&str) -> String) {
     for slide in &mut presentation.slides {

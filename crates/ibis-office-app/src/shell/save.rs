@@ -48,12 +48,13 @@ impl SlideEditor {
     pub(crate) fn save_then(&mut self, after: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(window, cx);
         #[cfg(not(target_family = "wasm"))]
-        match self.path.clone() {
+        // A file opened read-only for its password to modify is not written over: 名前を付けて保存 (as Office does).
+        match self.path.clone().filter(|_| !self.is_modify_locked()) {
             Some(path) => {
                 let result = self.save_to(path, window);
                 self.finish_save(result, after, window, cx);
             }
-            None => self.save_as_then(after, window, cx),
+            None => self.save_as_with(after, window, cx, |_, _, _| {}),
         }
         #[cfg(target_family = "wasm")]
         {
@@ -65,12 +66,17 @@ impl SlideEditor {
 
     /// ⌘⇧S: ask where, and save there.
     pub(crate) fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_as_then(AfterSave::Stay, window, cx);
+        self.save_as_with(AfterSave::Stay, window, cx, |_, _, _| {});
     }
 
-    /// `save_as`, then `after` once the file is saved there: not when the
-    /// dialog is cancelled or the save fails.
-    fn save_as_then(&mut self, after: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
+    /// ⌘⇧S, and then, once the file is written, `then`. A cancelled or failed save does not go on to `then`.
+    pub(crate) fn save_as_then(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) {
+        self.save_as_with(AfterSave::Stay, window, cx, then);
+    }
+
+    /// `save_as`, then `after` (and `then`) once the file is saved there: not
+    /// when the dialog is cancelled or the save fails.
+    fn save_as_with(&mut self, after: AfterSave, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) {
         self.commit_edit(window, cx);
         if self.source.is_none() {
             self.status = Some(crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").into());
@@ -86,12 +92,24 @@ impl SlideEditor {
                 }
             });
             let name = self.file_name.clone().unwrap_or_default();
-            let picked = cx.prompt_for_new_path(&directory, Some(&name));
+            let picked = cx.prompt_for_new_path_with_formats(&directory, Some(&name), &self.save_formats());
             cx.spawn_in(window, async move |this, cx| {
-                let Ok(Ok(Some(path))) = picked.await else { return };
+                // The dialog failing to open is told in a message box (not taken for a cancel).
+                let path = match picked.await {
+                    Ok(Ok(Some(path))) => path,
+                    Ok(Err(error)) => {
+                        this.update(cx, |this, cx| this.show_alert(crate::shell::i18n::text("shell.save-failed.title"), error.to_string().into(), cx)).ok();
+                        return;
+                    }
+                    _ => return,
+                };
                 this.update_in(cx, |this, window, cx| {
                     let result = this.save_to(path, window);
+                    let saved = result.is_ok();
                     this.finish_save(result, after, window, cx);
+                    if saved && after == AfterSave::Stay {
+                        then(this, window, cx);
+                    }
                 })
                 .ok();
             })
@@ -99,9 +117,89 @@ impl SlideEditor {
         }
         #[cfg(target_family = "wasm")]
         {
-            let _ = (window, after);
+            let _ = (window, after, then);
             self.status = Some(crate::shell::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
             cx.notify();
+        }
+    }
+
+    /// Save (as ⌘S, asking where for a file that has no path yet) and then, once the file is written, `then` (the
+    /// save confirmation's 保存: close afterwards). A cancelled or failed save does not go on to `then`. What is being
+    /// typed in a cell is put in first, so it is saved too.
+    pub(crate) fn save_then(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) {
+        self.commit_cell_edit(cx);
+        self.commit_edit(window, cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            if let Some(path) = self.path.clone().filter(|_| !self.is_modify_locked()) {
+                let result = self.save_to(path, window);
+                let saved = result.is_ok();
+                self.report_save(result, cx);
+                if saved {
+                    then(self, window, cx);
+                }
+                return;
+            }
+            if self.source.is_none() {
+                self.status = Some(crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").into());
+                return cx.notify();
+            }
+            let directory = if self.is_workbook() {
+                crate::xlsx::backup_save::effective_default_save_location()
+            } else {
+                std::env::var_os("HOME").map(Into::into).unwrap_or_else(|| ".".into())
+            };
+            let name = self.file_name.clone().unwrap_or_default();
+            let picked = cx.prompt_for_new_path_with_formats(&directory, Some(&name), &self.save_formats());
+            cx.spawn_in(window, async move |this, cx| {
+                // The dialog failing to open is told in a message box (not taken for a cancel).
+                let path = match picked.await {
+                    Ok(Ok(Some(path))) => path,
+                    Ok(Err(error)) => {
+                        this.update(cx, |this, cx| this.show_alert(crate::shell::i18n::text("shell.save-failed.title"), error.to_string().into(), cx)).ok();
+                        return;
+                    }
+                    _ => return,
+                };
+                this.update_in(cx, |this, window, cx| {
+                    let result = this.save_to(path, window);
+                    let saved = result.is_ok();
+                    this.report_save(result, cx);
+                    if saved {
+                        then(this, window, cx);
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = (window, then);
+            self.status = Some(crate::shell::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
+            cx.notify();
+        }
+    }
+
+    /// The formats the save dialog offers for the kind of the open file (the pop-up of the dialog; a name typed with another
+    /// extension is kept). Each is one `save_to` writes by its extension.
+    #[cfg(not(target_family = "wasm"))]
+    fn save_formats(&self) -> Vec<SaveFormat> {
+        use crate::shell::i18n::text;
+        let format = |label: &str, extensions: &[&str]| SaveFormat { label: text(label), extensions: extensions.iter().map(|e| e.to_string()).collect() };
+        if self.is_workbook() {
+            vec![
+                format("file.save-format.xlsx", &["xlsx"]),
+                format("file.save-format.xltx", &["xltx"]),
+                format("file.save-format.xls", &["xls"]),
+                format("file.save-format.ods", &["ods"]),
+                format("file.save-format.csv", &["csv"]),
+                format("file.save-format.tsv", &["tsv"]),
+            ]
+        } else if self.is_presentation() {
+            vec![format("file.save-format.pptx", &["pptx"]), format("file.save-format.ppsx", &["ppsx"]), format("file.save-format.potx", &["potx"]), format("file.save-format.odp", &["odp"])]
+        } else {
+            vec![format("file.save-format.docx", &["docx"]), format("file.save-format.dotx", &["dotx"]), format("file.save-format.odt", &["odt"])]
         }
     }
 
@@ -112,11 +210,17 @@ impl SlideEditor {
         if self.is_master_view() || self.is_page_view() {
             return Err(crate::shell::i18n::text("_shell.close-slide-master-view-and-notes-formatting-bef").to_string());
         }
+        // The password to modify not given: the file itself is not written over (another name is).
+        if self.is_modify_locked() && self.path.as_deref().is_some_and(|own| same_file(own, &path)) {
+            return Err(crate::shell::i18n::text("file.modify-locked-no-overwrite").to_string());
+        }
         let source = self.source.clone().ok_or(crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").to_string())?;
         // A workbook saved as .csv: the sheet shown, as CSV (Excel's 「CSV UTF-8」).
         let csv = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"));
         let tsv = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("tsv") || e.eq_ignore_ascii_case("tab") || e.eq_ignore_ascii_case("txt"));
         let ods = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ods"));
+        let odt = self.is_document() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("odt"));
+        let odp = self.is_presentation() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("odp"));
         let xls = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xls"));
         let xltx = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xltx") || e.eq_ignore_ascii_case("xltm"));
         let ppsx = self.is_presentation() && path.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_slideshow);
@@ -131,6 +235,10 @@ impl SlideEditor {
             ibis_pptx::csv::sheet_to_tsv(self.presentation(), index)
         } else if ods {
             ibis_pptx::write_ods_with_source(self.presentation(), &source).map_err(|e| e.to_string())?
+        } else if odt {
+            ibis_pptx::docx_convert::export_docx_to_odt(self.presentation()).map_err(|e| e.to_string())?
+        } else if odp {
+            ibis_pptx::write_odp(self.presentation()).map_err(|e| e.to_string())?
         } else if xls {
             let (bytes, report) = ibis_pptx::write_xls_report(self.presentation()).map_err(|e| e.to_string())?;
             self.save_note = crate::xlsx::export_xls::note(&report);
@@ -159,7 +267,12 @@ impl SlideEditor {
         let name: SharedString = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
         window.set_window_title(&format!("{name} - Acauda Office"));
         self.file_name = Some(name);
-        self.set_file_path(Some(path));
+        // A newly created file becomes recent as soon as its first save succeeds.
+        self.recent_files = crate::shell::recent_files::add(&path);
+        self.set_file_path(Some(path.clone()));
+        // The file as written here: the watching for other apps' changes (shell/file_watch.rs) does not take it for one.
+        self.watch.known = crate::shell::file_watch::DiskStamp::after_write(&path, &bytes);
+        self.watch.asked = None;
         // What is open is now what its file holds, so closing it asks
         // nothing until it is edited again (Save As too: the file is the new
         // one, as in Word and Excel). Not when saved as CSV or text, which
@@ -264,6 +377,12 @@ pub(crate) fn write_replacing(path: &std::path::Path, bytes: &[u8]) -> std::io::
     std::fs::rename(&temporary, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&temporary);
     })
+}
+
+/// Whether `a` and `b` are one file (the same path, or one that links to the other).
+#[cfg(not(target_family = "wasm"))]
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
 #[cfg(test)]

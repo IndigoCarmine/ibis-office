@@ -35,15 +35,19 @@ pub mod docx;
 pub mod pptx;
 pub(crate) mod pptx_new;
 mod pptx_sections;
+pub(crate) mod pptx_guides;
 mod pptx_groups;
 pub(crate) mod pptx_chart;
 mod pptx_comments;
+mod pptx_media_timing;
 mod pptx_timing;
 mod pptx_foreign;
 mod pptx_header_footer;
 mod pptx_links;
+mod pptx_zoom;
 mod pptx_theme;
 mod pptx_chart_type;
+pub(crate) mod chart_topology;
 pub(crate) mod pptx_chart_data;
 pub use pptx_foreign::ForeignSlide;
 pub(crate) mod pptx_new_chart;
@@ -157,6 +161,14 @@ pub fn open_progressive(
     if crate::odp::is_odp(&data) {
         data = crate::odp::to_pptx(&data)?.into();
     }
+    // An old Word document (.doc) likewise.
+    if crate::docx_convert::is_doc(&data) {
+        data = crate::docx_convert::import_doc_to_docx_bytes(&data)?.into();
+    }
+    // An OpenDocument text (.odt) likewise.
+    if crate::docx_convert::is_odt(&data) {
+        data = crate::docx_convert::import_odt_to_docx_bytes(&data)?.into();
+    }
 
     let mut csv_records = None;
     #[allow(unused_mut)]
@@ -179,6 +191,20 @@ pub fn open_progressive(
         crate::progress::fraction(0.15);
 
         let remaining_offset = iter.position();
+        // The cells the first rows make: room the last chunk's list keeps in front of its own, for the app to put them there
+        // without a copy of the whole list.
+        let first_cells_hint: usize = first.iter().map(|r| r.len()).sum();
+        // The cells the rest will make, from the size of the text left against the first rows' (a few per cent over): the list
+        // that gets them is made this big at once, so that it neither grows by doubling (3.7 GB for 2.3 GB of 21 million cells)
+        // nor stands beside the batches it is filled from.
+        let estimated_cells = if first.is_empty() || remaining_offset == 0 {
+            0
+        } else {
+            let rest_bytes = (text.len() - remaining_offset.min(text.len())) as f64;
+            let per_row = remaining_offset as f64 / first.len() as f64;
+            let cells_per_row = first_cells_hint as f64 / first.len() as f64;
+            (rest_bytes / per_row.max(1.0) * cells_per_row * 1.03) as usize
+        };
         if remaining_offset < text.len() {
             #[cfg(not(target_family = "wasm"))]
             {
@@ -191,9 +217,9 @@ pub fn open_progressive(
                     const BATCH_SIZE: usize = 100_000;
                     let mut batch = Vec::with_capacity(BATCH_SIZE);
                     let mut processed = first_chunk_rows;
-                    let base_style = ibis_doc_model::CellStyle::default();
+                    let base_style = ibis_doc_model::CellStyle { vertical: ibis_doc_model::CellVerticalAlign::Top, vertical_set: true, ..Default::default() };
                     let mut sheet_styles = Vec::new();
-                    let mut all_cells = Vec::new();
+                    let mut all_cells: Vec<ibis_doc_model::SheetCell> = Vec::with_capacity(estimated_cells + first_cells_hint);
                     let mut all_heights = Vec::new();
 
                     while let Some(rec) = iter.next() {
@@ -286,6 +312,16 @@ impl Source {
 
     pub fn kind(&self) -> Kind {
         self.kind
+    }
+
+    /// This source with `current` as the model it was read as: what the window
+    /// does to a file as it opens it (fields, tables of contents, pages, row
+    /// heights, today's date) is not an edit of the user's, so it is no change
+    /// to save. A file opened and saved with no edit is then the original file
+    /// byte for byte, whatever the window made of it (review 0.8.5, 開いた直後の書き換え).
+    pub fn rebased(mut self: Arc<Self>, current: &Presentation) -> Arc<Self> {
+        Arc::make_mut(&mut self).baseline = current.clone();
+        self
     }
 
     /// The model as it was read.
@@ -698,6 +734,7 @@ impl Source {
             background: ibis_doc_model::Fill::None,
             border: None,
             plot_background: ibis_doc_model::Fill::None,
+            plot_border: None,
             disp_blanks_as: None,
             plot_vis_only: true,
             data_table: None,
@@ -708,6 +745,7 @@ impl Source {
             ex: None,
             ex_format: None,
             excel_layout: false,
+            word_layout: false,
             cell_refs: Vec::new(),
             ex_source: None,
         };
@@ -814,6 +852,7 @@ impl Source {
             background: ibis_doc_model::Fill::None,
             border: None,
             plot_background: ibis_doc_model::Fill::None,
+            plot_border: None,
             disp_blanks_as: None,
             plot_vis_only: true,
             data_table: None,
@@ -824,6 +863,7 @@ impl Source {
             ex: None,
             ex_format: None,
             excel_layout: false,
+            word_layout: false,
             cell_refs: Vec::new(),
             ex_source: None,
         };
@@ -842,7 +882,15 @@ impl Source {
         match made {
             Ok((template, read)) => {
                 // A chartEx chart (waterfall…) was read back with its cells' values cached: it is that.
-                let chart = if kind.is_chart_ex() { template.clone() } else { pptx_chart_data::sheet_chart_from_data(&template, current, &refs) };
+                let mut chart = if kind.is_chart_ex() || refs.is_empty() { template.clone() } else { pptx_chart_data::sheet_chart_from_data(&template, current, &refs) };
+                // A series with no name cell is named by its number, as Excel does ("系列1"), not by the template's sample name.
+                if !kind.is_chart_ex() {
+                    for (i, (series, r)) in chart.groups.iter_mut().flat_map(|g| g.series.iter_mut()).zip(refs.iter()).enumerate() {
+                        if r.name.is_none() {
+                            series.name = if crate::english_names() { format!("Series{}", i + 1) } else { format!("系列{}", i + 1) }; // i18n-ok（文書に保存する名前）
+                        }
+                    }
+                }
                 lock().insert(id, NewChartEntry { kind, template: Some(template), refs });
                 Ok(ibis_doc_model::Shape { id, kind: ibis_doc_model::ShapeKind::Chart(Box::new(chart)), ..read })
             }
@@ -992,7 +1040,17 @@ impl Source {
     /// the new layout and master (text formats, theme colours): the file is
     /// written with the change and the slide read back for that.
     pub fn with_layout(&self, current: &Presentation, slide: ibis_doc_model::SlideId, layout: ibis_doc_model::LayoutId) -> Result<ibis_doc_model::Slide, Error> {
-        let mut new = current.with_layout(slide, layout).ok_or_else(|| Error::new("そのスライドかレイアウトがありません"))?;
+        let mut last = current.slides.iter().flat_map(|s| s.shapes.iter()).map(|s| s.id.0).max().unwrap_or(0);
+        self.with_layout_ids(current, slide, layout, &mut || {
+            last += 1;
+            ibis_doc_model::ShapeId(last)
+        })
+    }
+
+    /// [`Source::with_layout`], numbering the empty placeholders the new
+    /// layout adds by `new_id` (see `Presentation::with_layout_ids`).
+    pub fn with_layout_ids(&self, current: &Presentation, slide: ibis_doc_model::SlideId, layout: ibis_doc_model::LayoutId, new_id: &mut dyn FnMut() -> ibis_doc_model::ShapeId) -> Result<ibis_doc_model::Slide, Error> {
+        let mut new = current.with_layout_ids(slide, layout, new_id).ok_or_else(|| Error::new("そのスライドかレイアウトがありません"))?;
         let index = current.slide_index(slide).ok_or_else(|| Error::new("そのスライドがありません"))?;
         let mut changed = current.clone();
         changed.slides[index] = new.clone();
@@ -1028,6 +1086,36 @@ impl Source {
         let read = again.presentation.slides.get(index).filter(|s| s.shapes.len() == current.slides[index].shapes.len()).ok_or_else(|| Error::new("読み直せません"))?;
         let source = map.shapes.get(&read.shapes[at].id).ok_or_else(|| Error::new("グラフの部品がありません"))?;
         let part = pptx_shapes::chart_part_at(&again.source.package, &source.part, &source.path)?;
+        pptx_chart_data::read_chart_data(&again.source.package, &part, chart)
+    }
+
+    /// データの編集 of a chart in a document: chart `shape` of `current` as its workbook and the references its
+    /// series take their data from (as saving `current` writes them); a workbook made from the chart's data for
+    /// a chart with none.
+    pub fn doc_chart_data(&self, current: &Presentation, shape: ibis_doc_model::ShapeId) -> Result<pptx_chart_data::ChartData, Error> {
+        fn charts<'a>(blocks: &'a [ibis_doc_model::Block], out: &mut Vec<(ibis_doc_model::ShapeId, &'a ibis_doc_model::Chart)>) {
+            for b in blocks {
+                match b {
+                    ibis_doc_model::Block::Paragraph(p) => {
+                        for r in &p.runs {
+                            if let ibis_doc_model::FlowRunKind::Shape(s) = &r.kind && let ibis_doc_model::ShapeKind::Chart(c) = &s.kind {
+                                out.push((s.id, c));
+                            }
+                        }
+                    }
+                    ibis_doc_model::Block::Table(t) => t.rows.iter().flat_map(|r| &r.cells).for_each(|c| charts(&c.blocks, out)),
+                }
+            }
+        }
+        let flow = current.flow.as_ref().ok_or_else(|| Error::new("文書ではありません"))?;
+        let mut all = Vec::new();
+        charts(&flow.body, &mut all);
+        let ordinal = all.iter().position(|(id, _)| *id == shape).ok_or_else(|| Error::new("グラフではありません"))?;
+        let chart = all[ordinal].1;
+        let again = open(self.save(current, SaveOptions::default())?)?;
+        let SourceMap::Document(map) = &again.source.map else { return Err(Error::new("文書ではありません")) };
+        let reread = again.presentation.flow.as_ref().ok_or_else(|| Error::new("読み直せません"))?;
+        let part = docx::chart_part_by_ordinal(&again.source.package, map, reread, ordinal)?;
         pptx_chart_data::read_chart_data(&again.source.package, &part, chart)
     }
 
@@ -1148,3 +1236,5 @@ fn renumbered(slide: &ibis_doc_model::Slide, id: ibis_doc_model::SlideId, ids: &
     }
     out
 }
+
+mod chart_format;

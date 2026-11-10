@@ -434,11 +434,11 @@ impl Parser {
 pub fn function_name(word: &str) -> String {
     let mut w = word;
     for prefix in ["_xlfn.", "_xlws.", "_xlfn._xlws."] {
-        if w.len() >= prefix.len() && w[..prefix.len()].eq_ignore_ascii_case(prefix) {
+        if w.as_bytes().get(..prefix.len()).is_some_and(|p| p.eq_ignore_ascii_case(prefix.as_bytes())) {
             w = &w[prefix.len()..];
         }
     }
-    if w.len() >= 6 && w[..6].eq_ignore_ascii_case("_xlws.") {
+    if w.as_bytes().get(..6).is_some_and(|p| p.eq_ignore_ascii_case(b"_xlws.")) {
         w = &w[6..];
     }
     w.to_uppercase()
@@ -625,6 +625,13 @@ fn parse_row(word: &str) -> Option<(u32, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn function_name_with_multibyte_text_does_not_panic() {
+        assert_eq!(function_name("xあい"), "Xあい");
+        assert_eq!(function_name("_xlfn.sum"), "SUM");
+        let _ = parse("xあい(A1)");
+    }
 
     fn cell(row: u32, column: u32) -> Corner {
         Corner { row, column, row_fixed: false, column_fixed: false }

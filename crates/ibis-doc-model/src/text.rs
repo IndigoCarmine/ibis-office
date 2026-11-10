@@ -36,7 +36,23 @@ pub struct TextStyle {
     pub font: Option<String>,
     /// The run's other script's font, used when `font` is not installed.
     pub fallback_font: Option<String>,
+    /// Kerning from this size on, in hundredths of a point (`a:rPr/@kern`: 1200 kerns text of 12 pt and larger); `None` or 0: none.
+    pub kern: KernMin,
 }
+
+/// The size from which text is kerned (`a:rPr/@kern`, in hundredths of a point; `None` or 0: not kerned), as the file says it with its
+/// inheritance. It only tells the renderer: a run made in the editor has none until the file is read again, so it takes no part in
+/// comparing styles (two styles are equal whatever their `KernMin`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KernMin(pub Option<u32>);
+
+impl PartialEq for KernMin {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for KernMin {}
 
 impl TextStyle {
     pub const MIN_FONT_SIZE: u32 = 100;
@@ -61,6 +77,7 @@ impl TextStyle {
             align: self.align,
             font: run.font.clone().or_else(|| self.font.clone()),
             fallback_font: run.fallback_font.clone().or_else(|| self.fallback_font.clone()),
+            kern: KernMin(run.kern.0.or(self.kern.0)),
         }
     }
 }
@@ -76,6 +93,7 @@ impl Default for TextStyle {
             align: TextAlign::Left,
             font: None,
             fallback_font: None,
+            kern: KernMin(None),
         }
     }
 }
@@ -85,6 +103,19 @@ pub const FONT_SIZE_STEPS: &[u32] = &[
     800, 900, 1000, 1050, 1100, 1200, 1400, 1600, 1800, 2000, 2400, 2800, 3200, 3600, 4000,
     4400, 4800, 5400, 6000, 6600, 7200, 8000, 8800, 9600,
 ];
+
+/// The size of text PowerPoint draws in a shape whose text is shrunk by `a:normAutofit fontScale` (`font_scale`, 100000 = 100%): the size times the
+/// scale rounded to a whole point, a half up. Windows PowerPoint's PDFs: 009's titles (16 pt at 90% is 14 pt, 13 pt at 90% is 12 pt), 032 (18 pt at 90% is
+/// 16 pt), 005 (12 pt at 92.5% is 11 pt), and autofit-size-rounding.pptx, where all 44 boxes agree: 10 pt at 85% = 8.5 is 9, 7 pt at 50% = 3.5 is 4,
+/// 20 pt at 92.5% = 18.5 is 19, 44 pt at 62.5% = 27.5 is 28, 4 pt at 85% = 3.4 is 3 (no lower limit). Computed in decimals (a scale as a float is not
+/// exactly 0.925). Without a shrink the size is as it is.
+pub fn autofit_font_size_pt(size_pt: f32, font_scale: u32) -> f32 {
+    if font_scale >= 100_000 {
+        return size_pt;
+    }
+    let scaled = f64::from(size_pt) * f64::from(font_scale) / 100_000.0;
+    ((scaled + 0.5).floor() as f32).max(1.0)
+}
 
 /// The next larger (`grow = true`) or smaller size in [`FONT_SIZE_STEPS`],
 /// like PowerPoint's "Increase/Decrease Font Size".
@@ -99,9 +130,10 @@ pub fn step_font_size(current: u32, grow: bool) -> u32 {
 }
 
 /// Whether a character is drawn with the East Asian font of a font set
-/// (as Office picks: from CJK radicals, U+2E80, up).
+/// (as Office picks: Enclosed Alphanumerics U+2460..=U+24FF, Geometric
+/// Shapes U+25A0..=U+25FF, and from CJK radicals, U+2E80, up).
 pub fn is_east_asian(c: char) -> bool {
-    c as u32 >= 0x2e80
+    matches!(c as u32, 0x2460..=0x24ff | 0x25a0..=0x25ff) || c as u32 >= 0x2e80
 }
 
 /// Typefaces by script: a theme's heading or body fonts.
@@ -164,6 +196,40 @@ pub enum SlideLink {
     EndShow,
 }
 
+/// How a run of vertical writing is horizontal in vertical (縦中横, `w:eastAsianLayout w:vert`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TateChuYoko {
+    /// Not (the run is set as ordinary vertical text).
+    #[default]
+    Off,
+    /// 行の幅に合わせる (`w:vertCompress`): squeezed to the line's width when wider.
+    Fit,
+    /// Not squeezed: the line grows to hold it.
+    Grow,
+}
+
+/// The width (in em, the font size) Word fits a 縦中横 run into when 行の幅に合わせる is turned on.
+///
+/// Source: measured in Word for Mac 16.114 (Format > Asian Layout > Combine... with 行の幅に合わせる on, then saved; report
+/// `tasks/doc/reports/2026-11-04-issue94-tate-chu-yoko-fit.md`). The `w:w` Word writes is `floor(100 * T / natural width)` with
+/// T = 1.29 em for every font (MS Mincho / Gothic, Yu Gothic, Times New Roman, Arial, Meiryo, Yu Mincho), size (9 to 16 pt),
+/// character grid and compatibility mode tried. It is Office's constant, not derived from this crate's layout.
+pub const TATE_CHU_YOKO_FIT_WIDTH_EM: f32 = 1.29;
+
+/// The `w:w` (percent) Word stores when 縦中横 with 行の幅に合わせる is applied to characters whose advances (em) are `advances`.
+///
+/// Word shrinks the run so that its width `sum * w / 100` is [`TATE_CHU_YOKO_FIT_WIDTH_EM`]; a run that is not wider than that
+/// (the usual two digits) is not shrunk and gets no `w:w` (`None`). The value is stored once, as Word does: Word, when it opens
+/// the file, does not shrink a run by `w:vertCompress` alone, it applies the stored `w:w`.
+pub fn tate_chu_yoko_fit_scale(advances: &[f32]) -> Option<u32> {
+    let natural: f32 = advances.iter().sum();
+    if natural <= 0.0 {
+        return None;
+    }
+    let w = (100.0 * TATE_CHU_YOKO_FIT_WIDTH_EM / natural).floor();
+    (w < 100.0 && w >= 1.0).then_some(w as u32)
+}
+
 /// Character formatting of a run that differs from its body's [`TextStyle`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RunStyle {
@@ -192,10 +258,18 @@ pub struct RunStyle {
     pub font: Option<String>,
     /// The other script's font, for when `font` is not installed.
     pub fallback_font: Option<String>,
+    /// `a:rPr/@kern` (see `KernMin`).
+    pub kern: KernMin,
     /// The run's text is computed (a slide number), not typed.
     pub field: Option<TextField>,
     /// A line through the characters (`a:rPr/@strike`).
     pub strike: Strike,
+    /// 縦中横 of vertical writing (Word's `w:eastAsianLayout w:vert`): the run's characters stand upright side by side in one
+    /// cell of the line. `None`: not set, so the text is set as PowerPoint sets it (the digits two by two); `Some(Off)`: set
+    /// by Word, not horizontal in vertical.
+    pub tate_chu_yoko: Option<TateChuYoko>,
+    /// 文字の拡大縮小 (Word's `w:w`, in percent; `None` = 100). Windows Word shrinks 縦中横 by this alone (`w:vertCompress` shrinks nothing of itself).
+    pub char_scale: Option<u32>,
     /// Letters drawn as capitals (`a:rPr/@cap`).
     pub caps: Caps,
     /// How the underline is drawn when `underline` is set (`a:rPr/@u`).
@@ -206,6 +280,8 @@ pub struct RunStyle {
     pub link_tooltip: Option<String>,
     /// Shadow effect on characters (`a:outerShdw`).
     pub shadow: Option<crate::drawing::Shadow>,
+    /// A soft glow around the characters (`a:effectLst/a:glow`): colour and radius in EMU.
+    pub glow: Option<(crate::drawing::Color, i64)>,
     /// Proofing language code (`a:rPr/@lang`, e.g. "ja-JP", "en-US").
     pub lang: Option<String>,
     /// The run is a math formula (`a14:m`), drawn typeset; its text is the
@@ -214,6 +290,8 @@ pub struct RunStyle {
     /// The formula is in the line with the text round it (`a14:m` holding `m:oMath`), not a display formula of its own
     /// (`m:oMathPara`).
     pub math_inline: bool,
+    /// Run border line (`w:bdr` inside a Word text box).
+    pub border: Option<crate::flow::FlowBorder>,
 }
 
 /// The kind of an underline (OOXML's `ST_TextUnderlineType`, but `none`).
@@ -331,6 +409,21 @@ pub struct Bullet {
     pub color: Option<Rgb>,
     /// A numbered bullet (`a:buAutoNum`): `text` is the label it shows now.
     pub auto: Option<AutoNumber>,
+    /// A bullet drawn with a symbol typeface (`a:buFont` Wingdings, Symbol): `text` is the Unicode character that stands in
+    /// for its glyph where the typeface is not installed; this is what the file says.
+    pub symbol: Option<SymbolBullet>,
+}
+
+/// The glyph of a symbol typeface (Wingdings, Symbol) a bullet is drawn with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolBullet {
+    /// The typeface (`a:buFont/@typeface`).
+    pub font: String,
+    /// The character as the file writes it (`a:buChar/@char`): a code of the typeface, or in the private use range U+F020..=U+F0FF.
+    pub code: String,
+    /// The percentage of the bullet's size the stand-in character is drawn smaller (`Bullet::size` is already scaled by it): the
+    /// typeface's own glyph is drawn at the full size.
+    pub stand_in_percent: u32,
 }
 
 /// How a numbered bullet counts (`a:buAutoNum`).
@@ -396,6 +489,10 @@ pub struct Paragraph {
     /// Space above and below the paragraph, in hundredths of a point.
     pub space_before: u32,
     pub space_after: u32,
+    /// Whether `space_before` is drawn as it is. Not so (the default) for a space before given in points: PowerPoint draws it rounded to a whole
+    /// point (Windows PowerPoint's PDF of paragraph-spacing-before-values: 3.75 is 4, 4.8 is 5, 5.5 is 6, 6.4 is 6, 7.2 is 7; the reason is not
+    /// known). A space before given as a percentage of the line (`a:spcPct`) is not rounded, nor is Word's.
+    pub space_before_exact: bool,
     /// Formatting of the paragraph mark; sets the height of an empty paragraph.
     pub end_style: RunStyle,
     /// The paragraph is a line after a line break (Shift+Enter, `a:br`) of
@@ -407,6 +504,17 @@ pub struct Paragraph {
     pub level: u8,
     /// Tab stops defined on this paragraph (`a:pPr/a:tabLst`).
     pub tabs: Vec<TextTabStop>,
+    /// Default tab stop interval (`a:pPr/@defTabSz`), in EMU (`None`: 914 400 EMU = 1 inch).
+    pub default_tab: Option<Emu>,
+    /// Whether `w:snapToGrid` is explicitly disabled (`false`) on this paragraph in a Word text box.
+    pub no_snap_to_grid: bool,
+    /// The pitch of the page's line grid (`w:docGrid`) in hundredths of a point, set while a vertical Word text box is laid out on it: a
+    /// line of 縦中横 that is not squeezed (行を広げる) takes whole pitches. `None` off the grid.
+    pub grid_pitch: Option<u32>,
+    /// `a:pPr/@hangingPunct` off: no punctuation hangs past the end of a line (PowerPoint hangs 、。，．,. when it is on, its masters' setting).
+    pub no_hanging_punct: bool,
+    /// `a:pPr/@latinLnBrk` on: a line may break inside a Latin word.
+    pub latin_line_break: bool,
 }
 
 impl Paragraph {
@@ -504,6 +612,10 @@ pub struct CharacterFormat {
     pub baseline: Option<i32>,
     pub spacing: Option<i32>,
     pub strike: Option<Strike>,
+    /// 縦中横 (Word's command): `Some(None)` takes it away (the text is then Word's, which sets no digits upright).
+    pub tate_chu_yoko: Option<Option<TateChuYoko>>,
+    /// 文字の拡大縮小 (`w:w`, percent): `Some(None)` returns to 100.
+    pub char_scale: Option<Option<u32>>,
     pub caps: Option<Caps>,
     /// `Some(None)` takes the hyperlink away.
     pub link: Option<Option<SlideLink>>,
@@ -557,6 +669,12 @@ impl CharacterFormat {
         }
         if let Some(v) = self.spacing {
             run.spacing = v;
+        }
+        if let Some(v) = self.tate_chu_yoko {
+            run.tate_chu_yoko = Some(v.unwrap_or(TateChuYoko::Off));
+        }
+        if let Some(v) = self.char_scale {
+            run.char_scale = v.filter(|s| *s != 100);
         }
         if let Some(v) = self.strike {
             run.strike = v;
@@ -825,6 +943,9 @@ pub struct TextBody {
     pub warp_adjust: Vec<(String, i64)>,
     /// The text is cut at the shape's edge (a Word text box: what does not fit is not seen).
     pub clip: bool,
+    /// The text is a Word text box's, laid out by Word's rules: the last line of a justified paragraph is not spread, whatever
+    /// follows it (PowerPoint spreads it when the next paragraph has no space before it).
+    pub word_lines: bool,
 }
 
 impl Default for TextBody {
@@ -847,6 +968,7 @@ impl Default for TextBody {
             warp: None,
             warp_adjust: Vec::new(),
             clip: false,
+            word_lines: false,
         }
     }
 }
@@ -911,6 +1033,9 @@ impl TextBody {
         } else {
             let tail = self.paragraphs[p2].split_off(o2);
             self.paragraphs[p1].split_off(o1);
+            if self.paragraphs[p1].runs.is_empty() {
+                self.paragraphs[p1].end_style = tail.end_style;
+            }
             self.paragraphs[p1].runs.extend(tail.runs);
             self.paragraphs.drain(p1 + 1..=p2);
         }
@@ -1018,7 +1143,7 @@ impl TextBody {
 
     /// Cut runs at character `at` of [`text`](Self::text) (so a format
     /// can be given from there).
-    fn split_runs_at(&mut self, at: usize) {
+    pub fn split_runs_at(&mut self, at: usize) {
         let (p, offset) = self.locate(at);
         let paragraph = &mut self.paragraphs[p];
         let mut pos = 0;
@@ -1176,6 +1301,8 @@ impl TextBody {
             }
             if let Some(v) = format.space_before {
                 paragraph.space_before = v;
+                // A space before set here is in points (`a:spcPts`), which PowerPoint rounds; only a percentage read from a file is exact.
+                paragraph.space_before_exact = false;
             }
             if let Some(v) = format.space_after {
                 paragraph.space_after = v;
@@ -1183,6 +1310,7 @@ impl TextBody {
             match format.list {
                 Some(ListKind::None) => {
                     paragraph.bullet = None;
+                    paragraph.margin_left = 0;
                     paragraph.indent = 0;
                 }
                 Some(kind) => {
@@ -1214,7 +1342,7 @@ impl TextBody {
                         scheme: s.name().to_string(),
                         start_at: if shown == start_for_level { start_for_level } else { 1 },
                     });
-                    paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, auto });
+                    paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, auto, symbol: None });
                     // A hanging indent the width of the mark, as PowerPoint sets.
                     if paragraph.indent >= 0 {
                         let hang = if scheme.is_some() { 342_900 } else { 228_600 };
@@ -1249,7 +1377,7 @@ impl TextBody {
                                 let (picture, size, color) = paragraph.bullet.as_ref()
                                     .map(|b| (b.picture.clone(), b.size, b.color))
                                     .unwrap_or((None, 100_000, None));
-                                paragraph.bullet = Some(Bullet { text, picture, size, color, auto });
+                                paragraph.bullet = Some(Bullet { text, picture, size, color, auto, symbol: None });
                             }
                         }
                     }
@@ -1342,6 +1470,23 @@ impl TextBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_autofit_shrink_gives_a_whole_point_size() {
+        // PowerPoint's PDFs (009, 032, 005): 16 pt and 13 pt at 90% are 14 pt and 12 pt, 18 pt at 90% is 16 pt, 12 pt at 92.5% is 11 pt.
+        assert_eq!(autofit_font_size_pt(16.0, 90_000), 14.0);
+        assert_eq!(autofit_font_size_pt(13.0, 90_000), 12.0);
+        assert_eq!(autofit_font_size_pt(18.0, 90_000), 16.0);
+        assert_eq!(autofit_font_size_pt(12.0, 92_500), 11.0);
+        // The halves go up.
+        assert_eq!(autofit_font_size_pt(10.0, 85_000), 9.0);
+        assert_eq!(autofit_font_size_pt(20.0, 92_500), 19.0);
+        assert_eq!(autofit_font_size_pt(20.0, 62_500), 13.0);
+        assert_eq!(autofit_font_size_pt(28.0, 62_500), 18.0);
+        assert_eq!(autofit_font_size_pt(4.0, 85_000), 3.0);
+        assert_eq!(autofit_font_size_pt(16.0, 100_000), 16.0);
+        assert_eq!(autofit_font_size_pt(10.5, 100_000), 10.5);
+    }
 
     #[test]
     fn paragraph_format_excludes_next_paragraph_at_range_end() {

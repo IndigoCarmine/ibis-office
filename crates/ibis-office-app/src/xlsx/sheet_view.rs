@@ -21,10 +21,18 @@ use crate::render::shape_view::{Resources, hsla, polygon};
 
 /// Space between a cell's edge and its text, in points.
 const CELL_PADDING_PT: f32 = 2.0;
-// A cell's fill reaches over the grid line before it: one screen pixel
-// (0.75 pt) to the left and above, as Excel prints (measured from its PDF).
-const FILL_GROW_LEFT_PT: f32 = 0.75;
-const FILL_GROW_TOP_PT: f32 = 0.75;
+
+/// The padding each side of a cell's text in the room it has to fit in (a number that does not fit shows `#`).
+/// A column's width counts 5 pixels of padding besides its characters (ECMA-376 Part 1 18.3.1.13: 2 px a
+/// side and 1 for the grid line), so a text has the column less 5 px: 2.5 px = 1.875 pt a side on Windows
+/// (0.75 pt a pixel). Excel for Mac counts a pixel as a point and 4 pt in all.
+const ROOM_PADDING_PT: f32 = match ibis_pptx::EXCEL_METRICS {
+    ibis_pptx::ExcelMetrics::Windows => 2.5 * 0.75,
+    ibis_pptx::ExcelMetrics::Mac => 2.0,
+};
+/// Where a printed cell's text starts: 21 of the printer's pixels (1/600 inch) from the column's left, whatever the Normal font (Excel for
+/// Windows' PDFs of `pad-*.xlsx`: Calibri 11 and 20, ＭＳ Ｐゴシック 11, 游ゴシック 11, Arial 10).
+const PRINTED_TEXT_PADDING_PT: f32 = 21.0 * 72.0 / 600.0;
 // The text's distance from the cell's sides and its shift from the padded
 // box, in points, as Excel for Mac prints a cell: in its PDF of xlsx-XALN
 // (columns by ECMA-376's width formula) the pen of left-aligned text starts
@@ -93,11 +101,14 @@ struct TextItem {
 /// whole point (half up) of the sheet: in Excel's PDFs every advance (the
 /// font's width plus the `Tc` and TJ adjustments) is one, 43 893 of the
 /// 43 902 advances in the xlsx references. `px_per_point` is the pixels of
-/// one sheet point.
-fn whole_point_advances(line: &mut ShapedLine, px_per_point: f32) {
+/// one sheet point. `printed`: laid out as Excel for Windows prints it, each advance a whole pixel of the printer (1/600 inch): its PDFs of
+/// `colw-sweep.xlsx` draw 10.5 pt 游ゴシック at 10.56 pt, a kana 10.56 pt on, and break the lines by those (GitHub issue #68).
+fn whole_point_advances(line: &mut ShapedLine, px_per_point: f32, printed: bool) {
     if px_per_point <= 0.0 {
         return;
     }
+    // Excel for Windows rounds to a whole pixel (0.75 pt) on the screen and to the printer's (0.12 pt) in print, the Mac's to a point.
+    let unit = px_per_point * if printed { 72.0 / 600.0 } else { ibis_pptx::EXCEL_METRICS.pixel_pt() as f32 };
     let old: Vec<f32> = line.runs.iter().flat_map(|r| r.glyphs.iter().map(|g| f32::from(g.position.x))).collect();
     if old.is_empty() {
         return;
@@ -108,7 +119,7 @@ fn whole_point_advances(line: &mut ShapedLine, px_per_point: f32) {
     for run in &mut runs {
         for g in run.glyphs.iter_mut() {
             let next = old.get(i + 1).copied().unwrap_or(width);
-            let advance = ((next - old[i]) / px_per_point + 0.5).floor() * px_per_point;
+            let advance = ((next - old[i]) / unit + 0.5).floor() * unit;
             g.position.x = px(x);
             x += advance.max(0.0);
             i += 1;
@@ -121,6 +132,44 @@ fn whole_point_advances(line: &mut ShapedLine, px_per_point: f32) {
 struct Quad {
     rect: (f32, f32, f32, f32),
     color: Hsla,
+}
+
+/// A dashed line of a printed border: one path, and in a PDF one line with its dash pattern.
+#[derive(Clone)]
+struct DashedLine {
+    /// Where it runs (pixels).
+    points: Vec<(f32, f32)>,
+    width: f32,
+    color: Hsla,
+    /// The lengths of its dashes and gaps in turn, and how far into them it starts (pixels).
+    pattern: Vec<f32>,
+    phase: f32,
+}
+
+fn on_pixels_bounds(r: Bounds<Pixels>, across_y: bool, scale_factor: f32) -> Bounds<Pixels> {
+    let k = scale_factor;
+    let (x0, y0, x1, y1) = (
+        f32::from(r.origin.x) * k,
+        f32::from(r.origin.y) * k,
+        f32::from(r.origin.x + r.size.width) * k,
+        f32::from(r.origin.y + r.size.height) * k,
+    );
+    let ((a0, a1), (c0, c1)) = if across_y { ((x0, x1), (y0, y1)) } else { ((y0, y1), (x0, x1)) };
+    let (a0, a1) = (a0.round(), a1.round());
+    // Anchor `c1` (the cell grid boundary edge) to `c1.round()`, matching `snap_fill`,
+    // and step back by the integer pixel thickness `w_px`.
+    let w_px = (c1 - c0 + 1e-3).round().max(1.0);
+    let c1_snapped = c1.round();
+    let (c0, c1) = (c1_snapped - w_px, c1_snapped);
+    let ((x0, x1), (y0, y1)) = if across_y { ((a0, a1), (c0, c1)) } else { ((c0, c1), (a0, a1)) };
+    Bounds::new(point(px(x0 / k), px(y0 / k)), size(px((x1 - x0) / k), px((y1 - y0) / k)))
+}
+
+fn snap_fill_bounds(r: Bounds<Pixels>, scale_factor: f32) -> Bounds<Pixels> {
+    let k = scale_factor;
+    let (x0, y0) = ((f32::from(r.origin.x) * k).round(), (f32::from(r.origin.y) * k).round());
+    let (x1, y1) = ((f32::from(r.origin.x + r.size.width) * k).round(), (f32::from(r.origin.y + r.size.height) * k).round());
+    Bounds::new(point(px(x0 / k), px(y0 / k)), size(px((x1 - x0) / k), px((y1 - y0) / k)))
 }
 
 /// Draw `sheet` from the frame's top-left corner. `print` leaves out the
@@ -142,7 +191,15 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
             |_, _, _| {},
             move |bounds, _, window, cx| {
                 let painting = crate::debug_timing::start();
-                let o = bounds.origin;
+                let scale_factor = window.scale_factor();
+                let o = if print {
+                    bounds.origin
+                } else {
+                    point(
+                        px((f32::from(bounds.origin.x) * scale_factor).round() / scale_factor),
+                        px((f32::from(bounds.origin.y) * scale_factor).round() / scale_factor),
+                    )
+                };
                 let visible = window.content_mask().bounds;
                 let shown = |(x, y, w, h): (f32, f32, f32, f32)| {
                     let r = Bounds::new(point(o.x + px(x), o.y + px(y)), size(px(w), px(h)));
@@ -153,9 +210,29 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                 let (left, right) = (f32::from(visible.left() - o.x), f32::from(visible.right() - o.x));
                 // The parts of the layout for the rows shown.
                 let parts = sheet_layout.parts(top, bottom);
+                // On the screen a border or grid line is a whole number of the
+                // screen's pixels thick, the same at every place for a style
+                // and zoom (#2): its far edge anchored to the integer-snapped
+                // grid line (`c1.round()`) and its width rounded (at least one)
+                // so borders, grid lines and cell fills share the exact same
+                // integer pixel boundary with zero 1px gaps or overlaps.
+                // Printed, lines stay where Excel prints them (the PDF has no pixels).
+                let on_pixels = |r: Bounds<Pixels>, across_y: bool| -> Bounds<Pixels> {
+                    if print {
+                        return r;
+                    }
+                    on_pixels_bounds(r, across_y, scale_factor)
+                };
+                let snap_fill = |r: Bounds<Pixels>| -> Bounds<Pixels> {
+                    if print {
+                        return r;
+                    }
+                    snap_fill_bounds(r, scale_factor)
+                };
                 for &(rect, ref fill) in parts.iter().flat_map(|l| l.gradients.iter()) {
-                    if shown(rect).is_some() {
-                        let (w, h) = (rect.2, rect.3);
+                    if let Some(r) = shown(rect) {
+                        let r = snap_fill(r);
+                        let (w, h) = (f32::from(r.size.width), f32::from(r.size.height));
                         let subpaths = &[vec![(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)]];
                         crate::render::gradient::paint_gradient_mode(
                             window,
@@ -164,45 +241,11 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                             (w, h),
                             1.0,
                             false,
-                            &|pts| pts.iter().map(|&(px_x, px_y)| point(o.x + px(rect.0 + px_x), o.y + px(rect.1 + px_y))).collect(),
+                            &|pts| pts.iter().map(|&(px_x, px_y)| point(r.origin.x + px(px_x), r.origin.y + px(px_y))).collect(),
                         );
                     }
                 }
-                // On the screen a border or grid line is a whole number of the
-                // screen's pixels thick, the same at every place for a style
-                // and zoom (#2): its near edge on the nearest pixel and its
-                // width rounded (at least one). GPUI puts each edge of a quad
-                // on a pixel apart, so a line 1.4 pixels thick came out 1 or 2
-                // as it lay, and changed as the zoom moved it. Fills take
-                // their four edges to pixels, so neighbours meet without a
-                // seam. Printed, lines stay where Excel prints them (the PDF
-                // has no pixels).
-                let scale_factor = window.scale_factor();
-                let on_pixels = |r: Bounds<Pixels>, across_y: bool| -> Bounds<Pixels> {
-                    if print {
-                        return r;
-                    }
-                    let k = scale_factor;
-                    let (x0, y0, x1, y1) = (f32::from(r.origin.x) * k, f32::from(r.origin.y) * k, f32::from(r.origin.x + r.size.width) * k, f32::from(r.origin.y + r.size.height) * k);
-                    let ((a0, a1), (c0, c1)) = if across_y { ((x0, x1), (y0, y1)) } else { ((y0, y1), (x0, x1)) };
-                    let (a0, a1) = (a0.round(), a1.round());
-                    // The width is a whole number of logical pixels times the
-                    // scale factor (1.25, 1.5 on Windows): on a half pixel
-                    // float error must not tip it to 1 here and 2 there.
-                    let (c0, c1) = (c0.round(), c0.round() + (c1 - c0 + 1e-3).round().max(1.0));
-                    let ((x0, x1), (y0, y1)) = if across_y { ((a0, a1), (c0, c1)) } else { ((c0, c1), (a0, a1)) };
-                    Bounds::new(point(px(x0 / k), px(y0 / k)), size(px((x1 - x0) / k), px((y1 - y0) / k)))
-                };
-                let snap_fill = |r: Bounds<Pixels>| -> Bounds<Pixels> {
-                    if print {
-                        return r;
-                    }
-                    let k = scale_factor;
-                    let (x0, y0) = ((f32::from(r.origin.x) * k).round(), (f32::from(r.origin.y) * k).round());
-                    let (x1, y1) = ((f32::from(r.origin.x + r.size.width) * k).round(), (f32::from(r.origin.y + r.size.height) * k).round());
-                    Bounds::new(point(px(x0 / k), px(y0 / k)), size(px((x1 - x0) / k), px((y1 - y0) / k)))
-                };
-                for (is_grid, bands, quads) in parts.iter().map(|l| (false, &l.bands[0], &l.fills)).chain(parts.iter().map(|l| (true, &l.bands[1], &l.grid))) {
+                for (is_grid, bands, quads) in parts.iter().map(|l| (true, &l.bands[1], &l.grid)).chain(parts.iter().map(|l| (false, &l.bands[0], &l.fills))) {
                     for i in bands.find(top, bottom) {
                         if let Some(r) = shown(quads[i as usize].rect) {
                             let r = if is_grid { on_pixels(r, r.size.width > r.size.height) } else { snap_fill(r) };
@@ -223,21 +266,23 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
 
                     let y_of = |r: u32| -> f32 {
                         let len = ys.len();
-                        if (r as usize) < len {
+                        let raw = if (r as usize) < len {
                             ys[r as usize] as f32 * scale
                         } else {
                             let last = ys.last().copied().unwrap_or(0);
                             (last + (r as usize - (len - 1)) as i64 * sheet.default_row) as f32 * scale
-                        }
+                        };
+                        raw.round()
                     };
                     let x_of = |c: u32| -> f32 {
                         let len = xs.len();
-                        if (c as usize) < len {
+                        let raw = if (c as usize) < len {
                             xs[c as usize] as f32 * scale
                         } else {
                             let last = xs.last().copied().unwrap_or(0);
                             (last + (c as usize - (len - 1)) as i64 * sheet.default_column) as f32 * scale
-                        }
+                        };
+                        raw.round()
                     };
 
                     let base_bottom_y = y_of(base_max_row);
@@ -250,7 +295,7 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                         for r in first_r..=last_r {
                             let y = y_of(r);
                             if y >= top - default_row_px && y <= bottom + default_row_px {
-                                if let Some(rect) = shown((0.0, y - 0.5, w_extent, 1.0)) {
+                                if let Some(rect) = shown((0.0, y - 1.0, w_extent, 1.0)) {
                                     window.paint_quad(fill(on_pixels(rect, true), color));
                                 }
                             }
@@ -263,7 +308,7 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                             for c in 1..=max_col_view {
                                 let x = x_of(c);
                                 if x >= left - default_col_px && x <= right + default_col_px {
-                                    if let Some(rect) = shown((x - 0.5, seg_top, 1.0, seg_h)) {
+                                    if let Some(rect) = shown((x - 1.0, seg_top, 1.0, seg_h)) {
                                         window.paint_quad(fill(on_pixels(rect, false), color));
                                     }
                                 }
@@ -280,18 +325,38 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                 // measured at once (a screenful is the first paint's).
                 let cell_bands = layout.cell_bands.get_or_init(|| Bands::new(layout.cells.iter().map(|c| (c.rect.0, c.rect.1, c.rect.2 - c.rect.0, c.rect.3 - c.rect.1))));
                 let found = cell_bands.find(top, bottom);
+                let ts_key = (std::sync::Arc::as_ptr(window.text_system()) as usize as u64).wrapping_mul(0x517C_C1B7_2722_0A95);
                 {
                     let mut items = layout.items.borrow_mut();
                     if items.len() != layout.cells.len() {
                         items.resize_with(layout.cells.len(), || None);
                     }
                     let measure = |text: &str, font: &Font, size: f32| -> f32 {
+                        let key = measured_key(text, font, size) ^ ts_key;
+                        // A text shaped before (the same characters, font and size, in this scale) keeps its width and
+                        // shaping: the sheet's cells hold few different texts (a printed 5,000-page sheet shaped 590,000
+                        // cells, 70 % of its export's time).
+                        let cache_key = key ^ (px_per_point.to_bits() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                        if let Some((width, line)) = SHAPED_TEXTS.with(|c| c.borrow().get(&cache_key).cloned()) {
+                            if keep_measured {
+                                layout.measured.borrow_mut().insert(key, line);
+                            }
+                            return width;
+                        }
                         let run = TextRun { len: text.len(), font: font.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
                         let mut line = window.text_system().shape_line(SharedString::from(text.to_string()), px(size), &[run], None);
-                        whole_point_advances(&mut line, px_per_point);
+                        whole_point_advances(&mut line, px_per_point, *sheet.printed);
                         let width = f32::from(line.width);
+                        let line = Rc::new(line);
+                        SHAPED_TEXTS.with(|c| {
+                            let mut c = c.borrow_mut();
+                            if c.len() >= SHAPED_TEXTS_MAX {
+                                c.clear();
+                            }
+                            c.insert(cache_key, (width, line.clone()));
+                        });
                         if keep_measured {
-                            layout.measured.borrow_mut().insert(measured_key(text, font, size), Rc::new(line));
+                            layout.measured.borrow_mut().insert(key, line);
                         }
                         width
                     };
@@ -308,7 +373,24 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                 }
                 let items = layout.items.borrow();
                 let measured = layout.measured.borrow();
-                for t in found.iter().flat_map(|&i| items[i as usize].as_deref().unwrap_or(&[])) {
+                // The hyperlinks of the cells shown: where their text is drawn is kept for the pointer (`link_text_at`).
+                let links: Vec<&ibis_doc_model::Hyperlink> = if print || sheet.hyperlinks.is_empty() {
+                    Vec::new()
+                } else {
+                    let rows = found.iter().map(|&i| layout.cell_ids[i as usize].0);
+                    let (lo, hi) = (rows.clone().min().unwrap_or(0), rows.max().unwrap_or(0));
+                    sheet.hyperlinks.iter().filter(|h| h.range.first_row <= hi && lo <= h.range.last_row).collect()
+                };
+                let mut link_polys: HashMap<(u32, u32), Vec<Vec<(f64, f64)>>> = HashMap::new();
+                if !links.is_empty() {
+                    for &i in &found {
+                        let (r, c) = layout.cell_ids[i as usize];
+                        if links.iter().any(|h| (h.range.first_row..=h.range.last_row).contains(&r) && (h.range.first_column..=h.range.last_column).contains(&c)) {
+                            link_polys.insert((r, c), Vec::new());
+                        }
+                    }
+                }
+                for (ci, t) in found.iter().flat_map(|&i| items[i as usize].as_deref().unwrap_or(&[]).iter().map(move |t| (i as usize, t))) {
                     let Some(clip) = shown(t.clip) else { continue };
                     // Shaped pieces, or room of a fixed width.
                     let shaped: Vec<Result<ShapedLine, f32>> = t
@@ -336,11 +418,11 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                                 underline: None,
                                 strikethrough: piece_strike.then(|| StrikethroughStyle { thickness: px((size / 14.0).max(0.5)), color: Some(piece_color) }),
                             };
-                            Ok(match measured.get(&measured_key(&p.text, font, size)).filter(|l| l.text.as_ref() == p.text) {
+                            Ok(match measured.get(&(measured_key(&p.text, font, size) ^ ts_key)).filter(|l| l.text.as_ref() == p.text) {
                                 Some(line) => line.restyled(&[run]),
                                 None => {
                                     let mut line = window.text_system().shape_line(SharedString::from(p.text.clone()), px(size), &[run], None);
-                                    whole_point_advances(&mut line, px_per_point);
+                                    whole_point_advances(&mut line, px_per_point, *sheet.printed);
                                     line
                                 }
                             })
@@ -358,18 +440,39 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                     let (clip_left, clip_top, clip_w, clip_h) = t.clip;
                     let (start, end) = (x.max(clip_left), (x + total + gap * count.saturating_sub(1) as f32).min(clip_left + clip_w));
                     let is_angled = t.rotation >= 1 && t.rotation <= 180;
+                    if let Some(polys) = link_polys.get_mut(&layout.cell_ids[ci]) {
+                        let lines = shaped.iter().filter_map(|l| l.as_ref().ok());
+                        let ascent = lines.clone().map(|l| f32::from(l.ascent)).fold(0.0, f32::max);
+                        let descent = lines.map(|l| f32::from(l.descent)).fold(0.0, f32::max);
+                        if ascent + descent > 0.0 {
+                            let span = total + gap * count.saturating_sub(1) as f32;
+                            let corners = [(0.0, -ascent), (span, -ascent), (span, descent), (0.0, descent)];
+                            let (sin, cos) = if is_angled { text_angle(t.rotation).to_radians().sin_cos() } else { (0.0, 1.0) };
+                            let (ox, oy) = if is_angled { (t.left, t.baseline) } else { (x, t.baseline) };
+                            let turned: Vec<(f32, f32)> = corners.iter().map(|&(u, v)| (ox + u * cos - v * sin, oy + u * sin + v * cos)).collect();
+                            let cut = clip_to_box(&turned, (clip_left, clip_top, clip_left + clip_w, clip_top + clip_h));
+                            if cut.len() >= 3 {
+                                polys.push(cut.iter().map(|&(a, b)| (a as f64 / scale as f64, b as f64 / scale as f64)).collect());
+                            }
+                        }
+                    }
                     if !is_angled && (start < t.cell.0 - 0.5 || end > t.cell.1 + 0.5) {
                         run_on.push((start, end, clip_top, clip_top + clip_h));
                     }
                     let mask_bounds = Bounds::new(clip.origin, clip.size);
                     window.with_content_mask(Some(ContentMask { bounds: mask_bounds }), |window| {
+                        if print && !is_angled && t.cell.1 <= left + 0.5 && end > left + 0.5 {
+                            let bg_left = left.max(clip_left);
+                            let bg_w = (end - bg_left).max(0.0);
+                            if bg_w > 0.0 {
+                                window.paint_quad(fill(
+                                    Bounds::new(point(o.x + px(bg_left), o.y + px(clip_top)), size(px(bg_w), px(clip_h))),
+                                    gpui_kit::white(),
+                                ));
+                            }
+                        }
                         if is_angled {
-                            let angle_degrees = if t.rotation <= 90 {
-                                -(t.rotation as f32)
-                            } else {
-                                (t.rotation - 90) as f32
-                            };
-                            let angle = angle_degrees.to_radians();
+                            let angle = text_angle(t.rotation).to_radians();
                             let (sin, cos) = angle.sin_cos();
                             let scale = window.scale_factor();
                             let x0 = t.left;
@@ -426,8 +529,33 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                             let u_offset = u_off_pt * px_per_point;
                             let snap = |val: Pixels| px((f32::from(val) * window.scale_factor()).round() / window.scale_factor());
                             let u_y = snap(o.y + px(t.baseline + u_offset));
+                            // Printed, as Excel does (its PDFs of xlsx-XFNT, Calibri 11 and 20 pt): the lines are the
+                            // font's underline thickness (Calibri's 0.0654 em) down to whole sheet points, at least 1,
+                            // the top the font's underline position (0.1133 em, 游ゴシック's 0.1001 for East Asian
+                            // text) rounded to whole points below the baseline; a double underline's second line is
+                            // at twice that position (rounded down) and its first two thicknesses above it (Excel's
+                            // PDFs at 11 and 20 pt, Calibri and East Asian text).
+                            let has_east_asian = t.pieces.iter().any(|p| !p.text.is_ascii());
+                            let printed = print.then(|| {
+                                let em = if has_east_asian { 0.1001 } else { 0.1133 };
+                                let thick = ((font_pt * 0.0654).floor().max(1.0)) * px_per_point;
+                                let top = o.y + px(t.baseline + (font_pt * em).round() * px_per_point);
+                                let second = o.y + px(t.baseline + (font_pt * 2.0 * em + 1e-3).floor() * px_per_point);
+                                (thick, top, second)
+                            });
                             match t.underline {
                                 CellUnderline::None => {}
+                                CellUnderline::Single if printed.is_some() => {
+                                    let (thick, top, _) = printed.unwrap();
+                                    let x = o.x + px(text_start_x);
+                                    window.paint_quad(fill(Bounds::new(point(x, top), size(px(total), px(thick))), t.color));
+                                }
+                                CellUnderline::Double if printed.is_some() => {
+                                    let (thick, _, second) = printed.unwrap();
+                                    let x = o.x + px(text_start_x);
+                                    window.paint_quad(fill(Bounds::new(point(x, second - px(2.0 * thick)), size(px(total), px(thick))), t.color));
+                                    window.paint_quad(fill(Bounds::new(point(x, second), size(px(total), px(thick))), t.color));
+                                }
                                 CellUnderline::Single => {
                                     let x = snap(o.x + px(text_start_x));
                                     let r = Bounds::new(point(x, u_y), size(px(total), px(d_px)));
@@ -478,6 +606,21 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                         }
                     });
                 }
+                if !link_polys.is_empty() {
+                    let key = Arc::as_ptr(&sheet) as usize;
+                    LINK_TEXT.with(|m| {
+                        let mut m = m.borrow_mut();
+                        if m.len() > LINK_TEXT_MAX {
+                            m.clear();
+                        }
+                        // A pane that shows none of a cell's text (the other side of a frozen row or column, scrolled away) draws
+                        // nothing of it, but the text is still where the pane that shows it put it (sheet-local, not window-local):
+                        // only a pane that drew some of it writes.
+                        for ((r, c), polys) in link_polys.into_iter().filter(|(_, polys)| !polys.is_empty()) {
+                            m.insert((key, r, c), polys);
+                        }
+                    });
+                }
                 }
                 for q in parts.iter().flat_map(|l| l.bands[2].find(top, bottom).into_iter().map(move |i| &l.borders[i as usize])) {
                     if let Some(r) = shown(q.rect) {
@@ -508,6 +651,17 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                         && let Some(path) = polygon(&points, Some(px(*pen)), true)
                     {
                         window.paint_path(path, *color);
+                    }
+                }
+                for line in parts.iter().flat_map(|l| l.dashed_lines.iter()) {
+                    let (x0, x1) = line.points.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.0), b.max(p.0)));
+                    let (y0, y1) = line.points.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
+                    if shown((x0, y0, x1 - x0, y1 - y0)).is_none() {
+                        continue;
+                    }
+                    let moved: Vec<_> = line.points.iter().map(|&(x, y)| point(o.x + px(x), o.y + px(y))).collect();
+                    if let Some(path) = crate::render::shape_view::dashed_line_path(&moved, px(line.width), &line.pattern, line.phase) {
+                        window.paint_path(path, line.color);
                     }
                 }
                 for (a, b, width, color) in parts.iter().flat_map(|l| l.diagonals.iter()) {
@@ -634,11 +788,15 @@ thread_local! {
     /// Layouts of the sheets drawn lately, by the sheet, the scale and
     /// whether printed: GPUI draws the whole window again on every scroll.
     static LAYOUTS: std::cell::RefCell<Vec<CachedLayout>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PRINT_REGIONS: std::cell::RefCell<Vec<(LayoutKey, std::sync::Weak<Sheet>, Vec<EmuRect>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Forget the layouts kept: they hold their sheets, so that an edit would copy every cell of a big sheet before changing one (the layout of the changed sheet is made again at the next draw).
 pub(crate) fn release_layouts() {
     LAYOUTS.with(|cache| cache.borrow_mut().clear());
+    LINK_TEXT.with(|m| m.borrow_mut().clear());
+    PRINT_REGIONS.with(|cache| cache.borrow_mut().clear());
+    SHAPED_TEXTS.with(|cache| cache.borrow_mut().clear());
 }
 
 /// The text displayed for a cell on screen: evaluates show_formulas and show_zeros.
@@ -654,15 +812,23 @@ pub(crate) fn cell_shown_text(sheet: &Sheet, cell: &ibis_doc_model::SheetCell) -
 
 /// A layout by its key (the sheet's address, the scale's bits and whether
 /// printed), with the sheet it was made for.
-type CachedLayout = ((usize, u32, bool, u64, u64), Arc<Sheet>, Rc<SheetLayout>);
+type LayoutKey = (usize, usize, usize, u32, bool, u64, i64, u64);
+type CachedLayout = (LayoutKey, Arc<Sheet>, Rc<SheetLayout>);
 
 /// How many layouts to keep (a workbook's sheets at a zoom or two).
 const CACHED_LAYOUTS: usize = 8;
 
-fn cached_layout(sheet: &Arc<Sheet>, scale: f32, res: &Resources) -> Rc<SheetLayout> {
+fn layout_key(sheet: &Arc<Sheet>, scale: f32, res: &Resources) -> LayoutKey {
     // Keyed by the cell content generation so zoom changes on `Sheet`
     // retain cached layouts across zoom levels.
-    let key = (sheet.cells.content_id(), scale.to_bits(), res.print, res.print_scale.get().to_bits(), crate::render::web_image::generation());
+    let breaks = res.print_breaks.borrow();
+    let breaks_key = breaks.0.iter().chain(&breaks.1).fold(breaks.0.len() as i64, |h, v| h.wrapping_mul(31).wrapping_add(*v));
+    drop(breaks);
+    (sheet.cells.content_id(), Arc::as_ptr(sheet) as usize, res.layout_generation, scale.to_bits(), res.print, res.print_scale.get().to_bits(), breaks_key, crate::render::web_image::generation())
+}
+
+fn cached_layout(sheet: &Arc<Sheet>, scale: f32, res: &Resources) -> Rc<SheetLayout> {
+    let key = layout_key(sheet, scale, res);
     LAYOUTS.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some(i) = cache.iter().position(|(k, _, _)| *k == key) {
@@ -705,6 +871,7 @@ const PART_ROWS: u32 = 64;
 struct LayoutContext {
     print: bool,
     print_scale: f64,
+    breaks: Arc<(Vec<i64>, Vec<i64>)>,
     fonts: Vec<CellFont>,
     sheets: HashMap<String, Arc<Sheet>>,
     /// The cells that show a picture from an address (IMAGE): their text (the file's `#VALUE!`) is not drawn.
@@ -745,8 +912,15 @@ impl SheetLayout {
         fonts.push(cell_font(&CellStyle::default(), res));
         // What the calculation asked IMAGE for, of the cells that still hold a formula.
         let images: Vec<((u32, u32), ibis_calc::eval::ImageSpec)> = source.web_images.iter().filter(|((r, c), _)| source.cell(*r, *c).is_some_and(|x| x.formula.is_some())).map(|(k, v)| (*k, v.clone())).collect();
-        let context = LayoutContext { print: res.print, print_scale: res.print_scale.get(), fonts, sheets: res.sheets.clone(), images: images.iter().map(|(k, i)| (*k, i.source.clone())).collect() };
-        let row_tops = sheet.row_offsets().iter().map(|&y| y as f32 * scale).collect();
+        let context = LayoutContext { print: res.print, print_scale: res.print_scale.get(), breaks: res.print_breaks.borrow().clone(), fonts, sheets: res.sheets.clone(), images: images.iter().map(|(k, i)| (*k, i.source.clone())).collect() };
+        let row_tops = sheet
+            .row_offsets()
+            .iter()
+            .map(|&y| {
+                let raw = y as f32 * scale;
+                if res.print { raw } else { raw.round() }
+            })
+            .collect();
         let merges = sheet.merges.iter().map(|m| (m.first_row, m.last_row)).collect();
         let overlay = applied.as_ref().as_ref().map(|(_, o)| o);
         let part = if res.print { Part::All } else { Part::Base };
@@ -805,6 +979,8 @@ struct Layout {
     grid: Vec<Quad>,
     /// The cells' text, laid out at the first paint (by shaped widths).
     cells: Vec<CellText>,
+    /// The (row, column) of each of `cells`.
+    cell_ids: Vec<(u32, u32)>,
     /// The cells by the bands of the sheet they are in.
     cell_bands: std::cell::OnceCell<Bands>,
     /// Each cell's text items, made as the cell is first shown.
@@ -819,9 +995,66 @@ struct Layout {
     /// Solid diagonal lines as Excel prints them: outlines filled and
     /// stroked with a pen this wide.
     diagonal_shapes: Vec<(Vec<(f32, f32)>, f32, Hsla)>,
+    /// Lines of short dashes (the dots of dotted borders): the dashes, the line's width and its colour.
+    dashed_lines: Vec<DashedLine>,
     comments: Vec<((f32, f32), (f32, f32), (f32, f32), Hsla)>,
     /// The fills, grid lines, borders and vertical borders by band.
     bands: [Bands; 4],
+}
+
+const SHAPED_TEXTS_MAX: usize = 100_000;
+
+const LINK_TEXT_MAX: usize = 50_000;
+
+thread_local! {
+    /// Where the text of the cells with a hyperlink was drawn, as the paint laid it out: the sheet (its address), row and column
+    /// give the rectangles (corners, sheet-local EMU) the text covers, turned for rotated text, cut to what is shown of the cell
+    /// and the empty cells it runs on to. The pointer asks `link_text_at`, so the click and the pointer use what is drawn.
+    static LINK_TEXT: std::cell::RefCell<HashMap<(usize, u32, u32), Vec<Vec<(f64, f64)>>>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// The angle (degrees, counter-clockwise negative as the canvas turns) of text of the cell's rotation (1 to 180).
+fn text_angle(rotation: u8) -> f32 {
+    if rotation <= 90 { -(rotation as f32) } else { (rotation - 90) as f32 }
+}
+
+/// The cell (column, row) whose hyperlink text is drawn at the point (sheet-local EMU), if any.
+pub(crate) fn link_text_at(sheet: &Arc<Sheet>, x: f64, y: f64) -> Option<(u32, u32)> {
+    let key = Arc::as_ptr(sheet) as usize;
+    LINK_TEXT.with(|m| {
+        m.borrow().iter().find_map(|(&(k, r, c), polys)| {
+            (k == key && sheet.hyperlinks.iter().any(|h| (h.range.first_row..=h.range.last_row).contains(&r) && (h.range.first_column..=h.range.last_column).contains(&c))
+                && polys.iter().any(|poly| point_in_convex(poly, x, y)))
+            .then_some((c, r))
+        })
+    })
+}
+
+/// For the scenarios: the box (left, top, right, bottom; sheet-local EMU) around the first piece of hyperlink text drawn for the cell (stacked text is one per letter).
+#[cfg(all(target_os = "macos", feature = "scenarios"))]
+pub(crate) fn link_text_box(sheet: &Arc<Sheet>, row: u32, column: u32) -> Option<(f64, f64, f64, f64)> {
+    let key = Arc::as_ptr(sheet) as usize;
+    LINK_TEXT.with(|m| {
+        let m = m.borrow();
+        let points = m.get(&(key, row, column))?.first()?.iter();
+        points.fold(None, |b, &(x, y)| Some(b.map_or((x, y, x, y), |(l, t, r, bo): (f64, f64, f64, f64)| (l.min(x), t.min(y), r.max(x), bo.max(y)))))
+    })
+}
+
+fn point_in_convex(poly: &[(f64, f64)], x: f64, y: f64) -> bool {
+    let (mut pos, mut neg) = (false, false);
+    for k in 0..poly.len() {
+        let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
+        let cross = (b.0 - a.0) * (y - a.1) - (b.1 - a.1) * (x - a.0);
+        pos |= cross > 0.0;
+        neg |= cross < 0.0;
+    }
+    !(pos && neg)
+}
+
+thread_local! {
+    /// The texts shaped so far for measuring: (width, the shaped line), by `measured_key` and the scale.
+    static SHAPED_TEXTS: std::cell::RefCell<HashMap<u64, (f32, Rc<ShapedLine>)>> = std::cell::RefCell::new(HashMap::new());
 }
 
 /// A measured line's key: a hash of its text, font and size in pixels.
@@ -880,26 +1113,30 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
     DASH_ANCHOR.with(|a| a.set(anchors));
     PRINT_GRID.with(|g| g.set(ctx.print.then(|| (ctx.print_scale as f32, -anchors.0, -anchors.1))));
     BORDER_SHAPES.with(|s| s.borrow_mut().clear());
+    BORDER_DASHES.with(|s| s.borrow_mut().clear());
     let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
     let x = |c: u32| {
         let len = xs.len();
-        if (c as usize) < len {
+        let raw = if (c as usize) < len {
             xs[c as usize] as f32 * scale
         } else {
             let last = xs.last().copied().unwrap_or(0);
             (last + (c as usize - (len - 1)) as i64 * sheet.default_column) as f32 * scale
-        }
+        };
+        if ctx.print { raw } else { raw.round() }
     };
     let y = |r: u32| {
         let len = ys.len();
-        if (r as usize) < len {
+        let raw = if (r as usize) < len {
             ys[r as usize] as f32 * scale
         } else {
             let last = ys.last().copied().unwrap_or(0);
             (last + (r as usize - (len - 1)) as i64 * sheet.default_row) as f32 * scale
-        }
+        };
+        if ctx.print { raw } else { raw.round() }
     };
     let px_per_point = EMU_PER_POINT as f32 * scale;
+    let page_height_emu = sheet.print.page_size().1;
     let default_style = CellStyle::default();
     let style_of = |i: u32| sheet.styles.get(i as usize).unwrap_or(&default_style);
     // Pivot tables' row labels, drawn in by Excel's own indent.
@@ -918,15 +1155,16 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             }
         }
     }
-    // Cells holding a value stop text running on from beside them (only the part's own rows matter: the text runs along a row).
+    // Cells holding a value or a formula stop text running on from beside them (only the part's own rows matter: the text runs along a row).
     let filled: std::collections::HashSet<(u32, u32)> =
-        part_cells.iter().filter(|c| !c.text.is_empty()).map(|c| (c.row, c.column)).chain(covered.iter().copied()).collect();
+        part_cells.iter().filter(|c| !c.text.is_empty() || c.formula.is_some()).map(|c| (c.row, c.column)).chain(covered.iter().copied()).collect();
 
     let mut out = Layout {
         fills: Vec::new(),
         gradients: Vec::new(),
         grid: Vec::new(),
         cells: Vec::new(),
+        cell_ids: Vec::new(),
         cell_bands: Default::default(),
         items: Default::default(),
         measured: Default::default(),
@@ -934,11 +1172,13 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         vertical_borders: Vec::new(),
         diagonals: Vec::new(),
         diagonal_shapes: Vec::new(),
+        dashed_lines: Vec::new(),
         comments: Vec::new(),
         bands: Default::default(),
     };
     let fill_sources = fill_sources(sheet, part_cells);
     let columns = sheet.columns.len() as u32;
+    let mut center_across_inner: std::collections::HashSet<(u32, u32)> = Default::default();
     for cell in part_cells {
         if covered.contains(&(cell.row, cell.column)) {
             continue;
@@ -952,13 +1192,20 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         });
         let (left, top) = (x(range.first_column), y(range.first_row));
         let (right, bottom) = (x(range.last_column + 1), y(range.last_row + 1));
-        // Excel's fill covers the grid line on the cell's left and top (the
-        // screen pixel before the cell), as it prints.
-        // Printed, a whole point (Excel's PDFs of xlsx-XBRD: a fill from the
-        // grid line's point before the cell).
-        let (grow_left, grow_top) = if ctx.print { (1.0, 1.0) } else { (FILL_GROW_LEFT_PT, FILL_GROW_TOP_PT) };
-        let fill_left = if range.first_column == 0 { left } else { left - grow_left * px_per_point };
-        let fill_top = if range.first_row == 0 { top } else { top - grow_top * px_per_point };
+        // Where a cell has a fill, it covers the grid line before the cell
+        // (`[left - 1, right] x [top - 1, bottom]`, in points when printed and
+        // in pixels on screen) so default grid lines never show around a
+        // filled cell and borders painted on `[grid - t, grid]` meet the fill
+        // without a 1px gap or overlap.
+        let fill_unit = if ctx.print { px_per_point } else { 1.0 };
+        let (grow_left, grow_top) = (1.0, 1.0);
+        // A page's first row and column: the fill does not reach back over its edge (it is the previous page's).
+        let (grow_left, grow_top) = (
+            if ctx.print && ctx.breaks.1.contains(&xs[(range.first_column as usize).min(xs.len() - 1)]) { 0.0 } else { grow_left },
+            if ctx.print && ctx.breaks.0.contains(&ys[(range.first_row as usize).min(ys.len() - 1)]) { 0.0 } else { grow_top },
+        );
+        let fill_left = if range.first_column == 0 { left } else { left - grow_left * fill_unit };
+        let fill_top = if range.first_row == 0 { top } else { top - grow_top * fill_unit };
         if bottom <= top || right <= left {
             // A hidden row or column (one a filter hides): no fill, though
             // the fill's grown edge would show as a line (XAF-00003).
@@ -966,18 +1213,31 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             out.gradients.push(((fill_left, fill_top, right - fill_left, bottom - fill_top), grad.to_fill()));
         } else if let Some((preset, fg, bg)) = &style.pattern {
             out.fills.push(Quad { rect: (fill_left, fill_top, right - fill_left, bottom - fill_top), color: hsla(opaque(*bg)) });
-            if let Some(tile) = ibis_doc_model::pattern_tile(preset) {
-                let cell = px_per_point;
+            // Excel's tiles for a cell's patterns (not PowerPoint's), 1 pt per cell.
+            let tile = ibis_doc_model::spreadsheet_pattern_of_preset(preset).and_then(ibis_doc_model::spreadsheet_pattern_tile).or_else(|| ibis_doc_model::pattern_tile(preset));
+            if let Some(tile) = tile {
                 let fg_color = hsla(opaque(*fg));
-                let first_row = (fill_top / cell).floor() as i64;
-                let last_row = (bottom / cell).ceil() as i64;
-                let first_col = (fill_left / cell).floor() as i64;
-                let last_col = (right / cell).ceil() as i64;
+                // Printed, the tile is anchored at the paper's corner and its cells are paper points (not the sheet's, which
+                // the print scale shrinks): the cell a paper point `i` along and `j` down is `tile[(j + 8 - height % 8) % 8]`'s
+                // bit `i % 8` (Excel's PDFs of xlsx-XFIL: the tile is laid up from the paper's bottom edge). On screen
+                // the cells are the sheet's points from the sheet's corner.
+                let paper = PRINT_GRID.with(|g| g.get());
+                let (cell, ox, oy, row_shift) = match paper {
+                    Some((sc, kx, ky)) => {
+                        let height = (page_height_emu as f64 / 12_700.0).round() as i64;
+                        (px_per_point / sc, sc * kx, sc * ky, (8 - height.rem_euclid(8)).rem_euclid(8))
+                    }
+                    None => (px_per_point, 0.0, 0.0, 0),
+                };
+                let first_row = ((fill_top / cell) + oy).floor() as i64;
+                let last_row = (((bottom / cell) + oy)).ceil() as i64;
+                let first_col = ((fill_left / cell) + ox).floor() as i64;
+                let last_col = (((right / cell) + ox)).ceil() as i64;
                 for r in first_row..last_row {
-                    let bits = tile[r.rem_euclid(8) as usize];
+                    let bits = tile[(r + row_shift).rem_euclid(8) as usize];
                     if bits == 0 { continue; }
-                    let y0 = (r as f32 * cell).max(fill_top);
-                    let y1 = ((r + 1) as f32 * cell).min(bottom);
+                    let y0 = ((r as f32 - oy) * cell).max(fill_top);
+                    let y1 = (((r + 1) as f32 - oy) * cell).min(bottom);
                     if y1 <= y0 { continue; }
                     let mut c = first_col;
                     while c < last_col {
@@ -986,8 +1246,8 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                             while c + 1 < last_col && (bits & (0x80 >> (c + 1).rem_euclid(8)) != 0) {
                                 c += 1;
                             }
-                            let x0 = (start as f32 * cell).max(fill_left);
-                            let x1 = ((c + 1) as f32 * cell).min(right);
+                            let x0 = ((start as f32 - ox) * cell).max(fill_left);
+                            let x1 = (((c + 1) as f32 - ox) * cell).min(right);
                             if x1 > x0 {
                                 out.fills.push(Quad { rect: (x0, y0, x1 - x0, y1 - y0), color: fg_color });
                             }
@@ -1033,12 +1293,18 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                         to += 1;
                     }
                 }
-                (x(from), x(to + 1))
+                // Printed text can reach unused columns beyond the stored grid.
+                // The export measures its actual shaped end before choosing pages.
+                let end = if ctx.print && dir >= 0 && to + 1 == columns && range.first_row == range.last_row { 16_384 } else { to + 1 };
+                (x(from), x(end))
             };
             // The number format's colour ([Red]) over the font's.
             let mut style = style.clone();
             if !is_formula_display {
-                if let Some(c) = ibis_calc::numfmt::format(&display.value, &style.number_format, false).color {
+                // A number format names a colour only in brackets ([Red], [Color 3]): without a bracket there is nothing to work out.
+                if style.number_format.contains('[')
+                    && let Some(c) = ibis_calc::numfmt::format(&display.value, &style.number_format, false).color
+                {
                     style.color = ibis_doc_model::Rgb(c.rgb());
                 }
             }
@@ -1051,17 +1317,44 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                 pt * px_per_point
             });
             let style = &style;
+            // Centred across the selection (centerContinuous): the cell and the
+            // empty cells after it that are centred across too are one box.
+            if style.align == CellAlign::CenterAcross && range.first_row == range.last_row {
+                let mut to = range.last_column;
+                while to + 1 < columns
+                    && !filled.contains(&(cell.row, to + 1))
+                    && sheet.cell(cell.row, to + 1).is_some_and(|next| style_of(next.style).align == CellAlign::CenterAcross)
+                {
+                    to += 1;
+                    center_across_inner.insert((cell.row, to));
+                }
+            }
+            let across_right = if style.align == CellAlign::CenterAcross && range.first_row == range.last_row {
+                let mut to = range.last_column;
+                while to + 1 < columns
+                    && !filled.contains(&(cell.row, to + 1))
+                    && sheet.cell(cell.row, to + 1).is_some_and(|next| style_of(next.style).align == CellAlign::CenterAcross)
+                {
+                    to += 1;
+                }
+                x(to + 1)
+            } else {
+                right
+            };
+            out.cell_ids.push((cell.row, cell.column));
             out.cells.push(CellText {
                 text: shown_text,
                 kind: if image_failure.is_some() { CellKind::Error } else if is_formula_display { CellKind::Text } else { display.kind },
                 general,
                 style: style.clone(),
                 font: ctx.font(cell.style),
-                rect: (left + pivot_pad.unwrap_or(0.0), top, right, bottom),
+                rect: (left + pivot_pad.unwrap_or(0.0), top, across_right, bottom),
                 spans: [run_on(-1), run_on(0), run_on(1)],
                 row_gap: None,
                 runs: if image_failure.is_some() || is_formula_display { None } else { cell.runs.clone() },
                 phonetic: sheet.show_phonetic.then(|| cell.phonetic.clone()).flatten(),
+                printed: *sheet.printed,
+                text_extra: (range.first_column..=range.last_column).filter_map(|c| sheet.printed_text_extra.get(c as usize)).sum::<i64>() as f32 * scale,
             });
         }
         let diag_up = style.diagonal_up.as_ref().or_else(|| {
@@ -1134,7 +1427,9 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             // stroked) filled with the paper's checkerboard of points, as
             // the straight hair line (Excel's PDFs of xlsx-XBRD: a pattern
             // fill of that outline).
-            if let (BorderLine::Hair, Some((sc, kx, ky))) = (b.line, PRINT_GRID.with(|g| g.get())) {
+            if ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Mac
+                && let (BorderLine::Hair, Some((sc, kx, ky))) = (b.line, PRINT_GRID.with(|g| g.get()))
+            {
                 let p = px_per_point;
                 let (x0, x1) = (left / p - 0.5, right / p - 0.5);
                 let (y0, y1) = (top / p - 0.5, bottom / p - 0.5);
@@ -1338,79 +1633,126 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             out.diagonal_shapes.push((polygon, 0.0, hsla(opaque(color))));
         }
     }
-    // Borders: unmerged cells draw their own edges.
+    // Borders: unmerged cells and merged ranges draw their own outer edges.
     let mut in_merge: HashMap<(u32, u32), CellRange> = HashMap::new();
+    let mut merge_fallback_tl: std::collections::HashSet<(u32, u32)> = Default::default();
     for m in &sheet.merges {
+        let mut has_covered = false;
         for r in m.first_row..=m.last_row {
             for c in m.first_column..=m.last_column {
                 in_merge.insert((r, c), *m);
+                if (r, c) != (m.first_row, m.first_column) && sheet.cell(r, c).is_some() {
+                    has_covered = true;
+                }
             }
         }
+        if !has_covered {
+            merge_fallback_tl.insert((m.first_row, m.first_column));
+        }
     }
+    let row_break = |r: u32| ctx.print && r > 0 && (r as usize) < ys.len() && ctx.breaks.0.contains(&ys[r as usize]);
+    let col_break = |c: u32| ctx.print && c > 0 && (c as usize) < xs.len() && ctx.breaks.1.contains(&xs[c as usize]);
+    let side_of = |s: &CellStyle, edge: u8| -> Option<ibis_doc_model::Border> {
+        match edge {
+            0 => s.top,
+            1 => s.bottom,
+            2 => s.left,
+            _ => s.right,
+        }
+    };
+    let border_at = |r: Option<u32>, c: Option<u32>, edge: u8| -> Option<ibis_doc_model::Border> {
+        let (r, c) = (r?, c?);
+        if let Some(m) = in_merge.get(&(r, c)) {
+            let on_perimeter = match edge {
+                0 => r == m.first_row,
+                1 => r == m.last_row,
+                2 => c == m.first_column,
+                _ => c == m.last_column,
+            };
+            if !on_perimeter {
+                return None;
+            }
+            let own = sheet.cell(r, c).and_then(|cell| side_of(style_of(cell.style), edge));
+            if own.is_some() || !merge_fallback_tl.contains(&(m.first_row, m.first_column)) {
+                return own;
+            }
+            return sheet.cell(m.first_row, m.first_column).and_then(|cell| side_of(style_of(cell.style), edge));
+        }
+        if (edge == 2 && center_across_inner.contains(&(r, c)))
+            || (edge == 3 && center_across_inner.contains(&(r, c + 1)))
+        {
+            return None;
+        }
+        sheet.cell(r, c).and_then(|cell| side_of(style_of(cell.style), edge))
+    };
+    let neighbour_edge = |r: u32, c: u32, edge: u8| -> Option<ibis_doc_model::Border> {
+        match edge {
+            0 => (!row_break(r)).then(|| border_at(r.checked_sub(1), Some(c), 1)).flatten(),
+            1 => (!row_break(r + 1)).then(|| border_at(Some(r + 1), Some(c), 0)).flatten(),
+            2 => (!col_break(c)).then(|| border_at(Some(r), c.checked_sub(1), 3)).flatten(),
+            _ => (!col_break(c + 1)).then(|| border_at(Some(r), Some(c + 1), 2)).flatten(),
+        }
+    };
+    let beaten = |own: &Option<ibis_doc_model::Border>, other: Option<ibis_doc_model::Border>, other_first: bool| match (own, other) {
+        (Some(o), Some(n)) => {
+            let (a, b) = (border_rank(o.line), border_rank(n.line));
+            b > a || (b == a && other_first)
+        }
+        _ => false,
+    };
     for cell in part_cells {
         let (r, c) = (cell.row, cell.column);
         if in_merge.contains_key(&(r, c)) {
             continue;
         }
-        let style = style_of(cell.style);
+        let own_top = border_at(Some(r), Some(c), 0);
+        let own_bottom = border_at(Some(r), Some(c), 1);
+        let own_left = border_at(Some(r), Some(c), 2);
+        let own_right = border_at(Some(r), Some(c), 3);
         let (left, right, top, bottom) = (x(c), x(c + 1), y(r), y(r + 1));
-        // A shared edge shows one line: the neighbour's wins when it ranks
-        // higher, or ranks the same and the neighbour is on the left or above.
-        let neighbour = |r: Option<u32>, c: Option<u32>, side: fn(&CellStyle) -> &Option<ibis_doc_model::Border>| {
-            let (r, c) = (r?, c?);
-            if in_merge.contains_key(&(r, c)) {
-                return None;
-            }
-            sheet.cell(r, c).and_then(|n| *side(style_of(n.style)))
-        };
-        let beaten = |own: &Option<ibis_doc_model::Border>, other: Option<ibis_doc_model::Border>, other_first: bool| match (own, other) {
-            (Some(o), Some(n)) => {
-                let (a, b) = (border_rank(o.line), border_rank(n.line));
-                b > a || (b == a && other_first)
-            }
-            _ => false,
-        };
         // Excel's PDF of xlsx-XBRD: a row's line runs [left - 1, right] pt,
         // whatever its style and the cell's other lines; a column's line
         // from the top of the line above its top end ([top − 1] for none or
         // a thin one, top − 2 for a medium or thick one) down to the
         // bottom of the line below its bottom end (bottom, or bottom + 1
         // under a thick or double one).
-        let effective_top_border = style.top.or_else(|| neighbour(r.checked_sub(1), Some(c), |s| &s.bottom));
-        let effective_bottom_border = style.bottom.or_else(|| neighbour(Some(r + 1), Some(c), |s| &s.top));
-        let near = |b: &Option<ibis_doc_model::Border>| b.map_or(1.0, |b| b.line.width().min(2.0).max(1.0)) * px_per_point;
-        let far = |b: &Option<ibis_doc_model::Border>| b.map_or(0.0, |b| (b.line.width() - b.line.width().min(2.0)).max(0.0)) * px_per_point;
+        let effective_top_border = own_top.or_else(|| neighbour_edge(r, c, 0));
+        let effective_bottom_border = own_bottom.or_else(|| neighbour_edge(r, c, 1));
+        let border_unit = if ctx.print { px_per_point } else { 1.0 };
+        let line_units = |line: BorderLine| if ctx.print { line.width() } else { screen_border_pixels(line) };
+        let near = |b: &Option<ibis_doc_model::Border>| b.map_or(1.0, |b| line_units(b.line).min(2.0).max(1.0)) * border_unit;
+        let far = |b: &Option<ibis_doc_model::Border>| b.map_or(0.0, |b| (line_units(b.line) - line_units(b.line).min(2.0)).max(0.0)) * border_unit;
         // Where lines meet, the left one reaches over the top one's end
         // and the top one starts at the grid line; the right one starts
         // under the top line, which runs on over it (Excel's PDF of
         // xlsx-XBRD, "all" of each style: the dashes there show it).
         // border_quads takes a column's line from a point above `from`.
-        let effective_left_line = style.left.or_else(|| neighbour(Some(r), c.checked_sub(1), |s| &s.right));
-        let effective_right_line = style.right.or_else(|| neighbour(Some(r), Some(c + 1), |s| &s.left));
-        let v_from = top - (near(&effective_top_border) - px_per_point);
-        let v_from_right = if effective_top_border.is_some() { top + px_per_point + far(&effective_top_border) } else { top };
+        let effective_left_line = own_left.or_else(|| neighbour_edge(r, c, 2));
+        let effective_right_line = own_right.or_else(|| neighbour_edge(r, c, 3));
+        let v_from = top - (near(&effective_top_border) - border_unit);
+        let v_from_right = if effective_top_border.is_some() { top + border_unit + far(&effective_top_border) } else { top };
         let v_to = bottom + far(&effective_bottom_border);
-        let h_from = if effective_left_line.is_some() { left + far(&effective_left_line) } else { left - px_per_point };
+        let h_from = if effective_left_line.is_some() { left + far(&effective_left_line) } else { left - border_unit };
         let h_to = right + far(&effective_right_line);
         let edges = [
-            (&style.top, true, false, top, h_from, h_to, beaten(&style.top, neighbour(r.checked_sub(1), Some(c), |s| &s.bottom), true)),
-            (&style.bottom, true, false, bottom, h_from, h_to, beaten(&style.bottom, neighbour(Some(r + 1), Some(c), |s| &s.top), false)),
-            (&style.left, false, true, left, v_from, v_to, beaten(&style.left, neighbour(Some(r), c.checked_sub(1), |s| &s.right), true)),
-            (&style.right, false, false, right, v_from_right, v_to, beaten(&style.right, neighbour(Some(r), Some(c + 1), |s| &s.left), false)),
+            (&own_top, true, row_break(r), top, h_from, h_to, beaten(&own_top, neighbour_edge(r, c, 0), true)),
+            (&own_bottom, true, false, bottom, h_from, h_to, beaten(&own_bottom, neighbour_edge(r, c, 1), false)),
+            (&own_left, false, col_break(c), left, v_from, v_to, beaten(&own_left, neighbour_edge(r, c, 2), true)),
+            (&own_right, false, false, right, v_from_right, v_to, beaten(&own_right, neighbour_edge(r, c, 3), false)),
         ];
         // Where two double lines meet, Excel draws two boxes: the outer
         // lines run on to the outer corner, the inner ones stop at the inner
         // one (its PDF of xlsx-XBRD, "double all").
         let is_double = |b: &Option<ibis_doc_model::Border>| b.is_some_and(|b| b.line == BorderLine::Double);
-        let effective_left = style.left.or_else(|| neighbour(Some(r), c.checked_sub(1), |s| &s.right));
-        let effective_right = style.right.or_else(|| neighbour(Some(r), Some(c + 1), |s| &s.left));
+        let effective_left = own_left.or_else(|| neighbour_edge(r, c, 2));
+        let effective_right = own_right.or_else(|| neighbour_edge(r, c, 3));
         let corners = [
             (is_double(&effective_left), is_double(&effective_right)),
             (is_double(&effective_left), is_double(&effective_right)),
             (is_double(&effective_top_border), is_double(&effective_bottom_border)),
             (is_double(&effective_top_border), is_double(&effective_bottom_border)),
         ];
-        for (i, (b, horizontal, is_left, at, from, to, beaten)) in edges.into_iter().enumerate() {
+        for (i, (b, horizontal, at_page_start, at, from, to, beaten)) in edges.into_iter().enumerate() {
             if beaten {
                 continue;
             }
@@ -1418,44 +1760,42 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                 let lines = if horizontal { &mut out.borders } else { &mut out.vertical_borders };
                 let (start_double, end_double) = corners[i];
                 if b.line == BorderLine::Double && (start_double || end_double) {
-                    let p = px_per_point;
+                    let p = border_unit;
                     let color = hsla(opaque(b.color));
                     // The line nearer the cell's start side ([at − 2, at − 1])
                     // and the one after it ([at, at + 1]); which is outer
                     // depends on the side (top and left: the first).
                     let first_outer = i == 0 || i == 2;
                     let (lo, hi) = if horizontal { (left, right) } else { (top, bottom) };
+                    let at_shifted = if at_page_start { at + 2.0 * p } else { at };
                     for (offset, outer) in [(-2.0, first_outer), (0.0, !first_outer)] {
                         let a = if start_double { if outer { lo - 2.0 * p } else { lo } } else if horizontal { from } else { from - p };
                         let z = if end_double { if outer { hi + p } else { hi - p } } else { to };
-                        let edge = at + offset * p;
+                        let edge = at_shifted + offset * p;
                         let rect = if horizontal { (a, edge, z - a, p) } else { (edge, a, p, z - a) };
                         lines.push(Quad { rect, color });
                     }
                     continue;
                 }
-                border_quads(b, horizontal, is_left, at, from, to, px_per_point, lines);
+                border_quads(b, horizontal, at_page_start, at, from, to, px_per_point, lines);
             }
         }
     }
     // Merged ranges: draw outer perimeter borders. If perimeter cells define their own
-    // borders, use them; otherwise fall back to the top-left cell's border styling.
+    // borders, use them; otherwise (when covered cells are omitted) fall back to the top-left cell's border styling.
     // Adjacent cells with identical borders along an edge are grouped into contiguous segments.
     for m in sheet.merges.iter().filter(|m| in_part(m.first_row)) {
-        let tl_style = sheet.cell(m.first_row, m.first_column).map(|c| style_of(c.style));
-        let tl_top = tl_style.and_then(|s| s.top.as_ref());
-        let tl_bottom = tl_style.and_then(|s| s.bottom.as_ref());
-        let tl_left = tl_style.and_then(|s| s.left.as_ref());
-        let tl_right = tl_style.and_then(|s| s.right.as_ref());
-
         // Top edge: at y(m.first_row), from x(m.first_column) to x(m.last_column + 1)
         draw_contiguous_borders(
             m.first_column,
             m.last_column,
             &x,
-            |c| sheet.cell(m.first_row, c).and_then(|cell| style_of(cell.style).top.as_ref()).or(tl_top).copied(),
+            |c| {
+                let own = border_at(Some(m.first_row), Some(c), 0);
+                (!beaten(&own, neighbour_edge(m.first_row, c, 0), true)).then_some(own).flatten()
+            },
             true,
-            false,
+            row_break(m.first_row),
             y(m.first_row),
             px_per_point,
             &mut out.borders,
@@ -1466,7 +1806,10 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             m.first_column,
             m.last_column,
             &x,
-            |c| sheet.cell(m.last_row, c).and_then(|cell| style_of(cell.style).bottom.as_ref()).or(tl_bottom).copied(),
+            |c| {
+                let own = border_at(Some(m.last_row), Some(c), 1);
+                (!beaten(&own, neighbour_edge(m.last_row, c, 1), false)).then_some(own).flatten()
+            },
             true,
             false,
             y(m.last_row + 1),
@@ -1479,9 +1822,12 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             m.first_row,
             m.last_row,
             &y,
-            |r| sheet.cell(r, m.first_column).and_then(|cell| style_of(cell.style).left.as_ref()).or(tl_left).copied(),
+            |r| {
+                let own = border_at(Some(r), Some(m.first_column), 2);
+                (!beaten(&own, neighbour_edge(r, m.first_column, 2), true)).then_some(own).flatten()
+            },
             false,
-            true,
+            col_break(m.first_column),
             x(m.first_column),
             px_per_point,
             &mut out.vertical_borders,
@@ -1492,7 +1838,10 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             m.first_row,
             m.last_row,
             &y,
-            |r| sheet.cell(r, m.last_column).and_then(|cell| style_of(cell.style).right.as_ref()).or(tl_right).copied(),
+            |r| {
+                let own = border_at(Some(r), Some(m.last_column), 3);
+                (!beaten(&own, neighbour_edge(r, m.last_column, 3), false)).then_some(own).flatten()
+            },
             false,
             false,
             x(m.last_column + 1),
@@ -1512,9 +1861,9 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         let total_rows = (sheet.rows.len() as u32 + extra_rows).min(1_048_576);
         let (w, h) = (x(total_cols), y(total_rows));
         let t = 1.0;
-        // Printed, a line takes the point before the cell's edge (as a
-        // fill reaches over it); on screen it straddles the edge.
-        let back = if ctx.print { px_per_point } else { t / 2.0 };
+        // Both printed and on screen, a grid line takes the unit before the
+        // cell's edge (`[grid - back, grid]`), matching thin borders and cell fills.
+        let back = if ctx.print { px_per_point } else { t };
         for c in first..=total_cols {
             let cutouts: Vec<(f32, f32)> = sheet
                 .merges
@@ -1589,6 +1938,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
     }
     let rects = |quads: &[Quad]| Bands::new(quads.iter().map(|q| q.rect));
     out.diagonal_shapes.extend(BORDER_SHAPES.with(|s| std::mem::take(&mut *s.borrow_mut())));
+    out.dashed_lines.extend(BORDER_DASHES.with(|s| std::mem::take(&mut *s.borrow_mut())));
     row_gaps(&mut out.cells);
     // Each part draws the sparklines in its rows (the base none).
     for group in &sheet.sparklines {
@@ -1664,11 +2014,13 @@ thread_local! {
     static DASH_ANCHOR: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((-39.0, -39.0)) };
     /// For a printed sheet, its scale on the paper and where its origin is
     /// on the paper in sheet points (`dash_anchors`, negated): dotted and
-    /// hair lines are drawn on the paper's point grid (`paper_pattern`).
+    /// hair lines are drawn on the paper's point grid (`hair_cells`).
     static PRINT_GRID: std::cell::Cell<Option<(f32, f32, f32)>> = const { std::cell::Cell::new(None) };
     /// Outlines `border_quads` makes besides rectangles (slanted dashes),
     /// moved into the layout's `diagonal_shapes`.
     static BORDER_SHAPES: std::cell::RefCell<Vec<(Vec<(f32, f32)>, f32, Hsla)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The dashed lines of printed borders (`border_quads`), moved into the layout's `dashed_lines`.
+    static BORDER_DASHES: std::cell::RefCell<Vec<DashedLine>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Cut a dotted or hair line's rectangle (sheet points, x0, y0, x1, y1) as
@@ -1705,7 +2057,8 @@ fn clip_to_box(poly: &[(f32, f32)], (x0, y0, x1, y1): (f32, f32, f32, f32)) -> V
     out
 }
 
-fn paper_pattern(line: BorderLine, horizontal: bool, r: (f32, f32, f32, f32), grid: (f32, f32, f32)) -> Vec<(f32, f32, f32, f32)> {
+/// A hair line's squares on the paper's checkerboard (`r`: the line's rectangle in sheet points).
+fn hair_cells(r: (f32, f32, f32, f32), grid: (f32, f32, f32)) -> Vec<(f32, f32, f32, f32)> {
     let (s, kx, ky) = grid;
     let (x0, y0, x1, y1) = r;
     let cells = |a: f32, b: f32, k: f32| -> Vec<(i64, f32, f32)> {
@@ -1718,20 +2071,28 @@ fn paper_pattern(line: BorderLine, horizontal: bool, r: (f32, f32, f32, f32), gr
             .collect()
     };
     let mut out = Vec::new();
-    match line {
-        BorderLine::Hair => {
-            for (i, xa, xb) in cells(x0, x1, kx) {
-                for (j, ya, yb) in cells(y0, y1, ky) {
-                    if (i + j).rem_euclid(2) == 0 {
-                        out.push((xa, ya, xb, yb));
-                    }
-                }
+    for (i, xa, xb) in cells(x0, x1, kx) {
+        for (j, ya, yb) in cells(y0, y1, ky) {
+            if (i + j).rem_euclid(2) == 0 {
+                out.push((xa, ya, xb, yb));
             }
         }
-        _ if horizontal => out.extend(cells(x0, x1, kx).into_iter().filter(|c| c.0.rem_euclid(2) == 0).map(|(_, a, b)| (a, y0, b, y1))),
-        _ => out.extend(cells(y0, y1, ky).into_iter().filter(|c| c.0.rem_euclid(2) == 0).map(|(_, a, b)| (x0, a, x1, b))),
     }
     out
+}
+
+/// The step, on the paper in points, of the tile Excel 365 fills a dotted border with: 8 x 8 pixels drawn 0.96 pt
+/// square (its PDF's pattern: `XStep 0.96`), each row 4 pixels grey and 4 white, from the paper's corner: dots of
+/// half the step, a step apart.
+const DOT_STEP: f32 = 0.96;
+
+/// The dash pattern of a dotted border printed at `scale` (paper points per sheet point), in pixels (`px_per_point`
+/// a sheet point): the lengths of a dot and a gap, and how far into them the line starts, `start` sheet points
+/// from the sheet's origin, which is `origin` sheet points from the paper's corner.
+fn dotted_pattern(scale: f32, origin: f32, start: f32, px_per_point: f32) -> (Vec<f32>, f32) {
+    let px_per_paper_point = px_per_point / scale;
+    let half = DOT_STEP / 2.0 * px_per_paper_point;
+    (vec![half, half], (scale * (origin + start)).rem_euclid(DOT_STEP) * px_per_paper_point)
 }
 
 /// Where Excel starts the dash patterns of a sheet's borders, along a row
@@ -1795,19 +2156,28 @@ fn screen_border_pixels(line: BorderLine) -> f32 {
     }
 }
 
-fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, is_left: bool, at: f32, from: f32, to: f32, px_per_point: f32, out: &mut Vec<Quad>) {
+fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, at_page_start: bool, at: f32, from: f32, to: f32, px_per_point: f32, out: &mut Vec<Quad>) {
     // On the screen (not printed) a fixed number of pixels, whatever the zoom.
     let screen = PRINT_GRID.with(|g| g.get()).is_none() && !crate::render::chart_view::VECTOR_EXPORT.with(|v| v.get());
-    let t = if screen { screen_border_pixels(b.line) } else { (b.line.width() * px_per_point).max(thinnest_line()) };
+    let win_printed_hair = !screen && b.line == BorderLine::Hair && ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Windows;
+    let t = if screen {
+        screen_border_pixels(b.line)
+    } else if win_printed_hair {
+        (DOT_STEP / 4.0 * px_per_point).max(DOT_STEP / 4.0)
+    } else {
+        (b.line.width() * px_per_point).max(thinnest_line())
+    };
+    let border_unit = if screen { 1.0 } else { px_per_point };
     let color = hsla(opaque(b.color));
-    let _ = is_left;
     // Across the line, Excel's printed borders lie on the cell grid by their
     // width w (Excel for Mac's PDFs, xlsx-XBRD): w = 1 pt and 2 pt end on the
     // grid line ([g - w, g]), 3 pt (thick) is [g - 2, g + 1], and a double
     // line is two 1 pt lines, [g - 2, g - 1] and [g, g + 1]; the same on
     // every side of a cell. `rect` takes the near edge of the line.
+    // On a page's first row or column after a break (`at_page_start`), shift
+    // so the line starts at `at` on its own page instead of reaching into the previous page.
     let grid = at;
-    let near = |t: f32| grid - t.min(2.0 * px_per_point);
+    let near = |t: f32| if at_page_start { grid } else { grid - t.min(2.0 * border_unit) };
     let rect = |lo: f32, t: f32, a: f32, z: f32| {
         if horizontal {
             (a, lo, z - a, t)
@@ -1815,34 +2185,40 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, is_left: bool, at:
             (lo.max(0.0), a, t, z - a)
         }
     };
-    if matches!(b.line, BorderLine::Dotted | BorderLine::Hair)
+    if (b.line == BorderLine::Dotted || (b.line == BorderLine::Hair && ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Mac))
         && let Some(grid) = PRINT_GRID.with(|g| g.get())
     {
-        // Printed: a 1 pt line, cut on the paper's points.
+        // Printed: a 1 pt line, on the paper's points.
         let t = px_per_point;
         let (from, to) = if horizontal { (from, to) } else { (from - px_per_point, to) };
         let (x, y, w, h) = rect(near(t), t, from, to);
         let p = px_per_point;
-        for (a, b2, c, d) in paper_pattern(b.line, horizontal, (x / p, y / p, (x + w) / p, (y + h) / p), grid) {
+        if b.line == BorderLine::Dotted {
+            // The dots as the dashes of one line (a drawing of each is thousands of objects in a page of notes).
+            let (scale, kx, ky) = grid;
+            let (origin, start) = if horizontal { (kx, x / p) } else { (ky, y / p) };
+            let (pattern, phase) = dotted_pattern(scale, origin, start, p);
+            let (points, width) = if horizontal { (vec![(x, y + h / 2.0), (x + w, y + h / 2.0)], h) } else { (vec![(x + w / 2.0, y), (x + w / 2.0, y + h)], w) };
+            BORDER_DASHES.with(|d| d.borrow_mut().push(DashedLine { points, width, color, pattern, phase }));
+            return;
+        }
+        for (a, b2, c, d) in hair_cells((x / p, y / p, (x + w) / p, (y + h) / p), grid) {
             out.push(Quad { rect: (a * p, b2 * p, (c - a) * p, (d - b2) * p), color });
         }
         return;
     }
     if b.line == BorderLine::SlantDashDot && !screen {
-        // Excel's PDF of xlsx-XBRD: the dash-dot pattern of `mediumDashDot`
-        // (from the paper's corner) in a 2 pt band [g − 2, g], each dash an
-        // outline slanted 2 pt, filled and its outline stroked 1 pt: on
-        // the band's far side (g − ½) it covers [p + ½, p + L + ½], on its
-        // near side (g − 1½) [p + 2½, p + L + 2½], cut to the line's ends
-        // (a half point in).
+        // The dash-dot pattern of `mediumDashDot` (from the paper's corner) in a
+        // 2 pt band [g − 2, g], each dash a parallelogram slanted 2 pt across the band,
+        // clipped to the line's ends.
         let p = px_per_point;
         let (anchor_x, anchor_y) = DASH_ANCHOR.with(|a| a.get());
         let anchor = if horizontal { anchor_x } else { anchor_y };
         let (from, to) = if horizontal { (from, to) } else { (from - p, to) };
         let (start, end) = (from / p, to / p);
-        let (lo_clip, hi_clip) = (start + 0.5, end - 0.5);
-        let far = grid / p - 0.5;
-        let nearer = grid / p - 1.5;
+        let far = if at_page_start { grid / p + 2.0 } else { grid / p };
+        let nearer = if at_page_start { grid / p } else { grid / p - 2.0 };
+        let (y_lo, y_hi) = (nearer.min(far), nearer.max(far));
         let pattern = [9.0f32, 3.0, 3.0, 3.0];
         let period: f32 = pattern.iter().sum();
         let mut q0 = start - 3.0 - (start - 3.0 - anchor).rem_euclid(period);
@@ -1851,15 +2227,14 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, is_left: bool, at:
             let mut q = q0;
             for (i, &len) in pattern.iter().enumerate() {
                 if i % 2 == 0 {
-                    let (a1, b1) = ((q + 0.5).clamp(lo_clip, hi_clip), (q + len + 0.5).clamp(lo_clip, hi_clip));
-                    let (a2, b2) = ((q + 2.5).clamp(lo_clip, hi_clip), (q + len + 2.5).clamp(lo_clip, hi_clip));
-                    if b1 > a1 || b2 > a2 {
-                        let pts = [(a1, far), (b1, far), (b2, nearer), (a2, nearer)];
-                        let outline: Vec<(f32, f32)> = pts
-                            .iter()
-                            .map(|&(along, across)| if horizontal { (along * p, across * p) } else { (across * p, along * p) })
+                    let pts = [(q, far), (q + len, far), (q + len + 2.0, nearer), (q + 2.0, nearer)];
+                    let clipped = clip_to_box(&pts, (start, y_lo, end, y_hi));
+                    if clipped.len() >= 3 {
+                        let outline: Vec<(f32, f32)> = clipped
+                            .into_iter()
+                            .map(|(along, across)| if horizontal { (along * p, across * p) } else { (across * p, along * p) })
                             .collect();
-                        shapes.push((outline, p, color));
+                        shapes.push((outline, 0.0, color));
                     }
                 }
                 q += len;
@@ -1872,11 +2247,12 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, is_left: bool, at:
     match b.line {
         BorderLine::Double => {
             let thin = t / 3.0;
-            let (from, to) = if horizontal { (from, to) } else { (from - px_per_point, to) };
-            out.push(Quad { rect: rect(grid - 2.0 * thin, thin, from, to), color });
-            out.push(Quad { rect: rect(grid, thin, from, to), color });
+            let (from, to) = if horizontal { (from, to) } else { (from - border_unit, to) };
+            let g0 = if at_page_start { grid } else { grid - 2.0 * thin };
+            out.push(Quad { rect: rect(g0, thin, from, to), color });
+            out.push(Quad { rect: rect(g0 + 2.0 * thin, thin, from, to), color });
         }
-        line if dash_pattern(line).is_some() || (screen && line == BorderLine::SlantDashDot) => {
+        line if (!win_printed_hair && dash_pattern(line).is_some()) || (screen && line == BorderLine::SlantDashDot) => {
             // The pattern runs on from the paper's corner (Excel prints a
             // dashed edge continuous across cells), in points. On the
             // screen a slanted dash-dot is drawn as a dash-dot, 1 pixel.
@@ -1884,10 +2260,21 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, is_left: bool, at:
             let period: f32 = pattern.iter().sum();
             let (anchor_x, anchor_y) = DASH_ANCHOR.with(|a| a.get());
             let anchor = if horizontal { anchor_x } else { anchor_y };
-            // A column's dashes start, as its solid line does, a point
+            // A column's dashes start, as its solid line does, a unit
             // above (Excel's PDF of xlsx-XBRD).
-            let from = if horizontal { from } else { from - px_per_point };
+            let from = if horizontal { from } else { from - border_unit };
             let (start, end) = (from / px_per_point, to / px_per_point);
+            if !screen {
+                // Printed, the dashes are one line with its pattern, from where the pattern's period starts.
+                let across = if horizontal { near(t) } else { near(t).max(0.0) } + t / 2.0;
+                let points = if horizontal { vec![(start * px_per_point, across), (end * px_per_point, across)] } else { vec![(across, start * px_per_point), (across, end * px_per_point)] };
+                let phase = (start - anchor).rem_euclid(period) * px_per_point;
+                if end > start {
+                    BORDER_DASHES.with(|d| d.borrow_mut().push(DashedLine { points, width: t, color, pattern: pattern.iter().map(|l| l * px_per_point).collect(), phase }));
+                }
+                return;
+            }
+            // On the screen each dash is a rectangle on whole pixels.
             let mut p = start - (start - anchor).rem_euclid(period);
             while p < end {
                 let mut q = p;
@@ -1903,12 +2290,12 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, is_left: bool, at:
         }
         _ => {
             // Along a column a line of any width runs from the top grid
-            // line's 1 pt to the bottom one: [g - 1, g'] (Excel's PDF of
+            // line's 1 unit to the bottom one: [g - 1, g'] (Excel's PDF of
             // xlsx-XBRD).
             let (from, to) = if horizontal {
                 (from, to)
             } else {
-                (from - px_per_point, to)
+                (from - border_unit, to)
             };
             out.push(Quad { rect: rect(near(t), t, from, to), color });
         }
@@ -2036,6 +2423,10 @@ struct CellText {
     runs: Option<Arc<Vec<ibis_doc_model::CellRun>>>,
     /// The phonetic reading of the cell (furigana/ruby), shown when sheet's show_phonetic is true.
     phonetic: Option<Arc<str>>,
+    /// Laid out as Excel for Windows prints it (`Sheet::printed`).
+    printed: bool,
+    /// How much wider than its box the text may be printed (`Sheet::printed_text_extra`), in pixels.
+    text_extra: f32,
 }
 
 /// The font a cell's text is drawn in, with its measures.
@@ -2058,6 +2449,87 @@ struct CellFont {
 /// `text_items` draws them.
 pub(crate) fn text_width_pt(text: &str, style: &CellStyle, res: &Resources, ts: &TextSystem) -> f32 {
     GlyphWidths::new(style, res, ts).width(text)
+}
+
+fn printed_shaped_width(ts: &WindowTextSystem, text: &str, font: &Font, size: f32, px_per_point: f32, printed: bool) -> f32 {
+    let run = TextRun { len: text.len(), font: font.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
+    let mut line = ts.shape_line(SharedString::from(text.to_owned()), px(size * px_per_point), &[run], None);
+    whole_point_advances(&mut line, px_per_point, printed);
+    f32::from(line.width) / px_per_point
+}
+
+#[cfg(all(test, target_os = "windows", feature = "export"))]
+#[path = "../tests/xlsx/print_bounds.rs"]
+mod print_bounds_tests;
+
+/// Printed text's horizontal coverage, using the same line layout, font shaping,
+/// advance rounding and alignment as painting. Coordinates are sheet-local EMU.
+/// Empty values and explicit formatting are accounted for separately by export.
+pub(crate) fn printed_text_regions(sheet: &Arc<Sheet>, res: &Resources) -> Vec<EmuRect> {
+    let key = layout_key(sheet, 1.0 / EMU_PER_POINT as f32, res);
+    PRINT_REGIONS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.retain(|(_, sheet, _)| sheet.strong_count() > 0);
+        if let Some(at) = cache.iter().position(|(cached, _, _)| *cached == key) {
+            let entry = cache.remove(at);
+            let regions = entry.2.clone();
+            cache.push(entry);
+            return regions;
+        }
+        let regions = measure_printed_text_regions(sheet, res);
+        if cache.len() >= CACHED_LAYOUTS { cache.remove(0); }
+        // Weak keeps the allocation identity reserved without forcing a full
+        // Sheet clone on edit. Arc::make_mut dissociates it on mutation.
+        cache.push((key, Arc::downgrade(sheet), regions.clone()));
+        regions
+    })
+}
+
+fn measure_printed_text_regions(sheet: &Sheet, res: &Resources) -> Vec<EmuRect> {
+    let scale = 1.0 / EMU_PER_POINT as f32;
+    let mut fonts: Vec<CellFont> = sheet.styles.iter().map(|s| cell_font(s, res)).collect();
+    fonts.push(cell_font(&CellStyle::default(), res));
+    let context = LayoutContext { print: true, print_scale: 1.0, breaks: Default::default(), fonts, sheets: res.sheets.clone(), images: Default::default() };
+    let mut regions = Vec::new();
+    // Only one band is laid out at a time: print extent discovery must not
+    // retain another full-sheet set of fills, borders and text alongside paint.
+    let mut first = 0;
+    while first < sheet.cells.len() {
+        let from = sheet.cells[first].row;
+        let to = from.saturating_add(PART_ROWS);
+        let next = sheet.cells.partition_point(|cell| cell.row < to);
+        let laid = layout(sheet, scale, &context, None, Part::Rows(from, to));
+        let text_system = WindowTextSystem::new(Arc::clone(res.text_system()));
+        let measure = |text: &str, font: &Font, size: f32| {
+            printed_shaped_width(&text_system, text, font, size, 1.0, *sheet.printed)
+        };
+        for cell in &laid.cells {
+            let mut items = Vec::new();
+            text_items(cell, 1.0, &measure, &mut items);
+            for item in items {
+                // Horizontal run-on is enabled only at rotation zero in text_items;
+                // the cell/merge establishes the extent of other text modes.
+                if item.rotation != 0 { continue }
+                let width: f32 = item.pieces.iter().map(|piece| {
+                    piece.advance.unwrap_or_else(|| {
+                        let font = piece.run.as_ref().map(|r| &r.font).unwrap_or(if piece.plain { &item.plain } else { &item.font });
+                        measure(&piece.text, font, piece.size)
+                    })
+                }).sum();
+                let count = item.pieces.len();
+                let trailing = item.pieces.last().is_some_and(|p| p.advance.is_none() && p.text.ends_with(' '));
+                let (x, gap) = compute_text_x(item.align, item.left, item.right, width, count, trailing, item.rotation, 1.0);
+                let left = x.max(item.clip.0);
+                let right = (x + width + gap * count.saturating_sub(1) as f32).min(item.clip.0 + item.clip.2);
+                if right > left && item.clip.3 > 0.0 && (left < item.cell.0 || right > item.cell.1) {
+                    let emu = |v: f32| (v as f64 * EMU_PER_POINT as f64).round() as i64;
+                    regions.push(EmuRect::new(emu(left), emu(item.clip.1), emu(right) - emu(left), emu(item.clip.3)));
+                }
+            }
+        }
+        first = next;
+    }
+    regions
 }
 
 /// The widths of the glyphs of a format's font, found once each: the width of many texts in one format (a column of a million cells) without resolving the font and asking for each glyph again every time.
@@ -2089,6 +2561,42 @@ impl<'a> GlyphWidths<'a> {
     }
 }
 
+/// The text each cell shows, laid out as `text_items` lays it out (lines
+/// joined by `\n`, `#`s and all), as (row, column, text): for the scenarios.
+#[cfg(all(target_os = "macos", feature = "scenarios"))]
+pub(crate) fn shown_texts(sheet: &Sheet, res: &Resources, window: &Window) -> Vec<(u32, u32, String)> {
+    let scale = 1.0 / EMU_PER_POINT as f32;
+    let mut fonts: Vec<CellFont> = sheet.styles.iter().map(|s| cell_font(s, res)).collect();
+    fonts.push(cell_font(&CellStyle::default(), res));
+    let images = sheet.web_images.iter().filter(|((r, c), _)| sheet.cell(*r, *c).is_some_and(|x| x.formula.is_some())).map(|(k, v)| (*k, v.source.clone())).collect();
+    let context = LayoutContext { print: res.print, print_scale: res.print_scale.get(), breaks: Default::default(), fonts, sheets: res.sheets.clone(), images };
+    let laid = layout(sheet, scale, &context, None, Part::All);
+    let measure = |text: &str, font: &Font, size: f32| -> f32 {
+        let run = TextRun { len: text.len(), font: font.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
+        let mut line = window.text_system().shape_line(SharedString::from(text.to_string()), px(size), &[run], None);
+        whole_point_advances(&mut line, 1.0, *sheet.printed);
+        f32::from(line.width)
+    };
+    let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
+    let index = |edges: &[i64], at: f32| {
+        edges
+            .partition_point(|&e| {
+                let v = e as f32 * scale;
+                (if res.print { v } else { v.round() }) <= at + 0.01
+            })
+            .saturating_sub(1) as u32
+    };
+    laid.cells
+        .iter()
+        .map(|cell| {
+            let mut items = Vec::new();
+            text_items(cell, 1.0, &measure, &mut items);
+            let text = items.iter().map(|t| t.pieces.iter().map(|p| p.text.as_str()).collect::<String>()).collect::<Vec<_>>().join("\n");
+            (index(&ys, cell.rect.1), index(&xs, cell.rect.0), text)
+        })
+        .collect()
+}
+
 fn cell_font(style: &CellStyle, res: &Resources) -> CellFont {
     let mut font = res.font(&TextStyle {
         font_size: style.font_size,
@@ -2102,12 +2610,17 @@ fn cell_font(style: &CellStyle, res: &Resources) -> CellFont {
     // A proportional Japanese typeface (MS P Gothic, Meiryo UI) narrows its
     // kana and punctuation; its substitute does so with proportional widths
     // (`palt`).
-    if proportional_japanese(style.font.as_deref()) && latin_scale < 1.0 || style.font.as_deref().is_some_and(|n| n.starts_with("Meiryo UI")) {
+    if style.rotation != 255 && (proportional_japanese(style.font.as_deref()) && latin_scale < 1.0 || style.font.as_deref().is_some_and(|n| n.starts_with("Meiryo UI"))) {
         let mut features: Vec<(String, u32)> = font.features.0.iter().cloned().collect();
         features.push(("palt".into(), 1));
         font.features = FontFeatures(std::sync::Arc::new(features));
     }
-    let (ascent, descent) = res.metrics(&font);
+    let (ascent, descent) = style
+        .font
+        .as_deref()
+        .filter(|name| !res.has_typeface(name) && name.trim().starts_with("BIZ UD"))
+        .map(|_| (0.8799, 0.1201))
+        .unwrap_or_else(|| res.metrics(&font));
     CellFont { font, plain, latin_scale, ascent, descent }
 }
 
@@ -2442,6 +2955,9 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
     let segments = |text: &str, k: f32| -> Vec<Piece> {
         let mut out: Vec<Piece> = Vec::new();
         for c in text.chars() {
+            if c == '\t' {
+                continue;
+            }
             let size = base * k * if c.is_ascii() { latin_scale } else { 1.0 };
             let advance = proportional.then(|| fixed_advance(c)).flatten().map(|em| em * base * k);
             if let Some(a) = advance {
@@ -2494,17 +3010,23 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
     // Justified and distributed text wraps whether or not the cell says so,
     // across and down (Excel for Mac's PDF of xlsx-XALN, long text with
     // wrapText="0").
+    // (A number or a logical value is not wrapped by the cell's wrap setting: it shows as `#` if it does not fit.)
     let wrap_text = align != CellAlign::Fill
-        && (style.wrap
+        && ((style.wrap && !matches!(kind, CellKind::Number | CellKind::Boolean))
             || matches!(align, CellAlign::Justify | CellAlign::Distributed)
             || matches!(vertical, CellVerticalAlign::Justify | CellVerticalAlign::Distributed));
-    let room = (right - left - 2.0 * pad - if align == CellAlign::Distributed { 2.0 * indent } else { indent }).max(0.0);
+    // Printed by Excel for Windows, the text has the column of `printed_text_column_pt` less the 21 of the printer's pixels (1/600 inch) it
+    // starts in by: its PDFs of `colw-sweep.xlsx` (Calibri 11, columns 85 to 95 characters wide by halves, 游ゴシック 10.5 pt text at 10.56 pt)
+    // fit the characters of 88 pixels each that this holds, at all 21 widths, and no more (GitHub issue #68).
+    let padding = if cell.printed { PRINTED_TEXT_PADDING_PT } else { 2.0 * ROOM_PADDING_PT };
+    let room = (right - left + cell.text_extra - padding * px_per_point - if align == CellAlign::Distributed { 2.0 * indent } else { indent }).max(0.0);
 
     let is_vertical = style.rotation == 255;
     // Each line, and whether it ends its paragraph (justified text is
     // spread on the other lines only).
     let (mut lines, ends): (Vec<String>, Vec<bool>) = if is_vertical {
-        text.chars().map(|c| (c.to_string(), true)).unzip()
+        // (A line break in a stacked text is not a character to draw: a piece with a newline cannot be shaped.)
+        text.chars().filter(|c| !matches!(c, '\n' | '\r')).map(|c| (c.to_string(), true)).unzip()
     } else if wrap_text {
         wrap(text, room, |t| width(t, 1.0)).into_iter().unzip()
     } else {
@@ -2513,7 +3035,8 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
     if lines.is_empty() {
         return;
     }
-    if !wrap_text && !is_vertical {
+    // Lines broken in the text show one under another, wrapped or not (issue #17); a turned text keeps its first line.
+    if !wrap_text && !is_vertical && (1..=180).contains(&style.rotation) {
         lines.truncate(1);
     }
     let mut k = if matches!(style.vert_align, VerticalPosition::Superscript | VerticalPosition::Subscript) { 0.65 } else { 1.0 };
@@ -2540,10 +3063,42 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
             }
         }
     }
+    // The fill of a number format (`_ * #,##0_ `) is the room left over, so it
+    // never makes the number not fit: the long run of spaces the model holds
+    // (counted by the column's characters, not by this font's) is cut down to
+    // what the cell has room for.
+    if kind == CellKind::Number && !wrap_text && widths[0] > room + 0.01 {
+        let bytes = lines[0].as_bytes();
+        let mut best: Option<(usize, usize)> = None;
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b' ' {
+                let start = i;
+                while i < bytes.len() && bytes[i] == b' ' {
+                    i += 1;
+                }
+                if i - start >= 4 && best.is_none_or(|(a, b)| b - a < i - start) {
+                    best = Some((start, i));
+                }
+            } else {
+                i += 1;
+            }
+        }
+        if let Some((start, end)) = best {
+            let without = format!("{}{}", &lines[0][..start], &lines[0][end..]);
+            let without_width = width(&without, k);
+            if without_width <= room + 0.01 {
+                let space = width(" ", k).max(0.1);
+                let count = (((room - without_width) / space).floor().max(0.0) as usize).min(end - start);
+                lines[0] = format!("{}{}{}", &lines[0][..start], " ".repeat(count), &lines[0][end..]);
+                widths[0] = width(&lines[0], k);
+            }
+        }
+    }
     // A number that does not fit shows as `#` across the cell, as does one
     // its format cannot show (the model's text is then `#`s).
     let unshowable = kind == CellKind::Number && !lines[0].is_empty() && lines[0].chars().all(|c| c == '#');
-    if kind == CellKind::Number && !wrap_text && (widths[0] > room + 0.01 || unshowable) {
+    if (kind == CellKind::Number && !wrap_text && (widths[0] > room + 0.01 || unshowable)) || (kind == CellKind::Boolean && !wrap_text && widths[0] > room + 0.01) {
         let hash = width("#", k).max(0.1);
         let count = (room / hash).floor().max(0.0) as usize;
         lines[0] = "#".repeat(count);
@@ -2564,7 +3119,7 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         }
     }
 
-    let orig_text_size = base * if lines[0].is_ascii() { latin_scale } else { 1.0 };
+    let orig_text_size = base * if text.is_ascii() { latin_scale } else { 1.0 };
     let text_size = orig_text_size * k;
     let orig_line = (ascent + descent) * orig_text_size;
     let line = (ascent + descent) * text_size;
@@ -2576,6 +3131,42 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
     };
     if matches!(vertical, CellVerticalAlign::Justify | CellVerticalAlign::Distributed) && lines.len() > 1 && !is_vertical {
         pitch = pitch.max((bottom - top - pad - line) / (lines.len() - 1) as f32);
+    }
+    let rich = cell.runs.as_ref().filter(|_| !is_vertical && style.rotation == 0 && !matches!(align, CellAlign::Distributed | CellAlign::Fill | CellAlign::Justify));
+    let mut line_places: Option<Vec<(usize, usize)>> = rich.filter(|r| (wrap_text || lines.len() > 1) && r.iter().map(|x| x.text.as_str()).collect::<String>() == cell.text).and_then(|_| {
+        let chars: Vec<char> = cell.text.chars().collect();
+        let mut cursor = 0;
+        lines
+            .iter()
+            .map(|l| {
+                let l: Vec<char> = l.chars().collect();
+                let at = (cursor..=chars.len().saturating_sub(l.len())).find(|&p| chars[p..p + l.len()] == l[..])?;
+                cursor = at + l.len();
+                Some((at, l.len()))
+            })
+            .collect()
+    });
+    let mut line_ratios: Vec<f32> = match (rich, &line_places) {
+        (Some(runs), Some(places)) => places
+            .iter()
+            .map(|&(start, len)| {
+                let r = runs_between(runs.as_slice(), start, start + len)
+                    .iter()
+                    .filter(|r| !r.text.is_empty())
+                    .map(|r| r.size.unwrap_or(style.font_size) as f32 / style.font_size.max(1) as f32)
+                    .fold(0.0f32, f32::max);
+                if r > 0.0 { r } else { 1.0 }
+            })
+            .collect(),
+        _ => vec![1.0; lines.len()],
+    };
+    let mut line_offsets = Vec::with_capacity(lines.len());
+    let mut acc_y = 0.0f32;
+    for (idx, &r_i) in line_ratios.iter().enumerate() {
+        line_offsets.push(acc_y);
+        if idx + 1 < line_ratios.len() {
+            acc_y += pitch * r_i;
+        }
     }
     // Where Excel prints the text box against the cell's padding (points,
     // measured against Excel for Mac's PDF at Calibri 11).
@@ -2589,27 +3180,39 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
     } else {
         0.0
     };
-    let min_top = top + pad * 0.5 + v_shift_top;
-    if wrap_text && lines.len() > 1 {
+    // Ruby occupies its own font-metric line above the base text. Place both
+    // lines as one block, rather than painting the ruby inside the base line.
+    let ruby_height = if cell.phonetic.as_deref().is_some_and(|s|!s.is_empty()) && !is_vertical && style.rotation == 0 {
+        (ascent + descent) * base * 0.5 * 1.1 // Requested gap: ten percent of the ruby line.
+    } else { 0. };
+    let min_top = top + pad * 0.5 + v_shift_top + ruby_height;
+    if !is_vertical && lines.len() > 1 {
         let mut max_lines = 1;
         while max_lines < lines.len() {
-            let line_top = min_top + max_lines as f32 * pitch;
+            let line_top = min_top + line_offsets[max_lines];
             if line_top >= bottom {
                 break;
             }
             max_lines += 1;
         }
         lines.truncate(max_lines);
+        line_ratios.truncate(max_lines);
+        line_offsets.truncate(max_lines);
+        if let Some(p) = &mut line_places {
+            p.truncate(max_lines);
+        }
     }
-    let block = line + pitch * (lines.len() - 1) as f32;
+    let last_ratio = line_ratios.last().copied().unwrap_or(1.0);
+    let last_offset = line_offsets.last().copied().unwrap_or(0.0);
+    let block = last_offset + line * last_ratio;
     let first_top = match vertical {
         CellVerticalAlign::Top | CellVerticalAlign::Justify => min_top,
         CellVerticalAlign::Distributed if lines.len() > 1 && !is_vertical => min_top,
         CellVerticalAlign::Center | CellVerticalAlign::Distributed => {
-            top + (bottom - top - block) / 2.0 + v_shift_center
+            top + (bottom - top - block + ruby_height) / 2.0 + v_shift_center
         }
         CellVerticalAlign::Bottom => {
-            let base_block = if style.shrink { orig_line + pitch * (lines.len() - 1) as f32 } else { block };
+            let base_block = if style.shrink { last_offset + orig_line * last_ratio } else { block };
             let t = bottom - pad * 0.5 - base_block - v_shift_bottom - acc_shift;
             if is_vertical { t - 1.0 * px_per_point } else { t }
         }
@@ -2717,24 +3320,58 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
     }
 
     let align = if is_vertical && style.align == CellAlign::General { CellAlign::Center } else { align };
+    if is_vertical && wrap_text && lines.len() > 1 {
+        let max_per_col = (((bottom - top - base * k) / pitch.max(1.0)).floor().max(0.0) as usize + 1).max(1);
+        if lines.len() > max_per_col {
+            let cols: Vec<&[String]> = lines.chunks(max_per_col).collect();
+            let num_cols = cols.len();
+            let col_step = (base * k * 1.2).min(((right - left - pad) / num_cols as f32).max(base * k * 0.5));
+            for (col_idx, col) in cols.iter().enumerate() {
+                let col_block = (col.len().saturating_sub(1)) as f32 * pitch + line;
+                let col_first_top = match vertical {
+                    CellVerticalAlign::Top | CellVerticalAlign::Justify => min_top,
+                    CellVerticalAlign::Center | CellVerticalAlign::Distributed => {
+                        top + (bottom - top - col_block) / 2.0 + v_shift_center
+                    }
+                    CellVerticalAlign::Bottom => {
+                        bottom - pad * 0.5 - col_block - v_shift_bottom - acc_shift - 1.0 * px_per_point
+                    }
+                };
+                let col_center_x = match align {
+                    CellAlign::Right => right - TEXT_PAD_RIGHT_PT * px_per_point - indent - base * k * 0.5 - col_idx as f32 * col_step,
+                    CellAlign::Left => left + TEXT_PAD_LEFT_PT * px_per_point + indent + base * k * 0.5 + (num_cols - 1 - col_idx) as f32 * col_step,
+                    _ => (left + right + (num_cols - 1) as f32 * col_step) / 2.0 - col_idx as f32 * col_step,
+                };
+                let (l, r) = (col_center_x - base * k, col_center_x + base * k);
+                for (j, ch_text) in col.iter().enumerate() {
+                    let mut baseline = col_first_top + j as f32 * pitch + (line - (ascent + descent) * text_size) / 2.0 + ascent * text_size;
+                    if style.vert_align == VerticalPosition::Superscript {
+                        baseline -= base * 0.58;
+                    } else if style.vert_align == VerticalPosition::Subscript {
+                        baseline += base * 0.18;
+                    }
+                    out.push(TextItem {
+                        pieces: segments(ch_text, k),
+                        font: font.clone(),
+                        plain: plain_font.clone(),
+                        color,
+                        align: CellAlign::Center,
+                        left: l,
+                        right: r,
+                        baseline,
+                        underline: style.underline,
+                        strike: style.strike,
+                        clip: (clip_left, top, clip_right - clip_left, bottom - top),
+                        cell: (left, right),
+                        font_size: base,
+                        rotation: style.rotation,
+                    });
+                }
+            }
+            return;
+        }
+    }
     let line_count = lines.len();
-    // Parts in their own fonts are laid out on one unwrapped, unturned, unspread line.
-    let rich = cell.runs.as_ref().filter(|_| !is_vertical && style.rotation == 0 && !style.shrink && !matches!(align, CellAlign::Distributed | CellAlign::Fill | CellAlign::Justify));
-    // Wrapped, the parts follow the text onto its lines: each line's place in
-    // the cell's text (in characters), when the lines are pieces of it in order.
-    let line_places: Option<Vec<(usize, usize)>> = rich.filter(|r| wrap_text && r.iter().map(|x| x.text.as_str()).collect::<String>() == cell.text).and_then(|_| {
-        let chars: Vec<char> = cell.text.chars().collect();
-        let mut cursor = 0;
-        lines
-            .iter()
-            .map(|l| {
-                let l: Vec<char> = l.chars().collect();
-                let at = (cursor..=chars.len().saturating_sub(l.len())).find(|&p| chars[p..p + l.len()] == l[..])?;
-                cursor = at + l.len();
-                Some((at, l.len()))
-            })
-            .collect()
-    });
     for (i, text) in lines.into_iter().enumerate() {
         // Justified text is spread as distributed text is, but on the
         // lines that do not end a paragraph (Excel's PDF of xlsx-XALN).
@@ -2743,10 +3380,12 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
             CellAlign::Justify => CellAlign::Left,
             a => a,
         };
+        let r_i = line_ratios.get(i).copied().unwrap_or(1.0);
+        let y_off = line_offsets.get(i).copied().unwrap_or(i as f32 * pitch);
         let mut baseline = if style.shrink && vertical == CellVerticalAlign::Bottom {
-            first_top + i as f32 * pitch + ascent * orig_text_size
+            first_top + y_off + ascent * orig_text_size * r_i
         } else {
-            first_top + i as f32 * pitch + (line - (ascent + descent) * text_size) / 2.0 + ascent * text_size
+            first_top + y_off + (line - (ascent + descent) * text_size) * r_i / 2.0 + ascent * text_size * r_i
         };
         if style.vert_align == VerticalPosition::Superscript {
             baseline -= base * 0.58;
@@ -2757,7 +3396,7 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         // top, the next one down (its PDFs of xlsx-XALN: top, centred and
         // bottom lines in 48 pt rows at 13, 28 and 43 pt where these are
         // 12.73, 27.75 and 42.78).
-        if !is_vertical {
+        if !is_vertical && (line_count == 1 || ibis_pptx::EXCEL_METRICS != ibis_pptx::ExcelMetrics::Windows || matches!(vertical, CellVerticalAlign::Justify | CellVerticalAlign::Distributed)) {
             baseline = (baseline / px_per_point - 1e-3).ceil() * px_per_point;
         }
         // (Fitted to Excel's PDFs of xlsx-XBASE and XFNT; the cause not
@@ -2776,6 +3415,13 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
                 // naming its alignment, `ceil(0.3 · size)` above the cell's
                 // bottom (in an MS font `floor(0.18 · size + 0.45)` below the
                 // baseline), else 2 pt below the baseline (XSUP, XFNT).
+                let row_pt = (bottom - top) / px_per_point;
+                let gap = if row_pt - gap < size + 2.0 {
+                    let desc = if ms { 0.1406 } else { cell.font.descent };
+                    desc * size + 0.4
+                } else {
+                    gap
+                };
                 let set = style.vertical_set;
                 let shift = match style.vert_align {
                     VerticalPosition::Superscript if ms || !set => -(0.5 * size + 1e-3).floor(),
@@ -2787,7 +3433,8 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
                 };
                 baseline = bottom - (gap - shift) * px_per_point;
             } else if vertical == CellVerticalAlign::Center && style.vert_align == VerticalPosition::Baseline {
-                baseline = (((top + bottom) / 2.0 / px_per_point) + 3.5 * size / 11.0 - 1e-3).ceil() * px_per_point;
+                let offset = (size * 0.5 - CELL_PADDING_PT).max(size * 0.25);
+                baseline = (((top + bottom) / 2.0 / px_per_point) + offset - 1e-3).ceil() * px_per_point;
             } else if vertical == CellVerticalAlign::Top && ms && style.vert_align == VerticalPosition::Baseline {
                 baseline = (top / px_per_point + size - 1e-3).ceil() * px_per_point;
             }
@@ -2846,7 +3493,8 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         let (pad_left, pad_right) = if align == CellAlign::Fill {
             (CELL_PADDING_PT * px_per_point, CELL_PADDING_PT * px_per_point)
         } else {
-            (TEXT_PAD_LEFT_PT * px_per_point, TEXT_PAD_RIGHT_PT * px_per_point)
+            // Printed by Excel for Windows, the text starts the 21 printer's pixels in (`PRINTED_TEXT_PADDING_PT`).
+            (if cell.printed { PRINTED_TEXT_PADDING_PT } else { TEXT_PAD_LEFT_PT } * px_per_point, TEXT_PAD_RIGHT_PT * px_per_point)
         };
         let num_pad = if kind == CellKind::Number { TEXT_PAD_NUM_LEFT_PT * px_per_point } else { 0.0 };
         let (l, r) = match align {
@@ -2879,9 +3527,14 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         let ruby_scale = 0.5f32;
         let ruby_size = base * ruby_scale;
         let ruby_pieces = segments(phonetic, ruby_scale);
-        let ruby_baseline = (first_top + (ascent * ruby_size) - 1.0 * px_per_point).max(top + ruby_size);
+        let main=out.last();
+        let ruby_baseline = main.map_or(first_top,|m|m.baseline-ascent*base) - descent * ruby_size - (ascent + descent) * ruby_size * 0.1;
         let (pad_left, pad_right) = (TEXT_PAD_LEFT_PT * px_per_point, TEXT_PAD_RIGHT_PT * px_per_point);
-        let (l, r) = (left + pad_left + indent, right - pad_right);
+        let (mut l, r) = (left + pad_left + indent, right - pad_right);
+        if let Some(main)=main {
+            let main_width=main.pieces.iter().map(|p|p.advance.unwrap_or_else(||measure(&p.text,font_of(p.plain),p.size))).sum::<f32>();
+            l=match main.align {CellAlign::Center=>(main.left+main.right-main_width)/2.,CellAlign::Right=>main.right-main_width,_=>main.left};
+        }
         out.push(TextItem {
             pieces: ruby_pieces,
             font: font.clone(),
@@ -2907,9 +3560,12 @@ pub(crate) struct EditPiece {
     pub(crate) shaped: Option<ShapedLine>,
     pub(crate) x: f32,
     pub(crate) width: f32,
-    /// Where it starts in the text (bytes) and its length.
+    /// Where it starts in the text (bytes) and its length: the characters it shows and the tabs after them (a tab is
+    /// kept in the text but drawn as nothing, `text_items`).
     pub(crate) start: usize,
     pub(crate) len: usize,
+    /// Where, from `start`, the tabs it holds are: the shaped line has no room for them.
+    pub(crate) tabs: Vec<usize>,
 }
 
 /// A line of the text being typed: where its glyphs are, in pixels from the cell's top-left.
@@ -2931,7 +3587,9 @@ impl EditLine {
         let b = b.clamp(self.start, self.end);
         for p in &self.pieces {
             if b >= p.start && b <= p.start + p.len {
-                return p.x + p.shaped.as_ref().map_or(if b > p.start { p.width } else { 0.0 }, |s| f32::from(s.x_for_index(b - p.start)));
+                let rel = b - p.start;
+                let shown = rel - p.tabs.iter().filter(|&&t| t < rel).count();
+                return p.x + p.shaped.as_ref().map_or(if b > p.start { p.width } else { 0.0 }, |s| f32::from(s.x_for_index(shown)));
             }
         }
         self.pieces.last().map_or(self.x0, |p| p.x + p.width)
@@ -2959,12 +3617,37 @@ impl EditLayout {
     }
 }
 
+/// Style of the cell at (`row`, `column`), falling back to the workbook's
+/// default style (vertically centred in a new workbook or CSV) when the cell
+/// has not been created yet.
+pub(crate) fn cell_or_default_style(sheet: &Sheet, default_style: Option<&CellStyle>, row: u32, column: u32) -> CellStyle {
+    sheet
+        .cell(row, column)
+        .map(|c| sheet.styles[c.style as usize].clone())
+        .or_else(|| default_style.cloned())
+        .unwrap_or_else(|| CellStyle {
+            vertical: CellVerticalAlign::Center,
+            vertical_set: true,
+            ..Default::default()
+        })
+}
+
 /// `text` typed into the cell at (`row`, `column`) whose box is `cell` (width, height) pixels, `px_per_point`
 /// pixels to a point, laid out as `text_items` lays out that cell's shown text.
-pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, res: &Resources, row: u32, column: u32, text: &str, runs: Option<Arc<Vec<ibis_doc_model::CellRun>>>, origin: (f32, f32), cell: (f32, f32), px_per_point: f32) -> EditLayout {
+pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: Option<&CellStyle>, res: &Resources, row: u32, column: u32, text: &str, runs: Option<Arc<Vec<ibis_doc_model::CellRun>>>, origin: (f32, f32), cell: (f32, f32), px_per_point: f32, max_width: f32) -> EditLayout {
     let own = sheet.cell(row, column);
-    let mut style = own.map(|c| sheet.styles[c.style as usize].clone()).unwrap_or_default();
-    let kind = own.map_or(CellKind::Text, |c| c.kind);
+    let mut style = cell_or_default_style(sheet, default_style, row, column);
+    // What is typed is text, whatever the cell held: laid out as a number or a logical value it would not wrap, and show as
+    // `#` across the cell when it does not fit (GitHub issue #105: a long formula edited again). It keeps the place the
+    // value had (a number at the right, a logical value in the middle) while the cell's alignment is General.
+    let kind = CellKind::Text;
+    if style.align == CellAlign::General {
+        match own.map_or(CellKind::Text, |c| c.kind) {
+            CellKind::Number if style.number_format != "@" => style.align = CellAlign::Right,
+            CellKind::Boolean | CellKind::Error => style.align = CellAlign::Center,
+            _ => {}
+        }
+    }
     let original_wrap = style.wrap;
     let multi = text.contains('\n');
     style.wrap = style.wrap || multi;
@@ -2983,12 +3666,12 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, res: &Resources,
     let measure = |t: &str, f: &Font, size: f32| -> f32 {
         let run = TextRun { len: t.len(), font: f.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
         let mut line = ts.shape_line(SharedString::from(t.to_string()), px(size), &[run], None);
-        whole_point_advances(&mut line, px_per_point);
+        whole_point_advances(&mut line, px_per_point, false);
         f32::from(line.width)
     };
     // Bottom-aligned single lines share their row's baseline, the highest any of them asks for.
     let gap_of = |s: &CellStyle, t: &str| -> Option<f32> {
-        let probe = CellText { text: t.to_string(), kind: CellKind::Text, general: None, style: s.clone(), font: font.clone(), rect: (0.0, 0.0, 0.0, 0.0), spans: [(0.0, 0.0); 3], row_gap: None, runs: None, phonetic: None };
+        let probe = CellText { text: t.to_string(), kind: CellKind::Text, general: None, style: s.clone(), font: font.clone(), rect: (0.0, 0.0, 0.0, 0.0), spans: [(0.0, 0.0); 3], row_gap: None, runs: None, phonetic: None, printed: false, text_extra: 0.0 };
         bottom_gap(&probe)
     };
     let mut row_gap = gap_of(&style, text);
@@ -3013,17 +3696,22 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, res: &Resources,
         row_gap,
         runs: runs.clone(),
         phonetic: None,
+        printed: false,
+        text_extra: 0.0,
     };
     let total = |t: &TextItem| -> f32 { t.pieces.iter().map(|p| p.advance.unwrap_or_else(|| measure(&p.text, if p.plain { &t.plain } else { &t.font }, p.size))).sum() };
     // The widest line, to give a box that does not wrap the room it needs.
     let mut right = cell.0;
     if !original_wrap {
         let mut probe = Vec::new();
-        text_items(&make(1.0e6, cell.1), px_per_point, &measure, &mut probe);
+        text_items(&make(1.0e6, 1.0e6), px_per_point, &measure, &mut probe);
         let widest = probe.iter().map(&total).fold(0.0, f32::max);
         let indent = style.indent as f32 * 9.0 * px_per_point;
         right = right.max(widest + (TEXT_PAD_LEFT_PT + TEXT_PAD_RIGHT_PT) * px_per_point + indent + 2.0 * px_per_point);
     }
+    let capped=right>max_width;
+    right=right.min(max_width.max(1.));
+    let make=|r,b|{let mut cell=make(r,b);if capped{cell.style.wrap=true;cell.style.align=CellAlign::Left;}cell};
     // The room the lines need: all of them laid out (text_items drops those below the box), the box then as high as they are.
     let biggest = |t: &TextItem| t.pieces.iter().map(|p| p.size).fold(t.font_size, f32::max);
     let mut items = Vec::new();
@@ -3038,15 +3726,19 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, res: &Resources,
     let mut lines = Vec::new();
     let mut cursor = 0usize;
     let ascent = font.ascent;
+    // The text a line is drawn from, without the tabs; the colours of the cell references are found in it.
+    let plain = text.replace('\t', "");
     for t in &items {
         let line_text: String = t.pieces.iter().map(|p| p.text.as_str()).collect();
-        // The line's place in the text: after the previous line, over a line break.
-        let start = text[cursor..].find(&line_text).map_or(cursor, |i| cursor + i);
-        let end = start + line_text.len();
+        // The line's place in the text: after the previous line, over a line break. The line holds the text without its
+        // tabs (`text_items` draws a tab as nothing), so the text is read along with it, the tabs passed over.
+        let (start, end) = locate_line(text, cursor, &line_text);
+        let spans = piece_spans(text, start, end, t.pieces.iter().map(|p| p.text.len()));
         let shaped: Vec<(Option<ShapedLine>, f32)> = t
             .pieces
             .iter()
-            .map(|p| match p.advance {
+            .zip(&spans)
+            .map(|(p, (piece_start, _, _))| {let piece_start=*piece_start-text[..*piece_start].matches('\t').count();match p.advance {
                 Some(a) => (None, a),
                 None => {
                     let f = match &p.run {
@@ -3060,26 +3752,26 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, res: &Resources,
                         font: f,
                         color,
                         background_color: None,
-                        underline: None,
+                        // A part in its own underline (a note's text is edited in the same layout), else the cell's.
+                        underline: p.run.as_ref().map_or(t.underline, |r| r.underline).enabled().then(|| UnderlineStyle { thickness: px((p.size / 14.0).max(0.5)), color: Some(color), wavy: false }),
                         strikethrough: p.run.as_ref().map_or(t.strike, |r| r.strike).then(|| StrikethroughStyle { thickness: px((p.size / 14.0).max(0.5)), color: Some(color) }),
                     };
-                    let mut line = ts.shape_line(SharedString::from(p.text.clone()), px(p.size), &[run], None);
-                    whole_point_advances(&mut line, px_per_point);
+                    let runs=super::formula_reference::color_runs(&plain,piece_start,p.text.len(),run);
+                    let mut line = ts.shape_line(SharedString::from(p.text.clone()), px(p.size), &runs, None);
+                    whole_point_advances(&mut line, px_per_point, false);
                     let w = f32::from(line.width);
                     (Some(line), w)
                 }
-            })
+            }})
             .collect();
         let sum: f32 = shaped.iter().map(|(_, w)| *w).sum();
         let trailing = t.pieces.last().is_some_and(|p| p.advance.is_none() && p.text.ends_with(' '));
         let (mut x, _) = compute_text_x(t.align, t.left, t.right, sum, shaped.len(), trailing, 0, px_per_point);
         x -= origin.0;
         let x0 = x;
-        let mut at = start;
         let mut pieces = Vec::new();
-        for ((line, w), p) in shaped.into_iter().zip(&t.pieces) {
-            pieces.push(EditPiece { shaped: line, x, width: w, start: at, len: p.text.len() });
-            at += p.text.len();
+        for ((line, w), (piece_start, len, tabs)) in shaped.into_iter().zip(spans) {
+            pieces.push(EditPiece { shaped: line, x, width: w, start: piece_start, len, tabs });
             x += w;
         }
         let big = biggest(t);
@@ -3108,6 +3800,69 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, res: &Resources,
         }
     }
     EditLayout { lines, width: right, height: bottom }
+}
+
+/// Where the line drawn as `line` (the text without its tabs) is in `text`, as bytes from `cursor` on: the tabs between its
+/// characters, and those before and after them up to the line break, belong to it. Always at character boundaries.
+/// A line that is not found in the text (a character that was drawn as room only) takes what is left up to the line break.
+fn locate_line(text: &str, cursor: usize, line: &str) -> (usize, usize) {
+    let cursor = cursor.min(text.len());
+    let matched = |from: usize| -> Option<usize> {
+        let mut at = from;
+        for (i, c) in line.chars().enumerate() {
+            if i > 0 {
+                while text[at..].starts_with('\t') {
+                    at += 1;
+                }
+            }
+            if !text[at..].starts_with(c) {
+                return None;
+            }
+            at += c.len_utf8();
+        }
+        Some(at)
+    };
+    let found = text[cursor..].char_indices().map(|(i, _)| cursor + i).chain(std::iter::once(text.len())).find_map(|from| matched(from).map(|end| (from, end)));
+    let (mut start, mut end) = found.unwrap_or_else(|| (cursor, cursor + text[cursor..].find(['\n', '\r']).unwrap_or(text.len() - cursor)));
+    while start > cursor && text[..start].ends_with('\t') {
+        start -= 1;
+    }
+    while text[end..].starts_with('\t') {
+        end += 1;
+    }
+    (start, end)
+}
+
+/// The place in `text` of each piece of a line that is at `start..end`, which are `lengths` long without the tabs:
+/// (start, length, where the tabs are from the start). The tabs belong to the piece before them (those at the front, to the
+/// first), so the pieces meet and cover the line.
+fn piece_spans(text: &str, start: usize, end: usize, lengths: impl Iterator<Item = usize>) -> Vec<(usize, usize, Vec<usize>)> {
+    let lengths: Vec<usize> = lengths.collect();
+    let mut at = start;
+    let mut out = Vec::new();
+    for (i, n) in lengths.iter().enumerate() {
+        let from = at;
+        let mut tabs = Vec::new();
+        let mut taken = 0;
+        while at < end {
+            let Some(c) = text[at..].chars().next() else { break };
+            if c == '\t' {
+                tabs.push(at - from);
+                at += 1;
+            } else if taken < *n {
+                taken += c.len_utf8();
+                at += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if i + 1 == lengths.len() {
+            // Nothing is left over: what the pieces did not take (a fallback) goes to the last.
+            at = end;
+        }
+        out.push((from, at - from, tabs));
+    }
+    out
 }
 
 /// The parts of `runs` between the characters `from` and `to` of their text.
@@ -3186,7 +3941,7 @@ fn proportional_japanese(typeface: Option<&str>) -> bool {
 pub(crate) fn line_pitch(typeface: Option<&str>, japanese: bool) -> Option<f32> {
     let name = typeface?;
     if name.starts_with("ＭＳ") || name.starts_with("MS ") { // i18n-ok（フォント名の判定（表示名ではなく、フォント名の接頭辞））
-        Some(13.0 / 9.0)
+        Some(if ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Windows { 13.5 / 11.0 } else { 13.0 / 9.0 })
     } else if name.starts_with("Meiryo") || name.starts_with("メイリオ") { // i18n-ok（フォント名の判定（表示名ではなく、フォント名の接頭辞））
         Some(11.0 / 8.0)
     } else if name.starts_with("Calibri") || name.starts_with("Carlito") {
@@ -3203,36 +3958,35 @@ pub(crate) fn line_pitch(typeface: Option<&str>, japanese: bool) -> Option<f32> 
 }
 
 /// Break `text` into lines no wider than `room` (by `width`), as Excel
-/// wraps: between any two characters of Japanese, but back to the last
-/// space when a line would end inside a Latin word, and never putting a
-/// closing mark (、。）」…) at the start of a line. A line broken at a space
-/// keeps the space at its end: Excel aligns it with the space's width (in
-/// its PDF of XALN, "The quick " right-aligned starts 3 pt left of "The
-/// quick", centred 1 pt left).
+/// wraps: where `line_break::may_break` allows with Excel's kinsoku (between
+/// two characters of Japanese, but not before a closing mark nor after an
+/// opening one, going back over as many of them as there are; in Latin text
+/// after a space, a hyphen or a dash, not inside a word, a number or a path,
+/// but next to a character of East Asian Width "A" (— ² é) as next to a kanji:
+/// Excel for Windows' PDFs of `kinsoku-*-probe.xlsx`, GitHub issue #68), else
+/// before the character that does not fit. A line broken at a space keeps the
+/// space at its end: Excel aligns it with the space's width (in its PDF of
+/// XALN, "The quick " right-aligned starts 3 pt left of "The quick", centred
+/// 1 pt left). Spaces past the edge stay on the line.
 fn wrap(text: &str, room: f32, width: impl Fn(&str) -> f32) -> Vec<(String, bool)> {
-    let latin = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | ',' | '-' | '_' | '%' | '/' | '(' | ')');
-    let closing = |c: char| "、。，．・：；？！）］｝」』】〕〉》’”)]}.,:;!?ー々ぁぃぅぇぉっゃゅょァィゥェォッャュョ".contains(c); // i18n-ok（閉じ括弧の類の文字（禁則処理の文字集合））
+    use crate::render::line_break::{Kinsoku, LatinBreaks, may_break};
     let mut out = Vec::new();
     for paragraph in text.lines() {
         let mut line: Vec<char> = Vec::new();
         for c in paragraph.chars() {
             line.push(c);
             let s: String = line.iter().collect();
-            if line.len() == 1 || width(&s) <= room {
+            // Spaces past the edge stay on the line, but not the ideographic space: it wraps as a kanji does (Excel's PDF of corpus 082:
+            // a cell's leading 「　　」 stays alone on its first line).
+            if line.len() == 1 || (c.is_whitespace() && c != '\u{3000}') || width(&s) <= room {
                 continue;
             }
             // `c` does not fit: where does the line end?
-            let mut at = line.len() - 1;
-            let prev = line[at - 1];
-            if latin(prev) && latin(c) {
-                // Inside a Latin word: back to the space before it, if any.
-                if let Some(space) = line[..at].iter().rposition(|&x| x == ' ') {
-                    at = space + 1;
-                }
-            } else if closing(c) && at > 1 {
-                // A closing mark takes the character before it along.
-                at -= 1;
-            }
+            // The line ends where the characters allow, not at an ASCII space it holds: in Excel for Mac and for Windows (screen and PDF)
+            // "か updateFields のとき、開いたときに目次を作|り直す" keeps the Japanese after the space on the line, and a line breaks
+            // between "１ ダミー甲" characters, not at the space (checked with autofit row heights and PDFs of cells that would take one
+            // line more if the last space ended the line, and `ascii-space-wrap.xlsx`'s PDFs).
+            let at = (1..line.len()).rev().find(|&k| may_break(line[k - 1], line[k], Some(Kinsoku::EXCEL), LatinBreaks { ambiguous_wide: true, ..LatinBreaks::default() })).unwrap_or(line.len() - 1);
             let rest: Vec<char> = line.split_off(at);
             let done: String = line.iter().collect();
             out.push((done, false));
@@ -3245,14 +3999,112 @@ fn wrap(text: &str, room: f32, width: impl Fn(&str) -> f32) -> Vec<(String, bool
 
 #[cfg(test)]
 mod tests {
-    use super::{Bands, CellText, CellFont, text_items, fill_sources};
+    use super::{Bands, CellText, CellFont, text_items, fill_sources, wrap};
     use ibis_doc_model::{CellAlign, CellKind, CellStyle};
     use gpui_kit::font;
+
+    /// The lines of `text` wrapped in `room` characters (each one wide).
+    fn wrapped(text: &str, room: usize) -> Vec<String> {
+        wrap(text, room as f32, |t| t.chars().count() as f32).into_iter().map(|(l, _)| l).collect()
+    }
+
+    /// Issue 68, X1: Excel does not end a line with an opening bracket or `＄ ￥ $ ¥ £ #`.
+    #[test]
+    fn wrap_keeps_line_end_characters_off_the_line_end() {
+        assert_eq!(wrapped("あいうえお「かき", 6), vec!["あいうえお", "「かき"]);
+        assert_eq!(wrapped("あいうえお＄かき", 6), vec!["あいうえお", "＄かき"]);
+        assert_eq!(wrapped("あいうえお$かき", 6), vec!["あいうえお", "$かき"]);
+    }
+
+    /// Issue 68, X2: ゎ ヮ ヵ ヶ ゝ ゞ ヽ ヾ ゛ ゜ ％ ℃ ° ′ ″ % and the half-width ｡ ｣ ､ ･ ﾞ ｯ ｰ do not start a line.
+    #[test]
+    fn wrap_keeps_more_characters_off_the_line_start() {
+        for c in "ゎヮヵヶゝゞヽヾ゛゜％℃°′″%｡｣､･ﾞｯｰ".chars() {
+            assert_eq!(wrapped(&format!("あいうえお{c}かき"), 5), vec!["あいうえ".to_string(), format!("お{c}かき")], "{c}");
+        }
+    }
+
+    /// Issue 68, X3: characters that may not start a line take the ones before them, as many as follow each other (`」。`).
+    #[test]
+    fn wrap_takes_a_run_of_closing_marks_down_together() {
+        assert_eq!(wrapped("あいうえお」。かき", 5), vec!["あいうえ", "お」。かき"]);
+        assert_eq!(wrapped("あいうえお」」かき", 5), vec!["あいうえ", "お」」かき"]);
+        // The mark that overflows follows another one: both go down with the character before them (not only the one that overflows).
+        assert_eq!(wrapped("あいうえ」。かき", 5), vec!["あいう", "え」。かき"]);
+        assert_eq!(wrapped("あいうえ」」」かき", 5), vec!["あいう", "え」」」か", "き"]);
+    }
+
+    /// A line is not ended at an ASCII space it holds: Excel for Mac and for Windows keep the Japanese after "updateFields " on the line
+    /// (screen row heights by autofit and PDFs, 2026-11-04). Widths as Excel for Windows' screen sets them: a full-width character 15 px,
+    /// a Latin one 7 px; the room is 478 px, where the 42nd character ends the line.
+    #[core::prelude::v1::test]
+    fn wrap_does_not_end_a_line_at_an_ascii_space_it_holds() {
+        let text = "目次が更新要（dirty）か updateFields のとき、開いたときに目次を作り直すようにした。Word で同じ挙動を確認。"; // i18n-ok: Excel's own wrapped cell text
+        let width = |t: &str| t.chars().map(|c| if c.is_ascii() { 7.0 } else { 15.0 }).sum::<f32>();
+        let lines: Vec<String> = wrap(text, 478.0, width).into_iter().map(|(l, _)| l).collect();
+        assert_eq!(lines, vec!["目次が更新要（dirty）か updateFields のとき、開いたときに目次を作", "り直すようにした。Word で同じ挙動を確認。"]); // i18n-ok: Excel's own wrapped cell text
+        // A line that starts with a space keeps it (no empty first line), and the text goes on to the character that does not fit.
+        assert_eq!(wrapped(" あいうえおかきくけこ", 6), vec![" あいうえお", "かきくけこ"]); // i18n-ok: wrap test text
+        assert_eq!(wrapped("あ いうえおかきくけこ", 6), vec!["あ いうえお", "かきくけこ"]); // i18n-ok: wrap test text
+    }
+
+    /// Issue 68, X4: a Latin word, a number or a URL moves down whole; a line ends only after a space, a hyphen or a dash.
+    #[test]
+    fn wrap_does_not_cut_latin_words_numbers_and_urls() {
+        assert_eq!(wrapped("あいうえおwell-knownかき", 8), vec!["あいうえお", "well-", "knownかき"]);
+        assert_eq!(wrapped("あいうえお1,234,567.89かき", 14), vec!["あいうえお", "1,234,567.89かき"]);
+        assert_eq!(wrapped("あいうえお3.14%かき", 8).first().map(String::as_str), Some("あいうえお"));
+        assert_eq!(wrapped("あいうabc—defかき", 7), vec!["あいうabc—", "defかき"]);
+    }
+
+    /// A stacked (rotation 255) text with a line break: the break is not a character to shape (`shape_line` panics on a
+    /// newline in debug), so no piece holds one and the letters stack on.
+    #[test]
+    fn stacked_text_with_a_line_break_shapes_no_newline() {
+        let cell = CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
+            text: "ab\ncd".into(), kind: CellKind::Text, general: None,
+            style: CellStyle { rotation: 255, wrap: true, font_size: 1000, ..Default::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
+            rect: (0., 0., 100., 200.), spans: [(0., 100.); 3], row_gap: None,
+        };
+        let measure = |t: &str, _: &gpui_kit::Font, _: f32| {
+            assert!(!t.contains('\n') && !t.contains('\r'), "a newline is measured: {t:?}");
+            t.chars().count() as f32 * 5.
+        };
+        let mut out = Vec::new();
+        text_items(&cell, 1., &measure, &mut out);
+        assert_eq!(out.len(), 4);
+    }
+
+    /// GitHub issue #75: text set to "distributed" (均等割り付け) is laid out as one piece a character and spread over the
+    /// cell's width (it was set as centred text, close together).
+    #[test]
+    fn distributed_text_spreads_over_the_cells_width() {
+        let cell = CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
+            text: "家族手当制度がある".into(), kind: CellKind::Text, general: None,
+            style: CellStyle { align: CellAlign::Distributed, font_size: 1000, ..Default::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
+            rect: (0., 0., 200., 20.), spans: [(0., 200.); 3], row_gap: None,
+        };
+        let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 10.;
+        let mut out = Vec::new();
+        text_items(&cell, 1., &measure, &mut out);
+        assert_eq!(out.len(), 1);
+        let item = &out[0];
+        assert_eq!(item.align, CellAlign::Distributed);
+        assert_eq!(item.pieces.len(), 9, "one piece a character");
+        let total: f32 = item.pieces.iter().map(|p| measure(&p.text, &item.font, p.size)).sum();
+        let (x, gap) = super::compute_text_x(item.align, item.left, item.right, total, item.pieces.len(), false, 0, 1.);
+        // Nine characters of 10 in a cell of 200 (less its padding): the room between them is shared.
+        assert!(gap > 1.0, "the characters are not spread (gap {gap})");
+        let end = x + total + gap * 8.0;
+        assert!((end - item.right).abs() < 0.01, "the last character ends at the cell's right padding: {end} vs {}", item.right);
+    }
 
     #[test]
     fn vertical_justify_places_single_line_at_top_and_spreads_multiple_lines() {
         use ibis_doc_model::CellVerticalAlign;
-        let make = |text: &str| CellText { runs: None, phonetic: None,
+        let make = |text: &str| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { vertical: CellVerticalAlign::Justify, wrap: true, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -3274,7 +4126,7 @@ mod tests {
     #[test]
     fn vertical_distributed_places_single_line_at_center_and_spreads_multiple_lines() {
         use ibis_doc_model::CellVerticalAlign;
-        let make = |text: &str| CellText { runs: None, phonetic: None,
+        let make = |text: &str| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { vertical: CellVerticalAlign::Distributed, wrap: true, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -3315,7 +4167,7 @@ mod tests {
         use ibis_doc_model::CellRun;
         let run = |t: &str, bold: bool| CellRun { text: t.into(), font: None, size: None, bold: Some(bold), italic: None, underline: None, strike: None, color: None };
         let runs = vec![run("AAAA BBBB ", true), run("CCCC DDDD", false)];
-        let cell = CellText { runs: Some(std::sync::Arc::new(runs.clone())), phonetic: None,
+        let cell = CellText { runs: Some(std::sync::Arc::new(runs.clone())), phonetic: None, printed: false, text_extra: 0.0,
             text: "AAAA BBBB CCCC DDDD".into(), kind: CellKind::Text, general: None,
             style: CellStyle { wrap: true, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -3335,7 +4187,7 @@ mod tests {
 
     #[test]
     fn fill_repeats_complete_entries_and_clips_long_entries() {
-        let make = |text: &str| CellText { runs: None, phonetic: None,
+        let make = |text: &str| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { align: CellAlign::Fill, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -3461,7 +4313,7 @@ mod tests {
     #[test]
     fn centred_text_sits_on_the_cells_middle_at_a_whole_point() {
         use super::{compute_text_x, TEXT_LEFT_OFFSET_PX, TEXT_PAD_LEFT_PT, TEXT_PAD_NUM_LEFT_PT, TEXT_PAD_RIGHT_PT};
-        let make = |text: &str, kind: CellKind, align: CellAlign| CellText { runs: None, phonetic: None,
+        let make = |text: &str, kind: CellKind, align: CellAlign| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: text.into(), kind, general: None,
             style: CellStyle { align, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -3488,9 +4340,35 @@ mod tests {
     }
 
     #[test]
+    fn broken_lines_show_unwrapped_as_far_as_the_cell_goes() {
+        use ibis_doc_model::CellVerticalAlign;
+        // Issue #17: a cell of a text file, its lines broken but not wrapped, shows them one under another.
+        let make = |vert: CellVerticalAlign, height: f32| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
+            text: "Line 1\nLine 2\nLine 3\nLine 4".into(),
+            kind: CellKind::Text,
+            general: None,
+            style: CellStyle { vertical: vert, font_size: 1000, ..Default::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
+            rect: (0., 0., 100., height),
+            spans: [(0., 100.); 3], row_gap: None,
+        };
+        let measure = |_: &str, _: &gpui_kit::Font, _: f32| 10.;
+        let count = |c: CellText| {
+            let mut out = Vec::new();
+            text_items(&c, 1., &measure, &mut out);
+            out.len()
+        };
+        assert_eq!(count(make(CellVerticalAlign::Top, 100.)), 4);
+        assert_eq!(count(make(CellVerticalAlign::Center, 100.)), 4);
+        // A row too low for all of them shows those that start in it.
+        let low = count(make(CellVerticalAlign::Top, 25.));
+        assert!(low > 1 && low < 4, "{low}");
+    }
+
+    #[test]
     fn vertical_overflow_places_center_and_bottom_without_clamping_to_top() {
         use ibis_doc_model::CellVerticalAlign;
-        let make = |vert: CellVerticalAlign| CellText { runs: None, phonetic: None,
+        let make = |vert: CellVerticalAlign| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: "Line 1\nLine 2\nLine 3".into(),
             kind: CellKind::Text,
             general: None,
@@ -3525,7 +4403,7 @@ mod tests {
     #[test]
     fn shrink_to_fit_bottom_align_maintains_original_font_size_baseline() {
         use ibis_doc_model::CellVerticalAlign;
-        let make = |shrink: bool, text_len: usize| CellText { runs: None, phonetic: None,
+        let make = |shrink: bool, text_len: usize| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: "A".repeat(text_len),
             kind: CellKind::Text,
             general: None,
@@ -3558,9 +4436,12 @@ mod tests {
 
     #[test]
     fn ruby_phonetic_rendered_when_present() {
-        let cell = CellText {
+        use ibis_doc_model::CellVerticalAlign;
+        let mut cell = CellText {
             runs: None,
             phonetic: Some("トウキョウ".into()),
+            printed: false,
+            text_extra: 0.0,
             text: "東京".into(),
             kind: CellKind::Text,
             general: None,
@@ -3583,6 +4464,190 @@ mod tests {
         assert_eq!(ruby.font_size, 6.0);
         // Ruby baseline is above main text baseline
         assert!(ruby.baseline < main.baseline, "ruby baseline ({}) should be above main text baseline ({})", ruby.baseline, main.baseline);
+        // Horizontal alignment must keep the reading at the base text's left,
+        // and vertical centring must preserve the same typographic separation.
+        let mut gaps = Vec::new();
+        for horizontal in [CellAlign::Left, CellAlign::Center, CellAlign::Right] {
+            for vertical in [CellVerticalAlign::Top, CellVerticalAlign::Center, CellVerticalAlign::Bottom] {
+                let candidate = &mut cell;
+                candidate.style.align = horizontal;
+                candidate.style.vertical = vertical;
+                candidate.style.vertical_set = true;
+                let mut items = Vec::new();
+                text_items(candidate, 1., &measure, &mut items);
+                let (base, reading) = (&items[0], &items[1]);
+                let text_width = measure("東京", &candidate.font.font, base.font_size);
+                let expected = match horizontal {
+                    CellAlign::Center => (base.left + base.right - text_width) / 2.,
+                    CellAlign::Right => base.right - text_width,
+                    _ => base.left,
+                };
+                assert!((reading.left - expected).abs() < 0.001);
+                gaps.push(base.baseline - reading.baseline);
+            }
+        }
+        assert!(gaps.iter().all(|gap| (gap - gaps[0]).abs() < 0.001));
+    }
+
+    /// GitHub #22: Excel 365 fills a dotted border with a tile 0.96 pt across, half of it grey: dots of 0.48 pt a
+    /// step of 0.96 pt apart, from the paper's corner (its PDF's pattern), whatever the print scale.
+    #[test]
+    fn a_dotted_border_is_dots_of_half_the_tile_step_from_the_papers_corner() {
+        use super::dotted_pattern;
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        // At 100 %, a pixel a point: dots of 0.48, gaps of 0.48, and a line that starts on the origin starts a dot.
+        let (pattern, phase) = dotted_pattern(1.0, 0.0, 0.0, 1.0);
+        assert!(pattern.len() == 2 && near(pattern[0], 0.48) && near(pattern[1], 0.48), "{pattern:?}");
+        assert!(near(phase, 0.0));
+        // A line that starts 1.2 pt in starts 0.24 into the tile (1.2 - 0.96), which is half a dot in.
+        assert!(near(dotted_pattern(1.0, 0.0, 1.2, 1.0).1, 0.24));
+        // The sheet's origin 10 pt from the paper's corner moves the start by as much: 10 + 1.2 = 11.2 = 11 x 0.96 + 0.64.
+        assert!(near(dotted_pattern(1.0, 10.0, 1.2, 1.0).1, 0.64), "{}", dotted_pattern(1.0, 10.0, 1.2, 1.0).1);
+        // Printed at 50 %, the tile stays 0.96 pt on the paper: a sheet point is half a paper point, at 2 px a sheet
+        // point a paper point is 4 px, and a dot 0.48 of them.
+        let (half, _) = dotted_pattern(0.5, 0.0, 0.0, 2.0);
+        assert!(near(half[0], 1.92) && near(half[1], 1.92), "{half:?}");
+        // At 200 % on the paper (a sheet point two paper points), half the pixels per paper point.
+        let (double, _) = dotted_pattern(2.0, 0.0, 0.0, 2.0);
+        assert!(near(double[0], 0.48) && near(double[1], 0.48), "{double:?}");
+    }
+
+    /// What `border_quads` draws of a border along a row or a column: the rectangles (the screen) and the dashed lines
+    /// (printed) it makes.
+    fn border_marks(line: ibis_doc_model::BorderLine, horizontal: bool, printed: bool, scale: f32, length: f32) -> (usize, Vec<super::DashedLine>) {
+        use super::{BORDER_DASHES, PRINT_GRID, border_quads};
+        BORDER_DASHES.with(|d| d.borrow_mut().clear());
+        PRINT_GRID.with(|g| g.set(printed.then_some((1.0, 0.0, 0.0))));
+        let mut quads = Vec::new();
+        let border = ibis_doc_model::Border { line, color: ibis_doc_model::Rgb(0x808080) };
+        border_quads(&border, horizontal, false, 100.0 * scale, 10.0 * scale, (10.0 + length) * scale, scale, &mut quads);
+        PRINT_GRID.with(|g| g.set(None));
+        (quads.len(), BORDER_DASHES.with(|d| std::mem::take(&mut *d.borrow_mut())))
+    }
+
+    /// GitHub #22: a printed dashed or dotted border (any style, along a row or a column, at any size) is one dashed
+    /// line, not a rectangle for each dash; on the screen each dash is a rectangle.
+    #[test]
+    fn a_printed_dashed_border_is_one_dashed_line_and_a_screen_one_is_rectangles() {
+        use ibis_doc_model::BorderLine::*;
+        for line in [Dashed, Dotted, DashDot, DashDotDot, MediumDashed, MediumDashDot, MediumDashDotDot] {
+            for horizontal in [true, false] {
+                for scale in [1.0f32, 2.0] {
+                    let what = format!("{line:?} horizontal {horizontal} at {scale}");
+                    let (quads, lines) = border_marks(line, horizontal, true, scale, 100.0);
+                    assert_eq!(quads, 0, "printed {what}: no rectangles");
+                    assert_eq!(lines.len(), 1, "printed {what}: one dashed line");
+                    let l = &lines[0];
+                    assert!(l.width >= 0.9 * scale, "printed {what}: {} wide", l.width);
+                    assert!(l.pattern.len() >= 2 && l.pattern.len() % 2 == 0 && l.pattern.iter().all(|v| *v > 0.0), "{what}: {:?}", l.pattern);
+                    assert_eq!(l.points.len(), 2, "{what}");
+                    // The line runs along the border, 100 sheet points of it, from its start.
+                    let (a, b) = (l.points[0], l.points[1]);
+                    let (along, across) = if horizontal { (b.0 - a.0, b.1 - a.1) } else { (b.1 - a.1, b.0 - a.0) };
+                    // (A column's line starts a point above, as its solid line does.)
+                    assert!(across.abs() < 1e-4 && (along - 100.0 * scale).abs() < 1.5 * scale, "{what}: {:?}", l.points);
+                    let (quads, lines) = border_marks(line, horizontal, false, scale, 100.0);
+                    assert!(quads > 5 && lines.is_empty(), "screen {what}: {quads} rectangles, {} lines", lines.len());
+                }
+            }
+        }
+    }
+
+    /// The lengths of a dashed border's dashes and gaps are its pattern's (`dash_pattern`, in sheet points): 3 and 1 for
+    /// `dashed`, 9 and 3 for `mediumDashed`, 9 3 3 3 for a dash-dot, at any size.
+    #[test]
+    fn the_dashes_of_a_dashed_border_are_its_patterns() {
+        use ibis_doc_model::BorderLine::*;
+        for (line, pattern) in [(Dashed, vec![3.0f32, 1.0]), (MediumDashed, vec![9.0, 3.0]), (DashDot, vec![9.0, 3.0, 3.0, 3.0]), (MediumDashDotDot, vec![9.0, 3.0, 3.0, 3.0, 3.0, 3.0])] {
+            for scale in [1.0f32, 2.0] {
+                let (_, lines) = border_marks(line, true, true, scale, 120.0);
+                let want: Vec<f32> = pattern.iter().map(|l| l * scale).collect();
+                assert_eq!(lines[0].pattern, want, "{line:?} at {scale}");
+            }
+        }
+    }
+
+    /// A printed dotted border is the Excel tile's dots whatever its length, along a row and down a column, at 100 %
+    /// and 200 %: dots and gaps of 0.48 paper points, starting where the tile does on the paper.
+    #[test]
+    fn a_printed_dotted_border_is_the_excel_tile_at_any_size() {
+        use ibis_doc_model::BorderLine::Dotted;
+        for scale in [1.0f32, 2.0] {
+            for horizontal in [true, false] {
+                let (_, lines) = border_marks(Dotted, horizontal, true, scale, 100.0);
+                let l = &lines[0];
+                // The grid scale is 1 here: a sheet point is a paper point, and `scale` pixels.
+                assert!(l.pattern.iter().all(|v| (v - 0.48 * scale).abs() < 1e-3 * scale), "scale {scale} horizontal {horizontal}: {:?}", l.pattern);
+                assert!(l.phase >= 0.0 && l.phase < 0.96 * scale, "the phase is in the tile: {}", l.phase);
+                // The line starts 10 sheet points along (a column starts a point earlier: 9), which is 0.4 (0.36) into a tile.
+                let want = if horizontal { 0.4 } else { 0.36 };
+                assert!((l.phase - want * scale).abs() < 1e-3 * scale, "scale {scale} horizontal {horizontal}: phase {}", l.phase);
+            }
+        }
+    }
+
+    /// #157: Across arbitrary zoom levels (100%, 130%, 150%, 175%, 200%, 400%) and display scale factors
+    /// (1.0x, 2.0x Retina), `snap_fill_bounds` of a filled cell `[left - 1, right] x [top - 1, bottom]` and
+    /// `on_pixels_bounds` of a thin solid border `[at - 1, at]` share the exact same device-pixel boundary
+    /// without any 1px gap or overlap.
+    #[test]
+    fn fill_border_and_grid_snap_to_identical_device_pixels_across_zooms() {
+        use super::{PRINT_GRID, border_quads, on_pixels_bounds, snap_fill_bounds};
+        use gpui_kit::{Bounds, point, px, size};
+        use ibis_doc_model::{Border, BorderLine, Rgb};
+
+        PRINT_GRID.with(|g| g.set(None));
+        let thin = Border {
+            line: BorderLine::Thin,
+            color: Rgb(0x000000),
+        };
+        let to_bounds = |(x, y, w, h): (f32, f32, f32, f32)| Bounds::new(point(px(x), px(y)), size(px(w), px(h)));
+
+        for scale_factor in [1.0f32, 2.0] {
+            for zoom in [1.0f32, 1.3, 1.5, 1.75, 2.0, 4.0] {
+                let px_per_point = zoom * (96.0 / 72.0);
+                // Simulate cumulative cell boundaries in screen pixels (as `layout_part` computes `x(col)` / `y(row)`).
+                let mut edges = Vec::new();
+                let mut acc = 36.0f32;
+                for col in 0..8 {
+                    edges.push((acc * px_per_point).round());
+                    acc += 54.0 + (col as f32) * 3.7;
+                }
+                for w in edges.windows(2) {
+                    let (left, right) = (w[0], w[1]);
+                    let (top, bottom) = (w[0], w[1]);
+                    // Filled cell quad before `snap_fill_bounds`: `(left - 1.0, top - 1.0, right - left + 1.0, bottom - top + 1.0)`.
+                    let fill_b = snap_fill_bounds(
+                        to_bounds((left - 1.0, top - 1.0, right - left + 1.0, bottom - top + 1.0)),
+                        scale_factor,
+                    );
+                    let fill_left_dev = (f32::from(fill_b.origin.x) * scale_factor).round() as i32;
+                    let fill_right_dev = (f32::from(fill_b.origin.x + fill_b.size.width) * scale_factor).round() as i32;
+                    let fill_top_dev = (f32::from(fill_b.origin.y) * scale_factor).round() as i32;
+                    let fill_bottom_dev = (f32::from(fill_b.origin.y + fill_b.size.height) * scale_factor).round() as i32;
+
+                    // Thin horizontal border on the top edge `top` and bottom edge `bottom` (screen uses border_unit = 1.0).
+                    let mut top_quads = Vec::new();
+                    border_quads(&thin, true, false, top, left - 1.0, right, 1.0, &mut top_quads);
+                    assert_eq!(top_quads.len(), 1);
+                    let top_b = on_pixels_bounds(to_bounds(top_quads[0].rect), true, scale_factor);
+                    let b_top_0 = (f32::from(top_b.origin.y) * scale_factor).round() as i32;
+                    let b_top_1 = (f32::from(top_b.origin.y + top_b.size.height) * scale_factor).round() as i32;
+                    let b_left_0 = (f32::from(top_b.origin.x) * scale_factor).round() as i32;
+                    let b_right_1 = (f32::from(top_b.origin.x + top_b.size.width) * scale_factor).round() as i32;
+
+                    assert_eq!(b_top_0, fill_top_dev, "top border start must match fill top at zoom={zoom}, sf={scale_factor}");
+                    assert_eq!(b_top_1 - b_top_0, scale_factor as i32, "thin border must be 1 logical px thick at zoom={zoom}, sf={scale_factor}");
+                    assert_eq!(b_left_0, fill_left_dev, "top border left must match fill left at zoom={zoom}, sf={scale_factor}");
+                    assert_eq!(b_right_1, fill_right_dev, "top border right must match fill right at zoom={zoom}, sf={scale_factor}");
+
+                    let mut bottom_quads = Vec::new();
+                    border_quads(&thin, true, false, bottom, left - 1.0, right, 1.0, &mut bottom_quads);
+                    let bottom_b = on_pixels_bounds(to_bounds(bottom_quads[0].rect), true, scale_factor);
+                    let bb_1 = (f32::from(bottom_b.origin.y + bottom_b.size.height) * scale_factor).round() as i32;
+                    assert_eq!(bb_1, fill_bottom_dev, "bottom border outer edge must match fill bottom at zoom={zoom}, sf={scale_factor}");
+                }
+            }
+        }
     }
 }
-

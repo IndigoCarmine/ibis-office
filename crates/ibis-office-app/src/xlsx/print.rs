@@ -6,7 +6,7 @@
 //! page breaks, the header and footer (Excel's presets) and the title rows
 //! printed on every page (印刷タイトル) of the sheet shown.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, Command, SheetCommand, SheetPrint};
@@ -249,33 +249,105 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// ファイル > 印刷… (⌘P) in 表計算画面: the 印刷 dialog (a modal panel, as 文書画面's
+    /// 印刷の設定 is): the print target (作業中のシート / ブック全体 / 選択した部分), the
+    /// orientation, the paper and the scale, with 印刷 / キャンセル at the foot.
+    /// 印刷 then makes the PDF (`print_now`), as 文書画面 does.
+    pub(crate) fn open_xlsx_print_panel(&mut self, cx: &mut Context<Self>) {
+        self.open_page_setup(cx);
+        if let Some(s) = self.sheet_state_mut() {
+            s.page_setup = false;
+            s.print_panel = true;
+        }
+    }
+
+    pub(crate) fn close_xlsx_print_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.sheet_state_mut() {
+            s.print_panel = false;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn xlsx_print_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        if !self.sheet_state()?.print_panel {
+            return None;
+        }
+        let print = self.current_print()?;
+        let what = self.print_what();
+        let radio = |id: &'static str, label: &'static str, on: bool, f: Box<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>)>| -> AnyElement {
+            crate::shell::chrome::radio_button(id, on, false, crate::shell::i18n::text(label), cx.listener(move |this, _, _, cx| f(this, cx))).into_any_element()
+        };
+        let section = |label: &'static str| div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text(label));
+        let papers = PAPERS.iter().map(|&(name, size)| radio(Box::leak(format!("xlsx-print-paper-{name}").into_boxed_str()), name, print.paper == size, Box::new(move |this, cx| this.set_print(|p| p.paper = size, None, cx))));
+        let body = v_flex()
+            .gap_3()
+            .child(section("xlsx.print-what"))
+            .child(v_flex().gap_1()
+                .child(radio("xlsx-print-what-sheet", "xlsx.print-what.active-sheet", what == PrintWhat::ActiveSheet, Box::new(|this, cx| this.set_print_what(PrintWhat::ActiveSheet, cx))))
+                .child(radio("xlsx-print-what-book", "xlsx.print-what.entire-workbook", what == PrintWhat::EntireWorkbook, Box::new(|this, cx| this.set_print_what(PrintWhat::EntireWorkbook, cx))))
+                .child(radio("xlsx-print-what-selection", "xlsx.print-what.selection", what == PrintWhat::Selection, Box::new(|this, cx| this.set_print_what(PrintWhat::Selection, cx)))))
+            .child(section("_xlsx.orientation"))
+            .child(h_flex().gap_1()
+                .child(radio("xlsx-print-portrait", "_xlsx.portrait", !print.landscape, Box::new(|this, cx| this.set_print(|p| p.landscape = false, None, cx))))
+                .child(radio("xlsx-print-landscape", "_xlsx.landscape", print.landscape, Box::new(|this, cx| this.set_print(|p| p.landscape = true, None, cx)))))
+            .child(section("_shell.paper-size"))
+            .child(h_flex().flex_wrap().gap_1().children(papers))
+            .child(section("_xlsx.scale"))
+            .child(h_flex().flex_wrap().gap_1()
+                .child(radio("xlsx-print-scale-100", "xlsx.print-panel.scale-100", print.fit_to.is_none() && print.scale == 100, Box::new(|this, cx| this.set_print_scale_percent(100, cx))))
+                .child(radio("xlsx-print-fit-one", "_xlsx.fit-to-1-page", print.fit_to == Some((1, 1)), Box::new(|this, cx| this.set_print(|p| p.fit_to = Some((1, 1)), None, cx))))
+                .child(radio("xlsx-print-fit-width", "xlsx.scale-width-1", print.fit_to.map(|(w, _)| w) == Some(1) && print.fit_to != Some((1, 1)), Box::new(|this, cx| this.set_print_fit_width(1, cx)))))
+            .child(crate::shell::chrome::action_button("xlsx-print-page-setup").label(crate::shell::i18n::text("xlsx.page-setup")).on_click(cx.listener(|this, _, _, cx| {
+                this.close_xlsx_print_panel(cx);
+                this.open_page_setup(cx);
+            })));
+        // Printing makes a PDF; where there is no print dialog of the system to give it to, the PDF app prints it.
+        #[cfg(not(target_os = "macos"))]
+        let body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("xlsx.print-panel.note")));
+        let footer = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("xlsx-print-apply", crate::shell::i18n::text("docx.print-panel.print"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, window, cx| {
+                this.close_xlsx_print_panel(cx);
+                this.print_now(window, cx);
+            })))
+            .action(crate::shell::chrome::ActionDefinition::new("xlsx-print-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, _, cx| this.close_xlsx_print_panel(cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("xlsx.print-panel.title"), body.into_any_element(), footer))
+    }
+
     pub(crate) fn page_setup_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         if !self.sheet_state()?.page_setup {
             return None;
         }
-        if self.sheet_state()?.header_footer_edit.is_some() {
-            return self.header_footer_edit_panel(cx);
-        }
         let print = self.current_print()?;
         let area = self.current_sheet().and_then(|(_, s)| s.print_area);
-        let choice = |id: SharedString, label: &'static str, on: bool, f: Box<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>)>| {
-            let b = Button::new(id).small().label(crate::shell::i18n::text(label));
-            let b = if on { b.primary() } else { b.ghost() };
-            b.on_click(cx.listener(move |this, _, _, cx| f(this, cx)))
+        let choice = |id: SharedString, label: &'static str, on: bool, f: Box<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>)>| -> AnyElement {
+            let command = id.starts_with("area-") || id.starts_with("titles-") || id.starts_with("columns-") || id=="row-break" || label=="_xlsx.clear";
+            let independent = id.starts_with("center-") || id.starts_with("hf-") || id.starts_with("print-grid") || id.starts_with("print-head") || id=="print-black-white" || id=="print-draft";
+            let click=cx.listener(move |this,_,_,cx|f(this,cx));
+            if command {
+                let b=if label=="_xlsx.clear" {crate::shell::chrome::destructive_button(id,cx)}else{crate::shell::chrome::action_button(id)};
+                b.label(crate::shell::i18n::text(label)).on_click(click).into_any_element()
+            } else if independent {
+                crate::shell::chrome::checkbox_button(id,crate::shell::i18n::text(label),on,false,click).into_any_element()
+            } else {
+                crate::shell::chrome::radio_button(id,on,false,crate::shell::i18n::text(label),click).into_any_element()
+            }
         };
-        let row = |label: &'static str| h_flex().flex_wrap().gap_1().items_center().child(div().w(px(72.)).text_size(px(12.)).child(crate::shell::i18n::text(label)));
+        let row = |label: &'static str| h_flex().flex_wrap().gap_1().items_center().child(div().w(px(72.)).text_sm().child(crate::shell::i18n::text(label)));
         let papers = PAPERS.iter().map(|&(name, size)| choice(format!("paper-{name}").into(), name, print.paper == size, Box::new(move |this, cx| this.set_print(|p| p.paper = size, None, cx))));
-        let margins = MARGINS.iter().map(|&(name, m)| {
-            let emu = m.map(|v| (v * ibis_doc_model::EMU_PER_INCH as f64).round() as i64);
-            choice(format!("margins-{name}").into(), name, print.margins == emu, Box::new(move |this, cx| this.set_print(|p| p.margins = emu, None, cx)))
+        let margins = MARGINS.iter().enumerate().map(|(i,&(name,m))| {
+            let emu=m.map(|v|(v*ibis_doc_model::EMU_PER_INCH as f64).round() as i64);
+            crate::shell::chrome::segment_control::SegmentItem::label(("page-margins",i),crate::shell::i18n::text(name),print.margins==emu)
+                .on_click(cx.listener(move |e,_,_,cx|e.set_print(|p|p.margins=emu,None,cx)))
         });
         let body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(row("_xlsx.orientation").child(choice("portrait".into(), "_xlsx.portrait", !print.landscape, Box::new(|this, cx| this.set_print(|p| p.landscape = false, None, cx)))).child(choice("landscape".into(), "_xlsx.landscape", print.landscape, Box::new(|this, cx| this.set_print(|p| p.landscape = true, None, cx)))))
+            .p_0().child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).label(crate::shell::i18n::text("_xlsx.orientation"))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("portrait",crate::shell::i18n::text("_xlsx.portrait"),!print.landscape).on_click(cx.listener(|e,_,_,cx|e.set_print(|p|p.landscape=false,None,cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("landscape",crate::shell::i18n::text("_xlsx.landscape"),print.landscape).on_click(cx.listener(|e,_,_,cx|e.set_print(|p|p.landscape=true,None,cx)))))
             .child(row("_shell.paper-size").children(papers))
-            .child(row("_shell.margins").children(margins))
+            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).label(crate::shell::i18n::text("_shell.margins")).children(margins))
             .child(
                 row("fix.print.center-page")
                     .child(choice("center-horizontal".into(), "fix.print.horizontal", print.centered.0, Box::new(|this, cx| this.set_print(|p| p.centered.0 = !p.centered.0, None, cx))))
@@ -304,7 +376,7 @@ impl SlideEditor {
                     })))
                     .child(choice("area-clear".into(), "_xlsx.clear", false, Box::new(|this, cx| this.set_print(|_| {}, Some(None), cx)))),
             )
-            .child(div().text_size(px(12.)).child(SharedString::from(match area {
+            .child(div().text_sm().child(SharedString::from(match area {
                 Some(r) => crate::shell::i18n::format("_xlsx.print-area-range", &[("range", &format!("{}:{}", ibis_doc_model::cell_name(r.first_column, r.first_row), ibis_doc_model::cell_name(r.last_column, r.last_row)))]),
                 None => crate::shell::i18n::text("_xlsx.print-area-none-used-range").into(),
             })))
@@ -316,11 +388,11 @@ impl SlideEditor {
                         let on = print.header_footer.odd_header.as_deref() == code.as_deref();
                         choice(format!("header-{label}").into(), label, on, Box::new(move |this, cx| this.set_print(|p| p.header_footer.odd_header = code.clone(), None, cx)))
                     }))
-                    .child(Button::new("header-custom").small().label(crate::shell::i18n::text("xlsx.header.custom")).on_click(cx.listener(|this, _, window, cx| {
+                    .child(crate::shell::chrome::action_button("header-custom").small().label(crate::shell::i18n::text("xlsx.header.custom")).on_click(cx.listener(|this, _, window, cx| {
                         this.open_header_footer_edit(super::header_footer_edit::HfTarget::Header, window, cx);
                     }))),
             )
-            .child(div().text_size(px(11.)).text_color(rgb(0x5f6368)).child(SharedString::from(match &print.header_footer.odd_header {
+            .child(div().text_sm().text_color(rgb(0x5f6368)).child(SharedString::from(match &print.header_footer.odd_header {
                 Some(h) => crate::shell::i18n::format("_xlsx.header-code", &[("code", h)]),
                 None => crate::shell::i18n::text("_xlsx.none").into(),
             })))
@@ -331,11 +403,11 @@ impl SlideEditor {
                         let on = print.header_footer.odd_footer.as_deref() == code.as_deref();
                         choice(format!("footer-{label}").into(), label, on, Box::new(move |this, cx| this.set_print(|p| p.header_footer.odd_footer = code.clone(), None, cx)))
                     }))
-                    .child(Button::new("footer-custom").small().label(crate::shell::i18n::text("xlsx.footer.custom")).on_click(cx.listener(|this, _, window, cx| {
+                    .child(crate::shell::chrome::action_button("footer-custom").small().label(crate::shell::i18n::text("xlsx.footer.custom")).on_click(cx.listener(|this, _, window, cx| {
                         this.open_header_footer_edit(super::header_footer_edit::HfTarget::Footer, window, cx);
                     }))),
             )
-            .child(div().text_size(px(11.)).text_color(rgb(0x5f6368)).child(SharedString::from(match &print.header_footer.odd_footer {
+            .child(div().text_sm().text_color(rgb(0x5f6368)).child(SharedString::from(match &print.header_footer.odd_footer {
                 Some(f) => crate::shell::i18n::format("_xlsx.footer-code", &[("code", f)]),
                 None => crate::shell::i18n::text("_xlsx.none").into(),
             })))
@@ -354,7 +426,7 @@ impl SlideEditor {
                     })))
                     .child(choice("titles-clear".into(), "_xlsx.clear", false, Box::new(|this, cx| this.set_print_title_rows(None, cx)))),
             )
-            .child(div().text_size(px(12.)).child(SharedString::from(match self.print_title_rows() {
+            .child(div().text_sm().child(SharedString::from(match self.print_title_rows() {
                 Some((a, b)) => crate::shell::i18n::format("_xlsx.rows-to-repeat-at-top-rows-printed-on-every-page", &[("rows", &format!("{}:{}", a + 1, b + 1))]),
                 None => crate::shell::i18n::text("_xlsx.rows-to-repeat-at-top-none").into(),
             })))
@@ -366,7 +438,7 @@ impl SlideEditor {
                     })))
                     .child(choice("title-cols-clear".into(), "_xlsx.clear", false, Box::new(|this, cx| this.set_print_title_columns(None, cx)))),
             )
-            .child(div().text_size(px(12.)).child(SharedString::from(match self.print_title_columns() {
+            .child(div().text_sm().child(SharedString::from(match self.print_title_columns() {
                 Some((a, b)) => {
                     let col_name = |c: u32| ibis_doc_model::cell_name(c, 0).trim_end_matches('1').to_string();
                     crate::shell::i18n::format("fix.print.columns-repeat-left-cols-printed", &[("cols", &format!("{}:{}", col_name(a), col_name(b)))])

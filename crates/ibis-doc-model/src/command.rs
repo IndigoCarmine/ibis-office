@@ -80,6 +80,8 @@ pub enum Command {
     /// Replace a slide (the same id) with `slide`: レイアウトの適用
     /// (see [`Presentation::with_layout`]), and its own inverse.
     SetSlide { slide: Slide },
+    /// Replace the guides: those of `slide`, or of the normal view (`None`); its own inverse.
+    SetGuides { slide: Option<SlideId>, guides: Vec<crate::model::SlideGuide> },
     /// Set a slide's background (背景の書式設定).
     SetBackground { slide: SlideId, fill: Fill },
     /// Change the presentation canvas, preserving every shape and the notes page size.
@@ -167,6 +169,8 @@ pub enum Command {
     SetShapeHidden { slide: SlideId, shape: ShapeId, hidden: bool },
     /// ズーム後に元へ戻る: a zoom shape returns to its origin slide after viewing (or not).
     SetShapeReturnToZoom { slide: SlideId, shape: ShapeId, return_to_zoom: bool },
+    /// The picture `shape` is a ズーム object (PowerPoint's スライド/セクション/サマリー ズーム) or is not one (`None`).
+    SetZoomObject { slide: SlideId, shape: ShapeId, zoom: Option<crate::model::ZoomObject> },
     /// ズームの背景: a zoom shape shows the slide background or has a transparent background (`showBg`).
     SetShapeZoomShowBg { slide: SlideId, shape: ShapeId, show_bg: Option<bool> },
     /// ズームの継続時間: zoom transition duration in milliseconds (`dur`).
@@ -269,6 +273,18 @@ impl Presentation {
             if takes_layouts {
                 return self.apply(Command::Group(vec![command, Command::SetOwnFrame { slide, shape, own: true }]));
             }
+        }
+        // A worksheet's page range reaches the shapes on it (sheet_command.rs `used_extents`).
+        let on_sheet = |p: &Self, slide: SlideId| p.workbook.is_some() && p.slide(slide).is_some_and(|s| s.shapes.iter().any(|s| matches!(s.kind, ShapeKind::Sheet(_))));
+        if let Command::InsertShape { slide, .. }
+        | Command::InsertShapes { slide, .. }
+        | Command::RemoveShape { slide, .. }
+        | Command::RemoveShapes { slide, .. }
+        | Command::SetFrame { slide, .. }
+        | Command::SetTransform { slide, .. } = &command
+            && on_sheet(self, *slide)
+        {
+            return crate::sheet_command::with_printed_extent(self, |p| p.apply_one(command));
         }
         self.apply_one(command)
     }
@@ -827,6 +843,17 @@ impl Presentation {
                 };
                 Ok(Command::SetShapeFormula { slide, shape, formula: old })
             }
+            Command::SetZoomObject { slide, shape, zoom } => {
+                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
+                if s.shape(shape).is_none() {
+                    return Err(EditError::NoSuchShape(shape));
+                }
+                let old = match zoom {
+                    Some(z) => s.zoom_objects.insert(shape, z),
+                    None => s.zoom_objects.remove(&shape),
+                };
+                Ok(Command::SetZoomObject { slide, shape, zoom: old })
+            }
             Command::SetShapeReturnToZoom { slide, shape, return_to_zoom } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 if s.shape(shape).is_none() {
@@ -883,6 +910,13 @@ impl Presentation {
                 target.flip_v = flip_v;
                 Ok(Command::SetConnectorFrame { slide, shape, frame: old_frame, flip_h: old_flip_h, flip_v: old_flip_v })
             }
+            Command::SetGuides { slide, guides } => match slide {
+                None => Ok(Command::SetGuides { slide: None, guides: std::mem::replace(&mut self.guides, guides) }),
+                Some(id) => {
+                    let s = self.slide_mut(id).ok_or(EditError::NoSuchSlide(id))?;
+                    Ok(Command::SetGuides { slide, guides: std::mem::replace(&mut s.guides, guides) })
+                }
+            },
             Command::SetBackdropHidden { slide, hidden } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 let was = std::mem::replace(&mut s.hide_backdrop, hidden);
@@ -1005,7 +1039,7 @@ fn follow(frame: EmuRect, from: EmuRect, to: EmuRect) -> EmuRect {
 /// presentation as given to [`Document::new`] is state 0, and
 /// [`Document::mark_saved`] remembers the current one. Undoing back to the
 /// state saved makes it unmodified again, as in Word and Excel.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Document {
     presentation: Presentation,
     undo: Vec<Step>,
@@ -1014,9 +1048,18 @@ pub struct Document {
     last_state: u64,
     /// The state the presentation was in when it was last saved (or opened).
     saved_state: u64,
+    /// Last successful worksheet edit, before undo inversion, for Repeat (F4).
+    repeat_sheet: Vec<crate::sheet_command::SheetCommand>,
+    repeat_sheet_group: bool,
     /// The file this document is saved as (its whole path), for what the calculation says of it
     /// (`CELL("filename")`).
     file: Option<String>,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self::new(Presentation::default())
+    }
 }
 
 /// One undo (or redo) step, with the state it leads to: the state the
@@ -1029,7 +1072,32 @@ struct Step {
 
 impl Document {
     pub fn new(presentation: Presentation) -> Self {
-        Self { presentation, undo: Vec::new(), redo: Vec::new(), last_state: 0, saved_state: 0, file: None }
+        Self { presentation, undo: Vec::new(), redo: Vec::new(), last_state: 0, saved_state: 0, repeat_sheet: Vec::new(), repeat_sheet_group: false, file: None }
+    }
+
+    /// Mark the current state of the document as saved (clean): the same as [`Document::mark_saved`].
+    pub fn mark_clean(&mut self) {
+        self.mark_saved();
+    }
+
+    /// Clear all undo/redo history and mark the document as clean.
+    /// Used when initializing a newly created document or template instance.
+    pub fn reset_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.repeat_sheet.clear();
+        self.repeat_sheet_group = false;
+        self.mark_saved();
+    }
+
+    /// Mark the document as having unsaved changes (until it is saved again).
+    pub fn mark_dirty(&mut self) {
+        self.lose_saved_state();
+    }
+
+    /// Whether the document has unsaved changes since it was opened or last saved: the same as [`Document::is_modified`].
+    pub fn is_dirty(&self) -> bool {
+        self.is_modified()
     }
 
     /// Tell the document which file it is (`None`: not saved yet).
@@ -1052,6 +1120,11 @@ impl Document {
 
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
+    }
+
+    /// How many undo steps there are (a mark to tell whether the document was edited since).
+    pub fn undo_len(&self) -> usize {
+        self.undo.len()
     }
 
     pub fn can_redo(&self) -> bool {
@@ -1094,14 +1167,27 @@ impl Document {
     /// Apply `commands` as one undo step. If any command fails, the ones
     /// before it are rolled back and the document is unchanged.
     pub fn execute(&mut self, commands: Vec<Command>) -> Result<(), EditError> {
+        let repeat:Vec<_> = commands.iter().filter_map(|command|match command {
+            Command::Sheet(edit @ (crate::SheetCommand::SetFormat{..}|crate::SheetCommand::Insert{..}|crate::SheetCommand::Delete{..}|crate::SheetCommand::ClearFormats{..}|crate::SheetCommand::ShiftCells{..})) => Some(edit.clone()),
+            _ => None,
+        }).collect();
         let inverses = self.apply_all(commands)?;
         if !inverses.is_empty() {
             let state = self.new_state();
             self.undo.push(Step { state, commands: inverses });
             self.redo.clear();
+            let same_target = self.repeat_sheet_group && !repeat.is_empty() && !self.repeat_sheet.is_empty() && repeat.iter().chain(&self.repeat_sheet).all(|edit|match (repeat.first(),edit) {
+                (Some(crate::SheetCommand::SetFormat{slide:a,ranges:x,..}),crate::SheetCommand::SetFormat{slide:b,ranges:y,..}) => a==b && x==y,
+                _ => false,
+            });
+            if same_target {self.repeat_sheet.extend(repeat);} else {self.repeat_sheet = repeat;}
         }
         Ok(())
     }
+
+    pub fn repeat_sheet_commands(&self) -> &[crate::SheetCommand] { &self.repeat_sheet }
+    pub fn begin_repeat_sheet_group(&mut self) { self.repeat_sheet.clear(); self.repeat_sheet_group=true; }
+    pub fn end_repeat_sheet_group(&mut self) { self.repeat_sheet_group=false; }
 
     /// Apply `commands` as part of the most recent undo step, so that for
     /// example inserting a text box and typing its first text undo together.

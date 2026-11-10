@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) ibis inc.
 # Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-# Build the desktop version as a macOS app bundle, target/release/AcaudaOffice.app.
+# Build the desktop version as a macOS app bundle:
 #
-#   scripts/bundle-macos.sh
+#   scripts/bundle-macos.sh            debug build   (target/debug/AcaudaOffice.app)
+#   scripts/bundle-macos.sh --release  release build (target/release/AcaudaOffice.app)
 #
 # A bare executable opened from Finder starts in Terminal; an .app bundle does not.
 # UI icons and fonts are embedded in the executable; the bundle adds the app icon
@@ -14,26 +15,36 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+PROFILE=debug
+FLAGS=()
+if [[ "${1:-}" == "--release" ]]; then PROFILE=release; FLAGS=(--release); fi
+
 # The paths of this machine (the home folder, the repository) are not to go
 # into the executable (Rust keeps source paths for panics and the like): they
 # are rewritten to short relative ones, in a target directory of its own so
-# that the everyday builds (target/release) are not rebuilt by the flags.
+# that the everyday builds (target/debug, target/release) are not rebuilt by the flags.
 REMAP="--remap-path-prefix=$HOME/.cargo/registry/src=crates.io --remap-path-prefix=$HOME/.cargo/git/checkouts=git --remap-path-prefix=$HOME/.rustup=rustup --remap-path-prefix=$(pwd)=."
-RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build --release --locked -p ibis-office-app -p ibis-office-updater
+if [[ "$PROFILE" == release ]]; then
+  RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build --release --locked -p ibis-office-app -p ibis-office-updater
+  BIN_DIR=target/dist/release
+else
+  cargo build --locked -p ibis-office-app -p ibis-office-updater
+  BIN_DIR=target/debug
+fi
 
 # The version shown for macOS, from version.txt (a platform, a tab and its
 # version, per line).
 VERSION=$(awk -F'\t' '$1 == "macOS" { sub(/\r$/, "", $2); print $2 }' version.txt)
 [[ -n $VERSION ]] || { echo "version.txt has no macOS line" >&2; exit 1; }
 
-APP=target/release/AcaudaOffice.app
+APP=target/$PROFILE/AcaudaOffice.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/dist/release/AcaudaOffice "$APP/Contents/MacOS/AcaudaOffice"
+cp "$BIN_DIR/AcaudaOffice" "$APP/Contents/MacOS/AcaudaOffice"
 # The automatic update (todo-fix #35): AcaudaOffice starts the AcaudaOfficeUpdater of
 # the NEW app it downloaded, which swaps the apps. It is inside the signed (and
 # notarized) app, so it cannot be swapped for another.
-cp target/dist/release/AcaudaOfficeUpdater "$APP/Contents/MacOS/AcaudaOfficeUpdater"
+cp "$BIN_DIR/AcaudaOfficeUpdater" "$APP/Contents/MacOS/AcaudaOfficeUpdater"
 cp crates/ibis-office-app/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # The third-party components in the app and the notices their licences ask
 # for (made afresh from the dependencies), and Carlito's licence on its own
@@ -111,18 +122,22 @@ cat > "$APP/Contents/Info.plist" <<EOF
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Old Office and OpenDocument file (PowerPoint 97-2003, Excel 97-2003, OpenDocument spreadsheet and presentation)</string>
+			<string>Old Office and OpenDocument file (Word 97-2003, PowerPoint 97-2003, Excel 97-2003, OpenDocument text, spreadsheet and presentation)</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
+				<string>com.microsoft.word.doc</string>
+				<string>com.microsoft.word.dot</string>
 				<string>com.microsoft.powerpoint.ppt</string>
 				<string>com.microsoft.powerpoint.pps</string>
 				<string>com.microsoft.powerpoint.pot</string>
 				<string>com.microsoft.excel.xls</string>
 				<string>com.microsoft.excel.xlt</string>
+				<string>org.oasis-open.opendocument.text</string>
+				<string>org.oasis-open.opendocument.text-template</string>
 				<string>org.oasis-open.opendocument.spreadsheet</string>
 				<string>org.oasis-open.opendocument.spreadsheet-template</string>
 				<string>org.oasis-open.opendocument.presentation</string>
@@ -130,11 +145,15 @@ cat > "$APP/Contents/Info.plist" <<EOF
 			</array>
 			<key>CFBundleTypeExtensions</key>
 			<array>
+				<string>doc</string>
+				<string>dot</string>
 				<string>ppt</string>
 				<string>pps</string>
 				<string>pot</string>
 				<string>xls</string>
 				<string>xlt</string>
+				<string>odt</string>
+				<string>ott</string>
 				<string>ods</string>
 				<string>ots</string>
 				<string>odp</string>

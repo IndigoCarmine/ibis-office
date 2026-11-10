@@ -21,6 +21,11 @@ static SOURCE: OnceLock<Source> = OnceLock::new();
 
 /// Hand the text system to the metafile player. Call once the app has its text system (at start-up).
 pub(crate) fn install(cx: &App) {
+    // Once: listing the installed fonts takes tens of milliseconds, and every opened document (every page of the master
+    // view) calls this.
+    if SOURCE.get().is_some() {
+        return;
+    }
     let text_system = cx.text_system().clone();
     let installed = text_system.all_font_names().into_iter().collect();
     if SOURCE.set(Source { text_system, installed }).is_ok() {
@@ -29,14 +34,19 @@ pub(crate) fn install(cx: &App) {
 }
 
 /// The ascent and descent as fractions of the em size.
-fn metrics(face: &str, bold: bool, italic: bool) -> Option<(f64, f64)> {
+pub(crate) fn metrics(face: &str, bold: bool, italic: bool) -> Option<(f64, f64)> {
     let source = SOURCE.get()?;
-    let found = if source.installed.contains(face) {
-        let mut font = gpui_kit::font(face.to_string());
-        if bold {
-            font = font.bold();
+    let found = if let Some((family, mut weight, face_italic)) =
+        crate::render::shape_view::resolve_system_font(face, &source.installed)
+    {
+        let named_weight = crate::render::shape_view::strip_weight_suffix(face).is_some()
+            || weight != FontWeight::NORMAL;
+        if bold && (!named_weight || weight < FontWeight::SEMIBOLD) {
+            weight = FontWeight::BOLD;
         }
-        if italic {
+        let mut font = gpui_kit::font(family);
+        font.weight = weight;
+        if italic || face_italic {
             font = font.italic();
         }
         let id = source.text_system.resolve_font(&font);
@@ -44,5 +54,8 @@ fn metrics(face: &str, bold: bool, italic: bool) -> Option<(f64, f64)> {
     } else {
         None
     };
-    found.or_else(|| office_metrics(face)).map(|(a, d)| (f64::from(a), f64::from(d)))
+    found
+        .or_else(|| office_metrics(face))
+        .or_else(|| crate::render::shape_view::strip_weight_suffix(face).and_then(|(base, _)| office_metrics(base)))
+        .map(|(a, d)| (f64::from(a), f64::from(d)))
 }

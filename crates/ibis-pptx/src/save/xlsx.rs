@@ -179,6 +179,9 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
                             columns: vec![content.default_column; content.columns.len()],
                             rows: vec![content.default_row; content.rows.len()],
                             hidden_rows: Default::default(),
+            custom_rows: Default::default(),
+            custom_columns: Default::default(),
+            widened_columns: Default::default(),
                             hidden_columns: Default::default(),
                             spills: Default::default(),
                             validations: Vec::new(),
@@ -870,8 +873,22 @@ impl Writer<'_> {
             styles: Vec::new(),
             columns: Vec::new(),
             rows: Vec::new(),
+            // What the app measured when it opened the sheet, not saved (`Sheet::measured_rows`).
+            default_row: 0,
+            measured_rows: Default::default(),
+            fitted_rows: Default::default(),
+            printed_rows: Default::default(),
+            printed: Default::default(),
+            column_chars: Default::default(),
+            printed_text_extra: Default::default(),
+            column_fonts: Default::default(),
+            row_fonts: Default::default(),
+            written_fonts: Default::default(),
             merges: Vec::new(),
             hidden_rows: Default::default(),
+            custom_rows: Default::default(),
+            custom_columns: Default::default(),
+            widened_columns: Default::default(),
             hidden_columns: Default::default(),
             spills: Default::default(),
             frozen: None,
@@ -941,7 +958,7 @@ impl Writer<'_> {
             write_hyperlinks(self.package, part, &new.hyperlinks)?;
         }
         if old.comments != new.comments {
-            write_comments(self.package, part, &new.comments)?;
+            write_comments(self.package, part, &old.comments, new)?;
         }
         if old.threads != new.threads {
             write_threaded_comments(self.package, &self.map.workbook, part, &new.threads)?;
@@ -1878,7 +1895,7 @@ fn write_dxfs(package: &mut Package, part: &str, sheet_part: &str, old_formats: 
                         stops
                     }
                 };
-                for (pos, col) in stops {
+                for (pos, col) in &ibis_doc_model::sorted_stops(stops) {
                     let s = detached(doc, &format!("{prefix}stop"));
                     let frac = *pos as f64 / 1000.0;
                     doc.set_attr(s, "position", &format!("{:.2}", frac));
@@ -3072,6 +3089,101 @@ fn update_two_cell_corners(doc: &mut XmlDocument, anchor: NodeId, sheet: &Sheet,
     }
 }
 
+/// Set (`Some`) or take off (`None`) the element `<x:tag>` of a VML shape's `x:ClientData`.
+fn vml_set_client_tag(shape: &mut String, tag: &str, value: Option<&str>) {
+    let (open, close, empty) = (format!("<x:{tag}>"), format!("</x:{tag}>"), format!("<x:{tag}/>"));
+    let found = if let Some(a) = shape.find(&open) {
+        shape[a..].find(&close).map(|e| (a, a + e + close.len()))
+    } else {
+        shape.find(&empty).map(|a| (a, a + empty.len()))
+    };
+    let element = value.map(|v| if v.is_empty() { empty.clone() } else { format!("{open}{v}{close}") });
+    match (found, element) {
+        (Some((a, b)), Some(e)) => shape.replace_range(a..b, &e),
+        (Some((a, b)), None) => {
+            // The line it was on goes with it.
+            let (mut a, mut b) = (a, b);
+            while a > 0 && matches!(shape.as_bytes()[a - 1], b' ' | b'\t') {
+                a -= 1;
+            }
+            if shape[b..].starts_with("\r\n") {
+                b += 2;
+            } else if shape[b..].starts_with('\n') {
+                b += 1;
+            }
+            shape.replace_range(a..b, "");
+        }
+        (None, Some(e)) => {
+            if let Some(end) = shape.rfind("</x:ClientData>") {
+                shape.insert_str(end, &format!(" {e}\r\n "));
+            }
+        }
+        (None, None) => {}
+    }
+}
+
+/// Replace `key:<n>pt` in a VML shape's `style`.
+fn vml_set_style_points(shape: &mut String, key: &str, points: f64) {
+    let needle = format!("{key}:");
+    let Some(a) = shape.find(&needle) else { return };
+    let from = a + needle.len();
+    let Some(len) = shape[from..].find(|c: char| c == ';' || c == '\'' || c == '"') else { return };
+    let text = format!("{}", (points * 100.0).round() / 100.0);
+    shape.replace_range(from..from + len, &format!("{text}pt"));
+}
+
+/// The VML drawing part related from `sheet_part`.
+fn sheet_vml_part(package: &Package, sheet_part: &str) -> Option<String> {
+    package.relationships(sheet_part).ok()?.iter().find(|r| r.kind == REL_VML && !r.external).and_then(|r| r.target_part(sheet_part))
+}
+
+/// The byte range of the shape `id="{vml_id}"` in a VML drawing.
+fn vml_shape_range(text: &str, vml_id: &str) -> Option<(usize, usize)> {
+    let needle = format!("id=\"{vml_id}\"");
+    vml_shapes(text).into_iter().find(|&(a, b)| text[a..b].find('>').is_some_and(|open| text[a..a + open].contains(&needle)))
+}
+
+/// Write the state, and the place when it moved, of a control that only the VML describes (Excel 2007's form).
+fn write_legacy_control(package: &mut Package, sheet_part: &str, sheet: &Sheet, c: &ibis_doc_model::FormControl, frame: Option<ibis_doc_model::EmuRect>) -> Result<(), Error> {
+    use ibis_doc_model::ControlKind as K;
+    let Some(vml_part) = sheet_vml_part(package, sheet_part) else { return Ok(()) };
+    let Ok(bytes) = package.read(&vml_part) else { return Ok(()) };
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    let Some((a, b)) = vml_shape_range(&text, &c.vml_id) else { return Ok(()) };
+    let mut shape = text[a..b].to_string();
+    match c.kind {
+        K::CheckBox | K::Radio => vml_set_client_tag(&mut shape, "Checked", match c.checked { 0 => None, 2 => Some("2"), _ => Some("1") }),
+        K::Scroll | K::Spin => vml_set_client_tag(&mut shape, "Val", Some(&c.value.to_string())),
+        K::Drop | K::List => vml_set_client_tag(&mut shape, "Sel", Some(&c.value.to_string())),
+        _ => {}
+    }
+    vml_set_client_tag(&mut shape, "FmlaLink", c.link.as_deref().filter(|s| !s.is_empty()));
+    if matches!(c.kind, K::Drop | K::List) {
+        vml_set_client_tag(&mut shape, "FmlaRange", c.range.as_deref().filter(|s| !s.is_empty()));
+    }
+    if let Some(frame) = frame {
+        let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
+        let cell = |offsets: &[i64], v: i64| -> (usize, i64) {
+            let i = offsets.partition_point(|&o| o <= v).saturating_sub(1).min(offsets.len().saturating_sub(2));
+            (i, v - offsets.get(i).copied().unwrap_or(0))
+        };
+        // `x:Anchor`'s offsets are in pixels (96 per inch).
+        let ((c0, co0), (r0, ro0)) = (cell(&xs, frame.x), cell(&ys, frame.y));
+        let ((c1, co1), (r1, ro1)) = (cell(&xs, frame.x + frame.width), cell(&ys, frame.y + frame.height));
+        let px = |emu: i64| (emu as f64 / 9525.0).round() as i64;
+        let anchor = format!("\r\n    {c0}, {}, {r0}, {}, {c1}, {}, {r1}, {}", px(co0), px(ro0), px(co1), px(ro1));
+        vml_set_client_tag(&mut shape, "Anchor", Some(&anchor));
+        let pt = |emu: i64| emu as f64 / 12700.0;
+        vml_set_style_points(&mut shape, "margin-left", pt(frame.x));
+        vml_set_style_points(&mut shape, "margin-top", pt(frame.y));
+        vml_set_style_points(&mut shape, "width", pt(frame.width));
+        vml_set_style_points(&mut shape, "height", pt(frame.height));
+    }
+    text.replace_range(a..b, &shape);
+    package.set_bytes(&vml_part, text.into_bytes());
+    Ok(())
+}
+
 /// Write changes to existing form controls on `sheet_part` (state, properties, frame, and text formatting).
 fn write_control_changes(
     package: &mut Package,
@@ -3092,6 +3204,11 @@ fn write_control_changes(
         }
         if !cb.part.is_empty() && ca != cb {
             write_control_props(package, &cb.part, cb)?;
+        }
+        if !cb.vml_id.is_empty() {
+            // Excel 2007's form: no `control` element and no drawing shape; the VML holds the place and the state.
+            write_legacy_control(package, sheet_part, sheet, cb, (a.frame != b.frame).then_some(b.frame))?;
+            continue;
         }
         let rid = rels
             .iter()
@@ -3316,6 +3433,25 @@ fn write_control_removals(
         .find(|r| r.kind == REL_DRAWING && !r.external)
         .and_then(|r| r.target_part(sheet_part));
     for c in gone {
+        if !c.vml_id.is_empty() {
+            if let Some(vml_part) = sheet_vml_part(package, sheet_part)
+                && let Ok(bytes) = package.read(&vml_part)
+            {
+                let mut text = String::from_utf8_lossy(&bytes).into_owned();
+                if let Some((a, b)) = vml_shape_range(&text, &c.vml_id) {
+                    text.replace_range(a..b, "");
+                    package.set_bytes(&vml_part, text.into_bytes());
+                }
+            }
+            if let Some(rid) = rels.iter().find(|r| !r.external && !c.part.is_empty() && r.target_part(sheet_part).as_deref() == Some(c.part.as_str())).map(|r| r.id.clone()) {
+                package.remove_relationship(sheet_part, &rid)?;
+            }
+            if !c.part.is_empty() && package.contains(&c.part) {
+                package.remove_override(&c.part)?;
+                package.remove(&c.part);
+            }
+            continue;
+        }
         let rid = rels
             .iter()
             .find(|r| !r.external && !c.part.is_empty() && r.target_part(sheet_part).as_deref() == Some(c.part.as_str()))
@@ -3567,8 +3703,15 @@ fn chart_refs_of(package: &Package, part: &str, chart: &ibis_doc_model::Chart) -
 }
 
 pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis_doc_model::Chart, new: &ibis_doc_model::Chart) -> Result<(), Error> {
+    if super::chart_topology::differs(old, new) {
+        super::chart_topology::sync(package.xml_mut(part)?, new)?;
+        let base = super::chart_topology::baseline(old, new);
+        return write_chart_settings(package, part, &base, new);
+    }
+
     let mut expected = old.clone();
     expected.title = new.title.clone();
+    expected.background=new.background.clone();expected.border=new.border.clone();expected.plot_border=new.plot_border.clone();
     expected.pivot_source = new.pivot_source.clone();
     expected.legend = match (&old.legend, &new.legend) {
         (Some(o), Some(n)) => Some(ibis_doc_model::Legend {
@@ -3587,6 +3730,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
         return Err(unsupported("グラフの軸の追加・削除"));
     }
     for (e, n) in expected.axes.iter_mut().zip(&new.axes) {
+        e.text=n.text.clone();e.line=n.line.clone();
         e.min = n.min;
         e.max = n.max;
         e.major_unit = n.major_unit;
@@ -3668,6 +3812,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
         }
     };
     let chart = doc.child(root, "chart").ok_or_else(|| unsupported("グラフの XML"))?;
+    if old.background!=new.background || old.border!=new.border {super::chart_format::area(doc,root,Some(&new.background),Some(new.border.as_ref()),&c,&a,&["txPr","externalData","printSettings","userShapes","extLst"])?;}
     let new_el = |doc: &mut XmlDocument, name: &str| detached(doc, &format!("{c}{name}"));
     let valued = |doc: &mut XmlDocument, name: &str, value: &str| {
         let e = detached(doc, &format!("{c}{name}"));
@@ -3813,6 +3958,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                     }
                 };
                 write_chart_title_text(doc, title, &t.text, &a, &c);
+                super::chart_format::text(doc,title,&t.style,&c,&a);
             }
         }
     }
@@ -3835,6 +3981,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                         x
                     }
                 };
+                super::chart_format::text(doc,legend,&l.text,&c,&a);
                 let code = match l.source_position {
                     Some(ibis_doc_model::LegendPosition::Bottom) => "b",
                     Some(ibis_doc_model::LegendPosition::Left) => "l",
@@ -3894,9 +4041,10 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
         }
     }
     let plot = doc.child(chart, "plotArea").ok_or_else(|| unsupported("グラフの XML"))?;
+    if old.plot_border!=new.plot_border {super::chart_format::area(doc,plot,None,Some(new.plot_border.as_ref()),&c,&a,&["txPr","extLst"])?;}
     for (o, n) in old.axes.iter().zip(&new.axes) {
         if (o.min, o.max, o.major_unit, o.minor_unit, o.display_unit, o.log_base, &o.gridlines, &o.minor_gridlines, &o.title, o.reversed, o.crosses, o.crosses_at) == (n.min, n.max, n.major_unit, n.minor_unit, n.display_unit, n.log_base, &n.gridlines, &n.minor_gridlines, &n.title, n.reversed, n.crosses, n.crosses_at)
-            && o.date == n.date
+            && o.date == n.date && o.text==n.text && o.line==n.line
         {
             continue;
         }
@@ -3904,6 +4052,8 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
             matches!(doc.local_name(x), "valAx" | "catAx" | "dateAx" | "serAx") && doc.child(x, "axId").and_then(|i| doc.attr(i, "val")).and_then(|v| v.parse::<u32>().ok()) == n.source_id
         });
         let Some(axis) = axis else { return Err(unsupported("このグラフの軸")) };
+        if o.text!=n.text {super::chart_format::text(doc,axis,&n.text,&c,&a);}
+        if o.line!=n.line {super::chart_format::area(doc,axis,None,Some(n.line.as_ref()),&c,&a,&["txPr","crossAx","crosses","crossesAt","extLst"])?;}
         if o.date != n.date {
             let tag = if n.date { "dateAx" } else { "catAx" };
             doc.rename(axis, &format!("{c}{tag}"));
@@ -3999,6 +4149,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                 _ => {}
             }
         }
+        if o.gridlines!=n.gridlines {if let (Some(node),Some(stroke))=(doc.child(axis,"majorGridlines"),n.gridlines.as_ref()){super::chart_format::area(doc,node,None,Some(Some(stroke)),&c,&a,&[])?;}}
         if o.minor_gridlines.is_some() != n.minor_gridlines.is_some() {
             match (doc.child(axis, "minorGridlines"), n.minor_gridlines.is_some()) {
                 (Some(g), false) => doc.detach(g),
@@ -4029,6 +4180,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                         }
                     };
                     write_chart_title_text(doc, title, &t.text, &a, &c);
+                super::chart_format::text(doc,title,&t.style,&c,&a);
                 }
             }
         }
@@ -4243,6 +4395,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                 }
                 if o.labels != n.labels {
                     crate::save::pptx_chart::write_labels(doc, ser, o.labels.as_ref(), n.labels.as_ref())?;
+                    if let (Some(node),Some(labels))=(doc.child(ser,"dLbls"),n.labels.as_ref()){super::chart_format::text(doc,node,&labels.style,&c,&a);}
                 }
                 if o.marker != n.marker {
                     crate::save::pptx_chart::write_series_marker(doc, ser, n.marker.as_ref(), &c, &a)?;
@@ -4628,7 +4781,8 @@ fn write_tables(package: &mut Package, styles_part: Option<&str>, part: &str, ol
     Ok(())
 }
 
-fn write_comments(package: &mut Package, part: &str, comments: &[ibis_doc_model::SheetComment]) -> Result<(), Error> {
+fn write_comments(package: &mut Package, part: &str, old: &[ibis_doc_model::SheetComment], sheet: &ibis_doc_model::Sheet) -> Result<(), Error> {
+    let comments = sheet.comments.as_slice();
     let existing_rels = package.relationships(part)?;
     let existing_comment_rel = existing_rels.iter().find(|r| r.kind == REL_COMMENTS && !r.external).cloned();
 
@@ -4640,7 +4794,7 @@ fn write_comments(package: &mut Package, part: &str, comments: &[ibis_doc_model:
             }
             package.remove_relationship(part, &rel.id)?;
         }
-        return write_note_shapes(package, part, comments);
+        return write_note_shapes(package, part, comments, old, sheet);
     }
 
     let comments_part = if let Some(rel) = &existing_comment_rel {
@@ -4693,16 +4847,48 @@ fn write_comments(package: &mut Package, part: &str, comments: &[ibis_doc_model:
         doc.set_attr(comment_el, "authorId", &author_id.to_string());
 
         let text_el = doc.append_element(comment_el, "text");
-        let r_el = doc.append_element(text_el, "r");
-        let t_el = doc.append_element(r_el, "t");
-        if c.text.starts_with(char::is_whitespace) || c.text.ends_with(char::is_whitespace) || c.text.contains('\n') {
-            doc.set_attr(t_el, "xml:space", "preserve");
+        // The parts in their own fonts (when they hold the text), else the text as one part.
+        let plain = [ibis_doc_model::CellRun { text: c.text.clone(), ..Default::default() }];
+        let runs: &[ibis_doc_model::CellRun] = if !c.runs.is_empty() && c.runs.iter().map(|r| r.text.as_str()).collect::<String>() == c.text { &c.runs } else { &plain };
+        for run in runs {
+            let r_el = doc.append_element(text_el, "r");
+            if [run.font.is_some(), run.size.is_some(), run.bold.is_some(), run.italic.is_some(), run.underline.is_some(), run.strike.is_some(), run.color.is_some()].contains(&true) {
+                // The order the schema gives `rPr`'s children.
+                let p = doc.append_element(r_el, "rPr");
+                for (name, on) in [("b", run.bold), ("i", run.italic), ("strike", run.strike)] {
+                    if on == Some(true) {
+                        doc.append_element(p, name);
+                    }
+                }
+                if let Some(u) = run.underline.filter(|u| u.enabled()) {
+                    let e = doc.append_element(p, "u");
+                    if u != ibis_doc_model::CellUnderline::Single {
+                        doc.set_attr(e, "val", u.ooxml());
+                    }
+                }
+                if let Some(s) = run.size {
+                    let e = doc.append_element(p, "sz");
+                    doc.set_attr(e, "val", &number_to_xml(s as f64 / 100.0));
+                }
+                if let Some(c) = run.color {
+                    let e = doc.append_element(p, "color");
+                    doc.set_attr(e, "rgb", &argb(c));
+                }
+                if let Some(f) = &run.font {
+                    let e = doc.append_element(p, "rFont");
+                    doc.set_attr(e, "val", f);
+                }
+            }
+            let t_el = doc.append_element(r_el, "t");
+            if run.text.starts_with(char::is_whitespace) || run.text.ends_with(char::is_whitespace) || run.text.contains('\n') {
+                doc.set_attr(t_el, "xml:space", "preserve");
+            }
+            doc.set_text(t_el, &run.text);
         }
-        doc.set_text(t_el, &c.text);
     }
 
     package.set_xml(&comments_part, doc);
-    write_note_shapes(package, part, comments)?;
+    write_note_shapes(package, part, comments, old, sheet)?;
     Ok(())
 }
 
@@ -4736,15 +4922,39 @@ fn vml_shapes(text: &str) -> Vec<(usize, usize)> {
     out
 }
 
-/// The note's shape Excel writes (hidden until the cell is pointed at),
-/// beside its cell.
-fn note_shape(id: u32, row: u32, column: u32) -> String {
+/// The note's shape Excel writes (hidden until the cell is pointed at), `rect` (relative to the cell's top right corner)
+/// where it is: its `style` (points from the sheet's corner) and `x:Anchor` (the cells the box lies between, with the
+/// offsets in pixels).
+fn note_shape(id: u32, row: u32, column: u32, rect: ibis_doc_model::NoteRect, sheet: &ibis_doc_model::Sheet) -> String {
+    const PIXEL: f64 = 9525.0;
+    const POINT: f64 = 12700.0;
+    let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
+    let at = |offsets: &[i64], i: usize, default: i64| match offsets.get(i) {
+        Some(v) => *v,
+        None => offsets.last().copied().unwrap_or(0) + (i + 1 - offsets.len().max(1)) as i64 * default,
+    };
+    let (right, top) = (at(&xs, column as usize + 1, sheet.default_column), at(&ys, row as usize, sheet.default_row));
+    let (left, top, right, bottom) = (right + rect.dx, (top + rect.dy).max(0), right + rect.dx + rect.width, (top + rect.dy).max(0) + rect.height);
+    // The cell (and the pixels into it) a coordinate lies in.
+    let find = |offsets: &[i64], at_i: &dyn Fn(usize) -> i64, v: i64| -> (usize, i64) {
+        let mut i = 0usize;
+        while at_i(i + 1) <= v && i < 20_000 {
+            i += 1;
+        }
+        let _ = offsets;
+        (i, ((v - at_i(i)) as f64 / PIXEL).round() as i64)
+    };
+    let (c1, dx1) = find(&xs, &|i| at(&xs, i, sheet.default_column), left);
+    let (r1, dy1) = find(&ys, &|i| at(&ys, i, sheet.default_row), top);
+    let (c2, dx2) = find(&xs, &|i| at(&xs, i, sheet.default_column), right);
+    let (r2, dy2) = find(&ys, &|i| at(&ys, i, sheet.default_row), bottom);
+    let pt = |v: i64| number_to_xml((v as f64 / POINT * 100.0).round() / 100.0);
     format!(
-        "<v:shape id=\"_x0000_s{id}\" type=\"#_x0000_t202\" style='position:absolute;margin-left:59.25pt;margin-top:1.5pt;width:108pt;height:59.25pt;z-index:{z};visibility:hidden' fillcolor=\"#ffffe1\" o:insetmode=\"auto\">\r\n <v:fill color2=\"#ffffe1\"/>\r\n <v:shadow on=\"t\" color=\"black\" obscured=\"t\"/>\r\n <v:path o:connecttype=\"none\"/>\r\n <v:textbox style='mso-direction-alt:auto'>\r\n  <div style='text-align:left'></div>\r\n </v:textbox>\r\n <x:ClientData ObjectType=\"Note\">\r\n  <x:MoveWithCells/>\r\n  <x:SizeWithCells/>\r\n  <x:Anchor>\r\n   {}, 15, {}, 10, {}, 15, {}, 4</x:Anchor>\r\n  <x:AutoFill>False</x:AutoFill>\r\n  <x:Row>{row}</x:Row>\r\n  <x:Column>{column}</x:Column>\r\n </x:ClientData>\r\n</v:shape>",
-        column + 1,
-        row.saturating_sub(1),
-        column + 3,
-        row + 3,
+        "<v:shape id=\"_x0000_s{id}\" type=\"#_x0000_t202\" style='position:absolute;margin-left:{}pt;margin-top:{}pt;width:{}pt;height:{}pt;z-index:{z};visibility:hidden' fillcolor=\"#ffffe1\" o:insetmode=\"auto\">\r\n <v:fill color2=\"#ffffe1\"/>\r\n <v:shadow on=\"t\" color=\"black\" obscured=\"t\"/>\r\n <v:path o:connecttype=\"none\"/>\r\n <v:textbox style='mso-direction-alt:auto'>\r\n  <div style='text-align:left'></div>\r\n </v:textbox>\r\n <x:ClientData ObjectType=\"Note\">\r\n  <x:MoveWithCells/>\r\n  <x:SizeWithCells/>\r\n  <x:Anchor>\r\n   {c1}, {dx1}, {r1}, {dy1}, {c2}, {dx2}, {r2}, {dy2}</x:Anchor>\r\n  <x:AutoFill>False</x:AutoFill>\r\n  <x:Row>{row}</x:Row>\r\n  <x:Column>{column}</x:Column>\r\n </x:ClientData>\r\n</v:shape>",
+        pt(left),
+        pt(top),
+        pt(rect.width),
+        pt(rect.height),
         z = id % 1024,
     )
 }
@@ -4754,11 +4964,13 @@ fn note_shape(id: u32, row: u32, column: u32) -> String {
 /// `comments`, the drawing's other shapes (form controls) kept; with the
 /// sheet's `legacyDrawing`, its relationship and its content type. No
 /// shapes left: the drawing goes.
-fn write_note_shapes(package: &mut Package, part: &str, comments: &[ibis_doc_model::SheetComment]) -> Result<(), Error> {
+fn write_note_shapes(package: &mut Package, part: &str, comments: &[ibis_doc_model::SheetComment], old: &[ibis_doc_model::SheetComment], sheet: &ibis_doc_model::Sheet) -> Result<(), Error> {
     let rels = package.relationships(part)?;
     let rel = rels.iter().find(|r| r.kind == REL_VML && !r.external).cloned();
     let vml_part = rel.as_ref().and_then(|r| r.target_part(part));
     let existing = vml_part.as_ref().and_then(|p| package.read(p).ok()).map(|b| String::from_utf8_lossy(&b).into_owned());
+    // A note whose box changed (or that is new, with a box) gets its shape made again; the others keep theirs as read.
+    let moved = |cell: (u32, u32)| comments.iter().find(|c| (c.row, c.column) == cell).is_some_and(|c| c.rect.is_some() && old.iter().find(|o| (o.row, o.column) == cell).map(|o| o.rect) != Some(c.rect));
     let wanted: Vec<(u32, u32)> = comments.iter().map(|c| (c.row, c.column)).collect();
     let mut kept: Vec<String> = Vec::new();
     let mut have: Vec<(u32, u32)> = Vec::new();
@@ -4772,7 +4984,7 @@ fn write_note_shapes(package: &mut Package, part: &str, comments: &[ibis_doc_mod
                 max_id = max_id.max(n);
             }
             match note_cell(shape) {
-                Some(cell) if !wanted.contains(&cell) => {}
+                Some(cell) if !wanted.contains(&cell) || moved(cell) => {}
                 Some(cell) => {
                     have.push(cell);
                     kept.push(shape.to_string());
@@ -4811,7 +5023,7 @@ fn write_note_shapes(package: &mut Package, part: &str, comments: &[ibis_doc_mod
     for c in comments {
         if !have.contains(&(c.row, c.column)) {
             next += 1;
-            kept.push(note_shape(next, c.row, c.column));
+            kept.push(note_shape(next, c.row, c.column, c.rect.unwrap_or_else(|| ibis_doc_model::NoteRect::default_for(sheet.row_offsets().get(c.row as usize).copied().unwrap_or(0))), sheet));
         }
     }
     let sheet_has = |package: &Package| -> Result<Option<NodeId>, Error> {
@@ -5409,7 +5621,7 @@ fn write_gradient_fill(doc: &mut XmlDocument, fills: NodeId, gradient: &CellGrad
             stops
         }
     };
-    for (pos, col) in stops {
+    for (pos, col) in &ibis_doc_model::sorted_stops(stops) {
         let s = doc.append_element(g, &format!("{prefix}stop"));
         let frac = *pos as f64 / 1000.0;
         doc.set_attr(s, "position", &format!("{:.2}", frac));

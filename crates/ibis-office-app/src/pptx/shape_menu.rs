@@ -325,6 +325,49 @@ fn text_bullets_submenu(editor: &SlideEditor) -> MenuEntry {
 }
 
 impl SlideEditor {
+    /// The SmartArt commands of a selected diagram's menu (the text pane, the shapes, the layout and the colours): a
+    /// slide's, and a worksheet's.
+    pub(crate) fn smartart_shape_menu_entries(&self) -> Vec<MenuEntry> {
+        let mut entries: Vec<MenuEntry> = Vec::new();
+        let current_sa = self.selected_smartart_data();
+        let current_kind = current_sa.as_ref().map(|(_, k, ..)| *k);
+        let current_style = current_sa.as_ref().map(|(_, _, st, ..)| *st);
+        entries.push(MenuItem::tr("pptx.smartart.text-pane").icon("list_alt").checked(self.pptx().is_some_and(|s| s.smartart_text_pane)).on(|e, _, cx| e.toggle_smartart_text_pane(cx)).into());
+        entries.push(MenuItem::tr("pptx.smartart.add-shape").icon("add").on(|e, _, cx| e.smartart_add_shape(cx)).into());
+        entries.push(MenuItem::tr("pptx.smartart.remove-shape").icon("remove").on(|e, _, cx| e.smartart_remove_shape(cx)).into());
+        entries.push(MenuItem::tr("pptx.smartart.move-up").icon("arrow_upward").on(|e, _, cx| e.smartart_move_item_up(cx)).into());
+        entries.push(MenuItem::tr("pptx.smartart.move-down").icon("arrow_downward").on(|e, _, cx| e.smartart_move_item_down(cx)).into());
+        entries.push(MenuItem::tr("pptx.smartart.promote").icon("format_indent_decrease").on(|e, _, cx| e.smartart_promote(cx)).into());
+        entries.push(MenuItem::tr("pptx.smartart.demote").icon("format_indent_increase").on(|e, _, cx| e.smartart_demote(cx)).into());
+        if current_kind == Some(crate::pptx::SmartArtKind::OrganizationChart) {
+            entries.push(MenuItem::tr("pptx.smartart.add-assistant").icon("person_add").on(|e, _, cx| e.smartart_add_assistant(cx)).into());
+        }
+        entries.push(Submenu::tr("pptx.smartart.change-layout", "account_tree", [
+            ("pptx.smartart.layout.list", crate::pptx::SmartArtKind::BasicBlockList),
+            ("pptx.smartart.layout.vlist", crate::pptx::SmartArtKind::VerticalList),
+            ("pptx.smartart.layout.process", crate::pptx::SmartArtKind::BasicProcess),
+            ("pptx.smartart.layout.chevron", crate::pptx::SmartArtKind::ContinuousChevronProcess),
+            ("pptx.smartart.layout.cycle", crate::pptx::SmartArtKind::BasicCycle),
+            ("pptx.smartart.layout.hierarchy", crate::pptx::SmartArtKind::OrganizationChart),
+            ("pptx.smartart.layout.relationship", crate::pptx::SmartArtKind::BasicRelationship),
+            ("pptx.smartart.layout.matrix", crate::pptx::SmartArtKind::BasicMatrix),
+            ("pptx.smartart.layout.pyramid", crate::pptx::SmartArtKind::BasicPyramid),
+            ("pptx.smartart.layout.picture", crate::pptx::SmartArtKind::PictureList),
+        ].into_iter().map(|(id, k)| {
+            MenuItem::tr(id).checked(current_kind == Some(k)).on(move |e, _, cx| e.change_smartart_layout(k, cx)).into()
+        }).collect()).into());
+        entries.push(Submenu::tr("pptx.smartart.color", "palette", [
+            ("pptx.smartart.color.colorful", crate::pptx::SmartArtColorStyle::Colorful),
+            ("pptx.smartart.color.accent1", crate::pptx::SmartArtColorStyle::Accent1),
+            ("pptx.smartart.color.accent2", crate::pptx::SmartArtColorStyle::Accent2),
+            ("pptx.smartart.color.accent3", crate::pptx::SmartArtColorStyle::Accent3),
+            ("pptx.smartart.color.outline", crate::pptx::SmartArtColorStyle::Outline),
+        ].into_iter().map(|(id, st)| {
+            MenuItem::tr(id).checked(current_style == Some(st)).on(move |e, _, cx| e.set_smartart_color_style(st, cx)).into()
+        }).collect()).into());
+        entries
+    }
+
     /// The menu's entries for what is selected or edited now.
     pub(crate) fn shape_context_menu_entries(&self) -> Vec<MenuEntry> {
         let editing = self.text_editing().is_some();
@@ -443,7 +486,7 @@ impl SlideEditor {
                 MenuItem::tr("pptx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_spelling(w, cx)).into(),
                 MenuItem::tr("pptx.thesaurus").icon("menu_book").on(|e, w, cx| e.open_pptx_thesaurus(w, cx)).into(),
                 MenuItem::tr("pptx.insets-actions").icon("padding").on(|e, w, cx| e.open_text_insets_panel(w, cx)).into(),
-                MenuItem::tr("pptx.link").icon("link").shortcut("⌘K").on(|e, w, cx| e.slide_open_link_panel(w, cx)).into(),
+                self.slide_hyperlink_context_entry(),
             ]);
             return entries;
         }
@@ -469,6 +512,9 @@ impl SlideEditor {
                 Submenu::tr("pptx.grid-and-guides", "grid_on", vec![
                     MenuItem::tr("pptx.gridlines").icon("grid_on").shortcut("⇧F9").checked(self.is_pptx_gridlines_enabled()).on(|this, _, cx| this.toggle_pptx_gridlines(cx)).into(),
                     MenuItem::tr("pptx.guides").icon("straighten").shortcut("⌥F9").checked(self.is_pptx_guides_enabled()).on(|this, _, cx| this.toggle_pptx_guides(cx)).into(),
+                    MenuItem::tr("pptx.guides.add-vertical").icon("vertical_align_center").on(|e, _, cx| e.add_guide(false, cx)).into(),
+                    MenuItem::tr("pptx.guides.add-horizontal").icon("horizontal_rule").on(|e, _, cx| e.add_guide(true, cx)).into(),
+                    MenuItem::tr("pptx.guides.remove-all").icon("delete_sweep").disabled(self.guide_list().is_empty()).on(|e, _, cx| e.remove_all_guides(cx)).into(),
                     MenuEntry::Separator,
                     MenuItem::tr("pptx.snap-to-grid").checked(self.is_pptx_snap_to_grid_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_grid(cx)).into(),
                     MenuItem::tr("pptx.snap-to-shape").checked(self.is_pptx_snap_to_shape_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_shape(cx)).into(),
@@ -647,42 +693,7 @@ impl SlideEditor {
             entries.push(MenuItem::tr("pptx.smartart-to-shapes").icon("shapes").on(|e, _, cx| e.convert_diagram_to_shapes(cx)).into());
         }
         if self.can_modify_smartart_items() {
-            let current_sa = self.selected_smartart_data();
-            let current_kind = current_sa.as_ref().map(|(_, k, ..)| *k);
-            let current_style = current_sa.as_ref().map(|(_, _, st, ..)| *st);
-            entries.push(MenuItem::tr("pptx.smartart.text-pane").icon("list_alt").checked(self.pptx().is_some_and(|s| s.smartart_text_pane)).on(|e, _, cx| e.toggle_smartart_text_pane(cx)).into());
-            entries.push(MenuItem::tr("pptx.smartart.add-shape").icon("add").on(|e, _, cx| e.smartart_add_shape(cx)).into());
-            entries.push(MenuItem::tr("pptx.smartart.remove-shape").icon("remove").on(|e, _, cx| e.smartart_remove_shape(cx)).into());
-            entries.push(MenuItem::tr("pptx.smartart.move-up").icon("arrow_upward").on(|e, _, cx| e.smartart_move_item_up(cx)).into());
-            entries.push(MenuItem::tr("pptx.smartart.move-down").icon("arrow_downward").on(|e, _, cx| e.smartart_move_item_down(cx)).into());
-            entries.push(MenuItem::tr("pptx.smartart.promote").icon("format_indent_decrease").on(|e, _, cx| e.smartart_promote(cx)).into());
-            entries.push(MenuItem::tr("pptx.smartart.demote").icon("format_indent_increase").on(|e, _, cx| e.smartart_demote(cx)).into());
-            if current_kind == Some(crate::pptx::SmartArtKind::OrganizationChart) {
-                entries.push(MenuItem::tr("pptx.smartart.add-assistant").icon("person_add").on(|e, _, cx| e.smartart_add_assistant(cx)).into());
-            }
-            entries.push(Submenu::tr("pptx.smartart.change-layout", "account_tree", [
-                ("pptx.smartart.layout.list", crate::pptx::SmartArtKind::BasicBlockList),
-                ("pptx.smartart.layout.vlist", crate::pptx::SmartArtKind::VerticalList),
-                ("pptx.smartart.layout.process", crate::pptx::SmartArtKind::BasicProcess),
-                ("pptx.smartart.layout.chevron", crate::pptx::SmartArtKind::ContinuousChevronProcess),
-                ("pptx.smartart.layout.cycle", crate::pptx::SmartArtKind::BasicCycle),
-                ("pptx.smartart.layout.hierarchy", crate::pptx::SmartArtKind::OrganizationChart),
-                ("pptx.smartart.layout.relationship", crate::pptx::SmartArtKind::BasicRelationship),
-                ("pptx.smartart.layout.matrix", crate::pptx::SmartArtKind::BasicMatrix),
-                ("pptx.smartart.layout.pyramid", crate::pptx::SmartArtKind::BasicPyramid),
-                ("pptx.smartart.layout.picture", crate::pptx::SmartArtKind::PictureList),
-            ].into_iter().map(|(id, k)| {
-                MenuItem::tr(id).checked(current_kind == Some(k)).on(move |e, _, cx| e.change_smartart_layout(k, cx)).into()
-            }).collect()).into());
-            entries.push(Submenu::tr("pptx.smartart.color", "palette", [
-                ("pptx.smartart.color.colorful", crate::pptx::SmartArtColorStyle::Colorful),
-                ("pptx.smartart.color.accent1", crate::pptx::SmartArtColorStyle::Accent1),
-                ("pptx.smartart.color.accent2", crate::pptx::SmartArtColorStyle::Accent2),
-                ("pptx.smartart.color.accent3", crate::pptx::SmartArtColorStyle::Accent3),
-                ("pptx.smartart.color.outline", crate::pptx::SmartArtColorStyle::Outline),
-            ].into_iter().map(|(id, st)| {
-                MenuItem::tr(id).checked(current_style == Some(st)).on(move |e, _, cx| e.set_smartart_color_style(st, cx)).into()
-            }).collect()).into());
+            entries.extend(self.smartart_shape_menu_entries());
         }
         if self.can_convert_text_to_smartart() {
             entries.push(MenuItem::tr("pptx.smartart.convert-text").icon("account_tree").on(|e, _, cx| e.convert_selected_text_to_smartart(crate::pptx::SmartArtKind::BasicProcess, cx)).into());
@@ -860,7 +871,7 @@ impl SlideEditor {
         entries.extend([
             MenuEntry::Separator,
             Submenu::tr("pptx.menu.animation", "animation", crate::pptx::animation_ui::animation_items(self)).into(),
-            MenuItem::tr("pptx.link").icon("link").shortcut("⌘K").on(|e, w, cx| e.slide_open_link_panel(w, cx)).into(),
+            self.slide_hyperlink_context_entry(),
             MenuItem::tr("pptx.frame.settings").icon("straighten").on(|e, w, cx| e.open_frame_panel(w, cx)).into(),
             MenuItem::tr("pptx.alt-text").icon("accessibility").on(|e, w, cx| e.open_alt_text_panel(w, cx)).into(),
         ]);
@@ -925,6 +936,15 @@ impl SlideEditor {
                 cx.notify();
                 return;
             }
+        }
+        if let Some((target,link))=self.slide_link_target_at(layout.to_emu(event.position)){
+            let id=match &target{crate::pptx::links::LinkTarget::Shape(id)|crate::pptx::links::LinkTarget::Text{shape:id,..}|crate::pptx::links::LinkTarget::CellText{shape:id,..}=>*id};
+            self.set_selection(vec![id]);
+            let entry=self.slide_hyperlink_menu_for(target,link);
+            let mut entries=self.shape_context_menu_entries();
+            entries.retain(|e|match e{crate::shell::chrome::MenuEntry::Item(i)=>i.id!="pptx.link",crate::shell::chrome::MenuEntry::Submenu(s)=>s.id!="hyperlink.menu",_=>true});
+            entries.push(entry);
+            self.open_hyperlink_context(event.position,entries,window,cx);return;
         }
         let slop = crate::pptx::interaction::LINE_SLOP_PX as f64 / layout.scale as f64;
         let hit = crate::pptx::interaction::hit_test(self.slide(), p, slop);

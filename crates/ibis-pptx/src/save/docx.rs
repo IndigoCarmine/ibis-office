@@ -82,37 +82,134 @@ pub struct SourceMap {
 
 /// Whether two documents have the same content (the file name, which the
 /// viewer sets, aside).
+///
+/// Every field of [`FlowDocument`] is named here: compared, or listed as one the file does not hold (a view setting, a cache). A field
+/// added to the model does not compile until it is put in one of the two, so a change to it cannot be left out of the saving.
 fn same_document(a: &FlowDocument, b: &FlowDocument) -> bool {
-    a.page == b.page && a.header == b.header && a.footer == b.footer && a.body == b.body && a.styles == b.styles && last_section(a) == last_section(b)
-        && a.footnotes == b.footnotes && a.endnotes == b.endnotes && a.comments == b.comments && a.track_changes == b.track_changes && a.watermark == b.watermark && a.section_watermarks == b.section_watermarks
-        && a.page_color == b.page_color && a.properties == b.properties
-        && a.mark_as_final == b.mark_as_final && a.read_only_recommended == b.read_only_recommended
-        && a.update_fields == b.update_fields && a.note_separators == b.note_separators && a.mail_merge_type == b.mail_merge_type && a.mail_merge_field_map == b.mail_merge_field_map && a.view_mode == b.view_mode
-        && a.no_line_start == b.no_line_start && a.no_line_end == b.no_line_end
-        && a.protection == b.protection && a.lock_tracking == b.lock_tracking
-        && a.formatting_protection == b.formatting_protection
-        && a.interaction_mode == b.interaction_mode
-        && a.do_not_compress_images == b.do_not_compress_images
-        && a.default_image_dpi == b.default_image_dpi
-        && a.discard_image_editing_data == b.discard_image_editing_data
-        && a.save_frequency == b.save_frequency
-        && a.embed_true_type_fonts == b.embed_true_type_fonts
-        && a.embed_system_fonts == b.embed_system_fonts
-        && a.save_subset_fonts == b.save_subset_fonts
-        && a.compatibility_mode == b.compatibility_mode
-        && a.use_fe_layout == b.use_fe_layout
-        && a.do_not_expand_shift_return == b.do_not_expand_shift_return
-        && a.attached_template == b.attached_template
-        && a.link_styles == b.link_styles
-        && a.strict_first_and_last_chars == b.strict_first_and_last_chars
-        && a.theme_font_lang == b.theme_font_lang
-        && a.shape_groups == b.shape_groups
-}
-
-/// The rest of the last section: its other headers and footers and settings.
-#[allow(clippy::type_complexity)]
-fn last_section(d: &FlowDocument) -> (&[Block], &[Block], &[Block], &[Block], bool, bool, &Option<String>, &Option<(u32, String)>, bool, [bool; 6]) {
-    (&d.header_first, &d.footer_first, &d.header_even, &d.footer_even, d.title_page, d.even_and_odd, &d.page_number_format, &d.page_chapter, d.restart_numbering, d.linked)
+    let FlowDocument {
+        // Compared: what the file holds.
+        page,
+        header,
+        footer,
+        body,
+        header_first,
+        footer_first,
+        header_even,
+        footer_even,
+        title_page,
+        even_and_odd,
+        page_number_format,
+        page_chapter,
+        restart_numbering,
+        linked,
+        footnotes,
+        endnotes,
+        comments,
+        track_changes,
+        styles,
+        watermark,
+        section_watermarks,
+        page_color,
+        properties,
+        mark_as_final,
+        no_line_start,
+        no_line_end,
+        strict_first_and_last_chars,
+        theme_font_lang,
+        read_only_recommended,
+        update_fields,
+        note_separators,
+        mail_merge_type,
+        mail_merge_field_map,
+        lock_tracking,
+        doc_variables,
+        attached_template,
+        link_styles,
+        view_mode,
+        protection,
+        formatting_protection,
+        interaction_mode,
+        do_not_compress_images,
+        default_image_dpi,
+        discard_image_editing_data,
+        save_frequency,
+        embed_true_type_fonts,
+        embed_system_fonts,
+        save_subset_fonts,
+        compatibility_mode,
+        use_fe_layout,
+        do_not_expand_shift_return,
+        shape_groups,
+        // Not written by the saving: the viewer's own state, what layout reads, or numbering of the session.
+        file_name: _,
+        file_size: _,
+        default_tab_stop: _,
+        id_floor: _,
+        paragraph_spacing_preset: _,
+        style_set_preset: _,
+        show_field_codes: _,
+        form_design_mode: _,
+        compress_punctuation: _,
+        font_table: _,
+        balance_single_double_byte_width: _,
+        ul_trail_space: _,
+        adjust_line_height_in_table: _,
+        do_not_use_html_paragraph_auto_spacing: _,
+        split_pg_break_and_para_mark: _,
+        compat_mode: _,
+    } = a;
+    *page == b.page
+        && *header == b.header
+        && *footer == b.footer
+        && *body == b.body
+        && *header_first == b.header_first
+        && *footer_first == b.footer_first
+        && *header_even == b.header_even
+        && *footer_even == b.footer_even
+        && *title_page == b.title_page
+        && *even_and_odd == b.even_and_odd
+        && *page_number_format == b.page_number_format
+        && *page_chapter == b.page_chapter
+        && *restart_numbering == b.restart_numbering
+        && *linked == b.linked
+        && *footnotes == b.footnotes
+        && *endnotes == b.endnotes
+        && *comments == b.comments
+        && *track_changes == b.track_changes
+        && *styles == b.styles
+        && *watermark == b.watermark
+        && *section_watermarks == b.section_watermarks
+        && *page_color == b.page_color
+        && *properties == b.properties
+        && *mark_as_final == b.mark_as_final
+        && *no_line_start == b.no_line_start
+        && *no_line_end == b.no_line_end
+        && *strict_first_and_last_chars == b.strict_first_and_last_chars
+        && *theme_font_lang == b.theme_font_lang
+        && *read_only_recommended == b.read_only_recommended
+        && *update_fields == b.update_fields
+        && *note_separators == b.note_separators
+        && *mail_merge_type == b.mail_merge_type
+        && *mail_merge_field_map == b.mail_merge_field_map
+        && *lock_tracking == b.lock_tracking
+        && *doc_variables == b.doc_variables
+        && *attached_template == b.attached_template
+        && *link_styles == b.link_styles
+        && *view_mode == b.view_mode
+        && *protection == b.protection
+        && *formatting_protection == b.formatting_protection
+        && *interaction_mode == b.interaction_mode
+        && *do_not_compress_images == b.do_not_compress_images
+        && *default_image_dpi == b.default_image_dpi
+        && *discard_image_editing_data == b.discard_image_editing_data
+        && *save_frequency == b.save_frequency
+        && *embed_true_type_fonts == b.embed_true_type_fonts
+        && *embed_system_fonts == b.embed_system_fonts
+        && *save_subset_fonts == b.save_subset_fonts
+        && *compatibility_mode == b.compatibility_mode
+        && *use_fe_layout == b.use_fe_layout
+        && *do_not_expand_shift_return == b.do_not_expand_shift_return
+        && *shape_groups == b.shape_groups
 }
 
 /// A section's settings its `w:sectPr` holds (besides its headers').
@@ -175,22 +272,77 @@ fn shape_body(shape: &Shape) -> Option<&ibis_doc_model::TextBody> {
 
 /// The text of a `w:txbxContent`, paragraphs joined by `\n`.
 /// What a text body's runs look like, paragraph by paragraph: the text of each run of the same look, with its look (bold, italic,
-/// size in half points, colour).
-fn run_looks(body: &ibis_doc_model::TextBody) -> Vec<Vec<(String, bool, bool, u32, u32)>> {
+/// underline, underline kind, size in half points, colour).
+fn run_looks(body: &ibis_doc_model::TextBody) -> Vec<Vec<(String, bool, bool, bool, ibis_doc_model::Underline, u32, u32)>> {
     body.paragraphs
         .iter()
         .map(|p| {
-            let mut out: Vec<(String, bool, bool, u32, u32)> = Vec::new();
+            let mut out: Vec<(String, bool, bool, bool, ibis_doc_model::Underline, u32, u32)> = Vec::new();
             for r in p.runs.iter().filter(|r| !r.text.is_empty()) {
-                let look = (r.style.bold.unwrap_or(body.style.bold), r.style.italic.unwrap_or(body.style.italic), (r.style.font_size.unwrap_or(body.style.font_size) + 25) / 50, r.style.color.unwrap_or(body.style.color).0 & 0xffffff);
+                let look = (
+                    r.style.bold.unwrap_or(body.style.bold),
+                    r.style.italic.unwrap_or(body.style.italic),
+                    r.style.underline,
+                    r.style.underline_kind,
+                    (r.style.font_size.unwrap_or(body.style.font_size) + 25) / 50,
+                    r.style.color.unwrap_or(body.style.color).0 & 0xffffff,
+                );
                 match out.last_mut() {
-                    Some(last) if (last.1, last.2, last.3, last.4) == look => last.0.push_str(&r.text),
-                    _ => out.push((r.text.clone(), look.0, look.1, look.2, look.3)),
+                    Some(last) if (last.1, last.2, last.3, last.4, last.5, last.6) == look => last.0.push_str(&r.text),
+                    _ => out.push((r.text.clone(), look.0, look.1, look.2, look.3, look.4, look.5)),
                 }
             }
             out
         })
         .collect()
+}
+
+/// Which characters of a text body are 縦中横 (and how), paragraph by paragraph: (the run's text, its `TateChuYoko`).
+fn tcy_marks(body: &ibis_doc_model::TextBody) -> Vec<Vec<(String, ibis_doc_model::TateChuYoko)>> {
+    body.paragraphs
+        .iter()
+        .map(|p| p.runs.iter().filter(|r| !r.text.is_empty()).map(|r| (r.text.clone(), r.style.tate_chu_yoko.unwrap_or_default())).collect())
+        .collect()
+}
+
+/// The paragraphs of a new text box when some of its text is 縦中横 (`w:eastAsianLayout`, after the size in CT_RPr's order), run by run.
+fn tcy_paragraph_xml(body: &ibis_doc_model::TextBody, esc: &dyn Fn(&str) -> String, u_xml: &dyn Fn(bool, ibis_doc_model::Underline) -> String) -> Option<String> {
+    use ibis_doc_model::TateChuYoko;
+    let on = |r: &ibis_doc_model::Run| matches!(r.style.tate_chu_yoko, Some(TateChuYoko::Fit | TateChuYoko::Grow));
+    if !body.paragraphs.iter().flat_map(|p| &p.runs).any(on) {
+        return None;
+    }
+    Some(
+        body.paragraphs
+            .iter()
+            .map(|p| {
+                let runs: String = p
+                    .runs
+                    .iter()
+                    .filter(|r| !r.text.is_empty())
+                    .map(|r| {
+                        let half = (r.style.font_size.unwrap_or(body.style.font_size) + 25) / 50;
+                        let color = r.style.color.unwrap_or(body.style.color).0 & 0xffffff;
+                        let scale = r.style.char_scale.filter(|s| *s != 100).map(|s| format!("<w:w w:val=\"{s}\"/>")).unwrap_or_default();
+                        let layout = match r.style.tate_chu_yoko {
+                            Some(TateChuYoko::Fit) => r#"<w:eastAsianLayout w:vert="1" w:vertCompress="1"/>"#,
+                            Some(TateChuYoko::Grow) => r#"<w:eastAsianLayout w:vert="1"/>"#,
+                            _ => "",
+                        };
+                        let rpr = format!(
+                            "{}{}{}{}{scale}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>{layout}",
+                            if r.style.bold.unwrap_or(body.style.bold) { "<w:b/><w:bCs/>" } else { "" },
+                            if r.style.italic.unwrap_or(body.style.italic) { "<w:i/><w:iCs/>" } else { "" },
+                            u_xml(r.style.underline, r.style.underline_kind),
+                            if color != ibis_doc_model::TextStyle::default().color.0 & 0xffffff { format!("<w:color w:val=\"{color:06X}\"/>") } else { String::new() },
+                        );
+                        format!(r#"<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r>"#, esc(&r.text))
+                    })
+                    .collect();
+                format!("<w:p>{runs}</w:p>")
+            })
+            .collect(),
+    )
 }
 
 fn txbx_text(doc: &XmlDocument, content: NodeId) -> String {
@@ -205,6 +357,7 @@ fn txbx_text(doc: &XmlDocument, content: NodeId) -> String {
 enum AtomKey {
     Char(char),
     Tab,
+    PositionalTab(ibis_doc_model::TabAlign, bool, bool),
     LineBreak,
     PageBreak,
     ColumnBreak,
@@ -237,6 +390,11 @@ enum AtomKey {
 /// the link it is part of.
 type Atom<'a> = (AtomKey, &'a RunFormat, &'a Option<String>, &'a Option<Link>, &'a Option<Revision>);
 
+/// How many positions the save tells apart in `p` (what the reader keeps a source node for each of).
+pub(crate) fn atom_count(p: &FlowParagraph) -> usize {
+    atoms(p).len()
+}
+
 fn atoms(p: &FlowParagraph) -> Vec<Atom<'_>> {
     let mut out = Vec::new();
     for run in &p.runs {
@@ -244,6 +402,7 @@ fn atoms(p: &FlowParagraph) -> Vec<Atom<'_>> {
         match &run.kind {
             FlowRunKind::Text(t) => out.extend(t.chars().map(|c| (AtomKey::Char(c), f.0, f.1, f.2, f.3))),
             FlowRunKind::Tab => out.push((AtomKey::Tab, f.0, f.1, f.2, f.3)),
+            FlowRunKind::PositionalTab { align, relative_to_margin, leader } => out.push((AtomKey::PositionalTab(*align, *relative_to_margin, *leader), f.0, f.1, f.2, f.3)),
             FlowRunKind::LineBreak => out.push((AtomKey::LineBreak, f.0, f.1, f.2, f.3)),
             FlowRunKind::PageBreak => out.push((AtomKey::PageBreak, f.0, f.1, f.2, f.3)),
             FlowRunKind::ColumnBreak => out.push((AtomKey::ColumnBreak, f.0, f.1, f.2, f.3)),
@@ -2578,7 +2737,10 @@ impl Writer<'_> {
                     self.doc.remove_attr(e, "w:linePitch");
                 }
                 if let Some(space) = b.char_space {
-                    self.doc.set_attr(e, "w:charSpace", &tw(space));
+                    // ECMA-376 §17.6.5: charSpace is in 4096ths of a point
+                    // (the reader in docx.rs converts it the same way).
+                    let v = (space as f64 * 4096.0 / 12_700.0).round() as i64;
+                    self.doc.set_attr(e, "w:charSpace", &v.to_string());
                 } else {
                     self.doc.remove_attr(e, "w:charSpace");
                 }
@@ -3690,28 +3852,41 @@ impl Writer<'_> {
         let first = body.paragraphs.iter().flat_map(|p| &p.runs).find(|r| !r.text.is_empty());
         let bold = first.and_then(|r| r.style.bold).unwrap_or(body.style.bold);
         let italic = first.and_then(|r| r.style.italic).unwrap_or(body.style.italic);
+        let underline = first.is_some_and(|r| r.style.underline);
+        let underline_kind = first.map_or(ibis_doc_model::Underline::Single, |r| r.style.underline_kind);
         let color = first.and_then(|r| r.style.color).unwrap_or(body.style.color);
         let half = first.and_then(|r| r.style.font_size).map_or(half, |v| (v / 50).max(2));
-        // CT_RPr order: b, i, color, sz, szCs.
+        let u_xml = |on: bool, kind: ibis_doc_model::Underline| {
+            if on {
+                format!(r#"<w:u w:val="{}"/>"#, ibis_doc_model::UnderlineStyle::from_drawing_underline(kind).name())
+            } else {
+                String::new()
+            }
+        };
+        // CT_RPr order: b, i, color, sz, szCs, u.
         let rpr = format!(
-            "{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
+            "{}{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
             if bold { "<w:b/><w:bCs/>" } else { "" },
             if italic { "<w:i/><w:iCs/>" } else { "" },
+            u_xml(underline, underline_kind),
             if color != ibis_doc_model::TextStyle::default().color { format!("<w:color w:val=\"{:06X}\"/>", color.0 & 0xffffff) } else { String::new() },
         );
         // Each run with its own look when the paragraphs have runs that differ (a part of the text bold…); else a run per line.
         let looks = run_looks(body);
-        let paragraphs: String = if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
+        let paragraphs: String = if let Some(x) = tcy_paragraph_xml(body, &esc, &u_xml) {
+            x
+        } else if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
             looks
                 .iter()
                 .map(|p| {
                     let runs: String = p
                         .iter()
-                        .map(|(t, b, i, half, c)| {
+                        .map(|(t, b, i, u, uk, half, c)| {
                             let rpr = format!(
-                                "{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
+                                "{}{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
                                 if *b { "<w:b/><w:bCs/>" } else { "" },
                                 if *i { "<w:i/><w:iCs/>" } else { "" },
+                                u_xml(*u, *uk),
                                 if *c != ibis_doc_model::TextStyle::default().color.0 & 0xffffff { format!("<w:color w:val=\"{c:06X}\"/>") } else { String::new() },
                             );
                             format!(r#"<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r>"#, esc(t))
@@ -3813,26 +3988,39 @@ impl Writer<'_> {
         let first = body.paragraphs.iter().flat_map(|p| &p.runs).find(|r| !r.text.is_empty());
         let bold = first.and_then(|r| r.style.bold).unwrap_or(body.style.bold);
         let italic = first.and_then(|r| r.style.italic).unwrap_or(body.style.italic);
+        let underline = first.is_some_and(|r| r.style.underline);
+        let underline_kind = first.map_or(ibis_doc_model::Underline::Single, |r| r.style.underline_kind);
         let color = first.and_then(|r| r.style.color).unwrap_or(body.style.color);
         let half = first.and_then(|r| r.style.font_size).map_or(half, |v| (v / 50).max(2));
+        let u_xml = |on: bool, kind: ibis_doc_model::Underline| {
+            if on {
+                format!(r#"<w:u w:val="{}"/>"#, ibis_doc_model::UnderlineStyle::from_drawing_underline(kind).name())
+            } else {
+                String::new()
+            }
+        };
         let rpr = format!(
-            "{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
+            "{}{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
             if bold { "<w:b/><w:bCs/>" } else { "" },
             if italic { "<w:i/><w:iCs/>" } else { "" },
+            u_xml(underline, underline_kind),
             if color != ibis_doc_model::TextStyle::default().color { format!("<w:color w:val=\"{:06X}\"/>", color.0 & 0xffffff) } else { String::new() },
         );
         let looks = run_looks(body);
-        let paragraphs: String = if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
+        let paragraphs: String = if let Some(x) = tcy_paragraph_xml(body, &esc, &u_xml) {
+            x
+        } else if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
             looks
                 .iter()
                 .map(|p| {
                     let runs: String = p
                         .iter()
-                        .map(|(t, b, i, half, c)| {
+                        .map(|(t, b, i, u, uk, half, c)| {
                             let rpr = format!(
-                                "{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
+                                "{}{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
                                 if *b { "<w:b/><w:bCs/>" } else { "" },
                                 if *i { "<w:i/><w:iCs/>" } else { "" },
+                                u_xml(*u, *uk),
                                 if *c != ibis_doc_model::TextStyle::default().color.0 & 0xffffff { format!("<w:color w:val=\"{c:06X}\"/>") } else { String::new() },
                             );
                             format!(r#"<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r>"#, esc(t))
@@ -4034,13 +4222,41 @@ impl Writer<'_> {
 
     /// The paragraphs of the text box in `node` written run by run as `body` has its runs (the paragraph properties and the first
     /// run's properties of each paragraph are kept). Nothing happens when the paragraphs are not the same in number.
-    fn write_runs_by_look(&mut self, node: NodeId, body: &ibis_doc_model::TextBody) {
-        let Some(content) = self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent") else { return };
-        let paragraphs: Vec<NodeId> = self.doc.children_named(content, "p").collect();
-        if paragraphs.len() != body.paragraphs.len() {
-            return;
+    fn write_runs_by_look(&mut self, node: NodeId, body: &ibis_doc_model::TextBody) -> bool {
+        let contents: Vec<NodeId> = self.doc.descendants(node).into_iter().filter(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").collect();
+        // A box with a table or a content control among its paragraphs is left to the caller.
+        if contents.is_empty() || contents.iter().any(|&c| self.doc.children(c).iter().any(|&b| self.doc.is_element(b) && self.doc.local_name(b) != "p")) {
+            return false;
         }
-        for (p, model) in paragraphs.into_iter().zip(&body.paragraphs) {
+        for content in contents {
+            self.write_content_from_model(content, body);
+        }
+        true
+    }
+
+    /// The paragraphs of one `w:txbxContent`, written run by run from the model: a model paragraph that continues the line before
+    /// (`line_break`) is a `w:br` of the paragraph before it, and a paragraph keeps its properties.
+    fn write_content_from_model(&mut self, content: NodeId, body: &ibis_doc_model::TextBody) {
+        let mut groups: Vec<Vec<&ibis_doc_model::Paragraph>> = Vec::new();
+        for model in &body.paragraphs {
+            match groups.last_mut() {
+                Some(group) if model.line_break => group.push(model),
+                _ => groups.push(vec![model]),
+            }
+        }
+        let mut old: Vec<NodeId> = self.doc.children_named(content, "p").collect();
+        let Some(&last) = old.last() else { return };
+        // Paragraphs there are no more of are removed; those that are new are copies of the last one.
+        for extra in old.split_off(groups.len().min(old.len())) {
+            self.doc.detach(extra);
+        }
+        while old.len() < groups.len() {
+            let copy = self.doc.deep_clone(last);
+            let end = self.doc.children(content).len();
+            self.doc.insert(content, end, copy);
+            old.push(copy);
+        }
+        for (p, group) in old.into_iter().zip(groups) {
             let first_run = self.doc.children_named(p, "r").next();
             let old_pr = first_run.and_then(|r| self.doc.child(r, "rPr"));
             let template = old_pr.map(|n| self.doc.deep_clone(n));
@@ -4049,6 +4265,18 @@ impl Writer<'_> {
                     self.doc.detach(c);
                 }
             }
+            for (line, model) in group.into_iter().enumerate() {
+                if line > 0 {
+                    let r = self.doc.append_element(p, &self.w("r"));
+                    self.doc.append_element(r, &self.w("br"));
+                }
+                self.write_model_runs(p, model, body, template);
+            }
+        }
+    }
+
+    fn write_model_runs(&mut self, p: NodeId, model: &ibis_doc_model::Paragraph, body: &ibis_doc_model::TextBody, template: Option<NodeId>) {
+        {
             for run in model.runs.iter().filter(|r| !r.text.is_empty()) {
                 let r = self.doc.append_element(p, &self.w("r"));
                 let rpr = match &template {
@@ -4062,6 +4290,11 @@ impl Writer<'_> {
                 let o = RPR_ORDER;
                 self.toggle(rpr, &["b", "bCs"], Some(run.style.bold.unwrap_or(body.style.bold)), o);
                 self.toggle(rpr, &["i", "iCs"], Some(run.style.italic.unwrap_or(body.style.italic)), o);
+                if run.style.underline {
+                    self.val(rpr, "u", Some(ibis_doc_model::UnderlineStyle::from_drawing_underline(run.style.underline_kind).name()), o);
+                } else if self.doc.child(rpr, "u").is_some() {
+                    self.val(rpr, "u", Some("none"), o);
+                }
                 let half = ((run.style.font_size.unwrap_or(body.style.font_size) + 25) / 50).to_string();
                 self.val(rpr, "sz", Some(&half), o);
                 self.val(rpr, "szCs", Some(&half), o);
@@ -4069,8 +4302,28 @@ impl Writer<'_> {
                 if color != ibis_doc_model::TextStyle::default().color || self.doc.child(rpr, "color").is_some() {
                     self.val(rpr, "color", Some(&format!("{:06X}", color.0 & 0xffffff)), o);
                 }
+                // 文字の拡大縮小 (`w:w`): what 縦中横's 行の幅に合わせる shrinks the run by (`w:vertCompress` shrinks nothing of itself).
+                self.val(rpr, "w", run.style.char_scale.filter(|s| *s != 100).map(|s| s.to_string()).as_deref(), o);
+                // 縦中横 (`w:eastAsianLayout`): 行の幅に合わせる is `w:vertCompress`.
+                match run.style.tate_chu_yoko {
+                    Some(mode @ (ibis_doc_model::TateChuYoko::Fit | ibis_doc_model::TateChuYoko::Grow)) => {
+                        let e = self.ensure(rpr, "eastAsianLayout", o);
+                        self.doc.set_attr(e, "w:vert", "1");
+                        if mode == ibis_doc_model::TateChuYoko::Fit {
+                            self.doc.set_attr(e, "w:vertCompress", "1");
+                        } else {
+                            self.doc.remove_attr(e, "w:vertCompress");
+                        }
+                    }
+                    _ => {
+                        if let Some(e) = self.doc.child(rpr, "eastAsianLayout") {
+                            self.doc.remove_attr(e, "w:vert");
+                            self.doc.remove_attr(e, "w:vertCompress");
+                        }
+                    }
+                }
                 let t = self.doc.append_element(r, &self.w("t"));
-                if run.text.starts_with(char::is_whitespace) || run.text.ends_with(char::is_whitespace) {
+                if needs_space_preserve(&run.text) {
                     self.doc.set_attr(t, "xml:space", "preserve");
                 }
                 self.doc.set_text(t, &run.text);
@@ -4178,6 +4431,10 @@ impl Writer<'_> {
             self.doc.set_attr(body_pr, "anchor", anchor_val);
         }
         let text = body.text();
+        // Whether the text is the one the box was read with: the model is compared with the model (not with the XML's `w:t`
+        // texts, which leave out a `w:br`, a table or a content control, so the same text would look changed and the paragraphs
+        // be written again, losing their runs).
+        let text_unchanged = old_body.is_some_and(|old| old.text() == text);
         // The text's formatting (bold, italic, size, colour) of the first run, from the
         // model and from the old element: a change goes to every run of the box.
         // The values a body's first run is drawn with.
@@ -4186,13 +4443,17 @@ impl Writer<'_> {
             (
                 first.and_then(|r| r.style.bold).unwrap_or(b.style.bold),
                 first.and_then(|r| r.style.italic).unwrap_or(b.style.italic),
+                first.is_some_and(|r| r.style.underline),
+                first.map_or(ibis_doc_model::Underline::Single, |r| r.style.underline_kind),
                 (first.and_then(|r| r.style.font_size).unwrap_or(b.style.font_size) + 25) / 50 * 50,
                 first.and_then(|r| r.style.color).unwrap_or(b.style.color),
             )
         };
-        let (model_bold, model_italic, model_size, model_color) = looks(body);
-        let (old_bold, old_italic, old_size, old_color) = old_body.map_or((model_bold, model_italic, model_size, model_color), looks);
-        let format_changed = (old_bold, old_italic, old_size, old_color) != (model_bold, model_italic, model_size, model_color);
+        let (model_bold, model_italic, model_u, model_uk, model_size, model_color) = looks(body);
+        let (old_bold, old_italic, old_u, old_uk, old_size, old_color) =
+            old_body.map_or((model_bold, model_italic, model_u, model_uk, model_size, model_color), looks);
+        let format_changed = (old_bold, old_italic, old_u, old_uk, old_size, old_color)
+            != (model_bold, model_italic, model_u, model_uk, model_size, model_color);
         if format_changed {
             for run in self.doc.descendants(node).into_iter().filter(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "r" && self.doc.parent(n).is_some_and(|p| self.doc.local_name(p) == "p")).collect::<Vec<_>>() {
                 let in_content = std::iter::successors(self.doc.parent(run), |&n| self.doc.parent(n)).any(|n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent");
@@ -4214,6 +4475,14 @@ impl Writer<'_> {
                 }
                 if old_italic != model_italic {
                     self.toggle(rpr, &["i", "iCs"], Some(model_italic), o);
+                }
+                if (old_u, old_uk) != (model_u, model_uk) {
+                    let u_val = if model_u {
+                        ibis_doc_model::UnderlineStyle::from_drawing_underline(model_uk).name()
+                    } else {
+                        "none"
+                    };
+                    self.val(rpr, "u", Some(u_val), o);
                 }
                 if old_size != model_size {
                     let half = (model_size / 50).to_string();
@@ -4242,14 +4511,20 @@ impl Writer<'_> {
         // The text is the same but a part of it is formatted differently (bold words, another size…): the paragraphs are written
         // run by run, each with the formatting the model gives it.
         if let Some(old_body) = old_body
-            && txbx_text(self.doc, self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").unwrap_or(node)) == text
-            && run_looks(body) != run_looks(old_body)
+            && (text_unchanged || txbx_text(self.doc, self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").unwrap_or(node)) == text)
+            && (run_looks(body) != run_looks(old_body) || tcy_marks(body) != tcy_marks(old_body))
         {
-            self.write_runs_by_look(node, body);
+            if self.write_runs_by_look(node, body) {
+                return;
+            }
+        }
+        // The text changed: the paragraphs are written again from the model, run by run, so the words that were bold, coloured or
+        // italic still are, and a line break is still one.
+        if !text_unchanged && self.write_runs_by_look(node, body) {
             return;
         }
         for content in self.doc.descendants(node).into_iter().filter(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").collect::<Vec<_>>() {
-            if txbx_text(self.doc, content) == text {
+            if text_unchanged || txbx_text(self.doc, content) == text {
                 continue;
             }
             let old: Vec<NodeId> = self.doc.children_named(content, "p").collect();
@@ -4278,7 +4553,7 @@ impl Writer<'_> {
                     self.doc.insert(r, 0, rpr);
                 }
                 let t = self.doc.append_element(r, &self.w("t"));
-                if line.starts_with(char::is_whitespace) || line.ends_with(char::is_whitespace) {
+                if needs_space_preserve(line) {
                     self.doc.set_attr(t, "xml:space", "preserve");
                 }
                 self.doc.set_text(t, line);
@@ -5232,7 +5507,7 @@ impl Writer<'_> {
         let flush = |w: &mut Self, run: NodeId, text: &mut String| {
             if !text.is_empty() {
                 let t = w.doc.append_element(run, &w.w(if deleted { "delText" } else { "t" }));
-                if text.starts_with(char::is_whitespace) || text.ends_with(char::is_whitespace) {
+                if needs_space_preserve(text) {
                     w.doc.set_attr(t, "xml:space", "preserve");
                 }
                 w.doc.set_text(t, text);
@@ -5246,6 +5521,26 @@ impl Writer<'_> {
                 AtomKey::Tab => {
                     flush(self, run, &mut text);
                     self.doc.append_element(run, &self.w("tab"));
+                }
+                AtomKey::PositionalTab(align, relative_to_margin, leader) => {
+                    flush(self, run, &mut text);
+                    match original.filter(|&n| self.doc.local_name(n) == "ptab") {
+                        Some(n) => {
+                            let c = self.doc.deep_clone(n);
+                            let end = self.doc.children(run).len();
+                            self.doc.insert(run, end, c);
+                        }
+                        None => {
+                            let ptab = self.doc.append_element(run, &self.w("ptab"));
+                            self.doc.set_attr(ptab, "w:alignment", match align {
+                                ibis_doc_model::TabAlign::Right => "right",
+                                ibis_doc_model::TabAlign::Center => "center",
+                                _ => "left",
+                            });
+                            self.doc.set_attr(ptab, "w:relativeTo", if *relative_to_margin { "margin" } else { "indent" });
+                            self.doc.set_attr(ptab, "w:leader", if *leader { "dot" } else { "none" });
+                        }
+                    }
                 }
                 AtomKey::LineBreak | AtomKey::PageBreak | AtomKey::ColumnBreak => {
                     flush(self, run, &mut text);
@@ -6131,6 +6426,9 @@ impl Writer<'_> {
                             ole: pic.ole,
                             linked_file: None,
                             soft_edge: pic.soft_edge,
+                            shadow: pic.shadow,
+                            reflection: pic.reflection.clone(),
+                            clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
                         };
@@ -6557,8 +6855,16 @@ impl Writer<'_> {
         if c0 != c1 {
             self.val(rpr, "rStyle", c1.as_deref(), o);
         }
-        if f0.font != f1.font || f0.east_asian_font != f1.east_asian_font || f0.cs_font != f1.cs_font {
+        if f0.font != f1.font || f0.east_asian_font != f1.east_asian_font || f0.cs_font != f1.cs_font || f0.east_asia_hint != f1.east_asia_hint {
             let fonts = self.ensure(rpr, "rFonts", o);
+            if f0.east_asia_hint != f1.east_asia_hint {
+                // `w:hint` is the run's own: a copy of another run's takes the model's (the reader reads `eastAsia` as true, else false).
+                match f1.east_asia_hint {
+                    Some(true) => self.doc.set_attr(fonts, "w:hint", "eastAsia"),
+                    Some(false) => self.doc.set_attr(fonts, "w:hint", "default"),
+                    None => self.doc.remove_attr(fonts, "w:hint"),
+                }
+            }
             if f0.font != f1.font {
                 for a in ["w:asciiTheme", "w:hAnsiTheme"] {
                     self.doc.remove_attr(fonts, a);
@@ -6676,6 +6982,16 @@ impl Writer<'_> {
             let v = f1.scale.map(|s| s.to_string());
             self.val(rpr, "w", v.as_deref(), o);
         }
+        if f0.fit_text != f1.fit_text {
+            match f1.fit_text.flatten() {
+                Some((width, id)) => {
+                    let e = self.ensure(rpr, "fitText", o);
+                    self.doc.set_attr(e, "w:val", &width.to_string());
+                    self.doc.set_attr(e, "w:id", &id.to_string());
+                }
+                None => self.remove_child(rpr, "fitText"),
+            }
+        }
         if f0.kern != f1.kern {
             let v = f1.kern.map(|k| k.to_string());
             self.val(rpr, "kern", v.as_deref(), o);
@@ -6705,15 +7021,22 @@ impl Writer<'_> {
                 }
             }
         }
-        if f0.tate_chu_yoko != f1.tate_chu_yoko {
+        if f0.tate_chu_yoko != f1.tate_chu_yoko || f0.tate_chu_yoko_fit != f1.tate_chu_yoko_fit {
             match f1.tate_chu_yoko {
                 Some(true) => {
                     let e = self.ensure(rpr, "eastAsianLayout", o);
                     self.doc.set_attr(e, "w:vert", "1");
+                    // 行の幅に合わせる: `w:vertCompress` (Word writes it only when on).
+                    if f1.tate_chu_yoko_fit == Some(true) {
+                        self.doc.set_attr(e, "w:vertCompress", "1");
+                    } else {
+                        self.doc.remove_attr(e, "w:vertCompress");
+                    }
                 }
                 Some(false) => {
                     if let Some(e) = self.doc.child(rpr, "eastAsianLayout") {
                         self.doc.remove_attr(e, "w:vert");
+                        self.doc.remove_attr(e, "w:vertCompress");
                     }
                 }
                 None => {}
@@ -6954,20 +7277,12 @@ impl Writer<'_> {
                 for change in &b.tabs {
                     let e = self.doc.append_element(tabs, &name);
                     let (val, leader) = match change.stop {
-                        None => ("clear", false),
-                        Some(t) => (
-                            match t.align {
-                                ibis_doc_model::TabAlign::Left => "left",
-                                ibis_doc_model::TabAlign::Center => "center",
-                                ibis_doc_model::TabAlign::Right => "right",
-                                ibis_doc_model::TabAlign::Decimal => "decimal",
-                            },
-                            t.leader,
-                        ),
+                        None => ("clear", None),
+                        Some(t) => (t.align.xml_name(), t.leader.xml_name()),
                     };
                     self.doc.set_attr(e, "w:val", val);
-                    if leader {
-                        self.doc.set_attr(e, "w:leader", "dot");
+                    if let Some(leader) = leader {
+                        self.doc.set_attr(e, "w:leader", leader);
                     }
                     self.doc.set_attr(e, "w:pos", &(change.position / 635).to_string());
                 }
@@ -7666,6 +7981,14 @@ fn existing_chart_part(package: &Package, map: &SourceMap, old: &[Block], id: ib
     package.relationships(&source.part)?.into_iter().find(|r| r.id == rid).and_then(|r| r.target_part(&source.part)).ok_or_else(fail)
 }
 
+/// The chart part of the `ordinal`th chart (in document order) of the document `package` was read as (`flow`).
+pub(crate) fn chart_part_by_ordinal(package: &Package, map: &SourceMap, flow: &ibis_doc_model::FlowDocument, ordinal: usize) -> Result<String, Error> {
+    let mut charts = Vec::new();
+    charts_in(&flow.body, &mut charts);
+    let (id, _) = charts.get(ordinal).ok_or_else(|| unsupported("このグラフの変更"))?;
+    existing_chart_part(package, map, &flow.body, *id)
+}
+
 /// The media of the pictures in `blocks` (tables' too).
 fn pictures_in(blocks: &[Block], out: &mut HashSet<MediaId>) {
     for b in blocks {
@@ -8122,3 +8445,23 @@ pub(crate) fn write_custom_properties(
 }
 
 
+
+
+/// Whether a `w:t` needs `xml:space="preserve"`: Word drops a space at the start or end of the text, and runs of spaces.
+fn needs_space_preserve(text: &str) -> bool {
+    text.starts_with(char::is_whitespace) || text.ends_with(char::is_whitespace) || text.contains("  ")
+}
+
+#[cfg(test)]
+mod space_tests {
+    use super::needs_space_preserve;
+
+    #[test]
+    fn spaces_that_word_would_drop_are_preserved() {
+        assert!(needs_space_preserve(" a"));
+        assert!(needs_space_preserve("a "));
+        assert!(needs_space_preserve("a  b"));
+        assert!(!needs_space_preserve("a b"));
+        assert!(!needs_space_preserve("abc"));
+    }
+}

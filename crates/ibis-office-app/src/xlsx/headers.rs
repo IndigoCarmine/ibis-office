@@ -24,7 +24,7 @@ const GRIP: f32 = 4.0;
 
 /// Excel's maximum row height (409 pt).
 pub(crate) const MAX_ROW_HEIGHT_PT: f32 = 409.0;
-/// Excel's maximum column width (255 characters, ~1632 pt).
+/// Excel's maximum column width (255 characters; in points by the workbook's digit: `max_column_width_pt`).
 pub(crate) const MAX_COLUMN_WIDTH_CHARS: f32 = 255.0;
 
 /// Where the headers were last painted, in window pixels: (index, start,
@@ -141,6 +141,15 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// Press on the top-left corner above the row headers and left of the
+    /// column headers (the Select All button): selects every cell of the sheet.
+    pub(crate) fn on_header_corner_down(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.focus_handle.focus(window, cx);
+        self.commit_cell_edit(cx);
+        self.select_all_cells(cx);
+    }
+
     /// Press on a header strip.
     pub(crate) fn on_header_down(&mut self, axis: Axis, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
@@ -159,7 +168,12 @@ impl SlideEditor {
                     }
                 }
                 self.commit_cell_edit(cx);
-                self.wb_mut().header_drag = Some(HeaderDrag { axis, index, start, current: at, moved: false });
+                let scale = geometry.scale.max(1e-4);
+                let max_px = match axis {
+                    Axis::Rows => MAX_ROW_HEIGHT_PT * EMU_PER_POINT as f32 * scale,
+                    Axis::Columns => max_column_width_pt(self.default_font_size_pt()) * EMU_PER_POINT as f32 * scale,
+                };
+                self.wb_mut().header_drag = Some(HeaderDrag { axis, index, start, current: at.clamp(start, start + max_px), moved: false });
                 cx.notify();
             }
             Some(HeaderHit::Header(index)) => {
@@ -259,9 +273,10 @@ impl SlideEditor {
     /// The pointer moves (over the workspace): a line dragged follows it, a
     /// header selection stretches.
     pub(crate) fn on_header_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let default_size = self.default_font_size_pt();
         if event.pressed_button.is_none() {
-            let cell = self.cell_under(event.position);
-            self.show_comment_card(cell, cx);
+            self.comment_pointer_moved(event.position, cx);
+            self.note_pointer_moved(event.position, cx);
         }
         let geometry = self.header_geometry();
         let Some(state) = self.sheet_state_mut() else { return };
@@ -289,7 +304,7 @@ impl SlideEditor {
             let scale = geometry.scale.max(1e-4);
             let max_px = match drag.axis {
                 Axis::Rows => MAX_ROW_HEIGHT_PT * EMU_PER_POINT as f32 * scale,
-                Axis::Columns => MAX_COLUMN_WIDTH_CHARS * 6.4 * EMU_PER_POINT as f32 * scale,
+                Axis::Columns => max_column_width_pt(default_size) * EMU_PER_POINT as f32 * scale,
             };
             let at = match drag.axis {
                 Axis::Columns => f32::from(event.position.x),
@@ -330,7 +345,7 @@ impl SlideEditor {
         let px_size = (drag.current - drag.start).max(0.0);
         let max_emu = match drag.axis {
             Axis::Rows => (MAX_ROW_HEIGHT_PT * EMU_PER_POINT as f32).round() as Emu,
-            Axis::Columns => (MAX_COLUMN_WIDTH_CHARS * 6.4 * EMU_PER_POINT as f32).round() as Emu,
+            Axis::Columns => (max_column_width_pt(self.default_font_size_pt()) * EMU_PER_POINT as f32).round() as Emu,
         };
         let size: Emu = if px_size < 2.0 {
             0
@@ -372,7 +387,9 @@ impl SlideEditor {
             let style = &sheet.styles[cell.style as usize];
             let slot = &mut measures[cell.style as usize];
             let (glyphs, excel_digit, drawn_digit, italic) = slot.get_or_insert_with(|| self.excel_measure(style, &ts));
-            let width = glyphs.width(&cell.text) * *excel_digit / *drawn_digit + *italic + style.indent as f32 * 3.0 * *excel_digit;
+            // The widest of its lines (a line break starts another: issue #17, a cell of 54 lines was fitted to all of them end to end).
+            let text_width = cell.text.split('\n').map(|line| glyphs.width(line.trim_end_matches('\r'))).fold(0.0, f32::max);
+            let width = text_width * *excel_digit / *drawn_digit + *italic + style.indent as f32 * 3.0 * *excel_digit;
             let w = &mut widest[(cell.column - first) as usize];
             *w = w.max(width);
         }
@@ -381,8 +398,10 @@ impl SlideEditor {
                 continue;
             }
             let column = first + i as u32;
-            let size = fitted_width(widest);
-            commands.push(Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Columns, first: column, last: column, size }));
+            // No wider than Excel lets a column be (255 characters).
+            let size = fitted_width(widest).min((max_column_width_pt(self.default_font_size_pt()) * EMU_PER_POINT as f32) as Emu);
+            // Fitted, the column is the sheet's to widen again (not a width set by hand), and the width is saved.
+            commands.push(Command::Sheet(SheetCommand::SetColumnWidthFitted { slide, first: column, last: column, size }));
         }
         crate::debug_timing::report("fit columns: measure", started);
         if commands.is_empty() {
@@ -391,6 +410,7 @@ impl SlideEditor {
         if let Err(err) = self.document.execute(commands) {
             log::warn!("fitting rejected: {err}");
         }
+        self.scroll_columns_horizontally_into_view(first, last);
         cx.notify();
     }
 
@@ -430,9 +450,14 @@ impl SlideEditor {
         let size = style.font_size as f32 / 100.0;
         let excel_digit = digit * size / default_size;
         let drawn_digit = super::sheet_view::text_width_pt("0", style, &self.resources, ts).max(0.1);
-        let width = super::sheet_view::text_width_pt(text, style, &self.resources, ts) * excel_digit / drawn_digit;
+        let width = text.split('\n').map(|line| super::sheet_view::text_width_pt(line.trim_end_matches('\r'), style, &self.resources, ts)).fold(0.0, f32::max) * excel_digit / drawn_digit;
         let italic = if style.italic { 2.0 * size / 12.0 } else { 0.0 };
         width + italic + style.indent as f32 * 3.0 * excel_digit
+    }
+
+    /// The size of the workbook's default font, in points (its digit sets how wide a character of column width is).
+    pub(crate) fn default_font_size_pt(&self) -> f32 {
+        self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref()).map_or(11.0, |s| s.font_size as f32 / 100.0)
     }
 
     /// The header's menu (the right button), for the columns or rows selected.
@@ -591,6 +616,11 @@ impl SlideEditor {
 /// The width a column fitted to text `text_pt` wide gets: Excel shows a
 /// number from text + 4.2 pt (found by trying widths in Excel; `###`
 /// below) and leaves a little more when it fits a column. In quarter points.
+/// The widest a column can be in Excel, in points (255 characters, matching `row_col_size.rs`).
+pub(crate) fn max_column_width_pt(_default_size_pt: f32) -> f32 {
+    MAX_COLUMN_WIDTH_CHARS * 6.4
+}
+
 pub(crate) fn fitted_width(text_pt: f32) -> Emu {
     let pt = ((text_pt + 5.0) * 4.0).ceil() / 4.0;
     (pt * EMU_PER_POINT as f32) as Emu

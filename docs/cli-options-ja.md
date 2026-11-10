@@ -53,11 +53,15 @@ AcaudaOffice [--timing] [--quit-after-first-frame] [<FILE>]
 |---|---|---|
 | `FILE` | ファイルパス | 起動時に開く `.docx`, `.xlsx`, `.pptx` ファイルのパス。 |
 | `--slide` | `<number>` | 起動時に指定したスライド番号（1 始まり）を直接表示します（PowerPoint 向け）。 |
+| `--read-only` | （なし） | 閲覧だけのために開きます。編集はできず、サイドパネルは閉じたままです。 |
 
 **例:**
 ```bash
 # PowerPoint ファイルを開き、最初から 5 枚目のスライドを表示する
 AcaudaOffice --slide 5 presentation.pptx
+
+# 文書を閲覧だけのために開く
+AcaudaOffice --read-only report.docx
 ```
 
 ---

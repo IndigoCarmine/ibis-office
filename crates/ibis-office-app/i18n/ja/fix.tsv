@@ -9,7 +9,6 @@ text-columns.format	列のデータ形式：{format}
 goto-special.done	{count} 個のセルを選択しました。
 edit.refused	この操作はできません（{error}）
 flash-fill.done	フラッシュ フィル: {count} 個のセルに入力しました。
-note.cell	セル {cell} のメモ
 xlsx.protect-sheet	シートの保護…
 xlsx.unprotect-sheet	シート保護の解除…
 xlsx.lock-cells	セルのロック
@@ -39,6 +38,7 @@ app.settings	設定…
 app.file.print	印刷…
 about.version	バージョン {version}
 about.license	AGPL-3.0-only または商用ライセンスで提供しています。
+about.update-available	新しいバージョンがあります。
 xlsx.print-options	印刷オプション
 xlsx.print.gridlines	枠線
 xlsx.print.headings	行列見出し
@@ -59,7 +59,7 @@ fix.chart-edit.bar-pie	補助棒
 fix.chart-edit.split-series	分割の基準
 fix.chart-edit.percent	％
 fix.chart-edit.split-position-value	分割位置 / 値
-fix.chart-edit.second-plot-size	補助プロットのサイズ (%)
+fix.chart-edit.second-plot-size	補助プロットのサイズ
 fix.chart-edit.enter-number-split-position-value	分割位置 / 値には数を入れてください。
 fix.chart-edit.enter-integer-between-5-200	補助プロットのサイズには 5 から 200 の整数を入れてください。
 pptx.insert-chart.stock-hlc	株価 (高値-安値-終値)
@@ -118,11 +118,11 @@ xlsx.autorecover-settings	自動回復の設定…
 xlsx.autorecover.settings-title	自動回復の設定
 xlsx.autorecover.section-general	全般設定
 xlsx.autorecover.enabled-label	次の間隔で自動回復用データを保存する
-xlsx.autorecover.interval-label	保存間隔:
+xlsx.autorecover.interval-label	保存間隔
 xlsx.autorecover.interval-minutes-unit	分
 xlsx.autorecover.keep-unsaved-label	保存しないで終了する場合、最後に自動回復されたバージョンを残す
 xlsx.autorecover.section-location	保存先の場所
-xlsx.autorecover.location-label	自動回復用ファイルの場所:
+xlsx.autorecover.location-label	自動回復用ファイルの場所
 xlsx.autorecover.reset-location	既定の場所に戻す
 xlsx.autorecover.section-workbook	現在のブック
 xlsx.autorecover.disable-workbook-label	このブックの自動回復を行わない
@@ -158,13 +158,13 @@ xlsx.backupsave.default-loc-desc	新規ブックを保存する際の既定の�
 xlsx.backupsave.reset-default-loc	既定値に戻す
 xlsx.backupsave.section-backup	バックアップ ファイルの作成
 xlsx.backupsave.always-backup-label	上書き保存時に常にバックアップ ファイルを作成する
-xlsx.backupsave.backup-format-label	バックアップ形式:
+xlsx.backupsave.backup-format-label	バックアップ形式
 xlsx.backupsave.format-xlk	Excel 互換 (.xlk)
 xlsx.backupsave.format-xlsx	Excel ブック (.xlsx)
-xlsx.backupsave.backup-location-label	保存場所:
+xlsx.backupsave.backup-location-label	保存場所
 xlsx.backupsave.loc-same-folder	元のファイルと同じ場所
 xlsx.backupsave.loc-custom-folder	専用フォルダー
-xlsx.backupsave.custom-folder-label	バックアップ先フォルダー:
+xlsx.backupsave.custom-folder-label	バックアップ先フォルダー
 xlsx.backupsave.section-workbook	現在のブックの設定
 xlsx.backupsave.wb-backup-label	このブックで常にバックアップを作成する
 xlsx.backupsave.backup-now-btn	今すぐバックアップを作成
@@ -180,10 +180,10 @@ xlsx.backupsave.save-settings-btn	設定を保存
 xlsx.open-and-repair	破損ブックの修復…
 xlsx.repair.title	破損ブックの修復
 xlsx.repair.desc	破損して正常に開けない Excel ブックの修復、または数式・値のデータ抽出を行います。
-xlsx.repair.file-label	修復対象のファイル:
+xlsx.repair.file-label	修復対象のファイル
 xlsx.repair.browse-btn	参照…
 xlsx.repair.prompt-file	修復するブックを選択
-xlsx.repair.mode-label	修復方法の選択:
+xlsx.repair.mode-label	修復方法の選択
 xlsx.repair.mode-repair	修復（推奨）
 xlsx.repair.mode-repair-desc	できる限りのデータ、書式、数式を修復して開きます。
 xlsx.repair.mode-formulas	データの抽出: 数式を回復
@@ -258,7 +258,7 @@ pptx.insert-chart.contour	等高線
 pptx.insert-chart.contour-wireframe	ワイヤーフレーム等高線
 xlsx.pivot-chart-insert	ピボットグラフ…
 xlsx.pivot-chart	ピボットグラフ
-xlsx.pivot-chart-source	連動ピボットテーブル:
+xlsx.pivot-chart-source	連動ピボットテーブル
 xlsx.pivot-chart-open-fields	ピボットテーブルのフィールド…
 xlsx.pivot-chart-inserted	ピボットグラフを挿入しました
 xlsx.phonetic-toggle	ふりがなの表示/非表示
@@ -343,8 +343,6 @@ fix.validation.enter-source	元の値を入力してください。
 fix.validation.enter-formula	数式を入力してください。
 fix.validation.validation-rule-set	入力規則を設定しました。
 fix.validation.validation-rules-cleared	入力規則を削除しました。
-fix.notes.type-note	メモを入力
-fix.notes.delete-note	メモの削除
 fix.protection.cell-chart-you-re-trying	変更しようとしているセルやグラフは保護されているシート上にあります。変更するには、シートの保護を解除してください。パスワードの入力が必要な場合もあります。
 fix.protection.select-locked-cells	ロックされたセル範囲の選択
 fix.protection.select-unlocked-cells	ロックされていないセル範囲の選択
@@ -454,7 +452,7 @@ fix.picture-panel.rotate-left-90	左へ 90°
 fix.picture-panel.rotate-right-90	右へ 90°
 fix.picture-panel.flip-horizontal	左右反転
 fix.picture-panel.flip-vertical	上下反転
-fix.picture-panel.crop	切り抜き（％）
+fix.picture-panel.crop	切り抜き
 fix.picture-panel.apply-crop	切り抜きを適用
 fix.picture-panel.enter-crop-number-0-up	切り抜きは 0 以上 100 未満の数値（％）で入力してください。
 fix.picture-panel.top-plus-bottom-left-plus	上下、左右それぞれの合計は 100％ 未満にしてください。
@@ -489,3 +487,12 @@ fix.formula-bar.collapse	数式バーを折りたたむ
 xlsx.chart-type	グラフの種類
 fix.validation.continue	続けますか？
 fix.validation.cancel	キャンセル
+fix.move.overwrite	目的のセルに既にデータがあります。置き換えますか?
+fix.move.ok	OK
+fix.menu.search-placeholder	検索
+fix.menu.not-found	みつかりません
+help.check-update	更新を確認
+fix.update.latest	ibisOffice は最新です。
+fix.update.latest.detail	今のバージョンは {current} です。
+fix.update.check-failed	更新を確かめられませんでした。
+fix.update.check-failed.detail	インターネットに接続できているか確かめてから、もう一度試してください。

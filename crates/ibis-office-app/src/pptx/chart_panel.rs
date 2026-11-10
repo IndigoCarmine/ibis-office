@@ -6,10 +6,11 @@
 //! typed in and applied as one change (see `save/pptx_chart.rs` for what
 //! saving writes).
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputState,InputEvent};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{
     AxisKind, Chart, ChartType, Color, Command, ErrorBarType, ErrorBarValueType, ErrorBars, Fill, Grouping, LabelPosition, Number,
     ShapeId, ShapeKind, SlideId, Stroke, TrendlineType, chart::{Marker, MarkerSymbol},
@@ -18,16 +19,13 @@ use ibis_doc_model::{
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 
+/// The height of the workbook's grid in the pane.
+const CHART_GRID_HEIGHT: f32 = 280.;
+
 /// The panel's fields.
 pub(crate) struct ChartPanel {
     target: (SlideId, ShapeId),
     pub(crate) title: Option<Entity<InputState>>,
-    /// The series' names, in the chart's order (all groups).
-    pub(crate) names: Vec<Entity<InputState>>,
-    /// The categories (the first series' that has them).
-    pub(crate) categories: Vec<Entity<InputState>>,
-    /// Each series' values.
-    pub(crate) values: Vec<Vec<Entity<InputState>>>,
     /// Value axis scaling & units.
     pub(crate) val_min: Option<Entity<InputState>>,
     pub(crate) val_max: Option<Entity<InputState>>,
@@ -35,24 +33,31 @@ pub(crate) struct ChartPanel {
     pub(crate) val_reversed: bool,
     pub(crate) val_log_scale: bool,
     error: Option<SharedString>,
+    subscriptions:Vec<Subscription>,
+    /// The workbook's grid (the spreadsheet screen's editor, grid only) shown in the panel: the chart's data is edited there alone.
+    pub(crate) grid: Option<Entity<SlideEditor>>,
 }
 
+fn chart_field_subscription(input:&Entity<InputState>,w:&mut Window,cx:&mut Context<SlideEditor>)->Subscription{
+ cx.subscribe_in(input,w,|e,_,ev:&InputEvent,w,cx|if matches!(ev,InputEvent::Change|InputEvent::PressEnter{..}){e.apply_embedded_chart_data(w,cx);})
+}
+impl SlideEditor {
+ fn apply_embedded_chart_data(&mut self,w:&mut Window,cx:&mut Context<Self>){if self.is_document(){self.apply_doc_chart_panel(w,cx);}else{self.apply_chart_panel(w,cx);}}
+}
 impl ChartPanel {
     /// The fields for `chart` (`target`: where it is, for the editor that holds the panel).
     pub(crate) fn new(chart: &Chart, target: (SlideId, ShapeId), window: &mut Window, cx: &mut Context<SlideEditor>) -> Self {
         let mut field = |text: String| cx.new(|cx| InputState::new(window, cx).default_value(text));
         let title = chart.title.as_ref().map(|t| field(t.text.clone()));
-        let series: Vec<_> = chart.groups.iter().flat_map(|g| g.series.iter()).collect();
-        let names = series.iter().map(|s| field(s.name.clone())).collect();
-        let categories = series.iter().find(|s| !s.categories.is_empty()).map(|s| s.categories.iter().map(|c| field(c.clone())).collect()).unwrap_or_default();
-        let values = series.iter().map(|s| s.values.iter().map(|v| field(shown(*v))).collect()).collect();
         let val_axis = chart.axes.iter().find(|a| a.kind == AxisKind::Value);
         let val_min = val_axis.map(|a| field(shown(a.min)));
         let val_max = val_axis.map(|a| field(shown(a.max)));
         let val_major = val_axis.map(|a| field(shown(a.major_unit)));
         let val_reversed = val_axis.is_some_and(|a| a.reversed);
         let val_log_scale = val_axis.is_some_and(|a| a.log_base.is_some());
-        ChartPanel { target, title, names, categories, values, val_min, val_max, val_major, val_reversed, val_log_scale, error: None }
+        let mut panel=ChartPanel { target, title, val_min, val_max, val_major, val_reversed, val_log_scale, error: None,subscriptions:vec![], grid: None };
+        let fields=panel.title.iter().chain(panel.val_min.iter()).chain(panel.val_max.iter()).chain(panel.val_major.iter()).cloned().collect::<Vec<_>>();
+        for input in fields{panel.subscriptions.push(chart_field_subscription(&input,window,cx));}panel
     }
 
     /// `chart` with what was typed in the fields; the message when a value is not a number.
@@ -62,28 +67,7 @@ impl ChartPanel {
         if let (Some(t), Some(field)) = (chart.title.as_mut(), &panel.title) {
             t.text = read(field);
         }
-        let old_categories: Option<Vec<String>> = chart.groups.iter().flat_map(|g| g.series.iter()).find(|s| !s.categories.is_empty()).map(|s| s.categories.clone());
-        let categories: Vec<String> = panel.categories.iter().map(read).collect();
         let mut bad = false;
-        let mut index = 0;
-        for series in chart.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
-            if let Some(name) = panel.names.get(index) {
-                series.name = read(name);
-            }
-            // The same categories are every series'.
-            if old_categories.as_ref().is_some_and(|c| *c == series.categories) && categories.len() == series.categories.len() {
-                series.categories = categories.clone();
-            }
-            if let Some(fields) = panel.values.get(index) {
-                for (v, field) in series.values.iter_mut().zip(fields) {
-                    match typed(&read(field)) {
-                        Ok(x) => *v = x,
-                        Err(()) => bad = true,
-                    }
-                }
-            }
-            index += 1;
-        }
         let mut min_val = None;
         let mut max_val = None;
         let mut major_val = None;
@@ -201,14 +185,15 @@ impl SlideEditor {
     pub(crate) fn open_chart_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.end_text_edit(window, cx);
         let Some((slide, shape, chart)) = self.selected_chart() else { return };
-        // A chart of a new kind (chartEx): its data is edited in its workbook (データの編集).
-        if chart.ex.is_some() {
-            return self.open_chart_data(window, cx);
-        }
-        let panel = ChartPanel::new(&chart, (slide, shape), window, cx);
+        let mut panel = ChartPanel::new(&chart, (slide, shape), window, cx);
+        // The data is the workbook's: its grid is shown in the panel (a chart with no workbook of its own gets one made from its data).
+        panel.grid = self.chart_data_grid(slide, shape, window, cx);
         if let Some(s) = self.pptx_mut() {
             s.timing_panel = None; s.section_panel = None; s.gradient_panel = None; s.shadow_panel = None; s.glow_panel = None; s.paragraph_panel = None; s.find = None; s.size_panel = None; s.insets_panel = None; s.crop_panel = None; s.frame_panel = None; s.comments = None; s.header_footer = None;
             s.chart_panel = Some(panel);
+        }
+        if self.pptx().and_then(|s| s.chart_panel.as_ref()).is_none_or(|p| p.grid.is_none()) && let Some(s) = self.pptx_mut() {
+            s.chart_data = None;
         }
         self.sidebar_open = true;
         cx.notify();
@@ -218,6 +203,10 @@ impl SlideEditor {
         let Some(panel) = self.pptx().and_then(|s| s.chart_panel.as_ref()) else { return };
         let (slide, shape) = panel.target;
         let Some(ShapeKind::Chart(chart)) = self.presentation().slide(slide).and_then(|s| s.shape(shape)).map(|s| s.kind.clone()) else { return };
+        // A chartEx chart's data is the workbook's grid alone (kept up to date as it is edited): the fields hold nothing of it.
+        if chart.ex.is_some() {
+            return;
+        }
         let chart = match panel.apply_to(*chart, cx) {
             Ok(chart) => chart,
             Err(error) => {
@@ -231,7 +220,7 @@ impl SlideEditor {
         if current != Some(ShapeKind::Chart(Box::new(chart.clone()))) {
             self.run(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(chart))) }], cx);
         }
-        self.close_chart_panel(window, cx);
+        cx.notify();
     }
 
     /// データラベル: 位置や有無を設定。
@@ -457,6 +446,7 @@ impl SlideEditor {
     pub(crate) fn close_chart_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(s) = self.pptx_mut() {
             s.chart_panel = None;
+            s.chart_data = None;
         }
         self.focus_handle.focus(window, cx);
         cx.notify();
@@ -495,37 +485,22 @@ impl ChartPanel {
 /// データの編集's panel: the grid of the chart's data, its title and value axis.
 pub(crate) fn chart_panel_sidebar(p: &ChartPanel, actions: ChartPanelActions, cx: &mut Context<SlideEditor>) -> SidebarPanel {
     {
-        let cell = |e: &Entity<InputState>| div().w(px(84.)).flex_none().child(Input::new(e).small());
-        let label = |t: &str| div().w(px(84.)).flex_none().text_size(px(12.)).text_color(rgb(0x5f6368)).child(crate::shell::i18n::text(t));
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        let cell = |e: &Entity<InputState>| div().w(px(84.)).flex_none().child(crate::shell::chrome::text_field(e).full_width());
+        let label = |t: &str| div().w(px(84.)).flex_none().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text(t));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         if let Some(title) = &p.title {
-            body = body.child(div().text_size(px(13.)).child(crate::shell::i18n::text("_shell.title"))).child(Input::new(title).small());
+            body = body.child(div().text_sm().child(crate::shell::i18n::text("_shell.title"))).child(crate::shell::chrome::text_field(title).full_width());
         }
-        // Names across the top, then a row per category.
-        let mut grid = v_flex().gap_1();
-        let mut head = h_flex().gap_1().child(label("pptx.pivot.category"));
-        for name in &p.names {
-            head = head.child(cell(name));
+        // The data is the workbook's: the spreadsheet screen's own grid (cells, selection, editing, keys), embedded.
+        if let Some(grid) = &p.grid {
+            let focus = grid.read(cx).focus_handle.clone();
+            body = body.child(div().text_sm().child(crate::shell::i18n::text("pptx.chart-panel.series-names-categories-values")))
+                .child(div().id("pptx-chart-workbook-grid").w_full().h(px(CHART_GRID_HEIGHT)).flex().flex_col().overflow_hidden().border_1().border_color(rgb(0xd0d4d9))
+                    .on_mouse_down(MouseButton::Left, move |_, w, cx| focus.focus(w, cx))
+                    .child(grid.clone()));
         }
-        grid = grid.child(head);
-        let rows = p.values.iter().map(Vec::len).max().unwrap_or(0);
-        for r in 0..rows {
-            let mut row = h_flex().gap_1();
-            row = match p.categories.get(r) {
-                Some(c) => row.child(cell(c)),
-                None => row.child(label(&format!("{}", r + 1))),
-            };
-            for series in &p.values {
-                row = match series.get(r) {
-                    Some(v) => row.child(cell(v)),
-                    None => row.child(div().w(px(84.)).flex_none()),
-                };
-            }
-            grid = grid.child(row);
-        }
-        body = body.child(div().text_size(px(12.)).child(crate::shell::i18n::text("pptx.chart-panel.series-names-categories-values"))).child(div().id("pptx-chart-grid").overflow_x_scroll().child(grid));
         if p.val_min.is_some() || p.val_max.is_some() || p.val_major.is_some() {
-            body = body.child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("pptx.chart.axis-settings")));
+            body = body.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("pptx.chart.axis-settings")));
             let mut axis_fields = h_flex().gap_2();
             if let Some(min_in) = &p.val_min {
                 axis_fields = axis_fields.child(v_flex().gap_1().child(label("pptx.chart.axis.min")).child(cell(min_in)));
@@ -538,32 +513,15 @@ pub(crate) fn chart_panel_sidebar(p: &ChartPanel, actions: ChartPanelActions, cx
             }
             body = body.child(axis_fields);
 
-            let rev_mark = if p.val_reversed { "☑ " } else { "☐ " };
-            let rev_label = format!("{}{}", rev_mark, crate::shell::i18n::text("pptx.chart.axis.reversed"));
-            let rev_btn = Button::new("pptx-chart-val-reversed")
-                .small()
-                .ghost()
-                .label(rev_label)
-                .on_click(cx.listener(move |this, _, _, cx| (actions.reversed)(this, cx)));
-            let log_mark = if p.val_log_scale { "☑ " } else { "☐ " };
-            let log_label = format!("{}{}", log_mark, crate::shell::i18n::text("pptx.chart.axis.log-scale"));
-            let log_btn = Button::new("pptx-chart-val-log")
-                .small()
-                .ghost()
-                .label(log_label)
-                .on_click(cx.listener(move |this, _, _, cx| (actions.log)(this, cx)));
+            let rev_btn = crate::shell::chrome::checkbox_button("pptx-chart-val-reversed", crate::shell::i18n::text("pptx.chart.axis.reversed"), p.val_reversed, false, cx.listener(move |this, _, w, cx| {(actions.reversed)(this,cx);(actions.apply)(this,w,cx);}));
+            let log_btn = crate::shell::chrome::checkbox_button("pptx-chart-val-log", crate::shell::i18n::text("pptx.chart.axis.log-scale"), p.val_log_scale, false, cx.listener(move |this, _, w, cx| {(actions.log)(this,cx);(actions.apply)(this,w,cx);}));
             body = body.child(h_flex().gap_2().child(rev_btn).child(log_btn));
         }
         if let Some(error) = &p.error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error.clone()));
+            body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error.clone()));
         }
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("pptx-chart-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(move |e, _, w, cx| (actions.apply)(e, w, cx))))
-                .child(Button::new("pptx-chart-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(move |e, _, w, cx| (actions.cancel)(e, w, cx)))),
-        );
-        SidebarPanel { title: crate::shell::i18n::text("pptx.chart-data.chart-data"), body: body.into_any_element() }
+        SidebarPanel{title:crate::shell::i18n::text("pptx.chart-data.chart-data"),body:body.into_any_element()}
+
     }
 }
 

@@ -431,7 +431,7 @@ impl Decimal {
     }
 }
 
-/// General, in at most `width` characters (11 in a cell), as Excel shows
+/// General, in at most `width` characters excluding the minus sign (11 in a cell), as Excel shows
 /// it: plain digits, rounded to fit, or the exponent form for numbers too
 /// large or small.
 pub fn general(v: f64, width: usize) -> String {
@@ -440,7 +440,9 @@ pub fn general(v: f64, width: usize) -> String {
         return "0".into();
     }
     let negative = v < 0.0;
-    let room = width - usize::from(negative);
+    // ECMA-376 numFmt / General floating-point rule excludes the minus sign.
+    // https://learn.microsoft.com/dotnet/api/documentformat.openxml.spreadsheet.numberingformat
+    let room = width;
     let sign = if negative { "-" } else { "" };
     // Plain digits, rounded to fit: the text and the significant digits it shows.
     let plain = (d.point <= room as i32).then(|| {
@@ -845,7 +847,7 @@ fn general_section(value: f64, section: &Section, out: &mut Formatted) -> String
             // Too long to show in digits: the exponent form, as it is.
             if plain.len() > 255 { general(value.abs(), 11) } else { dbnum::general(&plain, level) }
         }
-        None => general(value.abs(), 11 - usize::from(value < 0.0)),
+        None => general(value.abs(), 11),
     };
     if value < 0.0 && digits.chars().any(|c| c != '0' && c != '〇' && c != '０' && c != '.') {
         text.push('-');
@@ -911,8 +913,10 @@ fn fraction_section(value: f64, section: &Section, l: &Layout, out: &mut Formatt
         whole += 1.0;
         num = 0;
     }
-    // Excel shows ### for a numerator it cannot hold.
-    if num > i32::MAX as u64 || (!has_whole && x >= 2_147_483_648.0) {
+    // Excel shows ### for a numerator it cannot hold: over 32767 with no whole part and one numerator place beside a fixed
+    // denominator (TEXT(45000.75,"?/4") is #VALUE!, where "?/?" goes on to 1999999/2 for 999999.5).
+    let fixed_den = matches!(f.denominator, Denominator::Fixed(_));
+    if num > i32::MAX as u64 || (!has_whole && x >= 2_147_483_648.0) || (!has_whole && fixed_den && num > 32767 && f.numerator.len() == 1) {
         out.overflow = true;
         return String::new();
     }
@@ -1139,12 +1143,22 @@ fn date_section(value: f64, section: &Section, date1904: bool, mut out: Formatte
                         None => text.push_str(DAYS[dow]),
                     },
                 },
-                DatePart::JaDay(n) => {
-                    text.push_str(DAYS_JA[dow]);
-                    if *n >= 4 {
-                        text.push_str("曜日");
+                // `aaa`/`aaaa` are the locale's short/long weekday: Japanese by default and under `[$-411]`, but under
+                // another locale tag they are `ddd`/`dddd` (Excel: `[$-409]aaaa` is Wednesday, `[$-407]aaaa` Mittwoch).
+                DatePart::JaDay(n) => match section.locale {
+                    Some(l) if l & 0x3FF != 0x11 => match (names, *n >= 4) {
+                        (Some(nm), true) => text.push_str(nm.days[dow]),
+                        (Some(nm), false) => text.push_str(nm.days_short[dow]),
+                        (None, true) => text.push_str(DAYS[dow]),
+                        (None, false) => text.push_str(&DAYS[dow][..3]),
+                    },
+                    _ => {
+                        text.push_str(DAYS_JA[dow]);
+                        if *n >= 4 {
+                            text.push_str("曜日");
+                        }
                     }
-                }
+                },
                 DatePart::Hour(n) => {
                     let v = if twelve { hour12(h) } else { h };
                     if *n >= 2 { text.push_str(&num(format!("{:02}", v), false)) } else { text.push_str(&num(v.to_string(), false)) }
@@ -1241,6 +1255,40 @@ mod tests {
         let v = CellValue::Number(46308.0 + 14.0 / 24.0 + 5.0 / 1440.0);
         let show = |code: &str| format(&v, code, false).text;
         assert_eq!(show("[$-409]dddd, mmmm d, yyyy"), "Tuesday, October 13, 2026");
+        // Japanese locale: dddd/ddd/mmmm/mmm/mmmmm as Excel (ja) shows them (measured, Excel 16.0 build 20527).
+        assert_eq!(show("[$-411]dddd"), "火曜日");
+        assert_eq!(show("[$-411]ddd"), "火");
+        assert_eq!(show("[$-411]m/d(ddd)"), "10/13(火)");
+        assert_eq!(show("[$-ja-JP]dddd"), "火曜日");
+        assert_eq!(show("[$-1010411]dddd"), "火曜日");
+        assert_eq!(show("[$-411]mmmm d"), "10月 13");
+        assert_eq!(show("[$-411]mmm d"), "10 13");
+        assert_eq!(show("[$-411]mmmmm"), "1");
+        // Eras with a locale and a weekday (Excel 16.0 build 20527 on 2026-10-14: R8.10.14 水 and the like).
+        let w = CellValue::Number(46309.6);
+        let showw = |code: &str| format(&w, code, false).text;
+        assert_eq!(showw("[$-ja-JP]ge.m.d ddd"), "R8.10.14 水");
+        assert_eq!(showw("[$-411]ge.m.d ddd"), "R8.10.14 水");
+        assert_eq!(showw("[$-ja-JP]gggee/m/d(ddd)"), "令和08/10/14(水)");
+        assert_eq!(showw("[$-411]ggge\"年\"m\"月\"d\"日\" dddd"), "令和8年10月14日 水曜日");
+        assert_eq!(showw("ge.m.d ddd"), "R8.10.14 Wed");
+        assert_eq!(showw("ge.m.d aaa"), "R8.10.14 水");
+        assert_eq!(showw("[$-ja]ddd"), "水");
+        assert_eq!(showw("[$-JP]ddd"), "Wed");
+        assert_eq!(showw("[$-0411]dddd"), "水曜日");
+        assert_eq!(showw("[$-409]ge.m.d ddd").ends_with("Wed"), true);
+        // Without a locale: dddd is English, aaaa Japanese; with another locale tag aaaa follows the locale.
+        assert_eq!(show("dddd"), "Tuesday");
+        assert_eq!(show("ddd"), "Tue");
+        assert_eq!(show("aaaa"), "火曜日");
+        assert_eq!(show("aaa"), "火");
+        assert_eq!(show("[$-409]aaaa"), "Tuesday");
+        assert_eq!(show("[$-409]aaa"), "Tue");
+        assert_eq!(show("[$-en-US]aaaa"), "Tuesday");
+        assert_eq!(show("[$-407]aaaa"), "Dienstag");
+        assert_eq!(show("[$-804]aaa"), "周二");
+        assert_eq!(show("yyyy/m/d aaaa"), "2026/10/13 火曜日");
+        assert_eq!(show("[$-409]yyyy/m/d aaaa"), "2026/10/13 Tuesday");
         assert_eq!(show("[$-407]dddd, d. mmmm yyyy"), "Dienstag, 13. Oktober 2026");
         assert_eq!(show("[$-407]ddd d mmm"), "Di 13 Okt");
         assert_eq!(show("[$-40C]dddd d mmmm yyyy"), "mardi 13 octobre 2026");
@@ -1402,6 +1450,9 @@ mod tests {
     #[test]
     fn generals() {
         assert_eq!(general(0.3333333333333333, 11), "0.333333333");
+        assert_eq!(general(1234567890.0,11),"1234567890");
+        assert_eq!(general(12345678901.0,11),"12345678901");
+        assert_eq!(general(-12345678901.0,11),"-12345678901");
         assert_eq!(general(123456789012.0, 11), "1.23457E+11");
         assert_eq!(general(1230000000000000.0, 11), "1.23E+15");
         assert_eq!(general(1e-10, 11), "1E-10");
@@ -1434,6 +1485,9 @@ mod tests {
         assert_eq!(format(&CellValue::Number(0.5), "* # ?/?", false).text, " 1/2");
         assert_eq!(f(999999.5, "?/?"), "1999999/2");
         assert_eq!(f(12345678.0, "?/?"), "12345678/1");
+        // A fixed denominator with one numerator place and no whole part holds no more than 32767 (### in a cell, #VALUE! in TEXT).
+        assert!(format(&CellValue::Number(45000.75), "?/4", false).overflow);
+        assert_eq!(f(8191.75, "?/4"), "32767/4");
     }
 
     #[test]

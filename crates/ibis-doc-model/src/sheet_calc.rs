@@ -43,6 +43,11 @@ pub fn sheet_of_slide(slide: &crate::model::Slide) -> Option<&std::sync::Arc<She
     })
 }
 
+/// Defined names of `presentation`'s workbook.
+pub(crate) fn collect_defined_names(presentation: &Presentation) -> Vec<DefinedName> {
+    presentation.workbook.as_deref().map(|wb| wb.names.clone()).unwrap_or_default()
+}
+
 impl<'a> BookView<'a> {
     pub fn new(presentation: &'a Presentation) -> Self {
         let mut sheets = Vec::new();
@@ -111,6 +116,18 @@ impl<'a> BookView<'a> {
         for (i, s) in self.sheets.iter().enumerate() {
             if let Some(sheet) = s.sheet {
                 out.extend(sheet.cells.iter().filter(|c| c.formula.as_deref().is_some_and(|f| f.as_bytes().windows(6).any(|w| w.eq_ignore_ascii_case(b"IMAGE(")))).map(|c| (i, c.row, c.column)));
+            }
+        }
+        out
+    }
+
+    /// The cells whose formula calls the function `name` (upper case, without the parenthesis).
+    pub fn formula_cells_calling(&self, name: &str) -> Vec<CellId> {
+        let call = format!("{name}(");
+        let mut out = Vec::new();
+        for (i, s) in self.sheets.iter().enumerate() {
+            if let Some(sheet) = s.sheet {
+                out.extend(sheet.cells.iter().filter(|c| c.formula.as_deref().is_some_and(|f| f.as_bytes().windows(call.len()).any(|w| w.eq_ignore_ascii_case(call.as_bytes())))).map(|c| (i, c.row, c.column)));
             }
         }
         out

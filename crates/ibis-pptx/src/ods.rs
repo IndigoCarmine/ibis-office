@@ -921,8 +921,8 @@ pub fn to_xlsx(data: &[u8]) -> Result<Vec<u8>, Error> {
                     col_default_style.push((col, col + repeat - 1, s.to_string()));
                 }
                 if width.is_some() || hidden {
-                    // The width in characters of the digit width the reader uses (0.55 of the font size).
-                    let digit = (default_font.1 * 0.55).round().max(1.0);
+                    // The width in characters of the digit width the reader uses.
+                    let digit = crate::xlsx::EXCEL_METRICS.digit_pt(Some(default_font.0.as_str()), default_font.1);
                     let chars = width.map_or(48.0, |w| w) / digit;
                     cols.push_str(&format!("<col min=\"{}\" max=\"{}\" width=\"{}\" customWidth=\"1\"{}/>", col + 1, col + repeat, ibis_calc::number_to_xml((chars * 256.0).ceil() / 256.0), if hidden { " hidden=\"1\"" } else { "" }));
                 }

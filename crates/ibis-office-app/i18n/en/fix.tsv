@@ -85,9 +85,6 @@ fix.validation.enter-source	Enter the source.
 fix.validation.enter-formula	Enter a formula.
 fix.validation.validation-rule-set	The validation rule is set.
 fix.validation.validation-rules-cleared	The validation rules are cleared.
-note.cell	Note on {cell}
-fix.notes.type-note	Type a note
-fix.notes.delete-note	Delete Note
 xlsx.protect-sheet	Protect Sheet…
 xlsx.unprotect-sheet	Unprotect Sheet…
 xlsx.lock-cells	Lock Cell
@@ -110,7 +107,7 @@ fix.protection.edit-scenarios	Edit scenarios
 fix.protection.password-optional	Password (optional)
 fix.protection.reenter-password	Reenter password
 fix.protection.protect-worksheet-contents-locked	Protect worksheet and contents of locked cells
-fix.protection.allow-all-users-worksheet	Allow all users of this worksheet to:
+fix.protection.allow-all-users-worksheet	Allow all users of this worksheet to
 fix.protection.unprotect-sheet	Unprotect Sheet
 fix.protection.protect-sheet	Protect Sheet
 fix.protection.unprotect	Unprotect
@@ -212,12 +209,13 @@ fix.symbols.circled-numbers-units	Circled Numbers and Units
 fix.symbols.symbols-special-characters	Symbols and Special Characters
 about.version	Version {version}
 about.license	Provided under AGPL-3.0-only or a commercial license.
+about.update-available	A new version is available.
 fix.picture-panel.rotate-flip	Rotate and Flip
 fix.picture-panel.rotate-left-90	Rotate Left 90°
 fix.picture-panel.rotate-right-90	Rotate Right 90°
 fix.picture-panel.flip-horizontal	Flip Horizontal
 fix.picture-panel.flip-vertical	Flip Vertical
-fix.picture-panel.crop	Crop (%)
+fix.picture-panel.crop	Crop
 fix.picture-panel.apply-crop	Apply Crop
 fix.picture-panel.enter-crop-number-0-up	Enter the crop as a number from 0 up to under 100 (%).
 fix.picture-panel.top-plus-bottom-left-plus	Top plus bottom, and left plus right, must each be under 100%.
@@ -250,7 +248,7 @@ fix.chart-edit.bar-pie	Bar of Pie
 fix.chart-edit.split-series	Split Series By
 fix.chart-edit.percent	%
 fix.chart-edit.split-position-value	Split Position / Value
-fix.chart-edit.second-plot-size	Second Plot Size (%)
+fix.chart-edit.second-plot-size	Second Plot Size
 fix.chart-edit.enter-number-split-position-value	Enter a number for the split position / value.
 fix.chart-edit.enter-integer-between-5-200	Enter an integer between 5 and 200 for the second plot size.
 pptx.insert-chart.stock-hlc	Stock (High-Low-Close)
@@ -309,11 +307,11 @@ xlsx.autorecover-settings	AutoRecover Settings…
 xlsx.autorecover.settings-title	AutoRecover Settings
 xlsx.autorecover.section-general	General Settings
 xlsx.autorecover.enabled-label	Save AutoRecover information every
-xlsx.autorecover.interval-label	Interval:
+xlsx.autorecover.interval-label	Interval
 xlsx.autorecover.interval-minutes-unit	minutes
 xlsx.autorecover.keep-unsaved-label	Keep the last AutoRecovered version if I close without saving
 xlsx.autorecover.section-location	File Location
-xlsx.autorecover.location-label	AutoRecover file location:
+xlsx.autorecover.location-label	AutoRecover file location
 xlsx.autorecover.reset-location	Reset to Default
 xlsx.autorecover.section-workbook	Current Workbook
 xlsx.autorecover.disable-workbook-label	Disable AutoRecover for this workbook only
@@ -349,13 +347,13 @@ xlsx.backupsave.default-loc-desc	Specify the default folder when saving new work
 xlsx.backupsave.reset-default-loc	Reset to Default
 xlsx.backupsave.section-backup	Create Backup Copy
 xlsx.backupsave.always-backup-label	Always create backup copy when saving
-xlsx.backupsave.backup-format-label	Backup format:
+xlsx.backupsave.backup-format-label	Backup format
 xlsx.backupsave.format-xlk	Excel Compatible (.xlk)
 xlsx.backupsave.format-xlsx	Excel Workbook (.xlsx)
-xlsx.backupsave.backup-location-label	Location:
+xlsx.backupsave.backup-location-label	Location
 xlsx.backupsave.loc-same-folder	Same as original file
 xlsx.backupsave.loc-custom-folder	Dedicated folder
-xlsx.backupsave.custom-folder-label	Backup destination folder:
+xlsx.backupsave.custom-folder-label	Backup destination folder
 xlsx.backupsave.section-workbook	Current Workbook Settings
 xlsx.backupsave.wb-backup-label	Always create backup for this workbook
 xlsx.backupsave.backup-now-btn	Create Backup Now
@@ -371,10 +369,10 @@ xlsx.backupsave.save-settings-btn	Save Settings
 xlsx.open-and-repair	Repair Damaged Workbook…
 xlsx.repair.title	Repair Damaged Workbook
 xlsx.repair.desc	Repair corrupted Excel workbooks or extract formulas and values.
-xlsx.repair.file-label	Workbook to repair:
+xlsx.repair.file-label	Workbook to repair
 xlsx.repair.browse-btn	Browse…
 xlsx.repair.prompt-file	Select workbook to repair
-xlsx.repair.mode-label	Repair options:
+xlsx.repair.mode-label	Repair options
 xlsx.repair.mode-repair	Repair (Recommended)
 xlsx.repair.mode-repair-desc	Recover as much data, formatting, and formulas as possible.
 xlsx.repair.mode-formulas	Extract Data: Recover Formulas
@@ -449,7 +447,7 @@ pptx.insert-chart.contour	Contour
 pptx.insert-chart.contour-wireframe	Wireframe Contour
 xlsx.pivot-chart-insert	PivotChart…
 xlsx.pivot-chart	PivotChart
-xlsx.pivot-chart-source	Connected PivotTable:
+xlsx.pivot-chart-source	Connected PivotTable
 xlsx.pivot-chart-open-fields	PivotTable Fields…
 xlsx.pivot-chart-inserted	PivotChart inserted
 xlsx.phonetic-toggle	Show/Hide Furigana
@@ -481,3 +479,12 @@ fix.formula-bar.collapse	Collapse Formula Bar
 xlsx.chart-type	Chart Type
 fix.validation.continue	Continue?
 fix.validation.cancel	Cancel
+fix.move.overwrite	Do you want to replace the contents of the destination cells?
+fix.move.ok	OK
+fix.menu.search-placeholder	Search
+fix.menu.not-found	Not found
+help.check-update	Check for Updates
+fix.update.latest	ibisOffice is up to date.
+fix.update.latest.detail	You have version {current}.
+fix.update.check-failed	Could not check for updates.
+fix.update.check-failed.detail	Make sure you are connected to the internet and try again.

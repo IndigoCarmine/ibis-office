@@ -742,12 +742,84 @@ impl<'a> IntoIterator for &'a mut Cells {
     }
 }
 
+/// Workbook-level context cached on each [`Sheet`] so single-sheet consumers
+/// (such as conditional formatting evaluation) can resolve defined names,
+/// cross-sheet references, the sheet's own index/name, and the 1904 date system.
+#[derive(Debug, Clone, Default)]
+pub struct SheetBookContext {
+    pub sheet_name: String,
+    pub sheet_index: usize,
+    pub defined_names: std::sync::Arc<[DefinedName]>,
+    pub date1904: bool,
+    pub sheets: std::sync::Arc<[(String, Cells)]>,
+}
+
+impl SheetBookContext {
+    /// Whether two contexts carry identical workbook state and sheet cell content IDs.
+    pub fn exact_eq(&self, other: &Self) -> bool {
+        self.sheet_name == other.sheet_name
+            && self.sheet_index == other.sheet_index
+            && self.date1904 == other.date1904
+            && self.defined_names == other.defined_names
+            && self.sheets.len() == other.sheets.len()
+            && self
+                .sheets
+                .iter()
+                .zip(other.sheets.iter())
+                .all(|((na, ca), (nb, cb))| na == nb && ca.content_id() == cb.content_id())
+    }
+}
+
+impl PartialEq for SheetBookContext {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for SheetBookContext {}
+
+/// A value the app works out when it opens a file and that is not part of the file: two sheets are equal whatever it holds
+/// (reading a file again gives the sheet without it), and it is not saved. Compare its contents through `.0`.
+#[derive(Clone, Debug, Default)]
+pub struct Unsaved<T>(pub T);
+
+impl<T> PartialEq for Unsaved<T> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl<T> Eq for Unsaved<T> {}
+
+impl<T> std::ops::Deref for Unsaved<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for Unsaved<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sheet {
     /// Column widths, in EMU (0 for a hidden column).
     pub columns: Vec<Emu>,
     /// Row heights, in EMU (0 for a hidden row).
     pub rows: Vec<Emu>,
+    /// Rows whose height the file fixes (`customHeight`). `rows` keeps the stored height; printing lays
+    /// these rows out on whole points (Excel truncates a fractional stored height there).
+    pub custom_rows: std::collections::BTreeSet<u32>,
+    /// Columns whose width the user (or the file: `customWidth="1"`) fixed. A column outside this set
+    /// widens by itself when a number wider than it is entered, and its width is not saved (as in Excel).
+    pub custom_columns: std::collections::BTreeSet<u32>,
+    /// Columns whose current width the sheet chose by itself (a number entered that is wider than the column). Such a width is
+    /// not saved, so the file opens with the column as it was (as Excel's). Every other change of a width is saved: fixed by hand,
+    /// fitted to the contents, hidden or shown again.
+    pub widened_columns: std::collections::BTreeSet<u32>,
     /// Cells with a value or a visible format, in row-major order.
     pub cells: Cells,
     pub styles: Vec<CellStyle>,
@@ -788,6 +860,33 @@ pub struct Sheet {
     /// their own (for rows and columns inserted).
     pub default_row: Emu,
     pub default_column: Emu,
+    /// The rows (0-based) that have no height of their own (`customHeight`) and no wrapping text: Excel measures them by the
+    /// fonts in them, whatever height the file stored (`ibis-office-app`'s `xlsx::row_fit` does, where the fonts can be read).
+    /// Not saved; empty for a sheet made here.
+    pub measured_rows: Unsaved<Vec<u32>>,
+    /// The height each of the `measured_rows` was given when the sheet was opened (what the fonts in it measure, which is not
+    /// what the file stored). A row still at that height is not a height the person chose: saving does not write it.
+    pub fitted_rows: Unsaved<std::collections::BTreeMap<u32, Emu>>,
+    /// How many rows the file prints (0: all of `rows`). Rows past it hold only a height (`<row ht customHeight/>` with no cell):
+    /// Excel keeps them but prints no page for them, so printing lays the sheet out without them. Not saved.
+    pub printed_rows: Unsaved<u32>,
+    /// The sheet is laid out as Excel for Windows prints it (a PDF): its text in the printer's units. Not saved.
+    pub printed: Unsaved<bool>,
+    /// The width the file gives each column of a `<col width>` of its own, in characters (the `columns` are its pixels on the
+    /// screen): Excel for Windows breaks a printed cell's text in a column of ECMA-376's width with the printer's digit. Not saved.
+    pub column_chars: Unsaved<std::collections::BTreeMap<u32, f64>>,
+    /// Printed (`printed`), how much wider than `columns` each column's text may be (EMU; see `column_chars`). Not saved.
+    pub printed_text_extra: Unsaved<Vec<Emu>>,
+    /// The font of each `<col>` of the file (first column, last column, typeface, size in hundredths of a point; `None` and 0 when
+    /// the column has no style of its own, so it is the Normal font): a cell no one wrote takes its column's style, and Excel
+    /// measures a row by all the cells of it, the unwritten ones too. Not saved.
+    pub column_fonts: Unsaved<Vec<(u32, u32, Option<String>, u32)>>,
+    /// The font of the style of each row that has one of its own (`<row s customFormat="1">`; `None` and 0 for the Normal style):
+    /// the cells of the row no one wrote take it, not their column's. Not saved.
+    pub row_fonts: Unsaved<std::collections::BTreeMap<u32, (Option<String>, u32)>>,
+    /// The fonts (typeface, size in hundredths of a point) of the cells written in each row of the file, empty ones too, but not the
+    /// ones in merged ranges. Excel measures a row by them and by the cells no one wrote. Not saved.
+    pub written_fonts: Unsaved<std::collections::BTreeMap<u32, Vec<(Option<String>, u32)>>>,
     /// The height of each hidden row and the width of each hidden column
     /// (their size in `rows` and `columns` is 0), to show them at again.
     pub hidden_rows: std::collections::BTreeMap<u32, Emu>,
@@ -854,6 +953,8 @@ pub struct Sheet {
     pub show_zeros: bool,
     /// インクの非表示.
     pub hide_ink: bool,
+    /// Cached workbook context for single-sheet evaluation (conditional formatting, etc.).
+    pub book_context: SheetBookContext,
 }
 
 impl Default for Sheet {
@@ -879,7 +980,19 @@ impl Default for Sheet {
             print: SheetPrint::default(),
             default_row: 0,
             default_column: 0,
+            measured_rows: Unsaved::default(),
+            fitted_rows: Unsaved::default(),
+            printed_rows: Unsaved::default(),
+            printed: Unsaved::default(),
+            column_chars: Unsaved::default(),
+            printed_text_extra: Unsaved::default(),
+            column_fonts: Unsaved::default(),
+            row_fonts: Unsaved::default(),
+            written_fonts: Unsaved::default(),
             hidden_rows: std::collections::BTreeMap::new(),
+            custom_rows: std::collections::BTreeSet::new(),
+            custom_columns: std::collections::BTreeSet::new(),
+            widened_columns: std::collections::BTreeSet::new(),
             hidden_columns: std::collections::BTreeMap::new(),
             spills: std::collections::BTreeMap::new(),
             conditional: Vec::new(),
@@ -907,6 +1020,7 @@ impl Default for Sheet {
             show_formulas: false,
             show_zeros: true,
             hide_ink: false,
+            book_context: SheetBookContext::default(),
         }
     }
 }
@@ -1401,6 +1515,30 @@ pub struct SheetComment {
     pub column: u32,
     pub author: String,
     pub text: String,
+    /// The text's parts in their own fonts (the `r` elements of `comments.xml`), their texts together `text`; empty for
+    /// a plain text.
+    pub runs: Vec<CellRun>,
+    /// The note's box (its legacy drawing shape); `None` takes the box Excel gives a new note.
+    pub rect: Option<NoteRect>,
+}
+
+/// A note's box, relative to the top right corner of its cell (EMU): where its top left corner is and its size, as
+/// the VML shape's `x:Anchor` and `style` give them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NoteRect {
+    pub dx: Emu,
+    pub dy: Emu,
+    pub width: Emu,
+    pub height: Emu,
+}
+
+impl NoteRect {
+    /// The box Excel gives a new note (the legacy drawing's 108 pt x 59.25 pt, a little right of the cell and above its top),
+    /// kept in the sheet (not above its top edge) when the cell is at `top` EMU from it.
+    pub fn default_for(top: Emu) -> Self {
+        let point = crate::EMU_PER_POINT;
+        NoteRect { dx: 12 * point, dy: (-8 * point).max(-top), width: 108 * point, height: (59.25 * point as f64) as Emu }
+    }
 }
 
 /// A threaded comment (`threadedComment`): the first post on a cell and
@@ -1506,6 +1644,18 @@ pub struct Validation {
     /// The message for a value it refuses, if shown (style `stop`,
     /// `warning`, `information`; title; text).
     pub error: Option<(String, String, String)>,
+}
+
+impl Validation {
+    /// The cell the rule's relative references count from: the top-left corner of the rectangle that
+    /// holds all of its ranges, whatever their order in `sqref` (Excel writes `sqref="C1:C5 A1:A5"` with
+    /// a formula relative to A1; measured with Excel 16.0 build 20527). `None` for a rule with no range.
+    /// Every place that reads or moves a rule's formulas takes the base from here.
+    pub fn base(&self) -> Option<(u32, u32)> {
+        let row = self.ranges.iter().map(|r| r.first_row).min()?;
+        let column = self.ranges.iter().map(|r| r.first_column).min()?;
+        Some((row, column))
+    }
 }
 
 /// A conditional format: its ranges and rules.
@@ -1780,6 +1930,10 @@ pub struct SheetPrint {
     /// The rows and columns manual page breaks come before (0-based).
     pub row_breaks: Vec<u32>,
     pub column_breaks: Vec<u32>,
+    /// The file names Letter (or no paper), is not fitted to pages, and the printer is set for A4: Excel for Windows breaks
+    /// the pages where Letter's would and draws them on the A4 paper at 0.95 of the scale (rounded down to a whole percent), in
+    /// the middle of the printable height, from the left margin. Read from the file; not saved.
+    pub letter_on_a4: bool,
 }
 
 impl SheetPrint {
@@ -1821,6 +1975,7 @@ impl Default for SheetPrint {
             header_footer: SheetHeaderFooter::default(),
             row_breaks: Vec::new(),
             column_breaks: Vec::new(),
+            letter_on_a4: false,
         }
     }
 }
@@ -1961,23 +2116,31 @@ pub enum CellGradient {
     Path { path: GradientPath, focus: [u32; 4], stops: Vec<(u16, Rgb)> },
 }
 
+/// The stops of a cell gradient in the order of their positions (the order a `gradientFill` is written and drawn in; a stable
+/// sort, so stops at the same position keep their order).
+pub fn sorted_stops(stops: &[(u16, Rgb)]) -> Vec<(u16, Rgb)> {
+    let mut sorted = stops.to_vec();
+    sorted.sort_by_key(|s| s.0);
+    sorted
+}
+
 impl CellGradient {
     /// Convert to drawing [`Fill`] for gradient rendering.
     pub fn to_fill(&self) -> Fill {
         match self {
             Self::Linear { degree, stops } => {
                 let angle = *degree as i32 * 60_000;
-                let stops = stops.iter().map(|(pos, col)| GradientStop {
-                    position: *pos as u32 * 100,
-                    color: Color::opaque(*col),
+                let stops = sorted_stops(stops).into_iter().map(|(pos, col)| GradientStop {
+                    position: pos as u32 * 100,
+                    color: Color::opaque(col),
                 }).collect();
                 Fill::Linear { angle, scaled: false, stops }
             }
             Self::Path { path, focus, stops } => {
                 let focus = focus.map(|v| v as i32);
-                let stops = stops.iter().map(|(pos, col)| GradientStop {
-                    position: *pos as u32 * 100,
-                    color: Color::opaque(*col),
+                let stops = sorted_stops(stops).into_iter().map(|(pos, col)| GradientStop {
+                    position: pos as u32 * 100,
+                    color: Color::opaque(col),
                 }).collect();
                 Fill::Path { path: *path, focus, stops }
             }
@@ -2080,5 +2243,14 @@ impl Default for ProtectionAllowed {
             objects: false,
             scenarios: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    /// A million-row CSV is 21 million cells: every byte of a cell is 21 MB of memory.
+    #[test]
+    fn a_cell_stays_small() {
+        assert!(std::mem::size_of::<super::SheetCell>() <= 112, "SheetCell is {} bytes", std::mem::size_of::<super::SheetCell>());
     }
 }

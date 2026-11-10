@@ -11,6 +11,10 @@ use ibis_doc_model::{
 use crate::shell::editor::SlideEditor;
 use crate::shell::editor::sheet_of;
 
+/// A new text box's fill (a pale yellow, `RRGGBB`) and the width of its outline (0.75 pt, in EMU).
+const NEW_TEXT_BOX_FILL: u32 = 0xFFFFE5;
+const NEW_TEXT_BOX_LINE_WIDTH: Emu = 9_525;
+
 /// Default preset shapes available in the worksheet Insert > Shapes menu:
 /// (preset, item id, label, icon).
 pub(crate) const SHEET_SHAPES: &[(&str, &str, &str, &str)] = &[
@@ -46,12 +50,774 @@ impl SlideEditor {
         let id = self.document.ids().new_shape_id();
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
-        let shape = Shape::text_box(id, frame, "");
+        // A new text box has a pale yellow fill and a thin black outline (0.75 pt).
+        let body = TextBody::plain("", TextStyle::default());
+        let mut auto = ibis_doc_model::AutoShape::text_box(Fill::Solid(Color::opaque(ibis_doc_model::Rgb(NEW_TEXT_BOX_FILL))), body);
+        auto.stroke = Some(Stroke::solid(Color::BLACK, NEW_TEXT_BOX_LINE_WIDTH));
+        let shape = Shape::new(id, frame, ShapeKind::Auto(auto));
         self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
         self.set_selection(vec![id]);
-        self.begin_edit(id, true, window, cx);
+        self.begin_edit(id, false, window, cx);
         cx.notify();
         id
+    }
+
+    /// Returns the IDs of all worksheet shapes currently being edited or selected that can hold text (`Auto` or `TextBox`).
+    pub(crate) fn selected_sheet_text_shape_ids(&self) -> Vec<ShapeId> {
+        let raw_ids: Vec<ShapeId> = if let Some(edit) = self.editing.as_ref() {
+            vec![edit.shape]
+        } else {
+            let mut ids = self.selected_ids();
+            if ids.is_empty()
+                && let Some(id) = self.selected_sheet_shape()
+            {
+                ids.push(id);
+            }
+            ids
+        };
+        raw_ids
+            .into_iter()
+            .filter(|id| {
+                self.slide()
+                    .shape(*id)
+                    .is_some_and(|s| matches!(s.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_)))
+            })
+            .collect()
+    }
+
+    /// Whether one or more worksheet text shapes (`Auto` or `TextBox`) are currently selected or being edited in place.
+    pub(crate) fn has_selected_sheet_text_shapes(&self) -> bool {
+        !self.selected_sheet_text_shape_ids().is_empty()
+    }
+
+    /// Returns the active DrawingML underline kind of the edited or primary selected worksheet shape.
+    pub(crate) fn selected_sheet_shape_underline(&self) -> Option<ibis_doc_model::Underline> {
+        if let Some(edit) = self.editing.as_ref()
+            && let Some(body) = self.slide().shape(edit.shape).and_then(|s| s.text_body())
+        {
+            let caret = edit.edit.range().start;
+            let mut pos = 0usize;
+            let mut found = None;
+            for p in &body.paragraphs {
+                for r in &p.runs {
+                    let n = r.text.chars().count();
+                    if caret <= pos + n {
+                        found = Some(&r.style);
+                        break;
+                    }
+                    pos += n;
+                }
+                if found.is_some() {
+                    break;
+                }
+                if pos == caret {
+                    found = p.runs.last().map(|r| &r.style).or(Some(&p.end_style));
+                    break;
+                }
+                pos += 1;
+            }
+            let s = found.or_else(|| body.paragraphs.first().and_then(|p| p.runs.first().map(|r| &r.style)))?;
+            return s.underline.then_some(s.underline_kind);
+        }
+        let ids = self.selected_sheet_text_shape_ids();
+        let primary_id = self
+            .selected_sheet_shape()
+            .filter(|id| ids.contains(id))
+            .or_else(|| ids.first().copied())?;
+        let body = self.slide().shape(primary_id).and_then(|s| s.text_body())?;
+        let s = body
+            .paragraphs
+            .iter()
+            .flat_map(|p| &p.runs)
+            .find(|r| !r.text.is_empty())
+            .or_else(|| body.paragraphs.first().and_then(|p| p.runs.first()))
+            .map(|r| &r.style)
+            .or_else(|| body.paragraphs.first().and_then(|p| Some(&p.end_style)))?;
+        s.underline.then_some(s.underline_kind)
+    }
+
+    /// Returns the active paragraph list/bullet kind of the edited or primary selected worksheet shape.
+    pub(crate) fn selected_sheet_shape_list(&self) -> Option<ibis_doc_model::ListKind> {
+        if let Some(edit) = self.editing.as_ref()
+            && let Some(body) = self.slide().shape(edit.shape).and_then(|s| s.text_body())
+        {
+            let caret = edit.edit.range().start;
+            let mut pos = 0usize;
+            for p in &body.paragraphs {
+                let len: usize = p.runs.iter().map(|r| r.text.chars().count()).sum();
+                if caret <= pos + len {
+                    return Some(ibis_doc_model::ListKind::of(p.bullet.as_ref()));
+                }
+                pos += len + 1;
+            }
+            return body.paragraphs.last().map(|p| ibis_doc_model::ListKind::of(p.bullet.as_ref()));
+        }
+        let ids = self.selected_sheet_text_shape_ids();
+        let primary_id = self
+            .selected_sheet_shape()
+            .filter(|id| ids.contains(id))
+            .or_else(|| ids.first().copied())?;
+        let body = self.slide().shape(primary_id).and_then(|s| s.text_body())?;
+        body.paragraphs.first().map(|p| ibis_doc_model::ListKind::of(p.bullet.as_ref()))
+    }
+
+    /// Mutate `TextBody` across all currently edited or selected worksheet text shapes (`Auto` or `TextBox`),
+    /// initializing `TextBody` on `ShapeKind::Auto` shapes that do not yet have one.
+    pub(crate) fn mutate_selected_shape_text(&mut self, mutator: impl Fn(&mut TextBody), cx: &mut Context<Self>) -> bool {
+        let ids = self.selected_sheet_text_shape_ids();
+        if ids.is_empty() {
+            return false;
+        }
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        for shape_id in ids {
+            if let Some(body) = self.slide().shape(shape_id).and_then(|s| s.text_body()).cloned() {
+                let mut next = body;
+                mutator(&mut next);
+                commands.push(Command::SetTextBody { slide, shape: shape_id, body: next });
+            } else if let Some(ShapeKind::Auto(auto)) = self.slide().shape(shape_id).map(|s| &s.kind).cloned() {
+                let mut next_auto = auto;
+                let mut body = TextBody::plain("", TextStyle::default());
+                mutator(&mut body);
+                next_auto.text = Some(body);
+                commands.push(Command::SetKind {
+                    slide,
+                    shape: shape_id,
+                    kind: Box::new(ShapeKind::Auto(next_auto)),
+                });
+            }
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+        }
+        true
+    }
+
+    /// Apply a `CharacterFormat` to the edited range or to all text of all selected worksheet text shapes.
+    pub(crate) fn apply_sheet_shape_character_format(&mut self, format: ibis_doc_model::CharacterFormat, cx: &mut Context<Self>) -> bool {
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = if let Some(edit) = self.editing.as_ref() {
+            vec![(edit.shape, edit.edit.range())]
+        } else {
+            self.selected_sheet_text_shape_ids().into_iter().map(|id| (id, 0..0)).collect()
+        };
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = targets
+            .into_iter()
+            .filter(|(id, _)| {
+                self.slide()
+                    .shape(*id)
+                    .is_some_and(|s| matches!(s.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_)))
+            })
+            .collect();
+        if targets.is_empty() {
+            return false;
+        }
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        for (shape_id, range) in targets {
+            let (from, to) = (range.start, range.end);
+            if self.slide().shape(shape_id).and_then(|s| s.text_body()).is_none()
+                && let Some(ShapeKind::Auto(auto)) = self.slide().shape(shape_id).map(|s| &s.kind).cloned()
+            {
+                let mut next_auto = auto;
+                next_auto.text = Some(TextBody::plain("", TextStyle::default()));
+                commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+            }
+            let char_len = self
+                .slide()
+                .shape(shape_id)
+                .and_then(|s| s.text_body())
+                .map_or(0, |b| b.text().chars().count());
+            let (start, end) = if from < to { (from, to) } else { (0, char_len) };
+            if from == to {
+                let mut style = self
+                    .slide()
+                    .shape(shape_id)
+                    .and_then(|s| s.text_body())
+                    .map(|b| b.style.clone())
+                    .unwrap_or_default();
+                let mut changed = false;
+                if let Some(b) = format.bold {
+                    style.bold = b;
+                    changed = true;
+                }
+                if let Some(i) = format.italic {
+                    style.italic = i;
+                    changed = true;
+                }
+                if let Some(sz) = format.font_size {
+                    style.font_size = sz;
+                    changed = true;
+                }
+                if let Some(ref f) = format.font {
+                    style.font = f.clone();
+                    changed = true;
+                }
+                if let Some(c) = format.color {
+                    style.color = c;
+                    changed = true;
+                }
+                if changed {
+                    commands.push(Command::SetTextStyle { slide, shape: shape_id, style });
+                }
+            }
+            commands.push(Command::SetCharacterFormat {
+                slide,
+                shape: shape_id,
+                start,
+                end,
+                format: format.clone(),
+            });
+        }
+        self.run_sheet(commands, cx);
+        true
+    }
+
+    /// Apply a `ParagraphFormat` to the edited range or to all paragraphs of all selected worksheet text shapes.
+    pub(crate) fn apply_sheet_shape_paragraph_format(&mut self, format: ibis_doc_model::ParagraphFormat, cx: &mut Context<Self>) -> bool {
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = if let Some(edit) = self.editing.as_ref() {
+            vec![(edit.shape, edit.edit.range())]
+        } else {
+            self.selected_sheet_text_shape_ids().into_iter().map(|id| (id, 0..0)).collect()
+        };
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = targets
+            .into_iter()
+            .filter(|(id, _)| {
+                self.slide()
+                    .shape(*id)
+                    .is_some_and(|s| matches!(s.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_)))
+            })
+            .collect();
+        if targets.is_empty() {
+            return false;
+        }
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        for (shape_id, range) in targets {
+            let (from, to) = (range.start, range.end);
+            if self.slide().shape(shape_id).and_then(|s| s.text_body()).is_none()
+                && let Some(ShapeKind::Auto(auto)) = self.slide().shape(shape_id).map(|s| &s.kind).cloned()
+            {
+                let mut next_auto = auto;
+                next_auto.text = Some(TextBody::plain("", TextStyle::default()));
+                commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+            }
+            let char_len = self
+                .slide()
+                .shape(shape_id)
+                .and_then(|s| s.text_body())
+                .map_or(0, |b| b.text().chars().count());
+            let (start, end) = if from < to { (from, to) } else { (0, char_len) };
+            if from == to
+                && let Some(align) = format.align
+            {
+                let mut style = self
+                    .slide()
+                    .shape(shape_id)
+                    .and_then(|s| s.text_body())
+                    .map(|b| b.style.clone())
+                    .unwrap_or_default();
+                style.align = align;
+                commands.push(Command::SetTextStyle { slide, shape: shape_id, style });
+            }
+            commands.push(Command::SetParagraphFormat {
+                slide,
+                shape: shape_id,
+                start,
+                end,
+                format: format.clone(),
+            });
+        }
+        self.run_sheet(commands, cx);
+        true
+    }
+
+    /// Set or clear a DrawingML underline style (`ibis_doc_model::Underline`) on edited or selected worksheet shapes.
+    pub(crate) fn set_sheet_shape_underline(&mut self, kind: Option<ibis_doc_model::Underline>, cx: &mut Context<Self>) -> bool {
+        self.apply_sheet_shape_character_format(
+            ibis_doc_model::CharacterFormat {
+                underline: Some(kind.is_some()),
+                underline_kind: kind,
+                ..Default::default()
+            },
+            cx,
+        )
+    }
+
+    /// Set or clear text highlight (background) color on edited or selected worksheet shapes.
+    pub(crate) fn set_sheet_shape_highlight(&mut self, color: Option<ibis_doc_model::Rgb>, cx: &mut Context<Self>) -> bool {
+        self.apply_sheet_shape_character_format(
+            ibis_doc_model::CharacterFormat {
+                highlight: Some(color),
+                ..Default::default()
+            },
+            cx,
+        )
+    }
+
+    /// Set a specific paragraph list/bullet kind on edited or selected worksheet shapes.
+    pub(crate) fn set_sheet_shape_list(&mut self, list: ibis_doc_model::ListKind, cx: &mut Context<Self>) -> bool {
+        self.apply_sheet_shape_paragraph_format(
+            ibis_doc_model::ParagraphFormat {
+                list: Some(list),
+                ..Default::default()
+            },
+            cx,
+        )
+    }
+
+    /// Toggle a paragraph list/bullet kind (bullet, numbered, or checklist) on edited or selected worksheet shapes.
+    pub(crate) fn toggle_sheet_shape_list(&mut self, target: ibis_doc_model::ListKind, cx: &mut Context<Self>) -> bool {
+        use ibis_doc_model::ListKind;
+        let cur = self.selected_sheet_shape_list().unwrap_or(ListKind::None);
+        let next = match target {
+            ListKind::Bullet => {
+                if matches!(cur, ListKind::Bullet) || matches!(cur, ListKind::Symbol(c) if c != '☐' && c != '☑') {
+                    ListKind::None
+                } else {
+                    ListKind::Bullet
+                }
+            }
+            ListKind::Numbered => {
+                if matches!(cur, ListKind::Numbered | ListKind::Scheme(_)) {
+                    ListKind::None
+                } else {
+                    ListKind::Numbered
+                }
+            }
+            ListKind::Symbol('☐') => {
+                if matches!(cur, ListKind::Symbol('☐' | '☑')) {
+                    ListKind::None
+                } else {
+                    ListKind::Symbol('☐')
+                }
+            }
+            other => {
+                if cur == other {
+                    ListKind::None
+                } else {
+                    other
+                }
+            }
+        };
+        self.set_sheet_shape_list(next, cx)
+    }
+
+    /// Format the selected text (or whole text if no selection) inside worksheet shape(s) being edited in place or selected.
+    pub(crate) fn format_sheet_shape_text(&mut self, change: &ibis_doc_model::StyleChange, cx: &mut Context<Self>) -> bool {
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = if let Some(edit) = self.editing.as_ref() {
+            vec![(edit.shape, edit.edit.range())]
+        } else {
+            let mut ids = self.selected_ids();
+            if ids.is_empty()
+                && let Some(id) = self.selected_sheet_shape()
+            {
+                ids.push(id);
+            }
+            ids.into_iter().map(|id| (id, 0..0)).collect()
+        };
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = targets
+            .into_iter()
+            .filter(|(id, _)| {
+                self.slide()
+                    .shape(*id)
+                    .is_some_and(|s| matches!(s.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_)))
+            })
+            .collect();
+        if targets.is_empty() {
+            return false;
+        }
+        let slide = self.current_slide;
+
+        use ibis_doc_model::{
+            CellAlign, CellUnderline, CellVerticalAlign, CharacterFormat, ParagraphFormat, Strike,
+            StyleChange, TextAlign, Underline, VerticalAnchor,
+        };
+
+        match change {
+            StyleChange::Fill(opt_rgb) => {
+                let fill = match opt_rgb {
+                    Some(c) => Fill::Solid(Color::opaque(*c)),
+                    None => Fill::None,
+                };
+                self.fill_sheet_shape(fill, cx);
+                return true;
+            }
+            StyleChange::FillTheme(rgb, _) => {
+                self.fill_sheet_shape(Fill::Solid(Color::opaque(*rgb)), cx);
+                return true;
+            }
+            StyleChange::Vertical(v) => {
+                let anchor = match v {
+                    CellVerticalAlign::Top => VerticalAnchor::Top,
+                    CellVerticalAlign::Center => VerticalAnchor::Middle,
+                    CellVerticalAlign::Bottom
+                    | CellVerticalAlign::Justify
+                    | CellVerticalAlign::Distributed => VerticalAnchor::Bottom,
+                };
+                let mut commands = Vec::new();
+                for &(shape_id, _) in &targets {
+                    if let Some(body) = self.slide().shape(shape_id).and_then(|s| s.text_body()).cloned() {
+                        let mut next = body;
+                        next.anchor = anchor;
+                        commands.push(Command::SetTextBody { slide, shape: shape_id, body: next });
+                    } else if let Some(ShapeKind::Auto(auto)) = self.slide().shape(shape_id).map(|s| &s.kind).cloned() {
+                        let mut next_auto = auto;
+                        let mut body = TextBody::plain("", TextStyle::default());
+                        body.anchor = anchor;
+                        next_auto.text = Some(body);
+                        commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                    }
+                }
+                if !commands.is_empty() {
+                    self.run_sheet(commands, cx);
+                }
+                return true;
+            }
+            StyleChange::Wrap(wrap) => {
+                let mut commands = Vec::new();
+                for &(shape_id, _) in &targets {
+                    if let Some(body) = self.slide().shape(shape_id).and_then(|s| s.text_body()).cloned() {
+                        let mut next = body;
+                        next.wrap = *wrap;
+                        commands.push(Command::SetTextBody { slide, shape: shape_id, body: next });
+                    } else if let Some(ShapeKind::Auto(auto)) = self.slide().shape(shape_id).map(|s| &s.kind).cloned() {
+                        let mut next_auto = auto;
+                        let mut body = TextBody::plain("", TextStyle::default());
+                        body.wrap = *wrap;
+                        next_auto.text = Some(body);
+                        commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                    }
+                }
+                if !commands.is_empty() {
+                    self.run_sheet(commands, cx);
+                }
+                return true;
+            }
+            StyleChange::Align(cell_align) => {
+                let align = match cell_align {
+                    CellAlign::Left | CellAlign::General | CellAlign::Fill => TextAlign::Left,
+                    CellAlign::Center | CellAlign::CenterAcross => TextAlign::Center,
+                    CellAlign::Right => TextAlign::Right,
+                    CellAlign::Justify => TextAlign::Justify,
+                    CellAlign::Distributed => TextAlign::Distributed,
+                };
+                let mut commands = Vec::new();
+                for (shape_id, range) in &targets {
+                    let shape_id = *shape_id;
+                    let (from, to) = (range.start, range.end);
+                    if self.slide().shape(shape_id).and_then(|s| s.text_body()).is_none()
+                        && let Some(ShapeKind::Auto(auto)) = self.slide().shape(shape_id).map(|s| &s.kind).cloned()
+                    {
+                        let mut next_auto = auto;
+                        let mut style = TextStyle::default();
+                        style.align = align;
+                        next_auto.text = Some(TextBody::plain("", style));
+                        commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                    }
+                    let char_len = self.slide().shape(shape_id).and_then(|s| s.text_body()).map_or(0, |b| b.text().chars().count());
+                    let (start, end) = if from < to { (from, to) } else { (0, char_len) };
+                    if from == to
+                        && let Some(mut style) = self.slide().shape(shape_id).and_then(|s| s.text_body()).map(|b| b.style.clone())
+                    {
+                        style.align = align;
+                        commands.push(Command::SetTextStyle { slide, shape: shape_id, style });
+                    }
+                    commands.push(Command::SetParagraphFormat {
+                        slide,
+                        shape: shape_id,
+                        start,
+                        end,
+                        format: ParagraphFormat { align: Some(align), ..Default::default() },
+                    });
+                }
+                self.run_sheet(commands, cx);
+                return true;
+            }
+            StyleChange::Indent(_) => {
+                return self.step_sheet_shape_indent(true, cx);
+            }
+            _ => {}
+        }
+
+        let (primary_id, primary_range) = targets
+            .iter()
+            .find(|(id, _)| Some(*id) == self.selected_sheet_shape())
+            .cloned()
+            .unwrap_or_else(|| targets[0].clone());
+        let (p_from, p_to) = (primary_range.start, primary_range.end);
+        let p_char_len = self.slide().shape(primary_id).and_then(|s| s.text_body()).map_or(0, |b| b.text().chars().count());
+        let p_start = if p_from < p_to { p_from } else { 0.min(p_char_len) };
+        let (cur_bold, cur_italic, cur_underline, cur_strike) = self
+            .slide()
+            .shape(primary_id)
+            .and_then(|s| s.text_body())
+            .map(|body| {
+                let mut pos = 0;
+                for p in &body.paragraphs {
+                    for r in &p.runs {
+                        let n = r.text.chars().count();
+                        if p_start < pos + n || (n > 0 && p_start == pos && pos == 0) {
+                            return (
+                                r.style.bold.unwrap_or(body.style.bold),
+                                r.style.italic.unwrap_or(body.style.italic),
+                                r.style.underline,
+                                r.style.strike != ibis_doc_model::Strike::None,
+                            );
+                        }
+                        pos += n;
+                    }
+                    pos += 1;
+                }
+                (body.style.bold, body.style.italic, false, false)
+            })
+            .unwrap_or((false, false, false, false));
+
+        let mut format = CharacterFormat::default();
+        match change {
+            StyleChange::Bold(_) => format.bold = Some(!cur_bold),
+            StyleChange::Italic(_) => format.italic = Some(!cur_italic),
+            StyleChange::Underline(_) => {
+                let on = !cur_underline;
+                format.underline = Some(on);
+                if on {
+                    format.underline_kind = Some(Underline::Single);
+                }
+            }
+            StyleChange::UnderlineKind(u) => match u {
+                CellUnderline::None => format.underline = Some(false),
+                CellUnderline::Double | CellUnderline::DoubleAccounting => {
+                    format.underline = Some(true);
+                    format.underline_kind = Some(Underline::Double);
+                }
+                CellUnderline::Single | CellUnderline::SingleAccounting => {
+                    format.underline = Some(true);
+                    format.underline_kind = Some(Underline::Single);
+                }
+            },
+            StyleChange::Strike(_) => {
+                format.strike = Some(if !cur_strike { Strike::Single } else { Strike::None });
+            }
+            StyleChange::FontSize(s) => format.font_size = Some(*s),
+            StyleChange::Font(f) => format.font = Some(f.clone()),
+            StyleChange::Color(c) | StyleChange::ColorTheme(c, _) => format.color = Some(*c),
+            _ => return false,
+        }
+        let mut commands = Vec::new();
+        for (shape_id, range) in targets {
+            let (from, to) = (range.start, range.end);
+            if self.slide().shape(shape_id).and_then(|s| s.text_body()).is_none()
+                && let Some(ShapeKind::Auto(auto)) = self.slide().shape(shape_id).map(|s| &s.kind).cloned()
+            {
+                let mut next_auto = auto;
+                let mut style = TextStyle::default();
+                if let Some(b) = format.bold {
+                    style.bold = b;
+                }
+                if let Some(i) = format.italic {
+                    style.italic = i;
+                }
+                if let Some(s) = format.font_size {
+                    style.font_size = s;
+                }
+                if let Some(f) = format.font.clone() {
+                    style.font = f;
+                }
+                if let Some(c) = format.color {
+                    style.color = c;
+                }
+                next_auto.text = Some(TextBody::plain("", style));
+                commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+            }
+            let char_len = self.slide().shape(shape_id).and_then(|s| s.text_body()).map_or(0, |b| b.text().chars().count());
+            let (start, end) = if from < to { (from, to) } else { (0, char_len) };
+            if from == to
+                && let Some(mut style) = self.slide().shape(shape_id).and_then(|s| s.text_body()).map(|b| b.style.clone())
+            {
+                if let Some(b) = format.bold {
+                    style.bold = b;
+                }
+                if let Some(i) = format.italic {
+                    style.italic = i;
+                }
+                if let Some(s) = format.font_size {
+                    style.font_size = s;
+                }
+                if let Some(ref f) = format.font {
+                    style.font = f.clone();
+                }
+                if let Some(c) = format.color {
+                    style.color = c;
+                }
+                commands.push(Command::SetTextStyle { slide, shape: shape_id, style });
+            }
+            commands.push(Command::SetCharacterFormat { slide, shape: shape_id, start, end, format: format.clone() });
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+        }
+        true
+    }
+
+    /// Step each targeted run's font size individually inside worksheet shape(s) being edited or selected.
+    pub(crate) fn step_sheet_shape_font_size(&mut self, larger: bool, cx: &mut Context<Self>) -> bool {
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = if let Some(edit) = self.editing.as_ref() {
+            vec![(edit.shape, edit.edit.range())]
+        } else {
+            let mut ids = self.selected_ids();
+            if ids.is_empty()
+                && let Some(id) = self.selected_sheet_shape()
+            {
+                ids.push(id);
+            }
+            ids.into_iter().map(|id| (id, 0..0)).collect()
+        };
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = targets
+            .into_iter()
+            .filter(|(id, _)| {
+                self.slide()
+                    .shape(*id)
+                    .is_some_and(|s| matches!(s.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_)))
+            })
+            .collect();
+        if targets.is_empty() {
+            return false;
+        }
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        for (shape_id, range) in targets {
+            let Some(shape) = self.slide().shape(shape_id).cloned() else {
+                continue;
+            };
+            let Some(body) = shape.text_body().cloned() else {
+                if let ShapeKind::Auto(auto) = shape.kind {
+                    let mut next_auto = auto;
+                    let mut style = TextStyle::default();
+                    style.font_size = ibis_doc_model::step_font_size(style.font_size, larger);
+                    next_auto.text = Some(TextBody::plain("", style));
+                    commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                }
+                continue;
+            };
+            let (from, to) = (range.start, range.end);
+            let char_len = body.text().chars().count();
+            let (start, end) = if from < to { (from, to) } else { (0, char_len) };
+            let default_size = body.style.font_size;
+            if from == to {
+                let mut style = body.style.clone();
+                style.font_size = ibis_doc_model::step_font_size(style.font_size, larger);
+                commands.push(Command::SetTextStyle { slide, shape: shape_id, style });
+            }
+            let mut pos = 0usize;
+            let mut any_run = false;
+            for p in &body.paragraphs {
+                if p.runs.is_empty() {
+                    if start <= pos && pos <= end {
+                        let cur = p.end_style.font_size.unwrap_or(default_size);
+                        let next = ibis_doc_model::step_font_size(cur, larger);
+                        commands.push(Command::SetCharacterFormat {
+                            slide,
+                            shape: shape_id,
+                            start: pos,
+                            end: pos,
+                            format: ibis_doc_model::CharacterFormat { font_size: Some(next), ..Default::default() },
+                        });
+                        any_run = true;
+                    }
+                } else {
+                    for r in &p.runs {
+                        let n = r.text.chars().count();
+                        let r_start = pos;
+                        let r_end = pos + n;
+                        let seg_start = start.max(r_start);
+                        let seg_end = end.min(r_end);
+                        if seg_start < seg_end || (n == 0 && start <= r_start && r_start <= end) {
+                            let cur = r.style.font_size.unwrap_or(default_size);
+                            let next = ibis_doc_model::step_font_size(cur, larger);
+                            commands.push(Command::SetCharacterFormat {
+                                slide,
+                                shape: shape_id,
+                                start: seg_start,
+                                end: seg_end,
+                                format: ibis_doc_model::CharacterFormat { font_size: Some(next), ..Default::default() },
+                            });
+                            any_run = true;
+                        }
+                        pos += n;
+                    }
+                }
+                pos += 1;
+            }
+            if !any_run {
+                let next = ibis_doc_model::step_font_size(default_size, larger);
+                commands.push(Command::SetCharacterFormat {
+                    slide,
+                    shape: shape_id,
+                    start,
+                    end,
+                    format: ibis_doc_model::CharacterFormat { font_size: Some(next), ..Default::default() },
+                });
+            }
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+        }
+        true
+    }
+
+    /// Step paragraph indentation inside worksheet shape(s) being edited or selected.
+    pub(crate) fn step_sheet_shape_indent(&mut self, more: bool, cx: &mut Context<Self>) -> bool {
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = if let Some(edit) = self.editing.as_ref() {
+            vec![(edit.shape, edit.edit.range())]
+        } else {
+            let mut ids = self.selected_ids();
+            if ids.is_empty()
+                && let Some(id) = self.selected_sheet_shape()
+            {
+                ids.push(id);
+            }
+            ids.into_iter().map(|id| (id, 0..0)).collect()
+        };
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = targets
+            .into_iter()
+            .filter(|(id, _)| {
+                self.slide()
+                    .shape(*id)
+                    .is_some_and(|s| matches!(s.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_)))
+            })
+            .collect();
+        if targets.is_empty() {
+            return false;
+        }
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        for (shape_id, range) in targets {
+            let Some(shape) = self.slide().shape(shape_id).cloned() else {
+                continue;
+            };
+            if shape.text_body().is_none()
+                && let ShapeKind::Auto(auto) = shape.kind.clone()
+            {
+                let mut next_auto = auto;
+                next_auto.text = Some(TextBody::plain("", TextStyle::default()));
+                commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+            }
+            let char_len = shape.text_body().map_or(0, |b| b.text().chars().count());
+            let (start, end) = if range.start < range.end { (range.start, range.end) } else { (0, char_len) };
+            commands.push(Command::SetParagraphFormat {
+                slide,
+                shape: shape_id,
+                start,
+                end,
+                format: ibis_doc_model::ParagraphFormat {
+                    indent_by: Some(if more { 457_200 } else { -457_200 }),
+                    ..Default::default()
+                },
+            });
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+        }
+        true
     }
 
     /// Insert an auto shape preset on the worksheet.
@@ -84,14 +850,21 @@ impl SlideEditor {
 
     /// Insert an image file on the worksheet as a floating picture.
     pub(crate) fn insert_sheet_picture(&mut self, name: &str, data: Vec<u8>, cx: &mut Context<Self>) -> Option<ShapeId> {
+        self.insert_sheet_picture_impl(name,data,false,cx)
+    }
+    pub(crate) fn paste_sheet_picture(&mut self,name:&str,data:Vec<u8>,cx:&mut Context<Self>)->Option<ShapeId>{self.insert_sheet_picture_impl(name,data,true,cx)}
+    fn insert_sheet_picture_impl(&mut self,name:&str,data:Vec<u8>,paste:bool,cx:&mut Context<Self>)->Option<ShapeId>{
+        let stamp=crate::shell::paste_placement::stamp(&data);
         let format = ibis_doc_model::MediaFormat::from_path(name);
         let (w, h) = crate::pptx::editing::validated_picture_size(format, &data)?;
         let (x, y) = self.sheet_insertion_origin();
-        // 96 DPI: 1 px = 9,525 EMU. Cap initial dimensions to 4,000,000 EMU (~420px).
+        // 96 DPI: 1 px = 9,525 EMU. A pasted picture keeps that size, as Excel pastes it (a 1282x801 screenshot
+        // comes in at 961.4x600.7 pt on Excel for Windows: test/github-issue/103). A picture inserted from a file is
+        // capped at 4,000,000 EMU (~420px).
         let max_dim = 4_000_000i64;
         let mut w_emu = w as i64 * 9_525;
         let mut h_emu = h as i64 * 9_525;
-        if w_emu > max_dim || h_emu > max_dim {
+        if !paste && (w_emu > max_dim || h_emu > max_dim) {
             let scale = (max_dim as f64 / w_emu as f64).min(max_dim as f64 / h_emu as f64);
             w_emu = (w_emu as f64 * scale) as i64;
             h_emu = (h_emu as f64 * scale) as i64;
@@ -115,7 +888,8 @@ impl SlideEditor {
             shadow: None,
             reflection: None,
             soft_edge: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None, ole: None };
-        let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
+        let mut shape = Shape::new(id, frame, ShapeKind::Picture(picture));
+        if paste{self.position_sheet_paste(std::slice::from_mut(&mut shape),stamp);}
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
         self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
@@ -297,7 +1071,7 @@ impl SlideEditor {
             commands.push(Command::SetFrame { slide, shape: shape_id, frame: enlarged });
         }
         self.run_sheet(commands, cx);
-        self.selection = Some(shape_id);
+        self.set_selection(vec![shape_id]);
         cx.notify();
     }
 
@@ -446,80 +1220,135 @@ impl SlideEditor {
 
     /// 選択中の図形の塗りつぶしを変更.
     pub(crate) fn fill_sheet_shape(&mut self, fill: Fill, cx: &mut Context<Self>) {
-        let Some(shape_id) = self.selected_sheet_shape() else { return };
-        let slide = self.current_slide;
-        let Some(shape) = self.slide().shape(shape_id) else { return };
-        if !matches!(shape.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_)) {
-            return;
+        let mut ids = self.selected_ids();
+        if ids.is_empty()
+            && let Some(id) = self.selected_sheet_shape()
+        {
+            ids.push(id);
         }
-        self.run_sheet(vec![Command::SetFill { slide, shape: shape_id, fill }], cx);
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        for shape_id in ids {
+            let Some(shape) = self.slide().shape(shape_id) else { continue };
+            if !matches!(shape.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_)) {
+                continue;
+            }
+            commands.push(Command::SetFill { slide, shape: shape_id, fill: fill.clone() });
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+        }
     }
 
     /// 選択中の図形の枠線の色を変更（None で枠線なし）.
     pub(crate) fn stroke_sheet_shape_color(&mut self, color: Option<Color>, cx: &mut Context<Self>) {
-        let Some(shape_id) = self.selected_sheet_shape() else { return };
+        let mut ids = self.selected_ids();
+        if ids.is_empty()
+            && let Some(id) = self.selected_sheet_shape()
+        {
+            ids.push(id);
+        }
         let slide = self.current_slide;
-        let Some(shape) = self.slide().shape(shape_id) else { return };
-        let current_stroke = match &shape.kind {
-            ShapeKind::Auto(a) => a.stroke.clone(),
-            ShapeKind::Picture(p) => p.stroke.clone(),
-            ShapeKind::Line(l) => Some(l.clone()),
-            _ => None,
-        };
-        let new_stroke = match (current_stroke, color) {
-            (_, None) => None,
-            (Some(mut s), Some(c)) => {
-                s.color = c;
-                Some(s)
-            }
-            (None, Some(c)) => Some(Stroke::solid(c, Stroke::DEFAULT_WIDTH)),
-        };
-        self.run_sheet(vec![Command::SetStroke { slide, shape: shape_id, stroke: new_stroke }], cx);
+        let mut commands = Vec::new();
+        for shape_id in ids {
+            let Some(shape) = self.slide().shape(shape_id) else { continue };
+            let current_stroke = match &shape.kind {
+                ShapeKind::Auto(a) => a.stroke.clone(),
+                ShapeKind::Picture(p) => p.stroke.clone(),
+                ShapeKind::Line(l) => Some(l.clone()),
+                _ => None,
+            };
+            let new_stroke = match (current_stroke, color) {
+                (_, None) => None,
+                (Some(mut s), Some(c)) => {
+                    s.color = c;
+                    Some(s)
+                }
+                (None, Some(c)) => Some(Stroke::solid(c, Stroke::DEFAULT_WIDTH)),
+            };
+            commands.push(Command::SetStroke { slide, shape: shape_id, stroke: new_stroke });
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+        }
     }
 
     /// 選択中の図形の枠線の太さを変更.
     pub(crate) fn stroke_sheet_shape_width(&mut self, width: Emu, cx: &mut Context<Self>) {
-        let Some(shape_id) = self.selected_sheet_shape() else { return };
+        let mut ids = self.selected_ids();
+        if ids.is_empty()
+            && let Some(id) = self.selected_sheet_shape()
+        {
+            ids.push(id);
+        }
         let slide = self.current_slide;
-        let Some(shape) = self.slide().shape(shape_id) else { return };
-        let current_stroke = match &shape.kind {
-            ShapeKind::Auto(a) => a.stroke.clone(),
-            ShapeKind::Picture(p) => p.stroke.clone(),
-            ShapeKind::Line(l) => Some(l.clone()),
-            _ => None,
-        };
-        let mut s = current_stroke.unwrap_or_else(|| Stroke::solid(Color::BLACK, Stroke::DEFAULT_WIDTH));
-        s.width = width;
-        self.run_sheet(vec![Command::SetStroke { slide, shape: shape_id, stroke: Some(s) }], cx);
+        let mut commands = Vec::new();
+        for shape_id in ids {
+            let Some(shape) = self.slide().shape(shape_id) else { continue };
+            let current_stroke = match &shape.kind {
+                ShapeKind::Auto(a) => a.stroke.clone(),
+                ShapeKind::Picture(p) => p.stroke.clone(),
+                ShapeKind::Line(l) => Some(l.clone()),
+                _ => None,
+            };
+            let mut s = current_stroke.unwrap_or_else(|| Stroke::solid(Color::BLACK, Stroke::DEFAULT_WIDTH));
+            s.width = width;
+            commands.push(Command::SetStroke { slide, shape: shape_id, stroke: Some(s) });
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+        }
     }
 
     /// 選択中の図形の枠線のダッシュパターン（実線・破線・点線）を変更.
     pub(crate) fn stroke_sheet_shape_dash(&mut self, dash: LineDash, cx: &mut Context<Self>) {
-        let Some(shape_id) = self.selected_sheet_shape() else { return };
+        let mut ids = self.selected_ids();
+        if ids.is_empty()
+            && let Some(id) = self.selected_sheet_shape()
+        {
+            ids.push(id);
+        }
         let slide = self.current_slide;
-        let Some(shape) = self.slide().shape(shape_id) else { return };
-        let current_stroke = match &shape.kind {
-            ShapeKind::Auto(a) => a.stroke.clone(),
-            ShapeKind::Picture(p) => p.stroke.clone(),
-            ShapeKind::Line(l) => Some(l.clone()),
-            _ => None,
-        };
-        let s = current_stroke.unwrap_or_else(|| Stroke::solid(Color::BLACK, Stroke::DEFAULT_WIDTH)).with_dash(dash);
-        self.run_sheet(vec![Command::SetStroke { slide, shape: shape_id, stroke: Some(s) }], cx);
+        let mut commands = Vec::new();
+        for shape_id in ids {
+            let Some(shape) = self.slide().shape(shape_id) else { continue };
+            let current_stroke = match &shape.kind {
+                ShapeKind::Auto(a) => a.stroke.clone(),
+                ShapeKind::Picture(p) => p.stroke.clone(),
+                ShapeKind::Line(l) => Some(l.clone()),
+                _ => None,
+            };
+            let s = current_stroke.unwrap_or_else(|| Stroke::solid(Color::BLACK, Stroke::DEFAULT_WIDTH)).with_dash(dash);
+            commands.push(Command::SetStroke { slide, shape: shape_id, stroke: Some(s) });
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+        }
     }
 
     /// 選択中の図形の影（Shadow）効果を設定.
     pub(crate) fn shadow_sheet_shape(&mut self, shadow: Option<Shadow>, cx: &mut Context<Self>) {
-        let Some(shape_id) = self.selected_sheet_shape() else { return };
-        let slide = self.current_slide;
-        let Some(shape) = self.slide().shape(shape_id) else { return };
-        let ShapeKind::Auto(auto) = &shape.kind else { return };
-        if auto.shadow == shadow {
-            return;
+        let mut ids = self.selected_ids();
+        if ids.is_empty()
+            && let Some(id) = self.selected_sheet_shape()
+        {
+            ids.push(id);
         }
-        let mut new_auto = auto.clone();
-        new_auto.shadow = shadow;
-        self.run_sheet(vec![Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(new_auto)) }], cx);
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        for shape_id in ids {
+            let Some(shape) = self.slide().shape(shape_id) else { continue };
+            let ShapeKind::Auto(auto) = &shape.kind else { continue };
+            if auto.shadow == shadow {
+                continue;
+            }
+            let mut new_auto = auto.clone();
+            new_auto.shadow = shadow;
+            commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(new_auto)) });
+        }
+        if !commands.is_empty() {
+            self.run_sheet(commands, cx);
+        }
     }
 
     /// 単一の図形を選択.
@@ -552,63 +1381,81 @@ impl SlideEditor {
 
     /// テキストボックス・図形内の文字の太字をトグル.
     pub(crate) fn format_sheet_text_bold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_characters(window, cx, |b, r| b.with_run(r).bold, |on| ibis_doc_model::CharacterFormat { bold: Some(on), ..Default::default() });
+        let _ = window;
+        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::Bold(true), cx);
     }
 
     /// テキストボックス・図形内の文字の斜体をトグル.
     pub(crate) fn format_sheet_text_italic(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_characters(window, cx, |b, r| b.with_run(r).italic, |on| ibis_doc_model::CharacterFormat { italic: Some(on), ..Default::default() });
+        let _ = window;
+        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::Italic(true), cx);
     }
 
     /// テキストボックス・図形内の文字の下線をトグル.
     pub(crate) fn format_sheet_text_underline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_characters(window, cx, |_, r| r.underline, |on| ibis_doc_model::CharacterFormat { underline: Some(on), ..Default::default() });
+        let _ = window;
+        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::Underline(true), cx);
     }
 
     /// テキストボックス・図形内の文字の取り消し線をトグル.
     pub(crate) fn format_sheet_text_strikethrough(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.strike_characters(window, cx);
+        let _ = window;
+        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::Strike(true), cx);
     }
 
     /// テキストボックス・図形内の文字色を変更.
     pub(crate) fn format_sheet_text_color(&mut self, color: ibis_doc_model::Rgb, window: &mut Window, cx: &mut Context<Self>) {
-        self.format_characters(window, cx, ibis_doc_model::CharacterFormat { color: Some(color), ..Default::default() });
+        let _ = window;
+        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::Color(color), cx);
     }
 
     /// テキストボックス・図形内のフォントサイズを変更 (pt 単位).
     pub(crate) fn format_sheet_text_size(&mut self, size_pt: u32, window: &mut Window, cx: &mut Context<Self>) {
-        self.format_characters(window, cx, ibis_doc_model::CharacterFormat { font_size: Some(size_pt * 100), ..Default::default() });
+        let _ = window;
+        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::FontSize(size_pt * 100), cx);
     }
 
     /// テキストボックス・図形内の段落配置を変更.
     pub(crate) fn format_sheet_text_align(&mut self, align: ibis_doc_model::TextAlign, window: &mut Window, cx: &mut Context<Self>) {
-        self.format_paragraphs(window, cx, ibis_doc_model::ParagraphFormat { align: Some(align), ..Default::default() });
+        let _ = window;
+        let cell_align = match align {
+            ibis_doc_model::TextAlign::Left => ibis_doc_model::CellAlign::Left,
+            ibis_doc_model::TextAlign::Center => ibis_doc_model::CellAlign::Center,
+            ibis_doc_model::TextAlign::Right => ibis_doc_model::CellAlign::Right,
+            ibis_doc_model::TextAlign::Justify => ibis_doc_model::CellAlign::Justify,
+            ibis_doc_model::TextAlign::Distributed => ibis_doc_model::CellAlign::Distributed,
+        };
+        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::Align(cell_align), cx);
     }
 
     /// テキストボックス・図形の上下方向（垂直）の配置を変更.
     pub(crate) fn format_sheet_text_vertical(&mut self, anchor: ibis_doc_model::VerticalAnchor, cx: &mut Context<Self>) {
-        self.format_text_body(|b| b.anchor = anchor, cx);
+        self.mutate_selected_shape_text(|b| b.anchor = anchor, cx);
+        self.sync_workbook_peers(cx);
     }
 
     /// テキストボックス・図形の文字列の方向を変更.
     pub(crate) fn format_sheet_text_direction(&mut self, vertical: bool, sideways: i32, cx: &mut Context<Self>) {
-        self.format_text_body(|b| {
+        self.mutate_selected_shape_text(|b| {
             b.vertical = vertical;
             if vertical {
                 b.vertical_kind = ibis_doc_model::VerticalKind::EastAsian;
             }
             b.sideways = sideways;
         }, cx);
+        self.sync_workbook_peers(cx);
     }
 
     /// テキストボックス・図形の内余白を変更.
     pub(crate) fn format_sheet_text_insets(&mut self, insets: ibis_doc_model::Insets, cx: &mut Context<Self>) {
-        self.format_text_body(|b| b.insets = insets, cx);
+        self.mutate_selected_shape_text(|b| b.insets = insets, cx);
+        self.sync_workbook_peers(cx);
     }
 
     /// テキストボックス・図形内のテキスト折り返しをトグル.
     pub(crate) fn format_sheet_text_wrap(&mut self, cx: &mut Context<Self>) {
-        self.format_text_body(|b| b.wrap = !b.wrap, cx);
+        self.mutate_selected_shape_text(|b| b.wrap = !b.wrap, cx);
+        self.sync_workbook_peers(cx);
     }
 
     /// 選択中の図形・画像・グラフのセルに対する配置方式を変更.
@@ -732,9 +1579,9 @@ impl SlideEditor {
                 if let Some((sheet, kind, frame)) = target_info {
                     match kind {
                         ShapeKind::Picture(mut pic) => {
-                            if let Some(png) = super::copy_picture::render_sheet_range_to_png(&sheet, range) {
-                                let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, png.clone());
-                                self.resources.add_picture(media, ibis_doc_model::MediaFormat::Png, &png);
+                            if let Some(png) = super::copy_picture::sheet_range_svg(&sheet, range).map(String::into_bytes) {
+                                let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Svg, png.clone());
+                                self.resources.add_picture(media, ibis_doc_model::MediaFormat::Svg, &png);
                                 pic.media = media;
                                 commands.push(Command::SetKind {
                                     slide: slide_id,
@@ -806,7 +1653,7 @@ impl SlideEditor {
 
                 match &shape.kind {
                     ShapeKind::Picture(pic) => {
-                        if let Some(png) = super::copy_picture::render_sheet_range_to_png(sheet, range) {
+                        if let Some(png) = super::copy_picture::sheet_range_svg(sheet, range).map(String::into_bytes) {
                             let current_data = p.media(pic.media).map(|m| &*m.data);
                             if current_data != Some(&png) {
                                 let (w_emu, h_emu) = super::copy_picture::sheet_range_emu_size(sheet, range);
@@ -841,8 +1688,8 @@ impl SlideEditor {
         }
 
         for (shape_id, mut pic, frame, png, (w_emu, h_emu)) in picture_updates {
-            let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, png.clone());
-            self.resources.add_picture(media, ibis_doc_model::MediaFormat::Png, &png);
+            let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Svg, png.clone());
+            self.resources.add_picture(media, ibis_doc_model::MediaFormat::Svg, &png);
             pic.media = media;
             commands.push(Command::SetKind {
                 slide: slide_id,
@@ -915,9 +1762,91 @@ impl SlideEditor {
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
         self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
-        self.selection = Some(id);
+        self.set_selection(vec![id]);
         cx.notify();
         id
+    }
+
+    /// 選択中またはインプレース編集中のワークシート図形・テキストボックスの文字列書式をクリアする。
+    /// 対象となる図形が存在して処理した場合は `true` を返す。
+    pub(crate) fn clear_sheet_shape_formats(&mut self, cx: &mut Context<Self>) -> bool {
+        let targets: Vec<(ShapeId, std::ops::Range<usize>)> = if let Some(edit) = self.editing.as_ref() {
+            vec![(edit.shape, edit.edit.range())]
+        } else {
+            let mut ids = self.selected_ids();
+            if ids.is_empty()
+                && let Some(id) = self.selected_sheet_shape()
+            {
+                ids.push(id);
+            }
+            ids.into_iter().map(|id| (id, 0..0)).collect()
+        };
+        if targets.is_empty() {
+            return false;
+        }
+        let slide = self.current_slide;
+        let mut commands = Vec::new();
+        let default_style = TextStyle::default();
+        for (shape_id, range) in targets {
+            let Some(shape) = self.slide().shape(shape_id) else { continue };
+            if !matches!(shape.kind, ShapeKind::Auto(_) | ShapeKind::TextBox(_)) {
+                continue;
+            }
+            let Some(mut body) = shape.text_body().cloned() else { continue };
+            if range.start < range.end {
+                if body.style != default_style {
+                    let base = body.style.clone();
+                    for p in &mut body.paragraphs {
+                        for r in &mut p.runs {
+                            if r.style.bold.is_none() && base.bold != default_style.bold {
+                                r.style.bold = Some(base.bold);
+                            }
+                            if r.style.italic.is_none() && base.italic != default_style.italic {
+                                r.style.italic = Some(base.italic);
+                            }
+                            if r.style.font_size.is_none() && base.font_size != default_style.font_size {
+                                r.style.font_size = Some(base.font_size);
+                            }
+                            if r.style.font.is_none() && base.font != default_style.font {
+                                r.style.font = base.font.clone();
+                            }
+                            if r.style.color.is_none() && base.color != default_style.color {
+                                r.style.color = Some(base.color);
+                            }
+                        }
+                    }
+                    body.style = default_style.clone();
+                }
+                body.clear_run_formats(range.start, range.end);
+            } else {
+                body.style = default_style.clone();
+                body.warp = None;
+                for p in &mut body.paragraphs {
+                    for r in &mut p.runs {
+                        r.style = RunStyle {
+                            field: r.style.field.clone(),
+                            ..RunStyle::default()
+                        };
+                    }
+                    p.end_style = RunStyle::default();
+                    p.align = None;
+                    p.bullet = None;
+                    p.level = 0;
+                    p.margin_left = 0;
+                    p.indent = 0;
+                    p.space_before = 0;
+                    p.space_after = 0;
+                    p.line_spacing = None;
+                }
+            }
+            commands.push(Command::SetTextBody { slide, shape: shape_id, body });
+        }
+        if commands.is_empty() {
+            return false;
+        }
+        self.run_sheet(commands, cx);
+        cx.notify();
+        true
     }
 
     /// 選択中のテキストまたは図形にワードアートスタイルを適用する。
@@ -1058,24 +1987,13 @@ impl SlideEditor {
 
     /// Insert a screenshot specifically from the clipboard (image or copied image files).
     pub(crate) fn insert_sheet_screenshot_from_clipboard(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
-        if let Some(item) = cx.read_from_clipboard() {
+        let item = cx.read_from_clipboard();
+        if let Some(item) = &item {
             for entry in item.entries() {
                 match entry {
-                    gpui::ClipboardEntry::Image(image) => {
-                        let ext = match image.format {
-                            gpui::ImageFormat::Png => "png",
-                            gpui::ImageFormat::Jpeg => "jpg",
-                            gpui::ImageFormat::Gif => "gif",
-                            gpui::ImageFormat::Svg => "svg",
-                            gpui::ImageFormat::Bmp => "bmp",
-                            _ => "png",
-                        };
-                        let name = format!("Screenshot.{}", ext);
-                        return self.insert_sheet_picture(&name, image.bytes.clone(), cx);
-                    }
                     gpui::ClipboardEntry::ExternalPaths(paths) => {
                         for path in paths.paths() {
-                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg"));
+                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "emf" | "wmf"));
                             if let (true, Ok(data)) = (ok, std::fs::read(path)) {
                                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Screenshot.png".into());
                                 return self.insert_sheet_picture(&name, data, cx);
@@ -1085,6 +2003,10 @@ impl SlideEditor {
                     _ => {}
                 }
             }
+        }
+        // The picture itself: a drawing (SVG, a metafile) or a bitmap, named by what its bytes are.
+        if let Some((name, bytes)) = crate::native_shape_clipboard::clipboard_picture(item.as_ref()) {
+            return self.insert_sheet_picture(&name, bytes, cx);
         }
         None
     }

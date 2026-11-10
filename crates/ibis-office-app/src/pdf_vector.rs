@@ -4,7 +4,8 @@
 //! Pages written as a vector PDF from what GPUI painted (its
 //! `PaintRecord`s): text as text in the fonts it was drawn with (subset and
 //! embedded, with the characters for copying and searching), shapes as
-//! paths, pictures as images. Shadows are left out: PDF has no blur.
+//! paths, pictures as images. A blurred shadow (a drop shadow, a soft edge, a glow) is a picture of its blur (as PowerPoint writes one: a bitmap
+//! with an alpha mask, PDF having no blur); an inner shadow is the same picture of the blur of what is not in its hole, cut to the shape.
 //!
 //! The records are in logical pixels from the page's top-left corner; each
 //! page is scaled to its size in points.
@@ -26,6 +27,14 @@ use krilla::text::{Font, GlyphId, KrillaGlyph};
 /// The font data of a font GPUI drew with: the file's bytes and the font's
 /// index in it.
 pub type FontData = Option<(Arc<Vec<u8>>, u32)>;
+
+/// The axis values (OpenType tag, value) a variable font is drawn at; empty for a font that is not variable.
+pub type Variations = Vec<([u8; 4], f32)>;
+
+/// How far a synthetic italic slants (x by this much of y), and the width of a synthetic bold's outline in ems: as the
+/// screen draws them (the macOS text system).
+const SYNTHETIC_SLANT: f32 = 0.2;
+const SYNTHETIC_BOLD_STROKE: f32 = 0.035;
 
 /// A page to write: its records, the window's width in logical pixels and
 /// device pixels per logical one, and its size in points.
@@ -49,13 +58,15 @@ pub struct PdfWriter {
     fonts: HashMap<FontId, Option<PdfFont>>,
     /// Images by the address of GPUI's image.
     images: HashMap<usize, Image>,
+    /// The same pictures by what they hold (size and a hash of the pixels, then the pixels themselves compared in full, so a hash that happens to match never stands in for another picture): one GPUI image rebuilt for another slide is compressed once.
+    images_by_content: HashMap<(u32, u32, u64), Vec<(Vec<u8>, Image)>>,
     /// Glyphs left out for want of their font.
     pub missing_glyphs: usize,
 }
 
 impl PdfWriter {
     pub fn new() -> Self {
-        Self { pages: Vec::new(), document: Document::new(), fonts: HashMap::new(), images: HashMap::new(), missing_glyphs: 0 }
+        Self { pages: Vec::new(), document: Document::new(), fonts: HashMap::new(), images: HashMap::new(), images_by_content: HashMap::new(), missing_glyphs: 0 }
     }
 
     /// Add a page `page_pt` points large from `records`, painted in a window
@@ -66,24 +77,28 @@ impl PdfWriter {
         self.pages.len()
     }
 
-    pub fn add_page(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, font_data: &mut dyn FnMut(FontId) -> FontData) {
+    pub fn add_page(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, font_data: &mut dyn FnMut(FontId) -> (FontData, (bool, bool), Variations)) {
         self.add_page_shifted(records, width_px, page_pt, scale_factor, (0.0, 0.0), font_data);
     }
 
     /// [`Self::add_page`], with everything on the page moved by `shift`
     /// points (to put what the window drew on whole pixels where the paper
     /// wants it between them).
-    pub fn add_page_shifted(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, shift: (f32, f32), font_data: &mut dyn FnMut(FontId) -> FontData) {
+    /// `font_data` also tells whether the font is drawn emboldened and slanted (bold or italic asked of a family without
+    /// that face): it is written so too.
+    pub fn add_page_shifted(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, shift: (f32, f32), font_data: &mut dyn FnMut(FontId) -> (FontData, (bool, bool), Variations)) {
         for record in &records {
             if let PaintRecord::Glyph { font_id, glyph_id, .. } = record {
                 let font = self.fonts.entry(*font_id).or_insert_with(|| {
-                    font_data(*font_id).and_then(|(data, index)| {
+                    let (data, synthetic, variations) = font_data(*font_id);
+                    data.and_then(|(data, index)| {
                         let characters = Arc::new(glyph_characters(&data, index));
                         let glyph_count = glyph_count(&data, index);
                         let extent = vertical_extent(&data, index);
-                        let advances = glyph_advances(&data, index);
-                        let font = Font::new(data.clone().into(), index)?;
-                        Some(PdfFont { font, characters, data, index, glyph_count, extent, advances, glyphs: Vec::new(), outlined: false })
+                        let advances = glyph_advances(&data, index, &variations);
+                        let coords: Vec<(krilla::text::Tag, f32)> = variations.iter().map(|(tag, value)| (krilla::text::Tag::new(tag), *value)).collect();
+                        let font = Font::new_variable(data.clone().into(), index, &coords)?;
+                        Some(PdfFont { font, characters, data, index, glyph_count, extent, advances, glyphs: Vec::new(), outlined: false, synthetic })
                     })
                 });
                 if let Some(font) = font
@@ -179,6 +194,8 @@ impl PdfWriter {
                                     opacity: fill.opacity,
                                     line_cap: if stroke.round_caps { LineCap::Round } else { LineCap::Butt },
                                     line_join: if stroke.round_joins { LineJoin::Round } else { LineJoin::Miter },
+                                    // A dashed line is one line with its pattern (`d`: [on off ...] phase), not a path of dashes.
+                                    dash: stroke.dash.map(|d| StrokeDash { array: d.pattern().to_vec(), offset: d.phase }),
                                     ..Stroke::default()
                                 }));
                                 s.draw_path(&path);
@@ -202,8 +219,8 @@ impl PdfWriter {
                     if glyph_id.0 >= pdf_font.glyph_count {
                         continue;
                     }
-                    let (font, characters, outlined, glyph_count, (ascent, descent)) =
-                        (pdf_font.font.clone(), pdf_font.characters.clone(), pdf_font.outlined, pdf_font.glyph_count, pdf_font.extent);
+                    let (font, characters, outlined, glyph_count, (ascent, descent), (bold, italic)) =
+                        (pdf_font.font.clone(), pdf_font.characters.clone(), pdf_font.outlined, pdf_font.glyph_count, pdf_font.extent, pdf_font.synthetic);
                     // The glyphs after it on the same line, in the same
                     // font, size, color and clip, go in one run: each
                     // advances to where the next one is.
@@ -228,7 +245,7 @@ impl PdfWriter {
                         gpui_kit::point(origin.x - gpui_kit::px(0.5), origin.y - *font_size * ascent),
                         gpui_kit::point(last_x + *font_size * last_advance + gpui_kit::px(0.5), origin.y + *font_size * descent),
                     );
-                    let inside = transformation.is_none() && within(&reach, clip);
+                    let inside = transformation.is_none() && !italic && within(&reach.dilate(*font_size * 0.05), clip);
                     with_clip(&mut surface, clip, inside, |s| {
                         if let Some(m) = transformation {
                             // In scaled pixels about the window's origin.
@@ -236,7 +253,14 @@ impl PdfWriter {
                             s.push_transform(&Transform::from_row(a, c, b, d, m.translation[0] / scale_factor, m.translation[1] / scale_factor));
                         }
                         let (paint, opacity) = color(*glyph_color);
-                        s.set_stroke(None);
+                        // Slanted about the baseline: x moves left by a fifth of the height below it (y grows down).
+                        if italic {
+                            let y0 = f32::from(origin.y);
+                            s.push_transform(&Transform::from_row(1.0, 0.0, -SYNTHETIC_SLANT, 1.0, SYNTHETIC_SLANT * y0, 0.0));
+                        }
+                        // Emboldened: outlined too, in the same colour.
+                        let stroke = bold.then(|| Stroke { paint: paint.clone().into(), width: size * SYNTHETIC_BOLD_STROKE, opacity, line_join: LineJoin::Round, ..Stroke::default() });
+                        s.set_stroke(stroke);
                         s.set_fill(Some(Fill { paint: paint.into(), opacity, rule: FillRule::NonZero }));
                         let mut text = String::new();
                         let mut glyphs = Vec::new();
@@ -249,6 +273,10 @@ impl PdfWriter {
                             glyphs.push(KrillaGlyph::new(GlyphId::new(id.0), advance, 0.0, 0.0, 0.0, start..text.len(), None));
                         }
                         s.draw_glyphs(Point::from_xy(f32::from(origin.x), f32::from(origin.y)), &glyphs, font, &text, size, outlined);
+                        s.set_stroke(None);
+                        if italic {
+                            s.pop();
+                        }
                         if transformation.is_some() {
                             s.pop();
                         }
@@ -262,9 +290,24 @@ impl PdfWriter {
                             let Some(bytes) = image.as_bytes(*frame_index) else { continue };
                             let size = image.size(*frame_index);
                             let (w, h) = (size.width.0.max(1) as u32, size.height.0.max(1) as u32);
-                            // BGRA to RGBA.
-                            let rgba: Vec<u8> = bytes.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect();
-                            let i = Image::from_rgba8(rgba, w, h);
+                            let content = (w, h, pixel_hash(bytes));
+                            let same = self.images_by_content.get(&content).and_then(|v| v.iter().find(|(held, _)| held.as_slice() == bytes).map(|(_, i)| i.clone()));
+                            let i = match same {
+                                Some(i) => i,
+                                None => {
+                                    // BGRA to RGBA, into one buffer of the right size.
+                                    let mut rgba = vec![0u8; bytes.len()];
+                                    for (to, from) in rgba.chunks_exact_mut(4).zip(bytes.chunks_exact(4)) {
+                                        to[0] = from[2];
+                                        to[1] = from[1];
+                                        to[2] = from[0];
+                                        to[3] = from[3];
+                                    }
+                                    let i = Image::from_rgba8(rgba, w, h);
+                                    self.images_by_content.entry(content).or_default().push((bytes.to_vec(), i.clone()));
+                                    i
+                                }
+                            };
                             self.images.insert(key, i.clone());
                             i
                         }
@@ -301,7 +344,18 @@ impl PdfWriter {
                         }
                     });
                 }
-                PaintRecord::Shadow { .. } => {}
+                PaintRecord::Shadow { bounds, corner_radii, color: shadow_color, blur_radius, inset, element, element_radii, clip } => {
+                    let sigma = f32::from(*blur_radius);
+                    let made = if *inset { inner_shadow_image(element, element_radii, bounds, corner_radii, *shadow_color, sigma) } else { shadow_image(bounds, corner_radii, *shadow_color, sigma) };
+                    let Some((image, rect)) = made else { continue };
+                    with_clip(&mut surface, clip, within(&rect, clip), |s| {
+                        s.push_transform(&Transform::from_translate(f32::from(rect.left()), f32::from(rect.top())));
+                        if let Some(size) = Size::from_wh(f32::from(rect.size.width), f32::from(rect.size.height)) {
+                            s.draw_image(image, size);
+                        }
+                        s.pop();
+                    });
+                }
             }
         }
         surface.pop();
@@ -350,6 +404,8 @@ struct PdfFont {
     advances: Vec<f32>,
     glyphs: Vec<u16>,
     outlined: bool,
+    /// Drawn emboldened (filled and outlined) and slanted, as the screen draws a font without a bold or italic face.
+    synthetic: (bool, bool),
 }
 
 /// Draw `f` inside `clip` (a rectangle in pixels).
@@ -399,6 +455,160 @@ fn with_clip(s: &mut Surface, clip: &Bounds<Pixels>, inside: bool, f: impl FnOnc
         }
         None => {}
     }
+}
+
+/// The raster a shadow is made on: `cols` × `rows` cells of `pitch` logical pixels from (`left`, `top`).
+struct Grid {
+    cols: usize,
+    rows: usize,
+    left: f32,
+    top: f32,
+    pitch: f32,
+}
+
+impl Grid {
+    /// A grid over the rectangle (`left`, `top`, `width`, `height`) with the pixel pitch a blur of deviation `sigma` calls for: as PowerPoint writes a
+    /// shadow, the picture's pixels are as coarse as keeps the blur at about 2.2 of them (`sigma / 2.2` logical pixels, at least half a pixel;
+    /// PowerPoint 16.0.20527.20088's PDFs of blurRad 1.5pt to 24pt: the deviation is 2.2 to 2.5 pixels of the shadow's bitmap, whose resolution goes
+    /// from 200 dpi down to 29 dpi), at most 1500 across.
+    fn over(left: f32, top: f32, width: f32, height: f32, sigma: f32) -> Grid {
+        let pitch = (sigma / 2.2).max(0.5).max(width / 1500.0).max(height / 1500.0);
+        Grid { cols: (width / pitch).ceil() as usize + 1, rows: (height / pitch).ceil() as usize + 1, left, top, pitch }
+    }
+
+    /// The coverage (0 to 1, anti-aliased by a pixel) of the rounded rectangle `bounds` at each cell.
+    fn coverage(&self, bounds: &Bounds<Pixels>, radii: &Corners<Pixels>) -> Vec<f32> {
+        let (bw, bh) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+        let (cx, cy) = (f32::from(bounds.left()) + bw / 2.0, f32::from(bounds.top()) + bh / 2.0);
+        let (hx, hy) = (bw / 2.0, bh / 2.0);
+        let radius = |right: bool, bottom: bool| {
+            let r = match (right, bottom) {
+                (false, false) => radii.top_left,
+                (true, false) => radii.top_right,
+                (false, true) => radii.bottom_left,
+                (true, true) => radii.bottom_right,
+            };
+            f32::from(r).min(hx).min(hy).max(0.0)
+        };
+        let mut coverage = vec![0f32; self.cols * self.rows];
+        for j in 0..self.rows {
+            let y = self.top + (j as f32 + 0.5) * self.pitch;
+            for i in 0..self.cols {
+                let x = self.left + (i as f32 + 0.5) * self.pitch;
+                let r = radius(x > cx, y > cy);
+                let (qx, qy) = ((x - cx).abs() - hx + r, (y - cy).abs() - hy + r);
+                let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
+                coverage[j * self.cols + i] = (0.5 - d / self.pitch).clamp(0.0, 1.0);
+            }
+        }
+        coverage
+    }
+
+    /// `coverage` blurred by a Gaussian of deviation `sigma` (pixels).
+    fn blur(&self, coverage: &mut [f32], sigma: f32) {
+        let (cols, rows) = (self.cols, self.rows);
+        let deviation = sigma / self.pitch;
+        if deviation <= 0.3 {
+            return;
+        }
+        let reach = (3.0 * deviation).ceil() as isize;
+        let kernel: Vec<f32> = (-reach..=reach).map(|k| (-((k * k) as f32) / (2.0 * deviation * deviation)).exp()).collect();
+        let total: f32 = kernel.iter().sum();
+        let kernel: Vec<f32> = kernel.iter().map(|k| k / total).collect();
+        let mut across = vec![0f32; cols * rows];
+        for j in 0..rows {
+            for i in 0..cols as isize {
+                let mut sum = 0.0;
+                for (n, w) in kernel.iter().enumerate() {
+                    let at = i + n as isize - reach;
+                    if at >= 0 && at < cols as isize {
+                        sum += w * coverage[j * cols + at as usize];
+                    }
+                }
+                across[j * cols + i as usize] = sum;
+            }
+        }
+        for j in 0..rows as isize {
+            for i in 0..cols {
+                let mut sum = 0.0;
+                for (n, w) in kernel.iter().enumerate() {
+                    let at = j + n as isize - reach;
+                    if at >= 0 && at < rows as isize {
+                        sum += w * across[at as usize * cols + i];
+                    }
+                }
+                coverage[j as usize * cols + i] = sum;
+            }
+        }
+    }
+
+    /// The picture of `alpha` (0 to 1 at each cell) in `rgba`'s colour, and the rectangle it covers.
+    fn image(&self, alpha: &[f32], rgba: Rgba) -> (Image, Bounds<Pixels>) {
+        let (r, g, b) = ((rgba.r * 255.0).round() as u8, (rgba.g * 255.0).round() as u8, (rgba.b * 255.0).round() as u8);
+        let pixels: Vec<u8> = alpha.iter().flat_map(|c| [r, g, b, (c * rgba.a * 255.0).round().clamp(0.0, 255.0) as u8]).collect();
+        let image = Image::from_rgba8(pixels, self.cols as u32, self.rows as u32);
+        let rect = Bounds::new(gpui_kit::point(gpui_kit::px(self.left), gpui_kit::px(self.top)), gpui_kit::size(gpui_kit::px(self.cols as f32 * self.pitch), gpui_kit::px(self.rows as f32 * self.pitch)));
+        (image, rect)
+    }
+}
+
+/// The picture of a blurred shadow: the rounded rectangle `bounds` (the shadow before it is blurred), its coverage blurred by a Gaussian of deviation
+/// `sigma` (pixels) and coloured, as straight RGBA with the shadow's alpha where the rectangle is whole. The rectangle the picture covers goes with it.
+fn shadow_image(bounds: &Bounds<Pixels>, radii: &Corners<Pixels>, shadow_color: Hsla, sigma: f32) -> Option<(Image, Bounds<Pixels>)> {
+    let rgba = shadow_color.to_rgb();
+    let (bw, bh) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    if rgba.a <= 0.0 || bw <= 0.0 || bh <= 0.0 {
+        return None;
+    }
+    let sigma = sigma.max(0.0);
+    let margin = 3.0 * sigma;
+    let grid = Grid::over(f32::from(bounds.left()) - margin, f32::from(bounds.top()) - margin, bw + 2.0 * margin, bh + 2.0 * margin, sigma);
+    let mut coverage = grid.coverage(bounds, radii);
+    grid.blur(&mut coverage, sigma);
+    Some(grid.image(&coverage, rgba))
+}
+
+/// The shadow inside a shape (`a:innerShdw`) as a coverage over a grid: it falls where the `hole` (the shape moved by the shadow's offset, with the
+/// same corners) does not cover, its edge blurred by `sigma`, and only inside the shape `element`. The grid covers the shape's rectangle and the
+/// reach of the blur round it (the hole is blurred where it goes past the shape too).
+fn inner_shadow_alpha(element: &Bounds<Pixels>, element_radii: &Corners<Pixels>, hole: &Bounds<Pixels>, hole_radii: &Corners<Pixels>, sigma: f32) -> Option<(Grid, Vec<f32>)> {
+    let (ew, eh) = (f32::from(element.size.width), f32::from(element.size.height));
+    if ew <= 0.0 || eh <= 0.0 {
+        return None;
+    }
+    let sigma = sigma.max(0.0);
+    let margin = 3.0 * sigma;
+    let grid = Grid::over(f32::from(element.left()) - margin, f32::from(element.top()) - margin, ew + 2.0 * margin, eh + 2.0 * margin, sigma);
+    let mut covered = grid.coverage(hole, hole_radii);
+    grid.blur(&mut covered, sigma);
+    let inside = grid.coverage(element, element_radii);
+    let alpha = covered.iter().zip(&inside).map(|(c, i)| (1.0 - c) * i).collect();
+    Some((grid, alpha))
+}
+
+/// The picture of a shadow inside a shape (`a:innerShdw`, see `inner_shadow_alpha`), and the rectangle it covers.
+fn inner_shadow_image(element: &Bounds<Pixels>, element_radii: &Corners<Pixels>, hole: &Bounds<Pixels>, hole_radii: &Corners<Pixels>, shadow_color: Hsla, sigma: f32) -> Option<(Image, Bounds<Pixels>)> {
+    let rgba = shadow_color.to_rgb();
+    if rgba.a <= 0.0 {
+        return None;
+    }
+    let (grid, alpha) = inner_shadow_alpha(element, element_radii, hole, hole_radii, sigma)?;
+    Some(grid.image(&alpha, rgba))
+}
+
+/// A hash of all the bytes of a picture (8 at a time, multiplied and folded in), to tell pictures by what they hold.
+fn pixel_hash(bytes: &[u8]) -> u64 {
+    const K: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut h = bytes.len() as u64;
+    let mut chunks = bytes.chunks_exact(8);
+    for c in &mut chunks {
+        let v = u64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]);
+        h = (h.rotate_left(5) ^ v).wrapping_mul(K);
+    }
+    for b in chunks.remainder() {
+        h = (h.rotate_left(5) ^ *b as u64).wrapping_mul(K);
+    }
+    h
 }
 
 fn rect_path(x0: f32, y0: f32, x1: f32, y1: f32) -> Option<Path> {
@@ -548,10 +758,12 @@ fn vertical_extent(data: &[u8], index: u32) -> (f32, f32) {
 
 /// The advances of a font's glyphs, in ems (`hmtx`); empty when they
 /// cannot be read.
-fn glyph_advances(data: &[u8], index: u32) -> Vec<f32> {
+fn glyph_advances(data: &[u8], index: u32, variations: &Variations) -> Vec<f32> {
     use skrifa::MetadataProvider as _;
     let Ok(font) = skrifa::FontRef::from_index(data, index) else { return Vec::new() };
-    let metrics = font.glyph_metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default());
+    // At the variable font's axis values (the default instance when it is not variable).
+    let location = font.axes().location(variations.iter().map(|(tag, value)| (skrifa::Tag::new(tag), *value)));
+    let metrics = font.glyph_metrics(skrifa::instance::Size::unscaled(), &location);
     let em = font.metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default()).units_per_em.max(1) as f32;
     (0..glyph_count(data, index)).map(|g| metrics.advance_width(skrifa::GlyphId::new(g)).unwrap_or(em) / em).collect()
 }
@@ -604,5 +816,80 @@ fn glyph_characters(data: &[u8], index: u32) -> HashMap<u32, char> {
             })
             .or_insert(candidate);
     }
+    use skrifa::raw::{TableProvider as _, tables::gsub::{SingleSubst, SubstitutionSubtables}};
+    if let Ok(gsub) = font.gsub()
+        && let Ok(lookups) = gsub.lookup_list()
+    {
+        for lookup in lookups.lookups().iter().flatten() {
+            if let Ok(SubstitutionSubtables::Single(subs)) = lookup.subtables() {
+                for sub in subs.iter().flatten() {
+                    match sub {
+                        SingleSubst::Format1(f1) => {
+                            let delta = f1.delta_glyph_id() as i32;
+                            if let Ok(cov) = f1.coverage() {
+                                for src in cov.iter() {
+                                    let dst = (src.to_u32() as i32 + delta).rem_euclid(65536) as u32;
+                                    if let Some(&cand) = out.get(&src.to_u32()) {
+                                        out.entry(dst).or_insert(cand);
+                                    }
+                                }
+                            }
+                        }
+                        SingleSubst::Format2(f2) => {
+                            if let Ok(cov) = f2.coverage() {
+                                for (src, dst) in cov.iter().zip(f2.substitute_glyph_ids()) {
+                                    if let Some(&cand) = out.get(&src.to_u32()) {
+                                        out.entry(dst.get().to_u32()).or_insert(cand);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     out.into_iter().map(|(g, (_, c))| (g, c)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{point, px, size};
+
+    fn bounds(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(w), px(h)))
+    }
+
+    /// An inner shadow (`a:innerShdw`) is no longer left out of the PDF: with the shape moved 6 px right and down as the hole, the shadow is
+    /// along the shape's top and left edges inside it, and nowhere else (not in the middle, not along the bottom and right edges, not outside).
+    #[test]
+    fn an_inner_shadow_falls_inside_the_shape_along_the_edges_the_offset_uncovers() {
+        let element = bounds(10.0, 10.0, 60.0, 60.0);
+        let hole = bounds(16.0, 16.0, 60.0, 60.0);
+        let (grid, alpha) = inner_shadow_alpha(&element, &Corners::default(), &hole, &Corners::default(), 0.1).expect("a shadow");
+        let at = |x: f32, y: f32| {
+            let (i, j) = (((x - grid.left) / grid.pitch).floor() as usize, ((y - grid.top) / grid.pitch).floor() as usize);
+            alpha[j * grid.cols + i]
+        };
+        assert!(at(12.0, 40.0) > 0.9, "left edge strip: {}", at(12.0, 40.0));
+        assert!(at(40.0, 12.0) > 0.9, "top edge strip: {}", at(40.0, 12.0));
+        assert!(at(40.0, 40.0) < 0.05, "the middle: {}", at(40.0, 40.0));
+        assert!(at(68.0, 40.0) < 0.05, "right edge, covered by the hole: {}", at(68.0, 40.0));
+        assert!(at(40.0, 68.0) < 0.05, "bottom edge, covered by the hole: {}", at(40.0, 68.0));
+        // Blurred (3 px), the shadow is still nowhere outside the shape: no cell whose centre is a pitch past its edge.
+        let (grid, alpha) = inner_shadow_alpha(&element, &Corners::default(), &hole, &Corners::default(), 3.0).expect("a shadow");
+        assert!(alpha.iter().any(|a| *a > 0.2), "a blurred shadow is still there");
+        for j in 0..grid.rows {
+            for i in 0..grid.cols {
+                let (x, y) = (grid.left + (i as f32 + 0.5) * grid.pitch, grid.top + (j as f32 + 0.5) * grid.pitch);
+                if x < 10.0 - grid.pitch || x > 70.0 + grid.pitch || y < 10.0 - grid.pitch || y > 70.0 + grid.pitch {
+                    assert!(alpha[j * grid.cols + i] < 0.05, "outside the shape at ({x}, {y}): {}", alpha[j * grid.cols + i]);
+                }
+            }
+        }
+        // The picture is made, and covers the shape.
+        let (_, rect) = inner_shadow_image(&element, &Corners::default(), &hole, &Corners::default(), gpui_kit::rgba(0x000000ff).into(), 0.1).expect("a picture");
+        assert!(rect.left() <= element.left() && rect.right() >= element.right());
+    }
 }

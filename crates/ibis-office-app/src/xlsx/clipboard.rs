@@ -9,7 +9,7 @@
 //! follow (as in Excel); pasting other text reads it as typed.
 
 use gpui_kit::*;
-use ibis_calc::input::{Typed, parse_input};
+use ibis_calc::input::{Typed, parse_imported};
 use ibis_doc_model::sheet_command::Axis;
 use ibis_doc_model::{
     CellEdit, CellInput, CellRange, CellStyle, Command, EmuRect, PutCell, Shape, ShapeKind, SheetCell, SheetCommand, SlideId, Validation,
@@ -50,6 +50,31 @@ pub(crate) struct Clip {
     pub(crate) col_widths: Vec<(u32, ibis_doc_model::Emu)>,
     /// Comments/notes in the copied range: (relative row, relative column, SheetComment).
     pub(crate) comments: Vec<(u32, u32, ibis_doc_model::SheetComment)>,
+    /// The workbook the cells came from (its defined names), so that the names their formulas use go with them.
+    pub(crate) source: Option<super::paste_names::NameSource>,
+    /// Copied in another window: `slide` is not a sheet of this workbook.
+    pub(crate) foreign: bool,
+    /// The window the cells were copied or cut in.
+    pub(crate) origin: Option<WeakEntity<SlideEditor>>,
+    /// Cut in another window: pasting here also clears the cells there (Excel: 切り取り then 貼り付け between workbooks).
+    pub(crate) cut_elsewhere: bool,
+}
+
+thread_local! {
+    /// What was last copied in any workbook window (all windows run on this thread), with the window it came
+    /// from: pasting into another window uses the formulas, formats and names, not only the text on the system
+    /// clipboard.
+    static SHARED_CLIP: std::cell::RefCell<Option<(usize, Clip)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// For tests, which drive one window: what was copied counts as copied in another window from now on.
+#[cfg(any(test, feature = "scenarios"))]
+pub(crate) fn copied_in_another_window() {
+    SHARED_CLIP.with(|c| {
+        if let Some((owner, _)) = c.borrow_mut().as_mut() {
+            *owner = 0;
+        }
+    });
 }
 
 impl Clip {
@@ -59,8 +84,49 @@ impl Clip {
 }
 
 impl SlideEditor {
+    /// Pasting what another window copied: that window's clip (formulas, formats, names), when the system
+    /// clipboard still holds its text, becomes this window's clip. The cells stay where they were (a cut
+    /// pasted here is a copy).
+    pub(crate) fn adopt_shared_clip(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.sheet_state().is_none_or(|s| s.clip.as_ref().is_some_and(|c| c.text == text)) {
+            return;
+        }
+        let me = self as *const Self as usize;
+        let found = SHARED_CLIP.with(|c| c.borrow().as_ref().filter(|(owner, clip)| *owner != me && clip.text == text).map(|(_, clip)| clip.clone()));
+        let Some(mut clip) = found else { return };
+        clip.foreign = true;
+        clip.cut_elsewhere = clip.cut;
+        clip.cut = false;
+        clip.slide = SlideId(u64::MAX);
+        if let Some(state) = self.sheet_state_mut() {
+            state.clip = Some(clip);
+        }
+    }
+
+    /// The commands that define the names `brought` (before the cells are put), as Excel does (`paste_names.rs`).
+    pub(crate) fn brought_commands(&mut self, brought: super::paste_names::Brought) -> Vec<Command> {
+        let mut commands = Vec::new();
+        for (name, sheet, formula) in brought.names {
+            // A name that refers to the copied workbook links it first (as typing such a formula does).
+            if ibis_calc::formula::has_external_book(&formula) {
+                commands.extend(self.link_new_books_commands(&format!("CHOOSE(1,{formula})")));
+            }
+            commands.push(Command::Sheet(SheetCommand::SetName { name, sheet, formula: Some(formula) }));
+        }
+        commands
+    }
+
     pub(crate) fn copy_cells(&mut self, cut: bool, cx: &mut Context<Self>) {
+        let shapes:Vec<_>=self.selected_shapes().into_iter().cloned().collect();
+        if !shapes.is_empty() && self.copy_office_shapes(&shapes,cx){if cut{self.delete_selected(cx);}return;}
         self.commit_cell_edit(cx);
+        // Cutting out of a pivot table changes it.
+        if cut && !self.selected_ranges().is_empty() {
+            let ranges = self.selected_ranges();
+            if self.pivot_refuses_ranges(&ranges, cx) {
+                return;
+            }
+        }
         let Some((_, sheet)) = self.current_sheet() else { return };
         let ranges = self.selected_ranges();
         if ranges.is_empty() {
@@ -344,8 +410,18 @@ impl SlideEditor {
 
         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
         let slide = self.current_slide;
+        let owner = self as *const Self as usize;
+        let source = self.presentation().workbook.as_ref().map(|w| super::paste_names::NameSource {
+            names: w.names.clone(),
+            sheet_names: w.sheets.iter().map(|s| s.name.clone()).collect(),
+            sheet: w.sheets.iter().position(|s| s.slide == Some(slide)),
+            book: self.file_path().as_ref().and_then(|p| Some((format!("{}/", p.parent()?.to_string_lossy().replace('\\', "/")), p.file_name()?.to_string_lossy().to_string()))),
+        });
         if let Some(state) = self.sheet_state_mut() {
-            state.clip = Some(Clip { slide, range: clip_range, cells, cut, text, validations, cell_images, col_widths, comments });
+            let clip = Clip { slide, range: clip_range, cells, cut, text, validations, cell_images, col_widths, comments, source, foreign: false, origin: Some(cx.weak_entity()), cut_elsewhere: false };
+            SHARED_CLIP.with(|c| *c.borrow_mut() = Some((owner, clip.clone())));
+            state.clip = Some(clip);
+            cx.notify();
         }
     }
 
@@ -355,10 +431,11 @@ impl SlideEditor {
             return;
         }
         self.commit_cell_edit(cx);
-        let Some((column, row)) = self.current_cell() else { return };
+        if !plain && self.paste_office_shapes(cx) { return; }
         let slide = self.current_slide;
         let item = cx.read_from_clipboard();
         let text = item.as_ref().and_then(|c| c.text()).unwrap_or_default();
+        self.adopt_shared_clip(&text, cx);
         let clip = self.sheet_state().and_then(|s| s.clip.clone()).filter(|c| c.text == text);
         // An object copied in its application (OLE) stays one.
         #[cfg(not(target_family = "wasm"))]
@@ -366,16 +443,16 @@ impl SlideEditor {
             return;
         }
         if clip.is_none() && text.is_empty() {
-            if let Some(item) = &item {
-                if let Some(ClipboardEntry::Image(image)) = item.entries().iter().find(|e| matches!(e, ClipboardEntry::Image(_))) {
-                    if self.insert_sheet_picture("clipboard.png", image.bytes.clone(), cx).is_some() {
-                        self.status = Some(crate::shell::i18n::text("_xlsx.pasted-the-image").into());
-                        return cx.notify();
-                    }
+            // A drawing (SVG, a metafile) or a bitmap, named by what its bytes are.
+            if let Some((name, bytes)) = crate::native_shape_clipboard::clipboard_picture(item.as_ref()) {
+                if self.paste_sheet_picture(&name, bytes, cx).is_some() {
+                    self.status = Some(crate::shell::i18n::text("_xlsx.pasted-the-image").into());
+                    return cx.notify();
                 }
             }
         }
 
+        let Some((column,row))=self.current_cell() else{return};
         let selected_ranges = self.selected_ranges();
         let dest_ranges = if selected_ranges.is_empty() {
             vec![CellRange { first_row: row, last_row: row, first_column: column, last_column: column }]
@@ -389,7 +466,19 @@ impl SlideEditor {
             out
         };
 
+        // Names the pasted formulas use come with them (a question may be asked first).
+        let mut brought = match clip.as_ref().filter(|c| !plain && !(c.cut && c.slide == slide)) {
+            Some(c) => match self.paste_names_gate(c, super::paste_names_dialog::PasteAgain::Paste, cx) {
+                Some(b) => Some(b),
+                None => return,
+            },
+            None => None,
+        };
         let mut commands = Vec::new();
+        // Where copied cells land (貼り付けのオプション is offered there).
+        let mut pasted: Option<CellRange> = None;
+        // Cells cut in another window are cleared there once they are pasted here.
+        let cut_elsewhere = clip.as_ref().filter(|c| c.cut_elsewhere && !plain).and_then(|c| Some((c.origin.clone()?, c.text.clone())));
         match clip {
             // A cut pasted on its own sheet moves the cells: formulas that
             // refer to them follow (Excel).
@@ -406,6 +495,15 @@ impl SlideEditor {
             }
             Some(clip) => {
                 let (h, w) = (clip.range.last_row - clip.range.first_row + 1, clip.range.last_column - clip.range.first_column + 1);
+                if !clip.cut && !plain && dest_ranges.len() == 1 {
+                    let dest = dest_ranges[0];
+                    let (sh, sw) = (dest.last_row - dest.first_row + 1, dest.last_column - dest.first_column + 1);
+                    pasted = Some(if sh % h == 0 && sw % w == 0 {
+                        dest
+                    } else {
+                        CellRange { first_row: dest.first_row, first_column: dest.first_column, last_row: dest.first_row + h - 1, last_column: dest.first_column + w - 1 }
+                    });
+                }
                 let mut cells = Vec::new();
                 for dest in &dest_ranges {
                     if h == 1 && w == 1 {
@@ -591,20 +689,36 @@ impl SlideEditor {
                         }
                     }
                 }
+                let names = match brought.take() {
+                    Some(brought) => {
+                        // The names an answer renamed are written new in the pasted formulas.
+                        for c in cells.iter_mut() {
+                            if let CellInput::Formula(f) = &mut c.input {
+                                *f = super::paste_names::rename_in_formula(f, &brought.renames);
+                            }
+                        }
+                        self.brought_commands(brought)
+                    }
+                    None => Vec::new(),
+                };
                 commands.insert(0, Command::Sheet(SheetCommand::PutCells { slide, cells }));
+                commands.splice(0..0, names);
             }
             None => {
                 let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
-                let mut grid: Vec<Vec<(CellInput, Option<String>)>> = Vec::new();
+                // A cell formatted as Text (@) keeps pasted text as text: a date or a formula too (#13).
+                let sheet_here = self.current_sheet().map(|(_, sheet)| sheet);
+                let as_text = |r: u32, c: u32| sheet_here.is_some_and(|sheet| sheet.cell(r, c).is_some_and(|cell| sheet.styles[cell.style as usize].number_format == "@"));
+                let mut grid: Vec<Vec<(CellInput, Option<String>, String)>> = Vec::new();
                 for line in text.trim_end_matches(['\n', '\r']).split('\n') {
                     let mut row_items = Vec::new();
                     for field in line.trim_end_matches('\r').split('\t') {
                         let item = if field.is_empty() {
-                            (CellInput::Clear, None)
+                            (CellInput::Clear, None, String::new())
                         } else {
-                            match parse_input(field, date1904) {
-                                Typed::Formula(f) => (CellInput::Formula(f), None),
-                                Typed::Value(v, format) => (CellInput::Value(v), format.map(|s| s.to_string())),
+                            match parse_imported(field, date1904) {
+                                Typed::Formula(f) => (CellInput::Formula(f), None, field.to_string()),
+                                Typed::Value(v, format) => (CellInput::Value(v), format.map(|s| s.to_string()), field.to_string()),
                             }
                         };
                         row_items.push(item);
@@ -621,9 +735,13 @@ impl SlideEditor {
 
                 for dest in &dest_ranges {
                     if th == 1 && tw == 1 {
-                        let (input, format) = &grid[0][0];
+                        let (input, format, raw) = &grid[0][0];
                         for r in dest.first_row..=dest.last_row {
                             for c in dest.first_column..=dest.last_column {
+                                if as_text(r, c) {
+                                    edits.push(CellEdit { row: r, column: c, input: CellInput::Value(ibis_doc_model::CellValue::Text(raw.clone())) });
+                                    continue;
+                                }
                                 edits.push(CellEdit { row: r, column: c, input: input.clone() });
                                 if let Some(code) = format {
                                     formats.push(((r, c), code.clone()));
@@ -632,8 +750,12 @@ impl SlideEditor {
                         }
                     } else {
                         for (r, row_items) in grid.iter().enumerate() {
-                            for (c, (input, format)) in row_items.iter().enumerate() {
+                            for (c, (input, format, raw)) in row_items.iter().enumerate() {
                                 let at = (dest.first_row + r as u32, dest.first_column + c as u32);
+                                if !raw.is_empty() && as_text(at.0, at.1) {
+                                    edits.push(CellEdit { row: at.0, column: at.1, input: CellInput::Value(ibis_doc_model::CellValue::Text(raw.clone())) });
+                                    continue;
+                                }
                                 edits.push(CellEdit { row: at.0, column: at.1, input: input.clone() });
                                 if let Some(code) = format {
                                     formats.push((at, code.clone()));
@@ -661,12 +783,46 @@ impl SlideEditor {
         if let Err(err) = self.document.execute(commands) {
             log::warn!("paste rejected: {err}");
             self.status = Some(crate::shell::i18n::text("_xlsx.can-t-paste-here").into());
+        } else {
+            if let Some(range) = pasted {
+                self.set_selected_ranges(&[range]);
+                let undo_len = self.document.undo_len();
+                self.wb_mut().last_paste = Some(LastPaste { slide, range, undo_len });
+            }
+            if let Some((origin, text)) = cut_elsewhere {
+                // The cut is done: the clipboard is spent, and the cells are gone from the window they were cut in.
+                SHARED_CLIP.with(|c| *c.borrow_mut() = None);
+                if let Some(state) = self.sheet_state_mut() {
+                    state.clip = None;
+                }
+                if let Some(source) = origin.upgrade() {
+                    source.update(cx, |s, cx| s.clear_cut_cells(&text, cx));
+                }
+            }
         }
         cx.notify();
     }
 
-    /// Take the formats off the selected cells.
+    /// The cells cut here were pasted in another window: take them out (their formats and validation too), as a cut
+    /// pasted on another sheet does, in one step of this workbook's undo.
+    pub(crate) fn clear_cut_cells(&mut self, text: &str, cx: &mut Context<Self>) {
+        let Some(clip) = self.sheet_state().and_then(|s| s.clip.clone()).filter(|c| c.cut && c.text == text) else { return };
+        let slide = clip.slide;
+        let edits: Vec<CellEdit> = clip.cells.iter().map(|c| CellEdit { row: c.orig_row, column: c.orig_column, input: CellInput::Clear }).collect();
+        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { slide, edits })];
+        commands.push(Command::Sheet(SheetCommand::ClearFormats { slide, ranges: vec![clip.range] }));
+        commands.push(Command::Sheet(SheetCommand::SetValidation { slide, ranges: vec![clip.range], rule: None }));
+        if let Some(state) = self.sheet_state_mut() {
+            state.clip = None;
+        }
+        self.run_sheet(commands, cx);
+    }
+
+    /// Take the formats off the selected cells (or selected/editing worksheet shape text).
     pub(crate) fn clear_cell_formats(&mut self, cx: &mut Context<Self>) {
+        if self.clear_sheet_shape_formats(cx) {
+            return;
+        }
         self.commit_cell_edit(cx);
         let Some(range) = self.selected_range() else { return };
         let slide = self.current_slide;
@@ -764,7 +920,82 @@ pub(crate) enum PasteSpecial {
     ValuesAndNumberFormats,
 }
 
+/// The last paste of copied cells: where it went, and how many undo steps there were just after (the options button
+/// is offered while nothing was done since).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LastPaste {
+    pub(crate) slide: ibis_doc_model::SlideId,
+    pub(crate) range: CellRange,
+    pub(crate) undo_len: usize,
+}
+
 impl SlideEditor {
+    /// The range pasted last, while it is still what is selected and nothing was done after (where 貼り付けのオプション shows).
+    pub(crate) fn paste_options_range(&self) -> Option<CellRange> {
+        let last = self.sheet_state()?.last_paste?;
+        (last.slide == self.current_slide && last.undo_len == self.document.undo_len() && self.selected_range() == Some(last.range)).then_some(last.range)
+    }
+
+    /// 貼り付けのオプション: the last paste done again as `kind` (in place of it).
+    pub(crate) fn repaste_as(&mut self, kind: PasteSpecial, cx: &mut Context<Self>) {
+        let Some(range) = self.paste_options_range() else { return };
+        self.document.undo();
+        self.set_selected_ranges(&[CellRange { last_row: range.first_row, last_column: range.first_column, ..range }]);
+        self.paste_special(kind, cx);
+        // The range where it landed this time (a transposed one has its sides swapped).
+        let (h, w) = (range.last_row - range.first_row + 1, range.last_column - range.first_column + 1);
+        let landed = if kind == PasteSpecial::Transpose {
+            CellRange { last_row: range.first_row + w - 1, last_column: range.first_column + h - 1, ..range }
+        } else {
+            range
+        };
+        let (slide, undo_len) = (self.current_slide, self.document.undo_len());
+        self.set_selected_ranges(&[landed]);
+        self.wb_mut().last_paste = Some(LastPaste { slide, range: landed, undo_len });
+        cx.notify();
+    }
+
+    /// Open 貼り付けのオプション at `position`.
+    pub(crate) fn open_paste_options(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::shell::chrome::{MenuEntry, MenuItem, fill_menu};
+        let item = |id: &'static str, label: &'static str, kind: PasteSpecial| -> MenuEntry {
+            MenuItem::new(id, crate::shell::i18n::text(label))
+                .on(move |this, _, cx| {
+                    if let Some(s) = this.sheet_state_mut() {
+                        s.list_popup = None;
+                    }
+                    this.repaste_as(kind, cx);
+                })
+                .into()
+        };
+        let entries = std::rc::Rc::new(vec![
+            item("xlsx.paste-opt-all", "_xlsx.paste", PasteSpecial::All),
+            item("xlsx.paste-opt-formulas", "_xlsx.formulas", PasteSpecial::Formulas),
+            item("xlsx.paste-opt-formulas-numfmt", "xlsx.paste-formulas-and-number-formats", PasteSpecial::FormulasAndNumberFormats),
+            item("xlsx.paste-opt-no-borders", "xlsx.paste-all-except-borders", PasteSpecial::AllExceptBorders),
+            item("xlsx.paste-opt-widths", "xlsx.paste-column-widths", PasteSpecial::ColumnWidths),
+            item("xlsx.paste-opt-transpose", "_xlsx.transpose", PasteSpecial::Transpose),
+            MenuEntry::Separator,
+            item("xlsx.paste-opt-values", "_xlsx.values", PasteSpecial::Values),
+            item("xlsx.paste-opt-values-numfmt", "xlsx.paste-values-and-number-formats", PasteSpecial::ValuesAndNumberFormats),
+            MenuEntry::Separator,
+            item("xlsx.paste-opt-formats", "_xlsx.formats", PasteSpecial::Formats),
+            item("xlsx.paste-opt-link", "_xlsx.paste-link", PasteSpecial::Link),
+        ]);
+        let editor = cx.entity().downgrade();
+        let menu = gpui_kit::component::menu::PopupMenu::build(window, cx, move |menu, window, cx| fill_menu(menu.min_w(px(240.)), &entries, &editor, window, cx));
+        let dismiss = cx.subscribe_in(&menu, window, |this, _, _: &gpui::DismissEvent, window, cx| {
+            if let Some(s) = this.sheet_state_mut() {
+                s.list_popup = None;
+            }
+            cx.notify();
+            this.focus_handle.focus(window, cx);
+        });
+        menu.read(cx).focus_handle(cx).focus(window, cx);
+        self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, anchor: Anchor::TopLeft, _dismiss: dismiss });
+        cx.notify();
+    }
+
     /// Paste what was copied here, as `kind` says, at the selected cell.
     pub(crate) fn paste_special(&mut self, kind: PasteSpecial, cx: &mut Context<Self>) {
         if kind == PasteSpecial::Link {
@@ -800,7 +1031,7 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let Some((column, row)) = self.current_cell() else { return };
         let slide = self.current_slide;
-        let Some(clip) = self.sheet_state().and_then(|s| s.clip.clone()) else {
+        let Some(clip) = self.sheet_state().and_then(|s| s.clip.clone()).filter(|c| !c.foreign) else {
             self.status = Some(crate::shell::i18n::text("_xlsx.to-use-paste-special-copy-cells-first").into());
             return cx.notify();
         };
@@ -859,9 +1090,21 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let Some((column, row)) = self.current_cell() else { return };
         let slide = self.current_slide;
+        self.adopt_shared_clip(&cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default(), cx);
         let Some(clip) = self.sheet_state().and_then(|s| s.clip.clone()) else {
             self.status = Some(crate::shell::i18n::text("_xlsx.to-use-paste-special-copy-cells-first").into());
             return cx.notify();
+        };
+        // Names the pasted formulas use come with them, for the kinds of paste that carry formulas (a question may be asked first).
+        let brought = if options.operation == PasteOp::None
+            && matches!(options.paste_type, PasteType::All | PasteType::Formulas | PasteType::AllExceptBorders | PasteType::FormulasAndNumberFormats)
+        {
+            match self.paste_names_gate(&clip, super::paste_names_dialog::PasteAgain::Special(options), cx) {
+                Some(b) => Some(b),
+                None => return,
+            }
+        } else {
+            None
         };
         let Some((_, sheet)) = self.current_sheet() else { return };
         let (h, w) = (clip.range.last_row - clip.range.first_row + 1, clip.range.last_column - clip.range.first_column + 1);
@@ -1178,7 +1421,16 @@ impl SlideEditor {
         if cells.is_empty() {
             return;
         }
-        let mut commands = vec![Command::Sheet(SheetCommand::PutCells { slide, cells })];
+        let mut commands = Vec::new();
+        if let Some(brought) = brought {
+            for c in cells.iter_mut() {
+                if let CellInput::Formula(f) = &mut c.input {
+                    *f = super::paste_names::rename_in_formula(f, &brought.renames);
+                }
+            }
+            commands = self.brought_commands(brought);
+        }
+        commands.push(Command::Sheet(SheetCommand::PutCells { slide, cells }));
         if options.paste_type == PasteType::All {
             for dest in &dest_ranges {
                 if h == 1 && w == 1 {

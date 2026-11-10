@@ -9,6 +9,7 @@
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 
 use crate::pptx::thumbnails::DraggedSlide;
 use crate::render::shape_view::{shape_element, slide_backdrop};
@@ -315,7 +316,7 @@ impl SlideEditor {
                     .h(px(card_h))
                     .rounded_sm()
                     .overflow_hidden()
-                    .bg(rgb(0xffffff))
+                    .bg(crate::shell::palette::doc(0xffffff))
                     .border(if is_current { px(2.5) } else { px(1.0) })
                     .border_color(if is_current {
                         theme_primary

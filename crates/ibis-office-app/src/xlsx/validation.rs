@@ -8,10 +8,11 @@
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, SheetCommand, Sheet, Validation};
 
 use crate::shell::chrome::{MenuEntry, MenuItem, SidebarPanel, fill_menu};
@@ -90,8 +91,20 @@ fn same_validation_settings(a: &Validation, b: &Validation) -> bool {
 /// A list's drop-down (or another small menu by the cells), open.
 pub(crate) struct ListPopup {
     pub(crate) menu: Entity<PopupMenu>,
+    /// Where the list is put: `position` is its `anchor` corner (the click point for a context list, a button's corner for `dropdown_list::below_button`).
     pub(crate) position: Point<Pixels>,
+    pub(crate) anchor: Anchor,
     pub(crate) _dismiss: Subscription,
+}
+
+/// Cell-owned list: focus stays in the editor so IME and ordinary typing keep working.
+pub(crate) struct ValidationChoices {
+    pub(crate) items: Vec<String>,
+    pub(crate) selected: usize,
+    pub(crate) original: String,
+    pub(crate) selection_query: String,
+    pub(crate) scroll: ScrollHandle,
+    pub(crate) bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
 }
 
 /// A pending confirmation for a data validation rule with style `warning` ("注意").
@@ -267,15 +280,15 @@ pub(crate) fn keeps_at(sheet: &Sheet, rule: &Validation, value: &CellValue, row:
     if value.is_empty() && rule.allow_blank {
         return true;
     }
-    let (Some(formula), Some(first)) = (rule.formula1.as_deref(), rule.ranges.first()) else { return true };
+    let (Some(formula), Some(base)) = (rule.formula1.as_deref(), rule.base()) else { return true };
     let mut with = sheet.clone();
     let mut cell = with.cell(row, column).cloned().unwrap_or(ibis_doc_model::SheetCell { runs: None, phonetic: None, row, column, value: CellValue::Empty, text: String::new(), kind: ibis_doc_model::CellKind::Empty, formula: None, style: 0 });
     cell.value = value.clone();
     cell.formula = None;
     with.put_cell(row, column, Some(cell));
-    let shifted = ibis_calc::formula::shift(formula, row as i64 - first.first_row as i64, column as i64 - first.first_column as i64);
+    let shifted = ibis_calc::formula::shift(formula, row as i64 - base.0 as i64, column as i64 - base.1 as i64);
     let book = super::conditional::OneSheet(&with);
-    match ibis_calc::recalc::evaluate(&book, (0, row, column), &shifted).0 {
+    match ibis_calc::recalc::evaluate(&book, (with.book_context.sheet_index, row, column), &shifted).0 {
         CellValue::Bool(b) => b,
         CellValue::Number(n) => n != 0.0,
         CellValue::Error(_) => false,
@@ -444,7 +457,7 @@ impl SlideEditor {
                     CellValue::Error(e) => e.as_str().to_string(),
                     CellValue::Empty => String::new(),
                 };
-                self.validation_list_items_in_book(rule).iter().any(|i| i.eq_ignore_ascii_case(&text))
+                { let items = self.validation_list_items_in_book(rule); let half = ibis_calc::functions::to_half_width(&text); items.iter().any(|i| i.eq_ignore_ascii_case(&text) || i.eq_ignore_ascii_case(&half)) }
             }
             "whole" => matches!(value, CellValue::Number(n) if n.fract() == 0.0 && compare(*n)),
             "decimal" | "date" | "time" => matches!(value, CellValue::Number(n) if compare(*n)),
@@ -460,12 +473,29 @@ impl SlideEditor {
         }
     }
 
+    /// The value a formula entered into (`row`, `column`) would give, worked out
+    /// as things stand, when the cell has a validation rule: Excel checks the
+    /// result of a formula entry against the rule as it does a typed value.
+    /// `None` when there is no rule or the engine cannot work the formula out.
+    pub(crate) fn formula_entry_value(&self, row: u32, column: u32, formula: &str) -> Option<CellValue> {
+        let (_, sheet) = self.current_sheet()?;
+        rule_at(sheet, row, column)?;
+        let workbook = self.presentation().workbook.as_ref()?;
+        let sheet_index = workbook.sheets.iter().position(|s| s.slide == Some(self.current_slide))?;
+        let view = ibis_doc_model::sheet_calc::BookView::new(self.presentation());
+        let (value, unsupported) = ibis_calc::recalc::evaluate(&view, (sheet_index, row, column), formula);
+        (!unsupported).then_some(value)
+    }
+
     /// Whether `value` may go into (`row`, `column`): `Err` with the
     /// message when the rule refuses it (style `stop`); `Ok` with a warning
     /// message and whether it is a `warning` confirmation (`true`) or `information` (`false`).
     pub(crate) fn check_entry(&self, row: u32, column: u32, value: &CellValue) -> Result<Option<(String, bool)>, String> {
         let Some((_, sheet)) = self.current_sheet() else { return Ok(None) };
         let Some(rule) = rule_at(sheet, row, column) else { return Ok(None) };
+        if rule.kind == "list" && !self.keeps_validation_in_book(rule, value, row, column) {
+            return Err("データ入力規則の制約があります。リストから選択してください。".to_string()); // i18n-ok: requested validation message
+        }
         let Some((style, title, text)) = &rule.error else { return Ok(None) };
         if self.keeps_validation_in_book(rule, value, row, column) {
             return Ok(None);
@@ -546,7 +576,7 @@ impl SlideEditor {
             this.focus_handle.focus(window, cx);
         });
         menu.read(cx).focus_handle(cx).focus(window, cx);
-        self.wb_mut().list_popup = Some(ListPopup { menu, position, _dismiss: dismiss });
+        self.wb_mut().list_popup = Some(ListPopup { menu, position, anchor: Anchor::TopLeft, _dismiss: dismiss });
         cx.notify();
     }
 
@@ -555,7 +585,94 @@ impl SlideEditor {
         let Some(rule) = self.current_rule() else { return };
         let Some((column, row)) = self.current_cell() else { return };
         let items = self.validation_list_items_in_book(&rule);
-        self.open_cell_items_popup(items, column, row, position, window, cx);
+        if items.is_empty() { return; }
+        if self.cell_edit().is_none() {
+            self.begin_cell_edit(super::cell_edit::EditMode::Enter, true, cx);
+        }
+        let original = self.cell_edit().map(|e| e.text.clone()).unwrap_or_default();
+        if let Some(edit) = self.cell_edit_mut() { edit.anchor = Some(0); edit.caret = edit.text.encode_utf16().count(); }
+        self.wb_mut().validation_choices = Some(ValidationChoices { items, selected: 0, selection_query: original.clone(), original, scroll: ScrollHandle::new(), bounds: Default::default() });
+        self.focus_handle.focus(window, cx);
+        let _ = (position, column, row);
+        cx.notify();
+    }
+
+    /// Start prefix completion on ordinary typing, without moving IME focus.
+    pub(crate) fn show_typed_validation_choices(&mut self) {
+        if self.sheet_state().is_none_or(|s|s.validation_choices.is_some()) { return; }
+        let Some(rule) = self.current_rule().filter(|r|r.kind=="list" && r.dropdown) else { return };
+        let items = self.validation_list_items_in_book(&rule);
+        if items.is_empty() { return; }
+        self.wb_mut().validation_choices = Some(ValidationChoices {
+            items, selected: 0, original: String::new(), selection_query: String::new(),
+            scroll: ScrollHandle::new(), bounds: Default::default(),
+        });
+    }
+
+    pub(crate) fn filtered_validation_choices(&self) -> Vec<String> {
+        let Some(p) = self.sheet_state().and_then(|s| s.validation_choices.as_ref()) else { return Vec::new() };
+        let query = self.cell_edit().map(|e| e.text.as_str()).unwrap_or("");
+        let query = if query == p.original { "" } else { query };
+        let query = query.to_lowercase();
+        p.items.iter().filter(|s| s.to_lowercase().starts_with(&query)).cloned().collect()
+    }
+
+    pub(crate) fn validation_choice_index(&self, count: usize) -> usize {
+        let Some(p) = self.sheet_state().and_then(|s|s.validation_choices.as_ref()) else { return 0 };
+        if self.cell_edit().is_some_and(|e| e.text != p.selection_query) { 0 } else { p.selected.min(count.saturating_sub(1)) }
+    }
+
+    pub(crate) fn validation_list_key(&mut self, key: &Keystroke, cx: &mut Context<Self>) -> bool {
+        if self.sheet_state().and_then(|s| s.validation_choices.as_ref()).is_none() { return false; }
+        match key.key.as_str() {
+            "up" | "down" => {
+                let n = self.filtered_validation_choices().len();
+                let selected = self.validation_choice_index(n);
+                let query = self.cell_edit().map(|e|e.text.clone()).unwrap_or_default();
+                let p = self.wb_mut().validation_choices.as_mut().unwrap();
+                p.selection_query = query;
+                p.selected = if n == 0 { 0 } else if key.key == "down" { (selected + 1) % n } else { (selected + n - 1) % n };
+                if n > 0 { p.scroll.scroll_to_item(p.selected); }
+                cx.notify(); true
+            }
+            "escape" => { self.wb_mut().validation_choices = None; self.cancel_cell_edit(cx); true }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn validation_cell_bounds(&self, column: u32, row: u32) -> Option<Bounds<Pixels>> {
+        let center = self.cell_center(column, row)?;
+        let layout = self.slide_layout()?;
+        let (_, sheet) = self.current_sheet()?;
+        let width = sheet.columns.get(column as usize).copied().unwrap_or(sheet.default_column);
+        let height = sheet.rows.get(row as usize).copied().unwrap_or(sheet.default_row);
+        let size = size(layout.to_px(width), layout.to_px(height));
+        Some(Bounds::new(point(center.x-size.width/2.,center.y-size.height/2.),size))
+    }
+
+    pub(crate) fn render_validation_choices(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let p = self.sheet_state()?.validation_choices.as_ref()?;
+        let edit = self.cell_edit()?;
+        let bounds = self.validation_cell_bounds(edit.column, edit.row)?;
+        let side = f32::from(bounds.size.height).clamp(12.,20.);
+        let items = self.filtered_validation_choices();
+        if items.is_empty() { return None; }
+        let selected = self.validation_choice_index(items.len());
+        let labels = items.clone();
+        let rows = items.into_iter().enumerate().map(|(i,text)| {
+            crate::shell::chrome::dropdown_list::option(("validation-choice",i), false, i==selected, true)
+                .child(div().flex_1().truncate().child(SharedString::from(text.clone())))
+                .on_mouse_down(MouseButton::Left,cx.listener(move |e,_,_,cx| {
+                    cx.stop_propagation();
+                    e.wb_mut().validation_choices=None;
+                    if let Some(edit)=e.cell_edit_mut(){edit.text=text.clone();}
+                    e.commit_cell_edit(cx);
+                })).into_any_element()
+        }).collect();
+        Some(crate::shell::chrome::dropdown_list::AnchoredDropdown {
+            trigger: bounds, width: bounds.size.width+px(side+1.), rows, labels,
+            scroll: p.scroll.clone(), measured: p.bounds.clone(),
+        }.into_any_element())
     }
 
     /// Check whether "Pick from Drop-down List" (⌥↓ / Alt+↓) can be offered for the active cell.
@@ -623,10 +740,8 @@ impl SlideEditor {
             ui: Default::default(),
         };
         if let Some(s) = self.sheet_state_mut() {
+            s.close_settings();
             s.validation = Some(panel);
-            s.page_setup = false;
-            s.custom_format = None;
-            s.panels.close();
         }
         self.sidebar_open = true;
         cx.notify();
@@ -731,7 +846,9 @@ impl SlideEditor {
         if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetValidation { slide, ranges, rule: Some(rule) })]) {
             return self.validation_message(err.to_string(), cx);
         }
-        self.validation_message(crate::shell::i18n::text("fix.validation.validation-rule-set").into(), cx);
+        self.status=Some(crate::shell::i18n::text("fix.validation.validation-rule-set").into());
+        self.wb_mut().validation=None;
+        cx.notify();
     }
 
     /// A list over the selected range (items `a,b,c`), with a message if given.
@@ -870,42 +987,27 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         let entity = cx.entity().downgrade();
-        // A drop-down of `list`, setting the field `set` picks.
+        // The same common dropdown trigger and list sizing used throughout the application.
         let choose = |id: &'static str, list: &'static [(&'static str, &'static str)], current: &str, set: fn(&mut ValidationPanel, &'static str)| {
-            let entity = entity.clone();
-            mark(
-                id,
-                Button::new(id)
-                    .small()
-                    .label(text(name_of(list, current)))
-                    .dropdown_menu(move |menu, _, _| {
-                        list.iter().fold(menu, |menu, &(key, name)| {
-                            let entity = entity.clone();
-                            menu.item(PopupMenuItem::new(text(name)).on_click(move |_, _, cx| {
-                                entity
-                                    .update(cx, |this, cx| {
-                                        if let Some(p) = this.sheet_state_mut().and_then(|s| s.validation.as_mut()) {
-                                            set(p, key);
-                                        }
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }))
-                        })
-                    })
-                    .into_any_element(),
-            )
+            let entries=list.iter().map(|&(key,name)|crate::shell::chrome::MenuItem::new(id,text(name)).checked(current==key).on(move|this,_,cx|{
+                if let Some(p)=this.sheet_state_mut().and_then(|s|s.validation.as_mut()){set(p,key);}
+                cx.notify();
+            }).into()).collect();
+            mark(id,div().w(px(224.)).max_w(px(224.)).child(crate::shell::chrome::Dropdown::from_entries(id,text(name_of(list,current)),entries,true,0,&cx.weak_entity()).into_any_element()).into_any_element())
         };
         type Flip = fn(&mut ValidationPanel);
         let toggle = |id: &'static str, on: bool, label: &str, flip: Flip| {
             mark(
                 id,
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if on { "☑" } else { "☐" }, text(label)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::checkbox_button(id, text(label), on, false, cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.sheet_state_mut().and_then(|s| s.validation.as_mut()) {
                             flip(p);
                         }
@@ -916,30 +1018,14 @@ impl SlideEditor {
         };
         let compared = !matches!(p.kind, "none" | "list" | "custom");
         // The dialog's three tabs.
-        let tabs = h_flex().gap_1().flex_wrap().children(["fix.pivot.settings", "fix.validation.input-message", "fix.validation.error-alert"].into_iter().enumerate().map(|(i, name)| {
-            mark(
-                &format!("tab-{i}"),
-                Button::new(("validation-tab", i))
-                    .small()
-                    .when(p.tab == i, |b| b.primary())
-                    .when(p.tab != i, |b| b.ghost())
-                    .label(text(name))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = this.sheet_state_mut().and_then(|s| s.validation.as_mut()) {
-                            p.tab = i;
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            )
-        }));
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).child(tabs);
+        let tab_index = p.tab;
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         if p.tab == 0 {
         body = body
-            .child(div().text_size(px(13.)).child(text("fix.validation.allow")))
+            .child(div().text_sm().child(text("fix.validation.allow")))
             .child(choose("validation-kind", &KINDS, p.kind, |p, k| p.kind = k));
         if compared {
-            body = body.child(div().text_size(px(13.)).child(text("fix.pivot-options.data"))).child(choose("validation-operator", &OPERATORS, p.operator, |p, k| p.operator = k));
+            body = body.child(div().text_sm().child(text("fix.pivot-options.data"))).child(choose("validation-operator", &OPERATORS, p.operator, |p, k| p.operator = k));
         }
         if p.kind != "none" {
             let label = match p.kind {
@@ -953,40 +1039,18 @@ impl SlideEditor {
                     h_flex()
                         .items_center()
                         .justify_between()
-                        .child(div().text_size(px(13.)).child(text(label)))
-                        .child(mark(
-                            "use-items-selection",
-                            Button::new("validation-use-items")
-                                .xsmall()
-                                .ghost()
-                                .label(text("xlsx.subtotal-use-selection"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.set_validation_range_from_selection(false, window, cx);
-                                }))
-                                .into_any_element(),
-                        )),
+                        .child(div().text_sm().child(text(label))),
                 )
-                .child(mark("items", Input::new(&p.items).small().into_any_element()));
+                .child(mark("items", crate::shell::chrome::text_field(&p.items).full_width().into_any_element()));
             if compared && matches!(p.operator, "between" | "notBetween") {
                 body = body
                     .child(
                         h_flex()
                             .items_center()
                             .justify_between()
-                            .child(div().text_size(px(13.)).child(text("_xlsx.max")))
-                            .child(mark(
-                                "use-second-selection",
-                                Button::new("validation-use-second")
-                                    .xsmall()
-                                    .ghost()
-                                    .label(text("xlsx.subtotal-use-selection"))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.set_validation_range_from_selection(true, window, cx);
-                                    }))
-                                    .into_any_element(),
-                            )),
+                            .child(div().text_sm().child(text("_xlsx.max"))),
                     )
-                    .child(mark("second", Input::new(&p.second).small().into_any_element()));
+                    .child(mark("second", crate::shell::chrome::text_field(&p.second).full_width().into_any_element()));
             }
             body = body.child(toggle("validation-blank", p.allow_blank, "fix.validation.ignore-blank", |p| p.allow_blank = !p.allow_blank));
             if p.kind == "list" {
@@ -999,7 +1063,7 @@ impl SlideEditor {
         body = body
             .child(toggle("validation-show-prompt", p.show_prompt, "fix.validation.show-input-message-when-cell", |p| p.show_prompt = !p.show_prompt));
         if p.show_prompt {
-            body = body.child(mark("prompt-title", Input::new(&p.prompt_title).small().into_any_element())).child(mark("prompt", Input::new(&p.prompt).small().into_any_element()));
+            body = body.child(mark("prompt-title", crate::shell::chrome::text_field(&p.prompt_title).full_width().into_any_element())).child(mark("prompt", crate::shell::chrome::text_field(&p.prompt).full_width().into_any_element()));
         }
         }
         if p.tab == 2 {
@@ -1007,28 +1071,26 @@ impl SlideEditor {
             .child(toggle("validation-show-error", p.show_error, "fix.validation.show-error-alert-after-invalid", |p| p.show_error = !p.show_error));
         if p.show_error {
             body = body
-                .child(h_flex().gap_2().items_center().child(div().text_size(px(13.)).child(text("_shell.styles"))).child(choose("validation-style", &STYLES, p.style, |p, k| p.style = k)))
-                .child(mark("error-title", Input::new(&p.error_title).small().into_any_element()))
-                .child(mark("error-text", Input::new(&p.error_text).small().into_any_element()));
+                .child(h_flex().gap_2().items_center().child(div().text_sm().child(text("_shell.styles"))).child(choose("validation-style", &STYLES, p.style, |p, k| p.style = k)))
+                .child(mark("error-title", crate::shell::chrome::text_field(&p.error_title).full_width().into_any_element()))
+                .child(mark("error-text", crate::shell::chrome::text_field(&p.error_text).full_width().into_any_element()));
         }
         }
-        body = body
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(
-                h_flex().gap_2().children([
-                    mark("apply", Button::new("validation-set").small().label(text("fix.pivot.settings")).on_click(cx.listener(|this, _, _, cx| this.apply_validation_panel(cx))).into_any_element()),
-                    mark("clear", Button::new("validation-clear").small().ghost().label(text("fix.validation.clear-all")).on_click(cx.listener(|this, _, _, cx| this.clear_validation(cx))).into_any_element()),
-                ])
-            )
-            .child(
-                h_flex().gap_2().flex_wrap().children([
-                    mark("circle-invalid", Button::new("validation-circle").small().ghost().label(text("_xlsx.circle-invalid-data")).on_click(cx.listener(|this, _, _, cx| this.circle_invalid_data(cx))).into_any_element()),
-                    mark("clear-circles", Button::new("validation-clear-circles").small().ghost().label(text("_xlsx.clear-validation-circles")).on_click(cx.listener(|this, _, _, cx| this.clear_validation_circles(cx))).into_any_element()),
-                    mark("next-invalid", Button::new("validation-next-invalid").small().ghost().label(text("xlsx.validation.next-invalid")).on_click(cx.listener(|this, _, _, cx| { this.jump_to_next_invalid_cell(cx); })).into_any_element()),
-                    mark("select-same", Button::new("validation-select-same").small().ghost().label(text("xlsx.validation.select-same")).on_click(cx.listener(|this, _, _, cx| { this.select_validation_cells(true, cx); })).into_any_element()),
-                ])
-            );
-        Some(SidebarPanel { title: crate::shell::i18n::text("_shell.data-validation").into(), body: body.into_any_element() })
+        body=body.children(crate::shell::chrome::panel_message(&p.message))
+            .child(div().border_t_1().border_color(rgb(crate::shell::chrome::BORDER)).pt_2().child(text("xlsx.validation.tools")))
+            .child(h_flex().gap_2().flex_wrap().children([
+                mark("circle-invalid",crate::shell::chrome::action_button("validation-circle").label(text("_xlsx.circle-invalid-data")).on_click(cx.listener(|e,_,_,cx|{e.circle_invalid_data(cx);e.wb_mut().validation=None;cx.notify();})).into_any_element()),
+                mark("clear-circles",crate::shell::chrome::action_button("validation-clear-circles").label(text("_xlsx.clear-validation-circles")).on_click(cx.listener(|e,_,_,cx|e.clear_validation_circles(cx))).into_any_element()),
+                mark("next-invalid",crate::shell::chrome::action_button("validation-next-invalid").label(text("xlsx.validation.next-invalid")).on_click(cx.listener(|e,_,_,cx|{e.jump_to_next_invalid_cell(cx);e.wb_mut().validation=None;cx.notify();})).into_any_element()),
+                mark("select-same",crate::shell::chrome::action_button("validation-select-same").label(text("xlsx.validation.select-same")).on_click(cx.listener(|e,_,_,cx|{e.select_validation_cells(true,cx);e.wb_mut().validation=None;cx.notify();})).into_any_element()),
+            ]));
+        let footer=crate::shell::chrome::action_bar()
+            .action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("validation-set", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|e,_,_,cx|e.apply_validation_panel(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
+            .action(mark_action("clear", crate::shell::chrome::ActionDefinition::new("validation-clear", "", crate::shell::chrome::ActionButtonKind::Destructive).label(text("fix.validation.clear-all")).on_click(cx.listener(|e,_,_,cx|e.clear_validation(cx)))));
+        // The dialog's three tabs are in the panel header area.
+        Some(SidebarPanel::with_footer(text("_shell.data-validation"),body.into_any_element(),footer)
+            .header_tabs("validation-tabs",["fix.pivot.settings","fix.validation.input-message","fix.validation.error-alert"].map(text),tab_index,|e,i,cx|{if let Some(p)=e.sheet_state_mut().and_then(|s|s.validation.as_mut()){p.tab=i;}cx.notify();},cx))
     }
 }
 
