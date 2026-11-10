@@ -72,6 +72,7 @@ fn a_zero_text_rectangle_of_a_custom_shape_is_one_line() {
         outline_pages: false,
         notes_source: None,
         handout_marks: Default::default(),
+        word_windows_lines: None,
     };
     export(presentation, &options).expect("the export");
     let image = image::open(out_dir.join("slide-01.png")).expect("the picture").to_rgba8();

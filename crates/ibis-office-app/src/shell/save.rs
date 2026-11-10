@@ -46,6 +46,8 @@ impl SlideEditor {
     /// `save`, then `after` once the file is saved. A file with no path yet
     /// is saved only once a path is picked, so `after` waits for that.
     pub(crate) fn save_then(&mut self, after: AfterSave, window: &mut Window, cx: &mut Context<Self>) {
+        // What is being typed in a cell is put in first, so it is saved too.
+        self.commit_cell_edit(cx);
         self.commit_edit(window, cx);
         #[cfg(not(target_family = "wasm"))]
         // A file opened read-only for its password to modify is not written over: 名前を付けて保存 (as Office does).
@@ -118,64 +120,6 @@ impl SlideEditor {
         #[cfg(target_family = "wasm")]
         {
             let _ = (window, after, then);
-            self.status = Some(crate::shell::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
-            cx.notify();
-        }
-    }
-
-    /// Save (as ⌘S, asking where for a file that has no path yet) and then, once the file is written, `then` (the
-    /// save confirmation's 保存: close afterwards). A cancelled or failed save does not go on to `then`. What is being
-    /// typed in a cell is put in first, so it is saved too.
-    pub(crate) fn save_then(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) {
-        self.commit_cell_edit(cx);
-        self.commit_edit(window, cx);
-        #[cfg(not(target_family = "wasm"))]
-        {
-            if let Some(path) = self.path.clone().filter(|_| !self.is_modify_locked()) {
-                let result = self.save_to(path, window);
-                let saved = result.is_ok();
-                self.report_save(result, cx);
-                if saved {
-                    then(self, window, cx);
-                }
-                return;
-            }
-            if self.source.is_none() {
-                self.status = Some(crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").into());
-                return cx.notify();
-            }
-            let directory = if self.is_workbook() {
-                crate::xlsx::backup_save::effective_default_save_location()
-            } else {
-                std::env::var_os("HOME").map(Into::into).unwrap_or_else(|| ".".into())
-            };
-            let name = self.file_name.clone().unwrap_or_default();
-            let picked = cx.prompt_for_new_path_with_formats(&directory, Some(&name), &self.save_formats());
-            cx.spawn_in(window, async move |this, cx| {
-                // The dialog failing to open is told in a message box (not taken for a cancel).
-                let path = match picked.await {
-                    Ok(Ok(Some(path))) => path,
-                    Ok(Err(error)) => {
-                        this.update(cx, |this, cx| this.show_alert(crate::shell::i18n::text("shell.save-failed.title"), error.to_string().into(), cx)).ok();
-                        return;
-                    }
-                    _ => return,
-                };
-                this.update_in(cx, |this, window, cx| {
-                    let result = this.save_to(path, window);
-                    let saved = result.is_ok();
-                    this.report_save(result, cx);
-                    if saved {
-                        then(this, window, cx);
-                    }
-                })
-                .ok();
-            })
-            .detach();
-        }
-        #[cfg(target_family = "wasm")]
-        {
-            let _ = (window, then);
             self.status = Some(crate::shell::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
             cx.notify();
         }

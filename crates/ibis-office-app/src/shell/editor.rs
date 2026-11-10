@@ -1447,18 +1447,12 @@ impl SlideEditor {
 
     /// Typing not yet put into the file: into a cell (counted even when it
     /// is what the cell has, as entering it is an edit: `commit_cell_edit`
-    /// makes it a step), or into a shape's text in place (`editing`) that
-    /// changes it (`commit_edit` makes a step of it only then).
+    /// makes it a step), or text an input method is composing in a shape.
     fn is_typing(&self, cx: &App) -> bool {
         let in_cell = self.sheet_state().is_some_and(|s| s.cell_edit.is_some());
-        let in_shape = self.editing.as_ref().is_some_and(|edit| {
-            let text = edit.state.read(cx).value().to_string();
-            if edit.is_new {
-                !text.trim().is_empty()
-            } else {
-                self.slide().shape(edit.shape).and_then(|s| s.text_body()).map(|b| b.text()).as_deref() != Some(text.as_str())
-            }
-        });
+        // A shape's text is typed into the document as it goes; only what the input method is composing is not in it yet.
+        let _ = cx;
+        let in_shape = self.editing.as_ref().is_some_and(|edit| edit.edit.marked.as_ref().is_some_and(|m| !m.is_empty()));
         in_cell || in_shape
     }
 

@@ -7754,6 +7754,7 @@ fn add_watermark(doc: &FlowDocument, pagination: &mut Pagination) {
                 relative_height: ibis_doc_model::FloatingAnchor::DEFAULT_RELATIVE_HEIGHT,
                 wrap_polygon: None,
                 glue: Default::default(),
+                over: None,
             });
             // The piece's centre along the turned text.
             let along = (i as f32 + 0.5) * slot - sw / 2.0;

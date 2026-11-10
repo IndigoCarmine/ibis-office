@@ -575,11 +575,6 @@ impl Resources {
         m
     }
 
-    /// Whether the typeface `name` is installed (else another font stands in for it).
-    pub(crate) fn has_typeface(&self, name: &str) -> bool {
-        self.fonts.available(name).is_some()
-    }
-
     /// How far to move a line of `font` at `size` down from where GPUI puts
     /// it in a line box `line` high (GPUI centres the font's height in the
     /// box) to where PowerPoint does (`rich_text::baseline`).

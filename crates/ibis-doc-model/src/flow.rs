@@ -1460,12 +1460,17 @@ impl FlowRunStyle {
         // symbols shared with Latin text only with `w:hint="eastAsia"`
         // (whatever `w:lang` says), else the Latin one.
         // (`east_asia_hint` is upstream's name for the same `w:hint`.)
-        let _ = paragraph_has_east_asian;
         let hint = self.east_asian_hint || self.east_asia_hint;
+        // Punctuation and symbols from U+2010 up take the East Asian font in a paragraph with East Asian text, as Word draws them
+        // ("―" full-width), but not "…" U+2026 (three dots on the baseline: DIDX). The narrow no-break space U+202F, U+205F and the
+        // currency signs (€, U+20A0 to U+20CF) are drawn in the Latin font among Latin text too (GitHub issue #68 D13).
+        let latin_among_latin = matches!(c as u32, 0x2010..=0x2027 | 0x202f | 0x205f | 0x20a0..=0x20cf);
         let east_asian = match c as u32 {
             0xff61..=0xff9f => false,
             0x2e80.. => true,
-            0x2000..=0x2e7f | 0x02b0..=0x04ff => hint,
+            0x2026 => hint,
+            0x2010..=0x2e7f => paragraph_has_east_asian || hint || !latin_among_latin,
+            0x2000..=0x200f | 0x02b0..=0x04ff => hint,
             // ¡ § ° ± × ÷…; à é ì ò ù ü only for Chinese.
             0x00a0..=0x00ff => {
                 hint && (matches!(c as u32, 0xa1 | 0xa4 | 0xa7 | 0xa8 | 0xaa | 0xad | 0xaf | 0xb0..=0xb4 | 0xb6..=0xba | 0xbc..=0xbf | 0xd7 | 0xf7)
