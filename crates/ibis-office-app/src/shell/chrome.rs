@@ -1103,22 +1103,23 @@ pub(crate) fn brand_logo(id:&'static str,height:f32,full_width:bool)->Stateful<D
     root
 }
 
-/// The Acauda Office logo (the mark and the name, logo/AcaudaOffice_logo.svg) as
-/// the start view's title row shows it: its height in pixels, and its width
-/// over its height. The SVG's own size is this size (99.25×22): GPUI draws
-/// an SVG picture at twice its own size and scales that to the element, and
-/// scaled down from its 600×133 it came out jagged.
+/// The Acauda Office logo (the name and the long-tailed tit, logo/AcaudaOffice_logo.svg) as the
+/// start view's title row shows it: its height in pixels, and its width over its height (the
+/// SVG's own size, 2116×558). The SVG is given the size it is drawn at, so that GPUI does not
+/// scale a large picture down (it came out jagged).
 pub(crate) const LOGO_HEIGHT: f32 = 22.0;
-pub(crate) const LOGO_ASPECT: f32 = 600.0 / 133.0;
+pub(crate) const LOGO_ASPECT: f32 = 2116.0 / 558.0;
 
 pub(crate) fn app_logo() -> std::sync::Arc<Image> { app_logo_for_height(LOGO_HEIGHT) }
-/// Size the SVG raster source to its use, so a large start logo stays sharp.
+/// Size the SVG raster source to its use, so a large start logo stays sharp. In dark mode the
+/// name's letters (`#15191e` in the SVG, apart from the bird's outlines) are drawn light.
 pub(crate) fn app_logo_for_height(height:f32)->std::sync::Arc<Image>{
-    static CACHE:std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<u32,std::sync::Arc<Image>>>>=std::sync::OnceLock::new();
-    let height=height.ceil().max(1.)as u32;
+    static CACHE:std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(u32,bool),std::sync::Arc<Image>>>>=std::sync::OnceLock::new();
+    let height=height.ceil().max(1.)as u32;let dark=crate::shell::palette::is_dark();
     let mut cache=CACHE.get_or_init(Default::default).lock().unwrap();
-    cache.entry(height).or_insert_with(||{
-        let svg=include_str!("../../logo/AcaudaOffice_logo.svg").replacen("width=\"600\" height=\"133\"",&format!("width=\"{}\" height=\"{height}\"",height as f32*LOGO_ASPECT),1);
+    cache.entry((height,dark)).or_insert_with(||{
+        let mut svg=include_str!("../../logo/AcaudaOffice_logo.svg").replacen("width=\"2116\" height=\"558\"",&format!("width=\"{}\" height=\"{height}\"",height as f32*LOGO_ASPECT),1);
+        if dark {svg=svg.replace("#15191e","#e8eef6");}
         std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg,svg.into_bytes()))
     }).clone()
 }
