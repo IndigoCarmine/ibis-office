@@ -1,21 +1,13 @@
 [package]
 name = "ibis-embed-protocol"
-description = "IPC protocol between ibisOffice and external editors of embedded (OLE) objects: messages, framing, host and handler sessions, handler manifests."
+description = "ibisOffice's side of the embedded (OLE) object protocol: acauda-embed, re-exported, and OLE objects to and from its messages."
 license = "AGPL-3.0-only"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-base64 = "0.22"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = { version = "0.8", default-features = false, features = ["parse"] }
-
-# Local sockets and process spawning do not exist in the browser build.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-interprocess = "2.4"
-getrandom = "0.3"
+acauda-embed = { git = "https://github.com/IndigoCarmine/acauda-embed", rev = "9b78881a2d703fe97483f64f0c99cb851226df80" }
 
 # The host's side (ibisOffice): OLE objects to and from messages, previews
 # drawn. Editors leave it off.
