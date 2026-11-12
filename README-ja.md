@@ -1,4 +1,4 @@
-<p align="center"><a href="README.md">English</a> | <b>日本語</b></p>
+<p align="center"><a href="README.md">English</a> | <b>日本語</b> | <a href="README-zh-CN.md">简体中文</a></p>
 
 <p align="center">
   <img src="asset/AcaudaOffice_logo.svg" alt="Acauda Office" width="480">
