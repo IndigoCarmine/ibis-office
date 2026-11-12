@@ -516,7 +516,7 @@ impl SlideEditor {
             .relative()
             .w(px(520.0))
             .h(px(page_height))
-            .bg(white())
+            .bg(crate::shell::palette::white())
             .rounded_md()
             .shadow_lg()
             .border_1()
@@ -535,7 +535,7 @@ impl SlideEditor {
                     .border_1()
                     .border_color(theme.border)
                     .shadow_sm()
-                    .bg(white())
+                    .bg(crate::shell::palette::white())
                     .child(crate::render::shape_view::slide_backdrop(&slide, scale, &self.resources))
                     .children(shapes),
             )

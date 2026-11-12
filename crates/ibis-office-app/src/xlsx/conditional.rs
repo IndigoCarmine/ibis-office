@@ -45,36 +45,87 @@ pub(crate) struct Overlay {
     pub(crate) icons: Vec<((u32, u32), Rgb, u8)>,
 }
 
-/// One sheet as the calculation sees it (formulas of conditional formats
-/// refer to their own sheet; other sheets are not seen).
+/// One sheet as the calculation sees it, backed by [`Sheet::book_context`]
+/// for defined names, sheet names/indices, `date1904`, and cross-sheet cells.
 pub(crate) struct OneSheet<'a>(pub(crate) &'a Sheet);
 
 impl Book for OneSheet<'_> {
     fn sheet_count(&self) -> usize {
-        1
+        self.0.book_context.sheets.len().max(1)
     }
-    fn sheet_name(&self, _: usize) -> &str {
-        ""
+    fn sheet_name(&self, sheet: usize) -> &str {
+        if let Some((name, _)) = self.0.book_context.sheets.get(sheet) {
+            name.as_str()
+        } else if sheet == self.0.book_context.sheet_index {
+            self.0.book_context.sheet_name.as_str()
+        } else {
+            ""
+        }
     }
-    fn value(&self, _: usize, row: u32, column: u32) -> CellValue {
-        self.0.cell(row, column).map(|c| c.value.clone()).unwrap_or_default()
+    fn value(&self, sheet: usize, row: u32, column: u32) -> CellValue {
+        if sheet == self.0.book_context.sheet_index || self.0.book_context.sheets.is_empty() {
+            self.0.cell(row, column).map(|c| c.value.clone()).unwrap_or_default()
+        } else if let Some((_, cells)) = self.0.book_context.sheets.get(sheet) {
+            cells
+                .binary_search_by_key(&(row, column), |c| (c.row, c.column))
+                .ok()
+                .map(|i| &cells[i])
+                .or_else(|| cells.iter().find(|c| c.row == row && c.column == column))
+                .map(|c| c.value.clone())
+                .unwrap_or_default()
+        } else {
+            CellValue::Empty
+        }
     }
-    fn formula(&self, _: usize, row: u32, column: u32) -> Option<&str> {
-        self.0.cell(row, column)?.formula.as_deref()
+    fn formula(&self, sheet: usize, row: u32, column: u32) -> Option<&str> {
+        if sheet == self.0.book_context.sheet_index || self.0.book_context.sheets.is_empty() {
+            self.0.cell(row, column)?.formula.as_deref()
+        } else {
+            let (_, cells) = self.0.book_context.sheets.get(sheet)?;
+            let cell = cells
+                .binary_search_by_key(&(row, column), |c| (c.row, c.column))
+                .ok()
+                .map(|i| &cells[i])
+                .or_else(|| cells.iter().find(|c| c.row == row && c.column == column))?;
+            cell.formula.as_deref()
+        }
     }
-    fn for_each_cell(&self, _: usize, area: (u32, u32, u32, u32), f: &mut dyn FnMut(u32, u32, &CellValue)) {
+    fn for_each_cell(&self, sheet: usize, area: (u32, u32, u32, u32), f: &mut dyn FnMut(u32, u32, &CellValue)) {
+        let cells = if sheet == self.0.book_context.sheet_index || self.0.book_context.sheets.is_empty() {
+            &self.0.cells
+        } else if let Some((_, cells)) = self.0.book_context.sheets.get(sheet) {
+            cells
+        } else {
+            return;
+        };
         let (r0, c0, r1, c1) = area;
-        for c in &self.0.cells {
+        for c in cells {
             if (r0..=r1).contains(&c.row) && (c0..=c1).contains(&c.column) && (!c.value.is_empty() || c.formula.is_some()) {
                 f(c.row, c.column, &c.value);
             }
         }
     }
-    fn extent(&self, _: usize) -> (u32, u32) {
-        self.0.cells.iter().fold((0, 0), |(r, c), x| (r.max(x.row + 1), c.max(x.column + 1)))
+    fn extent(&self, sheet: usize) -> (u32, u32) {
+        let cells = if sheet == self.0.book_context.sheet_index || self.0.book_context.sheets.is_empty() {
+            &self.0.cells
+        } else if let Some((_, cells)) = self.0.book_context.sheets.get(sheet) {
+            cells
+        } else {
+            return (0, 0);
+        };
+        cells.iter().fold((0, 0), |(r, c), x| (r.max(x.row + 1), c.max(x.column + 1)))
     }
-    fn defined_name(&self, _: &str, _: Option<usize>) -> Option<String> {
-        None
+    fn defined_name(&self, name: &str, sheet: Option<usize>) -> Option<String> {
+        let matches = |d: &&ibis_doc_model::DefinedName| d.name.eq_ignore_ascii_case(name);
+        if let Some(s) = sheet
+            && let Some(d) = self.0.book_context.defined_names.iter().filter(matches).find(|d| d.sheet == Some(s))
+        {
+            return Some(d.formula.clone());
+        }
+        self.0.book_context.defined_names.iter().filter(matches).find(|d| d.sheet.is_none()).map(|d| d.formula.clone())
+    }
+    fn date1904(&self) -> bool {
+        self.0.book_context.date1904
     }
     fn pivot_data(
         &self,
@@ -146,10 +197,11 @@ fn cells_of(sheet: &Sheet, ranges: &[CellRange]) -> Vec<(u32, u32)> {
 
 /// A point's value among the numbers `values` (sorted).
 fn point(book: &OneSheet, p: &CfValue, values: &[f64], anchor: (u32, u32)) -> Option<f64> {
+    let sheet_idx = book.0.book_context.sheet_index;
     let (min, max) = (*values.first()?, *values.last()?);
     let given = || -> Option<f64> {
         let v = p.value.as_deref()?;
-        v.parse::<f64>().ok().or_else(|| number(&ibis_calc::recalc::evaluate(book, (0, anchor.0, anchor.1), v.trim_start_matches('=')).0))
+        v.parse::<f64>().ok().or_else(|| number(&ibis_calc::recalc::evaluate(book, (sheet_idx, anchor.0, anchor.1), v.trim_start_matches('=')).0))
     };
     Some(match p.kind.as_str() {
         "min" | "autoMin" => min,
@@ -252,6 +304,7 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
         return None;
     }
     let book = OneSheet(sheet);
+    let sheet_idx = sheet.book_context.sheet_index;
     // Per cell: the formats of the rules that hold, by priority.
     let mut styles: HashMap<(u32, u32), Vec<(u32, CfStyle)>> = HashMap::new();
     let mut stopped: HashMap<(u32, u32), u32> = HashMap::new();
@@ -261,8 +314,10 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
     rules.sort_by_key(|(_, r)| r.priority);
     for (cf, rule) in rules {
         let cells = cells_of(sheet, &cf.ranges);
-        let Some(anchor) = cf.ranges.first().map(|r| (r.first_row, r.first_column)) else { continue };
-        let value = |p: (u32, u32)| book.value(0, p.0, p.1);
+        // Excel writes the formula relative to the top-left of the rectangle
+        // around all the areas, not of the first area.
+        let Some(anchor) = cf.ranges.iter().map(|r| r.first_row).min().zip(cf.ranges.iter().map(|r| r.first_column).min()) else { continue };
+        let value = |p: (u32, u32)| book.value(sheet_idx, p.0, p.1);
         // The range's numbers, sorted: only for the rules that rank or scale
         // by them (a rule by a formula or a comparison needs none).
         let numbers: Vec<f64> = if matches!(rule.kind, CfKind::Expression(_) | CfKind::TimePeriod { .. } | CfKind::CellIs { .. }) {
@@ -272,7 +327,10 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
             numbers.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             numbers
         };
-        let shifted = |f: &str, p: (u32, u32)| ibis_calc::formula::shift(f, p.0 as i64 - anchor.0 as i64, p.1 as i64 - anchor.1 as i64);
+        let shifted = |f: &str, p: (u32, u32)| {
+            let f = f.trim_start_matches('=');
+            ibis_calc::formula::shift(f, p.0 as i64 - anchor.0 as i64, p.1 as i64 - anchor.1 as i64)
+        };
         // A formula whose references do not move across the columns (all
         // `$D192`-like) gives the same value along a row: worked out once a
         // row (or once a column, for the other way round). A rule over a
@@ -286,11 +344,26 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
         };
         let moves: std::cell::RefCell<HashMap<String, (bool, bool)>> = Default::default();
         let still = |f: &str| {
+            let f = f.trim_start_matches('=');
             if let Some(m) = moves.borrow().get(f) {
                 return *m;
             }
+            let up = f.to_uppercase();
+            let has_relative_name = sheet.book_context.defined_names.iter().any(|d| {
+                up.contains(&d.name.to_uppercase()) && {
+                    let nf = d.formula.trim_start_matches('=');
+                    let nbase = ibis_calc::formula::shift(nf, 0, 0);
+                    placed(nf)
+                        || nbase != ibis_calc::formula::shift(nf, 0, 1)
+                        || nbase != ibis_calc::formula::shift(nf, 1, 0)
+                }
+            });
             let base = ibis_calc::formula::shift(f, 0, 0);
-            let m = if placed(f) { (false, false) } else { (base == ibis_calc::formula::shift(f, 0, 1), base == ibis_calc::formula::shift(f, 1, 0)) };
+            let m = if placed(f) || has_relative_name {
+                (false, false)
+            } else {
+                (base == ibis_calc::formula::shift(f, 0, 1), base == ibis_calc::formula::shift(f, 1, 0))
+            };
             moves.borrow_mut().insert(f.to_string(), m);
             m
         };
@@ -300,13 +373,13 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
                 (true, true) => (u32::MAX, u32::MAX),
                 (true, false) => (p.0, u32::MAX),
                 (false, true) => (u32::MAX, p.1),
-                (false, false) => return ibis_calc::recalc::evaluate(&book, (0, p.0, p.1), &shifted(f, p)).0,
+                (false, false) => return ibis_calc::recalc::evaluate(&book, (sheet_idx, p.0, p.1), &shifted(f, p)).0,
             };
             let key = (f.to_string(), row_key, col_key);
             if let Some(v) = memo.borrow().get(&key) {
                 return v.clone();
             }
-            let v = ibis_calc::recalc::evaluate(&book, (0, p.0, p.1), &shifted(f, p)).0;
+            let v = ibis_calc::recalc::evaluate(&book, (sheet_idx, p.0, p.1), &shifted(f, p)).0;
             memo.borrow_mut().insert(key, v.clone());
             v
         };
@@ -586,7 +659,7 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
         let key = (cell.style, format!("{list:?}"));
         if let Some(&index) = made.get(&key) {
             let style = &out.styles[index as usize];
-            let text = if hide_value.contains(&p) { String::new() } else { ibis_doc_model::sheet_command::display_text(&cell.value, style, false) };
+            let text = if hide_value.contains(&p) { String::new() } else { ibis_doc_model::sheet_command::display_text(&cell.value, style, sheet.book_context.date1904) };
             changed.push(SheetCell { style: index, text, ..cell });
             continue;
         }
@@ -643,7 +716,7 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
                 style.number_format = code.clone();
             }
         }
-        let text = if hide_value.contains(&p) { String::new() } else { ibis_doc_model::sheet_command::display_text(&cell.value, &style, false) };
+        let text = if hide_value.contains(&p) { String::new() } else { ibis_doc_model::sheet_command::display_text(&cell.value, &style, sheet.book_context.date1904) };
         let index = out.style_index(style);
         made.insert(key, index);
         changed.push(SheetCell { style: index, text, ..cell });
@@ -664,6 +737,26 @@ pub(crate) fn apply(sheet: &Sheet) -> Option<(Sheet, Overlay)> {
 mod tests {
     use super::{OneSheet, apply, point};
     use ibis_doc_model::{CellRange, CellStyle, CellValue, CfKind, CfRule, CfStyle, ConditionalFormat, Rgb, Sheet};
+
+    #[test]
+    fn formula_is_relative_to_the_top_left_of_all_areas() {
+        let mut sheet = Sheet::default();
+        sheet.rows = vec![20]; sheet.columns = vec![80; 4];
+        sheet.styles = vec![CellStyle::default()];
+        for (c, v) in [1.0, 0.0, 0.0, 1.0].into_iter().enumerate() {
+            sheet.put_cell(0, c as u32, Some(ibis_doc_model::SheetCell { runs: None, phonetic: None, row: 0, column: c as u32, value: CellValue::Number(v), text: v.to_string(), kind: ibis_doc_model::CellKind::Number, formula: None, style: 0 }));
+        }
+        let area = |first_column, last_column| CellRange { first_row: 0, last_row: 0, first_column, last_column };
+        sheet.conditional = vec![ConditionalFormat {
+            source_index: None,
+            // The first area is not the top-left one.
+            ranges: vec![area(2, 3), area(0, 1)],
+            rules: vec![CfRule { kind: CfKind::Expression("A1=1".into()), priority: 1, stop: false, style: Some(CfStyle { fill: Some(Rgb(0xFF0000)), ..Default::default() }) }],
+        }];
+        let (drawn, _) = apply(&sheet).unwrap();
+        let filled: Vec<bool> = (0..4).map(|c| drawn.styles[drawn.cell(0, c).unwrap().style as usize].fill == Some(Rgb(0xFF0000))).collect();
+        assert_eq!(filled, vec![true, false, false, true]);
+    }
 
     #[test]
     fn overlapping_expression_priority_and_stop_control_property_merging() {
@@ -887,6 +980,199 @@ mod tests {
         // A5 (50.0, 90th+ percentile) should be Green (0x63BE7B)
         let f_a5 = drawn.styles[drawn.cell(4, 0).unwrap().style as usize].fill.unwrap();
         assert_eq!(f_a5, Rgb(0x63BE7B));
+    }
+
+    #[test]
+    fn issue23_named_formula_in_conditional_formatting_and_recalc() {
+        use std::sync::Arc;
+        use ibis_doc_model::{
+            CellEdit, CellInput, CellKind, Command, DefinedName, Document, EmuRect, EmuSize,
+            Presentation, Shape, ShapeId, ShapeKind, SheetCell, SheetCommand, Slide, SlideId,
+            Workbook, WorkbookSheet, calculate_missing_values,
+        };
+
+        for formula_str in ["=LEFT(_NAME_,1)<>$A3", "LEFT(_NAME_,1)<>$A3"] {
+            let mut sheet = Sheet::default();
+            sheet.rows = vec![20; 6];
+            sheet.columns = vec![80; 3];
+            sheet.styles = vec![CellStyle::default()];
+
+            // B1 = "Apple", B2 has formula =B1
+            sheet.put_cell(0, 1, Some(SheetCell {
+                runs: None, phonetic: None, row: 0, column: 1,
+                value: CellValue::Text("Apple".into()), text: "Apple".into(),
+                kind: CellKind::Text, formula: None, style: 0,
+            }));
+            sheet.put_cell(1, 1, Some(SheetCell {
+                runs: None, phonetic: None, row: 1, column: 1,
+                value: CellValue::Empty, text: String::new(),
+                kind: CellKind::Empty, formula: Some("B1".into()), style: 0,
+            }));
+
+            // A3:A5 = ["A", "B", "A"], B3:B5 = [1, 2, 3]
+            for (idx, a_val) in ["A", "B", "A"].into_iter().enumerate() {
+                let r = (idx + 2) as u32;
+                sheet.put_cell(r, 0, Some(SheetCell {
+                    runs: None, phonetic: None, row: r, column: 0,
+                    value: CellValue::Text(a_val.into()), text: a_val.into(),
+                    kind: CellKind::Text, formula: None, style: 0,
+                }));
+                sheet.put_cell(r, 1, Some(SheetCell {
+                    runs: None, phonetic: None, row: r, column: 1,
+                    value: CellValue::Number((idx + 1) as f64), text: (idx + 1).to_string(),
+                    kind: CellKind::Number, formula: None, style: 0,
+                }));
+            }
+
+            // Conditional formatting on A3:B5: =LEFT(_NAME_,1)<>$A3 -> fill 0xFFC7CE
+            sheet.conditional_x14 = vec![ConditionalFormat {
+                source_index: None,
+                ranges: vec![CellRange { first_row: 2, last_row: 4, first_column: 0, last_column: 1 }],
+                rules: vec![CfRule {
+                    kind: CfKind::Expression(formula_str.into()),
+                    priority: 1,
+                    stop: false,
+                    style: Some(CfStyle { fill: Some(Rgb(0xFFC7CE)), ..Default::default() }),
+                }],
+            }];
+
+            let slide_id = SlideId(1);
+            let mut slide = Slide::new(slide_id);
+            slide.name = Some("Sheet1".into());
+            slide.shapes.push(Shape::new(ShapeId(1), EmuRect::default(), ShapeKind::Sheet(Arc::new(sheet))));
+
+            let mut wb = Workbook::default();
+            wb.sheets.push(WorkbookSheet {
+                name: "Sheet1".into(),
+                state: Default::default(),
+                slide: Some(slide_id),
+                hidden: None,
+                other: false,
+            });
+            wb.names.push(DefinedName {
+                name: "_NAME_".into(),
+                sheet: None,
+                formula: "Sheet1!$B$2".into(),
+                hidden: false,
+            });
+
+            let mut presentation = Presentation::empty(EmuSize::WIDESCREEN);
+            presentation.slides.push(slide);
+            presentation.workbook = Some(Arc::new(wb));
+
+            calculate_missing_values(&mut presentation).unwrap();
+
+            let s1 = ibis_doc_model::sheet_calc::sheet_of_slide(&presentation.slides[0]).unwrap();
+            let (drawn1, _) = apply(s1).unwrap();
+            let fill_at = |drawn: &Sheet, r: u32, c: u32| {
+                drawn.styles[drawn.cell(r, c).unwrap().style as usize].fill
+            };
+            // LEFT("Apple", 1) == "A": row 2 ("A") -> false, row 3 ("B") -> true, row 4 ("A") -> false
+            assert_eq!(fill_at(&drawn1, 2, 0), None);
+            assert_eq!(fill_at(&drawn1, 2, 1), None);
+            assert_eq!(fill_at(&drawn1, 3, 0), Some(Rgb(0xFFC7CE)));
+            assert_eq!(fill_at(&drawn1, 3, 1), Some(Rgb(0xFFC7CE)));
+            assert_eq!(fill_at(&drawn1, 4, 0), None);
+            assert_eq!(fill_at(&drawn1, 4, 1), None);
+
+            // Change B1 to "Banana" via SheetCommand::SetCells; B2 (=B1) recalculates and book_context updates
+            let mut doc = Document::new(presentation);
+            doc.execute(vec![Command::Sheet(SheetCommand::SetCells {
+                slide: slide_id,
+                edits: vec![CellEdit {
+                    row: 0,
+                    column: 1,
+                    input: CellInput::Value(CellValue::Text("Banana".into())),
+                }],
+            })]).unwrap();
+
+            let s2 = ibis_doc_model::sheet_calc::sheet_of_slide(&doc.presentation().slides[0]).unwrap();
+            let (drawn2, _) = apply(s2).unwrap();
+            // LEFT("Banana", 1) == "B": row 2 ("A") -> true, row 3 ("B") -> false, row 4 ("A") -> true
+            assert_eq!(fill_at(&drawn2, 2, 0), Some(Rgb(0xFFC7CE)));
+            assert_eq!(fill_at(&drawn2, 2, 1), Some(Rgb(0xFFC7CE)));
+            assert_eq!(fill_at(&drawn2, 3, 0), None);
+            assert_eq!(fill_at(&drawn2, 3, 1), None);
+            assert_eq!(fill_at(&drawn2, 4, 0), Some(Rgb(0xFFC7CE)));
+            assert_eq!(fill_at(&drawn2, 4, 1), Some(Rgb(0xFFC7CE)));
+        }
+    }
+
+    #[test]
+    fn cross_sheet_defined_name_in_conditional_formatting() {
+        use std::sync::Arc;
+        use ibis_doc_model::{
+            CellKind, DefinedName, EmuRect, EmuSize, Presentation, Shape, ShapeId, ShapeKind,
+            SheetCell, Slide, SlideId, Workbook, WorkbookSheet, calculate_missing_values,
+        };
+
+        let mut sheet1 = Sheet::default();
+        sheet1.rows = vec![20; 3];
+        sheet1.columns = vec![80; 2];
+        sheet1.styles = vec![CellStyle::default()];
+        sheet1.put_cell(0, 0, Some(SheetCell {
+            runs: None, phonetic: None, row: 0, column: 0,
+            value: CellValue::Number(10.0), text: "10".into(),
+            kind: CellKind::Number, formula: None, style: 0,
+        }));
+        sheet1.put_cell(1, 0, Some(SheetCell {
+            runs: None, phonetic: None, row: 1, column: 0,
+            value: CellValue::Number(25.0), text: "25".into(),
+            kind: CellKind::Number, formula: None, style: 0,
+        }));
+        sheet1.conditional = vec![ConditionalFormat {
+            source_index: None,
+            ranges: vec![CellRange { first_row: 0, last_row: 1, first_column: 0, last_column: 0 }],
+            rules: vec![CfRule {
+                kind: CfKind::Expression("=A1>THRESHOLD".into()),
+                priority: 1,
+                stop: false,
+                style: Some(CfStyle { fill: Some(Rgb(0xC6EFCE)), ..Default::default() }),
+            }],
+        }];
+
+        let mut sheet2 = Sheet::default();
+        sheet2.rows = vec![20; 2];
+        sheet2.columns = vec![80; 3];
+        sheet2.styles = vec![CellStyle::default()];
+        // OtherSheet!C1 (row 0, col 2) = 15.0
+        sheet2.put_cell(0, 2, Some(SheetCell {
+            runs: None, phonetic: None, row: 0, column: 2,
+            value: CellValue::Number(15.0), text: "15".into(),
+            kind: CellKind::Number, formula: None, style: 0,
+        }));
+
+        let s1_id = SlideId(1);
+        let s2_id = SlideId(2);
+        let mut slide1 = Slide::new(s1_id);
+        slide1.name = Some("Sheet1".into());
+        slide1.shapes.push(Shape::new(ShapeId(1), EmuRect::default(), ShapeKind::Sheet(Arc::new(sheet1))));
+
+        let mut slide2 = Slide::new(s2_id);
+        slide2.name = Some("OtherSheet".into());
+        slide2.shapes.push(Shape::new(ShapeId(2), EmuRect::default(), ShapeKind::Sheet(Arc::new(sheet2))));
+
+        let mut wb = Workbook::default();
+        wb.sheets.push(WorkbookSheet { name: "Sheet1".into(), state: Default::default(), slide: Some(s1_id), hidden: None, other: false });
+        wb.sheets.push(WorkbookSheet { name: "OtherSheet".into(), state: Default::default(), slide: Some(s2_id), hidden: None, other: false });
+        wb.names.push(DefinedName {
+            name: "THRESHOLD".into(),
+            sheet: None,
+            formula: "OtherSheet!$C$1".into(),
+            hidden: false,
+        });
+
+        let mut presentation = Presentation::empty(EmuSize::WIDESCREEN);
+        presentation.slides.push(slide1);
+        presentation.slides.push(slide2);
+        presentation.workbook = Some(Arc::new(wb));
+
+        calculate_missing_values(&mut presentation).unwrap();
+
+        let s1 = ibis_doc_model::sheet_calc::sheet_of_slide(&presentation.slides[0]).unwrap();
+        let (drawn, _) = apply(s1).unwrap();
+        assert_eq!(drawn.styles[drawn.cell(0, 0).unwrap().style as usize].fill, None);
+        assert_eq!(drawn.styles[drawn.cell(1, 0).unwrap().style as usize].fill, Some(Rgb(0xC6EFCE)));
     }
 }
 

@@ -400,9 +400,9 @@ pub fn workbook_from_with_delimiter(text: &str, name: &str, delimiter: char) -> 
         rows.push_str(&format!(r#"<row r="{}">{cells}</row>"#, r + 1));
     }
     let num_fmts: String = formats.iter().enumerate().map(|(i, f)| format!(r#"<numFmt numFmtId="{}" formatCode="{}"/>"#, 164 + i, escape(f))).collect();
-    let xfs: String = (0..formats.len()).map(|i| format!(r#"<xf numFmtId="{}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>"#, 164 + i)).collect();
+    let xfs: String = (0..formats.len()).map(|i| format!(r#"<xf numFmtId="{}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="center"/></xf>"#, 164 + i)).collect();
     let styles = format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{}<fonts count="1"><font><sz val="12"/><color theme="1"/><name val="游ゴシック"/><family val="2"/><charset val="128"/><scheme val="minor"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="{}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>{xfs}</cellXfs><cellStyles count="1"><cellStyle name="標準" xfId="0" builtinId="0"/></cellStyles></styleSheet>"#,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{}<fonts count="1"><font><sz val="12"/><color theme="1"/><name val="游ゴシック"/><family val="2"/><charset val="128"/><scheme val="minor"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"><alignment vertical="center"/></xf></cellStyleXfs><cellXfs count="{}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"><alignment vertical="center"/></xf>{xfs}</cellXfs><cellStyles count="1"><cellStyle name="標準" xfId="0" builtinId="0"/></cellStyles></styleSheet>"#,
         if formats.is_empty() { String::new() } else { format!(r#"<numFmts count="{}">{num_fmts}</numFmts>"#, formats.len()) },
         formats.len() + 1
     );
@@ -541,6 +541,9 @@ line two {i}\",=B{}
         // The formats the old way wrote into its workbook (numbered from 1) are not in the empty workbook the new way saves into: its styles say none.
         for style in &mut old.styles {
             style.xf = style.xf.filter(|&xf| xf == 0);
+            // A text file opened sits its cells at the top (issue #17); the workbook written from it does not say so.
+            style.vertical = ibis_doc_model::CellVerticalAlign::Top;
+            style.vertical_set = true;
         }
         assert_eq!(old.cells.len(), new_sheet.cells.len());
         for (a, b) in old.cells.iter().zip(&new_sheet.cells) {

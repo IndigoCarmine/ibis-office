@@ -228,6 +228,23 @@ impl SlideEditor {
     }
 
     pub(crate) fn set_underline_style(&mut self, style: Option<UnderlineStyle>, cx: &mut Context<Self>) {
+        if self.mutate_active_shape_text(
+            |body, range| {
+                let (s, e) = range.unwrap_or_else(|| (0, body.text().chars().count()));
+                let fmt = ibis_doc_model::CharacterFormat {
+                    underline: Some(style.is_some()),
+                    underline_kind: style.map(UnderlineStyle::to_drawing_underline),
+                    ..Default::default()
+                };
+                body.format_runs(s, e, &fmt);
+            },
+            cx,
+        ) {
+            return;
+        }
+        if self.apply_box_edit_run_change(&ibis_doc_model::RunChange::Underline(style.is_some()), cx) {
+            return;
+        }
         self.apply_text_properties(RunFormat { underline: Some(style.is_some()), underline_style: style, ..Default::default() }, cx);
     }
 

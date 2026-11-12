@@ -147,6 +147,9 @@ impl SlideEditor {
         };
         if self.run_flow(commands, cx) {
             self.set_caret(FlowPos::new(at.para, at.offset + 1), false, cx);
+            if let Some(state) = self.doc_state_mut() {
+                state.shape_selected = true;
+            }
         }
         cx.notify();
     }

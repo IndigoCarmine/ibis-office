@@ -204,7 +204,21 @@ fn play(emf: &[u8], use_plus: bool) -> Option<Played> {
     if player.canvas.drawn == 0 {
         return if fallback { Some(Played { svg: None, fallback: true, sole_image: None }) } else { None };
     }
-    let view = if r > l && b > t {
+    // GDI plays a metafile into a picture's box by its frame (`rclFrame`, in 0.01 mm), not by the bounds of what was
+    // drawn: content that stops short of the frame keeps its place in it. The frame is taken in device units.
+    let frame = (i32_at(emf, 24), i32_at(emf, 28), i32_at(emf, 32), i32_at(emf, 36));
+    let frame_view = match frame {
+        (Some(fl), Some(ft), Some(fr), Some(fb)) if fr > fl && fb > ft => Some((
+            f64::from(fl) / 100.0 * player.px_per_mm.0,
+            f64::from(ft) / 100.0 * player.px_per_mm.1,
+            f64::from(fr - fl) / 100.0 * player.px_per_mm.0,
+            f64::from(fb - ft) / 100.0 * player.px_per_mm.1,
+        )),
+        _ => None,
+    };
+    let view = if let Some(v) = frame_view.filter(|v| v.2 >= 1.0 && v.3 >= 1.0) {
+        v
+    } else if r > l && b > t {
         (f64::from(l), f64::from(t), f64::from(r - l + 1), f64::from(b - t + 1))
     } else {
         let (x0, y0, x1, y1) = player.canvas.extent?;
@@ -831,10 +845,10 @@ impl Player {
         self.canvas.text(&IDENTITY, clip, &xs, y + vertical, (x, y), &text, &font, color, 1.0, anchor);
     }
 
-    fn place_dib(&mut self, r: &[u8], dest: (f64, f64, f64, f64), info_at: usize, bits_at: usize, source: Option<(i32, i32, i32, i32)>) {
+    fn place_dib(&mut self, r: &[u8], dest: (f64, f64, f64, f64), info_at: usize, bits_at: usize, source: Option<(i32, i32, i32, i32)>, rop: u32) {
         let (Some(off_info), Some(size_info), Some(off_bits), Some(size_bits)) = (u32_at(r, info_at), u32_at(r, info_at + 4), u32_at(r, bits_at), u32_at(r, bits_at + 4)) else { return };
         let (Some(info), Some(bits)) = (r.get(off_info as usize..(off_info + size_info) as usize), r.get(off_bits as usize..(off_bits + size_bits) as usize)) else { return };
-        let Some(png) = dib_png(info, bits, source) else { return };
+        let Some(png) = dib_png(info, bits, source, rop) else { return };
         let matrix = self.matrix();
         let extent = [(dest.0, dest.1), (dest.0 + dest.2, dest.1 + dest.3)];
         self.canvas.grow(&matrix, &extent);
@@ -845,13 +859,14 @@ impl Player {
     fn stretch_dibits(&mut self, r: &[u8]) {
         let f = |at: usize| i32_at(r, at).unwrap_or(0);
         let dest = (f64::from(f(24)), f64::from(f(28)), f64::from(f(72)), f64::from(f(76)));
-        self.place_dib(r, dest, 48, 56, Some((f(32), f(36), f(40), f(44))));
+        let rop = u32_at(r, 68).unwrap_or(0x00CC_0020);
+        self.place_dib(r, dest, 48, 56, Some((f(32), f(36), f(40), f(44))), rop);
     }
 
     fn set_dibits(&mut self, r: &[u8]) {
         let f = |at: usize| i32_at(r, at).unwrap_or(0);
         let dest = (f64::from(f(24)), f64::from(f(28)), f64::from(f(40)), f64::from(f(44)));
-        self.place_dib(r, dest, 48, 56, Some((f(32), f(36), f(40), f(44))));
+        self.place_dib(r, dest, 48, 56, Some((f(32), f(36), f(40), f(44))), 0x00CC_0020);
     }
 
     /// EMR_BITBLT and STRETCHBLT.
@@ -879,7 +894,7 @@ impl Player {
             return;
         }
         let source = if stretch { Some((f(44), f(48), f(100), f(104))) } else { Some((f(44), f(48), f(32), f(36))) };
-        self.place_dib(r, dest, 84, 92, source);
+        self.place_dib(r, dest, 84, 92, source, rop);
     }
 
     /// EMR_EXTSELECTCLIPRGN: the region's rectangles as the clip.

@@ -176,7 +176,7 @@ fn fill_props(w: &mut W, fill: &Fill, rotation_deg: f64) -> String {
             Some(s) => format!(r##"draw:fill="solid" draw:fill-color="{}""##, hex(s.color.rgb)),
             None => r#"draw:fill="none""#.to_string(),
         },
-        Fill::Image(media) | Fill::TileImage { media, .. } => match w.picture(*media) {
+        Fill::Image(_) | Fill::TileImage { .. } | Fill::Blip(_) => match fill.media().and_then(|media| w.picture(media)) {
             Some(href) => {
                 let xml = format!(r#"<draw:fill-image draw:name="{{name}}" xlink:href="{href}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>"#);
                 let name = w.named("Bitmap", &href, &xml);
@@ -959,7 +959,7 @@ pub fn write(presentation: &Presentation) -> Result<Vec<u8>, Error> {
     for (i, slide) in presentation.slides.iter().enumerate() {
         let master = slide.layout.and_then(|l| master_of_layout.get(&l.0).cloned()).unwrap_or_else(|| default_master.clone());
         let mut dp = String::new();
-        if let Some(Fill::Solid(_) | Fill::Linear { .. } | Fill::Image(_) | Fill::TileImage { .. } | Fill::TileLinear { .. }) = Some(&slide.background) {
+        if let Some(Fill::Solid(_) | Fill::Linear { .. } | Fill::Image(_) | Fill::TileImage { .. } | Fill::Blip(_) | Fill::TileLinear { .. }) = Some(&slide.background) {
             let gp = fill_props(&mut w, &slide.background, 0.0);
             let _ = write!(dp, "{gp}");
         }

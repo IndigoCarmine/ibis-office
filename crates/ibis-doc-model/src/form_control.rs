@@ -115,6 +115,21 @@ pub fn resolve(presentation: &Presentation, own: SlideId, text: &str) -> Option<
     Some((slide, crate::CellRange { first_row: r.start.row.min(r.end.row), first_column: r.start.column.min(r.end.column), last_row: r.start.row.max(r.end.row), last_column: r.start.column.max(r.end.column) }))
 }
 
+/// Like [`resolve`], but also resolves hidden and `veryHidden` worksheets (which have no `SlideId`).
+fn resolve_sheet<'a>(presentation: &'a Presentation, own: SlideId, text: &str) -> Option<(&'a Sheet, crate::CellRange)> {
+    use ibis_calc::formula::parser::{Expr, parse};
+    let Expr::Ref(r) = parse(text.trim().trim_start_matches('=')).ok()? else { return None };
+    let sheet = match &r.sheet {
+        None => sheet_of(presentation, own)?,
+        Some(s) => {
+            let w = presentation.workbook.as_ref()?;
+            let ws = w.sheets.iter().find(|ws| ws.name.eq_ignore_ascii_case(&s.first))?;
+            ws.slide.and_then(|id| sheet_of(presentation, id)).or(ws.hidden.as_deref())?
+        }
+    };
+    Some((sheet, crate::CellRange { first_row: r.start.row.min(r.end.row), first_column: r.start.column.min(r.end.column), last_row: r.start.row.max(r.end.row), last_column: r.start.column.max(r.end.column) }))
+}
+
 fn number_of(v: &CellValue) -> Option<f64> {
     match v {
         CellValue::Number(n) => Some(*n),
@@ -143,8 +158,8 @@ pub fn refresh_controls(presentation: &mut Presentation) {
                 }
                 position += 1;
             }
-            if let Some((link_slide, range)) = c.link.as_deref().and_then(|l| resolve(presentation, slide.id, l)) {
-                let value = sheet_of(presentation, link_slide).and_then(|s| s.cell(range.first_row, range.first_column)).map(|cell| cell.value.clone()).unwrap_or(CellValue::Empty);
+            if let Some((link_sheet, range)) = c.link.as_deref().and_then(|l| resolve_sheet(presentation, slide.id, l)) {
+                let value = link_sheet.cell(range.first_row, range.first_column).map(|cell| cell.value.clone()).unwrap_or(CellValue::Empty);
                 match c.kind {
                     ControlKind::CheckBox => {
                         now.checked = match &value {
@@ -157,7 +172,7 @@ pub fn refresh_controls(presentation: &mut Presentation) {
                         // The cell holds the number of the button chosen in the group (the link of the first one).
                         let chosen = group > 0
                             && match &slide.shapes[group - 1].kind {
-                                ShapeKind::Control(first) => first.link.as_deref().and_then(|l| resolve(presentation, slide.id, l)).and_then(|(s, r)| sheet_of(presentation, s).and_then(|sh| sh.cell(r.first_row, r.first_column)).and_then(|cell| number_of(&cell.value))),
+                                ShapeKind::Control(first) => first.link.as_deref().and_then(|l| resolve_sheet(presentation, slide.id, l)).and_then(|(sh, r)| sh.cell(r.first_row, r.first_column).and_then(|cell| number_of(&cell.value))),
                                 _ => None,
                             }
                             .is_some_and(|n| n as i64 == position);
@@ -171,16 +186,14 @@ pub fn refresh_controls(presentation: &mut Presentation) {
                     _ => {}
                 }
             }
-            if let Some((range_slide, range)) = c.range.as_deref().and_then(|r| resolve(presentation, slide.id, r)) {
-                if let Some(sheet) = sheet_of(presentation, range_slide) {
-                    let mut items = Vec::new();
-                    for row in range.first_row..=range.last_row.min(range.first_row + 255) {
-                        for col in range.first_column..=range.last_column.min(range.first_column + 255) {
-                            items.push(sheet.cell(row, col).map(|cell| cell.text.clone()).unwrap_or_default());
-                        }
+            if let Some((sheet, range)) = c.range.as_deref().and_then(|r| resolve_sheet(presentation, slide.id, r)) {
+                let mut items = Vec::new();
+                for row in range.first_row..=range.last_row.min(range.first_row + 255) {
+                    for col in range.first_column..=range.last_column.min(range.first_column + 255) {
+                        items.push(sheet.cell(row, col).map(|cell| cell.text.clone()).unwrap_or_default());
                     }
-                    now.items = items;
                 }
+                now.items = items;
             }
             if now != **c {
                 updates.push((si, hi, now));

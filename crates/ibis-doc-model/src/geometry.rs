@@ -103,6 +103,28 @@ impl EmuRect {
         }
         Self::new(left, top, right - left, bottom - top)
     }
+
+    /// Resize by dragging `handle` by (`dx`, `dy`), preserving the original aspect ratio when
+    /// `keep_aspect_on_corners` is true and `handle` is one of the four corners.
+    pub fn resized_with_aspect(&self, handle: ResizeHandle, mut dx: Emu, mut dy: Emu, min: Emu, keep_aspect_on_corners: bool) -> Self {
+        if keep_aspect_on_corners && handle.is_corner() && self.width > 0 && self.height > 0 {
+            let sx = if handle.moves_left() { -1.0 } else { 1.0 };
+            let sy = if handle.moves_top() { -1.0 } else { 1.0 };
+            let w0 = self.width as f64;
+            let h0 = self.height as f64;
+            let raw_w = (w0 + sx * dx as f64).max(min as f64);
+            let raw_h = (h0 + sy * dy as f64).max(min as f64);
+            let min_k = (min as f64 / w0).max(min as f64 / h0);
+            let k = if (raw_w / w0 - 1.0).abs() >= (raw_h / h0 - 1.0).abs() {
+                (raw_w / w0).max(min_k)
+            } else {
+                (raw_h / h0).max(min_k)
+            };
+            dx = (sx * (w0 * k - w0)).round() as Emu;
+            dy = (sy * (h0 * k - h0)).round() as Emu;
+        }
+        self.resized(handle, dx, dy, min)
+    }
 }
 
 /// The eight resize handles around a selected shape.
@@ -129,6 +151,10 @@ impl ResizeHandle {
         Self::BottomLeft,
         Self::Left,
     ];
+
+    pub fn is_corner(self) -> bool {
+        matches!(self, Self::TopLeft | Self::TopRight | Self::BottomRight | Self::BottomLeft)
+    }
 
     pub fn moves_left(self) -> bool {
         matches!(self, Self::TopLeft | Self::Left | Self::BottomLeft)

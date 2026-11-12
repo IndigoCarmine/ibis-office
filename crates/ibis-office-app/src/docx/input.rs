@@ -48,6 +48,9 @@ impl SlideEditor {
 /// The input hooks of `FormatEditor` for a document (see `mod.rs`).
 impl SlideEditor {
     pub(crate) fn doc_text_for_range(&mut self, range: Range<usize>, adjusted: &mut Option<Range<usize>>, _: &mut Window, _: &mut Context<Self>) -> Option<String> {
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            return self.input_text_for_range(range, adjusted);
+        }
         let (_, text, offsets) = self.input_paragraph()?;
         let (a, b) = (to_position(&offsets, range.start), to_position(&offsets, range.end));
         *adjusted = Some(offsets[a]..offsets[b]);
@@ -55,6 +58,9 @@ impl SlideEditor {
     }
 
     pub(crate) fn doc_selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            return self.input_selected_range();
+        }
         let (caret, _, offsets) = self.input_paragraph()?;
         let (a, b) = self.ordered_selection()?;
         let (start, end) = if a.para == b.para { (a.offset, b.offset) } else { (caret.offset, caret.offset) };
@@ -64,6 +70,9 @@ impl SlideEditor {
     }
 
     pub(crate) fn doc_marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            return self.input_marked_range();
+        }
         let marked = self.doc_state()?.marked.as_ref()?;
         let (caret, _, offsets) = self.input_paragraph()?;
         let start = offsets.get(caret.offset).copied()?;
@@ -71,6 +80,10 @@ impl SlideEditor {
     }
 
     pub(crate) fn doc_unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            self.input_unmark(cx);
+            return;
+        }
         if let Some(state) = self.doc_state_mut() {
             state.marked = None;
         }
@@ -78,6 +91,10 @@ impl SlideEditor {
     }
 
     pub(crate) fn doc_replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, _: &mut Window, cx: &mut Context<Self>) {
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            self.input_replace(range, text, cx);
+            return;
+        }
         let composing = self.doc_state_mut().and_then(|s| s.marked.take()).is_some();
         // A range given outside composition replaces those characters of
         // the paragraph (the input method correcting what was typed).
@@ -94,7 +111,14 @@ impl SlideEditor {
         cx.notify();
     }
 
-    pub(crate) fn doc_replace_and_mark_text_in_range(&mut self, _: Option<Range<usize>>, text: &str, _: Option<Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn doc_replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, _: Option<Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            if let Some(range) = range {
+                self.input_replace(Some(range), "", cx);
+            }
+            self.input_mark(text, cx);
+            return;
+        }
         // Composing over a selection replaces it, as in Word.
         if self.doc_state().is_some_and(|s| s.marked.is_none()) && self.ordered_selection().is_some_and(|(a, b)| a != b) {
             self.delete_char(false, cx);
@@ -106,6 +130,9 @@ impl SlideEditor {
     }
 
     pub(crate) fn doc_bounds_for_range(&mut self, _: Range<usize>, _: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            return self.caret_bounds();
+        }
         let (_, caret) = self.text_selection()?;
         let lines = self.flow_lines();
         let (page, x, y, h) = self.caret_box(&lines, caret)?;
@@ -113,11 +140,14 @@ impl SlideEditor {
         Some(Bounds::new(point(origin.x + px(x * k), origin.y + px(y * k)), size(px(2.0), px(h * k))))
     }
 
-    pub(crate) fn doc_character_index_for_point(&mut self, _: Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+    pub(crate) fn doc_character_index_for_point(&mut self, point: Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+        if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
+            return self.input_index_for_point(point);
+        }
         None
     }
 
     pub(crate) fn doc_accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
-        self.doc_state().is_some_and(|s| s.caret.is_some())
+        self.doc_state().is_some_and(|s| s.box_edit.is_some() || s.caret.is_some())
     }
 }

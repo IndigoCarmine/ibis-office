@@ -236,6 +236,13 @@ pub(crate) trait FormatEditor {
     fn sidebar_tabs() -> Vec<crate::shell::chrome::SidebarTab> {
         Vec::new()
     }
+
+    /// Whether the right pane has something to show when it is opened with no panel chosen (a workbook: what is
+    /// selected; a presentation: the slide's or the shape's size and position). A document's shows only a panel opened
+    /// for it (書式・コメント・検索…), so its title-row button cannot open the pane by itself.
+    fn sidebar_on_request() -> bool {
+        false
+    }
 }
 
 impl SlideEditor {

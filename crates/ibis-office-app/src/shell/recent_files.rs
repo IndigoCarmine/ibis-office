@@ -15,20 +15,15 @@ pub(crate) const MAX_RECENT: usize = 20;
 
 /// Where the list is stored, if the user's data directory is known.
 fn store_path() -> Option<PathBuf> {
-    let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
-    #[cfg(target_os = "macos")]
-    let base = env("HOME").map(|home| home.join("Library/Application Support"));
-    #[cfg(target_os = "windows")]
-    let base = env("APPDATA");
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let base = env("XDG_DATA_HOME").or_else(|| env("HOME").map(|home| home.join(".local/share")));
+    let base = crate::shell::app_data::base();
     Some(base?.join("AcaudaOffice").join("recent-files.txt"))
 }
 
 /// The stored list; empty if there is none or it cannot be read.
 pub(crate) fn load() -> Vec<PathBuf> {
     let Some(store) = store_path() else { return Vec::new() };
-    std::fs::read_to_string(&store).map(|text| parse(&text)).unwrap_or_default()
+    // (A list stored with the extended-length form of Windows paths is read in the plain one.)
+    std::fs::read_to_string(&store).map(|text| parse(&text)).unwrap_or_default().iter().map(|p| crate::shell::plain_path::plain(p)).collect()
 }
 
 /// Put `path` first in the stored list and return the new list.
@@ -36,8 +31,16 @@ pub(crate) fn add(path: &Path) -> Vec<PathBuf> {
     let mut list = load();
     // The absolute path, so the same file opened from different working
     // directories is one entry.
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = crate::shell::plain_path::canonical(path).unwrap_or_else(|_| path.to_path_buf());
     push(&mut list, path);
+    save(&list);
+    list
+}
+
+/// Remove only the history entry; never delete the user's file.
+pub(crate) fn remove(path: &Path) -> Vec<PathBuf> {
+    let mut list=load();
+    list.retain(|entry|entry!=path);
     save(&list);
     list
 }

@@ -75,7 +75,8 @@ fn a_picture_in_an_ods_is_on_the_sheet() {
     let want = pictures(&ibis_pptx::read(&original).unwrap());
     assert_eq!(want.len(), got.len(), "{want:?}");
     assert_eq!(want[0].0, got[0].0, "the same sheet");
-    assert!((want[0].1.width - frame.width).abs() < 20_000 && (want[0].1.height - frame.height).abs() < 20_000, "{want:?} / {got:?}");
+    // (The picture of the xlsx is anchored to cells, so its size follows the column widths: Excel for Windows' are about 10 % narrower than Excel for Mac's.)
+    assert!((want[0].1.width - frame.width).abs() < 200_000 && (want[0].1.height - frame.height).abs() < 20_000, "{want:?} / {got:?}");
     // (The position is the same cell and the same offsets in it, 0.141 cm and 0.6 cm in column E; the column widths
     // and row heights LibreOffice wrote differ from Excel's a little, so the absolute position is not compared.)
     assert!(frame.x > 0 && frame.y > 0);

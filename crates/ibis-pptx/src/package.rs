@@ -17,6 +17,8 @@ pub(crate) const REL_SLIDE_MASTER: &str =
 pub(crate) const REL_CHART_USER_SHAPES: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartUserShapes";
 pub(crate) const REL_THEME: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
+pub(crate) const REL_THEME_OVERRIDE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/themeOverride";
 pub(crate) const REL_NOTES_MASTER: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster";
 pub(crate) const REL_NOTES_SLIDE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 pub(crate) const REL_TABLE_STYLES: &str =

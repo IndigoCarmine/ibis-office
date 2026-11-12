@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) ibis inc.
+# Additional terms under AGPL-3.0 section 7(b): see NOTICE.
+#
+# Flatpak manifest for ibisOffice.
+# Stages only the pre-built ibisOffice binary, icons, desktop/metainfo files,
+# ECMA-376 art borders data, and third-party license notices into /app.
+# No external shared libraries (.so) are bundled inside the Flatpak.
+id: jp.ne.ibis.ibisOffice
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: ibisOffice
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=host
+  - --talk-name=org.freedesktop.portal.Desktop
+  - --talk-name=org.freedesktop.portal.Documents
+  - --talk-name=org.freedesktop.portal.FileChooser
+  - --talk-name=org.freedesktop.portal.OpenURI
+
+modules:
+  - name: ibisoffice
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 staged/bin/ibisOffice /app/bin/ibisOffice
+      - install -Dm644 staged/share/applications/jp.ne.ibis.ibisOffice.desktop /app/share/applications/jp.ne.ibis.ibisOffice.desktop
+      - install -Dm644 staged/share/metainfo/jp.ne.ibis.ibisOffice.metainfo.xml /app/share/metainfo/jp.ne.ibis.ibisOffice.metainfo.xml
+      - |
+        for size in 16 24 32 48 256; do
+          install -Dm644 "staged/share/icons/hicolor/${size}x${size}/apps/jp.ne.ibis.ibisOffice.png" \
+            "/app/share/icons/hicolor/${size}x${size}/apps/jp.ne.ibis.ibisOffice.png"
+        done
+      - install -Dm644 staged/share/ibisOffice/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip /app/share/ibisOffice/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip
+      - install -Dm644 staged/share/ibisOffice/artborders/ECMA-NOTICE.txt /app/share/ibisOffice/artborders/ECMA-NOTICE.txt
+      - install -Dm644 staged/share/doc/ibisOffice/LICENSE /app/share/doc/ibisOffice/LICENSE
+      - install -Dm644 staged/share/doc/ibisOffice/COMMERCIAL-LICENSE.md /app/share/doc/ibisOffice/COMMERCIAL-LICENSE.md
+      - install -Dm644 staged/share/doc/ibisOffice/NOTICE /app/share/doc/ibisOffice/NOTICE
+      - install -Dm644 staged/share/doc/ibisOffice/third-party-licenses.md /app/share/doc/ibisOffice/third-party-licenses.md
+      - install -Dm644 staged/share/doc/ibisOffice/Carlito-OFL.txt /app/share/doc/ibisOffice/Carlito-OFL.txt
+    sources:
+      - type: dir
+        path: .

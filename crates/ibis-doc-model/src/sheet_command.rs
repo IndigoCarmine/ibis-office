@@ -448,7 +448,10 @@ pub enum SheetCommand {
     /// structural changes, which reach every sheet).
     RestoreAll { slides: Vec<Slide>, workbook: Option<Arc<Workbook>> },
     /// Sizes of columns or rows from `first` put back (the undo of a size change: not a copy of the whole book), with their entries in the hidden ones (the size they come back at, if any).
-    RestoreSizes { slide: SlideId, axis: Axis, first: u32, sizes: Vec<Emu>, hidden: Vec<Option<Emu>> },
+    RestoreSizes { slide: SlideId, axis: Axis, first: u32, sizes: Vec<Emu>, hidden: Vec<Option<Emu>>, custom: Vec<bool> },
+    /// A column width the sheet chose by itself (a number entered that is wider than the column; "fit to selection"):
+    /// the columns are not marked as fixed by the user, so they widen again and their width is not saved.
+    SetColumnWidthAuto { slide: SlideId, first: u32, last: u32, size: Emu },
     /// The sheet as built elsewhere, in place of the slide's (a pivot table
     /// built again from its source, in its style: ピボットテーブルの更新).
     ReplaceSheet { slide: SlideId, sheet: Box<Sheet> },
@@ -497,6 +500,19 @@ pub enum ChartMoveTarget {
     NewSheet { name: String, slide: SlideId, sheet_shape: ShapeId },
 }
 
+/// Subtract an inclusive rectangle as at most four non-overlapping retained rectangles.
+fn validation_range_difference(range:CellRange,cut:CellRange)->Vec<CellRange>{
+ let top=range.first_row.max(cut.first_row);let bottom=range.last_row.min(cut.last_row);
+ let left=range.first_column.max(cut.first_column);let right=range.last_column.min(cut.last_column);
+ if top>bottom||left>right{return vec![range];}
+ let mut out=Vec::new();
+ if range.first_row<top{out.push(CellRange{last_row:top-1,..range});}
+ if bottom<range.last_row{out.push(CellRange{first_row:bottom+1,..range});}
+ if range.first_column<left{out.push(CellRange{first_row:top,last_row:bottom,last_column:left-1,..range});}
+ if right<range.last_column{out.push(CellRange{first_row:top,last_row:bottom,first_column:right+1,..range});}
+ out
+}
+
 pub(crate) fn apply(presentation: &mut Presentation, command: SheetCommand) -> Result<Command, EditError> {
     let view_only = matches!(
         command,
@@ -518,6 +534,9 @@ pub(crate) fn apply(presentation: &mut Presentation, command: SheetCommand) -> R
         crate::slicer::refresh_slicers(presentation);
         crate::form_control::refresh_controls(presentation);
         crate::chart_refresh::refresh_charts(presentation);
+    }
+    if result.is_ok() {
+        sync_sheet_book_context(presentation);
     }
     result
 }
@@ -571,8 +590,9 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
         SheetCommand::Insert { slide, axis, at, count } => structure(presentation, slide, true, axis, at, count),
         SheetCommand::Delete { slide, axis, at, count } => structure(presentation, slide, false, axis, at, count),
         SheetCommand::RestoreAll { slides, workbook } => restore_all(presentation, slides, workbook),
-        SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden } => restore_sizes(presentation, slide, axis, first, sizes, hidden),
-        SheetCommand::SetSize { slide, axis, first, last, size } => set_size(presentation, slide, axis, first, last, size),
+        SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden, custom } => restore_sizes(presentation, slide, axis, first, sizes, hidden, custom),
+        SheetCommand::SetColumnWidthAuto { slide, first, last, size } => set_size_marked(presentation, slide, Axis::Columns, first, last, size, false),
+        SheetCommand::SetSize { slide, axis, first, last, size } => set_size_marked(presentation, slide, axis, first, last, size, true),
         SheetCommand::Hide { slide, axis, first, last, hidden } => hide(presentation, slide, axis, first, last, hidden),
         SheetCommand::MoveCells { slide, from, row, column } => move_cells(presentation, slide, from, row, column),
         SheetCommand::HideSheet { slide, sheet, hidden, shape } => hide_sheet(presentation, slide, sheet, hidden, shape),
@@ -783,9 +803,15 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
         SheetCommand::SetValidation { slide, ranges, rule } => {
             let inverse = snapshot(presentation);
             let sheet = sheet_mut(presentation, slide)?;
-            let within = |r: &CellRange| ranges.iter().any(|t| r.first_row >= t.first_row && r.last_row <= t.last_row && r.first_column >= t.first_column && r.last_column <= t.last_column);
+            // Replace only the addressed cells, including a partial overlap of an existing rule.
+            // Relative formula references are anchored at the first cell of the retained areas.
             for v in sheet.validations.iter_mut() {
-                v.ranges.retain(|r| !within(r));
+                let original=v.ranges.first().copied();
+                for target in &ranges {v.ranges=v.ranges.iter().flat_map(|r|validation_range_difference(*r,*target)).collect();}
+                if let (Some(old),Some(new))=(original,v.ranges.first()) {
+                    let delta=(new.first_row as i64-old.first_row as i64,new.first_column as i64-old.first_column as i64);
+                    if delta!=(0,0) {for formula in [&mut v.formula1,&mut v.formula2] {if let Some(f)=formula { *f=ibis_calc::formula::shift(f,delta.0,delta.1); }}}
+                }
             }
             sheet.validations.retain(|v| !v.ranges.is_empty());
             if let Some(mut rule) = rule {
@@ -1433,7 +1459,12 @@ fn set_cells(presentation: &mut Presentation, slide: SlideId, edits: Vec<CellEdi
         let anchors: Vec<((u32, u32), CellRange)> = sheet
             .spills
             .iter()
-            .filter(|(a, r)| changed.iter().any(|&(row, column)| (row, column) != **a && inside(r, row, column)))
+            .filter(|(a, r)| {
+                let blocked_1x1 = r.first_row == r.last_row
+                    && r.first_column == r.last_column
+                    && sheet.cell(a.0, a.1).is_some_and(|c| c.value == CellValue::Error(crate::sheet::CellError::Spill));
+                blocked_1x1 || changed.iter().any(|&(row, column)| (row, column) != **a && inside(r, row, column))
+            })
             .map(|(a, r)| (*a, *r))
             .collect();
         let typed: Vec<(u32, u32)> = edits.iter().filter(|e| !matches!(e.input, CellInput::Clear)).map(|e| (e.row, e.column)).collect();
@@ -1485,6 +1516,9 @@ fn clear_spilled(sheet: &mut Sheet, anchor: (u32, u32), old: CellRange, keep: Op
         return Vec::new();
     }
     let mut out = Vec::new();
+    // A spill of a million cells: taking them away one by one shifts the rest of the (sorted) cells each time,
+    // so the cells to remove are collected and taken out in one pass (#44).
+    let mut removed = std::collections::HashSet::new();
     for row in old.first_row..=old.last_row {
         for column in old.first_column..=old.last_column {
             if (row, column) == anchor || keep.is_some_and(|k| (k.first_row..=k.last_row).contains(&row) && (k.first_column..=k.last_column).contains(&column)) {
@@ -1494,10 +1528,18 @@ fn clear_spilled(sheet: &mut Sheet, anchor: (u32, u32), old: CellRange, keep: Op
             if cell.formula.is_some() {
                 continue;
             }
-            let new = (cell.style != 0).then(|| SheetCell { value: CellValue::Empty, text: String::new(), kind: CellKind::Empty, phonetic: None, runs: None, ..cell });
-            sheet.put_cell(row, column, new);
+            if cell.style != 0 {
+                // The cell stays where it is, so this does not move the others.
+                let emptied = SheetCell { value: CellValue::Empty, text: String::new(), kind: CellKind::Empty, phonetic: None, runs: None, ..cell };
+                sheet.put_cell(row, column, Some(emptied));
+            } else {
+                removed.insert((row, column));
+            }
             out.push((row, column));
         }
+    }
+    if !removed.is_empty() {
+        sheet.cells.retain(|c| !removed.contains(&(c.row, c.column)));
     }
     out
 }
@@ -1516,7 +1558,7 @@ fn spill(sheet: &mut Sheet, anchor: (u32, u32), value: CellValue, spill: Option<
     };
     let range = CellRange { first_row: anchor.0, first_column: anchor.1, last_row: anchor.0 + rows - 1, last_column: anchor.1 + columns - 1 };
     let in_old = |row: u32, column: u32| !was_blocked && (old.first_row..=old.last_row).contains(&row) && (old.first_column..=old.last_column).contains(&column);
-    let off_sheet = range.last_row as usize >= sheet.rows.len() || range.last_column as usize >= sheet.columns.len();
+    let off_sheet = range.last_row >= 1_048_576 || range.last_column >= 16_384;
     let blocked = off_sheet
         || (range.first_row..=range.last_row).any(|row| {
             (range.first_column..=range.last_column).any(|column| {
@@ -1527,6 +1569,14 @@ fn spill(sheet: &mut Sheet, anchor: (u32, u32), value: CellValue, spill: Option<
     if blocked {
         sheet.spills.insert(anchor, range);
         return (CellValue::Error(crate::sheet::CellError::Spill), changed);
+    }
+    if range.last_row as usize >= sheet.rows.len() {
+        let def_h = if sheet.default_row > 0 { sheet.default_row } else { 20 * crate::EMU_PER_POINT };
+        sheet.rows.resize(range.last_row as usize + 1, def_h);
+    }
+    if range.last_column as usize >= sheet.columns.len() {
+        let def_w = if sheet.default_column > 0 { sheet.default_column } else { 54 * crate::EMU_PER_POINT };
+        sheet.columns.resize(range.last_column as usize + 1, def_w);
     }
     for (i, v) in values.iter().enumerate() {
         let (row, column) = (anchor.0 + i as u32 / columns, anchor.1 + i as u32 % columns);
@@ -2947,14 +2997,21 @@ pub fn filtered_rows(sheet: &Sheet, f: &crate::sheet::AutoFilter, date1904: bool
 /// [`filtered_rows`] with today (a serial) given, for the date periods.
 pub fn filtered_rows_on(sheet: &Sheet, f: &crate::sheet::AutoFilter, today: Option<i64>, date1904: bool) -> std::collections::BTreeSet<u32> {
     let body = (f.range.first_row + 1)..=f.range.last_row;
+    // A checked-value list is a membership query, not a fresh scan of every
+    // selected string for each data row (quadratic on large distinct columns).
+    let value_sets: Vec<Option<std::collections::HashSet<String>>> = f.columns.iter().map(|(_,criterion)|match criterion {
+        crate::sheet::ColumnFilter::Values(values) => Some(values.iter().map(|v|v.to_lowercase()).collect()),
+        _ => None,
+    }).collect();
     let measures: Vec<f64> = f.columns.iter().map(|(column, criterion)| column_measure(sheet, criterion, body.clone(), *column)).collect();
     let icon_evaluators: Vec<Option<ColumnIconEvaluator>> = f.columns.iter().map(|(column, criterion)| match criterion {
         crate::sheet::ColumnFilter::Icon { .. } => Some(ColumnIconEvaluator::new(sheet, *column)),
         _ => None,
     }).collect();
     body.take_while(|&row| (row as usize) < sheet.rows.len()).filter(|&row| {
-        !f.columns.iter().zip(&measures).zip(&icon_evaluators).all(|(((column, criterion), measure), icon_eval)| {
+        !f.columns.iter().zip(&measures).zip(&icon_evaluators).zip(&value_sets).all(|((((column, criterion), measure), icon_eval),values)| {
             match criterion {
+                crate::sheet::ColumnFilter::Values(_) => values.as_ref().unwrap().contains(&sheet.cell(row,*column).map_or("",|c|c.text.as_str()).to_lowercase()),
                 crate::sheet::ColumnFilter::Icon { icon_set, icon_id } => {
                     icon_eval.as_ref().and_then(|e| e.icon_of(sheet, row, *column)) == Some((icon_set.clone(), *icon_id))
                 }
@@ -5180,7 +5237,7 @@ fn sizes_now(sheet: &Sheet, axis: Axis, first: u32, count: usize) -> (Vec<Emu>, 
     (sizes[range.clone()].to_vec(), range.map(|i| hidden.get(&(i as u32)).copied()).collect())
 }
 
-fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, new_sizes: Vec<Emu>, new_hidden: Vec<Option<Emu>>) -> Result<Command, EditError> {
+fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, new_sizes: Vec<Emu>, new_hidden: Vec<Option<Emu>>, new_custom: Vec<bool>) -> Result<Command, EditError> {
     let sheet = sheet_mut(presentation, slide)?;
     let len = match axis {
         Axis::Rows => sheet.rows.len(),
@@ -5190,6 +5247,16 @@ fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, fi
         return Err(EditError::IndexOutOfRange);
     }
     let (sizes, hidden_of) = sizes_now(sheet, axis, first, new_sizes.len());
+    let custom_of = custom_now(sheet, axis, first, new_sizes.len());
+    if axis == Axis::Columns && new_custom.len() == new_sizes.len() {
+        for (i, on) in new_custom.into_iter().enumerate() {
+            if on {
+                sheet.custom_columns.insert(first + i as u32);
+            } else {
+                sheet.custom_columns.remove(&(first + i as u32));
+            }
+        }
+    }
     let (target, hidden) = match axis {
         Axis::Rows => (&mut sheet.rows, &mut sheet.hidden_rows),
         Axis::Columns => (&mut sheet.columns, &mut sheet.hidden_columns),
@@ -5207,10 +5274,19 @@ fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, fi
         }
     }
     fit_frame(presentation, slide);
-    Ok(Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden: hidden_of }))
+    Ok(Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden: hidden_of, custom: custom_of }))
 }
 
-fn set_size(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, last: u32, size: Emu) -> Result<Command, EditError> {
+/// Whether each of `count` columns from `first` is fixed by the user (false for rows).
+fn custom_now(sheet: &Sheet, axis: Axis, first: u32, count: usize) -> Vec<bool> {
+    match axis {
+        Axis::Rows => vec![false; count],
+        Axis::Columns => (first..first + count as u32).map(|c| sheet.custom_columns.contains(&c)).collect(),
+    }
+}
+
+/// Sets the size of rows or columns; `fixed` says a column is then one whose width the user fixed.
+fn set_size_marked(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, last: u32, size: Emu, fixed: bool) -> Result<Command, EditError> {
     let (old, old_hidden) = {
         let sheet = sheet_mut(presentation, slide)?;
         let len = match axis {
@@ -5222,12 +5298,13 @@ fn set_size(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: 
         }
         sizes_now(sheet, axis, first, (last - first + 1) as usize)
     };
+    let old_custom = custom_now(sheet_mut(presentation, slide)?, axis, first, (last - first + 1) as usize);
     let visibility_changed = old.iter().any(|&was| (was == 0) != (size == 0));
     // Hiding or showing rows calculates again (SUBTOTAL and the like), which is undone from a picture of the whole book; a size alone from the sizes it replaces (a copy of the book is a copy of every cell).
     let inverse = if axis == Axis::Rows && visibility_changed {
         snapshot(presentation)
     } else {
-        Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes: old.clone(), hidden: old_hidden })
+        Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes: old.clone(), hidden: old_hidden, custom: old_custom })
     };
     let sheet = sheet_mut(presentation, slide)?;
     let sizes = match axis {
@@ -5236,6 +5313,15 @@ fn set_size(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: 
     };
     for s in &mut sizes[first as usize..=last as usize] {
         *s = size;
+    }
+    if axis == Axis::Columns {
+        for c in first..=last {
+            if fixed {
+                sheet.custom_columns.insert(c);
+            } else {
+                sheet.custom_columns.remove(&c);
+            }
+        }
     }
     let hidden = match axis {
         Axis::Rows => &mut sheet.hidden_rows,
@@ -5462,15 +5548,87 @@ fn unmerge(presentation: &mut Presentation, slide: SlideId, range: CellRange) ->
     Ok(inverse)
 }
 
+/// Synchronize `Sheet::book_context` on every slide's worksheet so single-sheet
+/// evaluators (such as conditional formatting) have up-to-date defined names,
+/// sheet names/indices, `date1904`, and cross-sheet cell snapshots.
+pub fn sync_sheet_book_context(presentation: &mut Presentation) {
+    let defined_names: std::sync::Arc<[crate::sheet::DefinedName]> =
+        crate::sheet_calc::collect_defined_names(presentation).into();
+    let date1904 = presentation.workbook.as_deref().is_some_and(|w| w.date1904);
+
+    let mut sheets_vec: Vec<(String, crate::sheet::Cells)> = Vec::new();
+    let mut slide_meta: std::collections::HashMap<SlideId, (usize, String)> = std::collections::HashMap::new();
+
+    match presentation.workbook.as_deref() {
+        Some(wb) => {
+            for (idx, ws) in wb.sheets.iter().enumerate() {
+                let cells = match ws.slide {
+                    Some(id) => presentation
+                        .slide(id)
+                        .and_then(crate::sheet_calc::sheet_of_slide)
+                        .map(|s| s.cells.clone())
+                        .unwrap_or_default(),
+                    None => ws.hidden.as_ref().map(|s| s.cells.clone()).unwrap_or_default(),
+                };
+                if let Some(id) = ws.slide {
+                    slide_meta.insert(id, (idx, ws.name.clone()));
+                }
+                sheets_vec.push((ws.name.clone(), cells));
+            }
+        }
+        None => {
+            for (i, slide) in presentation.slides.iter().enumerate() {
+                if let Some(sheet) = crate::sheet_calc::sheet_of_slide(slide) {
+                    let name = slide.name.clone().unwrap_or_else(|| format!("Sheet{}", i + 1));
+                    let idx = sheets_vec.len();
+                    slide_meta.insert(slide.id, (idx, name.clone()));
+                    sheets_vec.push((name, sheet.cells.clone()));
+                }
+            }
+        }
+    }
+
+    let sheets: std::sync::Arc<[(String, crate::sheet::Cells)]> = sheets_vec.into();
+
+    for (slide_pos, slide) in presentation.slides.iter_mut().enumerate() {
+        let (sheet_index, sheet_name) = slide_meta.get(&slide.id).cloned().unwrap_or_else(|| {
+            (slide_pos, slide.name.clone().unwrap_or_else(|| format!("Sheet{}", slide_pos + 1)))
+        });
+        let Some(shape) = slide.shapes.iter_mut().find(|sh| matches!(sh.kind, ShapeKind::Sheet(_))) else {
+            continue;
+        };
+        let ShapeKind::Sheet(sheet_arc) = &mut shape.kind else {
+            continue;
+        };
+        let new_ctx = crate::sheet::SheetBookContext {
+            sheet_name,
+            sheet_index,
+            defined_names: defined_names.clone(),
+            date1904,
+            sheets: sheets.clone(),
+        };
+        if !sheet_arc.book_context.exact_eq(&new_ctx) {
+            let sheet = Arc::make_mut(sheet_arc);
+            if !sheet.conditional.is_empty() || !sheet.conditional_x14.is_empty() {
+                sheet.cells.bump_content_id();
+            }
+            sheet.book_context = new_ctx;
+        }
+    }
+}
+
 /// Calculate the formula cells that have no value (a file written by a
 /// program that does not calculate has none cached), and what they feed.
 pub fn calculate_missing_values(presentation: &mut Presentation) -> Result<(), EditError> {
+    sync_sheet_book_context(presentation);
     let view = crate::sheet_calc::BookView::new(presentation);
     let mut missing = view.formula_cells_without_value();
     let images: Vec<_> = view.image_formula_cells().into_iter().filter(|c| !missing.contains(c)).collect();
     missing.extend(images);
     drop(view);
-    recalculate_cells_deep(presentation, &missing, 0, true)
+    let res = recalculate_cells_deep(presentation, &missing, 0, true);
+    sync_sheet_book_context(presentation);
+    res
 }
 
 /// Calculate again the given formula cells and what depends on them.
@@ -8103,6 +8261,7 @@ mod tests {
             background: crate::drawing::Fill::None,
             border: None,
             plot_background: crate::drawing::Fill::None,
+            plot_border: None,
             disp_blanks_as: None,
             plot_vis_only: true,
             data_table: None,
@@ -8113,6 +8272,7 @@ mod tests {
             ex: None,
             ex_format: None,
             excel_layout: false,
+            word_layout: false,
             cell_refs: Vec::new(),
             ex_source: None,
         };
@@ -8372,3 +8532,7 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+#[path="tests/validation_ranges.rs"]
+mod validation_range_tests;

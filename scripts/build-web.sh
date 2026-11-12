@@ -7,10 +7,21 @@
 #   scripts/build-web.sh            debug build
 #   scripts/build-web.sh --release  release build (plus wasm-opt when installed)
 #
-# Needs: rustup target add wasm32-unknown-unknown, wasm-bindgen-cli whose
-# version matches the wasm-bindgen crate in Cargo.lock, and `npm ci` for tsc.
+# Needs: rustup, wasm-bindgen-cli whose version matches the wasm-bindgen crate
+# in Cargo.lock, and `npm ci` for tsc. The Rust toolchain is chosen here: the
+# wasm_thread crate (threads in Web Workers) uses #![feature], so the browser
+# version builds with a pinned nightly (installed with the wasm32 target when
+# missing); RUSTUP_TOOLCHAIN set by the caller wins.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+WEB_TOOLCHAIN=nightly-2026-09-17
+export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-$WEB_TOOLCHAIN}"
+if ! rustup run "$RUSTUP_TOOLCHAIN" rustc --version >/dev/null 2>&1; then
+  rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+elif ! rustup target list --installed --toolchain "$RUSTUP_TOOLCHAIN" | grep -qx wasm32-unknown-unknown; then
+  rustup target add wasm32-unknown-unknown --toolchain "$RUSTUP_TOOLCHAIN"
+fi
 
 PROFILE=debug
 FLAGS=()

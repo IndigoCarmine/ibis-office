@@ -6,7 +6,8 @@
 # target/dist/AcaudaOffice-<version>-Linux.AppImage, with its SHA-256 beside it
 # (.sha256, which the automatic update checks).
 #
-#   scripts/bundle-linux.sh
+#   scripts/bundle-linux.sh            debug build
+#   scripts/bundle-linux.sh --release  release build
 #
 # The AppImage is AcaudaOffice's own runtime (crates/ibis-appimage: no FUSE,
 # no libfuse, which is LGPL) with the AppDir after it as a SquashFS image:
@@ -23,22 +24,27 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+PROFILE=debug
+FLAGS=()
+if [[ "${1:-}" == "--release" ]]; then PROFILE=release; FLAGS=(--release); fi
+
 # The paths of this machine are not to go into the executables (see
 # scripts/bundle-macos.sh), in a target directory of their own.
 REMAP="--remap-path-prefix=$HOME/.cargo/registry/src=crates.io --remap-path-prefix=$HOME/.cargo/git/checkouts=git --remap-path-prefix=$HOME/.rustup=rustup --remap-path-prefix=$(pwd)=."
-RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build --release --locked -p ibis-office-app -p ibis-appimage
+RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build ${FLAGS[@]+"${FLAGS[@]}"} --locked -p ibis-office-app -p ibis-appimage
 
 VERSION=$(awk -F'\t' '$1 == "Linux" { sub(/\r$/, "", $2); print $2 }' version.txt)
 [[ -n $VERSION ]] || { echo "version.txt has no Linux line" >&2; exit 1; }
 
 APPDIR=target/dist/linux/AppDir
 rm -rf "$APPDIR"
-mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/doc/AcaudaOffice" "$APPDIR/usr/share/AcaudaOffice/artborders"
+mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/doc/AcaudaOffice" "$APPDIR/usr/share/AcaudaOffice/artborders"
 # Without the symbols (half of the file): panics still name their place.
-strip -o "$APPDIR/usr/bin/AcaudaOffice" target/dist/release/AcaudaOffice
+strip -o "$APPDIR/usr/bin/AcaudaOffice" "target/dist/$PROFILE/AcaudaOffice"
 ln -s usr/bin/AcaudaOffice "$APPDIR/AppRun"
 
 cp crates/ibis-office-app/linux/acaudaoffice.desktop "$APPDIR/acaudaoffice.desktop"
+cp crates/ibis-office-app/linux/acaudaoffice.desktop "$APPDIR/usr/share/applications/acaudaoffice.desktop"
 ICONS=crates/ibis-office-app/windows/png/ico
 for size in 16 24 32 48 256; do
 	mkdir -p "$APPDIR/usr/share/icons/hicolor/${size}x${size}/apps"
@@ -63,8 +69,12 @@ cp crates/ibis-office-app/fonts/carlito/OFL.txt "$DOC/Carlito-OFL.txt"
 OUT="target/dist/AcaudaOffice-$VERSION-Linux.AppImage"
 rm -f "$OUT"
 # The runtime is stripped too: nothing may follow its ELF part (the image is found there).
-strip -o target/dist/linux/runtime target/dist/release/ibis-appimage-runtime
-target/dist/release/ibis-appimage-pack target/dist/linux/runtime "$APPDIR" "$OUT"
+strip -o target/dist/linux/runtime "target/dist/$PROFILE/ibis-appimage-runtime"
+if [[ "${USE_APPIMAGETOOL:-0}" == "1" ]] && command -v appimagetool >/dev/null 2>&1; then
+	ARCH=x86_64 appimagetool --runtime-file target/dist/linux/runtime "$APPDIR" "$OUT"
+else
+	"target/dist/$PROFILE/ibis-appimage-pack" target/dist/linux/runtime "$APPDIR" "$OUT"
+fi
 (cd target/dist && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256")
 ls -l "$OUT"
 cat "$OUT.sha256"

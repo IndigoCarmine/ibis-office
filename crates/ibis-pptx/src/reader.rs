@@ -881,6 +881,12 @@ struct GroupFrame {
     flip_v: bool,
 }
 
+/// Whether a shape rotated by `rotation` (60 000ths of a degree) lies on its side: turned 45 to 135
+/// degrees, or 225 to 315.
+pub(crate) fn turned_sideways(rotation: i32) -> bool {
+    (2_700_000..=8_100_000).contains(&rotation.rem_euclid(10_800_000))
+}
+
 /// How many turned groups deep a shape's turns are followed.
 const MAX_TURNS: usize = 8;
 
@@ -912,6 +918,7 @@ impl Transform {
         mut flip_h: bool,
         mut flip_v: bool,
     ) -> (EmuRect, i32, bool, bool) {
+        let sideways = turned_sideways(rotation);
         let mut cx = off.0 as f64 + ext.0 as f64 / 2.0;
         let mut cy = off.1 as f64 + ext.1 as f64 / 2.0;
         let mut ux = [1.0f64, 0.0f64];
@@ -973,8 +980,11 @@ impl Transform {
 
         let len_ux = ux[0].hypot(ux[1]);
         let len_uy = uy[0].hypot(uy[1]);
-        let final_w = (ext.0 as f64 * len_ux).round().max(0.0) as i64;
-        let final_h = (ext.1 as f64 * len_uy).round().max(0.0) as i64;
+        // A shape turned about a quarter has its turned look stretched: the unturned width takes the
+        // vertical scale and the height the horizontal one.
+        let (len_w, len_h) = if sideways { (len_uy, len_ux) } else { (len_ux, len_uy) };
+        let final_w = (ext.0 as f64 * len_w).round().max(0.0) as i64;
+        let final_h = (ext.1 as f64 * len_h).round().max(0.0) as i64;
         let frame = EmuRect::new(
             (cx - final_w as f64 / 2.0).round() as i64,
             (cy - final_h as f64 / 2.0).round() as i64,
@@ -1424,14 +1434,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 }
             }
         }
-        if let Some(theme) = ctx.theme
-            && let Some(style) = bg_fill_style(theme, 1)
-        {
-            let color = Some(ctx.colors.named("bg1"));
-            if let Some(fill) = self.fill(ctx, style, &ctx.master.rels, color, None) {
-                return fill;
-            }
-        }
+        // An absent background inherits the layout/master above, then the
+        // default white. A theme fill list is a palette, not an implicit bgRef.
         Fill::Solid(Color::WHITE)
     }
 
@@ -1649,7 +1653,13 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         if transform.groups.iter().flatten().count() > 1 {
             Some(transform.apply_groups(off, ext, rotation, flip_h, flip_v))
         } else {
-            let frame = transform.rect(off.0, off.1, ext.0, ext.1);
+            let mut frame = transform.rect(off.0, off.1, ext.0, ext.1);
+            if turned_sideways(rotation) {
+                // See `apply_groups`: the turned look is what the group stretches.
+                let (cx, cy) = (frame.x as f64 + frame.width as f64 / 2.0, frame.y as f64 + frame.height as f64 / 2.0);
+                let (w, h) = ((ext.0 as f64 * transform.sy).round().max(0.0) as i64, (ext.1 as f64 * transform.sx).round().max(0.0) as i64);
+                frame = EmuRect::new((cx - w as f64 / 2.0).round() as i64, (cy - h as f64 / 2.0).round() as i64, w, h);
+            }
             Some(transform.turn((frame, rotation, flip_h, flip_v)))
         }
     }
@@ -1730,7 +1740,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         }
         let shape = |kind| Shape { id, frame, rotation, flip_h, flip_v, kind, floating: None };
 
-        let tx_body = child(node, "txBody");
+        let tx_body = child(node, "txBody").or_else(||path(node,&["txSp","txBody"]));
         let has_text = tx_body.is_some_and(|b| {
             b.descendants().any(|n| n.has_tag_name("t") && !n.text().unwrap_or("").is_empty())
         });
@@ -1739,7 +1749,10 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             return stroke.map(|s| shape(ShapeKind::Line(s)));
         }
 
-        let mut fill = match chain().find_map(fill_element) {
+        // `useBgFill`: the shape takes the fill of the slide's background
+        // (ECMA-376 19.3.1.43), so it shows the background through itself.
+        let use_bg_fill = unqualified_attribute(node, "useBgFill").is_some_and(|v| v == "1" || v == "true");
+        let mut fill = match chain().find_map(fill_element).filter(|_| !use_bg_fill) {
             Some(f) => {
                 let mut parsed = self.fill(ctx, f, rels, None, group_fill).unwrap_or_default();
                 if f.tag_name().name() == "gradFill" && unqualified_attribute(f, "rotWithShape").map_or(false, |v| v == "0" || v == "false") {
@@ -1769,6 +1782,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 }
                 parsed
             }
+            None if use_bg_fill => self.background(ctx),
             None => self.style_fill(ctx, style, rels),
         };
         if is_line {
@@ -1778,7 +1792,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             color: style.and_then(|s| child(s, "fontRef")).and_then(|r| ctx.colors.in_parent(r, None)),
             ..TextDefaults::default()
         };
-        let text = child(node, "txBody").map(|body| self.text_body(ctx, body, defaults, inherited.as_ref()));
+        let text = child(node, "txBody").or_else(||path(node,&["txSp","txBody"])).map(|body| self.text_body(ctx, body, defaults, inherited.as_ref(), false));
         // An empty placeholder keeps its empty text (and the style it takes
         // from its layout) for typing into; it draws nothing, and the editor
         // shows its prompt (SlidePlaceholder::prompt_text).
@@ -1793,14 +1807,19 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let effect_idx = effect_ref.and_then(|r| attr_i64(r, "idx")).unwrap_or(0).max(0) as usize;
         let effect_ref_color = effect_ref.and_then(|r| ctx.colors.in_parent(r, None));
         let themed_effect_style = if effect_idx > 0 { ctx.theme.and_then(|t| effect_style(t, effect_idx)) } else { None };
-        let shadow = chain()
+        let has_effect_dag = chain().any(|p| drawing_child(p, "effectDag").is_some());
+        let effect_lst = chain()
             .find_map(|p| drawing_child(p, "effectLst"))
-            .and_then(|e| drawing_child(e, "outerShdw").or_else(|| drawing_child(e, "prstShdw")))
             .or_else(|| {
-                themed_effect_style
-                    .and_then(|s| drawing_child(s, "effectLst"))
-                    .and_then(|e| drawing_child(e, "outerShdw").or_else(|| drawing_child(e, "prstShdw")))
-            })
+                (!has_effect_dag)
+                    .then(|| themed_effect_style.and_then(|s| drawing_child(s, "effectLst")))
+                    .flatten()
+            });
+        let sp3d_node = chain()
+            .find_map(|p| drawing_child(p, "sp3d"))
+            .or_else(|| themed_effect_style.and_then(|s| drawing_child(s, "sp3d")));
+        let shadow = effect_lst
+            .and_then(|e| drawing_child(e, "outerShdw").or_else(|| drawing_child(e, "prstShdw")))
             .and_then(|s| {
                 let is_prst = s.tag_name().name() == "prstShdw";
                 let prst_defaults = if is_prst {
@@ -1836,23 +1855,11 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     rot_with_shape,
                 })
             });
-        let glow = chain()
-            .find_map(|p| drawing_child(p, "effectLst"))
+        let glow = effect_lst
             .and_then(|e| drawing_child(e, "glow"))
-            .or_else(|| {
-                themed_effect_style
-                    .and_then(|s| drawing_child(s, "effectLst"))
-                    .and_then(|e| drawing_child(e, "glow"))
-            })
             .and_then(|g| Some((ctx.colors.in_parent(g, effect_ref_color)?, attr_i64(g, "rad").unwrap_or(0))));
-        let inner_shadow = chain()
-            .find_map(|p| drawing_child(p, "effectLst"))
+        let inner_shadow = effect_lst
             .and_then(|e| drawing_child(e, "innerShdw"))
-            .or_else(|| {
-                themed_effect_style
-                    .and_then(|s| drawing_child(s, "effectLst"))
-                    .and_then(|e| drawing_child(e, "innerShdw"))
-            })
             .and_then(|s| {
                 Some(ibis_doc_model::Shadow {
                     color: ctx.colors.in_parent(s, effect_ref_color)?,
@@ -1867,25 +1874,13 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     rot_with_shape: true,
                 })
             });
-        let soft_edge = chain()
-            .find_map(|p| drawing_child(p, "effectLst"))
+        let soft_edge = effect_lst
             .and_then(|e| drawing_child(e, "softEdge"))
-            .or_else(|| {
-                themed_effect_style
-                    .and_then(|s| drawing_child(s, "effectLst"))
-                    .and_then(|e| drawing_child(e, "softEdge"))
-            })
             .and_then(|e| attr_i64(e, "rad"))
             .filter(|&r| r > 0);
         // Defaults: ECMA-376 Part 4 第 5 版 dml-main.xsd の CT_ReflectionEffect.
-        let reflection = chain()
-            .find_map(|p| drawing_child(p, "effectLst"))
+        let reflection = effect_lst
             .and_then(|e| drawing_child(e, "reflection"))
-            .or_else(|| {
-                themed_effect_style
-                    .and_then(|s| drawing_child(s, "effectLst"))
-                    .and_then(|e| drawing_child(e, "reflection"))
-            })
             .map(|e| ibis_doc_model::Reflection {
                 blur: attr_i64(e, "blurRad").unwrap_or(0),
                 start_alpha: attr_i64(e, "stA").unwrap_or(100_000) as i32,
@@ -1902,14 +1897,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 align: attr(e, "algn").map(TileAlign::parse).unwrap_or(TileAlign::Bottom),
                 rot_with_shape: attr(e, "rotWithShape").is_none_or(|v| v != "0" && v != "false"),
             });
-        let bevel = chain()
-            .find_map(|p| drawing_child(p, "sp3d"))
+        let bevel = sp3d_node
             .and_then(|s| drawing_child(s, "bevelT"))
-            .or_else(|| {
-                themed_effect_style
-                    .and_then(|s| drawing_child(s, "sp3d"))
-                    .and_then(|s| drawing_child(s, "bevelT"))
-            })
             .map(|b| {
                 let preset = attr(b, "prst").and_then(ibis_doc_model::BevelPreset::parse).unwrap_or_default();
                 let width = attr_i64(b, "w").unwrap_or(ibis_doc_model::Bevel::DEFAULT_SIZE);
@@ -2044,7 +2033,12 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
     fn picture(&mut self, ctx: &SlideCtx<'d, 'i, '_>, node: Node<'d, 'i>, rels: &Rels, level: Level, transform: Transform) -> Option<Shape> {
         let inherited = self.inherited(ctx, node, level);
         let xfrm = path(node, &["spPr", "xfrm"]);
-        let (frame, rotation, flip_h, flip_v) = self.placement(xfrm, inherited.as_ref(), transform)?;
+        // A picture in a sheet's drawing may have no `a:xfrm` (other makers leave it out): the anchor's box is its frame.
+        let anchored = if xfrm.is_none_or(|x| child(x, "off").is_none()) { self.anchor.take() } else { None };
+        let (frame, rotation, flip_h, flip_v) = match anchored {
+            Some(rect) => (rect, 0, false, false),
+            None => self.placement(xfrm, inherited.as_ref(), transform)?,
+        };
         let blip_fill = child(node, "blipFill")?;
         let embed = child(blip_fill, "blip").and_then(blip_target)?;
         let (media, format) = self.media(rels, embed)?;
@@ -2057,7 +2051,7 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
                 .unwrap_or_default();
             let sp_pr = child(node, "spPr");
             let stroke = sp_pr.and_then(|p| child(p, "ln")).and_then(|ln| self.stroke(ctx, Some(ln), None));
-            let picture_geometry = crate::geometry::geometry(sp_pr.and_then(|p| child(p, "prstGeom")));
+            let picture_geometry = crate::geometry::geometry(sp_pr.and_then(|p| child(p, "custGeom").or_else(||child(p, "prstGeom"))));
             let corner = match picture_geometry {
                 ibis_doc_model::Geometry::RoundRect { radius } => radius,
                 _ => 0,
@@ -2122,7 +2116,7 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
             });
             let fill_rect = child(blip_fill, "stretch").and_then(|s| child(s, "fillRect")).map(|r| ["l", "t", "r", "b"].map(|k| attr_i64(r, k).unwrap_or(0) as i32)).filter(|r| *r != [0, 0, 0, 0]);
             // The other colour effects: grey, black and white, one colour for all, a colour changed, the opacity.
-            let effects = child(blip_fill, "blip").map_or_else(ibis_doc_model::BlipEffects::default, |b| {
+            let mut effects = child(blip_fill, "blip").map_or_else(ibis_doc_model::BlipEffects::default, |b| {
                 let mut e = ibis_doc_model::BlipEffects::default();
                 e.grayscale = drawing_child(b, "grayscl").is_some();
                 e.bilevel = drawing_child(b, "biLevel").map(|l| attr_i64(l, "thresh").unwrap_or(50_000).clamp(0, 100_000) as i32);
@@ -2143,6 +2137,14 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
                     .filter(|v| *v != 100_000);
                 e
             });
+            effects.background = sp_pr
+                .and_then(fill_element)
+                .and_then(|f| self.fill(ctx, f, rels, None, None))
+                .or_else(|| Some(self.style_fill(ctx, child(node, "style"), rels)))
+                .and_then(|f| match f {
+                    Fill::Solid(c) => Some(c),
+                    _ => None,
+                });
             // A video or audio clip: the file a `p14:media` embeds.
             let clip = child(node, "nvPicPr").and_then(|n| child(n, "nvPr")).and_then(|nv| {
                 let media_elem = nv.descendants().find(|n| n.is_element() && n.tag_name().name() == "media");
@@ -2152,10 +2154,16 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
                 let (clip, format, link) = match embedded {
                     Some((clip, format)) => (clip, format, None),
                     None => {
-                        let file = nv.descendants().find(|n| n.is_element() && matches!(n.tag_name().name(), "videoFile" | "audioFile"))?;
-                        let rel = rels.get(attr(file, "link")?).filter(|r| r.external)?;
-                        let format = MediaFormat::from_path(&rel.target);
-                        (self.presentation.add_media(format, Vec::new()), format, Some(rel.target.clone()))
+                        let file = nv.descendants().find(|n| n.is_element() && matches!(n.tag_name().name(), "videoFile" | "audioFile" | "wavAudioFile"))?;
+                        let key=attr(file,"link").or_else(||attr(file,"embed"))?;
+                        let rel=rels.get(key)?;
+                        if rel.external {
+                            let format=MediaFormat::from_path(&rel.target);
+                            (self.presentation.add_media(format,Vec::new()),format,Some(rel.target.clone()))
+                        } else {
+                            let (media,format)=self.media(rels,key)?;
+                            (media,format,None)
+                        }
                     }
                 };
                 if !format.is_video() && !format.is_audio() {
@@ -2328,6 +2336,10 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
             let Some((x, y, w, h)) = rect else { continue };
             // Map the shape's own box onto the anchor's.
             let Some(shape) = elements(anchor).find(|n| matches!(n.tag_name().name(), "sp" | "grpSp" | "cxnSp" | "pic")) else { continue };
+            // A text box with no width or height shows nothing (Excel cuts its text to it: `vertOverflow="clip"`).
+            if shape.has_tag_name("sp") && (w <= 0.0 || h <= 0.0) && child(shape, "txBody").is_some() {
+                continue;
+            }
             let xfrm = elements(shape).find(|n| matches!(n.tag_name().name(), "spPr" | "grpSpPr")).and_then(|p| child(p, "xfrm"));
             let (off, ext) = xfrm.map(offset_extent).unwrap_or(((0, 0), (w as i64, h as i64)));
             let scale = |e: f64, c: i64| if c == 0 { 1.0 } else { e / c as f64 };
@@ -2364,7 +2376,21 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
         }
         let xml = self.package.read_xml(&part).ok()?;
         let doc = parse(&part, &xml).ok()?;
-        crate::chart::read_in(doc.root_element(), &ctx.colors, false)
+        let override_theme = self
+            .package
+            .related(&part, crate::package::REL_THEME_OVERRIDE)
+            .ok()
+            .flatten()
+            .and_then(|t| {
+                let s = self.package.read_xml(&t).ok()?;
+                let d = parse(&t, &s).ok()?;
+                Some(ctx.colors.theme().with_override(d.root_element()))
+            });
+        let colors = match &override_theme {
+            Some(t) => ctx.colors.with_theme(t),
+            None => ctx.colors.clone(),
+        };
+        crate::chart::read_in(doc.root_element(), &colors, false)
     }
 
     /// Ink (`p:contentPart`): its InkML strokes drawn as an SVG picture.
@@ -2409,7 +2435,11 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
             return Some(*found);
         }
         let data = self.package.read(&rel.target).ok()?;
-        let format = MediaFormat::from_path(&rel.target);
+        // A picture whose name does not say what it is (a `.tmp` file) is told by its first bytes.
+        let format = match MediaFormat::from_path(&rel.target) {
+            MediaFormat::Other => MediaFormat::sniff(&data).unwrap_or(MediaFormat::Other),
+            named => named,
+        };
         let id = self.presentation.add_media(format, data);
         self.media.insert(rel.target.clone(), (id, format));
         Some((id, format))
@@ -2479,16 +2509,48 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                 if !drawable(format) {
                     return Some(Fill::None);
                 }
-                if let Some(tile) = child(node, "tile") {
-                    let tx = attr_i64(tile, "tx").unwrap_or(0);
-                    let ty = attr_i64(tile, "ty").unwrap_or(0);
-                    let sx = attr_i64(tile, "sx").unwrap_or(100_000) as i32;
-                    let sy = attr_i64(tile, "sy").unwrap_or(100_000) as i32;
-                    let flip = ibis_doc_model::TileFlip::parse(unqualified_attribute(tile, "flip").unwrap_or("none"));
-                    let align = ibis_doc_model::TileAlign::parse(unqualified_attribute(tile, "algn").unwrap_or("tl"));
-                    Some(Fill::TileImage { media, tx, ty, sx, sy, flip, align })
+                let mut blip = ibis_doc_model::BlipFill::new(media);
+                blip.rot_with_shape = unqualified_attribute(node, "rotWithShape").is_none_or(|v| v != "0" && v != "false");
+                if let Some(r) = child(node, "srcRect") {
+                    let v = |name| attr_i64(r, name).unwrap_or(0) as i32;
+                    blip.crop = ibis_doc_model::Crop { left: v("l"), top: v("t"), right: v("r"), bottom: v("b") };
+                }
+                blip.fill_rect = child(node, "stretch").and_then(|s| child(s, "fillRect")).map(|r| ["l", "t", "r", "b"].map(|k| attr_i64(r, k).unwrap_or(0) as i32)).filter(|r| *r != [0, 0, 0, 0]);
+                if let Some(b) = child(node, "blip") {
+                    blip.duotone = drawing_child(b, "duotone").and_then(|d| {
+                        let colors: Vec<_> = elements(d).filter_map(|c| ctx.colors.resolve(c, placeholder)).collect();
+                        Some((colors.first()?.rgb, colors.get(1)?.rgb))
+                    });
+                    blip.luminance = drawing_child(b, "lum").and_then(|l| {
+                        let bright = attr_i64(l, "bright").unwrap_or(0).clamp(-100_000, 100_000) as i32;
+                        let contrast = attr_i64(l, "contrast").unwrap_or(0).clamp(-100_000, 100_000) as i32;
+                        (bright != 0 || contrast != 0).then_some((bright, contrast))
+                    });
+                    blip.effects.grayscale = drawing_child(b, "grayscl").is_some();
+                    blip.effects.bilevel = drawing_child(b, "biLevel").map(|l| attr_i64(l, "thresh").unwrap_or(50_000).clamp(0, 100_000) as i32);
+                    blip.effects.opacity = drawing_child(b, "alphaModFix")
+                        .map(|a| attr_i64(a, "amt").unwrap_or(100_000))
+                        .or_else(|| drawing_child(b, "alphaRepl").and_then(|a| attr_i64(a, "a")))
+                        .map(|v| v.clamp(0, 100_000) as i32)
+                        .filter(|v| *v != 100_000);
+                    blip.effects.replace = drawing_child(b, "clrRepl").and_then(|r| elements(r).next()).and_then(|c| ctx.colors.resolve(c, placeholder)).map(|c| c.rgb);
+                }
+                let tile = child(node, "tile").map(|tile| ibis_doc_model::PictureTile {
+                    tx: attr_i64(tile, "tx").unwrap_or(0),
+                    ty: attr_i64(tile, "ty").unwrap_or(0),
+                    sx: attr_i64(tile, "sx").unwrap_or(100_000) as i32,
+                    sy: attr_i64(tile, "sy").unwrap_or(100_000) as i32,
+                    flip: ibis_doc_model::TileFlip::parse(unqualified_attribute(tile, "flip").unwrap_or("none")),
+                    align: ibis_doc_model::TileAlign::parse(unqualified_attribute(tile, "algn").unwrap_or("tl")),
+                });
+                blip.tile = tile;
+                if blip.is_plain() {
+                    Some(match tile {
+                        Some(t) => Fill::TileImage { media, tx: t.tx, ty: t.ty, sx: t.sx, sy: t.sy, flip: t.flip, align: t.align },
+                        None => Fill::Image(media),
+                    })
                 } else {
-                    Some(Fill::Image(media))
+                    Some(Fill::Blip(Box::new(blip)))
                 }
             }
             "pattFill" => {
@@ -2588,7 +2650,7 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
         })
     }
 
-    fn text_body(&mut self, ctx: &SlideCtx<'d, 'i, '_>, body: Node<'d, 'i>, defaults: TextDefaults, inherited: Option<&Inherited<'d, 'i>>) -> TextBody {
+    fn text_body(&mut self, ctx: &SlideCtx<'d, 'i, '_>, body: Node<'d, 'i>, defaults: TextDefaults, inherited: Option<&Inherited<'d, 'i>>, table_cell: bool) -> TextBody {
         let colors = &ctx.colors;
 
         // List styles, from the most general to the shape's own.
@@ -2613,6 +2675,12 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
             None => {
                 if let Some(default) = self.default_text {
                     levels.merge(default, colors);
+                }
+                // A table cell's text follows the master's otherStyle after the presentation's defaultTextStyle; the text of
+                // a shape that is not a placeholder follows the defaultTextStyle only (PowerPoint's PDFs: a run with no `sz`
+                // is 18 pt where the master's otherStyle says 12 pt).
+                if table_cell && let Some(other) = path(ctx.master.root, &["txStyles", "otherStyle"]) {
+                    levels.merge(other, colors);
                 }
             }
         }
@@ -2657,6 +2725,9 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
             }
             if let Some(wrap) = attr(*pr, "wrap") {
                 out.wrap = wrap != "none";
+            }
+            if let Some(overflow) = attr(*pr, "vertOverflow") {
+                out.clip = matches!(overflow, "clip" | "ellipsis");
             }
             if let Some(vert) = attr(*pr, "vert") {
                 let kind = ibis_doc_model::VerticalKind::parse(vert);
@@ -2765,6 +2836,7 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                 color: Some(run.color.map(|c| c.rgb).unwrap_or(ibis_doc_model::Rgb::BLACK)),
                 font: run.font_for(text),
                 fallback_font: run.fallback_for(text),
+                kern: ibis_doc_model::KernMin(run.kern),
                 field: None,
                 strike: run.strike.unwrap_or_default(),
                 caps: run.caps.unwrap_or_default(),
@@ -2772,13 +2844,17 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                 link: rpr.and_then(|r| child(r, "hlinkClick")).and_then(|h| link_of(h, &ctx.slide.rels, slide_parts)),
                 link_tooltip: rpr.and_then(|r| child(r, "hlinkClick")).and_then(|h| attr(h, "tooltip")).filter(|s| !s.is_empty()).map(str::to_string),
                 shadow: run.shadow.flatten(),
+                glow: run.glow.flatten(),
                 lang: run.lang,
                 math: None,
                 math_inline: false,
+                border: None,
             }
         };
 
         let mut lines: Vec<Vec<Run>> = vec![Vec::new()];
+        // The `a:rPr` of the `a:br` (or run) that ended each line, for an empty line's height.
+        let mut line_ends: Vec<Option<RunStyle>> = Vec::new();
         // Where each run's text is in the part, when recording (see `text_sources`).
         let recording = self.text_sources.is_some();
         let mut sources: Vec<Vec<Option<crate::save::pptx::RunSource>>> = vec![Vec::new()];
@@ -2813,8 +2889,12 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                     let r_path = if recording { crate::xml::element_path(n) } else { Vec::new() };
                     let mut offset = 0usize;
                     // A vertical tab is a line break inside a run.
-                    for (i, piece) in text.split('\u{b}').enumerate() {
+                    // In a worksheet's drawing a line feed inside a run is a line break too (Excel for Windows' PDF of a
+                    // text box holding one `a:t` of several lines shows each on its own line).
+                    let in_sheet = p.ancestors().any(|a| a.has_tag_name(("http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing", "wsDr")));
+                    for (i, piece) in text.split(|c| c == '\u{b}' || (in_sheet && c == '\n')).enumerate() {
                         if i > 0 {
+                            line_ends.push(Some(run_style(child(n, "rPr"), "")));
                             lines.push(Vec::new());
                             sources.push(Vec::new());
                             elements_of_runs.push(Vec::new());
@@ -2835,6 +2915,7 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                     }
                 }
                 "br" => {
+                    line_ends.push(child(n, "rPr").map(|r| run_style(Some(r), "")));
                     lines.push(Vec::new());
                     sources.push(Vec::new());
                     elements_of_runs.push(Vec::new());
@@ -2866,8 +2947,8 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
         let size = lines.iter().flatten().next().and_then(|r| r.style.font_size).or(end_style.font_size).unwrap_or(self.default_font_size);
         let spacing = |s: &Option<Spacing>| match s {
             Some(Spacing::Points(v)) => *v,
-            // Spacing percentage is relative to font size (100_000 = 100%).
-            Some(Spacing::Percent(v)) => (*v as u64 * size as u64 / 100_000) as u32,
+            // Spacing percentage (`a:spcPct`) is relative to the single-spaced line height (`1.2 × size`; 100_000 = 100%).
+            Some(Spacing::Percent(v)) => (*v as u64 * size as u64 * 6 / 500_000) as u32,
             None => 0,
         };
         let line_spacing = match props.line_spacing {
@@ -2910,26 +2991,44 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                 }
                 Some(auto_number(scheme, n))
             }
+            // A paragraph without a bullet ends a numbering, empty or not (PowerPoint numbers again from
+            // its start after one).
             _ => {
-                if has_text {
-                    *numbering = None;
-                }
+                *numbering = None;
                 None
             }
         };
-        let bullet_size = props.bullet_size.flatten().unwrap_or(100_000) as f32
+        let bullet_pct = match props.bullet_size.flatten() {
+            Some(v) if v >= crate::style::BULLET_POINTS => ((v - crate::style::BULLET_POINTS) as u64 * 100_000 / size.max(1) as u64).clamp(25_000, 400_000) as u32,
+            Some(v) => v,
+            None => 100_000,
+        };
+        let bullet_size = bullet_pct as f32
             * if matches!(props.bullet, Some(BulletProps::Char(_))) { crate::style::bullet_scale(props.bullet_font.as_deref()) } else { 1.0 };
         let auto = match &props.bullet {
             Some(BulletProps::AutoNumber { scheme, start_at }) => Some(ibis_doc_model::text::AutoNumber { scheme: scheme.clone(), start_at: *start_at }),
             _ => None,
         };
-        let bullet = bullet.map(|text| Bullet { text, picture, size: bullet_size as u32, color: props.bullet_color.flatten().map(|c| c.rgb), auto });
+        let symbol = match (&props.bullet, props.bullet_font.as_deref()) {
+            (Some(BulletProps::Char(code)), Some(font)) if crate::style::is_symbol_font(font) => Some(ibis_doc_model::SymbolBullet {
+                font: font.to_string(),
+                code: code.clone(),
+                stand_in_percent: (crate::style::bullet_scale(Some(font)) * 100.0).round() as u32,
+            }),
+            _ => None,
+        };
+        let bullet = bullet.map(|text| Bullet { text, picture, size: bullet_size as u32, color: props.bullet_color.flatten().map(|c| c.rgb), auto, symbol });
 
         let count = lines.len();
         lines
             .into_iter()
             .enumerate()
             .map(|(i, runs)| Paragraph {
+                end_style: if runs.is_empty() {
+                    line_ends.get(i).and_then(|s| s.clone()).unwrap_or_else(|| end_style.clone())
+                } else {
+                    end_style.clone()
+                },
                 runs,
                 align: Some(props.align.unwrap_or_default()),
                 margin_left: props.margin_left.unwrap_or(0),
@@ -2938,11 +3037,13 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                 line_spacing,
                 font_align: props.font_align.unwrap_or_default(),
                 space_before: if i == 0 { spacing(&props.space_before) } else { 0 },
+                space_before_exact: matches!(props.space_before, Some(Spacing::Percent(_))),
                 space_after: if i + 1 == count { spacing(&props.space_after) } else { 0 },
-                end_style: end_style.clone(),
                 line_break: i > 0,
                 level,
                 tabs: props.tabs.clone().unwrap_or_default(),
+                default_tab: props.default_tab.filter(|&v| v != 914_400),
+                no_snap_to_grid: false,
             })
             .collect()
     }
@@ -2991,12 +3092,13 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             band_col: flag("bandCol"),
         };
         let style_id = pr.and_then(|p| child(p, "tableStyleId")).and_then(|n| n.text()).map(str::trim);
-        let def_id = self.table_styles.and_then(|list| attr(list, "def")).unwrap_or("{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}");
-        let target_id = style_id.unwrap_or(def_id);
-        let style = self
-            .table_styles
-            .and_then(|list| children(list, "tblStyle").find(|s| attr(*s, "styleId").is_some_and(|id| id.eq_ignore_ascii_case(target_id))))
-            .or_else(|| crate::drawing_table_style::find_builtin_style(target_id));
+        // A table without `a:tableStyleId` has no style: PowerPoint does not
+        // fall back to the `def` of `tableStyles.xml` (that one only seeds new tables).
+        let style = style_id.and_then(|target_id| {
+            self.table_styles
+                .and_then(|list| children(list, "tblStyle").find(|s| attr(*s, "styleId").is_some_and(|id| id.eq_ignore_ascii_case(target_id))))
+                .or_else(|| crate::drawing_table_style::find_builtin_style(target_id))
+        });
 
         // Style parts in the order they apply, each with the cells it covers.
         let mut parts: Vec<StylePart> = Vec::new();
@@ -3018,7 +3120,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 let first_data_col = flag("firstCol") as usize;
                 for c in first_data_col..=(last_col - flag("lastCol") as usize) {
                     let name = if (c - first_data_col).is_multiple_of(2) { "band1V" } else { "band2V" };
-                    part(name, (0, last_row), (c, c));
+                    part(name, (first_data_row, last_data_row.min(last_row)), (c, c));
                 }
             }
             if flag("lastCol") {
@@ -3042,6 +3144,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 let mut defaults = TextDefaults::default();
                 let mut fill = Fill::None;
                 let mut borders = CellBorders::default();
+                // The table's own fill (`a:wholeTbl`), which a part's translucent fill is laid over.
+                let mut base_fill = Fill::None;
                 for part in parts.iter().filter(|p| (p.rows.0..=p.rows.1).contains(&r) && (p.columns.0..=p.columns.1).contains(&c)) {
                     if let Some(text) = child(part.node, "tcTxStyle") {
                         if let Some(color) = ctx.colors.in_parent(text, None) {
@@ -3056,7 +3160,21 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     }
                     let Some(cell_style) = child(part.node, "tcStyle") else { continue };
                     if let Some(f) = child(cell_style, "fill").and_then(fill_element).and_then(|f| self.fill(ctx, f, rels, None, None)) {
-                        fill = f;
+                        if part.node.tag_name().name() == "wholeTbl" {
+                            base_fill = f.clone();
+                        }
+                        fill = match (&f, &base_fill) {
+                            (Fill::Solid(top), Fill::Solid(under)) if top.alpha < 255 && under.alpha == 255 => {
+                                let a = top.alpha as f32 / 255.0;
+                                let mix = |t: u8, u: u8| (t as f32 * a + u as f32 * (1.0 - a)) as u8;
+                                Fill::Solid(ibis_doc_model::drawing::Color::opaque(ibis_doc_model::Rgb(
+                                    (mix((top.rgb.0 >> 16) as u8, (under.rgb.0 >> 16) as u8) as u32) << 16
+                                        | (mix((top.rgb.0 >> 8) as u8, (under.rgb.0 >> 8) as u8) as u32) << 8
+                                        | mix(top.rgb.0 as u8, under.rgb.0 as u8) as u32,
+                                )))
+                            }
+                            _ => f,
+                        };
                     } else if child(cell_style, "fillRef").is_some() {
                         fill = self.style_fill(ctx, Some(cell_style), rels);
                     }
@@ -3108,7 +3226,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 }
 
                 let mut text = match child(tc, "txBody") {
-                    Some(body) => self.text_body(ctx, body, defaults, None),
+                    Some(body) => self.text_body(ctx, body, defaults, None, true),
                     None => TextBody::default(),
                 };
                 let margin = |name, default| tc_pr.and_then(|p| attr_i64(p, name)).unwrap_or(default);
@@ -3329,9 +3447,8 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
             styles.rich_images = xlsx::rich_value_images(meta.root_element(), values.root_element(), structures.root_element());
         }
     }
-    // The maximum digit width of the default font, in points: about 0.55 em
-    // (6 pt for 11 pt MS P Gothic, as Excel for Mac measures it).
-    let digit = (styles.default_font.1 as f64 / 100.0 * 0.55).round().max(1.0);
+    // The maximum digit width of the default font, in points (`xlsx::EXCEL_METRICS`).
+    let digit = xlsx::EXCEL_METRICS.digit_pt(styles.default_font.0.as_deref(), styles.default_font.1 as f64 / 100.0);
 
     // Print areas by the sheet's position in the workbook.
     let print_areas: HashMap<usize, ibis_doc_model::CellRange> = child(root, "definedNames")
@@ -3714,7 +3831,10 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
         }
         xlsx::extend_sheet(&mut sheet, sheet_root, columns, rows, digit, (&styles.default_font.0, styles.default_font.1));
         // What the sheet uses: the page printed and exported.
-        let used = (*sheet.column_offsets().last().unwrap_or(&0), *sheet.row_offsets().last().unwrap_or(&0));
+        // The rows holding only a height (no cell) stay in the sheet but are not used: Excel prints no page for them.
+        let (xs_used, ys_used) = (sheet.column_offsets(), sheet.row_offsets());
+        let used_rows = if *sheet.printed_rows > 0 { ((*sheet.printed_rows).max(rows) as usize).min(ys_used.len() - 1) } else { ys_used.len() - 1 };
+        let used = (*xs_used.last().unwrap_or(&0), ys_used[used_rows]);
         // Beyond it the grid goes on, as in Excel, for text running on past
         // the last cell and for new values.
         xlsx::extend_sheet(&mut sheet, sheet_root, (columns + GRID_MARGIN_COLUMNS).max(MIN_GRID_COLUMNS), (rows + GRID_MARGIN_ROWS).max(MIN_GRID_ROWS), digit, (&styles.default_font.0, styles.default_font.1));
@@ -3881,7 +4001,7 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
                     .and_then(|cd| unqualified_attribute(cd, "fPrintsWithSheet"))
                     .map(|v| v != "0" && v != "false")
                     .unwrap_or(true);
-                if shape.has_tag_name("graphicFrame") {
+                if shape.has_tag_name("graphicFrame") || shape.has_tag_name("pic") {
                     reader.anchor = Some(rect);
                 }
                 let start_shapes = slide.shapes.len();
@@ -3943,8 +4063,27 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
             slide.shapes.push(Shape { id, frame, rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Picture(ibis_doc_model::Picture::new(media)), floating: None });
             slide.shape_placements.insert(id, ibis_doc_model::ObjectPlacement::MoveAndSize);
         }
+        // Embedded objects (`oleObject`): the picture that stands for each (`objectPr`'s image, a PNG
+        // or an EMF), drawn where `objectPr/anchor` puts it.
+        for object in sheet_root.descendants().filter(|n| n.is_element() && n.tag_name().name() == "objectPr") {
+            let Some(rid) = attr_rid(object) else { continue };
+            let Some(anchor) = child(object, "anchor") else { continue };
+            let (Some(from), Some(to)) = (child(anchor, "from"), child(anchor, "to")) else { continue };
+            let Some((media, _)) = reader.media(&sheet_rels, rid) else { continue };
+            let ((x0, y0), (x1, y1)) = (at(anchor_cell(from)), at(anchor_cell(to)));
+            extent = (extent.0.max(x1), extent.1.max(y1));
+            let id = reader.presentation.new_shape_id();
+            slide.shapes.push(Shape { id, frame: EmuRect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)), rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Picture(ibis_doc_model::Picture::new(media)), floating: None });
+            slide.shape_placements.insert(id, ibis_doc_model::ObjectPlacement::MoveAndSize);
+        }
         // Form controls (フォーム コントロール): each `control` of the sheet with its `formControlPr`, placed by its anchor,
         // with the text its drawing shape has.
+        let vml_xml = child(sheet_root, "legacyDrawing")
+            .and_then(attr_rid)
+            .and_then(|rid| sheet_rels.get(rid))
+            .or_else(|| sheet_rels.values().find(|r| !r.external && r.kind.ends_with("/vmlDrawing")))
+            .and_then(|r| package.read_xml(&r.target).ok());
+        let vml_doc = vml_xml.as_deref().and_then(|x| roxmltree::Document::parse(x).ok());
         for control in sheet_root.descendants().filter(|n| n.is_element() && n.tag_name().name() == "control" && unqualified_attribute(*n, "shapeId").is_some()) {
             let Some(rel) = attr_rid(control).and_then(|rid| sheet_rels.get(rid)) else { continue };
             let Some(xml) = package.read_xml(&rel.target).ok() else { continue };
@@ -4020,6 +4159,24 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
                 c.value = 0;
             }
             let id = reader.presentation.new_shape_id();
+            let vml_hidden = !shape_id.is_empty()
+                && vml_doc.as_ref().is_some_and(|doc| {
+                    let suffix = format!("_s{shape_id}");
+                    doc.descendants().any(|n| {
+                        n.is_element()
+                            && n.tag_name().name() == "shape"
+                            && unqualified_attribute(n, "id").is_some_and(|v| v == shape_id || v.ends_with(&suffix))
+                            && unqualified_attribute(n, "style").is_some_and(|st| {
+                                st.split(';').any(|kv| {
+                                    let Some((k, v)) = kv.split_once(':') else { return false };
+                                    k.trim().eq_ignore_ascii_case("visibility") && v.trim().eq_ignore_ascii_case("hidden")
+                                })
+                            })
+                    })
+                });
+            if vml_hidden {
+                reader.slide_hidden.insert(id);
+            }
             slide.shapes.push(Shape { id, frame: EmuRect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)), rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Control(std::sync::Arc::new(c)), floating: None });
             slide.shape_placements.insert(id, ibis_doc_model::ObjectPlacement::MoveAndSize);
         }
@@ -4186,6 +4343,54 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
     ibis_doc_model::form_control::refresh_controls(&mut presentation);
     // Formulas the file has no value for (written by a program that does not calculate).
     let _ = ibis_doc_model::calculate_missing_values(&mut presentation);
+    {
+        let evaluated: Vec<(ibis_doc_model::SlideId, ibis_doc_model::CellRange)> = {
+            let view = ibis_doc_model::BookView::new(&presentation);
+            presentation
+                .workbook
+                .as_deref()
+                .map(|wb| {
+                    wb.names
+                        .iter()
+                        .filter(|dn| dn.name.eq_ignore_ascii_case("_xlnm.Print_Area"))
+                        .filter_map(|dn| {
+                            let idx = dn.sheet?;
+                            let slide_id = wb.sheets.get(idx)?.slide?;
+                            let s = presentation.slide(slide_id)?.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some(s) } else { None })?;
+                            if s.print_area.is_some() {
+                                return None;
+                            }
+                            let expr = ibis_calc::formula::parse(dn.formula.trim().trim_start_matches('=')).ok()?;
+                            let mut ctx = ibis_calc::eval::Ctx::new(&view, &ibis_calc::eval::Stored, idx, 0, 0);
+                            let ibis_calc::eval::Value::Ref(areas) = ctx.eval(&expr) else { return None };
+                            let first = areas.first()?;
+                            let mut r = ibis_doc_model::CellRange {
+                                first_row: first.first_row,
+                                first_column: first.first_column,
+                                last_row: first.last_row,
+                                last_column: first.last_column,
+                            };
+                            for a in &areas[1..] {
+                                r.first_row = r.first_row.min(a.first_row);
+                                r.first_column = r.first_column.min(a.first_column);
+                                r.last_row = r.last_row.max(a.last_row);
+                                r.last_column = r.last_column.max(a.last_column);
+                            }
+                            Some((slide_id, r))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        for (slide_id, area) in evaluated {
+            if let Some(slide) = presentation.slides.iter_mut().find(|s| s.id == slide_id)
+                && let Some(ShapeKind::Sheet(s)) = slide.shapes.iter_mut().map(|sh| &mut sh.kind).find(|k| matches!(k, ShapeKind::Sheet(_)))
+            {
+                std::sync::Arc::make_mut(s).print_area = Some(area);
+            }
+        }
+    }
+    ibis_doc_model::chart_refresh::fill_charts_without_data(&mut presentation);
     build_pivots_on_load(&mut presentation, date1904, styles_doc.as_ref().map(|d| d.root_element()), &sheet_colors);
 
     let map = crate::save::xlsx::SourceMap {
@@ -4651,7 +4856,18 @@ fn read_media_nodes(slide_root: Node, native_ids: &std::collections::HashMap<Str
                 clip.options.hide_while_not_playing = true;
             }
         }
-        if let Some(num_slds) = node.attribute("numSlds") {
+        if node.parent().and_then(|h| h.attribute("fullScrn")).is_some_and(|v| v == "1" || v == "true") {
+            clip.options.full_screen = true;
+        }
+        // Started with the slide: the play call is an effect after or with the previous.
+        let started_by_slide = timing.descendants().filter(|n| n.is_element() && n.tag_name().name() == "cmd" && n.attribute("cmd").is_some_and(|c| c.starts_with("play"))).any(|cmd| {
+            cmd.descendants().any(|t| t.is_element() && t.tag_name().name() == "spTgt" && t.attribute("spid") == Some(target))
+                && cmd.ancestors().find(|a| a.is_element() && a.tag_name().name() == "cTn" && a.attribute("presetClass") == Some("mediacall")).is_some_and(|c| matches!(c.attribute("nodeType"), Some("afterEffect" | "withEffect")))
+        });
+        if started_by_slide {
+            clip.options.start = ibis_doc_model::MediaStart::Automatically;
+        }
+        if let Some(num_slds) = node.attribute("numSld").or_else(|| node.attribute("numSlds")) {
             if let Ok(n) = num_slds.parse::<u32>() {
                 if n > 1 {
                     clip.options.play_across_slides = true;
@@ -4661,6 +4877,9 @@ fn read_media_nodes(slide_root: Node, native_ids: &std::collections::HashMap<Str
         if let Some(ctn) = child(node, "cTn") {
             if ctn.attribute("repeatCount") == Some("indefinite") {
                 clip.options.loop_until_stopped = true;
+            }
+            if ctn.attribute("fill") == Some("remove") {
+                clip.options.rewind = true;
             }
             if let Some(st_cond) = child(ctn, "stCondLst") {
                 for cond in st_cond.children().filter(|n| n.is_element() && n.tag_name().name() == "cond") {

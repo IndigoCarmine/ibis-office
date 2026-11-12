@@ -148,15 +148,24 @@ impl Canvas {
         self.clips
     }
 
-    fn attrs(&self, m: &Matrix, clip: Option<usize>) -> String {
+    /// The attributes of an element drawn in the units `m` maps to the device. The clip is in device units, but a
+    /// clip-path next to a transform is in the element's own units, so a clipped, transformed element is wrapped in a
+    /// group that carries the clip (`wrap`: whether to close the group after the element).
+    fn attrs(&mut self, m: &Matrix, clip: Option<usize>) -> (String, bool) {
         let mut s = String::new();
         if *m != IDENTITY {
             let _ = write!(s, r#" transform="matrix({} {} {} {} {} {})""#, num(m[0]), num(m[1]), num(m[2]), num(m[3]), num(m[4]), num(m[5]));
         }
+        let mut wrap = false;
         if let Some(c) = clip {
-            let _ = write!(s, r#" clip-path="url(#c{c})""#);
+            if *m != IDENTITY {
+                let _ = write!(self.body, r##"<g clip-path="url(#c{c})">"##);
+                wrap = true;
+            } else {
+                let _ = write!(s, r#" clip-path="url(#c{c})""#);
+            }
         }
-        s
+        (s, wrap)
     }
 
     /// A path in the units `m` maps to the device, painted as `paint` says.
@@ -164,7 +173,8 @@ impl Canvas {
         if d.is_empty() || (paint.fill.is_none() && paint.fill_url.is_none() && paint.stroke.is_none()) {
             return;
         }
-        let mut s = format!("<path{} d=\"{d}\"", self.attrs(m, clip));
+        let (attrs, wrap) = self.attrs(m, clip);
+        let mut s = format!("<path{attrs} d=\"{d}\"");
         if let Some(url) = &paint.fill_url {
             let _ = write!(s, r#" fill="{url}" fill-rule="{}""#, if paint.even_odd { "evenodd" } else { "nonzero" });
         } else {
@@ -192,6 +202,9 @@ impl Canvas {
             }
         }
         s += "/>";
+        if wrap {
+            s += "</g>";
+        }
         self.body += &s;
         self.drawn += 1;
     }
@@ -214,8 +227,14 @@ impl Canvas {
             let _ = write!(transform, "rotate({} {} {})", num(-font.angle), num(center.0), num(center.1));
         }
         let mut attrs = if transform.is_empty() { String::new() } else { format!(r#" transform="{transform}""#) };
+        // (A clip next to a transform would be in the element's own units: the group carries it.)
+        let wrap = clip.is_some() && !transform.is_empty();
         if let Some(c) = clip {
-            let _ = write!(attrs, r#" clip-path="url(#c{c})""#);
+            if wrap {
+                let _ = write!(self.body, r##"<g clip-path="url(#c{c})">"##);
+            } else {
+                let _ = write!(attrs, r#" clip-path="url(#c{c})""#);
+            }
         }
         let xlist: Vec<String> = xs.iter().map(|v| num(*v)).collect();
         let mut s = format!(
@@ -241,7 +260,7 @@ impl Canvas {
             (false, true) => s += r#" text-decoration="line-through""#,
             _ => {}
         }
-        let _ = write!(s, ">{}</text>", escape(text));
+        let _ = write!(s, ">{}</text>{}", escape(text), if wrap { "</g>" } else { "" });
         self.body += &s;
         self.drawn += 1;
     }
@@ -262,16 +281,18 @@ impl Canvas {
             local = then(local, [1.0, 0.0, 0.0, -1.0, 0.0, 2.0 * oy + h]);
         }
         let all = then(local, *m);
+        let (attrs, wrap) = self.attrs(&all, clip);
         let _ = write!(
             self.body,
-            r#"<image{} x="{}" y="{}" width="{}" height="{}" preserveAspectRatio="none" href="data:{};base64,{}"/>"#,
-            self.attrs(&all, clip),
+            r#"<image{} x="{}" y="{}" width="{}" height="{}" preserveAspectRatio="none" href="data:{};base64,{}"/>{}"#,
+            attrs,
             num(ox),
             num(oy),
             num(w),
             num(h),
             mime,
-            base64(png)
+            base64(png),
+            if wrap { "</g>" } else { "" }
         );
         self.drawn += 1;
     }
@@ -338,8 +359,9 @@ fn i32_at(d: &[u8], at: usize) -> Option<i32> {
 }
 
 /// A device-independent bitmap (its header, palette and bits as the records carry them) as a PNG; `source` is the part of it used
-/// (`x, y, width, height`) when it is not the whole.
-pub(crate) fn dib_png(info: &[u8], bits: &[u8], source: Option<(i32, i32, i32, i32)>) -> Option<Vec<u8>> {
+/// (`x, y, width, height`) when it is not the whole, and `rop` is the GDI raster operation (`SRCPAINT` leaves black transparent;
+/// `SRCAND` leaves white transparent).
+pub(crate) fn dib_png(info: &[u8], bits: &[u8], source: Option<(i32, i32, i32, i32)>, rop: u32) -> Option<Vec<u8>> {
     let header_size = u32_at(info, 0)? as usize;
     let (width, height, bit_count, compression, used) = if header_size == 12 {
         (i32::from(u16_at(info, 4)?), i32::from(u16_at(info, 6)?), u16_at(info, 10)?, 0, 0)
@@ -401,6 +423,13 @@ pub(crate) fn dib_png(info: &[u8], bits: &[u8], source: Option<(i32, i32, i32, i
                 }
                 _ => return None,
             };
+            let a = match rop {
+                // SRCPAINT (dest | src) and SRCINVERT (dest ^ src): black (0) leaves the destination unchanged.
+                0x00EE_0086 | 0x0066_0046 if (r, g, b) == (0, 0, 0) => 0,
+                // SRCAND (dest & src): white (0xFF) leaves the destination unchanged.
+                0x0088_00C6 if (r, g, b) == (255, 255, 255) => 0,
+                _ => a,
+            };
             let at = (y * w + x) * 4;
             rgba[at..at + 4].copy_from_slice(&[r, g, b, a]);
         }
@@ -421,4 +450,23 @@ pub(crate) fn dib_png(info: &[u8], bits: &[u8], source: Option<(i32, i32, i32, i
         part.extend_from_slice(&rgba[(y * w + sx) * 4..(y * w + sx + sw) * 4]);
     }
     Some(crate::png::encode(sw as u32, sh as u32, &part))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A clip is in device units, a transform scales the element: the clip-path must not sit on the transformed
+    /// element (it would be scaled with it, and a picture clipped to a small box would vanish).
+    #[test]
+    fn a_clip_next_to_a_transform_is_on_a_group_of_its_own() {
+        let mut canvas = Canvas::default();
+        let clip = canvas.clip_path("M0 0 L0 100 L100 100 L100 0 Z", false);
+        canvas.image(&[0.1, 0.0, 0.0, 0.1, 0.0, 0.0], Some(clip), 0.0, 0.0, 1000.0, 1000.0, "image/png", &[1, 2, 3]);
+        let svg = canvas.finish((0.0, 0.0, 100.0, 100.0));
+        let group = svg.find("<g clip-path=").expect("a group carries the clip");
+        let image = svg.find("<image transform=").expect("the image carries the transform");
+        assert!(group < image && !svg[image..svg[image..].find('>').map_or(0, |n| image + n)].contains("clip-path"), "{svg}");
+        assert!(svg.contains("</g>"));
+    }
 }

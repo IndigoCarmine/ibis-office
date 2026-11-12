@@ -572,10 +572,13 @@ fn sheet_stream(shared: &mut Shared, number: u16, sheet: &Sheet, pictures: &Pict
     // 5 points of padding): what the file can say for a width, and the default width it can say.
     let digit = shared.digit;
     let points = |emu: i64| emu as f64 / 12700.0;
-    let base_columns = ((points(sheet.default_column) - 5.0) / digit).round().clamp(1.0, 255.0);
+    // The padding is 5 pixels, a pixel being `pixel` points (the same metrics the reader counts a width in).
+    let pixel = crate::xlsx::EXCEL_METRICS.pixel_pt();
+    let padding = 5.0 * pixel;
+    let base_columns = ((points(sheet.default_column) - padding) / digit).round().clamp(1.0, 255.0);
     o.rec_u16(0x55, base_columns as u16);
-    let represented_default = (base_columns * digit + 5.0).trunc();
-    let width_word = |emu: i64| ((points(emu) * 256.0 / digit - (128.0 / digit).floor()).ceil()).clamp(0.0, 65535.0) as u16;
+    let represented_default = ((base_columns * digit + padding) / pixel).trunc() * pixel;
+    let width_word = |emu: i64| ((points(emu) * 256.0 / digit - (128.0 / (digit / pixel)).floor()).ceil()).clamp(0.0, 65535.0) as u16;
     let ncols = sheet.columns.len().min(256);
     let mut c = 0;
     while c < ncols {
@@ -855,7 +858,7 @@ pub fn write_report(presentation: &Presentation) -> Result<(Vec<u8>, Report), Er
     let mut shared = Shared {
         drawings: Vec::new(),
         blips: Vec::new(),
-        digit: (default_style.font_size as f64 / 100.0 * 0.55).round().max(1.0),
+        digit: crate::xlsx::EXCEL_METRICS.digit_pt(default_style.font.as_deref(), default_style.font_size as f64 / 100.0),
         book: Book::new(&default_style),
         strings: Strings::default(),
         refs: Refs { sheets: sheets.iter().enumerate().map(|(i, s)| (s.0.to_lowercase(), i as u16)).collect(), names: HashMap::new(), xti: Vec::new() },

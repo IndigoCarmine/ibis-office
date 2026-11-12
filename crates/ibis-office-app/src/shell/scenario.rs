@@ -65,9 +65,71 @@ static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 /// Every scenario: the shell's examples and each format's
 /// (`FormatEditor::scenarios`), as (name, function).
+#[path = "../tests/shell/dialog_apply.rs"]
+pub(crate) mod dialog_apply;
+#[path = "../tests/shell/button_probe.rs"]
+pub(crate) mod button_probe;
+#[path = "../tests/shell/hyperlinks.rs"]
+mod hyperlink_scenarios;
+#[path = "../tests/shell/panel_dialog.rs"]
+mod panel_dialog_scenarios;
+#[path = "../tests/shell/merge_workflow.rs"]
+mod merge_workflow_scenarios;
+#[path = "../tests/shell/ui_refinements.rs"]
+mod ui_refinements;
+#[path = "../tests/shell/layout_refinements.rs"]
+mod layout_refinements;
+#[path = "../tests/shell/xlsx_ink_followup.rs"]
+mod xlsx_ink_followup;
+#[path="../tests/shell/ui_followup.rs"]
+mod ui_followup;
+#[path="../tests/shell/issues_33_plus.rs"]
+mod issues_33_plus;
+#[path="../tests/shell/issues59_62.rs"]
+mod issues59_62;
+#[path="../tests/shell/ui_20261028.rs"]
+mod ui_20261028;
+#[path="../tests/shell/ui_20261029_align.rs"]
+mod ui_20261029_align;
+#[path="../tests/shell/editing_20261028.rs"]
+mod editing_20261028;
+#[path="../tests/shell/followup_20261028.rs"]
+mod followup_20261028;
+#[path="../tests/shell/issues64_65.rs"]
+mod issues64_65;
+#[path = "../tests/shell/dropdown.rs"]
+mod dropdown;
+#[path = "../tests/shell/segment_control_ui.rs"]
+mod segment_control_ui;
+#[path = "../tests/shell/panel_catalog.rs"]
+mod panel_catalog;
+
+#[path = "../tests/shell/menu_viewport.rs"]
+mod menu_viewport;
+
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     use crate::shell::format::FormatEditor;
     let mut all = crate::shell::scenario_examples::all();
+    all.extend(crate::native_quit_scenarios::all());
+    all.extend(panel_dialog_scenarios::all());
+    all.push(("shell::submenu_viewport_fit",menu_viewport::run));
+    all.extend(hyperlink_scenarios::all());
+    all.extend(dialog_apply::all());
+    all.extend(ui_refinements::all());
+    all.extend(layout_refinements::all());
+    all.extend(ui_followup::all());
+    all.extend(issues_33_plus::all());
+    all.extend(issues59_62::all());
+    all.extend(ui_20261028::all());
+    all.extend(ui_20261029_align::all());
+    all.extend(editing_20261028::all());
+    all.extend(followup_20261028::all());
+    all.extend(issues64_65::all());
+    all.push(("shell::dropdown_item_attributes",dropdown::run));
+    all.push(("shell::toolbar_style_common_dropdown",dropdown::toolbar_style));
+    all.extend(xlsx_ink_followup::all());
+    all.extend(segment_control_ui::all());
+    all.extend(merge_workflow_scenarios::all());
     all.extend(crate::shell::scenario_i18n::all());
     all.extend(crate::shell::scenario_fix::all());
     all.extend(crate::shell::scenario_menus::all());
@@ -77,18 +139,98 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all
 }
 
+/// Unfixed bug scenarios (corpus_report), skipped in normal `cargo test` and
+/// run with `--ignored` or `--include-ignored`.
+pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
+    let mut out: Vec<(&'static str, fn())> = vec![("shell::dump_all_right_panels", panel_catalog::dump_all_right_panels)];
+    out.extend(ui_followup::ignored());
+    #[cfg(target_os = "macos")]
+    {
+        out.extend(crate::pptx::corpus_report::ignored());
+        out.extend(crate::xlsx::corpus_report::ignored());
+        out.extend(crate::docx::corpus_report::ignored());
+    }
+    out
+}
+
+/// What the system's frameworks autoreleased during a scenario (the URLs and strings of font and file lookups: 350 000
+/// of them after 40 scenarios). The scenarios run on a thread with no run loop, which would never drain them.
+struct AutoreleasePool(#[cfg(target_os = "macos")] *mut objc::runtime::Object);
+
+impl AutoreleasePool {
+    fn new() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            use objc::{class, msg_send, sel, sel_impl};
+            // SAFETY: NSAutoreleasePool new/drain on this thread, released before the scenario's thread data is.
+            return Self(unsafe { msg_send![class!(NSAutoreleasePool), new] });
+        }
+        #[cfg(not(target_os = "macos"))]
+        Self()
+    }
+}
+
+impl Drop for AutoreleasePool {
+    fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        {
+            use objc::{msg_send, sel, sel_impl};
+            // SAFETY: the pool made by `new`.
+            unsafe {
+                let _: () = msg_send![self.0, drain];
+            }
+        }
+    }
+}
+
+/// Write the ids of a format's menu items to `tasks/doc/<file>` (read by `scripts/gen-<format>-ribbon-map.py`), only when the
+/// environment variable `IBIS_DUMP_MENU_IDS` is set: the scenarios do not rewrite a file of the repository on every run.
+pub(crate) fn dump_menu_ids(file: &str, ids: &[String]) {
+    if std::env::var_os("IBIS_DUMP_MENU_IDS").is_some() {
+        std::fs::write(repo_root().join("tasks/doc").join(file), ids.join("\n")).unwrap();
+    }
+}
+
 /// Run the scenarios whose names contain one of `filter` (all without
 /// one), except those whose names contain a `filter` starting with `!`
 /// (`!pptx::gradient`), printing each result as libtest does. The exit
 /// status: 0 when all pass.
-pub fn run(filter: &[String]) -> i32 {
-    let (skip, take): (Vec<&String>, Vec<&String>) = filter.iter().partition(|f| f.starts_with('!'));
-    let chosen: Vec<_> = all()
-        .into_iter()
-        .filter(|(name, _)| take.is_empty() || take.iter().any(|f| name.contains(f.as_str())))
-        .filter(|(name, _)| !skip.iter().any(|f| name.contains(&f[1..])))
-        .collect();
-    println!("\nrunning {} scenarios", chosen.len());
+pub fn run(args: &[String]) -> i32 {
+    crate::native_shape_clipboard::simulate(None);
+    if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")) {
+        println!("Usage: scenarios [--list] [--ignored | --include-ignored] [name ...] [!excluded-name ...]");
+        return 0;
+    }
+    let only_ignored = args.iter().any(|a| a == "--ignored");
+    let include_ignored = args.iter().any(|a| a == "--include-ignored");
+    let filter: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+    let (skip, take): (Vec<&String>, Vec<&String>) = filter.into_iter().partition(|f| f.starts_with('!'));
+    let matches = |name: &str| {
+        (take.is_empty() || take.iter().any(|f| name.contains(f.as_str())))
+            && !skip.iter().any(|f| name.contains(&f[1..]))
+    };
+    let source: Vec<_> = if only_ignored {
+        ignored()
+    } else if include_ignored {
+        all().into_iter().chain(ignored()).collect()
+    } else {
+        all()
+    };
+    let chosen: Vec<_> = source.into_iter().filter(|(name, _)| matches(name)).collect();
+    if args.iter().any(|a| a == "--list") {
+        // Names only, one per line, so a caller can run them in separate processes.
+        for (name, _) in &chosen { println!("{name}"); }
+        return 0;
+    }
+    let skipped_ignored: Vec<_> = if !only_ignored && !include_ignored {
+        ignored().into_iter().filter(|(name, _)| matches(name)).collect()
+    } else {
+        Vec::new()
+    };
+    println!("\nrunning {} scenarios", chosen.len() + skipped_ignored.len());
+    for (name, _) in &skipped_ignored {
+        println!("scenario {name} ... ignored");
+    }
     let mut failed = Vec::new();
     // The test files must come out as they went in (a scenario works on
     // copies of them, `Scenario::open`). One scenario's after is the next
@@ -96,13 +238,18 @@ pub fn run(filter: &[String]) -> i32 {
     // minute of the 333).
     let mut before = test_files();
     for (name, f) in &chosen {
+        crate::native_shape_clipboard::simulate(None);
         CURRENT.with(|c| *c.borrow_mut() = name.to_string());
         // What one scenario sets (typing corrections, the user's name, the backup copy) is not the next one's start.
         crate::shell::autocorrect::reset();
         crate::shell::user_name::reset();
         crate::docx::backup::reset();
         let started = crate::clock::Instant::now();
+        let pool = AutoreleasePool::new();
+        crate::shell::links::CAPTURE_URLS.with(|s|*s.borrow_mut()=Some(Vec::new()));
         let result = std::panic::catch_unwind(f);
+        crate::shell::links::CAPTURE_URLS.with(|s|*s.borrow_mut()=None);
+        drop(pool);
         let took = started.elapsed();
         let after = test_files();
         let changed = changed_files(&before, &after);
@@ -113,6 +260,14 @@ pub fn run(filter: &[String]) -> i32 {
         let ok = result.is_ok() && changed.is_empty();
         // The time it took (scripts/check-main.py lists the slowest).
         println!("scenario {name} ... {} ({:.2}s)", if ok { "ok" } else { "FAILED" }, took.as_secs_f64());
+        // IBIS_SCENARIO_MEM=1: the process's memory (`footprint`'s total, as the system counts it) after each scenario, to find what a
+        // scenario leaves behind.
+        if std::env::var_os("IBIS_SCENARIO_MEM").is_some()
+            && let Ok(out) = std::process::Command::new("footprint").args(["-p", &std::process::id().to_string()]).output()
+            && let Some(line) = String::from_utf8_lossy(&out.stdout).lines().find(|l| l.contains("Footprint:"))
+        {
+            println!("scenario-mem {name} {}", line.split("Footprint:").nth(1).unwrap_or("").trim());
+        }
         if !ok {
             failed.push(*name);
         }
@@ -137,7 +292,20 @@ pub fn run(filter: &[String]) -> i32 {
     if let Some(path) = std::env::var_os("IBIS_I18N_LOG") {
         let _ = std::fs::write(path, crate::shell::i18n::log::lines().join("\n") + "\n");
     }
-    println!("\nscenario result: {}. {} passed; {} failed", if failed.is_empty() { "ok" } else { "FAILED" }, chosen.len() - failed.len(), failed.len());
+    // IBIS_SCENARIO_HOLD=1: wait here (for `heap`/`vmmap` on the process, to see what the scenarios left in memory).
+    if std::env::var_os("IBIS_SCENARIO_HOLD").is_some() {
+        println!("scenario-hold pid {}", std::process::id());
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
+    println!(
+        "\nscenario result: {}. {} passed; {} failed; {} ignored",
+        if failed.is_empty() { "ok" } else { "FAILED" },
+        chosen.len() - failed.len(),
+        failed.len(),
+        skipped_ignored.len()
+    );
     for name in &failed {
         println!("    {name}");
     }
@@ -210,7 +378,7 @@ fn changed_files(before: &std::collections::BTreeMap<String, (u64, u128)>, after
 
 /// The repository's root (for the test files' paths).
 pub(crate) fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("the repository")
+    crate::shell::plain_path::canonical(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("the repository")
 }
 
 /// What a toolbar button shows.
@@ -230,6 +398,17 @@ pub(crate) struct Scenario {
     name: String,
     shots: usize,
     _lock: MutexGuard<'static, ()>,
+}
+
+impl Drop for Scenario {
+    fn drop(&mut self) {
+        // Close the window and let the application release the editor (its document, the pictures decoded for it and the
+        // render caches): otherwise each scenario's whole world stays in memory (hundreds of MB for a document with pictures).
+        let editor = self.editor.clone();
+        self.cx.update(|app| editor.update(app, |e, _| e.picture_watch = None));
+        self.cx.update_window(self.window.into(), |_, window, _| window.remove_window()).ok();
+        self.cx.run_until_parked();
+    }
 }
 
 impl Scenario {
@@ -306,7 +485,13 @@ impl Scenario {
         crate::shell::i18n::show(crate::shell::i18n::Language::Japanese);
         let name = CURRENT.with(|c| c.borrow().clone());
         let name = if name.is_empty() { "scenario".to_string() } else { name };
-        let text_system: Arc<dyn gpui_kit::PlatformTextSystem> = Arc::new(drawn_text::Logging { inner: gpui_kit::platform::current_platform(true).text_system() });
+        // One text system for all the scenarios of the process: a new one for each (its fonts and glyph caches)
+        // stayed in memory after the scenario, about 55 MB each, 5 GB in 90 scenarios.
+        thread_local! {
+            static TEXT_SYSTEM: Arc<dyn gpui_kit::PlatformTextSystem> =
+                Arc::new(drawn_text::Logging { inner: gpui_kit::platform::current_platform(true).text_system() });
+        }
+        let text_system = TEXT_SYSTEM.with(|t| t.clone());
         let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(crate::shell::icons::Assets::new("")), crate::export::headless_renderer);
         cx.allow_parking();
         cx.update(crate::init);
@@ -323,6 +508,38 @@ impl Scenario {
             .expect("a headless window");
         let editor = slot.borrow().clone().expect("the editor");
         Self { editor, window, cx, name, shots: 0, _lock: lock }
+    }
+
+    /// The app ends with its last window, as `run_native` makes it (here the request is recorded: `quit_requested`).
+    #[allow(dead_code)] // For the formats' scenarios.
+    pub(crate) fn quit_with_last_window(&mut self) {
+        crate::QUIT_REQUESTED.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.cx.update(|app| app.on_window_closed(|cx, _| crate::quit_if_last_window_closed(cx)).detach());
+    }
+
+    /// The app asked to quit (after `quit_with_last_window`).
+    #[allow(dead_code)] // For the formats' scenarios.
+    pub(crate) fn quit_requested(&self) -> bool {
+        crate::QUIT_REQUESTED.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How many windows the app has open.
+    #[allow(dead_code)] // For the formats' scenarios.
+    pub(crate) fn window_count(&mut self) -> usize {
+        self.cx.update(|app| app.windows().len())
+    }
+
+    /// Press the window's close button (the red button on a Mac, × elsewhere), as the platform does: the window goes if
+    /// the editor lets it (`window_should_close`, registered by `open_window_sized`). Whether it closed.
+    #[allow(dead_code)] // For the formats' scenarios.
+    pub(crate) fn press_close_button(&mut self) -> bool {
+        let editor = self.editor.clone();
+        let close = self.cx.update_window(self.window.into(), |_, w, app| editor.update(app, |e, cx| e.window_should_close(w, cx))).expect("the window");
+        if close {
+            self.cx.update_window(self.window.into(), |_, w, _| w.remove_window()).expect("the window");
+        }
+        self.cx.run_until_parked();
+        close
     }
 
     /// Let everything run and draw the window (a few frames, pictures decoded).
@@ -374,7 +591,7 @@ impl Scenario {
         self.settle();
     }
 
-    fn dispatch(&mut self, events: Vec<PlatformInput>) {
+    pub(crate) fn dispatch(&mut self, events: Vec<PlatformInput>) {
         self.cx
             .update_window(self.window.into(), |_, window, app| {
                 for event in events {
@@ -515,6 +732,15 @@ impl Scenario {
     pub(crate) fn click_shape(&mut self, index: usize) {
         let at = self.shape_position(index);
         self.click(at);
+    }
+
+    /// Select shape `index` of the current slide as PowerPoint does: a click inside a shape
+    /// that has text puts the caret in it, so Escape then leaves the shape selected.
+    pub(crate) fn select_shape(&mut self, index: usize) {
+        self.click_shape(index);
+        if self.with(|e, _| e.text_editing().is_some()) {
+            self.key("escape");
+        }
     }
 
     /// A double click on shape `index` of the current slide (edits its text).
@@ -759,6 +985,12 @@ impl Scenario {
         path
     }
 
+    /// Where a picture named `label` is saved among this scenario's screenshots (no number put before it).
+    #[allow(dead_code)] // For the formats' scenarios.
+    pub(crate) fn screenshot_path(&mut self, label: &str) -> PathBuf {
+        self.dir().join(format!("{label}.png"))
+    }
+
     pub(crate) fn screenshot(&mut self, label: &str) -> PathBuf {
         self.shots += 1;
         let path = self.dir().join(format!("{:02}-{label}.png", self.shots));
@@ -808,6 +1040,9 @@ mod drawn_text {
         }
         fn font_data(&self, font_id: FontId) -> Option<(Arc<Vec<u8>>, u32)> {
             self.inner.font_data(font_id)
+        }
+        fn synthetic_style(&self, font_id: FontId) -> (bool, bool) {
+            self.inner.synthetic_style(font_id)
         }
         fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> gpui_kit::Result<Bounds<f32>> {
             self.inner.typographic_bounds(font_id, glyph_id)

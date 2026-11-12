@@ -69,7 +69,7 @@ impl SlideEditor {
     /// Whether the current sheet is laid out in pages on screen (the page layout view, in a build that can
     /// work the pages out).
     pub(crate) fn page_layout_shown(&self) -> bool {
-        cfg!(all(target_os = "macos", feature = "export")) && self.current_sheet().is_some_and(|(_, s)| s.page_layout)
+        cfg!(all(any(target_os = "macos", target_os = "windows"), feature = "export")) && self.current_sheet().is_some_and(|(_, s)| s.page_layout)
     }
 
     /// The pages of the current worksheet at `scale` (pixels per EMU of paper): `None` when the sheet is not
@@ -79,9 +79,9 @@ impl SlideEditor {
         if !sheet.page_layout {
             return None;
         }
-        #[cfg(all(target_os = "macos", feature = "export"))]
+        #[cfg(all(any(target_os = "macos", target_os = "windows"), feature = "export"))]
         let (print_scale, pages) = crate::export::preview_pages(self.presentation(), self.slide(), &self.resources);
-        #[cfg(not(all(target_os = "macos", feature = "export")))]
+        #[cfg(not(all(any(target_os = "macos", target_os = "windows"), feature = "export")))]
         let (print_scale, pages): (f64, Vec<ibis_doc_model::EmuRect>) = (1.0, Vec::new());
         if pages.is_empty() {
             return None;
@@ -395,7 +395,7 @@ impl SlideEditor {
     fn header_footer_inputs(&self, index: usize, width: f32, margin_top: f32, margin_bottom: f32) -> Vec<AnyElement> {
         use crate::xlsx::header_footer_edit::HfTarget;
         use gpui_kit::component::input::Input;
-        let Some(panel) = self.sheet_state().and_then(|s| s.header_footer_edit.as_ref()).filter(|p| p.inline_page == Some(index)) else { return Vec::new() };
+        let Some(panel) = self.sheet_state().and_then(|s| s.header_footer_edit.as_ref()).filter(|p| p.inline_page == Some(index) && self.sidebar_open) else { return Vec::new() };
         let header = panel.target == HfTarget::Header;
         let height = if header { margin_top } else { margin_bottom }.clamp(24.0, 60.0);
         let third = (width - 24.0) / 3.0;

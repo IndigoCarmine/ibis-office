@@ -129,6 +129,19 @@ pub enum ChartType {
     Surface { is_3d: bool, wireframe: bool },
 }
 
+impl ChartType {
+    /// ECMA-376 Part 4, OfficeOpenXML-XMLSchema-Transitional/dml-chart.xsd:
+    /// CT_LineSer (also stockChart), CT_ScatterSer and CT_RadarSer allow c:marker;
+    /// CT_BarSer, CT_AreaSer, CT_BubbleSer, CT_PieSer and CT_SurfaceSer do not.
+    pub fn supports_markers(self) -> bool {
+        matches!(self, Self::Line | Self::Scatter { .. } | Self::Radar { .. } | Self::Stock { .. })
+    }
+    /// The same schema's series types admitting c:trendline and c:errBars.
+    pub fn supports_series_analysis(self) -> bool {
+        matches!(self, Self::Bar { .. } | Self::Line | Self::Area | Self::Scatter { .. } | Self::Bubble { .. } | Self::Stock { .. })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LabelPosition {
     Center,
@@ -181,11 +194,17 @@ pub enum LabelPiece {
 pub struct PointLabel {
     pub index: usize,
     pub deleted: bool,
+    pub show_value: Option<bool>,
+    pub show_percent: Option<bool>,
+    pub show_category: Option<bool>,
+    pub show_series_name: Option<bool>,
     /// Moved from its automatic position, in 100 000ths of the chart frame.
     pub offset: (i32, i32),
     /// Fixed text, with fields for the value and the like.
     pub text: Option<Vec<LabelPiece>>,
     pub style: Option<ChartText>,
+    pub fill: Option<Fill>,
+    pub border: Option<Option<Stroke>>,
     pub position: Option<LabelPosition>,
 }
 
@@ -195,10 +214,14 @@ pub struct DataLabels {
     pub show_percent: bool,
     pub show_category: bool,
     pub show_series_name: bool,
+    /// The text between the parts of a label (`c:separator`); `None` is ", ".
+    pub separator: Option<String>,
     pub position: Option<LabelPosition>,
     /// Number format code; `None` uses the series'.
     pub format: Option<String>,
     pub style: ChartText,
+    pub fill: Fill,
+    pub border: Option<Stroke>,
     pub points: Vec<PointLabel>,
 }
 
@@ -399,6 +422,10 @@ pub struct ErrorBars {
     pub value: Option<Number>,
     /// Line style for the error bar (`c:spPr`).
     pub stroke: Option<Stroke>,
+    /// Custom positive error values (`c:plus`) when `val_type == ErrorBarValueType::Custom`.
+    pub plus: Vec<Option<Number>>,
+    /// Custom negative error values (`c:minus`) when `val_type == ErrorBarValueType::Custom`.
+    pub minus: Vec<Option<Number>>,
 }
 
 impl Default for ErrorBars {
@@ -410,6 +437,8 @@ impl Default for ErrorBars {
             no_end_cap: false,
             value: Some(Number(1.0)),
             stroke: None,
+            plus: Vec::new(),
+            minus: Vec::new(),
         }
     }
 }
@@ -427,6 +456,10 @@ pub struct Series {
     pub point_fills: Vec<(usize, Fill)>,
     /// Outlines of single data points; `None` for no outline.
     pub point_strokes: Vec<(usize, Option<Stroke>)>,
+    /// How far a pie's slices are pulled out from the centre (`c:explosion` of the series), as a percentage of the radius.
+    pub explosion: u32,
+    /// The same for single slices (`c:explosion` of a `c:dPt`), overriding the series'.
+    pub point_explosions: Vec<(usize, u32)>,
     pub marker: Option<Marker>,
     pub labels: Option<DataLabels>,
     /// Trendline on this series (`c:trendline`).
@@ -465,11 +498,17 @@ pub struct View3D {
     /// Right-angle axes (`c:rAngAx`): an oblique projection, the axes stay upright.
     pub right_angle_axes: bool,
     pub depth_percent: u32,
+    /// `c:hPercent`: the box's height as a percentage of its base (`None`: automatic).
+    pub height_percent: Option<u32>,
+    /// `c:grouping val="standard"` (3-D column): the series stand one behind the other; otherwise (clustered) they stand side by side in one row.
+    pub series_in_depth: bool,
+    /// `c:gapDepth`: the gap behind a bar as a percentage of its depth.
+    pub gap_depth: u32,
 }
 
 impl Default for View3D {
     fn default() -> Self {
-        Self { rot_x: 15, rot_y: 20, right_angle_axes: true, depth_percent: 100 }
+        Self { rot_x: 15, rot_y: 20, right_angle_axes: true, depth_percent: 100, height_percent: None, series_in_depth: true, gap_depth: 150 }
     }
 }
 
@@ -523,9 +562,14 @@ pub struct Axis {
     /// Labels sit at the far end of the crossing axis (`tickLblPos="high"`),
     /// such as on the right of a chart for a vertical value axis.
     pub labels_high: bool,
+    /// Labels sit at the low end of the crossing axis (`tickLblPos="low"`),
+    /// such as below the plot for a top value axis.
+    pub labels_low: bool,
     /// Rotation of the tick labels, in 60 000ths of a degree clockwise
     /// (−5 400 000 reads bottom to top); 0 for horizontal.
     pub label_rotation: i32,
+    /// Whether `label_rotation` was explicitly set on the axis (`a:bodyPr/@rot`).
+    pub fixed_label_rotation: bool,
     /// Show every `label_skip`-th category label (1 shows all); 0 leaves it
     /// to the layout, which thins out labels that would overlap.
     pub label_skip: u32,
@@ -547,6 +591,12 @@ pub struct Axis {
     /// Crowded category labels stand in two rows, every other one lower (a
     /// histogram's and a Pareto chart's) instead of turning.
     pub stagger_labels: bool,
+    /// The title's rotation (`a:bodyPr/@rot` of the title, in 60 000ths of a degree); `None` is the automatic one (a
+    /// value axis' title stands upright along the axis).
+    pub title_rotation: Option<i32>,
+    /// The outer levels of a category axis of several levels (`c:multiLvlStrRef`), the nearest to the labels first: each
+    /// a group of categories (the first of them, how many, its name), as a year over its months.
+    pub category_levels: Vec<Vec<(usize, usize, String)>>,
 }
 
 /// The chart's title (`c:title`).
@@ -641,6 +691,7 @@ impl Chart {
             background: crate::Fill::None,
             border: None,
             plot_background: crate::Fill::None,
+            plot_border: None,
             disp_blanks_as: None,
             plot_vis_only: true,
             data_table: None,
@@ -651,6 +702,7 @@ impl Chart {
             ex: None,
             ex_format: None,
             excel_layout: false,
+            word_layout: false,
             cell_refs: Vec::new(),
             ex_source: None,
         }
@@ -668,6 +720,8 @@ pub struct Chart {
     pub background: Fill,
     pub border: Option<Stroke>,
     pub plot_background: Fill,
+    /// The outline of the plot area (`c:plotArea/c:spPr/a:ln`); `None` draws none.
+    pub plot_border: Option<Stroke>,
     /// How blank cells are plotted (`c:dispBlanksAs`).
     pub disp_blanks_as: Option<DispBlanksAs>,
     /// Plot visible cells only (`c:plotVisOnly`). Defaults to true.
@@ -692,6 +746,8 @@ pub struct Chart {
     /// Drawn as Excel's engine lays a chart out (a chart of a worksheet or of
     /// Word, not of PowerPoint): the margins and gaps of the plot differ.
     pub excel_layout: bool,
+    /// A chart in a Word document: laid out as Word does (its automatic axis intervals are not yet measured and follow the earlier rule).
+    pub word_layout: bool,
     /// The cells each series takes its name, categories and values from (`c:f`), for a chart of a worksheet: the chart
     /// follows them as the cells change. Empty where the chart holds its data itself.
     pub cell_refs: Vec<SeriesCells>,
@@ -970,7 +1026,7 @@ fn format_section(value: f64, section: &str) -> String {
     let padded = std::iter::repeat_n('0', int_len - int_digits.len()).chain(int_digits.chars());
     for (i, c) in padded.enumerate() {
         if p.grouping && i > 0 && (int_len - i) % 3 == 0 {
-            number.push(',');
+            number.push(p.group_char.unwrap_or(','));
         }
         number.push(c);
     }
@@ -1014,6 +1070,8 @@ struct DigitSection {
     decimals: usize,
     required_decimals: usize,
     grouping: bool,
+    /// The character between the groups (`###\ ###`: a space); a comma if none is given.
+    group_char: Option<char>,
     min_int_digits: usize,
 }
 
@@ -1037,6 +1095,7 @@ fn parse_digits(section: &str, value: Option<f64>) -> DigitSection {
     let mut after = String::new();
     let mut digits = String::new();
     let mut percent = false;
+    let mut group_char: Option<char> = None;
     let mut chars = section.chars().peekable();
     while let Some(c) = chars.next() {
         // Placeholders continue the digit run until literal text follows it.
@@ -1050,6 +1109,17 @@ fn parse_digits(section: &str, value: Option<f64>) -> DigitSection {
                     }
                     target.push(q);
                 }
+            }
+            // A literal between two runs of placeholders (`###\ ###`) is the
+            // character between the groups of thousands, not text after the number.
+            '\\' if in_digits && !digits.is_empty() && {
+                let mut ahead = chars.clone();
+                ahead.next();
+                matches!(ahead.next(), Some('#' | '0' | '?'))
+            } =>
+            {
+                group_char = chars.next();
+                digits.push(',');
             }
             '\\' => target.extend(chars.next()),
             '[' => {
@@ -1088,6 +1158,7 @@ fn parse_digits(section: &str, value: Option<f64>) -> DigitSection {
         decimals: frac_part.chars().filter(|c| matches!(c, '0' | '#' | '?')).count(),
         required_decimals: frac_part.chars().filter(|c| *c == '0').count(),
         grouping: int_part.contains(','),
+        group_char,
         min_int_digits: int_part.chars().filter(|c| *c == '0').count(),
         trailing_commas,
         before,
@@ -1107,6 +1178,8 @@ fn is_date_format(section: &str) -> bool {
             '[' if !quoted => bracket = true,
             ']' if !quoted => bracket = false,
             'y' | 'Y' | 'd' | 'D' | 'm' | 'M' if !quoted && !bracket => return true,
+            // An era (`gg`, `ggg`), but not the `g` of General.
+            'g' | 'G' if !quoted && !bracket && !section.to_ascii_lowercase().contains("general") => return true,
             _ => {}
         }
     }
@@ -1135,6 +1208,15 @@ pub(crate) fn serial_to_date(serial: f64) -> (i64, u32, u32) {
 /// Format a date serial with a code such as `yyyy/m`, `yyyy"年"m"月"`,
 /// `mmm-yy` or `d`. Times of day are not shown.
 fn format_date(value: f64, section: &str) -> String {
+    // The cells' formatter knows the rest of the date codes (an era year `ggge`, the weekday `aaa`, a time of day).
+    let formatted = ibis_calc::numfmt::format(&ibis_calc::CellValue::Number(value), section, false);
+    if !formatted.overflow && !formatted.text.is_empty() {
+        return formatted.text;
+    }
+    format_date_basic(value, section)
+}
+
+fn format_date_basic(value: f64, section: &str) -> String {
     const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     let (year, month, day) = serial_to_date(value);
     let mut out = String::new();
@@ -1256,6 +1338,9 @@ mod tests {
         assert_eq!(format_number(45078.0, "yyyy/m"), "2023/6");
         assert_eq!(format_number(45078.0, r#"yyyy"年"m"月""#), "2023年6月");
         assert_eq!(format_number(45078.0, "mmm-yy"), "Jun-23");
+        // An era year (the cells' formatter shows it).
+        assert_eq!(format_number(42856.0, r#"ggge"年""#), "平成29年");
+        assert_eq!(format_number(45778.0, r#"ggge"年""#), "令和7年");
         assert_eq!(format_number(45078.0, "yyyy/mm/dd"), "2023/06/01");
         assert_eq!(format_number(1.0, "yyyy/m/d"), "1900/1/1");
         assert_eq!(format_number(61.0, "yyyy/m/d"), "1900/3/1");

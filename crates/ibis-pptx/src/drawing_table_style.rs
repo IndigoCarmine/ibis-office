@@ -67,7 +67,7 @@ const STYLES: &[StyleMeta] = &[
     StyleMeta { guid: "{3B4B98B0-60AC-42C2-AFA5-B58CD77FA1E5}", name: "Light Style 1 - Accent 1", family: Family::Light1, color: ColorScheme::Accent(1) },
     StyleMeta { guid: "{0E3FDE45-AF77-4B5C-9715-49D594BDF05E}", name: "Light Style 1 - Accent 2", family: Family::Light1, color: ColorScheme::Accent(2) },
     StyleMeta { guid: "{C083E6E3-FA7D-4D7B-A595-EF9225AFEA82}", name: "Light Style 1 - Accent 3", family: Family::Light1, color: ColorScheme::Accent(3) },
-    StyleMeta { guid: "{D27102A9-8310-4765-A1911B00CA55}", name: "Light Style 1 - Accent 4", family: Family::Light1, color: ColorScheme::Accent(4) },
+    StyleMeta { guid: "{D27102A9-8310-4765-A935-A1911B00CA55}", name: "Light Style 1 - Accent 4", family: Family::Light1, color: ColorScheme::Accent(4) },
     StyleMeta { guid: "{5FD0F851-EC5A-4D38-B0AD-8093EC10F338}", name: "Light Style 1 - Accent 5", family: Family::Light1, color: ColorScheme::Accent(5) },
     StyleMeta { guid: "{68D230F3-CF80-4859-8CE7-A43EE81993B5}", name: "Light Style 1 - Accent 6", family: Family::Light1, color: ColorScheme::Accent(6) },
 
@@ -158,16 +158,19 @@ fn scheme_clr(color: ColorScheme, tint: Option<u32>, shade: Option<u32>) -> Stri
             _ => "accent5",
         },
     };
+    // DrawingML `tint`/`shade` (a blend towards white / black in linear RGB), as PowerPoint's own table styles use.
     if let Some(t) = tint {
-        let lum_off = 100_000 - t * 1000;
-        let lum_mod = t * 1000;
-        format!(r#"<a:schemeClr val="{name}"><a:lumMod val="{lum_mod}"/><a:lumOff val="{lum_off}"/></a:schemeClr>"#)
+        format!(r#"<a:schemeClr val="{name}"><a:tint val="{}"/></a:schemeClr>"#, t * 1000)
     } else if let Some(s) = shade {
-        let lum_mod = s * 1000;
-        format!(r#"<a:schemeClr val="{name}"><a:lumMod val="{lum_mod}"/></a:schemeClr>"#)
+        format!(r#"<a:schemeClr val="{name}"><a:shade val="{}"/></a:schemeClr>"#, s * 1000)
     } else {
         format!(r#"<a:schemeClr val="{name}"/>"#)
     }
+}
+
+fn scheme_clr_alpha(color: ColorScheme, percent: u32) -> String {
+    let plain = scheme_clr(color, None, None);
+    plain.replacen("/>", &format!("><a:alpha val=\"{}\"/></a:schemeClr>", percent * 1000), 1)
 }
 
 fn scheme_clr_b(color: ColorScheme) -> String {
@@ -198,17 +201,45 @@ fn border_edges(left: Option<&str>, right: Option<&str>, top: Option<&str>, bott
     s
 }
 
+/// One edge of a style element, `w` EMU wide.
+fn thick_edge_w(edge: &str, clr: &str, w: i64) -> String {
+    format!(r#"<a:tcBdr><a:{edge}>{}</a:{edge}></a:tcBdr>"#, border_ln(clr, w))
+}
+
+/// `border_edges` with every line `w` EMU wide (left, right, top, bottom, insideH, insideV).
+fn border_edges_w(w: i64, e: [Option<&str>; 6]) -> String {
+    let mut s = String::from("<a:tcBdr>");
+    for (name, c) in ["left", "right", "top", "bottom", "insideH", "insideV"].iter().zip(e) {
+        if let Some(c) = c {
+            s.push_str(&format!("<a:{name}>{}</a:{name}>", border_ln(c, w)));
+        }
+    }
+    s.push_str("</a:tcBdr>");
+    s
+}
+
+/// One edge of a style element drawn thicker (3 pt, the header's underline / the total row's overline of the Medium styles).
+fn thick_edge(edge: &str, clr: &str) -> String {
+    format!(r#"<a:tcBdr><a:{edge}>{}</a:{edge}></a:tcBdr>"#, border_ln(clr, 38100))
+}
+
 fn generate_tbl_style(meta: &StyleMeta) -> String {
     let mut xml = format!(r#"<a:tblStyle styleId="{}" styleName="{}">"#, meta.guid, meta.name);
     let clr_base = scheme_clr(meta.color, None, None);
     let clr_tint20 = scheme_clr(meta.color, Some(20), None);
     let clr_tint40 = scheme_clr(meta.color, Some(40), None);
-    let clr_tint60 = scheme_clr(meta.color, Some(60), None);
-    let clr_shade75 = scheme_clr(meta.color, None, Some(75));
-    let clr_shade90 = scheme_clr(meta.color, None, Some(90));
+    let clr_shade80 = scheme_clr(meta.color, None, Some(80));
+    let clr_shade60 = scheme_clr(meta.color, None, Some(60));
+    let clr_shade40 = scheme_clr(meta.color, None, Some(40));
+    let clr_alpha20 = scheme_clr_alpha(meta.color, 20);
+    let clr_alpha40 = scheme_clr_alpha(meta.color, 40);
+    let clr_tint50 = scheme_clr(meta.color, Some(50), None);
     let clr_white = r#"<a:schemeClr val="lt1"/>"#;
     let clr_black = r#"<a:schemeClr val="dk1"/>"#;
 
+    // Measured from PowerPoint's own rendering of each style (test/coverage PTST: the colour of every cell with the
+    // header/total row, first/last column and banded rows/columns on and off). A band's alpha is over the table's own
+    // fill, and only band 1 of rows and columns paints (the odd rows are the whole table's colour).
     match meta.family {
         Family::NoStyleNoGrid => {
             xml.push_str(r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle/></a:wholeTbl>"#);
@@ -218,151 +249,167 @@ fn generate_tbl_style(meta: &StyleMeta) -> String {
             xml.push_str(&format!(r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{bdr}</a:tcStyle></a:wholeTbl>"#));
         }
         Family::Themed1 => {
-            let bdr = border_edges(Some(&clr_base), Some(&clr_base), Some(&clr_base), Some(&clr_base), Some(&clr_base), Some(&clr_base));
-            let first_bdr = border_edges(None, None, None, Some(clr_white), None, None);
-            let last_bdr = border_edges(None, None, Some(&clr_base), None, None, None);
+            let bdr = border_edges_w(6350, [Some(clr_base.as_str()); 6]);
+            let head_bdr = thick_edge_w("bottom", clr_white, 12700);
+            let total_bdr = format!("<a:tcBdr><a:top>{}</a:top><a:bottom>{}</a:bottom></a:tcBdr>", border_ln(&clr_base, 12700), border_ln(&clr_base, 12700));
+            let first_bdr = thick_edge_w("right", &clr_base, 12700);
+            let last_bdr = thick_edge_w("left", &clr_base, 12700);
             xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill>{bdr}</a:tcStyle></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill>{first_bdr}</a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on"/><a:tcStyle>{last_bdr}</a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on"/></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on"/></a:lastCol>
-                <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_tint60}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band2H><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band2H>
-                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_tint60}</a:solidFill></a:fill></a:tcStyle></a:band1V>
-                <a:band2V><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band2V>"#
+                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{bdr}<a:fill><a:solidFill>{clr_tint50}</a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
+                <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_alpha40}</a:solidFill></a:fill></a:tcStyle></a:band1H>
+                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_alpha40}</a:solidFill></a:fill></a:tcStyle></a:band1V>
+                <a:lastCol><a:tcTxStyle b="on"/><a:tcStyle>{last_bdr}</a:tcStyle></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on"/><a:tcStyle>{first_bdr}</a:tcStyle></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on"/><a:tcStyle>{total_bdr}</a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{head_bdr}<a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstRow>"#
             ));
         }
         Family::Themed2 => {
-            let bdr = border_edges(Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white));
+            let line = scheme_clr(meta.color, Some(50), None);
+            let bdr = border_edges_w(6350, [Some(line.as_str()), Some(line.as_str()), Some(line.as_str()), Some(line.as_str()), None, None]);
+            let head_bdr = thick_edge_w("bottom", clr_white, 19050);
+            let total_bdr = thick_edge_w("top", clr_white, 19050);
+            let first_bdr = thick_edge_w("right", clr_white, 19050);
+            let last_bdr = thick_edge_w("left", clr_white, 19050);
             xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle>{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_shade90}</a:solidFill></a:fill>{bdr}</a:tcStyle></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_shade90}</a:solidFill></a:fill></a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_shade90}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_shade75}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_shade75}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
-                <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_shade75}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band2H><a:tcStyle><a:fill><a:solidFill>{clr_shade90}</a:solidFill></a:fill></a:tcStyle></a:band2H>
-                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_shade75}</a:solidFill></a:fill></a:tcStyle></a:band1V>
-                <a:band2V><a:tcStyle><a:fill><a:solidFill>{clr_shade90}</a:solidFill></a:fill></a:tcStyle></a:band2V>"#
+                r#"<a:wholeTbl><a:tcTxStyle>{clr_white}</a:tcTxStyle><a:tcStyle>{bdr}<a:fill><a:solidFill>{clr_shade80}</a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
+                <a:band1H><a:tcStyle><a:fill><a:solidFill><a:schemeClr val="lt1"><a:alpha val="20000"/></a:schemeClr></a:solidFill></a:fill></a:tcStyle></a:band1H>
+                <a:band1V><a:tcStyle><a:fill><a:solidFill><a:schemeClr val="lt1"><a:alpha val="20000"/></a:schemeClr></a:solidFill></a:fill></a:tcStyle></a:band1V>
+                <a:lastCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{last_bdr}</a:tcStyle></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{first_bdr}</a:tcStyle></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{total_bdr}</a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{head_bdr}</a:tcStyle></a:firstRow>"#
             ));
         }
-        Family::Light1 => {
-            let row_bdr = border_edges(None, None, None, Some(&clr_base), None, None);
-            let last_bdr = border_edges(None, None, Some(&clr_base), None, None, None);
+        Family::Light1 | Family::Light3 => {
+            let light1 = meta.family == Family::Light1;
+            let b = clr_base.as_str();
+            let outline = if light1 { border_edges_w(12700, [None, None, Some(b), Some(b), None, None]) } else { border_edges_w(12700, [Some(b); 6]) };
+            let row_bdr = thick_edge_w("bottom", &clr_base, if light1 { 12700 } else { 25400 });
+            let last_bdr = thick_edge_w("top", &clr_base, if light1 { 12700 } else { 25400 });
             xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle/></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle><a:tcStyle>{row_bdr}</a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle><a:tcStyle>{last_bdr}</a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle></a:lastCol>
-                <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band1V>"#
+                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{outline}</a:tcStyle></a:wholeTbl>
+                <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_alpha20}</a:solidFill></a:fill></a:tcStyle></a:band1H>
+                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_alpha20}</a:solidFill></a:fill></a:tcStyle></a:band1V>
+                <a:lastCol><a:tcTxStyle b="on"/></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on"/></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on"/><a:tcStyle>{last_bdr}</a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on"/><a:tcStyle>{row_bdr}</a:tcStyle></a:firstRow>"#
             ));
         }
         Family::Light2 => {
-            let last_bdr = border_edges(None, None, Some(&clr_base), None, None, None);
+            let b = clr_base.as_str();
+            let outline = border_edges_w(6350, [Some(b), Some(b), Some(b), Some(b), None, None]);
+            let band_h = border_edges_w(6350, [None, None, Some(b), Some(b), None, None]);
+            let band_v = border_edges_w(6350, [Some(b), Some(b), None, None, None, None]);
+            let last_bdr = thick_edge_w("top", &clr_base, 38100);
             xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle/></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle><a:tcStyle>{last_bdr}</a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle></a:lastCol>"#
-            ));
-        }
-        Family::Light3 => {
-            let tbl_bdr = border_edges(None, None, None, None, Some(&clr_base), None);
-            let row_bdr = border_edges(None, None, None, Some(&clr_base), None, None);
-            xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{tbl_bdr}</a:tcStyle></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle><a:tcStyle>{row_bdr}</a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle></a:lastCol>
-                <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band1V>"#
+                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{outline}</a:tcStyle></a:wholeTbl>
+                <a:band1H><a:tcStyle>{band_h}</a:tcStyle></a:band1H>
+                <a:band1V><a:tcStyle>{band_v}</a:tcStyle></a:band1V>
+                <a:lastCol><a:tcTxStyle b="on"/></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on"/></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on"/><a:tcStyle>{last_bdr}</a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstRow>"#
             ));
         }
         Family::Medium1 => {
-            let tbl_bdr = border_edges(None, None, None, None, Some(&clr_base), None);
+            let tbl_bdr = border_edges(Some(&clr_base), Some(&clr_base), Some(&clr_base), Some(&clr_base), Some(&clr_base), None);
             xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{tbl_bdr}</a:tcStyle></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on"/><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on"/><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on"/><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
+                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{tbl_bdr}<a:fill><a:solidFill>{clr_white}</a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
                 <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band1V>"#
+                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band1V>
+                <a:lastCol><a:tcTxStyle b="on"/></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on"/></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on"/><a:tcStyle><a:fill><a:solidFill>{clr_white}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstRow>"#
             ));
         }
         Family::Medium2 => {
             let bdr = border_edges(Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white));
+            let head_bdr = thick_edge("bottom", clr_white);
+            let total_bdr = thick_edge("top", clr_white);
             xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill>{bdr}</a:tcStyle></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
+                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{bdr}<a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
                 <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band2H><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band2H>
                 <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band1V>
-                <a:band2V><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band2V>"#
+                <a:lastCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{total_bdr}<a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{head_bdr}<a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstRow>"#
             ));
         }
         Family::Medium3 => {
-            let gray_tint = r#"<a:schemeClr val="dk1"><a:lumMod val="10000"/><a:lumOff val="90000"/></a:schemeClr>"#;
-            let bdr = border_edges(None, None, None, None, Some(clr_white), None);
+            let gray_tint = r#"<a:schemeClr val="dk1"><a:tint val="20000"/></a:schemeClr>"#;
+            let bdr = format!("<a:tcBdr><a:top>{}</a:top><a:bottom>{}</a:bottom></a:tcBdr>", border_ln(clr_black, 25400), border_ln(clr_black, 25400));
+            let head_bdr = thick_edge_w("bottom", clr_black, 25400);
+            let total_bdr = thick_edge_w("top", clr_black, 38100);
             xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{bdr}</a:tcStyle></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on"/><a:tcStyle><a:fill><a:solidFill>{clr_white}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
+                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{bdr}<a:fill><a:solidFill>{clr_white}</a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
                 <a:band1H><a:tcStyle><a:fill><a:solidFill>{gray_tint}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band1V><a:tcStyle><a:fill><a:solidFill>{gray_tint}</a:solidFill></a:fill></a:tcStyle></a:band1V>"#
+                <a:band1V><a:tcStyle><a:fill><a:solidFill>{gray_tint}</a:solidFill></a:fill></a:tcStyle></a:band1V>
+                <a:lastCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on">{clr_black}</a:tcTxStyle><a:tcStyle>{total_bdr}<a:fill><a:solidFill>{clr_white}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{head_bdr}<a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:firstRow>"#
             ));
         }
         Family::Medium4 => {
-            let bdr = border_edges(None, None, None, Some(&clr_base), None, None);
+            let b = clr_base.as_str();
+            let bdr = border_edges_w(12700, [Some(b); 6]);
+            xml.push_str(&format!(
+                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle>{bdr}<a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
+                <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band1H>
+                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band1V>
+                <a:lastCol><a:tcTxStyle b="on"/></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on"/></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on"/></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on"/></a:firstRow>"#
+            ));
+        }
+        Family::Dark1 if meta.color == ColorScheme::Neutral => {
+            // The grey one: tints of the text colour rather than shades of an accent.
+            let clr_tint60 = scheme_clr(meta.color, Some(60), None);
+            let head_bdr = thick_edge_w("bottom", clr_white, 38100);
+            let total_bdr = thick_edge_w("top", clr_white, 38100);
+            let first_bdr = thick_edge_w("right", clr_white, 38100);
+            let last_bdr = thick_edge_w("left", clr_white, 38100);
             xml.push_str(&format!(
                 r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill>{bdr}</a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on">{clr_base}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
                 <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band2H><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band2H>
                 <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band1V>
-                <a:band2V><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band2V>"#
+                <a:lastCol><a:tcTxStyle b="on"/><a:tcStyle>{last_bdr}<a:fill><a:solidFill>{clr_tint60}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on"/><a:tcStyle>{first_bdr}<a:fill><a:solidFill>{clr_tint60}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on"/><a:tcStyle>{total_bdr}<a:fill><a:solidFill>{clr_tint60}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{head_bdr}<a:fill><a:solidFill>{clr_black}</a:solidFill></a:fill></a:tcStyle></a:firstRow>"#
             ));
         }
         Family::Dark1 => {
-            let bdr = border_edges(Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white));
+            let head_bdr = thick_edge_w("bottom", clr_white, 38100);
+            let total_bdr = thick_edge_w("top", clr_white, 38100);
+            let first_bdr = thick_edge_w("right", clr_white, 38100);
+            let last_bdr = thick_edge_w("left", clr_white, 38100);
             xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle>{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill>{bdr}</a:tcStyle></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_black}</a:solidFill></a:fill></a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_shade75}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_shade75}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_shade75}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
-                <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_shade75}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band2H><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:band2H>
-                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_shade75}</a:solidFill></a:fill></a:tcStyle></a:band1V>
-                <a:band2V><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:band2V>"#
+                r#"<a:wholeTbl><a:tcTxStyle>{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_base}</a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
+                <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_shade60}</a:solidFill></a:fill></a:tcStyle></a:band1H>
+                <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_shade60}</a:solidFill></a:fill></a:tcStyle></a:band1V>
+                <a:lastCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{last_bdr}<a:fill><a:solidFill>{clr_shade60}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{first_bdr}<a:fill><a:solidFill>{clr_shade60}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{total_bdr}<a:fill><a:solidFill>{clr_shade40}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle>{head_bdr}<a:fill><a:solidFill>{clr_black}</a:solidFill></a:fill></a:tcStyle></a:firstRow>"#
             ));
         }
         Family::Dark2 => {
             let clr_b = scheme_clr_b(meta.color);
-            let bdr = border_edges(Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white), Some(clr_white));
+            let total_bdr = thick_edge_w("top", clr_black, 38100);
             xml.push_str(&format!(
-                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill>{bdr}</a:tcStyle></a:wholeTbl>
-                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_b}</a:solidFill></a:fill></a:tcStyle></a:firstRow>
-                <a:lastRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_b}</a:solidFill></a:fill></a:tcStyle></a:lastRow>
-                <a:firstCol><a:tcTxStyle b="on"/><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:firstCol>
-                <a:lastCol><a:tcTxStyle b="on"/><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:lastCol>
+                r#"<a:wholeTbl><a:tcTxStyle><a:schemeClr val="dk1"/></a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:wholeTbl>
                 <a:band1H><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band1H>
-                <a:band2H><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band2H>
                 <a:band1V><a:tcStyle><a:fill><a:solidFill>{clr_tint40}</a:solidFill></a:fill></a:tcStyle></a:band1V>
-                <a:band2V><a:tcStyle><a:fill><a:solidFill>{clr_tint20}</a:solidFill></a:fill></a:tcStyle></a:band2V>"#
+                <a:lastCol><a:tcTxStyle b="on"/></a:lastCol>
+                <a:firstCol><a:tcTxStyle b="on"/></a:firstCol>
+                <a:lastRow><a:tcTxStyle b="on"/><a:tcStyle>{total_bdr}</a:tcStyle></a:lastRow>
+                <a:firstRow><a:tcTxStyle b="on">{clr_white}</a:tcTxStyle><a:tcStyle><a:fill><a:solidFill>{clr_b}</a:solidFill></a:fill></a:tcStyle></a:firstRow>"#
             ));
         }
     }

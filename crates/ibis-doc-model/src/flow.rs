@@ -963,6 +963,56 @@ impl UnderlineStyle {
             _ => return None,
         })
     }
+
+    /// Converts a Word (`ST_Underline`) underline style to a DrawingML [`crate::text::Underline`].
+    pub fn to_drawing_underline(self) -> crate::text::Underline {
+        use crate::text::Underline;
+        use UnderlineStyle::*;
+        match self {
+            Single => Underline::Single,
+            Words => Underline::Words,
+            Double => Underline::Double,
+            Thick => Underline::Heavy,
+            Dotted => Underline::Dotted,
+            DottedHeavy => Underline::DottedHeavy,
+            Dash => Underline::Dash,
+            DashedHeavy => Underline::DashHeavy,
+            DashLong => Underline::DashLong,
+            DashLongHeavy => Underline::DashLongHeavy,
+            DotDash => Underline::DotDash,
+            DashDotHeavy => Underline::DotDashHeavy,
+            DotDotDash => Underline::DotDotDash,
+            DashDotDotHeavy => Underline::DotDotDashHeavy,
+            Wave => Underline::Wavy,
+            WavyHeavy => Underline::WavyHeavy,
+            WavyDouble => Underline::WavyDouble,
+        }
+    }
+
+    /// Converts a DrawingML [`crate::text::Underline`] to a Word (`ST_Underline`) underline style.
+    pub fn from_drawing_underline(u: crate::text::Underline) -> Self {
+        use crate::text::Underline;
+        use UnderlineStyle::*;
+        match u {
+            Underline::Single => Single,
+            Underline::Words => Words,
+            Underline::Double => Double,
+            Underline::Heavy => Thick,
+            Underline::Dotted => Dotted,
+            Underline::DottedHeavy => DottedHeavy,
+            Underline::Dash => Dash,
+            Underline::DashHeavy => DashedHeavy,
+            Underline::DashLong => DashLong,
+            Underline::DashLongHeavy => DashLongHeavy,
+            Underline::DotDash => DotDash,
+            Underline::DotDashHeavy => DashDotHeavy,
+            Underline::DotDotDash => DotDotDash,
+            Underline::DotDotDashHeavy => DashDotDotHeavy,
+            Underline::Wavy => Wave,
+            Underline::WavyHeavy => WavyHeavy,
+            Underline::WavyDouble => WavyDouble,
+        }
+    }
 }
 
 /// Where the section after a section break starts (`w:sectPr/w:type`).
@@ -1235,14 +1285,14 @@ pub struct FlowRunStyle {
     pub font: Option<String>,
     /// Typeface for East Asian text.
     pub east_asian_font: Option<String>,
-    /// Shared punctuation and symbols take the East Asian typeface
-    /// (`w:rFonts/@w:hint="eastAsia"`).
-    pub east_asian_hint: bool,
     /// The East Asian text is Chinese (`w:lang/@w:eastAsia` zh-…): with the
     /// hint, accented Latin letters take the East Asian typeface too.
     pub east_asian_chinese: bool,
     /// Typeface for Complex Script text (Arabic, Hebrew, Thai, Indic, etc.).
     pub cs_font: Option<String>,
+    /// Whether `w:rFonts/@w:hint="eastAsia"` selects the East Asian font for ambiguous characters
+    /// (punctuation and symbols shared by Latin and East Asian text).
+    pub east_asia_hint: bool,
     /// Hundredths of a point.
     pub size: u32,
     /// Complex Script font size (hundredths of a point, `w:szCs`).
@@ -1269,6 +1319,9 @@ pub struct FlowRunStyle {
     pub spacing: Emu,
     /// Horizontal scale in percent (`w:w`).
     pub scale: u32,
+    /// The width in twips a run of characters is fitted to and the id that
+    /// joins the runs of one span (`w:fitText`).
+    pub fit_text: Option<(u32, u32)>,
     /// Run border line (`w:bdr`).
     pub border: Option<FlowBorder>,
     /// Pair kerning from this size up, in half-points (`w:kern`); `None`:
@@ -1298,6 +1351,9 @@ pub struct FlowRunStyle {
     pub num_spacing: NumberSpacing,
     /// OpenType 前後関係に依存する異体字 (`w14:cntxtAlts`).
     pub contextual_alternates: bool,
+    /// An `EQ \o\ac` field's sizes (hundredths of a point) of its enclosure and of
+    /// the character in it, as the runs of its code have them (`None`: the run's own).
+    pub enclosure_sizes: Option<(u32, u32)>,
 }
 
 impl Default for FlowRunStyle {
@@ -1306,9 +1362,9 @@ impl Default for FlowRunStyle {
         Self {
             font: None,
             east_asian_font: None,
-            east_asian_hint: false,
             east_asian_chinese: false,
             cs_font: None,
+            east_asia_hint: false,
             size: 1050,
             cs_size: None,
             bold: false,
@@ -1327,6 +1383,7 @@ impl Default for FlowRunStyle {
             position: VerticalPosition::Baseline,
             spacing: 0,
             scale: 100,
+            fit_text: None,
             border: None,
             kern: None,
             emphasis: EmphasisMark::None,
@@ -1341,6 +1398,7 @@ impl Default for FlowRunStyle {
             num_form: NumberForm::Default,
             num_spacing: NumberSpacing::Default,
             contextual_alternates: false,
+            enclosure_sizes: None,
         }
     }
 }
@@ -1377,6 +1435,14 @@ impl FlowRunStyle {
 
     /// The typeface for a character.
     pub fn font_for(&self, c: char) -> Option<&str> {
+        self.font_for_in(c, true)
+    }
+
+    /// `font_for`, where `paragraph_has_east_asian` says whether the paragraph has East Asian text. The punctuation
+    /// from U+2010 up (dashes, curly quotes) is drawn in the East Asian font only in such a paragraph; among Latin
+    /// text only (even in a document whose language is Japanese) Word draws it in the Latin font (DHDR: "Header — 1"
+    /// is Calibri's em dash, 0.91 em wide, not the full-width one of 游ゴシック).
+    pub fn font_for_in(&self, c: char, paragraph_has_east_asian: bool) -> Option<&str> {
         if is_complex_script(c) {
             if let Some(f) = self.cs_font.as_deref() {
                 return Some(f);
@@ -1386,7 +1452,10 @@ impl FlowRunStyle {
         // RunFontSelector has it): CJK text takes the East Asian one; the
         // symbols shared with Latin text only with `w:hint="eastAsia"`
         // (whatever `w:lang` says), else the Latin one.
-        let hint = self.east_asian_hint;
+        // `paragraph_has_east_asian` changes nothing then: among Latin text
+        // the shared punctuation is Latin without the hint anyway.
+        let _ = paragraph_has_east_asian;
+        let hint = self.east_asia_hint;
         let east_asian = match c as u32 {
             0xff61..=0xff9f => false,
             0x2e80.. => true,
@@ -1463,6 +1532,9 @@ pub enum FlowRunKind {
     Text(String),
     /// A tab character: moves to the next tab stop.
     Tab,
+    /// An absolute position tab (`w:ptab`, ECMA-376 Part 1 §17.3.3.23): moves to the left, centre or right
+    /// of the margins (`relative_to_margin`: `true`) or of the paragraph's indents (`false`).
+    PositionalTab { align: TabAlign, relative_to_margin: bool, leader: bool },
     /// A line break within the paragraph.
     LineBreak,
     /// An inline picture of this size (turned, flipped and cut as `look` says).
@@ -1721,9 +1793,8 @@ impl FlowRun {
     pub fn len(&self) -> usize {
         match &self.kind {
             FlowRunKind::Text(t) => t.chars().count(),
-            FlowRunKind::DropDownList { items, selected, .. } => {
-                items.get(*selected).map_or(0, |(d, _)| d.chars().count())
-            }
+            // A drop-down is one position (as Word and the saving count it), whatever item it shows.
+            FlowRunKind::DropDownList { .. } => 1,
             FlowRunKind::DatePicker { text, .. } => text.chars().count(),
             FlowRunKind::RichText { text, .. }
             | FlowRunKind::PlainText { text, .. }
@@ -2240,6 +2311,8 @@ impl FlowBorder {
             // Word: a wave is 2.5 pt high and a double wave two of them, one above the other (a 0.75 pt line).
             DoubleWave => (vec![PT * 11 / 4, PT * 11 / 4], vec![]),
             Wave => (vec![PT * 13 / 4], vec![]),
+            // Word: a band 3.5 pt across whatever the width, of short slanted lines.
+            DashDotStroked => (vec![PT * 7 / 2], vec![]),
             ThreeDEmboss | ThreeDEngrave => (vec![w + t], vec![]),
             _ => (vec![w], vec![]),
         };
@@ -2265,7 +2338,7 @@ impl FlowBorder {
         use BorderStyle::*;
         Some(match self.style {
             Dotted => vec![w, w],
-            Dashed => vec![4 * w, 4 * w],
+            Dashed => vec![3 * w, w],
             DashSmallGap => vec![4 * w, w],
             DotDash => vec![27 * w / 4, 3 * w, 3 * w, 3 * w],
             DotDotDash => vec![23 * w / 4, 2 * w, 2 * w, 2 * w, 2 * w, 2 * w],
@@ -2310,6 +2383,8 @@ pub struct FlowParagraph {
     pub id: u32,
     /// A drop cap on the paragraph's initial letter (`w:framePr w:dropCap="drop|margin"`).
     pub drop_cap: Option<DropCap>,
+    /// A text frame (`w:framePr` without `w:dropCap`), such as a page-number frame in a footer.
+    pub framed: bool,
     /// The paragraph style (`w:pStyle`); `None` for the default one.
     pub style: Option<String>,
     /// The style of the table the paragraph is in, which it inherits from.
@@ -2357,6 +2432,10 @@ pub struct FlowParagraph {
     /// the space before and after is not added between paragraphs of the
     /// same style.
     pub contextual_spacing: bool,
+    /// The space before or after is Word's automatic one (`w:beforeAutospacing`, `w:afterAutospacing`; 14 pt, none at a
+    /// cell's start or end).
+    pub auto_before: bool,
+    pub auto_after: bool,
     /// widow/orphan control (`w:widowControl`, on unless the file turns it
     /// off): a paragraph's page does not end with its first line alone or
     /// start with its last line alone.
@@ -2545,6 +2624,9 @@ pub struct FlowTable {
     /// grid does not say the widths (cells or table without a width, in
     /// percent, or disagreeing with the grid).
     pub autofit: Option<AutoFit>,
+    /// An automatically laid out table of no set width (`w:tblLayout` autofit, `w:tblW` auto): wider than the text, its
+    /// columns are cut down in proportion (to the text's width), not less than their content's least width.
+    pub fit_to_page: bool,
     /// セル間隔 (`w:tblCellSpacing`).
     pub cell_spacing: Option<Emu>,
 }
@@ -2804,6 +2886,23 @@ pub struct FlowDocument {
     /// 禁則処理の方式（Word の「禁則処理の方式」標準/厳密: `word/settings.xml` の `w:strictFirstAndLastChars`, ECMA-376 Part 1 §17.15.1.84, DOCX-JA-010）。
     /// `true`: 厳密（Strict: 小書き仮名や長音記号等を行頭禁則とする、Word 日本語版の標準）、`false`: 標準（Normal）。
     pub strict_first_and_last_chars: bool,
+    /// 約物を詰める (`w:characterSpacingControl` compressPunctuation): a line that is a little too long fits by squeezing its
+    /// stops and brackets to half an em.
+    pub compress_punctuation: bool,
+    /// The typefaces of the file's font table (`word/fontTable.xml`) with their `w:family` (`roman`, `swiss`, ... or empty): Word draws a
+    /// typeface that is not installed with Cambria if the table says `roman` or does not list it, and with Calibri if it lists it otherwise.
+    pub font_families: std::collections::BTreeMap<String, String>,
+    /// 半角と全角の幅を調整する (`w:balanceSingleByteDoubleByteWidth` compat): a half-width space is half an em, whatever the
+    /// font.
+    pub balance_single_double_byte_width: bool,
+    /// 表内の行の高さを文書グリッドに合わせる (`w:adjustLineHeightInTable` compat): the lines in a table's cells are on the line
+    /// grid too.
+    pub adjust_line_height_in_table: bool,
+    /// HTML の段落の自動間隔を使わない (`w:doNotUseHTMLParagraphAutoSpacing` compat): adjacent paragraphs' space after and space
+    /// before are summed rather than collapsed to the larger one.
+    pub do_not_use_html_paragraph_auto_spacing: bool,
+    /// Word's compatibility mode (`w:compatSetting` compatibilityMode: 11 for Word 2003-era files, 15 for 2013 and later).
+    pub compat_mode: Option<u32>,
     /// 文書の既定テーマフォント言語・既定言語（Word の「校正言語の設定 > 既定に設定」: `word/settings.xml` の `w:themeFontLang`, ECMA-376 Part 1 §17.15.1.88, DOCX-JA-019）。
     pub theme_font_lang: Option<ThemeFontLang>,
     /// 読み取り専用を推奨（Word の「読み取り専用を推奨する」: `word/settings.xml` の `w:readOnlyRecommended`）。
@@ -3010,11 +3109,10 @@ pub struct RunFormat {
     pub font: Option<String>,
     /// East Asian typeface (`w:rFonts/@w:eastAsia`).
     pub east_asian_font: Option<String>,
-    /// `w:rFonts/@w:hint="eastAsia"`: punctuation and symbols shared by
-    /// Latin and East Asian text take the East Asian typeface.
-    pub east_asian_hint: Option<bool>,
     /// Complex Script typeface (`w:rFonts/@w:cs`).
     pub cs_font: Option<String>,
+    /// Whether `w:rFonts/@w:hint="eastAsia"` selects the East Asian font for ambiguous characters.
+    pub east_asia_hint: Option<bool>,
     /// Hundredths of a point.
     pub size: Option<u32>,
     /// Complex Script font size (hundredths of a point, `w:szCs`).
@@ -3042,6 +3140,8 @@ pub struct RunFormat {
     /// EMU.
     pub spacing: Option<Emu>,
     pub scale: Option<u32>,
+    /// `Some(None)` sets no fitting.
+    pub fit_text: Option<Option<(u32, u32)>>,
     pub hidden: Option<bool>,
     /// `Some(None)` sets no border.
     pub border: Option<Option<FlowBorder>>,
@@ -3076,6 +3176,8 @@ pub struct RunFormat {
     pub num_spacing: Option<NumberSpacing>,
     /// OpenType 前後関係に依存する異体字 (`w14:cntxtAlts`).
     pub contextual_alternates: Option<bool>,
+    /// An `EQ \oc` field's sizes of its enclosure and character (see `FlowRunStyle::enclosure_sizes`).
+    pub enclosure_sizes: Option<(u32, u32)>,
 }
 
 impl RunFormat {
@@ -3088,8 +3190,8 @@ impl RunFormat {
         }
         set(&mut self.font, &other.font);
         set(&mut self.east_asian_font, &other.east_asian_font);
-        set(&mut self.east_asian_hint, &other.east_asian_hint);
         set(&mut self.cs_font, &other.cs_font);
+        set(&mut self.east_asia_hint, &other.east_asia_hint);
         set(&mut self.size, &other.size);
         set(&mut self.cs_size, &other.cs_size);
         set(&mut self.bold, &other.bold);
@@ -3109,6 +3211,7 @@ impl RunFormat {
         set(&mut self.position, &other.position);
         set(&mut self.spacing, &other.spacing);
         set(&mut self.scale, &other.scale);
+        set(&mut self.fit_text, &other.fit_text);
         set(&mut self.hidden, &other.hidden);
         set(&mut self.border, &other.border);
         set(&mut self.kern, &other.kern);
@@ -3127,6 +3230,7 @@ impl RunFormat {
         set(&mut self.num_form, &other.num_form);
         set(&mut self.num_spacing, &other.num_spacing);
         set(&mut self.contextual_alternates, &other.contextual_alternates);
+        set(&mut self.enclosure_sizes, &other.enclosure_sizes);
     }
 
     /// This without what `other` sets to the same values (formatting a
@@ -3140,8 +3244,8 @@ impl RunFormat {
         let mut f = self.clone();
         clear(&mut f.font, &other.font);
         clear(&mut f.east_asian_font, &other.east_asian_font);
-        clear(&mut f.east_asian_hint, &other.east_asian_hint);
         clear(&mut f.cs_font, &other.cs_font);
+        clear(&mut f.east_asia_hint, &other.east_asia_hint);
         clear(&mut f.size, &other.size);
         clear(&mut f.cs_size, &other.cs_size);
         clear(&mut f.bold, &other.bold);
@@ -3161,6 +3265,7 @@ impl RunFormat {
         clear(&mut f.position, &other.position);
         clear(&mut f.spacing, &other.spacing);
         clear(&mut f.scale, &other.scale);
+        clear(&mut f.fit_text, &other.fit_text);
         clear(&mut f.hidden, &other.hidden);
         clear(&mut f.border, &other.border);
         clear(&mut f.kern, &other.kern);
@@ -3179,6 +3284,7 @@ impl RunFormat {
         clear(&mut f.num_form, &other.num_form);
         clear(&mut f.num_spacing, &other.num_spacing);
         clear(&mut f.contextual_alternates, &other.contextual_alternates);
+        clear(&mut f.enclosure_sizes, &other.enclosure_sizes);
         f
     }
 
@@ -3188,9 +3294,9 @@ impl RunFormat {
         FlowRunStyle {
             font: self.font.clone(),
             east_asian_font: self.east_asian_font.clone(),
-            east_asian_hint: self.east_asian_hint.unwrap_or(false),
             east_asian_chinese: self.lang_east_asia.as_deref().is_some_and(|l| l.to_ascii_lowercase().starts_with("zh")),
             cs_font: self.cs_font.clone(),
+            east_asia_hint: self.east_asia_hint.unwrap_or(false),
             size: self.size.unwrap_or(d.size),
             cs_size: self.cs_size,
             bold: self.bold.unwrap_or(false),
@@ -3209,6 +3315,7 @@ impl RunFormat {
             position: self.position.unwrap_or_default(),
             spacing: self.spacing.unwrap_or(0),
             scale: self.scale.unwrap_or(100),
+            fit_text: self.fit_text.flatten(),
             border: self.border.flatten(),
             kern: self.kern.filter(|&k| k > 0),
             emphasis: self.emphasis.unwrap_or_default(),
@@ -3223,6 +3330,7 @@ impl RunFormat {
             num_form: self.num_form.unwrap_or_default(),
             num_spacing: self.num_spacing.unwrap_or_default(),
             contextual_alternates: self.contextual_alternates.unwrap_or(false),
+            enclosure_sizes: self.enclosure_sizes,
         }
     }
 }
@@ -3255,6 +3363,8 @@ pub struct ParaFormat {
     pub suppress_line_numbers: Option<bool>,
     pub suppress_auto_hyphens: Option<bool>,
     pub contextual_spacing: Option<bool>,
+    pub auto_before: Option<bool>,
+    pub auto_after: Option<bool>,
     pub widow_control: Option<bool>,
     pub keep_next: Option<bool>,
     pub keep_lines: Option<bool>,
@@ -3274,6 +3384,7 @@ pub struct ParaFormat {
     /// Its level in the list (`w:numPr/w:ilvl`).
     pub level: Option<u32>,
     pub drop_cap: Option<Option<DropCap>>,
+    pub framed: Option<bool>,
 }
 
 impl ParaFormat {
@@ -3301,6 +3412,8 @@ impl ParaFormat {
         set(&mut self.suppress_line_numbers, &other.suppress_line_numbers);
         set(&mut self.suppress_auto_hyphens, &other.suppress_auto_hyphens);
         set(&mut self.contextual_spacing, &other.contextual_spacing);
+        set(&mut self.auto_before, &other.auto_before);
+        set(&mut self.auto_after, &other.auto_after);
         set(&mut self.widow_control, &other.widow_control);
         set(&mut self.keep_next, &other.keep_next);
         set(&mut self.keep_lines, &other.keep_lines);
@@ -3320,6 +3433,7 @@ impl ParaFormat {
         set(&mut self.num_id, &other.num_id);
         set(&mut self.level, &other.level);
         set(&mut self.drop_cap, &other.drop_cap);
+        set(&mut self.framed, &other.framed);
     }
 
     /// The tab stops after setting and clearing them in order.
@@ -3356,6 +3470,8 @@ impl ParaFormat {
         p.suppress_line_numbers = self.suppress_line_numbers.unwrap_or(false);
         p.suppress_auto_hyphens = self.suppress_auto_hyphens.unwrap_or(false);
         p.contextual_spacing = self.contextual_spacing.unwrap_or(false);
+        p.auto_before = self.auto_before.unwrap_or(false);
+        p.auto_after = self.auto_after.unwrap_or(false);
         p.widow_control = self.widow_control.unwrap_or(true);
         p.keep_with_next = self.keep_next.unwrap_or(false);
         p.keep_lines = self.keep_lines.unwrap_or(false);
@@ -3373,6 +3489,7 @@ impl ParaFormat {
         if let Some(dc) = self.drop_cap {
             p.drop_cap = dc;
         }
+        p.framed = self.framed.unwrap_or(false);
     }
 }
 
@@ -3624,6 +3741,11 @@ impl FlowStyles {
     pub fn paragraph_base_in(&self, style: Option<&str>, table_style: Option<&str>, regions: &[TableRegion]) -> (ParaFormat, RunFormat) {
         let mut para = self.defaults_para.clone();
         let mut run = self.defaults_run.clone();
+        // Without a size in `w:docDefaults` the text is 10 pt (a style that is not based on Normal does not get Normal's
+        // size; Word's PDF of a document whose style `a3` has no `w:basedOn` shows its 10.5 pt Normal text at 10 pt in it).
+        if run.size.is_none() {
+            run.size = Some(1000);
+        }
         if let Some(id) = table_style {
             let chain = self.chain(id);
             for s in &chain {
@@ -4264,6 +4386,10 @@ pub fn list_labels(doc: &FlowDocument) -> std::collections::HashMap<u32, String>
                 Block::Table(t) => {
                     for row in &t.rows {
                         for cell in &row.cells {
+                            // The cell a merge goes on in is not shown: Word does not count its paragraphs.
+                            if cell.merge == VerticalMerge::Continue {
+                                continue;
+                            }
                             walk(&cell.blocks, numbering, counters, out);
                         }
                     }
@@ -4446,6 +4572,19 @@ impl FlowDocument {
     /// What a `FILLIN` / `FILL-IN` field shows for this document (ECMA-376 Part 1 §17.16.5.24).
     pub fn fillin_text(&self, instruction: &str) -> String {
         crate::field_format::format_fillin(instruction)
+    }
+
+    /// What the document-information fields `KEYWORDS`, `LASTSAVEDBY`, `NUMCHARS`, `NUMWORDS` and `REVNUM` show (ECMA-376
+    /// Part 1 §17.16.5.35, .36, .44, .45, .53): what `INFO` shows for the same property. `None` for another field.
+    pub fn bare_info_text(&self, instruction: &str) -> Option<String> {
+        let words = crate::flow_command::field_words(instruction);
+        let first = words.first()?.to_ascii_uppercase();
+        let property = match first.as_str() {
+            "KEYWORDS" | "LASTSAVEDBY" | "NUMCHARS" | "NUMWORDS" => first.as_str(),
+            "REVNUM" => "REVISION",
+            _ => return None,
+        };
+        self.info_text(&format!("INFO {property} {}", words[1..].join(" ")))
     }
 
     /// What an `INFO` field shows for this document (ECMA-376 Part 1 §17.16.5.30).

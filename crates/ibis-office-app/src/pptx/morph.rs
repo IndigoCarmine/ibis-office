@@ -204,7 +204,7 @@ impl SlideEditor {
         let olds: Vec<&Shape> = before.shown_shapes().collect();
         let news: Vec<&Shape> = slide.shown_shapes().collect();
         let layer = |opacity: f32, element: AnyElement| div().absolute().top_0().left_0().size_full().opacity(opacity).child(element).into_any_element();
-        let mut page = div().absolute().top_0().left_0().size_full().overflow_hidden().bg(white());
+        let mut page = div().absolute().top_0().left_0().size_full().overflow_hidden().bg(crate::shell::palette::white());
         page = page.child(slide_backdrop(before, scale, &self.resources)).child(layer(t, slide_backdrop(slide, scale, &self.resources).into_any_element()));
         for &i in &pairing.old_only {
             page = page.child(layer(1.0 - t, shape_element(olds[i], olds[i].frame, scale, &self.resources, None)));

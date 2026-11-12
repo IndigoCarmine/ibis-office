@@ -175,7 +175,9 @@ fn add_shape(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Sheet
                 if let Some(template) = &entry.template {
                     // Its series from the cells, then the rest of what was set since.
                     let refs = chart_data.get(&shape.id).and_then(|e| e.iter().rev().find(|(c, _)| c.groups == after.groups)).map(|(_, d)| d.series.clone()).unwrap_or_else(|| entry.refs.clone());
-                    super::super::pptx_chart_data::write_sheet_chart_series(package, &part, after, &refs)?;
+                    if !refs.is_empty() {
+                        super::super::pptx_chart_data::write_sheet_chart_series(package, &part, after, &refs)?;
+                    }
                     let base_groups: Vec<_> = template
                         .groups
                         .iter()
@@ -254,7 +256,19 @@ fn add_shape(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Sheet
 /// The cells a new chartEx chart reads: the first series' name, categories and values as the sheet holds them now.
 fn ex_cells(current: &Presentation, refs: &[super::super::pptx_chart_data::SeriesRefs], kind: super::super::NewChartKind) -> Option<super::super::pptx_new_chart::ExCells> {
     use ibis_doc_model::CellValue;
-    let first = refs.first()?;
+    let Some(first) = refs.first() else {
+        let categories = if kind == super::super::NewChartKind::Histogram {
+            None
+        } else {
+            Some(("Sheet1!$A$2:$A$5".to_string(), vec![vec!["A".into(), "B".into(), "C".into(), "D".into()]]))
+        };
+        return Some(super::super::pptx_new_chart::ExCells {
+            name: None,
+            categories,
+            values: ("Sheet1!$B$2:$B$5".to_string(), vec![Some(10.0), Some(20.0), Some(15.0), Some(25.0)]),
+            title: String::new(),
+        });
+    };
     let read = |reference: &str| -> Option<(String, Vec<CellValue>)> {
         let (sheet, range) = super::super::pptx_chart_data::parse_ref(reference)?;
         let model = super::super::pptx_chart_data::sheet_of(current, &sheet)?;

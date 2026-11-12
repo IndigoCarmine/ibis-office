@@ -8,6 +8,7 @@
 //! line, a picture, several shapes, or the slide when nothing is selected).
 
 use gpui_kit::*;
+use crate::shell::palette::rgb;
 use ibis_doc_model::{CharacterFormat, ChartType, Color, Fill, GradientPath, LineSpacing, ListKind, MediaStart, MediaVolume, ParagraphFormat, Rgb, ShapeKind, Stroke, TextAlign};
 
 use super::editing::{Align, ArrowKind, CHANGE_SHAPE_IDS, COLORS, LineKind, Order, SHAPES, SelectionKind, TableOption, Tool, WIDTHS};
@@ -1262,24 +1263,37 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             MenuItem::tr("pptx.timing.cancel").on(|e, w, cx| e.close_timing_panel(w, cx)).into(),
         ]).into());
     }
-    menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.text-outline", "format_color_text", vec![
-        MenuItem::tr("pptx.text-outline.none").on(|e, w, cx| e.set_text_outline_color(w, cx, None)).into(),
-        MenuItem::tr("pptx.text-outline.black").on(|e, w, cx| e.set_text_outline_color(w, cx, Some(ibis_doc_model::Rgb(0x000000)))).into(),
-        MenuItem::tr("pptx.text-outline.white").on(|e, w, cx| e.set_text_outline_color(w, cx, Some(ibis_doc_model::Rgb(0xffffff)))).into(),
-        MenuItem::tr("pptx.text-outline.red").on(|e, w, cx| e.set_text_outline_color(w, cx, Some(ibis_doc_model::Rgb(0xc00000)))).into(),
-        MenuItem::tr("pptx.text-outline.blue").on(|e, w, cx| e.set_text_outline_color(w, cx, Some(ibis_doc_model::Rgb(0x4472c4)))).into(),
-        MenuItem::tr("pptx.text-outline.yellow").on(|e, w, cx| e.set_text_outline_color(w, cx, Some(ibis_doc_model::Rgb(0xffc000)))).into(),
-        MenuItem::tr("pptx.text-outline.green").on(|e, w, cx| e.set_text_outline_color(w, cx, Some(ibis_doc_model::Rgb(0x70ad47)))).into(),
-        Submenu::tr("pptx.text-outline.weight", "line_style", vec![
-            MenuItem::tr("pptx.text-outline.0-5pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 6_350)).into(),
-            MenuItem::tr("pptx.text-outline.1pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 12_700)).into(),
-            MenuItem::tr("pptx.text-outline.1-5pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 19_050)).into(),
-            MenuItem::tr("pptx.text-outline.2-25pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 28_575)).into(),
-            MenuItem::tr("pptx.text-outline.3pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 38_100)).into(),
-            MenuItem::tr("pptx.text-outline.4-5pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 57_150)).into(),
-            MenuItem::tr("pptx.text-outline.6pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 76_200)).into(),
-        ]).into(),
+    let mut text_outline_items = color_menu(editor, "pptx.text-outline", Some(crate::shell::i18n::text("pptx.text-outline.none")), |e, rgb, w, cx| {
+        e.set_text_outline_color(w, cx, rgb);
+    });
+    if let Some(MenuEntry::Palette(p)) = text_outline_items.first_mut() {
+        if let Some(none) = p.none.as_mut() {
+            none.id = "pptx.text-outline.none";
+        }
+        for (hex, id) in [
+            (0x000000, "pptx.text-outline.black"),
+            (0xffffff, "pptx.text-outline.white"),
+            (0xc00000, "pptx.text-outline.red"),
+            (0x0070c0, "pptx.text-outline.blue"), // the standard blue; the theme row follows the presentation's theme, which may not have 4472C4
+            (0xffc000, "pptx.text-outline.yellow"),
+            (0x70ad47, "pptx.text-outline.green"),
+        ] {
+            if let Some(sw) = p.theme.iter_mut().flatten().chain(p.standard.iter_mut()).find(|s| s.rgb == Rgb(hex)) {
+                sw.item.id = id;
+            }
+        }
+    }
+    text_outline_items.push(MenuEntry::Separator);
+    text_outline_items.push(Submenu::tr("pptx.text-outline.weight", "line_style", vec![
+        MenuItem::tr("pptx.text-outline.0-5pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 6_350)).into(),
+        MenuItem::tr("pptx.text-outline.1pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 12_700)).into(),
+        MenuItem::tr("pptx.text-outline.1-5pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 19_050)).into(),
+        MenuItem::tr("pptx.text-outline.2-25pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 28_575)).into(),
+        MenuItem::tr("pptx.text-outline.3pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 38_100)).into(),
+        MenuItem::tr("pptx.text-outline.4-5pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 57_150)).into(),
+        MenuItem::tr("pptx.text-outline.6pt").on(|e, w, cx| e.set_text_outline_weight(w, cx, 76_200)).into(),
     ]).into());
+    menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.text-outline", "format_color_text", text_outline_items).into());
     let has_table = editor.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Table(_)));
     menus.items_mut(MenuId::Format).push(Submenu::tr("table.borders", "border_all", table_borders_menu_items(has_table)).into());
     let has_line_or_connector = editor.selected_shapes().iter().any(|s| matches!(&s.kind, ShapeKind::Line(_)) || matches!(&s.kind, ShapeKind::Auto(a) if super::editing::is_connector_geometry(&a.geometry)));
@@ -1522,6 +1536,20 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
                 this.paste_from_clipboards(window, cx);
             }
         });
+    }
+    // 貼り付け（書式なし・書式を合わせる）: what is pasted is the clipboard's text, which takes the place's own format.
+    if editor.text_editing().is_some() || editor.pptx().is_none_or(|s| s.clipboard.is_empty() || SlideEditor::can_copy_shapes(&s.clipboard)) {
+        for id in ["edit.paste-plain", "edit.paste-match"] {
+            // ⌥⇧⌘V is also the animation painter's paste (a copied animation, pasted onto the selected shape): it keeps that.
+            if id == "edit.paste-match" && editor.can_paste_animations() {
+                continue;
+            }
+            menus.connect(id, |this, window, cx| {
+                if !this.paste_edited_text(cx) {
+                    this.paste_from_clipboards(window, cx);
+                }
+            });
+        }
     }
     // With a text edited, ⌘C and ⌘X take the selected text, not the shape.
     if editor.text_editing().is_some() {
@@ -1812,6 +1840,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("insert.equation", |this, window, cx| this.open_pptx_math_panel(window, cx));
     menus.connect("insert.link", |this, window, cx| this.slide_open_link_panel(window, cx));
     menus.connect("tools.dictionary", |this, window, cx| this.open_pptx_thesaurus(window, cx));
+    menus.connect("tools.word-count", |this, _, cx| this.show_word_count(cx));
     menus.connect("tools.accessibility", |this, window, cx| this.open_pptx_accessibility_panel(window, cx));
     menus.connect("pptx.motion", |this, _, cx| this.toggle_animation_pane(cx));
     if let Some(item) = menus.find_mut("pptx.motion") {
@@ -1985,7 +2014,7 @@ fn color_menu(editor: &SlideEditor, _id: &'static str, none: Option<SharedString
         .filter(|(rgb, _)| !matches!(rgb, 0x000000 | 0x404040 | 0x7f7f7f | 0xd9d9d9 | 0xffffff | 0x4472c4))
         .map(|&(rgb, id)| Swatch::with_id(id, Rgb(rgb), crate::shell::i18n::text(id), false, &pick))
         .collect();
-    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None })]
+    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None, current:None })]
 }
 
 fn fill_presets(background: bool) -> Vec<MenuEntry> {
@@ -2131,14 +2160,40 @@ pub(crate) fn table_borders_menu_items(enabled: bool) -> Vec<MenuEntry> {
             MenuItem::tr("table.borders.4-5pt").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 57_150, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 57_150)) }), cx)).into(),
             MenuItem::tr("table.borders.6pt").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { width: 76_200, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 76_200)) }), cx)).into(),
         ]).into(),
-        Submenu::tr("table.borders.color", "border_color", vec![
-            MenuItem::tr("table.borders.black").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::BLACK, ..s.unwrap_or_else(|| Stroke::solid(Color::BLACK, 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.white").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::WHITE, ..s.unwrap_or_else(|| Stroke::solid(Color::WHITE, 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.red").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0xc00000)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0xc00000)), 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.blue").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0x4472c4)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0x4472c4)), 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.yellow").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0xffc000)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0xffc000)), 12_700)) }), cx)).into(),
-            MenuItem::tr("table.borders.green").disabled(!enabled).on(|e, _, cx| e.stroke_selected(|s| Some(Stroke { color: Color::opaque(Rgb(0x70ad47)), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(Rgb(0x70ad47)), 12_700)) }), cx)).into(),
-        ]).into(),
+        Submenu::tr("table.borders.color", "border_color", {
+            use crate::shell::color_palette::{theme_rows, Palette, PickColor, Swatch};
+            let pick: PickColor = std::rc::Rc::new(|e, rgb, _, cx| {
+                if let Some(rgb) = rgb {
+                    e.stroke_selected(move |s| Some(Stroke { color: Color::opaque(rgb), ..s.unwrap_or_else(|| Stroke::solid(Color::opaque(rgb), 12_700)) }), cx);
+                }
+            });
+            let default_theme = [
+                Rgb(0xffffff), Rgb(0x000000), Rgb(0xe7e6e6), Rgb(0x44546a),
+                Rgb(0x4472c4), Rgb(0xed7d31), Rgb(0xa5a5a5), Rgb(0xffc000), Rgb(0x5b9bd5), Rgb(0x70ad47),
+            ];
+            let mut theme = theme_rows(&default_theme, &pick, None);
+            let mut standard: Vec<Swatch> = COLORS
+                .iter()
+                .filter(|(rgb, _)| !matches!(rgb, 0x000000 | 0x404040 | 0x7f7f7f | 0xd9d9d9 | 0xffffff | 0x4472c4))
+                .map(|&(rgb, id)| Swatch::with_id(id, Rgb(rgb), crate::shell::i18n::text(id), false, &pick))
+                .collect();
+            for sw in theme.iter_mut().flatten().chain(standard.iter_mut()) {
+                sw.item.disabled = !enabled;
+            }
+            for (hex, id) in [
+                (0x000000, "table.borders.black"),
+                (0xffffff, "table.borders.white"),
+                (0xc00000, "table.borders.red"),
+                (0x4472c4, "table.borders.blue"),
+                (0xffc000, "table.borders.yellow"),
+                (0x70ad47, "table.borders.green"),
+            ] {
+                if let Some(sw) = theme.iter_mut().flatten().chain(standard.iter_mut()).find(|s| s.rgb == Rgb(hex)) {
+                    sw.item.id = id;
+                }
+            }
+            vec![MenuEntry::Palette(Palette { none: None, theme, standard, pick: Some(pick), more: None, button: None, current:None })]
+        }).into(),
     ]
 }
 
@@ -2640,19 +2695,79 @@ pub(crate) fn menu_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
 fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
     let style = editor.selected_text_style();
     let on = style.is_some();
-    let font: SharedString = style.as_ref().and_then(|s| s.font.clone()).unwrap_or_else(|| crate::shell::i18n::text("pptx.chrome.theme-fonts").to_string()).into();
+    let (mixed_fonts, mixed_min_size) = {
+        let mut fonts: Vec<Option<String>> = Vec::new();
+        let mut sizes: Vec<u32> = Vec::new();
+        if let (Some(body), Some(edit)) = (editor.edited_body(), editor.text_editing()) {
+            let r = edit.range();
+            if r.start < r.end {
+                let mut at = 0usize;
+                for p in &body.paragraphs {
+                    for run in &p.runs {
+                        let n = run.text.chars().count();
+                        if at < r.end && at + n > r.start && n > 0 {
+                            let look = body.style.with_run(&run.style);
+                            fonts.push(look.font.clone().or(look.fallback_font.clone()));
+                            sizes.push(look.font_size);
+                        }
+                        at += n;
+                    }
+                    at += 1;
+                }
+            }
+        } else {
+            for shape in editor.selected_shapes() {
+                if let Some(body) = shape.text_body() {
+                    let mut pushed = false;
+                    for p in &body.paragraphs {
+                        for run in &p.runs {
+                            if !run.text.is_empty() {
+                                let look = body.style.with_run(&run.style);
+                                fonts.push(look.font.clone().or(look.fallback_font.clone()));
+                                sizes.push(look.font_size);
+                                pushed = true;
+                            }
+                        }
+                    }
+                    if !pushed {
+                        fonts.push(body.style.font.clone().or(body.style.fallback_font.clone()));
+                        sizes.push(body.style.font_size);
+                    }
+                }
+            }
+        }
+        let mf = fonts.first().is_some_and(|f0| fonts.iter().any(|f| f != f0));
+        let ms = match (sizes.iter().min(), sizes.iter().max()) {
+            (Some(&lo), Some(&hi)) if lo != hi => Some(lo),
+            _ => None,
+        };
+        (mf, ms)
+    };
+    let font: SharedString = if mixed_fonts {
+        SharedString::from("")
+    } else {
+        style
+            .as_ref()
+            .and_then(|s| s.font.clone())
+            .unwrap_or_else(|| crate::shell::i18n::text("pptx.chrome.theme-fonts").to_string())
+            .into()
+    };
+    let font_size_value: Option<SharedString> = match mixed_min_size {
+        Some(min_sz) => Some(format!("{}+", min_sz as f32 / 100.0).into()),
+        None => style.as_ref().map(|s| format!("{}", s.font_size_pt()).into()),
+    };
     let align = style.as_ref().map(|s| s.align);
     let align_item = |id: &'static str, icon: &'static str, a: TextAlign| -> MenuEntry {
         MenuItem::tr(id).icon(icon).checked(align == Some(a)).on(move |this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { align: Some(a), ..Default::default() })).into()
     };
-    let first_run = editor.selected_shapes().into_iter().find_map(|s| s.text_body()).and_then(|b| b.paragraphs.iter().flat_map(|p| p.runs.first()).next().map(|r| r.style.clone()));
+    let first_run = editor.selected_text_run();
     let underline = first_run.as_ref().is_some_and(|r| r.underline);
     let shadow = editor.selected_shadow().is_some();
     let strike = first_run.as_ref().is_some_and(|r| r.strike != ibis_doc_model::Strike::None);
     let spacing = editor.selected_spacing();
     let list = editor.selected_list();
     let _text_color = style.as_ref().map_or(rgb(0x000000).into(), |s| crate::render::shape_view::hsla(Color::opaque(s.color)));
-    let current_font = style.as_ref().and_then(|s| s.font.as_deref());
+    let current_font = (!mixed_fonts).then(|| style.as_ref().and_then(|s| s.font.as_deref())).flatten();
     let leading = vec![
         MenuItem::tr("pptx.replace-fonts").on(|this, window, cx| this.open_replace_fonts_panel(window, cx)).into(),
     ];
@@ -2735,12 +2850,42 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
             this.format_paragraphs(window, cx, ParagraphFormat { list: Some(kind), ..Default::default() })
         });
     let number_types = ToolButton::text("number-types", crate::shell::i18n::text("pptx.chrome.numbering"), crate::shell::i18n::text("pptx.chrome.numbering-style")).disabled(!on).menu(numbered.menu.clone().unwrap_or_default()).hidden();
+    let current_v_anchor = editor
+        .edited_body()
+        .or_else(|| editor.selected_shapes().into_iter().find_map(|s| s.text_body()))
+        .map(|b| b.anchor);
+    let [align_l, align_c, align_r, align_drop] = crate::shell::chrome::align_h_toolbar_items(
+        align,
+        on,
+        handler(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { align: Some(TextAlign::Left), ..Default::default() })),
+        handler(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { align: Some(TextAlign::Center), ..Default::default() })),
+        handler(|this, window, cx| this.format_paragraphs(window, cx, ParagraphFormat { align: Some(TextAlign::Right), ..Default::default() })),
+        vec![
+            align_item("align.left", "format_align_left", TextAlign::Left),
+            align_item("align.center", "format_align_center", TextAlign::Center),
+            align_item("align.right", "format_align_right", TextAlign::Right),
+            align_item("align.justify", "format_align_justify", TextAlign::Justify),
+            align_item("align.distributed", "format_align_justify", TextAlign::Distributed),
+        ],
+    );
+    let [valign_t, valign_m, valign_b, valign_drop] = crate::shell::chrome::align_v_toolbar_items(
+        current_v_anchor,
+        on,
+        handler(|e, _, cx| e.format_text_body(|b| b.anchor = ibis_doc_model::VerticalAnchor::Top, cx)),
+        handler(|e, _, cx| e.format_text_body(|b| b.anchor = ibis_doc_model::VerticalAnchor::Middle, cx)),
+        handler(|e, _, cx| e.format_text_body(|b| b.anchor = ibis_doc_model::VerticalAnchor::Bottom, cx)),
+        vec![
+            MenuItem::tr("pptx.text.top").icon("vertical_align_top").checked(current_v_anchor == Some(ibis_doc_model::VerticalAnchor::Top)).on(|e, _, cx| e.format_text_body(|b| b.anchor = ibis_doc_model::VerticalAnchor::Top, cx)).into(),
+            MenuItem::tr("pptx.text.middle").icon("vertical_align_center").checked(current_v_anchor == Some(ibis_doc_model::VerticalAnchor::Middle)).on(|e, _, cx| e.format_text_body(|b| b.anchor = ibis_doc_model::VerticalAnchor::Middle, cx)).into(),
+            MenuItem::tr("pptx.text.bottom").icon("vertical_align_bottom").checked(current_v_anchor == Some(ibis_doc_model::VerticalAnchor::Bottom)).on(|e, _, cx| e.format_text_body(|b| b.anchor = ibis_doc_model::VerticalAnchor::Bottom, cx)).into(),
+        ],
+    );
     vec![
         sep(),
         ToolItem::Select { id: "font", value: font, width: 128.0, tooltip: crate::shell::i18n::text("_shell.font"), menu: font_menu, disabled: !on },
         sep(),
         ToolItem::FontSize {
-            value: style.as_ref().map(|s| format!("{}", s.font_size_pt()).into()),
+            value: font_size_value,
             smaller: on.then(|| handler(|this, window, cx| this.step_font_size_of_text(false, window, cx))),
             larger: on.then(|| handler(|this, window, cx| this.step_font_size_of_text(true, window, cx))),
         },
@@ -2767,6 +2912,21 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
             this.toggle_text_shadow(window, cx)
         }).into(),
         ToolButton::new("strikethrough", "format_strikethrough", crate::shell::i18n::text("pptx.chrome.strikethrough")).on(strike).disabled(!on).click(|this, window, cx| this.strike_characters(window, cx)).into(),
+        ToolButton::new("text-color", "format_color_text", crate::shell::i18n::text("_shell.font-color"))
+            .disabled(!on)
+            // The colour at first: red, as Office's (the colours of the buttons at first are our own picks).
+            .palette(editor, "text-color", 0xff0000, color_menu(editor, "pptx.text-color", None, |this, rgb, window, cx| {
+                if let Some(rgb) = rgb {
+                    this.format_characters(window, cx, CharacterFormat { color: Some(rgb), ..Default::default() });
+                }
+            }))
+            .into(),
+        ToolButton::new("highlight", "ink_highlighter", crate::shell::i18n::text("pptx.chrome.highlight-color"))
+            .disabled(!on)
+            .palette(editor, "highlight", 0xffff00, color_menu(editor, "pptx.highlight", Some(crate::shell::i18n::text("pptx.chrome.no-color")), |this, rgb, window, cx| {
+                this.format_characters(window, cx, ibis_doc_model::CharacterFormat { highlight: Some(rgb), ..Default::default() })
+            }))
+            .into(),
         ToolButton::new("character-spacing", "space_bar", crate::shell::i18n::text("pptx.text.character-spacing"))
             .disabled(!on)
             .menu(vec![
@@ -2791,21 +2951,6 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
             .disabled(!on)
             .menu(proofing_language_menu_items(editor))
             .into(),
-        ToolButton::new("highlight", "ink_highlighter", crate::shell::i18n::text("pptx.chrome.highlight-color"))
-            .disabled(!on)
-            .palette(editor, "highlight", 0xffff00, color_menu(editor, "pptx.highlight", Some(crate::shell::i18n::text("pptx.chrome.no-color")), |this, rgb, window, cx| {
-                this.format_characters(window, cx, ibis_doc_model::CharacterFormat { highlight: Some(rgb), ..Default::default() })
-            }))
-            .into(),
-        ToolButton::new("text-color", "format_color_text", crate::shell::i18n::text("_shell.font-color"))
-            .disabled(!on)
-            // The colour at first: red, as Office's (the colours of the buttons at first are our own picks).
-            .palette(editor, "text-color", 0xff0000, color_menu(editor, "pptx.text-color", None, |this, rgb, window, cx| {
-                if let Some(rgb) = rgb {
-                    this.format_characters(window, cx, CharacterFormat { color: Some(rgb), ..Default::default() });
-                }
-            }))
-            .into(),
         ToolButton::new("pptx-format-paint", "format_paint", crate::shell::i18n::text("_shell.copy-paste-formatting")).disabled(!on).menu(format_copy_items(editor)).into(),
         sep(),
         bullets.into(),
@@ -2826,24 +2971,14 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
                     .collect(),
             )
             .into(),
-        ToolButton::new("align", "format_align_left", crate::shell::i18n::text("_shell.arrange"))
-            .disabled(!on)
-            .menu(vec![
-                align_item("align.left", "format_align_left", TextAlign::Left),
-                align_item("align.center", "format_align_center", TextAlign::Center),
-                align_item("align.right", "format_align_right", TextAlign::Right),
-                align_item("align.justify", "format_align_justify", TextAlign::Justify),
-                align_item("align.distributed", "format_align_justify", TextAlign::Distributed),
-            ])
-            .into(),
-        ToolButton::new("vertical-align", "vertical_align_center", crate::shell::i18n::text("_shell.vertical-alignment"))
-            .disabled(!on)
-            .menu(vec![
-                MenuItem::tr("pptx.text.top").icon("vertical_align_top").on(|e, _, cx| e.format_text_body(|b| b.anchor = ibis_doc_model::VerticalAnchor::Top, cx)).into(),
-                MenuItem::tr("pptx.text.middle").icon("vertical_align_center").on(|e, _, cx| e.format_text_body(|b| b.anchor = ibis_doc_model::VerticalAnchor::Middle, cx)).into(),
-                MenuItem::tr("pptx.text.bottom").icon("vertical_align_bottom").on(|e, _, cx| e.format_text_body(|b| b.anchor = ibis_doc_model::VerticalAnchor::Bottom, cx)).into(),
-            ])
-            .into(),
+        align_l,
+        align_c,
+        align_r,
+        align_drop,
+        valign_t,
+        valign_m,
+        valign_b,
+        valign_drop,
         ToolButton::new("text-direction", "format_textdirection_l_to_r", crate::shell::i18n::text("docx.chrome.text-direction"))
             .disabled(!on)
             .menu(vec![
@@ -2980,7 +3115,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                     .zip(CHANGE_SHAPE_IDS)
                     .map(|(&(preset, icon, label), id)| MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).on(move |e, _, cx| e.change_selected_shapes(preset, cx)).into())
                     .collect();
-                items.push(ToolButton::new("change-shape", "shapes", crate::shell::i18n::text("pptx.chrome.change-shape")).menu(change).into());
+                items.push(ToolButton::new("change-shape", "shapes", crate::shell::i18n::text("pptx.chrome.change-shape")).menu(change).hidden().into());
             }
             if editor.selected_shapes().iter().any(|s| crate::xlsx::ink::stroke_points(s).is_some()) {
                 let ink_menu = vec![
@@ -3240,6 +3375,9 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             items.extend(arrange_buttons(editor));
         }
         SelectionKind::Multi => {
+            if editor.selected_text_style().is_some() {
+                items.extend(text_buttons(editor));
+            }
             items.push(sep());
             items.push(fill.into());
             items.extend(outline_buttons(editor, false));
@@ -4029,63 +4167,8 @@ fn heading(text: impl Into<SharedString>) -> Div {
 }
 
 /// The sidebar: 書式設定オプション for the selection, or the slide's settings.
-pub(crate) fn sidebar(editor: &mut SlideEditor) -> Option<SidebarPanel> {
-    let cm = |emu: i64| format!("{:.2} cm", emu as f64 / 360_000.0);
-    let shapes = editor.selected_shapes();
-    if let Some(shape) = shapes.first() {
-        let mut body = div().px(px(18.)).py(px(8.));
-        if shapes.len() > 1 {
-            body = body.child(div().text_size(px(13.)).text_color(text_secondary()).child(crate::shell::i18n::format("pptx.chrome.count-shapes-selected", &[("count", &shapes.len())])));
-        }
-        if let ShapeKind::Auto(auto) = &shape.kind {
-            let fill = match &auto.fill {
-                Fill::None => crate::shell::i18n::text("_shell.none").to_string(),
-                Fill::Solid(c) => format!("#{:06X}", c.rgb.0),
-                Fill::Linear { .. } | Fill::TileLinear { .. } | Fill::Path { .. } => crate::shell::i18n::text("pptx.chrome.gradient").to_string(),
-                Fill::Image(_) | Fill::TileImage { .. } => crate::shell::i18n::text("pptx.chrome.picture").to_string(),
-                Fill::Pattern { preset, .. } => crate::shell::i18n::format("pptx.chrome.pattern-preset", &[("preset", preset)]),
-            };
-            let line = auto.stroke.as_ref().map_or(crate::shell::i18n::text("_shell.none").to_string(), |s| {
-                let dash = if s.dashed { crate::shell::i18n::text("pptx.chrome.dashed").to_string() } else { String::new() };
-                crate::shell::i18n::format("_pptx.hex-width-pt-dash", &[("hex", &format!("{:06X}", s.color.rgb.0)), ("width", &(s.width as f64 / 12_700.0)), ("dash", &dash)])
-            });
-            body = body.child(heading(crate::shell::i18n::text("pptx.chrome.fill-line"))).child(field(crate::shell::i18n::text("pptx.common.fill"), fill)).child(field(crate::shell::i18n::text("_shell.line"), line));
-        }
-        body = body
-            .child(heading(crate::shell::i18n::text("_shell.size-rotation")))
-            .child(field(crate::shell::i18n::text("_shell.width"), cm(shape.frame.width)))
-            .child(field(crate::shell::i18n::text("_shell.height"), cm(shape.frame.height)))
-            .child(field(crate::shell::i18n::text("_shell.rotate"), format!("{}°", (shape.rotation as f64 / 60_000.0 * 10.0).round() / 10.0)))
-            .child(heading(crate::shell::i18n::text("_shell.position")))
-            .child(field("X".into(), cm(shape.frame.x)))
-            .child(field("Y".into(), cm(shape.frame.y)));
-        return Some(SidebarPanel { title: crate::shell::i18n::text("_shell.format-options"), body: body.into_any_element() });
-    }
-    let slide = editor.slide();
-    let index = editor.presentation().slide_index(editor.current_slide).unwrap_or(0) + 1;
-    let layout = slide.layout.and_then(|l| editor.presentation().layout(l)).map(|l| l.name.clone()).unwrap_or_else(|| "—".into());
-    let background = match &slide.background {
-        Fill::None => crate::shell::i18n::text("_shell.none").to_string(),
-        Fill::Solid(c) => format!("#{:06X}", c.rgb.0),
-        Fill::Linear { .. } | Fill::TileLinear { .. } | Fill::Path { .. } => crate::shell::i18n::text("pptx.chrome.gradient").to_string(),
-        Fill::Image(_) | Fill::TileImage { .. } => crate::shell::i18n::text("pptx.chrome.picture").to_string(),
-        Fill::Pattern { preset, .. } => crate::shell::i18n::format("pptx.chrome.pattern-preset", &[("preset", preset)]),
-    };
-    let size = editor.presentation().slide_size;
-    let ratio = size.width as f64 / size.height.max(1) as f64;
-    let kind = if (ratio - 16.0 / 9.0).abs() < 0.01 { crate::shell::i18n::text("pptx.chrome.widescreen-16-9") } else if (ratio - 4.0 / 3.0).abs() < 0.01 { crate::shell::i18n::text("pptx.chrome.standard-4-3") } else { crate::shell::i18n::text("_shell.custom") };
-    let body = div()
-        .px(px(18.))
-        .py(px(8.))
-        .child(heading(crate::shell::i18n::format("pptx.chrome.slide-index", &[("index", &index)])))
-        .child(field(crate::shell::i18n::text("_shell.background"), background))
-        .child(field(crate::shell::i18n::text("_shell.layout"), layout))
-        .child(field(crate::shell::i18n::text("_shell.transitions"), transition_name(editor.slide().transition.as_ref())))
-        .child(heading(crate::shell::i18n::text("pptx.chrome.slide-size")))
-        .child(field(crate::shell::i18n::text("_shell.size"), kind.to_string()))
-        .child(field(crate::shell::i18n::text("_shell.width"), cm(size.width)))
-        .child(field(crate::shell::i18n::text("_shell.height"), cm(size.height)));
-    Some(SidebarPanel { title: crate::shell::i18n::text("_shell.slide"), body: body.into_any_element() })
+pub(crate) fn sidebar(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<SidebarPanel> {
+    super::sidebar_settings::sidebar(editor,window,cx)
 }
 
 pub(crate) fn reflection_preset(distance: i64, end_pos: i32) -> ibis_doc_model::Reflection {
@@ -4244,4 +4327,46 @@ pub(crate) fn numbered_scheme_menu_items(editor: &SlideEditor) -> Vec<MenuEntry>
         .into(),
     ])
     .collect()
+}
+
+
+/// Words in `text`: runs of letters and digits, and every Japanese or Chinese character on its own (as a word count of
+/// PowerPoint's counts them, roughly).
+fn count_words(text: &str) -> usize {
+    let mut words = 0;
+    let mut in_word = false;
+    for c in text.chars() {
+        let wide = matches!(c as u32, 0x3040..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff | 0xff66..=0xff9f);
+        if wide {
+            words += 1;
+            in_word = false;
+        } else if c.is_alphanumeric() {
+            if !in_word {
+                words += 1;
+                in_word = true;
+            }
+        } else {
+            in_word = false;
+        }
+    }
+    words
+}
+
+impl SlideEditor {
+    /// ツール > 文字カウント: the slides, words and characters of the presentation's slides, in the status line.
+    pub(crate) fn show_word_count(&mut self, cx: &mut Context<Self>) {
+        let slides = self.presentation().slides.len();
+        let (mut words, mut chars) = (0usize, 0usize);
+        for slide in &self.presentation().slides {
+            for shape in &slide.shapes {
+                if let Some(body) = shape.text_body() {
+                    let text = body.text();
+                    words += count_words(&text);
+                    chars += text.chars().filter(|c| !c.is_whitespace()).count();
+                }
+            }
+        }
+        self.status = Some(crate::shell::i18n::format("pptx.tools.word-count", &[("slides", &slides), ("words", &words), ("chars", &chars)]).into());
+        cx.notify();
+    }
 }

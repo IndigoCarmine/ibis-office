@@ -39,6 +39,7 @@ impl SlideEditor {
         if self.format.kind() == ibis_pptx::Kind::Document {
             self.apply_docx_default_design(cx);
         }
+        self.document.reset_history();
         // A new presentation opens without the speaker notes (the title row's notes button shows them).
         if let Some(state) = self.pptx_mut() {
             state.notes_hidden = true;
@@ -88,6 +89,8 @@ impl SlideEditor {
                     this.load(loaded.presentation, name, window, cx);
                     this.source = Some(loaded.source);
                     this.path = None;
+                    this.document.set_file(None);
+                    this.document.reset_history();
                     this.recent_files = crate::shell::recent_files::add(&path);
                     this.set_status(crate::shell::i18n::text("file.new-from-template-done").to_string(), cx);
                     crate::timing::document_loaded(window);
@@ -125,6 +128,8 @@ impl SlideEditor {
         let source = self.source.clone().ok_or(crate::shell::i18n::text("_shell.this-file-cannot-be-saved-yet").to_string())?;
         let csv = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"));
         let ods = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ods"));
+        let odt = self.is_document() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("odt"));
+        let odp = self.is_presentation() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("odp"));
         let xls = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xls"));
         let xltx = self.is_workbook() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xltx") || e.eq_ignore_ascii_case("xltm"));
         let ppsx = self.is_presentation() && path.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_slideshow);
@@ -136,6 +141,10 @@ impl SlideEditor {
             ibis_pptx::csv::sheet_to_csv(self.presentation(), index)
         } else if ods {
             ibis_pptx::write_ods_with_source(self.presentation(), &source).map_err(|e| e.to_string())?
+        } else if odt {
+            ibis_pptx::docx_convert::export_docx_to_odt(self.presentation()).map_err(|e| e.to_string())?
+        } else if odp {
+            ibis_pptx::write_odp(self.presentation()).map_err(|e| e.to_string())?
         } else if xls {
             ibis_pptx::write_xls(self.presentation()).map_err(|e| e.to_string())?
         } else if xltx || potx || dotx {
@@ -148,7 +157,7 @@ impl SlideEditor {
             source.save(self.presentation(), ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?
         };
         // A copy keeps the protection of the file.
-        let bytes = match (&self.protection_password, csv || ods || xls) {
+        let bytes = match (&self.protection_password, csv || ods || xls || odt || odp) {
             (Some(password), false) => crate::shell::save::protect(&bytes, password)?,
             _ => bytes,
         };
@@ -352,9 +361,27 @@ impl SlideEditor {
                 .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")))
                 .ok_or(crate::shell::i18n::text("_shell.could-not-create-the-pdf").to_string())?;
             let data = std::fs::read(&made).map_err(|e| e.to_string())?;
-            crate::shell::save::write_replacing(&pdf, &data).map_err(|e| crate::shell::i18n::format("file.cannot-write", &[("path", &pdf.display()), ("error", &e)]))?;
+            let mut dest = pdf;
+            if let Err(e) = crate::shell::save::write_replacing(&dest, &data) {
+                if !printing {
+                    return Err(crate::shell::i18n::format("file.cannot-write", &[("path", &dest.display()), ("error", &e)]));
+                }
+                let parent = dest.parent().map(std::path::Path::to_path_buf).unwrap_or_else(std::env::temp_dir);
+                let mut wrote = false;
+                for n in 1..=99 {
+                    let alt = parent.join(format!("{stem}-{n}.pdf"));
+                    if crate::shell::save::write_replacing(&alt, &data).is_ok() {
+                        dest = alt;
+                        wrote = true;
+                        break;
+                    }
+                }
+                if !wrote {
+                    return Err(crate::shell::i18n::format("file.cannot-write", &[("path", &dest.display()), ("error", &e)]));
+                }
+            }
             let _ = std::fs::remove_dir_all(&dir);
-            Ok(pdf)
+            Ok(dest)
         }))
     }
 
@@ -782,11 +809,100 @@ impl SlideEditor {
             })
             .detach();
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(not(target_os = "macos"), not(target_family = "wasm")))]
+        {
+            let (stem, _) = self.name_parts();
+            let pdf = std::env::temp_dir().join(format!("{stem}.pdf"));
+            let job = match self.write_pdf_with(pdf, true) {
+                Ok(job) => job,
+                Err(err) => return self.report(Err(crate::shell::i18n::format("file.print-failed", &[("error", &err)])), cx),
+            };
+            self.report(Ok(crate::shell::i18n::text("_shell.preparing-to-print").into()), cx);
+            let task = cx.background_executor().spawn(async move { job() });
+            cx.spawn_in(window, async move |this, cx| {
+                let result = task.await;
+                this.update(cx, |this, cx| {
+                    let msg = result.and_then(|pdf| {
+                        open_pdf_in_default_app(&pdf, cx)?;
+                        Ok(crate::shell::i18n::text("file.print-opened-pdf").to_string())
+                    });
+                    this.report(msg.map_err(|e| crate::shell::i18n::format("file.print-failed", &[("error", &e)])), cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
+        #[cfg(target_family = "wasm")]
         {
             let _ = window;
             self.report(Err(crate::shell::i18n::text("_shell.printing-is-not-yet-available-in-this-environmen").into()), cx);
         }
+    }
+}
+
+/// Whether this is a test run (it must not open a PDF app, nor a print dialog), told by the headless switch or by the program's name
+/// (the app is `ibisOffice[.exe]`; a test binary is named after its crate or file). Not by the arguments: a file named `latest.docx` is
+/// an argument too (issue #19: the PDF app did not start for it).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn running_under_test() -> bool {
+    if std::env::var_os("IBIS_HEADLESS").is_some() {
+        return true;
+    }
+    let exe = std::env::current_exe().ok();
+    let name = exe.as_deref().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+    is_test_binary_name(name)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn is_test_binary_name(name: &str) -> bool {
+    !name.starts_with("AcaudaOffice")
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod running_under_test_tests {
+    use super::is_test_binary_name;
+
+    #[test]
+    fn the_app_is_not_a_test_binary_whatever_file_it_opens() {
+        // The program's name is the app's; its arguments (a file named latest.docx, a folder named test) are not looked at.
+        for name in ["AcaudaOffice.exe", "AcaudaOffice", "AcaudaOffice-debug.exe"] {
+            assert!(!is_test_binary_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn test_binaries_are_told_by_their_name() {
+        for name in ["ibis_office_app-0123456789abcdef.exe", "scenarios-0123456789abcdef", "clock_rule-1a2b3c.exe"] {
+            assert!(is_test_binary_name(name), "{name}");
+        }
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn open_pdf_in_default_app(pdf: &std::path::Path, cx: &mut App) -> Result<(), String> {
+    if running_under_test() {
+        let _ = (pdf, cx);
+        return Ok(());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        cx.open_url(&pdf.to_string_lossy());
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = cx;
+        let status = std::process::Command::new("open").arg(pdf).status().map_err(|e| e.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(crate::shell::i18n::format("file.print-exit", &[("status", &status)]))
+        }
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        let _ = cx;
+        std::process::Command::new("xdg-open").arg(pdf).spawn().map(|_| ()).map_err(|e| e.to_string())
     }
 }
 
@@ -798,14 +914,18 @@ pub(crate) fn export_program() -> Result<std::path::PathBuf, String> {
         return Ok(current);
     }
     if let Some(dir) = current.parent() {
-        let c1 = dir.join("AcaudaOffice");
-        if c1.exists() {
-            return Ok(c1);
+        for name in ["AcaudaOffice", "AcaudaOffice.exe"] {
+            let c1 = dir.join(name);
+            if c1.exists() {
+                return Ok(c1);
+            }
         }
         if let Some(parent) = dir.parent() {
-            let c2 = parent.join("AcaudaOffice");
-            if c2.exists() {
-                return Ok(c2);
+            for name in ["AcaudaOffice", "AcaudaOffice.exe"] {
+                let c2 = parent.join(name);
+                if c2.exists() {
+                    return Ok(c2);
+                }
             }
         }
     }

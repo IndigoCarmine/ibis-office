@@ -18,6 +18,10 @@ use ibis_doc_model::{FontAlign, TextAlign};
 use crate::render::math_view::{self, MathBox};
 use crate::render::font_metrics::{POWERPOINT_SINGLE, natural_below, powerpoint_below_baseline};
 
+/// The size of a pixel of the device Office draws a PDF on, in points: 600 dpi. Its emboldened glyphs (Excel's PDF: `0.12 Tc` on a
+/// bold of a typeface without one; PowerPoint's: a bold run 18.12 pt a character) are a pixel wider.
+const OFFICE_PDF_DEVICE_PIXEL_PT: f32 = 72.0 / 600.0;
+
 /// A run of the paragraph, ready to draw.
 #[derive(Clone, Debug)]
 pub(crate) struct Piece {
@@ -35,12 +39,20 @@ pub(crate) struct Piece {
     pub(crate) raise: f32,
     /// Added after each character, in pixels.
     pub(crate) spacing: f32,
+    /// Added after each character of a bold the typeface does not have (drawn by thickening the regular glyphs), in
+    /// pixels: Office's PDF device is 600 dpi and its emboldening widens a glyph by a pixel of it (0.12 pt). Set by
+    /// `lay_out` from the typeface the text is shaped with.
+    pub(crate) synthetic_bold: std::cell::Cell<f32>,
     /// Background colour behind the characters (a highlighter).
     pub(crate) highlight: Option<Hsla>,
     /// Outline around the characters: colour and width in pixels.
     pub(crate) outline: Option<(Hsla, f32)>,
-    /// Shadow behind the characters: colour and offset (dx, dy) in pixels.
-    pub(crate) shadow: Option<(Hsla, f32, f32)>,
+    /// Shadow behind the characters: colour, offset (dx, dy) and blur radius in pixels.
+    pub(crate) shadow: Option<(Hsla, f32, f32, f32)>,
+    /// Inner shadow inside the characters (`a:innerShdw`): colour, offset (dx, dy) and blur radius in pixels.
+    pub(crate) inner_shadow: Option<(Hsla, f32, f32, f32)>,
+    /// A glow round the characters: colour and radius in pixels.
+    pub(crate) glow: Option<(Hsla, f32)>,
     /// The characters painted with a gradient or a pattern (`a:gradFill`,
     /// `a:pattFill`) instead of `color`, across the run's stretch of a line.
     pub(crate) fill: Option<ibis_doc_model::Fill>,
@@ -55,6 +67,22 @@ pub(crate) struct Piece {
     /// A formula drawn typeset in place of `text` (which stays its one-line
     /// form, so that positions in it still count).
     pub(crate) math: Option<ibis_doc_model::math::Math>,
+    /// Run border box (`w:bdr` inside a Word text box): `(color, width_px, space_px)`.
+    pub(crate) border: Option<(Hsla, f32, f32)>,
+    /// Fallback kana advance widths (U+3040..=U+30FF, in `1/256 em`) when
+    /// substituting an uninstalled typeface such as `Meiryo UI`.
+    pub(crate) kana_widths: Option<&'static [u16; 192]>,
+    /// Whether the piece substitutes an uninstalled proportional Japanese typeface
+    /// (`ＭＳ Ｐ`, `HGP`, `Meiryo UI`), so full-width alphanumerics use proportional advances.
+    pub(crate) proportional_alnum: bool,
+}
+
+impl Piece {
+    /// The space added after each character, in pixels: the run's character spacing and the widening of an emboldened
+    /// glyph.
+    pub(crate) fn spacing_px(&self) -> f32 {
+        self.spacing + self.synthetic_bold.get()
+    }
 }
 
 /// How much smaller PowerPoint draws a small capital than a capital.
@@ -291,6 +319,12 @@ pub(crate) struct RichParagraph {
     /// Where the first line starts, from the element's left edge (negative
     /// for a hanging indent); the other lines start at the edge.
     pub(crate) first_line: f32,
+    /// Left margin of the paragraph (`a:pPr/@marL`), in pixels.
+    pub(crate) margin_left: f32,
+    /// Tab stops (`a:pPr/a:tabLst`), in pixels from the text body's left inset.
+    pub(crate) tabs: Vec<f32>,
+    /// Default tab stop interval (`a:pPr/@defTabSz`), in pixels (0: unused).
+    pub(crate) default_tab: f32,
     /// The width the lines are broken to, in pixels, when it is known
     /// exactly (else the element's width, which the layout rounds to
     /// pixels, so that the lines would break differently at each zoom).
@@ -322,6 +356,20 @@ pub(crate) struct RichParagraph {
     pub(crate) at_x: Option<f32>,
 }
 
+thread_local! {
+    /// Where the window's origin is from the slide's, in pixels: a picture of a page (a sheet's print, with its margin and the part of the
+    /// sheet it shows) draws the slide offset in the window, so `at_x` (from the slide's edge) is moved by as much.
+    static AT_X_OFFSET: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+}
+
+pub(crate) fn set_at_x_offset(offset: f32) {
+    AT_X_OFFSET.with(|o| o.set(offset));
+}
+
+pub(crate) fn at_x_offset() -> f32 {
+    AT_X_OFFSET.with(|o| o.get())
+}
+
 /// The paragraphs of one text, placed together: the layout rounds each
 /// paragraph's height to pixels, which adds up over the paragraphs (and
 /// moves a text centred or at the bottom of its box), so the paragraphs
@@ -337,6 +385,11 @@ pub(crate) struct TextBlock {
     /// Where the next paragraph starts below `top`, pixels (as they are
     /// painted in order).
     pub(crate) next: Rc<std::cell::Cell<f32>>,
+    /// Text in columns (`numCol`): the height of a column, the distance from one column's left edge to the next's, and
+    /// the number of columns (pixels). The paragraphs go down a column to its end and on from the top of the next.
+    pub(crate) flow: Rc<std::cell::Cell<Option<(f32, f32, usize)>>>,
+    /// The column the paragraph painted last is in.
+    pub(crate) column: Rc<std::cell::Cell<usize>>,
     /// How the text is turned (window pixels), set with `top`.
     pub(crate) turn: Rc<std::cell::Cell<Option<Turn>>>,
     /// The area the text is placed in (top and height, window pixels), set
@@ -547,7 +600,9 @@ impl TextBlock {
     /// `anchor` of the way down the room left (0 top, 0.5 middle, 1 bottom).
     pub(crate) fn place(&self, top: f32, height: f32, anchor: f32) {
         let text: f32 = self.heights.borrow().iter().sum();
-        self.top.set(top + (height - text) * anchor);
+        // (Text in columns starts at the top: its height is not one column's.)
+        self.top.set(if self.flow.get().is_some() { top } else { top + (height - text) * anchor });
+        self.column.set(0);
         self.area.set((top, height));
         self.next.set(0.0);
     }
@@ -616,28 +671,7 @@ impl Turn {
         self.sin.abs() > 1e-6 || self.cos < 0.0 || self.tx.abs() > 1e-3 || self.ty.abs() > 1e-3
     }
 
-    /// Shift the pivot of the turn so that the text line's visual center (baseline - ascent / 2)
-    /// stays in place, as PowerPoint rotates text about its line center rather than the box center.
-    pub(crate) fn with_visual_pivot(self, baseline_y: f32, ascent: f32) -> Self {
-        if !self.shape_turned {
-            return self;
-        }
-        let one_minus_cos = 1.0 - self.cos;
-        let det = 2.0 * one_minus_cos;
-        if det.abs() < 1e-4 {
-            return self;
-        }
-        let cy = (self.sin * self.tx + one_minus_cos * self.ty) / det;
-        let visual_y = baseline_y - ascent / 2.0;
-        let delta = (visual_y - cy) / 2.0;
-        Self {
-            cos: self.cos,
-            sin: self.sin,
-            tx: self.tx + delta * self.sin,
-            ty: self.ty + delta * one_minus_cos,
-            shape_turned: self.shape_turned,
-        }
-    }
+
 }
 
 /// How a text is turned with its shape (`TextBlock::place`): `text`
@@ -800,6 +834,8 @@ struct Char {
     start: usize,
     end: usize,
     c: char,
+    /// Unspaced advance from the shaper.
+    raw: f32,
     advance: f32,
     /// A typeset formula's ascent and descent, in place of the piece's.
     lift: Option<(f32, f32)>,
@@ -933,6 +969,18 @@ impl Element for RichParagraphElement {
         // Baselines are rounded from the top of the text, the paragraph
         // starting where the ones above end (not where the layout, rounded
         // to pixels, puts it).
+        let mut column_shift = 0.0;
+        if let Some(t) = &paragraph.text_top
+            && let Some((column_height, pitch, count)) = t.block.flow.get()
+        {
+            let own = t.before + text_height(paragraph, &layout.lines) + t.after;
+            let next = t.block.next.get();
+            if next > 0.5 && next + own > column_height + 0.5 && t.block.column.get() + 1 < count {
+                t.block.column.set(t.block.column.get() + 1);
+                t.block.next.set(0.0);
+            }
+            column_shift = t.block.column.get() as f32 * pitch;
+        }
         let (text_top, mut top) = match &paragraph.text_top {
             Some(t) => (t.block.top.get(), t.block.next.get() + t.before),
             None => (origin, 0.0),
@@ -947,7 +995,9 @@ impl Element for RichParagraphElement {
             (if (d - d.trunc()).abs() == 0.5 { d.trunc() } else { d.round() }) / sf
         };
         let x_correction = match (paragraph.at_x, paragraph.align) {
-            (Some(at_x), TextAlign::Left) => at_x - snap_device(at_x, window.scale_factor()),
+            // Where the text is meant to start, not where the box was snapped to (the box sits on its parent's snapped edge plus its
+            // padding, which can round the other way than the exact position does: half a pixel off).
+            (Some(at_x), TextAlign::Left) if (at_x - f32::from(bounds.origin.x)).abs() <= 1.5 => at_x - f32::from(bounds.origin.x),
             _ => 0.0,
         };
         let line_count = layout.lines.len();
@@ -958,15 +1008,39 @@ impl Element for RichParagraphElement {
             // shared out between the characters that show (a line of one is
             // centred).
             let shown_chars = layout.chars[line.start..line.end].iter().rposition(|c| !c.c.is_whitespace()).map_or(0, |k| k + 1);
-            let shown_width: f32 = layout.chars[line.start..line.start + shown_chars].iter().map(|c| c.advance).sum();
+            let shown_slice = &layout.chars[line.start..line.start + shown_chars];
+            let shown_width: f32 = shown_slice.iter().map(|c| c.advance).sum();
+            // A comma or full stop that hangs past the edge (the line broke because it did not fit) is not spread over the room: the characters before it
+            // are, and it follows the last of them (PowerPoint's justified line of 032 p10 ends past the edge with its comma).
+            let hang = shown_slice.last().filter(|c| hangs(c.c) && shown_width > room + 0.01 && shown_chars > 2).map_or(0.0, |c| c.advance);
+            let spread_chars = shown_chars - usize::from(hang > 0.0);
+            let spread_width = shown_width - hang;
             let spread = match paragraph.align {
                 TextAlign::Distributed => true,
-                TextAlign::Justify => n + 1 < line_count,
+                TextAlign::Justify => n + 1 < line_count || (!paragraph.last && paragraph.text_top.as_ref().is_some_and(|t| t.after == 0.0)),
                 _ => false,
-            } && room > shown_width
+            } && room > spread_width
                 && paragraph.room != Some(0.0);
-            let extra = if spread && shown_chars > 1 { (room - shown_width) / (shown_chars - 1) as f32 } else { 0.0 };
+            let word_spaces = if spread && paragraph.align == TextAlign::Justify && !shown_slice.iter().any(|c| is_cjk(c.c)) {
+                shown_slice.iter().filter(|c| c.c == ' ').count()
+            } else {
+                0
+            };
+            let space_extra = if word_spaces > 0 { (room - spread_width) / word_spaces as f32 } else { 0.0 };
+            let extra = if spread && word_spaces == 0 && spread_chars > 1 { (room - spread_width) / (spread_chars - 1) as f32 } else { 0.0 };
+            let char_extra = |k: usize| -> f32 {
+                if !spread || k >= line.start + spread_chars {
+                    0.0
+                } else if word_spaces > 0 {
+                    if layout.chars[k].c == ' ' { space_extra } else { 0.0 }
+                } else if k + 1 < line.start + spread_chars {
+                    extra
+                } else {
+                    0.0
+                }
+            };
             let mut x = f32::from(bounds.origin.x)
+                + column_shift
                 + x_correction
                 + start
                 + match paragraph.align {
@@ -976,7 +1050,10 @@ impl Element for RichParagraphElement {
                     TextAlign::Center => (room - line.width) / 2.0,
                     TextAlign::Right => room - line.width,
                 };
-            let mut baseline = text_top + snap(top + line.baseline, paragraph.px_per_point);
+            // PowerPoint on a screen puts a line's baseline on a whole point from the top of the text; its PDF does not (Windows PowerPoint's PDF of 009:
+            // two lines of 14 pt are 16.80 pt apart, 1.2 x 14, on the 0.12 pt grid of the 600 dpi page; whole points would make 17).
+            let baseline = if window.is_recording_paints_only() { top + line.baseline } else { snap(top + line.baseline, paragraph.px_per_point) };
+            let mut baseline = text_top + baseline;
             let mut line_top = text_top + top;
             if paragraph.mirror && let Some(t) = &paragraph.text_top {
                 // Lines from left to right: each line where it would be
@@ -990,20 +1067,26 @@ impl Element for RichParagraphElement {
                 let n = p.lines.len();
                 p.lines.push(LinePosition { start: line.start, end: line.end, x, top: line_top, baseline, height: line.height });
                 let mut at = x;
-                for c in &layout.chars[line.start..line.end] {
-                    p.chars.push(CharPosition { x: at, advance: c.advance + extra, line: n });
-                    at += c.advance + extra;
+                for (k, c) in layout.chars[line.start..line.end].iter().enumerate() {
+                    let adv = c.advance + char_extra(line.start + k);
+                    p.chars.push(CharPosition { x: at, advance: adv, line: n });
+                    at += adv;
                 }
             }
             let reference = reference(paragraph, &layout.chars[line.start..line.end]);
-            let line_turn = turn.map(|t| t.with_visual_pivot(baseline, reference.0));
+            // Every line shares the shape transform: a line-specific pivot would
+            // compress the spacing as the shape rotates.
+            let line_turn = turn;
             // Text bent to a warp: the line's box is kept, the glyphs are collected as they come.
             let warp = paragraph.text_top.as_ref().map(|t| t.block.warp.clone()).filter(|w| w.borrow().is_some());
             if let Some(w) = &warp && let Some(w) = w.borrow_mut().as_mut() {
                 w.lines.push((x, x + line.width, line_top, line_top + line.height, baseline));
             }
-            if let (0, Some(turn), Some(b)) = (n, turn, &paragraph.bullet) {
-                paint_turned_bullet(b, f32::from(bounds.origin.x) + b.x, baseline + b.drop, turn, window);
+            if let (0, Some(b)) = (n, &paragraph.bullet) {
+                match turn {
+                    Some(turn) => paint_turned_bullet(b, f32::from(bounds.origin.x) + b.x, baseline + b.drop, turn, window),
+                    None => paint_bullet(b, f32::from(bounds.origin.x) + column_shift + b.x, baseline + b.drop, window),
+                }
             }
             // Where text painted with a gradient or a pattern spans along
             // the line: each run of stretches with the same fill (pieces of
@@ -1016,7 +1099,7 @@ impl Element for RichParagraphElement {
                     let fill = &paragraph.pieces[layout.chars[k].piece].fill;
                     let start = (k, at);
                     while k < line.end && paragraph.pieces[layout.chars[k].piece].fill == *fill {
-                        at += layout.chars[k].advance + extra;
+                        at += layout.chars[k].advance + char_extra(k);
                         k += 1;
                     }
                     if fill.is_some() {
@@ -1055,7 +1138,7 @@ impl Element for RichParagraphElement {
                         let y = baseline - piece.raise;
                         math_view::paint(boxed, point(px(x), px(y)), piece.color, &piece.font, window, cx);
                     }
-                    x += layout.chars[i..j].iter().map(|c| c.advance + extra).sum::<f32>();
+                    x += (i..j).map(|k| layout.chars[k].advance + char_extra(k)).sum::<f32>();
                     i = j;
                     continue;
                 }
@@ -1070,13 +1153,18 @@ impl Element for RichParagraphElement {
                 let shaped = window.text_system().shape_line(text.to_string().into(), px(piece.size), &[run], None);
                 let y = baseline - piece.raise + align_offset(paragraph.font_align, piece, reference);
                 let turn = line_turn;
-                let advance: f32 = layout.chars[i..j].iter().map(|c| c.advance + extra).sum();
+                let advance: f32 = (i..j).map(|k| layout.chars[k].advance + char_extra(k)).sum();
                 // A strike stops at the line's last character that shows
-                // (not through the spaces a wrapped line ends with).
-                let shown = layout.chars[line.start..line.end].iter().rposition(|c| !c.c.is_whitespace()).map_or(line.start, |k| line.start + k + 1);
+                // (not through the spaces a wrapped line ends with; full-width
+                // ideographic spaces and trailing underlined spaces at the end
+                // of a paragraph are drawn).
+                let shown = layout.chars[line.start..line.end]
+                    .iter()
+                    .rposition(|c| !c.c.is_whitespace() || c.c == '\u{3000}' || (n + 1 == line_count && paragraph.pieces[c.piece].underline))
+                    .map_or(line.start, |k| line.start + k + 1);
                 let end = j.min(shown).max(i);
                 // (No room after the last character that shows.)
-                let struck: f32 = layout.chars[i..end].iter().map(|c| c.advance + extra).sum::<f32>() - if end == shown && end > i { extra } else { 0.0 };
+                let struck: f32 = (i..end).map(|k| layout.chars[k].advance + if k + 1 < shown { char_extra(k) } else { 0.0 }).sum();
                 let origin = ul_origin(piece, x);
                 ul_state.set(piece.underline.then_some((origin, x + advance, piece.underline_kind, piece.strike_size)));
                 if let Some(w) = &warp {
@@ -1086,8 +1174,9 @@ impl Element for RichParagraphElement {
                         let Some((data, index)) = window.text_system().font_data(run.font_id) else { readable = false; break };
                         for glyph in &run.glyphs {
                             let before = text[..glyph.index.min(text.len())].chars().count() as f32;
-                            let (gx, gy) = (x + f32::from(glyph.position.x) + piece.spacing * before, y + f32::from(glyph.position.y));
+                            let (gx, gy) = (x + f32::from(glyph.position.x) + piece.spacing_px() * before, y + f32::from(glyph.position.y));
                             let Some(polygons) = crate::render::glyph_outline::glyph_polygons(&data, index, glyph.id.0, piece.size) else { readable = false; break 'glyphs };
+                            let polygons = slanted_if_synthetic(polygons, window.text_system().synthetic_style(run.font_id).1);
                             taken.push((polygons.into_iter().map(|p| p.into_iter().map(|(a, b)| (gx + a, gy + b)).collect()).collect(), piece.color));
                         }
                     }
@@ -1119,27 +1208,66 @@ impl Element for RichParagraphElement {
                     let area = Bounds::new(point(px(x), px(y - piece.ascent)), size(px(advance), px(piece.ascent + piece.descent)));
                     window.paint_quad(fill(area, color));
                 }
-                if let Some((color, dx, dy)) = piece.shadow {
-                    let at = point(px(x + dx), px(y + dy));
-                    for run in &shaped.runs {
-                        for glyph in &run.glyphs {
-                            let _ = window.paint_glyph(at + glyph.position, run.font_id, glyph.id, px(piece.size), color);
+                if let Some((color, bw, space)) = piece.border {
+                    let bx = x - space;
+                    let by = y - piece.ascent - space;
+                    let bw_total = advance + 2.0 * space;
+                    let bh_total = piece.ascent + piece.descent + 2.0 * space;
+                    window.paint_quad(fill(Bounds::new(point(px(bx), px(by)), size(px(bw_total), px(bw))), color));
+                    window.paint_quad(fill(Bounds::new(point(px(bx), px(by + bh_total - bw)), size(px(bw_total), px(bw))), color));
+                    window.paint_quad(fill(Bounds::new(point(px(bx), px(by)), size(px(bw), px(bh_total))), color));
+                    window.paint_quad(fill(Bounds::new(point(px(bx + bw_total - bw), px(by)), size(px(bw), px(bh_total))), color));
+                }
+                if let Some((color, radius)) = piece.glow {
+                    // The glow: the letters painted around themselves, rings out to the radius, each
+                    // ring fainter (they add up to a soft fall-off). Office's glow is the letters' outline blurred out
+                    // to `rad` at the glow's alpha; the rings stand for that blur, and the half of the alpha is a
+                    // choice of ours (not measured against Office's blur), so that the rings together stay fainter than the letters.
+                    // The glow surrounds the filled AND outlined glyph. DrawingML's
+                    // centred outline contributes half its width before the glow radius.
+                    // Do not clamp a document's explicit radius by the font size.
+                    let rings = 6;
+                    let max_r = radius + piece.outline.map_or(0., |(_,width)|width * 0.5);
+                    let per = color.a * 0.5 / rings as f32;
+                    for ring in (1..=rings).rev() {
+                        let r = max_r * ring as f32 / rings as f32;
+                        let tint = Hsla { a: per, ..color };
+                        for k in 0..16 {
+                            let (s, c) = (k as f32 / 16.0 * std::f32::consts::TAU).sin_cos();
+                            let at = point(px(x + c * r), px(y + s * r));
+                            for run in &shaped.runs {
+                                for glyph in &run.glyphs {
+                                    let before = text[..glyph.index.min(text.len())].chars().count() as f32;
+                                    let _ = window.paint_glyph(at + glyph.position + point(px((piece.spacing_px() + extra) * before), px(0.0)), run.font_id, glyph.id, px(piece.size), tint);
+                                }
+                            }
                         }
                     }
                 }
-                if piece.spacing == 0.0 && extra == 0.0 {
-                    let height = shaped.ascent + shaped.descent;
-                    let _ = shaped.paint(point(px(x), px(y) - shaped.ascent), height, gpui_kit::TextAlign::Left, None, window, cx);
-                } else if extra == 0.0 {
-                    paint_spaced(&shaped, text, piece, point(px(x), px(y)), window);
-                } else {
-                    let spread = Piece { spacing: piece.spacing + extra, ..piece.clone() };
-                    paint_spaced(&shaped, text, &spread, point(px(x), px(y)), window);
+                if let Some((color, dx, dy, blur)) = piece.shadow {
+                    // The shadow's letters sit where the text's do: after the character spacing and
+                    // the extra space a distributed line adds. PowerPoint blurs the glyph mask with a
+                    // Gaussian of deviation `TEXT_SHADOW_SIGMA_PER_BLUR * blurRad` and paints it at the
+                    // shadow's alpha inside the letters. The blur is the glyph drawn at offsets that follow that
+                    // Gaussian (rings of equal probability), each at the alpha whose product over all of them
+                    // leaves the shadow's alpha where every copy overlaps.
+                    let offsets = text_shadow_offsets(blur);
+                    let alpha = 1.0 - (1.0 - color.a).powf(1.0 / offsets.len() as f32);
+                    let tint = Hsla { a: alpha, ..color };
+                    for (ox, oy) in offsets {
+                        let at = point(px(x + dx + ox), px(y + dy + oy));
+                        for run in &shaped.runs {
+                            for glyph in &run.glyphs {
+                                let before = text[..glyph.index.min(text.len())].chars().count() as f32;
+                                let _ = window.paint_glyph(at + glyph.position + point(px((piece.spacing_px() + extra) * before), px(0.0)), run.font_id, glyph.id, px(piece.size), tint);
+                            }
+                        }
+                    }
                 }
                 if let Some((color, width)) = piece.outline {
-                    // The outline, over the text as PowerPoint strokes it: the
-                    // text painted around itself in the outline's colour, out to
-                    // half the line's width (the line straddles the edge).
+                    // The outline: the text painted around itself in the outline's
+                    // colour, out to half the line's width, and then the text over
+                    // it, so the fill stays (as `paint_turned` does).
                     let r = width / 2.0;
                     // Rings out to the line's half width, so the outline is solid.
                     let rings = (r / 0.75).ceil().max(1.0) as usize;
@@ -1151,10 +1279,21 @@ impl Element for RichParagraphElement {
                         let at = point(px(x + ox), px(y + oy));
                         for run in &shaped.runs {
                             for glyph in &run.glyphs {
-                                let _ = window.paint_glyph(at + glyph.position, run.font_id, glyph.id, px(piece.size), color);
+                                let before = text[..glyph.index.min(text.len())].chars().count();
+                                let dx: f32 = (i..(i + before).min(j)).map(|k| layout.chars[k].advance + char_extra(k) - layout.chars[k].raw).sum();
+                                let _ = window.paint_glyph(at + glyph.position + point(px(dx), px(0.0)), run.font_id, glyph.id, px(piece.size), color);
                             }
                         }
                     }
+                }
+                if piece.spacing_px() == 0.0 && extra == 0.0 && space_extra == 0.0 && piece.kana_widths.is_none() && !piece.proportional_alnum && !text.contains('\t') {
+                    let height = shaped.ascent + shaped.descent;
+                    let _ = shaped.paint(point(px(x), px(y) - shaped.ascent), height, gpui_kit::TextAlign::Left, None, window, cx);
+                } else {
+                    paint_spaced(&shaped, text, &layout.chars[i..j], i, &char_extra, piece, point(px(x), px(y)), window);
+                }
+                if let Some(inner_sh) = piece.inner_shadow {
+                    paint_inner_shadow(&shaped, text, &layout.chars[i..j], piece, extra, (x, y), inner_sh, window);
                 }
                 paint_decorations(piece, (x, baseline - piece.raise), struck, origin, paragraph.px_per_point, None, window);
                 x += advance;
@@ -1201,11 +1340,23 @@ fn upright_glyph((x, y): (f32, f32), size: f32, turn: Turn) -> ((f32, f32), f32)
 fn paint_glyph_at(window: &mut Window, (tx, ty): (f32, f32), angle: f32, font_id: FontId, glyph: GlyphId, size: f32, color: Hsla) {
     let scale = window.scale_factor();
     let pivot = point(ScaledPixels(tx * scale), ScaledPixels(ty * scale));
+    // The renderer drops a glyph whose unturned box (from its origin, right and up by about a size) is
+    // outside the window, whatever the turn does to it: a line of sideways text at the slide's edge lost
+    // its letters one by one. So the glyph is drawn at an anchor inside the window and the turn carries
+    // it from there to where it belongs.
+    let viewport = window.viewport_size();
+    let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
+    let anchor = if tx >= 0.0 && tx <= vw - size && ty >= size && ty <= vh {
+        (tx, ty)
+    } else {
+        (tx.clamp(0.0, (vw - size).max(0.0)), ty.clamp(size.min(vh), vh))
+    };
+    let from = point(ScaledPixels(anchor.0 * scale), ScaledPixels(anchor.1 * scale));
     let transformation = TransformationMatrix::unit()
         .translate(pivot)
         .rotate(Radians(angle))
-        .translate(point(ScaledPixels(-pivot.x.0), ScaledPixels(-pivot.y.0)));
-    let _ = window.paint_glyph_transformed(point(px(tx), px(ty)), font_id, glyph, px(size), color, transformation);
+        .translate(point(ScaledPixels(-from.x.0), ScaledPixels(-from.y.0)));
+    let _ = window.paint_glyph_transformed(point(px(anchor.0), px(anchor.1)), font_id, glyph, px(size), color, transformation);
 }
 
 /// A rectangle of the text's coordinates painted turned.
@@ -1231,7 +1382,7 @@ fn paint_turned(shaped: &ShapedLine, text: &str, piece: &Piece, (x, y): (f32, f3
     }
     let glyph_at = |index: usize, position: Point<Pixels>| {
         let before = text[..index.min(text.len())].chars().count() as f32;
-        (x + f32::from(position.x) + piece.spacing * before, y + f32::from(position.y))
+        (x + f32::from(position.x) + piece.spacing_px() * before, y + f32::from(position.y))
     };
     if let Some((color, width)) = piece.outline {
         let r = width / 2.0;
@@ -1267,6 +1418,15 @@ fn paint_turned(shaped: &ShapedLine, text: &str, piece: &Piece, (x, y): (f32, f3
 
 }
 
+/// A glyph's polygons (from its baseline, y down) slanted as the text system draws an italic asked of a font without one
+/// (x moves right by a fifth of the height above the baseline).
+fn slanted_if_synthetic(polygons: Vec<Vec<(f32, f32)>>, italic: bool) -> Vec<Vec<(f32, f32)>> {
+    if !italic {
+        return polygons;
+    }
+    polygons.into_iter().map(|p| p.into_iter().map(|(a, b)| (a - 0.2 * b, b)).collect()).collect()
+}
+
 /// A stretch of text painted with a gradient or a pattern (`fill`): its
 /// glyphs as polygons, the fill laid over `area` (x, y, width, height: the
 /// run's extent along the line), turned by `turn`. False (nothing painted)
@@ -1290,8 +1450,9 @@ fn paint_filled(
         let Some((data, index)) = window.text_system().font_data(run.font_id) else { return false };
         for glyph in &run.glyphs {
             let before = text[..glyph.index.min(text.len())].chars().count() as f32;
-            let (gx, gy) = (x + f32::from(glyph.position.x) + piece.spacing * before, y + f32::from(glyph.position.y));
+            let (gx, gy) = (x + f32::from(glyph.position.x) + piece.spacing_px() * before, y + f32::from(glyph.position.y));
             let Some(polygons) = crate::render::glyph_outline::glyph_polygons(&data, index, glyph.id.0, piece.size) else { return false };
+            let polygons = slanted_if_synthetic(polygons, window.text_system().synthetic_style(run.font_id).1);
             contours.extend(polygons.into_iter().map(|p| p.into_iter().map(|(px_, py)| (gx + px_ - bx, gy + py - by)).collect()));
         }
     }
@@ -1321,6 +1482,17 @@ fn paint_filled(
     true
 }
 
+/// A bullet (a number) with its baseline's start at (`x`, `y`).
+fn paint_bullet(b: &BulletMark, x: f32, y: f32, window: &mut Window) {
+    let run = TextRun { len: b.text.len(), font: b.font.clone(), color: b.color, background_color: None, underline: None, strikethrough: None };
+    let shaped = window.text_system().shape_line(b.text.clone().into(), px(b.size), &[run], None);
+    for run in &shaped.runs {
+        for glyph in &run.glyphs {
+            let _ = window.paint_glyph(point(px(x + f32::from(glyph.position.x)), px(y + f32::from(glyph.position.y))), run.font_id, glyph.id, px(b.size), b.color);
+        }
+    }
+}
+
 /// A turned text's bullet, its baseline's start at (`x`, `y`).
 fn paint_turned_bullet(b: &BulletMark, x: f32, y: f32, turn: Turn, window: &mut Window) {
     let run = TextRun { len: b.text.len(), font: b.font.clone(), color: b.color, background_color: None, underline: None, strikethrough: None };
@@ -1332,13 +1504,139 @@ fn paint_turned_bullet(b: &BulletMark, x: f32, y: f32, turn: Turn, window: &mut 
     }
 }
 
+/// Paint an inner shadow (`a:innerShdw`) inside the glyphs of `shaped`: pixels inside the glyph
+/// whose shifted neighbours `(px - dx, py - dy)` within the blur radius lie outside the glyph
+/// are tinted with `sh_color`.
+fn paint_inner_shadow(
+    shaped: &ShapedLine,
+    text: &str,
+    chars: &[Char],
+    piece: &Piece,
+    extra: f32,
+    (x, y): (f32, f32),
+    (sh_color, dx, dy, blur): (Hsla, f32, f32, f32),
+    window: &mut Window,
+) {
+    let r1 = (blur * 0.25).max(0.5);
+    let r2 = (blur * 0.5).max(1.0);
+    let mut offsets = [(0.0f32, 0.0f32); 13];
+    for k in 0..6 {
+        let (s, c) = (k as f32 / 6.0 * std::f32::consts::TAU).sin_cos();
+        offsets[1 + k] = (c * r1, s * r1);
+        offsets[7 + k] = (c * r2, s * r2);
+    }
+    let spaced = !(piece.spacing_px() == 0.0 && extra == 0.0 && piece.kana_widths.is_none() && !piece.proportional_alnum && !text.contains('\t'));
+    for run in &shaped.runs {
+        let Some((data, index)) = window.text_system().font_data(run.font_id) else { continue };
+        let synth_italic = window.text_system().synthetic_style(run.font_id).1;
+        for glyph in &run.glyphs {
+            if glyph.is_emoji {
+                continue;
+            }
+            let Some(polygons) = crate::render::glyph_outline::glyph_polygons(&data, index, glyph.id.0, piece.size) else { continue };
+            let polygons = slanted_if_synthetic(polygons, synth_italic);
+            if polygons.is_empty() {
+                continue;
+            }
+            let shift_x = if spaced {
+                let before = text[..glyph.index.min(text.len())].chars().count();
+                chars[..before.min(chars.len())].iter().map(|c| c.advance + extra - c.raw).sum::<f32>()
+            } else {
+                0.0
+            };
+            let gx = x + f32::from(glyph.position.x) + shift_x;
+            let gy = y + f32::from(glyph.position.y);
+            let mut min_x = f32::INFINITY;
+            let mut max_x = f32::NEG_INFINITY;
+            let mut min_y = f32::INFINITY;
+            let mut max_y = f32::NEG_INFINITY;
+            for poly in &polygons {
+                for &(px_, py_) in poly {
+                    min_x = min_x.min(gx + px_);
+                    max_x = max_x.max(gx + px_);
+                    min_y = min_y.min(gy + py_);
+                    max_y = max_y.max(gy + py_);
+                }
+            }
+            if min_x >= max_x || min_y >= max_y {
+                continue;
+            }
+            let x0 = min_x.floor() as i32;
+            let x1 = max_x.ceil() as i32;
+            let y0 = min_y.floor() as i32;
+            let y1 = max_y.ceil() as i32;
+            let gw = (x1 - x0).clamp(1, 512) as usize;
+            let gh = (y1 - y0).clamp(1, 512) as usize;
+            let mut mask = vec![false; gw * gh];
+            let mut crossings: Vec<f32> = Vec::new();
+            for row in 0..gh {
+                let py_f = y0 as f32 + row as f32 + 0.5 - gy;
+                crossings.clear();
+                for poly in &polygons {
+                    let n = poly.len();
+                    if n < 3 {
+                        continue;
+                    }
+                    for k in 0..n {
+                        let (ax, ay) = poly[k];
+                        let (bx, by) = poly[(k + 1) % n];
+                        if (ay <= py_f && by > py_f) || (by <= py_f && ay > py_f) {
+                            let t = (py_f - ay) / (by - ay);
+                            crossings.push(gx + ax + t * (bx - ax));
+                        }
+                    }
+                }
+                crossings.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                for pair in crossings.chunks_exact(2) {
+                    let c_start = ((pair[0] - x0 as f32 - 0.5).ceil() as i32).max(0) as usize;
+                    let c_end = ((pair[1] - x0 as f32 - 0.5).floor() as i32 + 1).clamp(0, gw as i32) as usize;
+                    for col in c_start..c_end.min(gw) {
+                        mask[row * gw + col] = true;
+                    }
+                }
+            }
+            let is_inside = |wx: f32, wy: f32| -> bool {
+                let col = (wx - x0 as f32).floor() as i32;
+                let row = (wy - y0 as f32).floor() as i32;
+                if col < 0 || row < 0 || col >= gw as i32 || row >= gh as i32 {
+                    false
+                } else {
+                    mask[row as usize * gw + col as usize]
+                }
+            };
+            for row in 0..gh {
+                let wy = y0 as f32 + row as f32 + 0.5;
+                for col in 0..gw {
+                    if !mask[row * gw + col] {
+                        continue;
+                    }
+                    let wx = x0 as f32 + col as f32 + 0.5;
+                    let mut outside_count = 0usize;
+                    for &(ox, oy) in &offsets {
+                        if !is_inside(wx - dx + ox, wy - dy + oy) {
+                            outside_count += 1;
+                        }
+                    }
+                    if outside_count > 0 {
+                        let frac = outside_count as f32 / offsets.len() as f32;
+                        let tint = Hsla { a: sh_color.a * frac, ..sh_color };
+                        let area = Bounds::new(point(px(x0 as f32 + col as f32), px(y0 as f32 + row as f32)), size(px(1.0), px(1.0)));
+                        window.paint_quad(fill(area, tint));
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Paint `shaped` (the line of `text`) glyph by glyph from `baseline`,
-/// with the piece's character spacing after each character.
-fn paint_spaced(shaped: &ShapedLine, text: &str, piece: &Piece, baseline: Point<Pixels>, window: &mut Window) {
+/// placing each character at its laid-out advance (`c.advance + extra`).
+fn paint_spaced(shaped: &ShapedLine, text: &str, chars: &[Char], start_index: usize, char_extra: &dyn Fn(usize) -> f32, piece: &Piece, baseline: Point<Pixels>, window: &mut Window) {
     for run in &shaped.runs {
         for glyph in &run.glyphs {
-            let before = text[..glyph.index.min(text.len())].chars().count() as f32;
-            let at = point(baseline.x + glyph.position.x + px(piece.spacing * before), baseline.y + glyph.position.y);
+            let before = text[..glyph.index.min(text.len())].chars().count();
+            let dx: f32 = chars[..before.min(chars.len())].iter().enumerate().map(|(k, c)| c.advance + char_extra(start_index + k) - c.raw).sum();
+            let at = point(baseline.x + glyph.position.x + px(dx), baseline.y + glyph.position.y);
             let _ = if glyph.is_emoji {
                 window.paint_emoji(at, run.font_id, glyph.id, px(piece.size))
             } else {
@@ -1346,7 +1644,6 @@ fn paint_spaced(shaped: &ShapedLine, text: &str, piece: &Piece, baseline: Point<
             };
         }
     }
-
 }
 
 /// The ascent and descent of the largest piece among `chars`, which the
@@ -1383,7 +1680,7 @@ fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -
             let boxed = math_view::typeset(math, piece.size, &mut math_view::window_measure(piece.font.clone(), window));
             let count = piece.text.chars().count().max(1) as f32;
             for (start, c) in piece.text.char_indices() {
-                chars.push(Char { piece: index, start, end: start + c.len_utf8(), c, advance: boxed.width / count, lift: Some((boxed.ascent, boxed.descent)) });
+                chars.push(Char { piece: index, start, end: start + c.len_utf8(), c, raw: boxed.width / count, advance: boxed.width / count, lift: Some((boxed.ascent, boxed.descent)) });
             }
             maths[index] = Some(boxed);
             continue;
@@ -1397,15 +1694,32 @@ fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -
             strikethrough: None,
         };
         let shaped = window.text_system().shape_line(piece.text.clone().into(), px(piece.size), &[run], None);
+        let emboldened = shaped.runs.first().is_some_and(|r| window.text_system().synthetic_style(r.font_id).0);
+        piece.synthetic_bold.set(if emboldened { OFFICE_PDF_DEVICE_PIXEL_PT * paragraph.px_per_point } else { 0.0 });
         let bounds: Vec<(usize, char)> = piece.text.char_indices().collect();
         for (k, &(start, c)) in bounds.iter().enumerate() {
             let end = bounds.get(k + 1).map_or(piece.text.len(), |b| b.0);
-            let x0 = f32::from(shaped.x_for_index(start));
+            // For the first character (`k == 0`), the piece starts at 0.0 (`shaped.x_for_index(0)`
+            // returns `glyph[0].position.x`, which is negative when OpenType `palt` shifts an
+            // opening bracket left by 0.5 em; using it as `x0` would inflate `x1 - x0` and make
+            // the piece's character advances sum to more than `shaped.width`).
+            let x0 = if k == 0 { 0.0 } else { f32::from(shaped.x_for_index(start)) };
             let x1 = if end == piece.text.len() { f32::from(shaped.width) } else { f32::from(shaped.x_for_index(end)) };
             let raw = (x1 - x0).max(0.0);
-            let adv = if c == ' ' && piece.spacing == 0.0 && piece.text.chars().all(|ch| ch == ' ') {
+            let next_c = bounds.get(k + 1).map(|b| b.1);
+            let adv = if let Some(w) = piece.kana_widths
+                && (0x3041..=0x30fa).contains(&(c as usize))
+                && !next_c.is_some_and(|n| "（「『【〔〈《［｛〘〖".contains(n)) // i18n-ok（禁則の文字の並び）
+            {
+                (w[c as usize - 0x3040] as f32 / 256.0) * piece.size + piece.spacing_px()
+            } else if piece.proportional_alnum
+                && let Some(w) = crate::render::font_metrics::fallback_fullwidth_alnum_width(c)
+            {
+                (w as f32 / 256.0) * piece.size + piece.spacing_px()
+            } else if c == ' ' && piece.spacing_px() == 0.0 && piece.text.chars().all(|ch| ch == ' ') {
                 // Office (DirectWrite/GDI) snaps space advances to 96 DPI half-pixels:
-                let size_pt = piece.size / paragraph.px_per_point.max(1.0);
+                // (Points from pixels by the paragraph's own scale: below one pixel a point the space came out too narrow.)
+                let size_pt = piece.size / paragraph.px_per_point.max(1e-3);
                 if size_pt > 0.0 {
                     let em_adv = raw / piece.size;
                     let px96 = (size_pt * (96.0 / 72.0)) * em_adv;
@@ -1416,9 +1730,9 @@ fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -
                     raw
                 }
             } else {
-                raw + piece.spacing
+                raw + piece.spacing_px()
             };
-            chars.push(Char { piece: index, start, end, c, advance: adv, lift: None });
+            chars.push(Char { piece: index, start, end, c, raw, advance: adv, lift: None });
         }
     }
     // Text that fills its box exactly (full-width characters, a box sized
@@ -1428,7 +1742,7 @@ fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -
         (Some(_), Some(room)) => (Some(room), 0.02 * paragraph.px_per_point.max(0.05)),
         _ => (width, 0.5),
     };
-    let breaks = break_lines(&chars, room, paragraph.first_line, slack);
+    let breaks = break_lines(&mut chars, room, paragraph.first_line, paragraph.margin_left, &paragraph.tabs, paragraph.default_tab, slack);
     let lines = breaks
         .into_iter()
         .map(|(start, end)| {
@@ -1482,11 +1796,44 @@ fn snap(y: f32, px_per_point: f32) -> f32 {
     if px_per_point > 0.0 { (y / px_per_point).round() * px_per_point } else { y }
 }
 
+/// Next tab stop position (in pixels from the text body's left inset) strictly after `x`.
+fn next_tab_stop(x: f32, tabs: &[f32], default_tab: f32) -> Option<f32> {
+    if let Some(&stop) = tabs.iter().find(|&&pos| pos > x + 1e-3) {
+        return Some(stop);
+    }
+    if default_tab > 0.0 {
+        let k = ((x + 1e-3) / default_tab).floor() + 1.0;
+        return Some((k * default_tab).max(x));
+    }
+    None
+}
+
 /// Ranges of `chars` that make up each line within `width` (and `slack`
 /// over it), the first line starting `first_line` in.
-fn break_lines(chars: &[Char], width: Option<f32>, first_line: f32, slack: f32) -> Vec<(usize, usize)> {
+fn break_lines(
+    chars: &mut [Char],
+    width: Option<f32>,
+    first_line: f32,
+    margin_left: f32,
+    tabs: &[f32],
+    default_tab: f32,
+    slack: f32,
+) -> Vec<(usize, usize)> {
     if chars.is_empty() {
         return vec![(0, 0)];
+    }
+    if width.is_none() {
+        let mut used = 0.0;
+        for c in chars.iter_mut() {
+            if c.c == '\t' {
+                let abs_x = margin_left + first_line + used;
+                if let Some(stop) = next_tab_stop(abs_x, tabs, default_tab) {
+                    c.advance = (stop - abs_x).max(0.0);
+                }
+            }
+            used += c.advance;
+        }
+        return vec![(0, chars.len())];
     }
     let Some(width) = width else { return vec![(0, chars.len())] };
     let mut lines = Vec::new();
@@ -1496,6 +1843,13 @@ fn break_lines(chars: &[Char], width: Option<f32>, first_line: f32, slack: f32) 
     let mut last_break = None;
     let mut i = 0;
     while i < chars.len() {
+        if chars[i].c == '\t' {
+            let line_offset = if lines.is_empty() { first_line } else { 0.0 };
+            let abs_x = margin_left + line_offset + used;
+            if let Some(stop) = next_tab_stop(abs_x, tabs, default_tab) {
+                chars[i].advance = (stop - abs_x).max(0.0);
+            }
+        }
         let c = chars[i];
         if i > start && may_break_before(chars[i - 1].c, c.c) {
             last_break = Some(i);
@@ -1507,7 +1861,16 @@ fn break_lines(chars: &[Char], width: Option<f32>, first_line: f32, slack: f32) 
             let end = last_break.filter(|&b| b > start).unwrap_or(i);
             lines.push((start, end));
             start = end;
-            used = chars[start..i].iter().map(|c| c.advance).sum();
+            used = 0.0;
+            for k in start..i {
+                if chars[k].c == '\t' {
+                    let abs_x = margin_left + used;
+                    if let Some(stop) = next_tab_stop(abs_x, tabs, default_tab) {
+                        chars[k].advance = (stop - abs_x).max(0.0);
+                    }
+                }
+                used += chars[k].advance;
+            }
             last_break = None;
             continue;
         }
@@ -1520,19 +1883,16 @@ fn break_lines(chars: &[Char], width: Option<f32>, first_line: f32, slack: f32) 
 
 /// Whether a line may end between `before` and `after`.
 fn may_break_before(before: char, after: char) -> bool {
-    if after.is_whitespace() {
-        return false;
-    }
-    if before.is_whitespace() {
-        return true;
-    }
-    if !(is_cjk(before) || is_cjk(after)) {
-        return false;
-    }
     // Kinsoku: characters that do not start or end a line.
     const NO_START: &str = "、。，．・：；？！ー―‐〜）」』】〕〉》］｝〙〗’”ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ々ゝゞヽヾ%％),.:;?!]}"; // i18n-ok（禁則処理の文字集合（表示文字ではない））
     const NO_END: &str = "（「『【〔〈《［｛〘〖‘“([{"; // i18n-ok（禁則処理の文字集合（表示文字ではない））
-    !NO_START.contains(after) && !NO_END.contains(before)
+    if after.is_whitespace() || NO_START.contains(after) || NO_END.contains(before) {
+        return false;
+    }
+    if before.is_whitespace() || matches!(before, '-' | '/') {
+        return true;
+    }
+    is_cjk(before) || is_cjk(after)
 }
 
 /// Punctuation that may hang past the end of a line.
@@ -1541,12 +1901,60 @@ fn hangs(c: char) -> bool {
 }
 
 pub(crate) fn is_cjk(c: char) -> bool {
-    matches!(c as u32, 0x2e80..=0x9fff | 0xf900..=0xfaff | 0xfe30..=0xfe4f | 0xff00..=0xffef | 0x20000..=0x3ffff)
+    matches!(c as u32, 0x2460..=0x24ff | 0x25a0..=0x25ff | 0x2e80..=0x9fff | 0xf900..=0xfaff | 0xfe30..=0xfe4f | 0xff00..=0xffef | 0x20000..=0x3ffff)
+}
+
+/// The deviation of PowerPoint's text shadow blur per unit of `blurRad`. Measured on the shadow bitmaps of PowerPoint
+/// 16.0.20527.20088's PDFs (`a:rPr/a:effectLst/a:outerShdw`, black 43%, 54pt text): PowerPoint draws the shadow at a resolution
+/// (200 dpi for blurRad 1.5pt and 3pt, 100 dpi for 6pt, 50 dpi for 12pt, 28.7 dpi for 24pt) that keeps the blur radius at 8.3 to
+/// 9.5 bitmap pixels, and the blur is about 2.2 to 2.5 pixels' deviation (0.264 of the radius in every case). Fitted
+/// (the deviation of an extra Gaussian that turns the 1.5pt shadow's mask into the 6pt and 24pt masks, pixel footprint included;
+/// and the edge of the 3pt mask, and of the 12pt mask from the 3pt mask): 0.79pt for 3pt, 3.2pt for 12pt, 1.58pt for 6pt,
+/// 6.45pt for 24pt, that is 0.263, 0.266, 0.263 and 0.269 of blurRad.
+const TEXT_SHADOW_SIGMA_PER_BLUR: f32 = 0.265;
+
+/// The offsets (pixels) at which a text shadow of blur radius `blur` is drawn: one at (0, 0) when the blur is under a
+/// pixel, else 3 rings of 8 points whose radii cut the Gaussian of deviation `TEXT_SHADOW_SIGMA_PER_BLUR * blur` into 3 parts of equal
+/// probability (the radius of the middle of each part: `sigma * sqrt(-2 ln(1 - p))` at p = 1/6, 1/2, 5/6), the rings turned
+/// by a third of the angle between points so that the points do not line up, and the radii scaled so that the offsets' variance is sigma^2 in each direction.
+fn text_shadow_offsets(blur: f32) -> Vec<(f32, f32)> {
+    if blur < 1.0 {
+        return vec![(0.0, 0.0)];
+    }
+    let sigma = blur * TEXT_SHADOW_SIGMA_PER_BLUR;
+    let mut offsets = Vec::with_capacity(24);
+    let ps = [1.0f32 / 6.0, 0.5, 5.0 / 6.0];
+    // The rings' mean square radius is made 2 * sigma^2 (the variance of the 2-D Gaussian), as the middles of the parts alone fall short of it.
+    let mean_square = ps.iter().map(|p| -2.0 * (1.0 - p).ln()).sum::<f32>() / ps.len() as f32;
+    let fit = (2.0 / mean_square).sqrt();
+    for (ring, p) in ps.into_iter().enumerate() {
+        let radius = sigma * fit * (-2.0 * (1.0 - p).ln()).sqrt();
+        for k in 0..8 {
+            let angle = (k as f32 + ring as f32 / 3.0) / 8.0 * std::f32::consts::TAU;
+            let (s, c) = angle.sin_cos();
+            offsets.push((c * radius, s * radius));
+        }
+    }
+    offsets
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Char, CharPosition, LinePosition, ParagraphPositions, break_lines};
+    use super::{Char, CharPosition, LinePosition, ParagraphPositions, break_lines, text_shadow_offsets, TEXT_SHADOW_SIGMA_PER_BLUR};
+
+    /// The shadow's blur is a Gaussian of deviation 0.265 blurRad (PowerPoint's PDFs of blurRad 3pt, 6pt, 12pt and 24pt): the offsets' variance in each direction, whatever the radius.
+    #[test]
+    fn text_shadow_offsets_have_the_deviation_of_the_blur_fraction() {
+        for blur in [4.0f32, 8.3, 33.0] {
+            let offsets = text_shadow_offsets(blur);
+            let n = offsets.len() as f32;
+            let var_x = offsets.iter().map(|o| o.0 * o.0).sum::<f32>() / n;
+            let var_y = offsets.iter().map(|o| o.1 * o.1).sum::<f32>() / n;
+            let sigma = blur * TEXT_SHADOW_SIGMA_PER_BLUR;
+            assert!((var_x / (sigma * sigma) - 1.0).abs() < 0.08 && (var_y / (sigma * sigma) - 1.0).abs() < 0.08, "{blur}: {var_x} {var_y} against {}", sigma * sigma);
+        }
+        assert_eq!(text_shadow_offsets(0.5), vec![(0.0, 0.0)]);
+    }
 
     /// "ab c" wrapped after "ab " (10 px a character), then "de".
     fn positions() -> ParagraphPositions {
@@ -1595,39 +2003,39 @@ mod tests {
     }
 
     fn chars(text: &str, advance: f32) -> Vec<Char> {
-        text.char_indices().map(|(i, c)| Char { piece: 0, start: i, end: i + c.len_utf8(), c, advance, lift: None }).collect()
+        text.char_indices().map(|(i, c)| Char { piece: 0, start: i, end: i + c.len_utf8(), c, raw: advance, advance, lift: None }).collect()
     }
 
     #[test]
     fn breaks_at_spaces() {
-        let c = chars("ab cd ef", 1.0);
+        let mut c = chars("ab cd ef", 1.0);
         // The space after "cd" hangs past the edge.
-        assert_eq!(break_lines(&c, Some(5.0), 0.0, 0.5), vec![(0, 6), (6, 8)]);
+        assert_eq!(break_lines(&mut c, Some(5.0), 0.0, 0.0, &[], 0.0, 0.5), vec![(0, 6), (6, 8)]);
     }
 
     #[test]
     fn breaks_between_japanese_characters_but_not_before_punctuation() {
-        let c = chars("あいうーえお", 1.0);
+        let mut c = chars("あいうーえお", 1.0);
         // "うー" stays together: the first line breaks before "う".
-        assert_eq!(break_lines(&c, Some(3.0), 0.0, 0.5), vec![(0, 2), (2, 5), (5, 6)]);
+        assert_eq!(break_lines(&mut c, Some(3.0), 0.0, 0.0, &[], 0.0, 0.5), vec![(0, 2), (2, 5), (5, 6)]);
     }
 
     #[test]
     fn a_hanging_indent_gives_the_first_line_more_room() {
-        let c = chars("abcdef", 1.0);
-        assert_eq!(break_lines(&c, Some(4.0), -2.0, 0.5), vec![(0, 6)]);
-        assert_eq!(break_lines(&c, Some(4.0), 1.0, 0.5), vec![(0, 3), (3, 6)]);
+        let mut c = chars("abcdef", 1.0);
+        assert_eq!(break_lines(&mut c, Some(4.0), -2.0, 0.0, &[], 0.0, 0.5), vec![(0, 6)]);
+        assert_eq!(break_lines(&mut c, Some(4.0), 1.0, 0.0, &[], 0.0, 0.5), vec![(0, 3), (3, 6)]);
     }
 
     #[test]
     fn a_comma_hangs_past_the_end_of_a_line() {
-        let c = chars("あいう、え", 1.0);
-        assert_eq!(break_lines(&c, Some(3.0), 0.0, 0.5), vec![(0, 4), (4, 5)]);
+        let mut c = chars("あいう、え", 1.0);
+        assert_eq!(break_lines(&mut c, Some(3.0), 0.0, 0.0, &[], 0.0, 0.5), vec![(0, 4), (4, 5)]);
     }
 
     #[test]
     fn a_long_word_breaks_where_it_must() {
-        let c = chars("abcdef", 1.0);
-        assert_eq!(break_lines(&c, Some(4.0), 0.0, 0.5), vec![(0, 4), (4, 6)]);
+        let mut c = chars("abcdef", 1.0);
+        assert_eq!(break_lines(&mut c, Some(4.0), 0.0, 0.0, &[], 0.0, 0.5), vec![(0, 4), (4, 6)]);
     }
 }

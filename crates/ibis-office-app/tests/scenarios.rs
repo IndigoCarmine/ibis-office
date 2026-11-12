@@ -6,16 +6,19 @@
 //!
 //!   cargo test --release -p ibis-office-app --test scenarios [-- <part of a name> | !<part of a name to leave out>]
 //!
-//! The scenario driver (`run_scenarios`) is built only on macOS; elsewhere
+//! The scenario driver (`run_scenarios`) is built only on macOS and Linux; elsewhere
 //! this target still builds and says it skipped them.
 
-#[cfg(target_os = "macos")]
+// `run_scenarios` exists only where the scenario driver is built (src/lib.rs):
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 fn main() {
-    let filter: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with('-')).collect();
-    std::process::exit(ibis_office_app::run_scenarios(&filter));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    std::process::exit(ibis_office_app::run_scenarios(&args));
 }
 
-#[cfg(not(target_os = "macos"))]
+// Elsewhere (Windows, or without the `scenarios` feature) there is no driver: the test target only says so (it
+// has no harness, so it needs a `main`).
+#[cfg(not(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios")))]
 fn main() {
-    eprintln!("skipped: the scenario tests run only on macOS (src/shell/scenario.rs)");
+    eprintln!("skipped: the scenario tests run only on macOS and Linux with the `scenarios` feature (src/shell/scenario.rs)");
 }

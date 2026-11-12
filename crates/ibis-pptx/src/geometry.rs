@@ -45,6 +45,11 @@ fn presets() -> &'static HashMap<String, Arc<GeometryDef>> {
         let Ok(doc) = roxmltree::Document::parse(text) else { return HashMap::new() };
         let mut map: HashMap<String, Arc<GeometryDef>> = elements(doc.root_element()).map(|n| (n.tag_name().name().to_string(), Arc::new(definition(n)))).collect();
         map.entry("upArrow".to_string()).or_insert_with(|| Arc::new(up_arrow()));
+        // ECMA-376's `presetShapeDefinitions.xml` has `<rect l="il" t="ir" r="it" b="ib" />` on `pie`
+        // (`t` and `r` swapped, making `l > r` and `t > b`).
+        if let Some(pie) = map.get_mut("pie").and_then(Arc::get_mut) {
+            pie.text_rect = Some(["il", "it", "ir", "ib"].map(str::to_string));
+        }
         map
     })
 }

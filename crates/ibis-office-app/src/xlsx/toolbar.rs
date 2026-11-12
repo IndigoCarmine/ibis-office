@@ -66,13 +66,117 @@ pub(super) const NUMBER_FORMATS: &[(&str, &str)] = &[
 ];
 
 impl SlideEditor {
-    /// The selected cell's format (reflecting pending or run styles when editing a cell).
+    /// The selected cell's format (reflecting pending or run styles when editing a cell or worksheet shape).
     pub(crate) fn current_style(&self) -> CellStyle {
         let default = || self.presentation().workbook.as_ref().and_then(|w| w.default_style.clone()).unwrap_or_default();
         let mut style = match (self.current_sheet(), self.current_cell()) {
             (Some((_, sheet)), Some((column, row))) => sheet.cell(row, column).map_or_else(default, |c| sheet.styles[c.style as usize].clone()),
             _ => default(),
         };
+        if let Some(edit) = self.editing.as_ref()
+            && let Some(body) = self.slide().shape(edit.shape).and_then(|s| s.text_body())
+        {
+            let range = edit.edit.range();
+            let char_off = range.start;
+            let is_caret = range.is_empty();
+            let mut pos = 0;
+            let mut found_run = None;
+            let mut found_para_align = None;
+            'outer: for para in &body.paragraphs {
+                for r in &para.runs {
+                    let n = r.text.chars().count();
+                    if char_off < pos + n || (is_caret && n > 0 && char_off == pos + n) {
+                        found_run = Some(&r.style);
+                        found_para_align = para.align;
+                        break 'outer;
+                    }
+                    pos += n;
+                }
+                if found_para_align.is_none() && char_off <= pos {
+                    found_para_align = para.align;
+                }
+                pos += 1;
+            }
+            style.bold = found_run.and_then(|s| s.bold).unwrap_or(body.style.bold);
+            style.italic = found_run.and_then(|s| s.italic).unwrap_or(body.style.italic);
+            style.underline = match found_run {
+                Some(s) if s.underline => match s.underline_kind {
+                    ibis_doc_model::Underline::Double | ibis_doc_model::Underline::WavyDouble => ibis_doc_model::CellUnderline::Double,
+                    _ => ibis_doc_model::CellUnderline::Single,
+                },
+                _ => ibis_doc_model::CellUnderline::None,
+            };
+            style.strike = found_run.is_some_and(|s| s.strike != ibis_doc_model::Strike::None);
+            style.font_size = found_run.and_then(|s| s.font_size).unwrap_or(body.style.font_size);
+            style.color = found_run.and_then(|s| s.color).unwrap_or(body.style.color);
+            style.font = found_run.and_then(|s| s.font.clone()).or_else(|| body.style.font.clone());
+            style.align = match found_para_align.unwrap_or(body.style.align) {
+                ibis_doc_model::TextAlign::Left => CellAlign::Left,
+                ibis_doc_model::TextAlign::Center => CellAlign::Center,
+                ibis_doc_model::TextAlign::Right => CellAlign::Right,
+                ibis_doc_model::TextAlign::Justify => CellAlign::Justify,
+                ibis_doc_model::TextAlign::Distributed => CellAlign::Distributed,
+            };
+            style.vertical = match body.anchor {
+                ibis_doc_model::VerticalAnchor::Top => CellVerticalAlign::Top,
+                ibis_doc_model::VerticalAnchor::Middle => CellVerticalAlign::Center,
+                ibis_doc_model::VerticalAnchor::Bottom => CellVerticalAlign::Bottom,
+            };
+            style.wrap = body.wrap;
+            return style;
+        }
+        let primary_text_shape = self
+            .selected_sheet_shape()
+            .filter(|id| self.selected_sheet_text_shape_ids().contains(id))
+            .or_else(|| self.selected_sheet_text_shape_ids().first().copied());
+        if let Some(shape_id) = primary_text_shape
+            && let Some(shape) = self.slide().shape(shape_id)
+            && matches!(shape.kind, ibis_doc_model::ShapeKind::Auto(_) | ibis_doc_model::ShapeKind::TextBox(_))
+        {
+            if let Some(body) = shape.text_body() {
+                let found_run = body.paragraphs.iter().flat_map(|p| &p.runs).find(|r| !r.text.is_empty()).or_else(|| body.paragraphs.first().and_then(|p| p.runs.first())).map(|r| &r.style);
+                let found_para_align = body.paragraphs.first().and_then(|p| p.align);
+                style.bold = found_run.and_then(|s| s.bold).unwrap_or(body.style.bold);
+                style.italic = found_run.and_then(|s| s.italic).unwrap_or(body.style.italic);
+                style.underline = match found_run {
+                    Some(s) if s.underline => match s.underline_kind {
+                        ibis_doc_model::Underline::Double | ibis_doc_model::Underline::WavyDouble => ibis_doc_model::CellUnderline::Double,
+                        _ => ibis_doc_model::CellUnderline::Single,
+                    },
+                    _ => ibis_doc_model::CellUnderline::None,
+                };
+                style.strike = found_run.is_some_and(|s| s.strike != ibis_doc_model::Strike::None);
+                style.font_size = found_run.and_then(|s| s.font_size).unwrap_or(body.style.font_size);
+                style.color = found_run.and_then(|s| s.color).unwrap_or(body.style.color);
+                style.font = found_run.and_then(|s| s.font.clone()).or_else(|| body.style.font.clone());
+                style.align = match found_para_align.unwrap_or(body.style.align) {
+                    ibis_doc_model::TextAlign::Left => CellAlign::Left,
+                    ibis_doc_model::TextAlign::Center => CellAlign::Center,
+                    ibis_doc_model::TextAlign::Right => CellAlign::Right,
+                    ibis_doc_model::TextAlign::Justify => CellAlign::Justify,
+                    ibis_doc_model::TextAlign::Distributed => CellAlign::Distributed,
+                };
+                style.vertical = match body.anchor {
+                    ibis_doc_model::VerticalAnchor::Top => CellVerticalAlign::Top,
+                    ibis_doc_model::VerticalAnchor::Middle => CellVerticalAlign::Center,
+                    ibis_doc_model::VerticalAnchor::Bottom => CellVerticalAlign::Bottom,
+                };
+                style.wrap = body.wrap;
+            } else {
+                let ts = ibis_doc_model::TextStyle::default();
+                style.bold = ts.bold;
+                style.italic = ts.italic;
+                style.underline = ibis_doc_model::CellUnderline::None;
+                style.strike = false;
+                style.font_size = ts.font_size;
+                style.color = ts.color;
+                style.font = ts.font;
+                style.align = CellAlign::Left;
+                style.vertical = CellVerticalAlign::Top;
+                style.wrap = true;
+            }
+            return style;
+        }
         // When editing a cell, reflect the pending style changes or active run style immediately in the toolbar.
         if let Some(edit) = self.cell_edit() {
             if let Some((col, row)) = self.current_cell() {
@@ -131,10 +235,307 @@ impl SlideEditor {
         self.current_style().underline.enabled()
     }
 
+    fn xlsx_target_run_fonts_and_sizes(&self, default_font: &str) -> Vec<(String, u32)> {
+        let mut out = Vec::new();
+        if let Some(edit) = self.editing.as_ref()
+            && let Some(body) = self.slide().shape(edit.shape).and_then(|s| s.text_body())
+        {
+            let range = edit.edit.range();
+            let char_len = body.text().chars().count();
+            let (start, end) = if range.start < range.end {
+                (range.start, range.end)
+            } else if range.start == range.end {
+                // Caret only: single run at caret
+                return Vec::new();
+            } else {
+                (0, char_len)
+            };
+            let body_font = body.style.font.as_deref().unwrap_or(default_font);
+            let mut pos = 0usize;
+            for p in &body.paragraphs {
+                for r in &p.runs {
+                    let n = r.text.chars().count();
+                    if pos < end && start < pos + n && n > 0 {
+                        let f = r.style.font.as_deref().unwrap_or(body_font).to_string();
+                        let sz = r.style.font_size.unwrap_or(body.style.font_size);
+                        out.push((f, sz));
+                    }
+                    pos += n;
+                }
+                pos += 1;
+            }
+            return out;
+        }
+        let shape_ids = self.selected_sheet_text_shape_ids();
+        if !shape_ids.is_empty() {
+            let mut any_body = false;
+            for shape_id in shape_ids {
+                if let Some(body) = self.slide().shape(shape_id).and_then(|s| s.text_body()) {
+                    any_body = true;
+                    let body_font = body.style.font.as_deref().unwrap_or(default_font);
+                    let mut any_non_empty = false;
+                    for p in &body.paragraphs {
+                        for r in &p.runs {
+                            if !r.text.is_empty() {
+                                let f = r.style.font.as_deref().unwrap_or(body_font).to_string();
+                                let sz = r.style.font_size.unwrap_or(body.style.font_size);
+                                out.push((f, sz));
+                                any_non_empty = true;
+                            }
+                        }
+                    }
+                    if !any_non_empty {
+                        out.push((body_font.to_string(), body.style.font_size));
+                    }
+                } else if self
+                    .slide()
+                    .shape(shape_id)
+                    .is_some_and(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Auto(_)))
+                {
+                    any_body = true;
+                    let ts = ibis_doc_model::TextStyle::default();
+                    let f = ts.font.as_deref().unwrap_or(default_font).to_string();
+                    out.push((f, ts.font_size));
+                }
+            }
+            if any_body {
+                return out;
+            }
+        }
+        if let Some(edit) = self.cell_edit() {
+            if let Some(sel) = edit.selection()
+                && !sel.is_empty()
+                && let Some(runs) = &edit.runs
+            {
+                let b0 = super::cell_edit::byte_at(&edit.text, sel.start);
+                let b1 = super::cell_edit::byte_at(&edit.text, sel.end);
+                let cell_style = match (self.current_sheet(), self.current_cell()) {
+                    (Some((_, sheet)), Some((col, row))) => sheet.cell(row, col).map_or_else(CellStyle::default, |c| sheet.styles[c.style as usize].clone()),
+                    _ => CellStyle::default(),
+                };
+                let base_font = cell_style.font.as_deref().unwrap_or(default_font);
+                let mut at = 0usize;
+                for run in runs {
+                    let next = at + run.text.len();
+                    if at < b1 && b0 < next && !run.text.is_empty() {
+                        let f = run.font.as_deref().unwrap_or(base_font).to_string();
+                        let sz = run.size.unwrap_or(cell_style.font_size);
+                        out.push((f, sz));
+                    }
+                    at = next;
+                }
+            }
+            return out;
+        }
+        if let Some((_, sheet)) = self.current_sheet() {
+            let wb_default = self.presentation().workbook.as_ref().and_then(|w| w.default_style.clone()).unwrap_or_default();
+            for r in self.selected_ranges() {
+                let cell_count = (r.last_row.saturating_sub(r.first_row) + 1) as u64 * (r.last_column.saturating_sub(r.first_column) + 1) as u64;
+                if cell_count > 1024 {
+                    break;
+                }
+                for row in r.first_row..=r.last_row {
+                    for col in r.first_column..=r.last_column {
+                        let cell = sheet.cell(row, col);
+                        let st = cell.map(|c| &sheet.styles[c.style as usize]).unwrap_or(&wb_default);
+                        let base_font = st.font.as_deref().unwrap_or(default_font);
+                        if let Some(runs) = cell.and_then(|c| c.runs.as_ref()).filter(|runs| !runs.is_empty()) {
+                            for run in runs.iter() {
+                                if !run.text.is_empty() {
+                                    let f = run.font.as_deref().unwrap_or(base_font).to_string();
+                                    let sz = run.size.unwrap_or(st.font_size);
+                                    out.push((f, sz));
+                                }
+                            }
+                        } else {
+                            out.push((base_font.to_string(), st.font_size));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    pub(crate) fn toolbar_font_display(&self, default_font: &str) -> String {
+        let items = self.xlsx_target_run_fonts_and_sizes(default_font);
+        if let Some((first_font, _)) = items.first() {
+            if items.iter().any(|(f, _)| f != first_font) {
+                return String::new();
+            }
+            return first_font.clone();
+        }
+        default_font.to_string()
+    }
+
+    pub(crate) fn toolbar_font_size_display(&self, default_size: u32) -> String {
+        let items = self.xlsx_target_run_fonts_and_sizes("游ゴシック"); // i18n-ok
+        if let Some(&(_, first_size)) = items.first() {
+            let min_size = items.iter().map(|&(_, sz)| sz).min().unwrap_or(first_size);
+            let max_size = items.iter().map(|&(_, sz)| sz).max().unwrap_or(first_size);
+            let s = format!("{}", min_size as f32 / 100.0);
+            if min_size != max_size {
+                return format!("{s}+");
+            }
+            return s;
+        }
+        format!("{}", default_size as f32 / 100.0)
+    }
+
+    pub(crate) fn step_font_size_selection(&mut self, larger: bool, cx: &mut Context<Self>) {
+        // 1. If selecting text in a cell edit with rich-text runs, step each selected run individually.
+        if let Some(sel) = self.cell_edit().and_then(|e| e.selection()).filter(|r| !r.is_empty()) {
+            let cell_style = match (self.current_sheet(), self.current_cell()) {
+                (Some((_, sheet)), Some((col, row))) => sheet.cell(row, col).map_or_else(CellStyle::default, |c| sheet.styles[c.style as usize].clone()),
+                _ => CellStyle::default(),
+            };
+            if let Some(edit) = self.cell_edit_mut()
+                && !edit.text.trim_start().starts_with('=')
+            {
+                let b0 = super::cell_edit::byte_at(&edit.text, sel.start);
+                let b1 = super::cell_edit::byte_at(&edit.text, sel.end);
+                if b0 < b1 {
+                    let runs = edit.runs.take().unwrap_or_else(|| {
+                        vec![ibis_doc_model::CellRun {
+                            text: edit.text.clone(),
+                            font: None,
+                            size: Some(cell_style.font_size),
+                            bold: Some(cell_style.bold),
+                            italic: Some(cell_style.italic),
+                            underline: Some(cell_style.underline),
+                            strike: Some(cell_style.strike),
+                            color: Some(cell_style.color),
+                        }]
+                    });
+                    let mut split: Vec<ibis_doc_model::CellRun> = Vec::new();
+                    let mut at = 0usize;
+                    for run in runs {
+                        let (start, end) = (at, at + run.text.len());
+                        at = end;
+                        let mut cuts = vec![start];
+                        cuts.extend([b0, b1].into_iter().filter(|&b| b > start && b < end));
+                        cuts.push(end);
+                        for w in cuts.windows(2) {
+                            split.push(ibis_doc_model::CellRun {
+                                text: run.text[w[0] - start..w[1] - start].to_string(),
+                                ..run.clone()
+                            });
+                        }
+                    }
+                    let mut pos = 0usize;
+                    for run in &mut split {
+                        let end = pos + run.text.len();
+                        if pos >= b0 && end <= b1 {
+                            let cur = run.size.unwrap_or(cell_style.font_size);
+                            run.size = Some(ibis_doc_model::step_font_size(cur, larger));
+                        }
+                        pos = end;
+                    }
+                    edit.runs = Some(split);
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        // 2. If editing or selecting a worksheet shape, step each run in the shape individually.
+        if self.step_sheet_shape_font_size(larger, cx) {
+            return;
+        }
+        // 3. Otherwise step the cell font size (stepping each run/cell individually when mixed).
+        self.commit_cell_edit(cx);
+        if self.protection_refuses(super::protection::Guarded::FormatCells, cx) {
+            return;
+        }
+        if let Some((_, sheet)) = self.current_sheet() {
+            let ranges = self.selected_ranges();
+            let total_cells: u64 = ranges
+                .iter()
+                .map(|r| (r.last_row.saturating_sub(r.first_row) + 1) as u64 * (r.last_column.saturating_sub(r.first_column) + 1) as u64)
+                .sum();
+            if total_cells <= 1024 {
+                let wb_default = self.presentation().workbook.as_ref().and_then(|w| w.default_style.clone()).unwrap_or_default();
+                let mut has_runs = false;
+                let mut first_sz = None;
+                let mut mixed_cells = false;
+                for r in &ranges {
+                    for row in r.first_row..=r.last_row {
+                        for col in r.first_column..=r.last_column {
+                            let cell = sheet.cell(row, col);
+                            let st = cell.map(|c| &sheet.styles[c.style as usize]).unwrap_or(&wb_default);
+                            if cell.and_then(|c| c.runs.as_ref()).is_some_and(|runs| !runs.is_empty()) {
+                                has_runs = true;
+                            }
+                            match first_sz {
+                                None => first_sz = Some(st.font_size),
+                                Some(sz) if sz != st.font_size => mixed_cells = true,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                if has_runs || mixed_cells {
+                    let slide = self.current_slide;
+                    let mut commands = Vec::new();
+                    for r in &ranges {
+                        for row in r.first_row..=r.last_row {
+                            for col in r.first_column..=r.last_column {
+                                let cell = sheet.cell(row, col);
+                                let st = cell.map(|c| &sheet.styles[c.style as usize]).unwrap_or(&wb_default);
+                                let next_cell_sz = ibis_doc_model::step_font_size(st.font_size, larger);
+                                let cell_range = CellRange { first_row: row, first_column: col, last_row: row, last_column: col };
+                                commands.push(Command::Sheet(SheetCommand::SetFormat {
+                                    slide,
+                                    ranges: vec![cell_range],
+                                    change: StyleChange::FontSize(next_cell_sz),
+                                }));
+                                if let Some(runs) = cell.and_then(|c| c.runs.as_ref()).filter(|runs| !runs.is_empty()) {
+                                    let new_runs: Vec<ibis_doc_model::CellRun> = runs
+                                        .iter()
+                                        .map(|run| {
+                                            let cur = run.size.unwrap_or(st.font_size);
+                                            ibis_doc_model::CellRun {
+                                                size: Some(ibis_doc_model::step_font_size(cur, larger)),
+                                                ..run.clone()
+                                            }
+                                        })
+                                        .collect();
+                                    commands.push(Command::Sheet(SheetCommand::SetRuns {
+                                        slide,
+                                        row,
+                                        column: col,
+                                        runs: new_runs,
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                    if !commands.is_empty() {
+                        self.run_sheet(commands, cx);
+                        return;
+                    }
+                }
+            }
+        }
+        let size = self.current_style().font_size;
+        self.format_cells(StyleChange::FontSize(ibis_doc_model::step_font_size(size, larger)), cx);
+    }
+
+    pub(crate) fn step_sheet_indent(&mut self, more: bool, cx: &mut Context<Self>) {
+        if self.step_sheet_shape_indent(more, cx) {
+            return;
+        }
+        let cur = self.current_style().indent;
+        let next = if more { cur + 1 } else { cur.saturating_sub(1) };
+        self.format_cells(StyleChange::Indent(next), cx);
+    }
+
     /// Change the selected range's format (one undo step).
     pub(crate) fn format_cells(&mut self, change: StyleChange, cx: &mut Context<Self>) {
         // Text selected while typing: the font change is for that part alone.
         if self.format_edit_selection(&change, cx) {
+            return;
+        }
+        if self.format_sheet_shape_text(&change, cx) {
             return;
         }
         self.commit_cell_edit(cx);
@@ -380,6 +781,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         self.selection = None;
         let state = self.wb_mut();
+        state.panels.extra_ranges = None;
         state.cells.insert(slide, (0, 0));
         state.cell_ends.insert(slide, end);
         cx.notify();
@@ -1093,7 +1495,7 @@ pub(crate) fn cell_color_menu(editor: &SlideEditor, fill: bool) -> Vec<MenuEntry
         .map(|&(name, c)| Swatch::with_id(if fill { "xlsx.fill" } else { "xlsx.color" }, Rgb(c), crate::shell::i18n::text(name), false, &pick))
         .collect();
     let none = fill.then(|| MenuItem::tr("xlsx.fill-none").icon("format_color_reset").on(format(StyleChange::Fill(None))));
-    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None })]
+    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None, current:None })]
 }
 
 /// The palette of the colour new border lines are drawn in.
@@ -1106,6 +1508,101 @@ pub(crate) fn border_color_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
             cx.notify();
         }
     }))
+}
+
+/// The palette of the toolbar's 枠線の色 (`"border-color"`) button (#115):
+/// sets shape stroke color when a shape is selected, or cell border color when cells are selected.
+pub(crate) fn toolbar_border_color_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let colors: Vec<(SharedString, Rgb, &'static str)> = COLORS
+        .iter()
+        .map(|&(label, c)| (SharedString::from(crate::shell::i18n::text(label)), Rgb(c), "xlsx.toolbar-border-color"))
+        .collect();
+    let theme = editor.current_theme_palette_colors();
+    let none = MenuItem::tr("xlsx.shape-stroke.none")
+        .icon("format_color_reset")
+        .on(|this, _, cx| {
+            if !this.selected_ids().is_empty() || this.selected_sheet_shape().is_some() {
+                this.stroke_sheet_shape_color(None, cx);
+            } else {
+                this.set_borders("none", cx);
+            }
+        });
+    crate::shell::color_palette::simple_palette(
+        Some(none),
+        Some(&theme),
+        &colors,
+        Some(editor.wb().border_color),
+        std::rc::Rc::new(|this, c, _, cx| {
+            if !this.selected_ids().is_empty() || this.selected_sheet_shape().is_some() {
+                this.stroke_sheet_shape_color(c.map(ibis_doc_model::Color::opaque), cx);
+            } else if let Some(rgb) = c {
+                this.wb_mut().border_color = rgb;
+                let edges = ["top", "bottom", "left", "right", "inside-h", "inside-v", "diagonal-up", "diagonal-down"];
+                let existing: Vec<&'static str> = edges.into_iter().filter(|&k| this.range_edge(k).is_some()).collect();
+                if existing.is_empty() {
+                    this.set_borders("outside", cx);
+                } else {
+                    for k in existing {
+                        this.set_borders(k, cx);
+                    }
+                }
+            } else {
+                this.set_borders("none", cx);
+            }
+        }),
+    )
+}
+
+/// Build a color `Palette` menu entry from `(item_id, label_key, hex)` items (preserving item IDs for menu connection/tests)
+/// plus the workbook's theme colors (#113).
+pub(crate) fn palette_menu_with_ids(
+    editor: &SlideEditor,
+    none: Option<MenuItem>,
+    items: &[(&'static str, &'static str, u32)],
+    disabled: bool,
+    pick: crate::shell::color_palette::PickColor,
+) -> Vec<MenuEntry> {
+    use crate::shell::color_palette::{Palette, Swatch, THEME_TINTS};
+    let base = editor.current_theme_palette_colors();
+    let mut theme: Vec<Vec<Swatch>> = vec![
+        base.iter()
+            .map(|&rgb| {
+                let mut sw = Swatch::new(rgb, format!("#{:06X}", rgb.0), false, &pick);
+                sw.item.disabled = disabled;
+                sw
+            })
+            .collect(),
+    ];
+    if base.len() == 10 {
+        for row in 1..6 {
+            theme.push(
+                (0..10)
+                    .map(|i| {
+                        let rgb = ibis_pptx::tinted(base[i], THEME_TINTS[i][row]);
+                        let mut sw = Swatch::new(rgb, format!("#{:06X}", rgb.0), false, &pick);
+                        sw.item.disabled = disabled;
+                        sw
+                    })
+                    .collect(),
+            );
+        }
+    }
+    let standard: Vec<Swatch> = items
+        .iter()
+        .map(|&(item_id, label_key, hex)| {
+            let mut sw = Swatch::with_id(item_id, Rgb(hex), crate::shell::i18n::text(label_key), false, &pick);
+            sw.item.disabled = disabled;
+            sw
+        })
+        .collect();
+    vec![MenuEntry::Palette(Palette {
+        none,
+        theme,
+        standard,
+        pick: Some(pick),
+        more: None,
+        button: None, current:None,
+    })]
 }
 
 /// The items for the line style of new border lines.
@@ -1127,27 +1624,137 @@ pub(crate) fn border_style_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     }).collect()
 }
 
+/// The 17 DrawingML underline styles (`a:TextUnderlineType`) for worksheet shapes/textboxes (#156).
+/// Excludes cell-only `SingleAccounting` and `DoubleAccounting`.
+pub(crate) fn shape_underline_kind_items(now: Option<ibis_doc_model::Underline>) -> Vec<MenuEntry> {
+    use ibis_doc_model::Underline as U;
+    const KINDS: [(&str, &str, U); 17] = [
+        ("pptx.underline.sng", "docx.paragraph-decorations.single", U::Single),
+        ("pptx.underline.words", "docx.toolbar.words-only", U::Words),
+        ("pptx.underline.dbl", "_docx.double-underline", U::Double),
+        ("pptx.underline.heavy", "_docx.thick-underline", U::Heavy),
+        ("pptx.underline.dotted", "_shell.dotted", U::Dotted),
+        ("pptx.underline.dottedHeavy", "docx.toolbar.thick-dotted", U::DottedHeavy),
+        ("pptx.underline.dash", "_shell.dashed", U::Dash),
+        ("pptx.underline.dashHeavy", "docx.toolbar.thick-dashed", U::DashHeavy),
+        ("pptx.underline.dashLong", "docx.toolbar.long-dashed", U::DashLong),
+        ("pptx.underline.dashLongHeavy", "docx.toolbar.thick-long-dashed", U::DashLongHeavy),
+        ("pptx.underline.dotDash", "docx.picture.border.dash.dashdot", U::DotDash),
+        ("pptx.underline.dotDashHeavy", "docx.toolbar.thick-dash-dot", U::DotDashHeavy),
+        ("pptx.underline.dotDotDash", "_docx.dash-dot-dot", U::DotDotDash),
+        ("pptx.underline.dotDotDashHeavy", "docx.toolbar.thick-dash-dot-dot", U::DotDotDashHeavy),
+        ("pptx.underline.wavy", "_shell.wave", U::Wavy),
+        ("pptx.underline.wavyHeavy", "docx.toolbar.thick-wave", U::WavyHeavy),
+        ("pptx.underline.wavyDbl", "docx.paragraph-decorations.double-wave", U::WavyDouble),
+    ];
+    KINDS
+        .into_iter()
+        .map(|(id, label, kind)| {
+            MenuItem::new(id, crate::shell::i18n::text(label))
+                .checked(now == Some(kind))
+                .on(move |this, _, cx| {
+                    this.set_sheet_shape_underline(Some(kind), cx);
+                })
+                .into()
+        })
+        .collect()
+}
+
+/// Text highlight (background) color palette for worksheet shapes/textboxes (#152).
+pub(crate) fn shape_highlight_color_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let colors: Vec<(SharedString, Rgb, &'static str)> = COLORS
+        .iter()
+        .map(|&(label, c)| (SharedString::from(crate::shell::i18n::text(label)), Rgb(c), "xlsx.shape-highlight-color"))
+        .collect();
+    let theme = editor.current_theme_palette_colors();
+    let none = MenuItem::tr("pptx.chrome.no-color")
+        .icon("format_color_reset")
+        .on(|this, _, cx| {
+            this.set_sheet_shape_highlight(None, cx);
+        });
+    crate::shell::color_palette::simple_palette(
+        Some(none),
+        Some(&theme),
+        &colors,
+        None,
+        std::rc::Rc::new(|this, c, _, cx| {
+            this.set_sheet_shape_highlight(c, cx);
+        }),
+    )
+}
+
 pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
     let style = editor.current_style();
     let format = |change: StyleChange| move |this: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>| this.format_cells(change.clone(), cx);
     let mut number_menu: Vec<MenuEntry> = NUMBER_FORMATS.iter().map(|&(name, code)| MenuItem::new("xlsx.number-format", crate::shell::i18n::text(name)).checked(style.number_format == code).on(format(StyleChange::NumberFormat(code.into()))).into()).collect();
     number_menu.push(MenuEntry::Separator);
     number_menu.push(MenuItem::tr("xlsx.number-format-custom").on(|this, window, cx| this.open_custom_format(window, cx)).into());
-    let font = style.font.clone().unwrap_or_else(|| "游ゴシック".into()); // i18n-ok（既定のフォント名（スタイルに保存される値））
+    let default_font = style.font.clone().unwrap_or_else(|| "游ゴシック".into()); // i18n-ok（既定のフォント名（スタイルに保存される値））
+    let font = editor.toolbar_font_display(&default_font);
     let font_menu = crate::shell::font_list::build_font_menu_entries(
         "xlsx.font",
         Vec::new(),
-        Some(&font),
+        (!font.is_empty()).then_some(font.as_str()),
         |f, this, _, cx| {
             this.format_cells(StyleChange::Font(Some(f.to_string())), cx);
         },
     );
     let size = style.font_size;
+    let size_display = editor.toolbar_font_size_display(size);
     let halign = |id: &'static str, icon: &'static str, label: &'static str, a: CellAlign| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).checked(style.align == a).on(format(StyleChange::Align(a))).into() };
     let valign = |id: &'static str, icon: &'static str, label: &'static str, a: CellVerticalAlign| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).icon(icon).checked(style.vertical == a).on(format(StyleChange::Vertical(a))).into() };
     let border = |id: &'static str, icon: &'static str, label: &'static str, kind: &'static str| -> MenuEntry { MenuItem::new(id, label).icon(icon).on(move |this, _, cx| this.set_borders(kind, cx)).into() };
     let border_styles = border_style_items(editor);
     let border_colors = border_color_menu(editor);
+    let current_text_align = match style.align {
+        CellAlign::Left => Some(ibis_doc_model::TextAlign::Left),
+        CellAlign::Center | CellAlign::CenterAcross => Some(ibis_doc_model::TextAlign::Center),
+        CellAlign::Right => Some(ibis_doc_model::TextAlign::Right),
+        CellAlign::Justify => Some(ibis_doc_model::TextAlign::Justify),
+        CellAlign::Distributed => Some(ibis_doc_model::TextAlign::Distributed),
+        CellAlign::General | CellAlign::Fill => None,
+    };
+    let [align_l, align_c, align_r, align_drop] = crate::shell::chrome::align_h_toolbar_items_with_id(
+        "halign",
+        current_text_align,
+        true,
+        handler(format(StyleChange::Align(CellAlign::Left))),
+        handler(format(StyleChange::Align(CellAlign::Center))),
+        handler(format(StyleChange::Align(CellAlign::Right))),
+        vec![
+            halign("xlsx.align-general", "format_align_left", "_xlsx.general", CellAlign::General),
+            halign("xlsx.align-left", "format_align_left", "_shell.left", CellAlign::Left),
+            halign("xlsx.align-center", "format_align_center", "_shell.center", CellAlign::Center),
+            halign("xlsx.align-right", "format_align_right", "_shell.right", CellAlign::Right),
+            halign("xlsx.align-center-across", "format_align_center", "_xlsx.center-across-selection", CellAlign::CenterAcross),
+            halign("xlsx.align-distributed", "format_align_justify", "_shell.distributed", CellAlign::Distributed),
+            halign("xlsx.align-fill", "format_align_left", "_xlsx.fill", CellAlign::Fill),
+            halign("xlsx.align-justify", "format_align_justify", "align.justify", CellAlign::Justify),
+            MenuEntry::Separator,
+            MenuItem::tr("xlsx.shrink").checked(style.shrink).on(move |this, _, cx| this.format_cells(StyleChange::Shrink(!style.shrink), cx)).into(),
+        ],
+    );
+    let current_valign = match style.vertical {
+        CellVerticalAlign::Top => Some(ibis_doc_model::VerticalAnchor::Top),
+        CellVerticalAlign::Center => Some(ibis_doc_model::VerticalAnchor::Middle),
+        CellVerticalAlign::Bottom => Some(ibis_doc_model::VerticalAnchor::Bottom),
+        CellVerticalAlign::Justify | CellVerticalAlign::Distributed => None,
+    };
+    let [valign_t, valign_m, valign_b, valign_drop] = crate::shell::chrome::align_v_toolbar_items_with_id(
+        "valign",
+        current_valign,
+        true,
+        handler(format(StyleChange::Vertical(CellVerticalAlign::Top))),
+        handler(format(StyleChange::Vertical(CellVerticalAlign::Center))),
+        handler(format(StyleChange::Vertical(CellVerticalAlign::Bottom))),
+        vec![
+            valign("xlsx.valign-top", "vertical_align_top", "_shell.top", CellVerticalAlign::Top),
+            valign("xlsx.valign-center", "vertical_align_center", "_shell.center", CellVerticalAlign::Center),
+            valign("xlsx.valign-bottom", "vertical_align_bottom", "_shell.bottom", CellVerticalAlign::Bottom),
+            valign("xlsx.valign-justify", "vertical_align_center", "align.justify", CellVerticalAlign::Justify),
+            valign("xlsx.valign-distributed", "vertical_align_center", "_shell.distributed", CellVerticalAlign::Distributed),
+        ],
+    );
     // Whether the selection holds a merged range (the merge button is then pressed).
     let merged = match (editor.selected_range(), editor.current_sheet()) {
         (Some(r), Some((_, sheet))) => sheet.merges.iter().any(|m| m.first_row <= r.last_row && r.first_row <= m.last_row && m.first_column <= r.last_column && r.first_column <= m.last_column),
@@ -1178,25 +1785,48 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolItem::Select { id: "font", value: font.into(), width: 128.0, tooltip: crate::shell::i18n::text("_shell.font").into(), menu: font_menu, disabled: false },
         sep(),
         ToolItem::FontSize {
-            value: Some(format!("{}", size as f32 / 100.0).into()),
-            smaller: Some(handler(move |this, _, cx| this.format_cells(StyleChange::FontSize(ibis_doc_model::step_font_size(size, false)), cx))),
-            larger: Some(handler(move |this, _, cx| this.format_cells(StyleChange::FontSize(ibis_doc_model::step_font_size(size, true)), cx))),
+            value: Some(size_display.into()),
+            smaller: Some(handler(|this, _, cx| this.step_font_size_selection(false, cx))),
+            larger: Some(handler(|this, _, cx| this.step_font_size_selection(true, cx))),
         },
         sep(),
         ToolButton::new("bold", "format_bold", "_shell.bold-b").on(style.bold).click(format(StyleChange::Bold(!style.bold))).into(),
         ToolButton::new("italic", "format_italic", "_shell.italic-i").on(style.italic).click(format(StyleChange::Italic(!style.italic))).into(),
-        ToolButton::new("underline", "format_underlined", "_shell.underline-u").on(style.underline.enabled()).click(format(StyleChange::Underline(!style.underline.enabled())))
-            // A split button as Excel's: the left half underlines in the kind last chosen (single at first) or takes the underline off.
-            .menu(ibis_doc_model::CellUnderline::ALL.into_iter().map(|u| {
-            let label = match u { ibis_doc_model::CellUnderline::None => crate::shell::i18n::text("_xlsx.no-underline"), ibis_doc_model::CellUnderline::Single => crate::shell::i18n::text("_xlsx.single-underline"), ibis_doc_model::CellUnderline::Double => crate::shell::i18n::text("_xlsx.double-underline"), ibis_doc_model::CellUnderline::SingleAccounting => crate::shell::i18n::text("_xlsx.single-accounting"), ibis_doc_model::CellUnderline::DoubleAccounting => crate::shell::i18n::text("_xlsx.double-accounting") };
-            MenuItem::new(u.ooxml(), label).checked(style.underline == u).on(format(StyleChange::UnderlineKind(u))).into()
-        }).collect())
-            .last_used(editor, "underline", |i| i.id != "none", |i| i.id == "single", false)
-            .quick_off(style.underline.enabled(), format(StyleChange::UnderlineKind(ibis_doc_model::CellUnderline::None)))
+        if editor.has_selected_sheet_text_shapes() {
+            let now = editor.selected_sheet_shape_underline();
+            ToolButton::new("underline", "format_underlined", "_shell.underline-u")
+                .on(now.is_some())
+                .click(format(StyleChange::Underline(!now.is_some())))
+                .menu(shape_underline_kind_items(now))
+                .last_used(editor, "shape-underline", |_| true, |i| i.id == "pptx.underline.sng", false)
+                .quick_off(now.is_some(), |this, _, cx| {
+                    this.set_sheet_shape_underline(None, cx);
+                })
+                .into()
+        } else {
+            ToolButton::new("underline", "format_underlined", "_shell.underline-u").on(style.underline.enabled()).click(format(StyleChange::Underline(!style.underline.enabled())))
+                // A split button as Excel's: the left half underlines in the kind last chosen (single at first) or takes the underline off.
+                .menu(ibis_doc_model::CellUnderline::ALL.into_iter().map(|u| {
+                let label = match u { ibis_doc_model::CellUnderline::None => crate::shell::i18n::text("_xlsx.no-underline"), ibis_doc_model::CellUnderline::Single => crate::shell::i18n::text("_xlsx.single-underline"), ibis_doc_model::CellUnderline::Double => crate::shell::i18n::text("_xlsx.double-underline"), ibis_doc_model::CellUnderline::SingleAccounting => crate::shell::i18n::text("_xlsx.single-accounting"), ibis_doc_model::CellUnderline::DoubleAccounting => crate::shell::i18n::text("_xlsx.double-accounting") };
+                MenuItem::new(u.ooxml(), label).checked(style.underline == u).on(format(StyleChange::UnderlineKind(u))).into()
+            }).collect())
+                .last_used(editor, "underline", |i| i.id != "none", |i| i.id == "single", false)
+                .quick_off(style.underline.enabled(), format(StyleChange::UnderlineKind(ibis_doc_model::CellUnderline::None)))
+                .into()
+        },
+        ToolButton::new("strikethrough", "format_strikethrough", "pptx.chrome.strikethrough")
+            .on(style.strike)
+            .click(format(StyleChange::Strike(!style.strike)))
             .into(),
         ToolButton::new("text-color", "format_color_text", "_shell.font-color").palette(editor, "text-color", 0xff0000, cell_color_menu(editor, false)).into(),
+        ToolButton::new("highlight", "ink_highlighter", "pptx.chrome.highlight-color")
+            .palette(editor, "highlight", 0xffff00, shape_highlight_color_menu(editor))
+            .into(),
+        ToolButton::new("clear-format", "format_clear", crate::shell::i18n::text("pptx.chrome.clear-all-formatting")).click(|this, _, cx| this.clear_cell_formats(cx)).into(),
         sep(),
         ToolButton::new("fill", "format_color_fill", "_shell.fill-color").palette(editor, "fill", 0xffff00, cell_color_menu(editor, true)).into(),
+        ToolButton::new("border-color", "border_color", "_shell.border-color").palette(editor, "border-color", 0x000000, toolbar_border_color_menu(editor)).into(),
+        ToolButton::new("sheet-list", "menu", "").searchable().single_select().hidden().menu(crate::xlsx::sheet_ui::sheet_list_menu_entries(editor)).into(),
         // A split button as Excel's: the left half draws the border last chosen (the bottom border at first), with its icon.
         ToolButton::new("borders", "border_bottom", "_shell.line")
             .menu(vec![
@@ -1229,64 +1859,48 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
             .quick(move |this, _, cx| if merged { this.unmerge_cells(cx) } else { this.merge_cells(true, cx) })
             .into(),
         sep(),
-        ToolButton::new("align-left", "format_align_left", "_shell.left")
-            .segment(crate::shell::chrome::SegmentRounding::Left)
-            .on(style.align == CellAlign::Left)
-            .click(format(StyleChange::Align(CellAlign::Left)))
-            .into(),
-        ToolButton::new("align-center", "format_align_center", "_shell.center")
-            .segment(crate::shell::chrome::SegmentRounding::Middle)
-            .on(style.align == CellAlign::Center || style.align == CellAlign::CenterAcross)
-            .click(format(StyleChange::Align(CellAlign::Center)))
-            .into(),
-        ToolButton::new("align-right", "format_align_right", "_shell.right")
-            .segment(crate::shell::chrome::SegmentRounding::Middle)
-            .on(style.align == CellAlign::Right)
-            .click(format(StyleChange::Align(CellAlign::Right)))
-            .into(),
-        ToolButton::dropdown("halign", "_shell.horizontal-alignment")
-            .segment(crate::shell::chrome::SegmentRounding::Right)
-            .menu(vec![
-                halign("xlsx.align-general", "format_align_left", "_xlsx.general", CellAlign::General),
-                halign("xlsx.align-left", "format_align_left", "_shell.left", CellAlign::Left),
-                halign("xlsx.align-center", "format_align_center", "_shell.center", CellAlign::Center),
-                halign("xlsx.align-right", "format_align_right", "_shell.right", CellAlign::Right),
-                halign("xlsx.align-center-across", "format_align_center", "_xlsx.center-across-selection", CellAlign::CenterAcross),
-                halign("xlsx.align-distributed", "format_align_justify", "_shell.distributed", CellAlign::Distributed),
-                halign("xlsx.align-fill", "format_align_left", "_xlsx.fill", CellAlign::Fill),
-                halign("xlsx.align-justify", "format_align_justify", "align.justify", CellAlign::Justify),
-                MenuEntry::Separator,
-                MenuItem::tr("xlsx.shrink").checked(style.shrink).on(move |this, _, cx| this.format_cells(StyleChange::Shrink(!style.shrink), cx)).into(),
-            ])
-            .into(),
-        ToolButton::new("valign-top", "vertical_align_top", "_shell.top")
-            .segment(crate::shell::chrome::SegmentRounding::Left)
-            .on(style.vertical == CellVerticalAlign::Top)
-            .click(format(StyleChange::Vertical(CellVerticalAlign::Top)))
-            .into(),
-        ToolButton::new("valign-center", "vertical_align_center", "_shell.center")
-            .segment(crate::shell::chrome::SegmentRounding::Middle)
-            .on(style.vertical == CellVerticalAlign::Center)
-            .click(format(StyleChange::Vertical(CellVerticalAlign::Center)))
-            .into(),
-        ToolButton::new("valign-bottom", "vertical_align_bottom", "_shell.bottom")
-            .segment(crate::shell::chrome::SegmentRounding::Middle)
-            .on(style.vertical == CellVerticalAlign::Bottom)
-            .click(format(StyleChange::Vertical(CellVerticalAlign::Bottom)))
-            .into(),
-        ToolButton::dropdown("valign", "_shell.vertical-alignment")
-            .segment(crate::shell::chrome::SegmentRounding::Right)
-            .menu(vec![
-                valign("xlsx.valign-top", "vertical_align_top", "_shell.top", CellVerticalAlign::Top),
-                valign("xlsx.valign-center", "vertical_align_center", "_shell.center", CellVerticalAlign::Center),
-                valign("xlsx.valign-bottom", "vertical_align_bottom", "_shell.bottom", CellVerticalAlign::Bottom),
-                valign("xlsx.valign-justify", "vertical_align_center", "align.justify", CellVerticalAlign::Justify),
-                valign("xlsx.valign-distributed", "vertical_align_center", "_shell.distributed", CellVerticalAlign::Distributed),
-            ])
-            .into(),
+        align_l,
+        align_c,
+        align_r,
+        align_drop,
+        valign_t,
+        valign_m,
+        valign_b,
+        valign_drop,
         ToolButton::new("wrap", "wrap_text", "_shell.wrap-text").on(style.wrap).click(format(StyleChange::Wrap(!style.wrap))).into(),
-        ToolButton::new("indent-less", "format_indent_decrease", "_xlsx.decrease-indent").click(format(StyleChange::Indent(style.indent.saturating_sub(1)))).into(),
-        ToolButton::new("indent-more", "format_indent_increase", "_xlsx.increase-indent").click(format(StyleChange::Indent(style.indent + 1))).into(),
+        {
+            let cur_list = editor.selected_sheet_shape_list();
+            let bullets_on = matches!(cur_list, Some(ibis_doc_model::ListKind::Bullet))
+                || matches!(cur_list, Some(ibis_doc_model::ListKind::Symbol(c)) if c != '☐' && c != '☑');
+            ToolButton::new("bullets", "format_list_bulleted", "_shell.bullets")
+                .on(bullets_on)
+                .click(|this, _, cx| {
+                    this.toggle_sheet_shape_list(ibis_doc_model::ListKind::Bullet, cx);
+                })
+                .into()
+        },
+        {
+            let cur_list = editor.selected_sheet_shape_list();
+            let numbered_on = matches!(cur_list, Some(ibis_doc_model::ListKind::Numbered | ibis_doc_model::ListKind::Scheme(_)));
+            ToolButton::new("numbered", "format_list_numbered", "_shell.numbering")
+                .on(numbered_on)
+                .click(|this, _, cx| {
+                    this.toggle_sheet_shape_list(ibis_doc_model::ListKind::Numbered, cx);
+                })
+                .into()
+        },
+        {
+            let cur_list = editor.selected_sheet_shape_list();
+            let checklist_on = matches!(cur_list, Some(ibis_doc_model::ListKind::Symbol('☐' | '☑')));
+            ToolButton::new("checklist", "checklist", "checklist")
+                .on(checklist_on)
+                .click(|this, _, cx| {
+                    this.toggle_sheet_shape_list(ibis_doc_model::ListKind::Symbol('☐'), cx);
+                })
+                .into()
+        },
+        ToolButton::new("indent-less", "format_indent_decrease", "_xlsx.decrease-indent").click(|this, _, cx| this.step_sheet_indent(false, cx)).into(),
+        ToolButton::new("indent-more", "format_indent_increase", "_xlsx.increase-indent").click(|this, _, cx| this.step_sheet_indent(true, cx)).into(),
         sep(),
         ToolButton::new("functions", "functions", "_shell.functions")
             .menu(super::autosum::FUNCTIONS.iter().map(|&(f, label)| MenuItem::new("xlsx.function", crate::shell::i18n::format("xlsx.toolbar.function-item", &[("name", &f), ("label", &crate::shell::i18n::text(label))])).on(move |this, _, cx| this.auto_function(f, cx)).into()).collect())
@@ -1407,7 +2021,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         vec![
             MenuItem::tr("xlsx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_sheet_spelling(w, cx)).into(),
             MenuItem::tr("pptx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_sheet_spelling(w, cx)).into(),
-            MenuItem::tr("xlsx.thesaurus").icon("menu_book").on(|e, w, cx| e.open_thesaurus(w, cx)).into(),
+            MenuItem::tr("xlsx.thesaurus").icon("menu_book").on(|e, w, cx| e.open_sheet_thesaurus(w, cx)).into(),
         ],
     );
     // 書式 > テキスト: 下線（下線・二重下線）
@@ -1612,63 +2226,32 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             })
             .into(),
     );
-    // 挿入 > 新しいメモ (編集 for a cell with one), after the link; メモの削除.
+    // 挿入 > メモ/コメント (7 items grouped into a submenu, #139; コメントとメモのクリア stays in 編集 > クリア, #140).
     let has_note = editor.current_cell().zip(editor.current_sheet()).is_some_and(|((c, r), (_, sheet))| sheet.comment_at(r, c).is_some());
-    let mut note: MenuEntry = MenuItem::tr(if has_note { "xlsx.note-edit" } else { "xlsx.note-new" }).icon("note_add").shortcut("⇧F2").on(|this, window, cx| this.open_note_panel(window, cx)).into();
-    for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "insert.link", note) {
-            Ok(()) => break,
-            Err(back) => note = back,
-        }
-    }
-    let mut note_delete: MenuEntry = MenuItem::tr("xlsx.note-delete").icon("delete").disabled(!has_note).on(|this, _, cx| this.delete_notes(cx)).into();
-    for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, if has_note { "xlsx.note-edit" } else { "xlsx.note-new" }, note_delete) {
-            Ok(()) => break,
-            Err(back) => note_delete = back,
-        }
-    }
     let has_thread = editor.current_cell().zip(editor.current_sheet()).is_some_and(|((c, r), (_, sheet))| sheet.thread_at(r, c).is_some());
-    let mut comment_delete: MenuEntry = MenuItem::tr("xlsx.comment-delete").icon("delete").disabled(!has_thread).on(|this, _, cx| {
-        if let Some((c, r)) = this.current_cell() {
-            this.delete_threaded_comment(r, c, cx);
-        }
-    }).into();
-    for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "xlsx.note-delete", comment_delete) {
-            Ok(()) => break,
-            Err(back) => comment_delete = back,
-        }
-    }
     let has_any_comments = editor.current_sheet().is_some_and(|(_, s)| !s.comments.is_empty() || !s.threads.is_empty());
-    let mut clear_comments: MenuEntry = MenuItem::tr("xlsx.clear-comments").icon("clear_all").disabled(!has_any_comments).on(|this, _, cx| this.delete_threaded_comments_and_notes(cx)).into();
-    for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "xlsx.comment-delete", clear_comments) {
-            Ok(()) => break,
-            Err(back) => clear_comments = back,
-        }
-    }
-    let mut prev_comment: MenuEntry = MenuItem::tr("xlsx.previous-comment").icon("arrow_back").disabled(!has_any_comments).on(|this, _, cx| this.select_next_comment(false, cx)).into();
-    for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "xlsx.clear-comments", prev_comment) {
-            Ok(()) => break,
-            Err(back) => prev_comment = back,
-        }
-    }
-    let mut next_comment: MenuEntry = MenuItem::tr("xlsx.next-comment").icon("arrow_forward").disabled(!has_any_comments).on(|this, _, cx| this.select_next_comment(true, cx)).into();
-    for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "xlsx.previous-comment", next_comment) {
-            Ok(()) => break,
-            Err(back) => next_comment = back,
-        }
-    }
     let show_all_notes = editor.sheet_state().is_some_and(|s| s.show_all_notes);
-    let mut all_notes: MenuEntry = MenuItem::tr("xlsx.show-all-notes").icon("visibility").checked(show_all_notes).on(|this, _, cx| this.toggle_show_all_notes(cx)).into();
-    for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "xlsx.next-comment", all_notes) {
-            Ok(()) => break,
-            Err(back) => all_notes = back,
-        }
+    let notes_comments_items: Vec<MenuEntry> = vec![
+        MenuItem::tr("insert.comment").icon("add_comment").shortcut("⌥⌘M").on(|this, window, cx| this.open_threaded_comment_panel(window, cx)).into(),
+        MenuItem::tr("xlsx.comment-delete").icon("delete").disabled(!has_thread).on(|this, _, cx| {
+            if let Some((c, r)) = this.current_cell() {
+                this.delete_threaded_comment(r, c, cx);
+            }
+        }).into(),
+        MenuEntry::Separator,
+        MenuItem::tr(if has_note { "xlsx.note-edit" } else { "xlsx.note-new" }).icon("note_add").shortcut("⇧F2").on(|this, window, cx| this.open_note_panel(window, cx)).into(),
+        MenuItem::tr("xlsx.note-delete").icon("delete").disabled(!has_note).on(|this, _, cx| this.delete_notes(cx)).into(),
+        MenuEntry::Separator,
+        MenuItem::tr("xlsx.previous-comment").icon("arrow_back").disabled(!has_any_comments).on(|this, _, cx| this.select_next_comment(false, cx)).into(),
+        MenuItem::tr("xlsx.next-comment").icon("arrow_forward").disabled(!has_any_comments).on(|this, _, cx| this.select_next_comment(true, cx)).into(),
+        MenuItem::tr("xlsx.show-all-notes").icon("visibility").checked(show_all_notes).on(|this, _, cx| this.toggle_show_all_notes(cx)).into(),
+    ];
+    let notes_comments_sub: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.notes-comments-menu", "comment", notes_comments_items).into();
+    let insert_entries = menus.items_mut(crate::shell::chrome::MenuId::Insert);
+    if let Some(pos) = insert_entries.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "insert.comment")) {
+        insert_entries[pos] = notes_comments_sub;
+    } else {
+        insert_entries.push(notes_comments_sub);
     }
 
     let is_landscape = editor.current_print().is_some_and(|p| p.landscape);
@@ -1844,8 +2427,8 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.compatibility-check").icon("rule").on(|this, window, cx| this.open_xlsx_compatibility_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.error-options").icon("rule").on(|this, window, cx| this.open_error_options_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autocorrect").icon("spellcheck").on(|this, window, cx| this.open_autocorrect_panel(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autorecover-settings").icon("settings_backup_restore").on(|this, window, cx| { this.wb_mut().panels.close(); this.open_autorecover_settings(window, cx) }).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.recover-unsaved").icon("restore_page").on(|this, _window, cx| { this.wb_mut().panels.close(); this.open_recover_unsaved(cx) }).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autorecover-settings").icon("settings_backup_restore").on(|this, window, cx| { this.wb_mut().close_settings(); this.open_autorecover_settings(window, cx) }).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.recover-unsaved").icon("restore_page").on(|this, _window, cx| { this.wb_mut().close_settings(); this.open_recover_unsaved(cx) }).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.backup-save-settings").icon("save_as").on(|this, window, cx| this.open_xlsx_backup_save_settings_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.open-and-repair").icon("cleaning_services").disabled(super::repair::damaged_workbook().is_none()).on(|this, window, cx| this.open_xlsx_repair_damaged(window, cx)).into());
     let hide_ink = editor.current_sheet().is_some_and(|(_, s)| s.hide_ink);
@@ -2097,6 +2680,10 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.ruler-unit.inch", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Inches, cx));
     menus.connect("xlsx.ruler-unit.point", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Points, cx));
     menus.connect("xlsx.ruler-unit.pica", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Picas, cx));
+    let has_cell_selection = editor.selection.is_none() && editor.selected_ids().is_empty() && editor.selected_range().is_some();
+    if let Some(item) = menus.find_mut("xlsx.zoom-selection") {
+        item.disabled = !has_cell_selection;
+    }
     menus.connect("xlsx.zoom-selection", |this, window, cx| {
         this.zoom_to_selection(window, cx);
     });
@@ -2229,7 +2816,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     // ファイル > 未保存のブックの回復…
     let mut recover_entry: MenuEntry = MenuItem::tr("xlsx.recover-unsaved")
         .icon("restore_page")
-        .on(|this, _window, cx| { this.wb_mut().panels.close(); this.open_recover_unsaved(cx) })
+        .on(|this, _window, cx| { this.wb_mut().close_settings(); this.open_recover_unsaved(cx) })
         .into();
     for (_, entries) in menus.menus.iter_mut() {
         match insert_after(entries, "file.open", recover_entry) {
@@ -2464,14 +3051,13 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.xml-source").icon("data_object").on(|this, window, cx| this.open_xml_source(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(MenuItem::tr("xlsx.xml-map-properties").icon("tune").on(|this, window, cx| this.open_xml_map_properties(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.slicer-insert").icon("filter_alt").on(|this, window, cx| this.open_slicer_insert_panel(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.timeline-insert").icon("timeline").on(|this, window, cx| this.open_timeline_insert_panel(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(crate::shell::chrome::Submenu::new("xlsx.insert-control", "widgets", crate::shell::i18n::text("xlsx.insert-control"), super::control_insert::control_insert_items()).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.timeline-insert").icon("schedule").on(|this, window, cx| this.open_timeline_insert_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(crate::shell::chrome::Submenu::new("xlsx.insert-control", "checklist", crate::shell::i18n::text("xlsx.insert-control"), super::control_insert::control_insert_items()).into());
     menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.ink").icon("draw").on(|this, window, cx| this.open_ink_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.pivot-insert").icon("table_chart").on(|this, window, cx| this.open_create_pivot(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.recommended-pivots").icon("auto_graph").on(|this, window, cx| this.open_recommended_pivots(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.recommended-pivot-tables").icon("auto_awesome_motion").on(|this, window, cx| this.open_recommended_pivot_tables(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.recommended-pivots").icon("insert_chart").on(|this, window, cx| this.open_recommended_pivots(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.pivot-chart-insert").icon("insert_chart").on(|this, window, cx| this.open_insert_pivot_chart(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.3d-model").icon("view_in_ar").on(|this, window, cx| this.pick_sheet_3d_model(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.3d-model").icon("shapes").on(|this, window, cx| this.pick_sheet_3d_model(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Insert).push(MenuItem::tr("xlsx.signature-line").icon("draw").on(|this, _, cx| { this.insert_sheet_signature_line("", "", cx); }).into());
     let spark_style_items: Vec<MenuEntry> = [
         ("xlsx.sparkline-style-1", 0),
@@ -2490,16 +3076,27 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             .into()
     })
     .collect();
-    let spark_color_items: Vec<MenuEntry> = vec![
-        MenuItem::tr("xlsx.sparkline-color-blue").on(|this, _, cx| this.set_selected_sparklines_series_color(Some(ibis_doc_model::Rgb(0x376092)), cx)).into(),
-        MenuItem::tr("xlsx.sparkline-color-red").on(|this, _, cx| this.set_selected_sparklines_series_color(Some(ibis_doc_model::Rgb(0xC00000)), cx)).into(),
-        MenuItem::tr("xlsx.sparkline-color-green").on(|this, _, cx| this.set_selected_sparklines_series_color(Some(ibis_doc_model::Rgb(0x70AD47)), cx)).into(),
-        MenuItem::tr("xlsx.sparkline-color-purple").on(|this, _, cx| this.set_selected_sparklines_series_color(Some(ibis_doc_model::Rgb(0x7030A0)), cx)).into(),
-        MenuItem::tr("xlsx.sparkline-color-cyan").on(|this, _, cx| this.set_selected_sparklines_series_color(Some(ibis_doc_model::Rgb(0x4BACC6)), cx)).into(),
-        MenuItem::tr("xlsx.sparkline-color-orange").on(|this, _, cx| this.set_selected_sparklines_series_color(Some(ibis_doc_model::Rgb(0xED7D31)), cx)).into(),
-        MenuItem::tr("xlsx.sparkline-color-gray").on(|this, _, cx| this.set_selected_sparklines_series_color(Some(ibis_doc_model::Rgb(0x7F7F7F)), cx)).into(),
-        MenuItem::tr("xlsx.sparkline-color-black").on(|this, _, cx| this.set_selected_sparklines_series_color(Some(ibis_doc_model::Rgb(0x000000)), cx)).into(),
+    const SPARK_COLOR_SWATCHES: [(&str, &str, u32); 8] = [
+        ("xlsx.sparkline-color-blue", "xlsx.sparkline-color-blue", 0x376092),
+        ("xlsx.sparkline-color-red", "xlsx.sparkline-color-red", 0xC00000),
+        ("xlsx.sparkline-color-green", "xlsx.sparkline-color-green", 0x70AD47),
+        ("xlsx.sparkline-color-purple", "xlsx.sparkline-color-purple", 0x7030A0),
+        ("xlsx.sparkline-color-cyan", "xlsx.sparkline-color-cyan", 0x4BACC6),
+        ("xlsx.sparkline-color-orange", "xlsx.sparkline-color-orange", 0xED7D31),
+        ("xlsx.sparkline-color-gray", "xlsx.sparkline-color-gray", 0x7F7F7F),
+        ("xlsx.sparkline-color-black", "xlsx.sparkline-color-black", 0x000000),
     ];
+    let spark_color_items: Vec<MenuEntry> = palette_menu_with_ids(
+        editor,
+        None,
+        &SPARK_COLOR_SWATCHES,
+        false,
+        std::rc::Rc::new(|this, c, _, cx| {
+            if let Some(rgb) = c {
+                this.set_selected_sparklines_series_color(Some(rgb), cx);
+            }
+        }),
+    );
     let spark_hidden_items: Vec<MenuEntry> = vec![
         MenuItem::tr("xlsx.sparkline-display-hidden-on").on(|this, _, cx| this.set_selected_sparklines_display_hidden(true, cx)).into(),
         MenuItem::tr("xlsx.sparkline-display-hidden-off").on(|this, _, cx| this.set_selected_sparklines_display_hidden(false, cx)).into(),
@@ -2628,16 +3225,17 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     let spark_marker_color_items: Vec<MenuEntry> = MARKER_COLOR_MENUS
         .into_iter()
         .map(|(sub_id, label_key, pt, palette)| {
-            let items: Vec<MenuEntry> = palette
-                .into_iter()
-                .map(|(item_id, color_label, hex)| {
-                    MenuItem::new(item_id, color_label)
-                        .on(move |this, _, cx| {
-                            this.set_selected_sparklines_point_color(pt, Some(ibis_doc_model::Rgb(hex)), cx);
-                        })
-                        .into()
-                })
-                .collect();
+            let items: Vec<MenuEntry> = palette_menu_with_ids(
+                editor,
+                None,
+                &palette,
+                false,
+                std::rc::Rc::new(move |this, c, _, cx| {
+                    if let Some(rgb) = c {
+                        this.set_selected_sparklines_point_color(pt, Some(rgb), cx);
+                    }
+                }),
+            );
             crate::shell::chrome::Submenu::new(sub_id, "palette", label_key, items).into()
         })
         .collect();
@@ -2669,7 +3267,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         MenuItem::new("xlsx.sparkline-group", crate::shell::i18n::text("xlsx.group")).on(|this, _, cx| this.group_selected_sparklines(cx)).into(),
         MenuItem::new("xlsx.sparkline-ungroup", crate::shell::i18n::text("xlsx.ungroup")).on(|this, _, cx| this.ungroup_selected_sparklines(cx)).into(),
     ];
-    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(crate::shell::chrome::Submenu::tr("xlsx.sparklines", "show_chart", spark_items).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Insert).push(crate::shell::chrome::Submenu::tr("xlsx.sparklines", "insert_chart", spark_items).into());
     let shape_entries: Vec<MenuEntry> = super::shape_edit::SHEET_SHAPES
         .iter()
         .map(|&(preset, id, _label, icon)| {
@@ -2699,14 +3297,11 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
 
     let insert = menus.items_mut(crate::shell::chrome::MenuId::Insert);
     insert.push(MenuItem::tr("xlsx.insert-function").icon("functions").shortcut("⇧F3").on(|this, window, cx| { this.insert_function_action(window, cx); }).into());
-    insert.push(MenuItem::tr("xlsx.insert-textbox").icon("text_fields").on(|this, window, cx| { this.insert_sheet_textbox(window, cx); }).into());
-    insert.push(crate::shell::chrome::Submenu::tr("xlsx.insert-shape", "shapes", shape_entries.clone()).into());
     let picture_subitems = vec![
         MenuItem::tr("xlsx.insert-picture-in-cell").icon("table_rows").on(|this, window, cx| { this.pick_sheet_pictures_in_cells(window, cx); }).into(),
         MenuItem::tr("xlsx.insert-picture-over-cells").icon("image").on(|this, window, cx| { this.pick_sheet_picture(window, cx); }).into(),
         MenuItem::tr("xlsx.camera-tool").icon("photo_camera").shortcut("⌥⇧⌘X").on(|this, _, cx| { this.insert_camera_picture(cx); }).into(),
     ];
-    insert.push(crate::shell::chrome::Submenu::tr("xlsx.insert-picture-menu", "image", picture_subitems.clone()).into());
     let screenshot_subitems = vec![
         MenuItem::tr("xlsx.screenshot.available-windows").icon("fit_screen").on(|this, _, cx| { this.insert_sheet_screenshot_window(cx); }).into(),
         MenuItem::tr("xlsx.screenshot.clipping").icon("crop").on(|this, _, cx| { this.insert_sheet_screenshot_clipping(cx); }).into(),
@@ -2715,12 +3310,9 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     let screenshot_menu = crate::shell::chrome::Submenu::tr("xlsx.screenshot", "fit_screen", screenshot_subitems.clone());
     insert.push(screenshot_menu.clone().into());
     insert.push(crate::shell::embed::insert_menu());
-    insert.push(MenuItem::tr("xlsx.insert.wordart").icon("title").on(|this, _, cx| { this.insert_sheet_wordart(0, None, cx); }).into());
-    insert.push(crate::shell::chrome::Submenu::tr("xlsx.insert.wordart-styles", "title", wordart_insert_items()).into());
+    insert.push(MenuItem::tr("xlsx.insert.wordart").icon("text_fields").on(|this, _, cx| { this.insert_sheet_wordart(0, None, cx); }).into());
+    insert.push(crate::shell::chrome::Submenu::tr("xlsx.insert.wordart-styles", "text_fields", wordart_insert_items()).into());
     let smartart_items = crate::pptx::chrome::smartart_insert_items();
-    insert.push(crate::shell::chrome::Submenu::tr("insert.smartart", "account_tree", smartart_items.clone()).into());
-    insert.push(MenuItem::tr("xlsx.insert-link").icon("link").on(|this, window, cx| { this.open_link_panel(window, cx); }).into());
-    insert.push(MenuItem::tr("xlsx.insert-symbol").icon("functions").on(|this, _, cx| { this.open_symbols(cx); }).into());
 
     fill_submenu(menus, "insert.shape", shape_entries);
     fill_submenu(menus, "insert.chart", super::chart_insert::chart_items());
@@ -2929,8 +3521,8 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.signature-line", |this, _, cx| { this.insert_sheet_signature_line("", "", cx); });
     menus.connect("xlsx.ink", |this, window, cx| this.open_ink_panel(window, cx));
     menus.connect("xlsx.autocorrect", |this, window, cx| this.open_autocorrect_panel(window, cx));
-    menus.connect("xlsx.autorecover-settings", |this, window, cx| { this.wb_mut().panels.close(); this.open_autorecover_settings(window, cx) });
-    menus.connect("xlsx.recover-unsaved", |this, _window, cx| { this.wb_mut().panels.close(); this.open_recover_unsaved(cx) });
+    menus.connect("xlsx.autorecover-settings", |this, window, cx| { this.wb_mut().close_settings(); this.open_autorecover_settings(window, cx) });
+    menus.connect("xlsx.recover-unsaved", |this, _window, cx| { this.wb_mut().close_settings(); this.open_recover_unsaved(cx) });
     menus.connect("xlsx.backup-save-settings", |this, window, cx| this.open_xlsx_backup_save_settings_panel(window, cx));
     menus.connect("xlsx.open-and-repair", |this, window, cx| this.open_xlsx_repair_damaged(window, cx));
     menus.connect("xlsx.print-active-sheet", |this, _, cx| this.set_print_what(super::PrintWhat::ActiveSheet, cx));
@@ -3147,32 +3739,16 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             })
             .into(),
     );
-    let style_items: Vec<MenuEntry> = vec![
-        MenuItem::tr("xlsx.chart-style-none").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(None, cx)).into(),
-        MenuItem::tr("xlsx.chart-style-1").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(1), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-2").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(2), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-3").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(3), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-4").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(4), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-5").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(5), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-6").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(6), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-7").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(7), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-8").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(8), cx)).into(),
-    ];
+    let style_items:Vec<MenuEntry>=super::chart_edit::CHART_STYLES.iter().map(|(key,style)|{
+        let style=*style;MenuItem::tr(key).disabled(!has_chart).on(move |e,_,cx|e.set_sheet_chart_visual_style(style,cx)).into()
+    }).collect();
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         crate::shell::chrome::Submenu::tr("xlsx.chart-styles", "palette", style_items).into(),
     );
-    let palette_items: Vec<MenuEntry> = vec![
-        MenuItem::tr("xlsx.chart-palette-1").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(0, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-2").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(1, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-3").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(2, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-4").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(3, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-5").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(4, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-6").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(5, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-7").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(6, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-8").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(7, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-9").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(8, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-10").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(9, cx)).into(),
-    ];
+    let palette_items:Vec<MenuEntry>=super::chart_edit::COLOR_PALETTES.iter().enumerate().map(|(i,(key,colors))| {
+        let mut item=MenuItem::tr(key).disabled(!has_chart).on(move |e,_,cx|e.set_sheet_chart_color_palette(i,cx));
+        item.dropdown_content=Some(crate::shell::chrome::dropdown::ItemContent::Palette(colors.to_vec()));item.into()
+    }).collect();
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         crate::shell::chrome::Submenu::tr("xlsx.chart-palettes", "color_lens", palette_items).into(),
     );
@@ -3245,25 +3821,11 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.chart-error-bars", |this, _, cx| {
         this.toggle_sheet_chart_error_bars(cx);
     });
-    menus.connect("xlsx.chart-style-none", |this, _, cx| this.set_sheet_chart_style(None, cx));
-    menus.connect("xlsx.chart-style-1", |this, _, cx| this.set_sheet_chart_style(Some(1), cx));
-    menus.connect("xlsx.chart-style-2", |this, _, cx| this.set_sheet_chart_style(Some(2), cx));
-    menus.connect("xlsx.chart-style-3", |this, _, cx| this.set_sheet_chart_style(Some(3), cx));
-    menus.connect("xlsx.chart-style-4", |this, _, cx| this.set_sheet_chart_style(Some(4), cx));
-    menus.connect("xlsx.chart-style-5", |this, _, cx| this.set_sheet_chart_style(Some(5), cx));
-    menus.connect("xlsx.chart-style-6", |this, _, cx| this.set_sheet_chart_style(Some(6), cx));
-    menus.connect("xlsx.chart-style-7", |this, _, cx| this.set_sheet_chart_style(Some(7), cx));
-    menus.connect("xlsx.chart-style-8", |this, _, cx| this.set_sheet_chart_style(Some(8), cx));
+    for (key,style) in super::chart_edit::CHART_STYLES {menus.connect(key,move |e,_,cx|e.set_sheet_chart_visual_style(style,cx));}
     menus.connect("xlsx.chart-palette-1", |this, _, cx| this.set_sheet_chart_color_palette(0, cx));
     menus.connect("xlsx.chart-palette-2", |this, _, cx| this.set_sheet_chart_color_palette(1, cx));
     menus.connect("xlsx.chart-palette-3", |this, _, cx| this.set_sheet_chart_color_palette(2, cx));
     menus.connect("xlsx.chart-palette-4", |this, _, cx| this.set_sheet_chart_color_palette(3, cx));
-    menus.connect("xlsx.chart-palette-5", |this, _, cx| this.set_sheet_chart_color_palette(4, cx));
-    menus.connect("xlsx.chart-palette-6", |this, _, cx| this.set_sheet_chart_color_palette(5, cx));
-    menus.connect("xlsx.chart-palette-7", |this, _, cx| this.set_sheet_chart_color_palette(6, cx));
-    menus.connect("xlsx.chart-palette-8", |this, _, cx| this.set_sheet_chart_color_palette(7, cx));
-    menus.connect("xlsx.chart-palette-9", |this, _, cx| this.set_sheet_chart_color_palette(8, cx));
-    menus.connect("xlsx.chart-palette-10", |this, _, cx| this.set_sheet_chart_color_palette(9, cx));
     for &(preset, id) in &crate::pptx::chart_panel::ChartPreset::ALL {
         menus.connect(id, move |this, _, cx| this.set_sheet_chart_type(preset, cx));
     }
@@ -3652,54 +4214,35 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     );
 
     // 図形の塗りつぶし (xlsx.shape-fill)
-    let fill_color_items: Vec<MenuEntry> = vec![
-        MenuItem::tr("xlsx.shape-fill.none")
-            .icon("format_color_reset")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::None, cx))
-            .into(),
-        MenuEntry::Separator,
-        MenuItem::tr("xlsx.shape-fill.black")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::BLACK), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-fill.white")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::WHITE), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-fill.blue")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x2b579a))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-fill.cyan")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x17a2b8))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-fill.green")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x107c41))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-fill.yellow")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffc000))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-fill.orange")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xed7d31))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-fill.red")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xc00000))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-fill.purple")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x7030a0))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-fill.gray")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x7f7f7f))), cx))
-            .into(),
+    const SHAPE_FILL_SWATCHES: [(&str, &str, u32); 10] = [
+        ("xlsx.shape-fill.black", "xlsx.shape-fill.black", 0x000000),
+        ("xlsx.shape-fill.white", "xlsx.shape-fill.white", 0xffffff),
+        ("xlsx.shape-fill.blue", "xlsx.shape-fill.blue", 0x2b579a),
+        ("xlsx.shape-fill.cyan", "xlsx.shape-fill.cyan", 0x17a2b8),
+        ("xlsx.shape-fill.green", "xlsx.shape-fill.green", 0x107c41),
+        ("xlsx.shape-fill.yellow", "xlsx.shape-fill.yellow", 0xffc000),
+        ("xlsx.shape-fill.orange", "xlsx.shape-fill.orange", 0xed7d31),
+        ("xlsx.shape-fill.red", "xlsx.shape-fill.red", 0xc00000),
+        ("xlsx.shape-fill.purple", "xlsx.shape-fill.purple", 0x7030a0),
+        ("xlsx.shape-fill.gray", "xlsx.shape-fill.gray", 0x7f7f7f),
     ];
+    let fill_none = MenuItem::tr("xlsx.shape-fill.none")
+        .icon("format_color_reset")
+        .disabled(!has_shape)
+        .on(|this, _, cx| this.fill_sheet_shape(ibis_doc_model::Fill::None, cx));
+    let fill_color_items: Vec<MenuEntry> = palette_menu_with_ids(
+        editor,
+        Some(fill_none),
+        &SHAPE_FILL_SWATCHES,
+        !has_shape,
+        std::rc::Rc::new(|this, c, _, cx| {
+            let fill = match c {
+                Some(rgb) => ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(rgb)),
+                None => ibis_doc_model::Fill::None,
+            };
+            this.fill_sheet_shape(fill, cx);
+        }),
+    );
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         crate::shell::chrome::Submenu::tr("xlsx.shape-fill", "format_color_fill", fill_color_items).into(),
     );
@@ -3753,57 +4296,34 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             .on(|this, _, cx| this.stroke_sheet_shape_dash(ibis_doc_model::LineDash::DashDot, cx))
             .into(),
     ];
-    let stroke_items: Vec<MenuEntry> = vec![
-        MenuItem::tr("xlsx.shape-stroke.none")
-            .icon("format_color_reset")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(None, cx))
-            .into(),
-        MenuEntry::Separator,
-        MenuItem::tr("xlsx.shape-stroke.black")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::BLACK), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-stroke.white")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::WHITE), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-stroke.blue")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x2b579a))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-stroke.cyan")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x17a2b8))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-stroke.green")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x107c41))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-stroke.yellow")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffc000))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-stroke.orange")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xed7d31))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-stroke.red")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xc00000))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-stroke.purple")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x7030a0))), cx))
-            .into(),
-        MenuItem::tr("xlsx.shape-stroke.gray")
-            .disabled(!has_shape)
-            .on(|this, _, cx| this.stroke_sheet_shape_color(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x7f7f7f))), cx))
-            .into(),
-        MenuEntry::Separator,
-        crate::shell::chrome::Submenu::tr("xlsx.shape-stroke.width", "line_weight", width_items).into(),
-        crate::shell::chrome::Submenu::tr("xlsx.shape-stroke.dash", "border_style", dash_items).into(),
+    const SHAPE_STROKE_SWATCHES: [(&str, &str, u32); 10] = [
+        ("xlsx.shape-stroke.black", "xlsx.shape-stroke.black", 0x000000),
+        ("xlsx.shape-stroke.white", "xlsx.shape-stroke.white", 0xffffff),
+        ("xlsx.shape-stroke.blue", "xlsx.shape-stroke.blue", 0x2b579a),
+        ("xlsx.shape-stroke.cyan", "xlsx.shape-stroke.cyan", 0x17a2b8),
+        ("xlsx.shape-stroke.green", "xlsx.shape-stroke.green", 0x107c41),
+        ("xlsx.shape-stroke.yellow", "xlsx.shape-stroke.yellow", 0xffc000),
+        ("xlsx.shape-stroke.orange", "xlsx.shape-stroke.orange", 0xed7d31),
+        ("xlsx.shape-stroke.red", "xlsx.shape-stroke.red", 0xc00000),
+        ("xlsx.shape-stroke.purple", "xlsx.shape-stroke.purple", 0x7030a0),
+        ("xlsx.shape-stroke.gray", "xlsx.shape-stroke.gray", 0x7f7f7f),
     ];
+    let stroke_none = MenuItem::tr("xlsx.shape-stroke.none")
+        .icon("format_color_reset")
+        .disabled(!has_shape)
+        .on(|this, _, cx| this.stroke_sheet_shape_color(None, cx));
+    let mut stroke_items: Vec<MenuEntry> = palette_menu_with_ids(
+        editor,
+        Some(stroke_none),
+        &SHAPE_STROKE_SWATCHES,
+        !has_shape,
+        std::rc::Rc::new(|this, c, _, cx| {
+            this.stroke_sheet_shape_color(c.map(ibis_doc_model::Color::opaque), cx);
+        }),
+    );
+    stroke_items.push(MenuEntry::Separator);
+    stroke_items.push(crate::shell::chrome::Submenu::tr("xlsx.shape-stroke.width", "line_weight", width_items).into());
+    stroke_items.push(crate::shell::chrome::Submenu::tr("xlsx.shape-stroke.dash", "border_style", dash_items).into());
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         crate::shell::chrome::Submenu::tr("xlsx.shape-stroke", "border_color", stroke_items).into(),
     );
@@ -3856,19 +4376,30 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     );
 
     // テキストボックス・図形内テキストの書式設定 (XLSX-OBJECT-012 & XLSX-OBJECT-013)
-    let has_text = editor.edited_body().is_some() || editor.selected_sheet_shape().and_then(|id| editor.slide().shape(id)).is_some_and(|s| s.text_body().is_some() || matches!(s.kind, ibis_doc_model::ShapeKind::TextBox(_) | ibis_doc_model::ShapeKind::Auto(_)));
-    let text_color_items: Vec<MenuEntry> = vec![
-        MenuItem::tr("xlsx.text.color-black").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0x000000), w, cx)).into(),
-        MenuItem::tr("xlsx.text.color-white").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0xffffff), w, cx)).into(),
-        MenuItem::tr("xlsx.text.color-blue").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0x2b579a), w, cx)).into(),
-        MenuItem::tr("xlsx.text.color-cyan").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0x17a2b8), w, cx)).into(),
-        MenuItem::tr("xlsx.text.color-green").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0x107c41), w, cx)).into(),
-        MenuItem::tr("xlsx.text.color-yellow").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0xffc000), w, cx)).into(),
-        MenuItem::tr("xlsx.text.color-orange").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0xed7d31), w, cx)).into(),
-        MenuItem::tr("xlsx.text.color-red").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0xc00000), w, cx)).into(),
-        MenuItem::tr("xlsx.text.color-purple").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0x7030a0), w, cx)).into(),
-        MenuItem::tr("xlsx.text.color-gray").disabled(!has_text).on(|this, w, cx| this.format_sheet_text_color(ibis_doc_model::Rgb(0x7f7f7f), w, cx)).into(),
+    let has_text = editor.has_selected_sheet_text_shapes();
+    const SHAPE_TEXT_COLOR_SWATCHES: [(&str, &str, u32); 10] = [
+        ("xlsx.text.color-black", "xlsx.text.color-black", 0x000000),
+        ("xlsx.text.color-white", "xlsx.text.color-white", 0xffffff),
+        ("xlsx.text.color-blue", "xlsx.text.color-blue", 0x2b579a),
+        ("xlsx.text.color-cyan", "xlsx.text.color-cyan", 0x17a2b8),
+        ("xlsx.text.color-green", "xlsx.text.color-green", 0x107c41),
+        ("xlsx.text.color-yellow", "xlsx.text.color-yellow", 0xffc000),
+        ("xlsx.text.color-orange", "xlsx.text.color-orange", 0xed7d31),
+        ("xlsx.text.color-red", "xlsx.text.color-red", 0xc00000),
+        ("xlsx.text.color-purple", "xlsx.text.color-purple", 0x7030a0),
+        ("xlsx.text.color-gray", "xlsx.text.color-gray", 0x7f7f7f),
     ];
+    let text_color_items: Vec<MenuEntry> = palette_menu_with_ids(
+        editor,
+        None,
+        &SHAPE_TEXT_COLOR_SWATCHES,
+        !has_text,
+        std::rc::Rc::new(|this, c, w, cx| {
+            if let Some(rgb) = c {
+                this.format_sheet_text_color(rgb, w, cx);
+            }
+        }),
+    );
     const TEXT_SIZES: [(&'static str, u32); 15] = [
         ("xlsx.text.size-8", 8),
         ("xlsx.text.size-9", 9),
@@ -4010,7 +4541,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     let special = |id: &'static str, label: &'static str, kind: P| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(label)).on(move |this, _, cx| this.paste_special(kind, cx)).into() };
     let submenu: MenuEntry = crate::shell::chrome::Submenu::tr("xlsx.paste-special", "content_paste",
         vec![
-            MenuItem::new("xlsx.paste-special-dialog", crate::shell::i18n::text("xlsx.paste-special-dots")).icon("content_paste").shortcut("⌘⌥V").on(|this, _, cx| this.open_paste_special_dialog(cx)).into(),
+            MenuItem::new("xlsx.paste-special-dialog", crate::shell::i18n::text("xlsx.paste-special-dots")).icon("content_paste").shortcut("⌘⌥V").on(|this, _, cx| this.open_paste_special_dialog_panel(cx)).into(),
             MenuEntry::Separator,
             special("xlsx.paste-all", "_xlsx.all", P::All),
             special("xlsx.paste-values", "_xlsx.values", P::Values),
@@ -4142,7 +4673,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.page-break", |this, _, cx| this.toggle_row_break(cx));
     menus.connect("xlsx.pivot-insert", |this, window, cx| this.open_create_pivot(window, cx));
     menus.connect("xlsx.recommended-pivots", |this, window, cx| this.open_recommended_pivots(window, cx));
-    menus.connect("xlsx.recommended-pivot-tables", |this, window, cx| this.open_recommended_pivot_tables(window, cx));
+    // "xlsx.recommended-pivot-tables" (the menu list's id) is an alias of "xlsx.recommended-pivots" (see `canonical_menu_id`): both insert the recommended PivotTable; connecting the alias again would replace this.
     menus.connect("xlsx.pivot-chart-insert", |this, window, cx| this.open_insert_pivot_chart(window, cx));
     menus.connect("xlsx.chart-format", |this, window, cx| this.open_sheet_chart_panel(window, cx));
     menus.connect("xlsx.chart-switch-row-column", |this, window, cx| this.switch_sheet_chart_row_column(window, cx));
@@ -4252,12 +4783,26 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.pivot-col-headers", |this, _, cx| this.toggle_pivot_col_headers(cx));
     menus.connect("xlsx.pivot-styles", |this, _, cx| this.set_pivot_style("PivotStyleLight16", cx));
     menus.connect("xlsx.recommended-charts", |this, window, cx| this.open_recommended_charts(window, cx));
-    menus.connect("xlsx.thesaurus", |this, window, cx| this.open_thesaurus(window, cx));
+    menus.connect("xlsx.thesaurus", |this, window, cx| this.open_sheet_thesaurus(window, cx));
+    menus.connect("tools.dictionary", |this, window, cx| this.open_sheet_thesaurus(window, cx));
     menus.connect("edit.copy", |this, _, cx| this.copy_cells(false, cx));
     menus.connect("xlsx.copy-as-picture", |this, _, cx| this.copy_as_picture(cx));
     menus.connect("edit.cut", |this, _, cx| this.copy_cells(true, cx));
     menus.connect("edit.paste", |this, _, cx| this.paste_cells(false, cx));
     menus.connect("edit.paste-plain", |this, _, cx| this.paste_cells(true, cx));
+    // 書式に合わせて貼り付け: the values (and formulas as values) in the cells' own formats.
+    menus.connect("edit.paste-match", |this, _, cx| this.paste_cells(true, cx));
+    // 書式のコピー / 書式の貼り付け (⌥⌘C / ⌥⌘V): the selected cells' formats picked up; the selection then takes them.
+    menus.connect("edit.copy-format", |this, _, cx| {
+        if this.sheet_state().is_some_and(|s| s.painter.is_none()) {
+            this.toggle_format_paint(cx);
+        }
+    });
+    menus.connect("edit.paste-format", |this, _, cx| this.finish_format_paint(cx));
+    menus.connect("xlsx.protect", |this, window, cx| this.open_protect_panel(window, cx));
+    menus.connect("xlsx.split-text", |this, window, cx| this.open_text_columns_panel(window, cx));
+    menus.connect("tools.word-count", |this, window, cx| this.open_sheet_word_count(window, cx));
+    menus.connect("tools.accessibility", |this, window, cx| this.open_xlsx_accessibility_panel(window, cx));
     menus.connect("format.clear", |this, _, cx| this.clear_cell_formats(cx));
     menus.connect("xlsx.clear-formats", |this, _, cx| this.clear_cell_formats(cx));
     menus.connect("xlsx.clear-contents", |this, _, cx| this.clear_selected_cells(cx));
@@ -4303,7 +4848,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.protect-workbook", |this, window, cx| this.open_protect_workbook_panel(window, cx));
     menus.connect("xlsx.unprotect-workbook", |this, window, cx| this.open_protect_workbook_panel(window, cx));
     menus.connect("xlsx.allow-edit-ranges", |this, window, cx| this.open_allow_edit_ranges_panel(window, cx));
-    menus.connect("xlsx.paste-special-dialog", |this, _, cx| this.open_paste_special_dialog(cx));
+    menus.connect("xlsx.paste-special-dialog", |this, _, cx| this.open_paste_special_dialog_panel(cx));
     menus.connect("xlsx.paste-validation", |this, _, cx| this.paste_special(super::clipboard::PasteSpecial::Validation, cx));
     menus.connect("xlsx.paste-picture", |this, _, cx| this.paste_as_picture(false, cx));
     menus.connect("xlsx.paste-linked-picture", |this, _, cx| this.paste_as_picture(true, cx));

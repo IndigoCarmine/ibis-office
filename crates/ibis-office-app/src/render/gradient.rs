@@ -166,7 +166,10 @@ pub(crate) fn paint_gradient_mode(
                 let hi = if i + 1 == bands { t1 + overlap } else { lo + step + overlap };
                 let pieces = subpaths
                     .iter()
-                    .map(|s| clip_half(&clip_half(s, |p| t(p) - lo), |p| hi - t(p)))
+                    .map(|s| {
+                        let s = if i == 0 { s.clone() } else { clip_half(s, |p| t(p) - lo) };
+                        if i + 1 == bands { s } else { clip_half(&s, |p| hi - t(p)) }
+                    })
                     .collect();
                 paint(pieces, color);
             }

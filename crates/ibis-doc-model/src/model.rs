@@ -214,6 +214,31 @@ impl MediaFormat {
         })
     }
 
+    /// The picture format a file's first bytes show (its magic number), for a file whose
+    /// name does not say (such as a `.tmp` picture).
+    pub fn sniff(data: &[u8]) -> Option<Self> {
+        let starts = |m: &[u8]| data.starts_with(m);
+        if starts(b"\x89PNG\r\n\x1a\n") {
+            Some(Self::Png)
+        } else if starts(&[0xff, 0xd8, 0xff]) {
+            Some(Self::Jpeg)
+        } else if starts(b"GIF87a") || starts(b"GIF89a") {
+            Some(Self::Gif)
+        } else if starts(b"BM") && data.len() > 14 {
+            Some(Self::Bmp)
+        } else if starts(b"II*\0") || starts(b"MM\0*") {
+            Some(Self::Tiff)
+        } else if starts(b"RIFF") && data.get(8..12) == Some(b"WEBP") {
+            Some(Self::Webp)
+        } else if starts(&[0xd7, 0xcd, 0xc6, 0x9a]) {
+            Some(Self::Wmf)
+        } else if starts(&[1, 0, 0, 0]) && data.get(40..44) == Some(b" EMF") {
+            Some(Self::Emf)
+        } else {
+            None
+        }
+    }
+
     /// The format of a part named `path`, from its extension.
     pub fn from_path(path: &str) -> Self {
         let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
@@ -655,12 +680,14 @@ pub struct BlipEffects {
     pub opacity: Option<i32>,
     /// Saturation modulation (`a:satMod/@amt`, 100 000ths, 100 000 is 100%).
     pub saturation: Option<i32>,
+    /// Solid fill of the picture's shape properties (`p:spPr/a:solidFill`), shown behind transparent pixels.
+    pub background: Option<crate::Color>,
 }
 
 impl BlipEffects {
     /// Whether none applies.
     pub fn is_none(&self) -> bool {
-        *self == Self::default()
+        Self { background: None, ..*self } == Self::default()
     }
 }
 
@@ -2144,6 +2171,13 @@ impl Presentation {
         let old_background = old_layout.map(|l| &l.background);
         if old_background.is_none_or(|b| *b == old.background) {
             out.background = new_layout.background.clone();
+        }
+        // Empty placeholders with no destination in the new layout disappear.
+        // Content already entered by the user stays as an ordinary shape.
+        if old.layout != Some(layout) {
+            let unmatched: Vec<_> = out.placeholders.iter().filter(|(_,ph)|Layout::matching(&new_layout.placeholders,&ph.placeholder,true).is_none()).map(|(id,_)|*id).collect();
+            out.shapes.retain(|shape|!unmatched.contains(&shape.id)||!shape.text_body().is_some_and(|body|body.is_empty() && body.paragraphs.iter().all(|p|p.runs.iter().all(|r|r.style.field.is_none()))));
+            for id in unmatched {out.placeholders.remove(&id);}
         }
         for shape in &mut out.shapes {
             let Some(ph) = out.placeholders.get_mut(&shape.id) else { continue };

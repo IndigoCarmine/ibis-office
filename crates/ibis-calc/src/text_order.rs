@@ -6,7 +6,8 @@
 //! Text with kanji is ordered by the reading the OS gives it (macOS:
 //! CoreFoundation's string tokenizer, Latin transcription turned into
 //! hiragana); everything else, and every platform without that service
-//! (the Web, for now Windows), by its lower-case text as before. A reading
+//! (the Web), by its lower-case text as before; Windows orders text with kanji by its `ja-JP` order
+//! (`collation`: JIS X 0208 for the kanji, by reading for the first level only). A reading
 //! the cell itself carries (`phoneticPr`/`rPh`) is passed in by the caller
 //! as `phonetic` and wins over the OS's.
 
@@ -79,6 +80,14 @@ pub fn compare_for_sort_with_case(
     pb: Option<&str>,
     match_case: bool,
 ) -> Ordering {
+    // Windows has no reading to give (see `reading`): texts with kanji go by the system's Japanese order.
+    #[cfg(windows)]
+    if pa.is_none() && pb.is_none() && (has_kanji(a) || has_kanji(b)) {
+        let ord = crate::collation::compare(a, b);
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
     let ka = sort_key(a, pa);
     let kb = sort_key(b, pb);
     let ord = ka.cmp(&kb);

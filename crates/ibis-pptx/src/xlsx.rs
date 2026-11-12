@@ -213,6 +213,110 @@ fn parse_gradient_fill(g: Node, colors: &SheetColors) -> Option<CellGradient> {
     }
 }
 
+fn map_pattern(pattern_type: &str) -> Option<&'static str> {
+    match pattern_type {
+        "gray0625" => Some("pct5"),
+        "gray125" => Some("pct10"),
+        "lightGray" => Some("pct25"),
+        "mediumGray" => Some("pct50"),
+        "darkGray" => Some("pct75"),
+        "lightHorizontal" => Some("ltHorz"),
+        "darkHorizontal" => Some("dkHorz"),
+        "lightVertical" => Some("ltVert"),
+        "darkVertical" => Some("dkVert"),
+        "lightDown" => Some("ltDnDiag"),
+        "darkDown" => Some("dkDnDiag"),
+        "lightUp" => Some("ltUpDiag"),
+        "darkUp" => Some("dkUpDiag"),
+        "lightGrid" => Some("smGrid"),
+        "darkGrid" => Some("cross"),
+        "lightTrellis" => Some("diagCross"),
+        "darkTrellis" => Some("trellis"),
+        _ => None,
+    }
+}
+
+fn parse_border_edge(b: Node, name: &str, colors: &SheetColors) -> Option<Border> {
+    let e = child(b, name)?;
+    let name = attr(e, "style")?;
+    if name == "none" {
+        return None;
+    }
+    let line = BorderLine::from_ooxml(name).unwrap_or(BorderLine::Thin);
+    Some(Border {
+        line,
+        color: child(e, "color").and_then(|c| colors.color(c)).unwrap_or(Rgb::BLACK),
+    })
+}
+
+fn parse_dxf(d: Node, colors: &SheetColors) -> ibis_doc_model::CfStyle {
+    let font = child(d, "font");
+    let flag = |name: &str| font.and_then(|f| child(f, name)).map(|c| attr_bool(c, "val").unwrap_or(true));
+    let fill_node = child(d, "fill");
+    let pattern_fill = fill_node.and_then(|f| child(f, "patternFill"));
+    let gradient_fill = fill_node.and_then(|f| child(f, "gradientFill"));
+
+    let fill = pattern_fill
+        .as_ref()
+        .and_then(|p| {
+            match attr(*p, "patternType") {
+                Some("none") => None,
+                // A dxf's solid fill is its bgColor; with no bgColor Excel
+                // fills nothing, whatever the fgColor (the coverage tests'
+                // references from Excel, XCF-00177 to 00190). Excel writes
+                // solid as fgColor indexed="64", the system foreground,
+                // with the colour in bgColor: reading fgColor made such
+                // rows black.
+                Some("solid") => child(*p, "bgColor").and_then(|c| colors.color(c)),
+                _ => child(*p, "bgColor").or_else(|| child(*p, "fgColor")).and_then(|c| colors.color(c)),
+            }
+        })
+        .or_else(|| {
+            gradient_fill.as_ref().and_then(|g| {
+                children(*g, "stop").next().and_then(|s| child(s, "color")).and_then(|c| colors.color(c))
+            })
+        });
+
+    let pattern = pattern_fill.as_ref().and_then(|p| {
+        let ptype = attr(*p, "patternType")?;
+        let preset = map_pattern(ptype)?;
+        let fg = child(*p, "fgColor").and_then(|c| colors.color(c)).unwrap_or(Rgb::BLACK);
+        let bg = child(*p, "bgColor").and_then(|c| colors.color(c)).unwrap_or(Rgb::WHITE);
+        Some((preset.to_string(), fg, bg))
+    });
+
+    let gradient = gradient_fill.as_ref().and_then(|g| parse_gradient_fill(*g, colors));
+
+    let underline = font.and_then(|f| child(f, "u")).map(|u| {
+        CellUnderline::from_ooxml(attr(u, "val").unwrap_or("single"))
+    });
+
+    let vert_align = font.and_then(|f| child(f, "vertAlign")).and_then(|v| attr(v, "val")).map(|val| {
+        match val {
+            "superscript" => VerticalPosition::Superscript,
+            "subscript" => VerticalPosition::Subscript,
+            _ => VerticalPosition::Baseline,
+        }
+    });
+
+    let border = child(d, "border");
+    let side = |name: &str| border.and_then(|b| parse_border_edge(b, name, colors));
+    let number_format = child(d, "numFmt").and_then(|n| attr(n, "formatCode")).map(str::to_string);
+    ibis_doc_model::CfStyle {
+        color: font.and_then(|f| child(f, "color")).and_then(|c| colors.color(c)),
+        bold: flag("b"),
+        italic: flag("i"),
+        underline,
+        strike: flag("strike"),
+        fill,
+        gradient,
+        pattern,
+        vert_align,
+        borders: [side("left"), side("right"), side("top"), side("bottom")],
+        number_format,
+    }
+}
+
 pub(crate) fn read_styles(root: Option<Node>, colors: &SheetColors) -> Styles {
     let Some(root) = root else {
         return Styles { formats: vec![CellFormat { number_format: "General".into(), ..Default::default() }], date1904: false, default_font: (None, 1100), dxfs: Vec::new(), rich_errors: HashMap::new(), rich_images: HashMap::new(), custom_cell_styles: Vec::new() };
@@ -258,28 +362,6 @@ pub(crate) fn read_styles(root: Option<Node>, colors: &SheetColors) -> Styles {
             },
         })
         .collect();
-    let map_pattern = |pattern_type: &str| -> Option<&'static str> {
-        match pattern_type {
-            "gray0625" => Some("pct5"),
-            "gray125" => Some("pct10"),
-            "lightGray" => Some("pct25"),
-            "mediumGray" => Some("pct50"),
-            "darkGray" => Some("pct75"),
-            "lightHorizontal" => Some("ltHorz"),
-            "darkHorizontal" => Some("dkHorz"),
-            "lightVertical" => Some("ltVert"),
-            "darkVertical" => Some("dkVert"),
-            "lightDown" => Some("ltDnDiag"),
-            "darkDown" => Some("dkDnDiag"),
-            "lightUp" => Some("ltUpDiag"),
-            "darkUp" => Some("dkUpDiag"),
-            "lightGrid" => Some("smGrid"),
-            "darkGrid" => Some("cross"),
-            "lightTrellis" => Some("diagCross"),
-            "darkTrellis" => Some("trellis"),
-            _ => None,
-        }
-    };
     let patterns: Vec<Option<(String, Rgb, Rgb)>> = child(root, "fills")
         .into_iter()
         .flat_map(|n| children(n, "fill"))
@@ -336,13 +418,7 @@ pub(crate) fn read_styles(root: Option<Node>, colors: &SheetColors) -> Styles {
         .flat_map(|n| children(n, "fill"))
         .map(|f| child(f, "gradientFill").and_then(|g| parse_gradient_fill(g, colors)))
         .collect();
-    let edge = |b: Node, name: &str| -> Option<Border> {
-        let e = child(b, name)?;
-        let name = attr(e, "style")?;
-        if name == "none" { return None; }
-        let line = BorderLine::from_ooxml(name).unwrap_or(BorderLine::Thin);
-        Some(Border { line, color: child(e, "color").and_then(|c| colors.color(c)).unwrap_or(Rgb::BLACK) })
-    };
+    let edge = |b: Node, name: &str| parse_border_edge(b, name, colors);
     struct Edges {
         left: Option<Border>,
         right: Option<Border>,
@@ -485,70 +561,7 @@ pub(crate) fn read_styles(root: Option<Node>, colors: &SheetColors) -> Styles {
     let dxfs = child(root, "dxfs")
         .into_iter()
         .flat_map(|d| children(d, "dxf"))
-        .map(|d| {
-            let font = child(d, "font");
-            let flag = |name: &str| font.and_then(|f| child(f, name)).map(|c| attr_bool(c, "val").unwrap_or(true));
-            let fill_node = child(d, "fill");
-            let pattern_fill = fill_node.and_then(|f| child(f, "patternFill"));
-            let gradient_fill = fill_node.and_then(|f| child(f, "gradientFill"));
-
-            let fill = pattern_fill.as_ref().and_then(|p| {
-                match attr(*p, "patternType") {
-                    Some("none") => None,
-                    // A dxf's solid fill is its bgColor; with no bgColor Excel
-                    // fills nothing, whatever the fgColor (the coverage tests'
-                    // references from Excel, XCF-00177 to 00190). Excel writes
-                    // solid as fgColor indexed="64", the system foreground,
-                    // with the colour in bgColor: reading fgColor made such
-                    // rows black.
-                    Some("solid") => child(*p, "bgColor").and_then(|c| colors.color(c)),
-                    _ => child(*p, "bgColor").or_else(|| child(*p, "fgColor")).and_then(|c| colors.color(c)),
-                }
-            }).or_else(|| {
-                gradient_fill.as_ref().and_then(|g| {
-                    children(*g, "stop").next().and_then(|s| child(s, "color")).and_then(|c| colors.color(c))
-                })
-            });
-
-            let pattern = pattern_fill.as_ref().and_then(|p| {
-                let ptype = attr(*p, "patternType")?;
-                let preset = map_pattern(ptype)?;
-                let fg = child(*p, "fgColor").and_then(|c| colors.color(c)).unwrap_or(Rgb::BLACK);
-                let bg = child(*p, "bgColor").and_then(|c| colors.color(c)).unwrap_or(Rgb::WHITE);
-                Some((preset.to_string(), fg, bg))
-            });
-
-            let gradient = gradient_fill.as_ref().and_then(|g| parse_gradient_fill(*g, colors));
-
-            let underline = font.and_then(|f| child(f, "u")).map(|u| {
-                CellUnderline::from_ooxml(attr(u, "val").unwrap_or("single"))
-            });
-
-            let vert_align = font.and_then(|f| child(f, "vertAlign")).and_then(|v| attr(v, "val")).map(|val| {
-                match val {
-                    "superscript" => VerticalPosition::Superscript,
-                    "subscript" => VerticalPosition::Subscript,
-                    _ => VerticalPosition::Baseline,
-                }
-            });
-
-            let border = child(d, "border");
-            let side = |name: &str| border.and_then(|b| edge(b, name));
-            let number_format = child(d, "numFmt").and_then(|n| attr(n, "formatCode")).map(str::to_string);
-            ibis_doc_model::CfStyle {
-                color: font.and_then(|f| child(f, "color")).and_then(|c| colors.color(c)),
-                bold: flag("b"),
-                italic: flag("i"),
-                underline,
-                strike: flag("strike"),
-                fill,
-                gradient,
-                pattern,
-                vert_align,
-                borders: [side("left"), side("right"), side("top"), side("bottom")],
-                number_format,
-            }
-        })
+        .map(|d| parse_dxf(d, colors))
         .collect();
     Styles { formats, date1904: false, default_font, dxfs, rich_errors: HashMap::new(), rich_images: HashMap::new(), custom_cell_styles }
 }
@@ -672,7 +685,7 @@ pub(crate) fn read_custom_sheet_views(root: Node) -> Vec<ibis_doc_model::CustomS
             let active_cell = selection.and_then(|s| attr(s, "activeCell")).and_then(cell_ref);
             let selection_range = selection.and_then(|s| attr(s, "sqref")).and_then(parse_range);
             let print = if child(v, "pageSetUp").is_some() || child(v, "pageSetup").is_some() || child(v, "pageMargins").is_some() || child(v, "headerFooter").is_some() || child(v, "printOptions").is_some() {
-                Some(read_print(v))
+                Some(read_print(v, attr_bool(v, "showGridLines").unwrap_or(true)))
             } else {
                 None
             };
@@ -792,16 +805,22 @@ fn read_validations(root: Node) -> Vec<ibis_doc_model::Validation> {
 }
 
 /// The 2010 conditional formats (`x14:cfRule`) that no rule of 2007 names (by `x14:id`): icon sets and data bars
-/// only 2010 has (3Stars, 3Triangles, 5Boxes).
+/// only 2010 has (3Stars, 3Triangles, 5Boxes), as well as rules referencing defined names or other sheets which
+/// Excel writes exclusively into `<x14:conditionalFormattings>`.
 fn read_conditional_x14_only(root: Node, colors: &SheetColors) -> Vec<ibis_doc_model::ConditionalFormat> {
-    use ibis_doc_model::{CfKind, CfRule, CfValue, ConditionalFormat};
+    use ibis_doc_model::{CfKind, CfRule, CfValue, ConditionalFormat, DataBarAxisPosition, DataBarDirection};
     let named: std::collections::HashSet<String> = root
         .descendants()
         .filter(|n| n.is_element() && n.tag_name().name() == "id" && n.parent().is_some_and(|p| p.tag_name().name() == "ext"))
         .filter_map(|n| n.text().map(|t| t.trim().to_string()))
         .collect();
-    let cfvo = |n: Node| CfValue { kind: attr(n, "type").unwrap_or("num").to_string(), value: attr(n, "val").map(str::to_string).or_else(|| child(n, "f").and_then(|f| f.text()).map(str::to_string)), gte: attr_bool(n, "gte").unwrap_or(true) };
-    let _ = colors;
+    let cfvo = |n: Node| CfValue {
+        kind: attr(n, "type").unwrap_or("num").to_string(),
+        value: attr(n, "val")
+            .map(str::to_string)
+            .or_else(|| child(n, "f").and_then(|f| f.text()).map(ibis_calc::formula::from_file)),
+        gte: attr_bool(n, "gte").unwrap_or(true),
+    };
     let mut out = Vec::new();
     for group in root.descendants().filter(|n| n.is_element() && n.tag_name().name() == "conditionalFormatting" && n.attribute("sqref").is_none()) {
         let ranges: Vec<CellRange> = child(group, "sqref").and_then(|s| s.text()).unwrap_or("").split_whitespace().filter_map(parse_range).collect();
@@ -810,31 +829,133 @@ fn read_conditional_x14_only(root: Node, colors: &SheetColors) -> Vec<ibis_doc_m
             if r.attribute("id").is_some_and(|id| named.contains(id.trim())) {
                 continue;
             }
-            if attr(r, "type") != Some("iconSet") {
-                continue;
-            }
-            let Some(is) = child(r, "iconSet") else { continue };
-            let icons: Vec<Option<ibis_doc_model::CfIcon>> = is
-                .descendants()
-                .filter(|n| n.tag_name().name() == "cfIcon")
-                .map(|ci| {
-                    let s = attr(ci, "iconSet").unwrap_or("NoIcon").to_string();
-                    let id = attr_i64(ci, "iconId").unwrap_or(-1) as i32;
-                    Some(if id < 0 || s == "NoIcon" { ibis_doc_model::CfIcon::no_icon() } else { ibis_doc_model::CfIcon::new(s, id) })
-                })
+            let formulas: Vec<String> = children(r, "f")
+                .chain(children(r, "formula"))
+                .filter_map(|f| f.text())
+                .map(ibis_calc::formula::from_file)
                 .collect();
-            rules.push(CfRule {
-                kind: CfKind::IconSet {
-                    set: attr(is, "iconSet").unwrap_or("3TrafficLights1").to_string(),
-                    values: children(is, "cfvo").map(cfvo).collect(),
-                    reverse: attr_bool(is, "reverse").unwrap_or(false),
-                    show_value: attr_bool(is, "showValue").unwrap_or(true),
-                    custom: attr_bool(is, "custom").unwrap_or(false),
-                    icons,
+            let kind = match attr(r, "type").unwrap_or("") {
+                "cellIs" => CfKind::CellIs {
+                    operator: attr(r, "operator").unwrap_or("equal").to_string(),
+                    formulas,
                 },
+                "timePeriod" => {
+                    let period = attr(r, "timePeriod").unwrap_or("today").to_string();
+                    let formula = formulas.into_iter().next().unwrap_or_default();
+                    CfKind::TimePeriod { period, formula }
+                }
+                "expression"
+                | "containsText"
+                | "notContainsText"
+                | "beginsWith"
+                | "endsWith"
+                | "containsBlanks"
+                | "notContainsBlanks"
+                | "containsErrors"
+                | "notContainsErrors" => match formulas.into_iter().next() {
+                    Some(f) => CfKind::Expression(f),
+                    None => continue,
+                },
+                "top10" => CfKind::Top10 {
+                    rank: attr_i64(r, "rank").unwrap_or(10).max(0) as u32,
+                    percent: attr_bool(r, "percent").unwrap_or(false),
+                    bottom: attr_bool(r, "bottom").unwrap_or(false),
+                },
+                "aboveAverage" => CfKind::AboveAverage {
+                    above: attr_bool(r, "aboveAverage").unwrap_or(true),
+                    equal: attr_bool(r, "equalAverage").unwrap_or(false),
+                    std_dev: attr_i64(r, "stdDev").unwrap_or(0).max(0) as u32,
+                },
+                "uniqueValues" => CfKind::Unique,
+                "duplicateValues" => CfKind::Duplicate,
+                "colorScale" => {
+                    let Some(cs) = child(r, "colorScale") else { continue };
+                    let points: Vec<CfValue> = children(cs, "cfvo").map(cfvo).collect();
+                    let cols: Vec<Rgb> = children(cs, "color").map(|c| colors.color(c).unwrap_or(Rgb::BLACK)).collect();
+                    CfKind::ColorScale(points.into_iter().zip(cols).collect())
+                }
+                "dataBar" => {
+                    let Some(db) = child(r, "dataBar") else { continue };
+                    let points: Vec<CfValue> = children(db, "cfvo").map(cfvo).collect();
+                    let color = child(db, "fillColor")
+                        .or_else(|| child(db, "color"))
+                        .and_then(|c| colors.color(c))
+                        .unwrap_or(Rgb(0x638EC6));
+                    let min_length = attr_i64(db, "minLength").map(|v| v.max(0) as u32);
+                    let max_length = attr_i64(db, "maxLength").map(|v| v.max(0) as u32);
+                    let gradient = attr_bool(db, "gradient").unwrap_or_else(|| attr(db, "gradient") != Some("0"));
+                    let negative_color = child(db, "negativeFillColor")
+                        .or_else(|| child(db, "negativeBarColor"))
+                        .and_then(|c| colors.color(c));
+                    let axis_color = child(db, "axisColor").and_then(|c| colors.color(c));
+                    let axis_position = Some(match attr(db, "axisPosition") {
+                        Some("midpoint") => DataBarAxisPosition::Midpoint,
+                        Some("none") => DataBarAxisPosition::None,
+                        _ => DataBarAxisPosition::Automatic,
+                    });
+                    let border_color = attr_bool(db, "border")
+                        .unwrap_or(false)
+                        .then(|| child(db, "borderColor").and_then(|c| colors.color(c)).unwrap_or(color));
+                    let negative_border_color = child(db, "negativeBorderColor").and_then(|c| colors.color(c));
+                    let direction = match attr(db, "direction") {
+                        Some("leftToRight") => DataBarDirection::LeftToRight,
+                        Some("rightToLeft") => DataBarDirection::RightToLeft,
+                        _ => DataBarDirection::Context,
+                    };
+                    let at = |i: usize| {
+                        points.get(i).cloned().unwrap_or(CfValue {
+                            kind: if i == 0 { "min".into() } else { "max".into() },
+                            value: None,
+                            gte: true,
+                        })
+                    };
+                    CfKind::DataBar {
+                        min: at(0),
+                        max: at(1),
+                        color,
+                        gradient,
+                        negative_color,
+                        axis_color,
+                        axis_position,
+                        min_length,
+                        max_length,
+                        border_color,
+                        negative_border_color,
+                        direction,
+                    }
+                }
+                "iconSet" => {
+                    let Some(is) = child(r, "iconSet") else { continue };
+                    let icons: Vec<Option<ibis_doc_model::CfIcon>> = is
+                        .descendants()
+                        .filter(|n| n.tag_name().name() == "cfIcon")
+                        .map(|ci| {
+                            let s = attr(ci, "iconSet").unwrap_or("NoIcon").to_string();
+                            let id = attr_i64(ci, "iconId").unwrap_or(-1) as i32;
+                            Some(if id < 0 || s == "NoIcon" {
+                                ibis_doc_model::CfIcon::no_icon()
+                            } else {
+                                ibis_doc_model::CfIcon::new(s, id)
+                            })
+                        })
+                        .collect();
+                    CfKind::IconSet {
+                        set: attr(is, "iconSet").unwrap_or("3TrafficLights1").to_string(),
+                        values: children(is, "cfvo").map(cfvo).collect(),
+                        reverse: attr_bool(is, "reverse").unwrap_or(false),
+                        show_value: attr_bool(is, "showValue").unwrap_or(true),
+                        custom: attr_bool(is, "custom").unwrap_or(false),
+                        icons,
+                    }
+                }
+                _ => continue,
+            };
+            let style = child(r, "dxf").map(|d| parse_dxf(d, colors));
+            rules.push(CfRule {
+                kind,
                 priority: attr_i64(r, "priority").unwrap_or(1000).max(0) as u32,
-                stop: false,
-                style: None,
+                stop: attr_bool(r, "stopIfTrue").unwrap_or(false),
+                style,
             });
         }
         if !rules.is_empty() && !ranges.is_empty() {
@@ -848,7 +969,7 @@ fn read_conditional_x14_only(root: Node, colors: &SheetColors) -> Vec<ibis_doc_m
 /// rules' formats from `dxfs`.
 fn read_conditional(root: Node, styles: &Styles, colors: &SheetColors) -> Vec<ibis_doc_model::ConditionalFormat> {
     use ibis_doc_model::{CfKind, CfRule, CfValue, ConditionalFormat, DataBarAxisPosition, DataBarDirection};
-    let cfvo = |n: Node| CfValue { kind: attr(n, "type").unwrap_or("num").to_string(), value: attr(n, "val").map(str::to_string).or_else(|| child(n, "f").and_then(|f| f.text()).map(str::to_string)), gte: attr_bool(n, "gte").unwrap_or(true) };
+    let cfvo = |n: Node| CfValue { kind: attr(n, "type").unwrap_or("num").to_string(), value: attr(n, "val").map(str::to_string).or_else(|| child(n, "f").and_then(|f| f.text()).map(ibis_calc::formula::from_file)), gte: attr_bool(n, "gte").unwrap_or(true) };
     // The Excel 2010 rules (`x14:cfRule` in the sheet's `extLst`), by their ids: a rule of 2007 names its
     // 2010 half by `x14:id` in its own `extLst`, and that half holds the data bar's gradient, border, direction and
     // axis, and the icon sets of 2010.
@@ -863,7 +984,20 @@ fn read_conditional(root: Node, styles: &Styles, colors: &SheetColors) -> Vec<ib
             let ranges = attr(cf, "sqref").unwrap_or("").split_whitespace().filter_map(parse_range).collect();
             let rules = children(cf, "cfRule")
                 .map(|r| {
-                    let formulas: Vec<String> = children(r, "formula").filter_map(|f| f.text()).map(ibis_calc::formula::from_file).collect();
+                    let mut formulas: Vec<String> = children(r, "formula")
+                        .chain(children(r, "f"))
+                        .filter_map(|f| f.text())
+                        .map(ibis_calc::formula::from_file)
+                        .collect();
+                    if formulas.is_empty()
+                        && let Some(x14) = x14_of(r)
+                    {
+                        formulas = children(x14, "f")
+                            .chain(children(x14, "formula"))
+                            .filter_map(|f| f.text())
+                            .map(ibis_calc::formula::from_file)
+                            .collect();
+                    }
                     let kind = match attr(r, "type").unwrap_or("") {
                         "cellIs" => CfKind::CellIs { operator: attr(r, "operator").unwrap_or("equal").to_string(), formulas },
                         "timePeriod" => {
@@ -987,7 +1121,14 @@ fn read_conditional(root: Node, styles: &Styles, colors: &SheetColors) -> Vec<ib
                         },
                         _ => CfKind::Other,
                     };
-                    let style = attr_i64(r, "dxfId").and_then(|i| styles.dxfs.get(i.max(0) as usize)).cloned();
+                    let style = attr_i64(r, "dxfId")
+                        .and_then(|i| styles.dxfs.get(i.max(0) as usize))
+                        .cloned()
+                        .or_else(|| {
+                            child(r, "dxf")
+                                .or_else(|| x14_of(r).and_then(|x| child(x, "dxf")))
+                                .map(|d| parse_dxf(d, colors))
+                        });
                     CfRule { kind, priority: attr_i64(r, "priority").unwrap_or(0).max(0) as u32, stop: attr_bool(r, "stopIfTrue").unwrap_or(false), style }
                 })
                 .collect();
@@ -1231,7 +1372,18 @@ pub(crate) fn cell_ref(reference: &str) -> Option<(u32, u32)> {
 /// 13.6640625 and prints both 82 pt wide (xlsx-XALN), 1.25 as 1.1640625
 /// (7 pt), 8.75 as 8.6640625 (52 pt).
 pub(crate) fn column_pixels(chars: f64, digit: f64) -> f64 {
-    (((256.0 * chars + (128.0 / digit).floor()) / 256.0) * digit).floor()
+    column_pixels_in(EXCEL_METRICS, chars, digit)
+}
+
+/// The same in `metrics`' pixels: the whole pixels are of `digit` ÷ the pixel's
+/// points, the result in points.
+pub(crate) fn column_pixels_in(metrics: ExcelMetrics, chars: f64, digit: f64) -> f64 {
+    let pixel = metrics.pixel_pt();
+    let d = digit / pixel;
+    let px = ((256.0 * chars + (128.0 / d).floor()) / 256.0) * d;
+    // ECMA-376's formula truncates to the pixel (as Excel does); a width
+    // written from points then reads back as the same pixels.
+    px.floor() * pixel
 }
 
 /// The width of a column with none of its own, in points: `defaultColWidth`
@@ -1244,7 +1396,13 @@ pub(crate) fn default_column_width(format: Option<Node>, digit: f64) -> f64 {
         .map(|w| column_pixels(w, digit))
         .unwrap_or_else(|| {
             let base = format.and_then(|f| attr(f, "baseColWidth")).and_then(|v| v.parse::<f64>().ok()).unwrap_or(8.0);
-            (base * digit + 5.0).trunc()
+            let pixel = EXCEL_METRICS.pixel_pt();
+            // The width of a column without `defaultColWidth` is the base width's pixels and 5 more for the cell's padding and
+            // grid line, rounded up to a multiple of 8 pixels (ECMA-376 18.3.1.81 on `baseColWidth`): 8 digits of 8 px and 5 make
+            // 69 px, which Excel for Windows prints as 72 (a column of 72 px: 49.7 pt at 100 % where 69 px gave 47.6 pt); 8 digits
+            // of 7 px and 5 make 61, shown as 64.
+            let pixels = base * (digit / pixel) + 5.0;
+            if EXCEL_METRICS == ExcelMetrics::Windows { (pixels / 8.0).ceil() * 8.0 * pixel } else { pixels.trunc() * pixel }
         })
 }
 
@@ -1403,11 +1561,84 @@ pub(crate) fn dynamic_metadata_indices(root: Node) -> HashSet<u32> {
 /// the declared `defaultRowHeight` (13.5 pt: the rows of the chart sheets of
 /// a user's private workbook are 13.5 pt in Excel's PDF, not 18).
 pub(crate) fn default_row_height(format: Option<Node>, default_font: (&Option<String>, u32)) -> f64 {
+    default_row_height_in(EXCEL_METRICS, format, default_font)
+}
+
+/// Which Excel the sizes of rows and columns follow. The two lay the same file
+/// out a little differently: Excel for Windows (desktop) counts a column in
+/// whole 96 dpi pixels (the digit 7 px, 0.75 pt a pixel) and keep a declared
+/// `defaultRowHeight`; Excel for Mac counts a pixel as a point (the digit 6 pt)
+/// and fits the rows without a height to the font (18 pt for 11 pt).
+/// One switch for all of them: the screen and the print use the same one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExcelMetrics {
+    Windows,
+    Mac,
+}
+
+/// The sizes the reader lays sheets out by (the user's decision on which Excel
+/// to follow: Excel for Windows (desktop), decided by the user 2026-10-20).
+pub const EXCEL_METRICS: ExcelMetrics = ExcelMetrics::Windows;
+
+/// The Normal font a workbook gets without one named (Office's default).
+const DEFAULT_FONT: &str = "Calibri";
+
+/// The space between a cell's edge and its text, in points (each side).
+const CELL_TEXT_PADDING_PT: f64 = 2.0;
+
+impl ExcelMetrics {
+    /// A pixel of a column's width, in points.
+    pub fn pixel_pt(self) -> f64 {
+        match self {
+            ExcelMetrics::Windows => 0.75,
+            ExcelMetrics::Mac => 1.0,
+        }
+    }
+
+    /// What Excel for Windows prints a column at, against its width on the screen: the Normal font's
+    /// widest digit is measured in whole pixels on each device (`font_digit`): 96 dpi on the screen, the
+    /// printer's 600 dpi in print (1/600 inch = 0.12 pt), so a column of the same characters is
+    /// `printed_digit * 0.12 pt` against `screen_digit * 0.75 pt` wide. Excel 365's PDFs: a column stored 10
+    /// characters wide is 46 * 10 units for MS PGothic 11 (60 pt on the screen: 0.92), 51 for
+    /// Yu Gothic 11 (1.02), 47 for Calibri 11 (52.5 pt: 1.07), 40 for Courier New 8, ...
+    pub fn print_column_factor(self, font: Option<&str>, font_pt: f64) -> f64 {
+        match self {
+            ExcelMetrics::Windows => {
+                let printed = crate::font_digit::max_digit_px(font.unwrap_or(DEFAULT_FONT), font_pt, 600.0).map_or_else(|| (font_pt * 600.0 / 72.0 * 0.5).round().max(1.0), f64::from);
+                printed * 0.12 / self.digit_pt(font, font_pt)
+            }
+            ExcelMetrics::Mac => 1.0,
+        }
+    }
+
+    /// The maximum digit width of the default font (`font_pt` points), in points.
+    pub fn digit_pt(self, font: Option<&str>, font_pt: f64) -> f64 {
+        match self {
+            // The widest digit of the Normal font in whole pixels at 96 dpi, as GDI measures it (Excel does the
+            // same): 8 px for MS PGothic or Yu Gothic 11 pt, 7 for Calibri 11 pt, so a column stored 9.4414
+            // characters wide is 76 px = 57 pt (Excel 365's `Columns.Width`). A font this machine does not have,
+            // or no GDI (macOS, Linux): half an em.
+            ExcelMetrics::Windows => {
+                let measured = crate::font_digit::max_digit_px(font.unwrap_or(DEFAULT_FONT), font_pt, 96.0);
+                measured.map_or_else(|| (font_pt * 96.0 / 72.0 * 0.5).round(), f64::from).max(1.0) * 0.75
+            }
+            // About 0.55 em, as Excel for Mac measures it (6 pt for 11 pt).
+            ExcelMetrics::Mac => (font_pt * 0.55).round().max(1.0),
+        }
+    }
+}
+
+pub(crate) fn default_row_height_in(metrics: ExcelMetrics, format: Option<Node>, default_font: (&Option<String>, u32)) -> f64 {
     let (font_name, default_font_size) = default_font;
+    // The declared `defaultRowHeight` is what Excel for Windows lays the rows
+    // without a height out by; Excel for Mac keeps it only for the MS fonts and
+    // works the height out from the font otherwise.
     let ms_font = font_name.as_deref().is_some_and(|n| n.starts_with("ＭＳ") || n.starts_with("MS "));
-    let custom_height = format.and_then(|f| attr_bool(f, "customHeight")).unwrap_or(false) || (ms_font && format.and_then(|f| attr(f, "defaultRowHeight")).is_some());
+    let declared = format.and_then(|f| attr(f, "defaultRowHeight")).and_then(|v| v.parse::<f64>().ok());
+    let keeps_declared = metrics == ExcelMetrics::Windows || ms_font;
+    let custom_height = format.and_then(|f| attr_bool(f, "customHeight")).unwrap_or(false) || (keeps_declared && declared.is_some());
     if custom_height {
-        format.and_then(|f| attr(f, "defaultRowHeight")).and_then(|v| v.parse::<f64>().ok()).unwrap_or(15.0)
+        declared.unwrap_or(15.0)
     } else {
         let font_pt = (default_font_size as f64 / 100.0).max(1.0);
         (font_pt * (18.0 / 11.0)).round().max(18.0)
@@ -1554,6 +1785,17 @@ fn cell_needed_height_uncapped(text: &str, col_chars: f64, font: Option<&str>, f
 pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras: &SharedExtras, digit: f64, colors: &SheetColors, dynamic_metadata: &HashSet<u32>) -> Sheet {
     let format = child(root, "sheetFormatPr");
     let default_row_pt = default_row_height(format, (&styles.default_font.0, styles.default_font.1));
+    // The line heights below are Excel for Mac's (18 pt for an 11 pt font).
+    // A file that declares its own default row height lays its text rows out
+    // by that height: the lines are scaled by the declared one over the Mac one.
+    let row_scale = if EXCEL_METRICS == ExcelMetrics::Windows && format.and_then(|f| attr(f, "defaultRowHeight")).is_some() {
+        let mac = ((styles.default_font.1 as f64 / 100.0).max(1.0) * (18.0 / 11.0)).round().max(18.0);
+        default_row_pt / mac
+    } else {
+        1.0
+    };
+    let scaled = |font: Option<&str>, height: f64| if font.is_some_and(|f| f.contains("Meiryo") || f.starts_with("ＭＳ") || f.starts_with("MS ")) { height } else { height * row_scale };
+    let declared_default = EXCEL_METRICS == ExcelMetrics::Windows && format.and_then(|f| attr(f, "defaultRowHeight")).is_some();
     let default_width = default_column_width(format, digit);
     let px = |v: f64| (v * EMU_PER_POINT as f64).round() as Emu;
     let pt = |v: f64| (v * EMU_PER_POINT as f64).round() as Emu;
@@ -1568,18 +1810,30 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     let mut outline_rows = std::collections::BTreeMap::new();
     let mut outline_columns = std::collections::BTreeMap::new();
     let mut hidden_rows = std::collections::BTreeMap::new();
+    let mut custom_rows = std::collections::BTreeSet::new();
+    let mut custom_columns = std::collections::BTreeSet::new();
     let mut max_column = 0u32;
+    let mut column_fonts: Vec<(u32, u32, Option<String>, u32)> = Vec::new();
+    let mut row_fonts: std::collections::BTreeMap<u32, (Option<String>, u32)> = std::collections::BTreeMap::new();
+    // The styles (xf) of the cells written in each row, each once (see `Sheet::written_fonts`).
+    let mut written_xfs: std::collections::BTreeMap<u32, Vec<usize>> = std::collections::BTreeMap::new();
     for col in child(root, "cols").into_iter().flat_map(|c| children(c, "col")) {
         let (Some(min), Some(max)) = (attr_i64(col, "min"), attr_i64(col, "max")) else { continue };
         let hidden = attr_bool(col, "hidden").unwrap_or(false);
         let char_w = attr(col, "width").and_then(|v| v.parse::<f64>().ok()).unwrap_or(default_col_chars);
         let width = column_pixels(char_w, digit);
         let level = attr_i64(col, "outlineLevel").unwrap_or(0).clamp(0, 7) as u8;
+        let col_format = attr_i64(col, "style").filter(|&s| s > 0).and_then(|s| styles.formats.get(s as usize));
+        column_fonts.push((min.max(1) as u32 - 1, max.clamp(1, 16_384) as u32 - 1, col_format.and_then(|f| f.style.font.clone()), col_format.map_or(0, |f| f.style.font_size)));
         for c in (min.max(1) as u32 - 1)..(max.clamp(1, 16_384) as u32) {
             if level > 0 {
                 outline_columns.insert(c, level);
             }
             col_chars.insert(c, char_w);
+            // A width the user fixed (`customWidth`): the column does not widen by itself when a number is entered.
+            if attr_bool(col, "customWidth").unwrap_or(false) {
+                custom_columns.insert(c);
+            }
             widths.insert(c, if hidden { 0 } else { px(width) });
             if hidden {
                 hidden_columns.insert(c, px(width));
@@ -1590,9 +1844,14 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     let mut cells = Vec::new();
     let mut cell_images: Vec<ibis_doc_model::CellImage> = Vec::new();
     let mut heights: HashMap<u32, Emu> = HashMap::new();
+    // Rows Excel measures by their fonts (no `customHeight`, no wrapping text): see `Sheet::measured_rows`.
+    let mut measured: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
     let mut max_row = 0u32;
+    // The rows that have a cell element (a row of only a height is not part of what Excel prints).
+    let mut rows_with_cells: HashSet<u32> = HashSet::new();
     let mut style_index: HashMap<usize, u32> = HashMap::new();
     let mut sheet_styles: Vec<CellStyle> = Vec::new();
+    let mut row_styles: Vec<(u32, u32)> = Vec::new();
     // Shared formulas by index: the formula and the cell it is written for.
     let mut shared: HashMap<String, (String, u32, u32)> = HashMap::new();
     let (mut rows_seen, mut rows_reported) = (0u32, 0usize);
@@ -1621,8 +1880,42 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         let hidden = attr_bool(row, "hidden").unwrap_or(false);
         let custom_height = attr_bool(row, "customHeight").unwrap_or(false);
         let declared_ht = attr(row, "ht").and_then(|v| v.parse::<f64>().ok());
-        let mut auto_ht = default_row_pt;
+        // Excel for Windows fits a row that has no height to what is in it (the
+        // default height only for a row with nothing in it).
+        let fits_content = EXCEL_METRICS == ExcelMetrics::Windows && declared_default;
+        let mut auto_ht = if fits_content { 0.0 } else { default_row_pt };
+        let win_step = |h: f64| if fits_content { (h / 0.75 - 1e-6).ceil() * 0.75 } else { h };
+        if attr_bool(row, "customFormat").unwrap_or(false) {
+            let format = attr_i64(row, "s").filter(|&s| s > 0).and_then(|s| styles.formats.get(s as usize));
+            row_fonts.insert(r, (format.and_then(|f| f.style.font.clone()), format.map_or(0, |f| f.style.font_size)));
+        }
+        let row_xf = attr_i64(row, "s")
+            .filter(|&s| s > 0 && attr_bool(row, "customFormat").unwrap_or(true))
+            .map(|s| s as usize);
+        if let Some(xf) = row_xf
+            && let Some(format) = styles.formats.get(xf)
+        {
+            let style = &format.style;
+            let visible = style.fill.is_some()
+                || style.gradient.is_some()
+                || style.pattern.is_some()
+                || style.left.is_some()
+                || style.right.is_some()
+                || style.top.is_some()
+                || style.bottom.is_some()
+                || style.diagonal_up.is_some()
+                || style.diagonal_down.is_some();
+            if visible {
+                let index = *style_index.entry(xf).or_insert_with(|| {
+                    sheet_styles.push(style.clone());
+                    (sheet_styles.len() - 1) as u32
+                });
+                max_row = max_row.max(r + 1);
+                row_styles.push((r, index));
+            }
+        }
         let mut wraps_text = false;
+        let mut any_wrap = false;
         // A cell without a reference follows the one before it.
         let mut next_column = 0u32;
         for c in children(row, "c") {
@@ -1633,7 +1926,8 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 continue;
             };
             next_column = column + 1;
-            let xf = attr_i64(c, "s").unwrap_or(0).max(0) as usize;
+            rows_with_cells.insert(row_index);
+            let xf = attr_i64(c, "s").map(|s| s.max(0) as usize).or(row_xf).unwrap_or(0);
             let format = styles.formats.get(xf).or_else(|| styles.formats.first());
             let raw = child(c, "v").and_then(|v| v.text()).unwrap_or("");
             let col_width = col_chars.get(&column).copied().unwrap_or(default_col_chars);
@@ -1646,23 +1940,37 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 text = display_with_width(&value, format.map_or("General", |f| f.number_format.as_str()), styles.date1904, col_width);
             }
             let in_merge = merged_cells.iter().any(|m| m.first_row <= row_index && row_index <= m.last_row && m.first_column <= column && column <= m.last_column);
+            // A row with a wrapping cell (a merged one too) is left at the height the file has: this is a limit of ibisOffice, not a
+            // rule of Microsoft Excel, which fits such a row to the lines of the text (a merged cell is not fitted); ibisOffice does not
+            // measure the lines of wrapped text with the formula of `ibis-office-app`'s `xlsx::row_fit` yet.
+            any_wrap |= format.is_some_and(|f| f.style.wrap);
+            if !in_merge {
+                let list = written_xfs.entry(row_index).or_default();
+                if !list.contains(&xf) {
+                    list.push(xf);
+                }
+            }
             if !custom_height && !hidden && in_merge && !text.is_empty() {
                 // A merged cell does not fit its row to its text (it does not wrap into more rows), but a larger
                 // font still makes the row as tall as one line of it (Excel's PDFs of xlsx-XCEL).
                 let font_pt = format.map_or(styles.default_font.1 as f64 / 100.0, |f| f.style.font_size as f64 / 100.0).max(1.0);
                 let font_name = format.and_then(|f| f.style.font.as_deref()).or(styles.default_font.0.as_deref());
-                auto_ht = auto_ht.max(line_height(font_name, font_pt));
+                auto_ht = auto_ht.max(win_step(scaled(font_name, line_height(font_name, font_pt))));
             }
             if !custom_height && !hidden && !in_merge {
                 let font_pt = format.map_or(styles.default_font.1 as f64 / 100.0, |f| f.style.font_size as f64 / 100.0).max(1.0);
                 let wrap = format.map_or(false, |f| f.style.wrap);
+                any_wrap |= wrap;
                 // A cell with nothing in it does not make its row taller.
                 if !text.is_empty() {
                     let font_name = format.and_then(|f| f.style.font.as_deref()).or(styles.default_font.0.as_deref());
                     // Only rows of fonts whose Mac metrics differ from the ones
                     // the file was saved with are fitted again (see below).
                     wraps_text |= wrap && font_name.is_some_and(|f| f.contains("Meiryo") || f.starts_with("ＭＳ") || f.starts_with("MS "));
-                    auto_ht = auto_ht.max(cell_needed_height(&text, col_width, font_name, font_pt, wrap, format.is_some_and(|f| f.style.bold)));
+                    // Excel for Windows leaves the declared default height to a row of
+                    // one line of the default font's size (it fits a row again only
+                    // when it is edited).
+                    auto_ht = auto_ht.max(win_step(scaled(font_name, cell_needed_height(&text, col_width, font_name, font_pt, wrap, format.is_some_and(|f| f.style.bold)))));
                 }
             }
             // A picture in the cell (セルに配置): drawn over it, the cell's own `#VALUE!` not shown.
@@ -1680,6 +1988,14 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 && let Some(range) = unqualified_attr(f, "ref").and_then(parse_range)
             {
                 spills.insert((row_index, column), range);
+            }
+            if value == CellValue::Error(CellError::Spill) {
+                spills.entry((row_index, column)).or_insert(CellRange {
+                    first_row: row_index,
+                    first_column: column,
+                    last_row: row_index,
+                    last_column: column,
+                });
             }
             // A data table (`f t="dataTable"`): its results are values.
             if let Some(f) = elements(c).find(|n| n.has_tag_name(("http://schemas.openxmlformats.org/spreadsheetml/2006/main", "f")) && unqualified_attr(*n, "t") == Some("dataTable"))
@@ -1709,6 +2025,11 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             });
             let style = format.map(|f| f.style.clone()).unwrap_or_default();
             let visible = formula.is_some()
+                // Typed empty text and values hidden by number formats still
+                // establish Excel's print extent (Windows Office controls:
+                // A1 plus a typed value at C70 prints all six grid pages).
+                // This tests actual cells, not the worksheet's dimension hint.
+                || !value.is_empty()
                 || !text.is_empty()
                 || style.fill.is_some()
                 || style.gradient.is_some()
@@ -1718,14 +2039,14 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 || style.top.is_some()
                 || style.bottom.is_some()
                 || style.diagonal_up.is_some()
-                || style.diagonal_down.is_some();
+                || style.diagonal_down.is_some()
+                // The empty cells a text is centred across (the page reaches them).
+                || style.align == ibis_doc_model::CellAlign::CenterAcross;
             // A cell with only a format that does not show (a number
             // format, a font) is kept, for what is typed into it, but does
             // not make the sheet any bigger.
-            // Empty text still has calculation semantics (e.g. TOCOL ignore=1
-            // keeps it, while it skips a genuinely empty cell). Keep typed
-            // values even when they have no visible text, without growing
-            // the visible sheet extent.
+            // Typed empty text is distinct from a genuinely empty cell both
+            // for calculation (e.g. TOCOL ignore=1) and for the print extent.
             if !visible && value.is_empty() && (xf == 0 || styles.formats.get(xf).is_none()) {
                 continue;
             }
@@ -1751,8 +2072,14 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             let ht = declared_ht.unwrap_or(default_row_pt);
             hidden_rows.insert(r, pt(ht));
         } else if custom_height {
-            let ht = declared_ht.unwrap_or(default_row_pt);
+            // A custom row is a whole number of device pixels in Excel for Windows (0.75 pt, cut down: 5.85 pt = 7.8 px is 7 px = 5.25 pt;
+            // 37.5 pt = 50 px stays; a height written to 4 decimals of a centimetre by another format is not cut by that noise): its PDFs show
+            // 118's rows 1..32 (stored 1029 pt) at 1029 pt, not the 1008 pt of whole points, and 058's 150 rows of 5.85 pt on 1 page.
+            // Elsewhere OOXML ht is a height in points, fractions included, and printing cuts it to whole points (`export::print_layout`).
+            // Saving writes only the rows the person changed, as they set them (40 pt is written 40 pt; read again it is 39.75 pt).
+            let ht = declared_ht.filter(|h| h.is_finite() && *h >= 0.0).map(|h| if EXCEL_METRICS == ExcelMetrics::Windows { (h / 0.75 + 0.01).floor() * 0.75 } else { h }).unwrap_or(default_row_pt);
             heights.insert(r, pt(ht));
+            custom_rows.insert(r);
         } else {
             // Excel for Mac fits again a row holding wrapping text of Meiryo UI
             // or ＭＳ ゴシック when it opens the file (one private workbook's
@@ -1762,8 +2089,13 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             // workbook's 游ゴシック 12 pt wrapped rows, whose row boundaries in
             // the PDF are exactly the stored 126, 168, 147 and 84 pt (our
             // estimate made the 84 pt row 104).
-            let keeps_stored = !wraps_text && declared_ht.is_some();
-            heights.insert(r, pt(if keeps_stored { declared_ht.unwrap_or(auto_ht) } else { auto_ht }));
+            // Excel for Windows keeps a stored height (the refitting below is what Excel
+            // for Mac does on opening, to fonts whose metrics differ from its own).
+            if !any_wrap {
+                measured.insert(r);
+            }
+            let keeps_stored = (!wraps_text || EXCEL_METRICS == ExcelMetrics::Windows) && declared_ht.is_some();
+            heights.insert(r, pt(if keeps_stored { declared_ht.unwrap_or(auto_ht) } else if auto_ht > 0.0 { auto_ht } else { default_row_pt }));
         }
     }
 
@@ -1780,6 +2112,27 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     for m in &merges {
         max_row = max_row.max(m.last_row + 1);
         max_column = max_column.max(m.last_column + 1);
+    }
+    if !row_styles.is_empty() && max_column > 0 {
+        let existing: HashSet<(u32, u32)> = cells.iter().map(|c| (c.row, c.column)).collect();
+        for (r, index) in row_styles {
+            for col in 0..max_column {
+                if !existing.contains(&(r, col)) {
+                    cells.push(SheetCell {
+                        runs: None,
+                        phonetic: None,
+                        row: r,
+                        column: col,
+                        value: CellValue::Empty,
+                        text: String::new(),
+                        kind: CellKind::Empty,
+                        formula: None,
+                        style: index,
+                    });
+                }
+            }
+        }
+        cells.sort_by_key(|c| (c.row, c.column));
     }
 
     let view = child(root, "sheetViews").and_then(|v| child(v, "sheetView"));
@@ -1822,14 +2175,64 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         }
         None => (None, None),
     };
+    let print = read_print(root, grid_lines);
+    // Text that runs on past its cell over the empty cells beside it is printed
+    // as far as it reaches on the page, so the sheet's extent includes those
+    // columns without adding a new page across for overflowing text alone.
+    {
+        let occupied: HashSet<(u32, u32)> = cells.iter().filter(|c| !c.text.is_empty() || c.formula.is_some()).map(|c| (c.row, c.column)).collect();
+        let col_emu = |c: u32| widths.get(&c).copied().unwrap_or(px(default_width));
+        let width_of = |c: u32| col_emu(c) as f64 / EMU_PER_POINT as f64;
+        let (paper_w, _) = print.page_size();
+        let [left, right, _, _] = print.margins;
+        let page_room_emu = ((paper_w - left - right).max(EMU_PER_INCH / 2) as f64 / (print.scale.max(10) as f64 / 100.0)).floor() as i64;
+        let used_emu: i64 = (0..max_column).map(&col_emu).sum();
+        let page_limit_emu = ((used_emu.max(1) + page_room_emu - 1) / page_room_emu) * page_room_emu;
+        for cell in cells.iter().filter(|c| c.kind == CellKind::Text && !c.text.is_empty()) {
+            let Some(style) = sheet_styles.get(cell.style as usize) else { continue };
+            if style.wrap || style.rotation != 0 || style.shrink || !matches!(style.align, CellAlign::General | CellAlign::Left) || cell.text.contains('\n') {
+                continue;
+            }
+            if merges.iter().any(|m| m.first_row <= cell.row && cell.row <= m.last_row && m.first_column <= cell.column && cell.column <= m.last_column) {
+                continue;
+            }
+            let em = style.font_size as f64 / 100.0;
+            let font = style.font.as_deref().or(styles.default_font.0.as_deref()).unwrap_or(DEFAULT_FONT);
+            // The text's width in its font (GDI); where that cannot be measured, half an em a Latin character and a whole
+            // one a wide one. Plus the cell's padding on both sides.
+            let text_width = crate::font_digit::text_width_pt(font, em, style.bold, &cell.text)
+                .unwrap_or_else(|| cell.text.chars().map(|c| if c.is_ascii() { 0.5 * em } else { em }).sum::<f64>());
+            let need = text_width + 2.0 * CELL_TEXT_PADDING_PT;
+            let mut reach = cell.column;
+            let mut room = width_of(cell.column);
+            let mut end_emu: i64 = (0..=cell.column).map(&col_emu).sum();
+            while room < need && reach < 16_383 && !occupied.contains(&(cell.row, reach + 1)) && end_emu + col_emu(reach + 1) <= page_limit_emu {
+                reach += 1;
+                room += width_of(reach);
+                end_emu += col_emu(reach);
+            }
+            if room >= need || !occupied.contains(&(cell.row, reach + 1)) {
+                max_column = max_column.max(reach + 1);
+            }
+        }
+    }
     let columns = (0..max_column).map(|c| widths.get(&c).copied().unwrap_or(px(default_width))).collect();
-    // A row of its own height counts even with nothing shown in it (a picture in a cell leaves its cell's text empty).
+    // A row of its own height counts even with nothing shown in it (a picture in a cell leaves its cell's text empty), but
+    // only when the row has a cell: a `<row ht=.. customHeight/>` with no cell is not printed (Excel's PDF of a sheet whose
+    // last rows, 647 and 648, are only a height has no page for them).
+    let mut printed_rows = max_row;
+    if let Some(last) = heights.iter().filter(|(r, h)| **h != pt(default_row_pt) && rows_with_cells.contains(r)).map(|(r, _)| *r).max() {
+        max_row = max_row.max(last + 1);
+        printed_rows = max_row;
+    }
+    // The rows of a height alone stay in the model (the person's edit of an empty row is kept), but print no page.
     if let Some(last) = heights.iter().filter(|(_, h)| **h != pt(default_row_pt)).map(|(r, _)| *r).max() {
         max_row = max_row.max(last + 1);
     }
     let rows = (0..max_row).map(|r| heights.get(&r).copied().unwrap_or(pt(default_row_pt))).collect();
+    // The rows with no `row` element are measured too.
+    let measured_rows: Vec<u32> = (0..max_row).filter(|r| measured.contains(r) || !heights.contains_key(r)).collect();
     cells.sort_by_key(|c| (c.row, c.column));
-    let print = read_print(root);
     let show_phonetic = view.and_then(|v| attr_bool(v, "showPhonetic")).unwrap_or(false);
     let phonetic_pr = child(root, "phoneticPr").map(|p| {
         let font_id = attr(p, "fontId").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
@@ -1858,7 +2261,29 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         print,
         default_row: pt(default_row_pt),
         default_column: px(default_width),
+        measured_rows: ibis_doc_model::Unsaved(measured_rows),
+        column_fonts: ibis_doc_model::Unsaved(column_fonts),
+        row_fonts: ibis_doc_model::Unsaved(row_fonts),
+        written_fonts: ibis_doc_model::Unsaved(
+            written_xfs
+                .into_iter()
+                .map(|(r, xfs)| {
+                    let fonts: Vec<(Option<String>, u32)> = xfs
+                        .into_iter()
+                        .map(|xf| {
+                            let format = styles.formats.get(xf).or_else(|| styles.formats.first());
+                            (format.and_then(|f| f.style.font.clone()), format.map_or(0, |f| f.style.font_size))
+                        })
+                        .collect();
+                    (r, fonts)
+                })
+                .collect(),
+        ),
+        fitted_rows: Default::default(),
+        printed_rows: ibis_doc_model::Unsaved(printed_rows),
         hidden_rows,
+        custom_rows,
+        custom_columns,
         hidden_columns,
         spills,
         conditional: read_conditional(root, styles, colors),
@@ -1886,6 +2311,7 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         show_formulas,
         show_zeros,
         hide_ink: false,
+        book_context: Default::default(),
     };
     if let Some(f) = &sheet.auto_filter {
         sheet.filtered_rows = ibis_doc_model::sheet_command::filtered_rows(&sheet, f, styles.date1904).into_iter().filter(|&row| sheet.rows.get(row as usize) == Some(&0)).collect();
@@ -2377,24 +2803,44 @@ fn reference_at(chars: &[char], start: usize, rows: i64, columns: i64) -> Option
 }
 
 /// How a worksheet is printed. Without a `pageSetup`, it goes on A4 (the
-/// Japanese locale's paper); with one that names no paper, on Letter, as
-/// the format says.
-fn read_print(root: Node) -> SheetPrint {
+/// Japanese locale's paper); with one that names no paper, on the region's paper in Excel for
+/// Windows (A4 in Japan), on Letter (the format's default) elsewhere.
+fn read_print(root: Node, show_grid_lines: bool) -> SheetPrint {
     let mut print = SheetPrint::default();
     let number = |n: Node, name: &str| attr(n, name).and_then(|v| v.parse::<f64>().ok());
     let inches = |v: f64| (v * EMU_PER_INCH as f64).round() as Emu;
     if let Some(setup) = child(root, "pageSetup").or_else(|| child(root, "pageSetUp")) {
-        print.paper = match attr_i64(setup, "paperSize").unwrap_or(1) {
-            1 => (inches(8.5), inches(11.0)),
-            5 => (inches(8.5), inches(14.0)),
-            8 => (297 * 36_000, 420 * 36_000),
-            11 => (148 * 36_000, 210 * 36_000),
-            12 => (257 * 36_000, 364 * 36_000),
-            13 => (182 * 36_000, 257 * 36_000),
-            43 => SheetPrint::HAGAKI,
-            44 => SheetPrint::OFUKU_HAGAKI,
-            _ => SheetPrint::A4,
+        // The paper a `pageSetup` names is Letter (1) when it names none (ECMA-376). Excel for Windows prints a sheet laid out
+        // for Letter on the A4 paper of a printer set for A4 (the region's default paper, `locale_paper`: 15 of the corpus'
+        // documents, every one of them with an A4 PDF; and Excel's PDFs of `paperSize` 1 and of none are the same),
+        // (its text, rows and columns come out 5 points of the scale smaller there: pagesetup-probe, not worked out yet).
+        // Paper sizes this table does not know print on the machine's
+        // default paper, and on A4 in the Mac's.
+        let named = attr_i64(setup, "paperSize");
+        let region = if EXCEL_METRICS == ExcelMetrics::Windows { crate::locale_paper::default_paper_size() } else { 1 };
+        let letter_on_a4 = EXCEL_METRICS == ExcelMetrics::Windows && region == 9 && named.unwrap_or(1) == 1;
+        let missing = if letter_on_a4 { 9 } else { region };
+        let known = |n: i64| -> Option<(Emu, Emu)> {
+            Some(match n {
+                1 | 2 => (inches(8.5), inches(11.0)),
+                5 => (inches(8.5), inches(14.0)),
+                8 => (297 * 36_000, 420 * 36_000),
+                11 => (148 * 36_000, 210 * 36_000),
+                12 => (257 * 36_000, 364 * 36_000),
+                13 => (182 * 36_000, 257 * 36_000),
+                43 => SheetPrint::HAGAKI,
+                44 => SheetPrint::OFUKU_HAGAKI,
+                3 => (inches(11.0), inches(17.0)),
+                6 => (inches(5.5), inches(8.5)),
+                7 => (inches(7.25), inches(10.5)),
+                14 => (inches(8.5), inches(13.0)),
+                9 | 10 => SheetPrint::A4,
+                _ => return None,
+            })
         };
+        // A number the table does not know (257, a custom size) prints on the machine's default paper in Excel for
+        // Windows (A4 in the Japanese PC's PDF of 151; Excel for the web's was Letter), on A4 in the Mac's.
+        print.paper = known(if letter_on_a4 { 9 } else { named.unwrap_or(missing) }).unwrap_or_else(|| if EXCEL_METRICS == ExcelMetrics::Windows { known(missing).unwrap_or((inches(8.5), inches(11.0))) } else { SheetPrint::A4 });
         print.landscape = attr(setup, "orientation") == Some("landscape");
         print.scale = attr_i64(setup, "scale").filter(|s| (10..=400).contains(s)).unwrap_or(100) as u32;
         print.over_then_down = attr(setup, "pageOrder") == Some("overThenDown");
@@ -2407,6 +2853,11 @@ fn read_print(root: Node) -> SheetPrint {
         if fit {
             let pages = |name: &str| attr_i64(setup, name).unwrap_or(1).max(0) as u32;
             print.fit_to = Some((pages("fitToWidth"), pages("fitToHeight")));
+        } else {
+            // A sheet that names Letter on an A4 printer is laid out in pages of Letter's size and drawn smaller on the A4 paper
+            // (the page's `letter_on_a4`: see `print_sheet`); not when it is fitted to pages (Excel's PDFs: paper1fit prints
+            // as paper9 does).
+            print.letter_on_a4 = letter_on_a4;
         }
     }
     if let Some(m) = child(root, "pageMargins") {
@@ -2424,7 +2875,7 @@ fn read_print(root: Node) -> SheetPrint {
     }
     if let Some(o) = child(root, "printOptions") {
         print.centered = (attr_bool(o, "horizontalCentered").unwrap_or(false), attr_bool(o, "verticalCentered").unwrap_or(false));
-        print.grid_lines = attr_bool(o, "gridLines").unwrap_or(false);
+        print.grid_lines = attr_bool(o, "gridLines").unwrap_or_else(|| attr_bool(o, "gridLinesSet") == Some(false) && show_grid_lines);
         print.headings = attr_bool(o, "headings").unwrap_or(false);
     }
     if let Some(hf) = child(root, "headerFooter") {
@@ -2432,7 +2883,7 @@ fn read_print(root: Node) -> SheetPrint {
         print.header_footer.different_odd_even = attr_bool(hf, "differentOddEven").unwrap_or(false);
         print.header_footer.scale_with_doc = attr_bool(hf, "scaleWithDoc").unwrap_or(true);
         print.header_footer.align_with_margins = attr_bool(hf, "alignWithMargins").unwrap_or(true);
-        let text_child = |name: &str| child(hf, name).and_then(|n| n.text()).map(str::to_string);
+        let text_child = |name: &str| child(hf, name).and_then(|n| n.text()).map(decode_xstring);
         print.header_footer.odd_header = text_child("oddHeader");
         print.header_footer.odd_footer = text_child("oddFooter");
         print.header_footer.even_header = text_child("evenHeader");
@@ -2488,7 +2939,9 @@ fn csv_chunk(first_row: usize, records: &[Vec<String>], base: &CellStyle, defaul
     let line_height = cell_needed_height("x", col_chars, font, font_pt, false, base.bold);
     for (offset, record) in records.iter().enumerate() {
         let row = (first_row + offset) as u32;
-        let mut row_height = default_row_pt;
+        // As `read_sheet` fits a row for Excel for Windows: to what is in it, in steps of 0.75 pt.
+        let fits = EXCEL_METRICS == ExcelMetrics::Windows;
+        let mut row_height = if fits { 0.0 } else { default_row_pt };
         for (column, field) in record.iter().enumerate() {
             if field.is_empty() {
                 continue;
@@ -2517,7 +2970,7 @@ fn csv_chunk(first_row: usize, records: &[Vec<String>], base: &CellStyle, defaul
             };
             if !text.is_empty() {
                 let needed = if text.contains('\n') { cell_needed_height(&text, col_chars, font, font_pt, false, base.bold) } else { line_height };
-                row_height = row_height.max(needed);
+                row_height = row_height.max(if fits { (needed / 0.75 - 1e-6).ceil() * 0.75 } else { needed });
             }
             let visible = formula.is_some() || !text.is_empty();
             if !visible && value.is_empty() {
@@ -2537,7 +2990,7 @@ fn csv_chunk(first_row: usize, records: &[Vec<String>], base: &CellStyle, defaul
             let kind = CellKind::of(&value);
             chunk.cells.push(SheetCell { runs: None, phonetic: None, row, column, value, text, kind, formula, style: style as u32 });
         }
-        chunk.heights.push(pt(row_height));
+        chunk.heights.push(pt(if row_height > 0.0 { row_height } else { default_row_pt }));
     }
     chunk
 }
@@ -2550,7 +3003,10 @@ pub(crate) fn fill_csv_sheet(sheet: &mut Sheet, root: Node, styles: &Styles, dig
     let default_width = default_column_width(format, digit);
     let col_chars = format.and_then(|f| attr(f, "defaultColWidth")).and_then(|v| v.parse::<f64>().ok()).unwrap_or(8.43);
     let pt = |v: f64| (v * EMU_PER_POINT as f64).round() as Emu;
-    let base = styles.formats.first().map(|f| f.style.clone()).unwrap_or_default();
+    let mut base = styles.formats.first().map(|f| f.style.clone()).unwrap_or_default();
+    // A text file's cells sit at the top of their rows (issue #17).
+    base.vertical = ibis_doc_model::CellVerticalAlign::Top;
+    base.vertical_set = true;
     let default_font = styles.default_font.0.clone();
 
     let items: Vec<(usize, &[Vec<String>])> = records.chunks(CHUNK_ROWS).enumerate().map(|(i, c)| (i * CHUNK_ROWS, c)).collect();
@@ -2733,14 +3189,14 @@ mod tests {
     fn print_setup() {
         let xml = r#"<worksheet><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" fitToHeight="0"/><rowBreaks count="1"><brk id="40" max="16383" man="1"/></rowBreaks></worksheet>"#;
         let doc = roxmltree::Document::parse(xml).unwrap();
-        let print = read_print(doc.root_element());
+        let print = read_print(doc.root_element(), true);
         assert_eq!(print.page_size(), (297 * 36_000, 210 * 36_000));
         assert_eq!(print.fit_to, Some((1, 0)));
         assert_eq!(print.margins[0], EMU_PER_INCH / 4);
         assert_eq!(print.centered, (true, false));
         assert_eq!(print.row_breaks, vec![40]);
         let doc = roxmltree::Document::parse("<worksheet/>").unwrap();
-        assert_eq!(read_print(doc.root_element()), SheetPrint::default());
+        assert_eq!(read_print(doc.root_element(), true), SheetPrint::default());
     }
 
     #[test]
@@ -2756,7 +3212,7 @@ mod tests {
             </headerFooter>
         </worksheet>"#;
         let doc = roxmltree::Document::parse(xml).unwrap();
-        let print = read_print(doc.root_element());
+        let print = read_print(doc.root_element(), true);
         assert_eq!(print.paper, SheetPrint::HAGAKI);
         assert_eq!(print.scale, 75);
         assert!(print.over_then_down);
@@ -2783,7 +3239,7 @@ mod tests {
         let bytes = xml_doc.to_bytes();
         let serialized = std::str::from_utf8(&bytes).unwrap();
         let doc2 = roxmltree::Document::parse(serialized).unwrap();
-        let print2 = read_print(doc2.root_element());
+        let print2 = read_print(doc2.root_element(), true);
         assert_eq!(print, print2);
     }
 
@@ -2807,14 +3263,50 @@ mod tests {
     fn column_width_formula() {
         // ECMA-376 Part 1 §18.3.1.13 with a 6 pt digit: the widths Excel
         // for Mac saves (13.6640625) and prints (82 pt).
-        assert_eq!(column_pixels(13.75, 6.0), 82.0);
-        assert_eq!(column_pixels(13.6640625, 6.0), 82.0);
-        assert_eq!(column_pixels(8.75, 6.0), 52.0);
-        assert_eq!(column_pixels(8.6640625, 6.0), 52.0);
-        assert_eq!(column_pixels(1.25, 6.0), 7.0);
-        assert_eq!(column_pixels(1.1640625, 6.0), 7.0);
-        assert_eq!(column_pixels(12.0, 6.0), 72.0);
-        assert_eq!(column_pixels(3.0, 6.0), 18.0);
+        assert_eq!(column_pixels_in(ExcelMetrics::Mac, 13.75, 6.0), 82.0);
+        assert_eq!(column_pixels_in(ExcelMetrics::Mac, 13.6640625, 6.0), 82.0);
+        assert_eq!(column_pixels_in(ExcelMetrics::Mac, 8.75, 6.0), 52.0);
+        assert_eq!(column_pixels_in(ExcelMetrics::Mac, 8.6640625, 6.0), 52.0);
+        assert_eq!(column_pixels_in(ExcelMetrics::Mac, 1.25, 6.0), 7.0);
+        assert_eq!(column_pixels_in(ExcelMetrics::Mac, 1.1640625, 6.0), 7.0);
+        assert_eq!(column_pixels_in(ExcelMetrics::Mac, 12.0, 6.0), 72.0);
+        assert_eq!(column_pixels_in(ExcelMetrics::Mac, 3.0, 6.0), 18.0);
+    }
+
+    #[test]
+    fn column_width_in_the_webs_pixels() {
+        // Excel 365 on Windows: the digit is measured by GDI (`font_digit`): 8 px (6 pt) for 11 pt MS PGothic, so a
+        // column stored 9.4414 characters wide is 76 px = 57 pt (read from Excel's Columns(i).Width), 7 px for
+        // Calibri 11 pt (a column shown 8.43 characters wide, stored 9.140625, is 64 px = 48 pt). Fonts this machine does not have are skipped.
+        let ms: Option<&str> = Some("ＭＳ Ｐゴシック");
+        if crate::font_digit::max_digit_px(ms.unwrap(), 11.0, 96.0).is_some() {
+            let digit = ExcelMetrics::Windows.digit_pt(ms, 11.0);
+            assert_eq!(digit, 6.0);
+            assert_eq!(column_pixels_in(ExcelMetrics::Windows, 9.44140625, digit), 57.0);
+            assert_eq!(column_pixels_in(ExcelMetrics::Windows, 12.0, digit), 72.0);
+            // Printed 46 units of 1/600 inch a digit (5.52 pt) against 6 pt shown (Excel 365: 52.46 pt for the 57 pt column).
+            let f = ExcelMetrics::Windows.print_column_factor(ms, 11.0);
+            assert!((f - 0.92).abs() < 1e-3 && (57.0 * f - 52.44).abs() < 0.1, "{f}");
+        }
+        if crate::font_digit::max_digit_px("Calibri", 11.0, 96.0).is_some() {
+            assert_eq!(ExcelMetrics::Windows.digit_pt(Some("Calibri"), 11.0), 5.25);
+            assert_eq!(column_pixels_in(ExcelMetrics::Windows, 9.140625, 5.25), 48.0);
+        }
+        assert_eq!(ExcelMetrics::Mac.digit_pt(ms, 11.0), 6.0);
+    }
+
+    #[test]
+    fn default_row_height_follows_the_metrics() {
+        let doc = roxmltree::Document::parse(r#"<sheetFormatPr xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" defaultRowHeight="12.75"/>"#).unwrap();
+        let format = Some(doc.root_element());
+        let arial = Some("Arial".to_string());
+        let ms = Some("ＭＳ Ｐゴシック".to_string());
+        // The web keeps the declared height; Mac fits an Arial sheet to the font
+        // (18 pt) and keeps the declared one only for the MS fonts.
+        assert_eq!(default_row_height_in(ExcelMetrics::Windows, format, (&arial, 1000)), 12.75);
+        assert_eq!(default_row_height_in(ExcelMetrics::Mac, format, (&arial, 1000)), 18.0);
+        assert_eq!(default_row_height_in(ExcelMetrics::Mac, format, (&ms, 1100)), 12.75);
+        assert_eq!(default_row_height_in(ExcelMetrics::Windows, format, (&ms, 1100)), 12.75);
     }
 
     #[test]
@@ -2924,6 +3416,99 @@ mod tests {
         assert_eq!(cell_needed_height("自動拡張される3行の折り返しテキスト", 10.0, None, 11.0, true, false), 76.0);
         // Many lines stop at Excel's most (409.5 pt).
         assert_eq!(cell_needed_height(&"行\n".repeat(100), 10.0, None, 11.0, true, false), 409.5);
+    }
+
+    #[test]
+    fn parses_x14_conditional_formatting_with_defined_name() {
+        let mut zip = ibis_ooxml::zip::Writer::new();
+        let meta = ibis_ooxml::zip::EntryMeta::default();
+
+        zip.add("[Content_Types].xml", meta.clone(), br#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>"#).unwrap();
+
+        zip.add("_rels/.rels", meta.clone(), br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"#).unwrap();
+
+        zip.add("xl/_rels/workbook.xml.rels", meta.clone(), br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>"#).unwrap();
+
+        zip.add("xl/workbook.xml", meta.clone(), br#"<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Sheet1" sheetId="1" r:id="rId1"/>
+  </sheets>
+  <definedNames>
+    <definedName name="_NAME_">Sheet1!$B$2</definedName>
+  </definedNames>
+</workbook>"#).unwrap();
+
+        zip.add("xl/worksheets/sheet1.xml", meta, br#"<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+           xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
+           xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">
+  <sheetData>
+    <row r="2">
+      <c r="B2" t="inlineStr"><is><t>Apple</t></is></c>
+    </row>
+    <row r="3">
+      <c r="A3" t="inlineStr"><is><t>A</t></is></c>
+      <c r="B3"><v>1</v></c>
+    </row>
+    <row r="4">
+      <c r="A4" t="inlineStr"><is><t>B</t></is></c>
+      <c r="B4"><v>2</v></c>
+    </row>
+    <row r="5">
+      <c r="A5" t="inlineStr"><is><t>A</t></is></c>
+      <c r="B5"><v>3</v></c>
+    </row>
+  </sheetData>
+  <extLst>
+    <ext uri="{78C0D931-6437-407d-A8EE-F0AA7539E650}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">
+      <x14:conditionalFormattings>
+        <x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">
+          <x14:cfRule type="expression" priority="1" id="{E5B9A136-1234-4567-89AB-CDEF01234567}">
+            <xm:f>LEFT(_NAME_,1)&lt;&gt;$A3</xm:f>
+            <x14:dxf>
+              <font><b val="1"/><color rgb="FF9C0006"/></font>
+              <fill><patternFill patternType="solid"><bgColor rgb="FFFFC7CE"/></patternFill></fill>
+            </x14:dxf>
+          </x14:cfRule>
+          <xm:sqref>A3:B5</xm:sqref>
+        </x14:conditionalFormatting>
+      </x14:conditionalFormattings>
+    </ext>
+  </extLst>
+</worksheet>"#).unwrap();
+
+        let bytes = zip.finish().unwrap();
+        let presentation = crate::read(&bytes).unwrap();
+        let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&presentation.slides[0]).unwrap();
+        assert_eq!(sheet.conditional_x14.len(), 1);
+        let cf = &sheet.conditional_x14[0];
+        assert_eq!(cf.ranges, vec![CellRange { first_row: 2, first_column: 0, last_row: 4, last_column: 1 }]);
+        assert_eq!(cf.rules.len(), 1);
+        assert_eq!(cf.rules[0].kind, ibis_doc_model::CfKind::Expression("LEFT(_NAME_,1)<>$A3".into()));
+        let st = cf.rules[0].style.as_ref().unwrap();
+        assert_eq!(st.bold, Some(true));
+        assert_eq!(st.color, Some(Rgb(0x9C0006)));
+        assert_eq!(st.fill, Some(Rgb(0xFFC7CE)));
+
+        assert_eq!(sheet.book_context.sheet_name, "Sheet1");
+        assert_eq!(sheet.book_context.sheet_index, 0);
+        assert_eq!(sheet.book_context.defined_names.len(), 1);
+        assert_eq!(sheet.book_context.defined_names[0].name, "_NAME_");
+        assert_eq!(sheet.book_context.defined_names[0].formula, "Sheet1!$B$2");
     }
 }
 

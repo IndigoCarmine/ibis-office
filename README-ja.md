@@ -37,6 +37,7 @@ ibisOffice そのものの機能・互換性・速さは、[ibisOffice の READM
 - **Windows**：`AcaudaOffice-<版>-Windows.zip` を展開して、`AcaudaOffice` フォルダの `AcaudaOffice.exe` を起動します。または、`AcaudaOffice-<版>-Windows-Setup.exe` でインストールします（使っているユーザーだけに入ります。管理者の権限は要りません）。
 - **macOS**：`AcaudaOffice-<版>-macOS.zip` を展開して、`AcaudaOffice.app` をアプリケーション フォルダに移します。
 - **Linux**：`AcaudaOffice-<版>-Linux.AppImage` をダウンロードし、実行権限を付けて（`chmod +x`）、ダブルクリックします。
+- **ブラウザー版の組み込み**：閉じる・ダウンロードのボタンを出し、組み込んだ側のページにイベントで知らせる方法は [ブラウザー版の組み込み](docs/web-embedding-ja.md) をご覧ください。
 
 Acauda Office の設定は、ibisOffice とは別のフォルダ（`AcaudaOffice`）に保存します。そのため、両方を同時にインストールできます。自動更新は、このリポジトリのリリースだけを見ます。
 
@@ -51,10 +52,10 @@ cargo build --release
 ```
 
 - 最新の安定版の Rust が必要です。
-- macOS では、`scripts/bundle-macos.sh` で `target/release/AcaudaOffice.app` を作ります。
+- macOS では、`scripts/bundle-macos.sh --release` で `target/release/AcaudaOffice.app` を作ります（`--release` なしでは、デバッグ ビルドを `target/debug/AcaudaOffice.app` に作ります）。
 - Windows では、`pwsh scripts/bundle-windows.ps1` で、配布用の zip とインストーラーを `target/dist` に作ります（インストーラーには [Inno Setup 6](https://jrsoftware.org/isdl.php) が要ります）。
-- Linux では、`scripts/bundle-linux.sh` で AppImage を `target/dist` に作ります。
-- Web 版は、`scripts/build-web.sh --release` でビルドし、`www/` を配信します（WebGPU に対応したブラウザ）。
+- Linux では、`scripts/bundle-linux.sh --release` で AppImage を `target/dist` に作ります。
+- Web 版は、`scripts/build-web.sh --release` でビルドし、`www/` を配信します（WebGPU に対応したブラウザ：Chrome・Edge・Safari 26 以降）。
 
 ## ライセンス
 
